@@ -1,0 +1,66 @@
+package rid
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/google/uuid"
+)
+
+// RID represents a parsed Resource Identifier.
+type RID struct {
+	Service      string
+	Realm        string
+	ResourceType string
+	ID           string
+}
+
+// New generates a new RID string with an auto-generated UUID.
+func New(service, realm, resourceType string) string {
+	return fmt.Sprintf("ri.%s.%s.%s.%s", service, realm, resourceType, uuid.New().String())
+}
+
+// NewOntologyRID generates a new RID for an ontology.
+func NewOntologyRID() string {
+	return New("ontology", "main", "ontology")
+}
+
+// NewObjectTypeRID generates a new RID for an object type.
+func NewObjectTypeRID() string {
+	return New("ontology", "main", "object-type")
+}
+
+// NewPropertyRID generates a new RID for a property.
+func NewPropertyRID() string {
+	return New("ontology", "main", "property")
+}
+
+// NewLinkTypeRID generates a new RID for a link type.
+func NewLinkTypeRID() string {
+	return New("ontology", "main", "link-type")
+}
+
+// NewObjectRID generates a new RID for an object.
+func NewObjectRID() string {
+	return New("ontology", "main", "object")
+}
+
+// NewActionTypeRID generates a new RID for an action type.
+func NewActionTypeRID() string {
+	return New("ontology", "main", "action-type")
+}
+
+// Parse parses a RID string into its constituent parts.
+// Expected format: ri.{service}.{realm}.{resourceType}.{uuid}
+func Parse(rid string) (*RID, error) {
+	parts := strings.SplitN(rid, ".", 5)
+	if len(parts) != 5 || parts[0] != "ri" {
+		return nil, fmt.Errorf("invalid RID format: %q", rid)
+	}
+	return &RID{
+		Service:      parts[1],
+		Realm:        parts[2],
+		ResourceType: parts[3],
+		ID:           parts[4],
+	}, nil
+}

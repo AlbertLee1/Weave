@@ -1,0 +1,1003 @@
+package oss_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oss"
+	"github.com/liyang/weave/pkg/oss/where"
+)
+
+// --- Mock OMS Repository ---
+
+type mockOmsRepo struct {
+	objectTypes map[string]*oms.ObjectType // key: ontologyRID+":"+apiName
+	byRID       map[string]*oms.ObjectType // key: RID
+	linkTypes   map[string][]oms.LinkType  // key: objectTypeRID
+}
+
+func newMockOmsRepo() *mockOmsRepo {
+	return &mockOmsRepo{
+		objectTypes: make(map[string]*oms.ObjectType),
+		byRID:       make(map[string]*oms.ObjectType),
+		linkTypes:   make(map[string][]oms.LinkType),
+	}
+}
+
+func (m *mockOmsRepo) addObjectType(ot *oms.ObjectType) {
+	key := ot.OntologyRID + ":" + ot.APIName
+	m.objectTypes[key] = ot
+	m.byRID[ot.RID] = ot
+}
+
+func (m *mockOmsRepo) addLinkType(lt oms.LinkType) {
+	m.linkTypes[lt.SourceObjectType] = append(m.linkTypes[lt.SourceObjectType], lt)
+}
+
+func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error {
+	return nil
+}
+
+func (m *mockOmsRepo) GetOntology(_ context.Context, _ string) (*oms.Ontology, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockOmsRepo) ListOntologies(_ context.Context) ([]oms.Ontology, error) {
+	return nil, nil
+}
+
+func (m *mockOmsRepo) CreateObjectType(_ context.Context, _ *oms.ObjectType) error {
+	return nil
+}
+
+func (m *mockOmsRepo) GetObjectType(_ context.Context, rid string) (*oms.ObjectType, error) {
+	if ot, ok := m.byRID[rid]; ok {
+		return ot, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockOmsRepo) GetObjectTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.ObjectType, error) {
+	key := ontologyRID + ":" + apiName
+	if ot, ok := m.objectTypes[key]; ok {
+		return ot, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockOmsRepo) ListObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
+	return nil, nil
+}
+
+func (m *mockOmsRepo) UpdateObjectType(_ context.Context, _ *oms.ObjectType) error {
+	return nil
+}
+
+func (m *mockOmsRepo) DeleteObjectType(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockOmsRepo) CreateProperty(_ context.Context, _ *oms.Property) error {
+	return nil
+}
+
+func (m *mockOmsRepo) ListProperties(_ context.Context, _ string) ([]oms.Property, error) {
+	return nil, nil
+}
+
+func (m *mockOmsRepo) DeleteProperty(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockOmsRepo) CreateLinkType(_ context.Context, _ *oms.LinkType) error {
+	return nil
+}
+
+func (m *mockOmsRepo) GetLinkType(_ context.Context, _ string) (*oms.LinkType, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockOmsRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	return m.linkTypes[objectTypeRID], nil
+}
+
+func (m *mockOmsRepo) CreateActionType(_ context.Context, _ *oms.ActionType) error {
+	return nil
+}
+
+func (m *mockOmsRepo) GetActionType(_ context.Context, _ string) (*oms.ActionType, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockOmsRepo) ListActionTypes(_ context.Context, _ string) ([]oms.ActionType, error) {
+	return nil, nil
+}
+
+func (m *mockOmsRepo) UpdateActionType(_ context.Context, _ *oms.ActionType) error {
+	return nil
+}
+
+func (m *mockOmsRepo) CreateInterface(_ context.Context, _ *oms.Interface) error {
+	return nil
+}
+
+func (m *mockOmsRepo) ListInterfaces(_ context.Context, _ string) ([]oms.Interface, error) {
+	return nil, nil
+}
+
+func (m *mockOmsRepo) AttachInterface(_ context.Context, _ *oms.ObjectTypeInterface) error {
+	return nil
+}
+
+// --- Mock Link Resolver ---
+
+type mockLinkResolver struct {
+	results map[string][]string // linkTypeAPIName -> target PKs
+	err     error
+}
+
+func (m *mockLinkResolver) ResolveLinkedObjects(_ context.Context, _ string, _ []string) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockLinkResolver) ResolveLinkedObjectsByAPIName(_ context.Context, _, linkTypeAPIName string, _ []string) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.results[linkTypeAPIName], nil
+}
+
+// --- Test Setup ---
+
+const testOntologyRID = "ri.ontology.main.ontology.test"
+
+func setupOSSTest(t *testing.T) (*oss.ServiceImpl, *index.Manager, *mockOmsRepo, *mockLinkResolver) {
+	t.Helper()
+
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+
+	props := []index.Property{
+		{APIName: "employeeId", BaseType: "string", IsSearchable: true},
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+		{APIName: "age", BaseType: "integer", IsSearchable: true},
+		{APIName: "active", BaseType: "boolean", IsSearchable: true},
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("employee", props)
+	if err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	// Seed data
+	docs := []struct {
+		id  string
+		doc map[string]interface{}
+	}{
+		{"emp1", map[string]interface{}{"employeeId": "emp1", "name": "alice", "age": float64(30), "active": true, "deptId": "d1"}},
+		{"emp2", map[string]interface{}{"employeeId": "emp2", "name": "bob", "age": float64(25), "active": false, "deptId": "d1"}},
+		{"emp3", map[string]interface{}{"employeeId": "emp3", "name": "charlie", "age": float64(35), "active": true, "deptId": "d2"}},
+	}
+	for _, d := range docs {
+		if err := mgr.IndexDocument("employee", d.id, d.doc); err != nil {
+			t.Fatalf("IndexDocument %s: %v", d.id, err)
+		}
+	}
+
+	// Small delay to let the index settle
+	time.Sleep(200 * time.Millisecond)
+
+	repo := newMockOmsRepo()
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.employee",
+		OntologyRID: testOntologyRID,
+		APIName:     "employee",
+		DisplayName: "Employee",
+		PrimaryKey:  "employeeId",
+		Status:      "ACTIVE",
+		Visibility:  "NORMAL",
+	})
+
+	linkResolver := &mockLinkResolver{
+		results: make(map[string][]string),
+	}
+
+	svc := oss.NewService(repo, mgr, linkResolver)
+	return svc, mgr, repo, linkResolver
+}
+
+// --- WireObject Tests (3 tests) ---
+
+func TestFormatObject_Fields(t *testing.T) {
+	props := map[string]interface{}{
+		"name": "alice",
+		"age":  float64(30),
+	}
+	obj := oss.FormatObject("employee", "emp1", props)
+
+	if obj.APIName != "employee" {
+		t.Errorf("expected APIName 'employee', got %q", obj.APIName)
+	}
+	if obj.PrimaryKey != "emp1" {
+		t.Errorf("expected PrimaryKey 'emp1', got %v", obj.PrimaryKey)
+	}
+	if obj.Properties["name"] != "alice" {
+		t.Errorf("expected name 'alice', got %v", obj.Properties["name"])
+	}
+	if obj.Properties["age"] != float64(30) {
+		t.Errorf("expected age 30, got %v", obj.Properties["age"])
+	}
+	if obj.RID != "ri.phonograph2-objects.main.object.emp1" {
+		t.Errorf("expected RID 'ri.phonograph2-objects.main.object.emp1', got %q", obj.RID)
+	}
+}
+
+func TestFormatObject_JSON(t *testing.T) {
+	props := map[string]interface{}{
+		"name": "alice",
+	}
+	obj := oss.FormatObject("employee", "emp1", props)
+
+	data, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if parsed["__primaryKey"] != "emp1" {
+		t.Errorf("expected __primaryKey 'emp1', got %v", parsed["__primaryKey"])
+	}
+	if parsed["__apiName"] != "employee" {
+		t.Errorf("expected __apiName 'employee', got %v", parsed["__apiName"])
+	}
+	// __rid should be present with the RID format
+	rid, ok := parsed["__rid"]
+	if !ok {
+		t.Fatal("expected __rid to be present")
+	}
+	if rid != "ri.phonograph2-objects.main.object.emp1" {
+		t.Errorf("expected __rid 'ri.phonograph2-objects.main.object.emp1', got %v", rid)
+	}
+	// Properties should be flattened at the top level (no "properties" key)
+	if _, ok := parsed["properties"]; ok {
+		t.Error("expected no nested 'properties' key; properties should be flattened")
+	}
+	if parsed["name"] != "alice" {
+		t.Errorf("expected name 'alice' at top level, got %v", parsed["name"])
+	}
+}
+
+func TestObjectPage_Empty(t *testing.T) {
+	page := &oss.ObjectPage{
+		Data:       make([]*oss.WireObject, 0),
+		TotalCount: "0",
+	}
+
+	data, err := json.Marshal(page)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	arr, ok := parsed["data"].([]interface{})
+	if !ok {
+		t.Fatal("expected data to be an array")
+	}
+	if len(arr) != 0 {
+		t.Errorf("expected empty data array, got %d items", len(arr))
+	}
+	tc, ok := parsed["totalCount"].(string)
+	if !ok {
+		t.Fatalf("expected totalCount to be a string, got %T", parsed["totalCount"])
+	}
+	if tc != "0" {
+		t.Errorf("expected totalCount '0', got %v", tc)
+	}
+	if _, ok := parsed["nextPageToken"]; ok {
+		t.Error("expected nextPageToken to be omitted")
+	}
+}
+
+// --- GetObject Tests (4 tests) ---
+
+func TestGetObject_Found(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	obj, err := svc.GetObject(ctx, oss.GetObjectRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+	})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+
+	if obj.APIName != "employee" {
+		t.Errorf("expected APIName 'employee', got %q", obj.APIName)
+	}
+	if obj.PrimaryKey != "emp1" {
+		t.Errorf("expected PrimaryKey 'emp1', got %v", obj.PrimaryKey)
+	}
+	if obj.Properties == nil {
+		t.Fatal("expected non-nil Properties")
+	}
+	// Bleve returns stored fields
+	if obj.Properties["name"] != "alice" {
+		t.Errorf("expected name 'alice', got %v", obj.Properties["name"])
+	}
+}
+
+func TestGetObject_NotFound(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	_, err := svc.GetObject(ctx, oss.GetObjectRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "nonexistent",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err != oms.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestGetObject_PrimaryKeyMatch(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	obj, err := svc.GetObject(ctx, oss.GetObjectRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp2",
+	})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+
+	if obj.PrimaryKey != "emp2" {
+		t.Errorf("expected PrimaryKey 'emp2', got %v", obj.PrimaryKey)
+	}
+	if obj.Properties["name"] != "bob" {
+		t.Errorf("expected name 'bob', got %v", obj.Properties["name"])
+	}
+}
+
+func TestGetObject_UnknownObjectType(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	_, err := svc.GetObject(ctx, oss.GetObjectRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "nonexistent",
+		PrimaryKey:  "emp1",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+// --- ListObjects Tests (5 tests) ---
+
+func TestListObjects_All(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	if len(page.Data) != 3 {
+		t.Errorf("expected 3 objects, got %d", len(page.Data))
+	}
+	if page.TotalCount != "3" {
+		t.Errorf("expected totalCount '3', got %v", page.TotalCount)
+	}
+	if page.NextPageToken != "" {
+		t.Errorf("expected no nextPageToken, got %q", page.NextPageToken)
+	}
+}
+
+func TestListObjects_Pagination_FirstPage(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PageSize:    2,
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	if len(page.Data) != 2 {
+		t.Errorf("expected 2 objects, got %d", len(page.Data))
+	}
+	if page.NextPageToken == "" {
+		t.Error("expected nextPageToken to be set")
+	}
+	if page.TotalCount != "3" {
+		t.Errorf("expected totalCount '3', got %v", page.TotalCount)
+	}
+}
+
+func TestListObjects_Pagination_SecondPage(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Get first page
+	firstPage, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PageSize:    2,
+	})
+	if err != nil {
+		t.Fatalf("ListObjects first page: %v", err)
+	}
+	if firstPage.NextPageToken == "" {
+		t.Fatal("expected nextPageToken on first page")
+	}
+
+	// Get second page
+	secondPage, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PageSize:    2,
+		PageToken:   firstPage.NextPageToken,
+	})
+	if err != nil {
+		t.Fatalf("ListObjects second page: %v", err)
+	}
+
+	if len(secondPage.Data) != 1 {
+		t.Errorf("expected 1 object on second page, got %d", len(secondPage.Data))
+	}
+	if secondPage.NextPageToken != "" {
+		t.Errorf("expected no nextPageToken on last page, got %q", secondPage.NextPageToken)
+	}
+}
+
+func TestListObjects_Empty(t *testing.T) {
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	props := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("emptyType", props)
+	if err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	repo := newMockOmsRepo()
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.empty",
+		OntologyRID: testOntologyRID,
+		APIName:     "emptyType",
+		PrimaryKey:  "id",
+	})
+
+	linkResolver := &mockLinkResolver{results: make(map[string][]string)}
+	svc := oss.NewService(repo, mgr, linkResolver)
+	ctx := context.Background()
+
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "emptyType",
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	if len(page.Data) != 0 {
+		t.Errorf("expected 0 objects, got %d", len(page.Data))
+	}
+	if page.TotalCount != "0" {
+		t.Errorf("expected totalCount '0', got %v", page.TotalCount)
+	}
+}
+
+func TestListObjects_DefaultPageSize(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	// PageSize=0 should use default (100), which is more than our 3 docs
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PageSize:    0,
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	if len(page.Data) != 3 {
+		t.Errorf("expected 3 objects with default page size, got %d", len(page.Data))
+	}
+	// No next page since all fit in default page
+	if page.NextPageToken != "" {
+		t.Errorf("expected no nextPageToken, got %q", page.NextPageToken)
+	}
+}
+
+// --- SearchObjects Tests (6 tests) ---
+
+func TestSearchObjects_EqString(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "name",
+			Value: json.RawMessage(`"alice"`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(page.Data))
+	}
+	if page.Data[0].PrimaryKey != "emp1" {
+		t.Errorf("expected PrimaryKey 'emp1', got %v", page.Data[0].PrimaryKey)
+	}
+}
+
+func TestSearchObjects_EqNumber(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "age",
+			Value: json.RawMessage(`30`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(page.Data))
+	}
+	if page.Data[0].PrimaryKey != "emp1" {
+		t.Errorf("expected PrimaryKey 'emp1', got %v", page.Data[0].PrimaryKey)
+	}
+}
+
+func TestSearchObjects_EqBoolean(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "active",
+			Value: json.RawMessage(`true`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 2 {
+		t.Errorf("expected 2 results for active=true, got %d", len(page.Data))
+	}
+}
+
+func TestSearchObjects_And(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type: "and",
+			Value: json.RawMessage(`[
+				{"type":"eq","field":"active","value":true},
+				{"type":"gt","field":"age","value":30}
+			]`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 1 {
+		t.Fatalf("expected 1 result (active=true AND age>30), got %d", len(page.Data))
+	}
+	if page.Data[0].PrimaryKey != "emp3" {
+		t.Errorf("expected PrimaryKey 'emp3', got %v", page.Data[0].PrimaryKey)
+	}
+}
+
+func TestSearchObjects_NoMatch(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "name",
+			Value: json.RawMessage(`"nobody"`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 0 {
+		t.Errorf("expected 0 results, got %d", len(page.Data))
+	}
+	if page.TotalCount != "0" {
+		t.Errorf("expected totalCount '0', got %v", page.TotalCount)
+	}
+}
+
+func TestSearchObjects_WithPagination(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Search active=true which returns 2, but page size 1
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "active",
+			Value: json.RawMessage(`true`),
+		},
+		PageSize: 1,
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 1 {
+		t.Errorf("expected 1 result with pageSize=1, got %d", len(page.Data))
+	}
+	if page.NextPageToken == "" {
+		t.Error("expected nextPageToken to be set")
+	}
+	if page.TotalCount != "2" {
+		t.Errorf("expected totalCount '2', got %v", page.TotalCount)
+	}
+}
+
+// --- ListLinkedObjects Tests (4 tests) ---
+
+func TestListLinkedObjects_Found(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Set up department index and data
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d1", map[string]interface{}{
+		"deptId":   "d1",
+		"deptName": "engineering",
+	}); err != nil {
+		t.Fatalf("IndexDocument d1: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Register department object type
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		DisplayName: "Department",
+		PrimaryKey:  "deptId",
+		Status:      "ACTIVE",
+	})
+
+	// Register link type
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	// Configure link resolver to return d1 for employeeDept
+	linkResolver.results["employeeDept"] = []string{"d1"}
+
+	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+		LinkType:    "employeeDept",
+	})
+	if err != nil {
+		t.Fatalf("ListLinkedObjects: %v", err)
+	}
+
+	if len(page.Data) != 1 {
+		t.Fatalf("expected 1 linked object, got %d", len(page.Data))
+	}
+	if page.Data[0].APIName != "department" {
+		t.Errorf("expected APIName 'department', got %q", page.Data[0].APIName)
+	}
+	if page.Data[0].PrimaryKey != "d1" {
+		t.Errorf("expected PrimaryKey 'd1', got %v", page.Data[0].PrimaryKey)
+	}
+}
+
+func TestListLinkedObjects_NoLinks(t *testing.T) {
+	svc, _, repo, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Register a target object type
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	// Register link type
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	// Link resolver returns no results
+	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+		LinkType:    "employeeDept",
+	})
+	if err != nil {
+		t.Fatalf("ListLinkedObjects: %v", err)
+	}
+
+	if len(page.Data) != 0 {
+		t.Errorf("expected 0 linked objects, got %d", len(page.Data))
+	}
+	if page.TotalCount != "0" {
+		t.Errorf("expected totalCount '0', got %v", page.TotalCount)
+	}
+}
+
+func TestListLinkedObjects_WithPagination(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Set up department index with 3 departments
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	for i := 1; i <= 3; i++ {
+		id := fmt.Sprintf("d%d", i)
+		if err := mgr.IndexDocument("department", id, map[string]interface{}{
+			"deptId":   id,
+			"deptName": fmt.Sprintf("dept%d", i),
+		}); err != nil {
+			t.Fatalf("IndexDocument %s: %v", id, err)
+		}
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDepts",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "ONE_TO_MANY",
+	})
+
+	linkResolver.results["employeeDepts"] = []string{"d1", "d2", "d3"}
+
+	// First page
+	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+		LinkType:    "employeeDepts",
+		PageSize:    2,
+	})
+	if err != nil {
+		t.Fatalf("ListLinkedObjects first page: %v", err)
+	}
+
+	if len(page.Data) != 2 {
+		t.Errorf("expected 2 linked objects on first page, got %d", len(page.Data))
+	}
+	if page.NextPageToken == "" {
+		t.Error("expected nextPageToken to be set")
+	}
+	if page.TotalCount != "3" {
+		t.Errorf("expected totalCount '3', got %v", page.TotalCount)
+	}
+}
+
+func TestListLinkedObjects_LinkTypeError(t *testing.T) {
+	svc, _, _, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	linkResolver.err = fmt.Errorf("link resolver error")
+
+	_, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+		LinkType:    "badLink",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err.Error() != "link resolver error" {
+		t.Errorf("expected 'link resolver error', got %q", err.Error())
+	}
+}
+
+// --- HTTP Handler Tests (3 tests) ---
+
+func TestHandler_GetObject_200(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee/emp1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if body["__apiName"] != "employee" {
+		t.Errorf("expected __apiName 'employee', got %v", body["__apiName"])
+	}
+	if body["__primaryKey"] != "emp1" {
+		t.Errorf("expected __primaryKey 'emp1', got %v", body["__primaryKey"])
+	}
+	// Properties should be flattened at top level
+	if body["name"] != "alice" {
+		t.Errorf("expected name 'alice' at top level, got %v", body["name"])
+	}
+	// __rid should be present
+	if body["__rid"] == nil {
+		t.Error("expected __rid to be present")
+	}
+}
+
+func TestHandler_GetObject_404(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee/nonexistent", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if body["errorCode"] != "NOT_FOUND" {
+		t.Errorf("expected errorCode 'NOT_FOUND', got %v", body["errorCode"])
+	}
+}
+
+func TestHandler_ListObjects_200(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee?pageSize=2", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	data, ok := body["data"].([]interface{})
+	if !ok {
+		t.Fatal("expected data to be an array")
+	}
+	if len(data) != 2 {
+		t.Errorf("expected 2 objects, got %d", len(data))
+	}
+
+	if body["nextPageToken"] == nil || body["nextPageToken"] == "" {
+		t.Error("expected nextPageToken to be set")
+	}
+
+	tc, ok := body["totalCount"].(string)
+	if !ok || tc != "3" {
+		t.Errorf("expected totalCount '3', got %v", body["totalCount"])
+	}
+
+	// Check that chi routing properly handles the GET route
+	// (not conflicting with the GET /{primaryKey} route)
+	first := data[0].(map[string]interface{})
+	if _, ok := first["__apiName"]; !ok {
+		t.Error("expected __apiName in object")
+	}
+
+	_ = strings.NewReader("") // keep import
+}
