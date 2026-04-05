@@ -66,7 +66,7 @@ export function LinkTypeForm({ onSubmit, objectTypes, isLoading }: LinkTypeFormP
         >
           <option value="">Select source...</option>
           {objectTypes.map((ot) => (
-            <option key={ot.rid} value={ot.apiName}>
+            <option key={ot.rid} value={ot.rid}>
               {ot.displayName} ({ot.apiName})
             </option>
           ))}
@@ -83,7 +83,7 @@ export function LinkTypeForm({ onSubmit, objectTypes, isLoading }: LinkTypeFormP
         >
           <option value="">Select target...</option>
           {objectTypes.map((ot) => (
-            <option key={ot.rid} value={ot.apiName}>
+            <option key={ot.rid} value={ot.rid}>
               {ot.displayName} ({ot.apiName})
             </option>
           ))}
