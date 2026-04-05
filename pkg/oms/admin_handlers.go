@@ -2000,6 +2000,161 @@ func (h *OMSHandler) ImportOntology(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- Security Policy request structs ---
+
+// CreateSecurityPolicyRequest is the request body for creating a security policy.
+type CreateSecurityPolicyRequest struct {
+	PolicyType string          `json:"policyType"`
+	Rules      json.RawMessage `json:"rules"`
+}
+
+// UpdateSecurityPolicyRequest is the request body for updating a security policy.
+type UpdateSecurityPolicyRequest struct {
+	PolicyType string          `json:"policyType"`
+	Rules      json.RawMessage `json:"rules"`
+}
+
+// --- Security Policy handlers ---
+
+// CreateSecurityPolicy handles POST /api/admin/objectTypes/{objectTypeRid}/securityPolicies.
+func (h *OMSHandler) CreateSecurityPolicy(w http.ResponseWriter, r *http.Request) {
+	objectTypeRID := chi.URLParam(r, "objectTypeRid")
+
+	var req CreateSecurityPolicyRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	if req.PolicyType == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:policyType", map[string]string{
+			"parameter": "policyType",
+			"reason":    "policyType is required",
+		}))
+		return
+	}
+	if len(req.Rules) == 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:rules", map[string]string{
+			"parameter": "rules",
+			"reason":    "rules is required",
+		}))
+		return
+	}
+
+	sp := &SecurityPolicy{
+		RID:           rid.NewSecurityPolicyRID(),
+		ObjectTypeRID: objectTypeRID,
+		PolicyType:    req.PolicyType,
+		Rules:         req.Rules,
+	}
+
+	if err := h.repo.CreateSecurityPolicy(r.Context(), sp); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("CreateSecurityPolicyFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusCreated, sp)
+}
+
+// ListSecurityPolicies handles GET /api/admin/objectTypes/{objectTypeRid}/securityPolicies.
+func (h *OMSHandler) ListSecurityPolicies(w http.ResponseWriter, r *http.Request) {
+	objectTypeRID := chi.URLParam(r, "objectTypeRid")
+
+	list, err := h.repo.ListSecurityPolicies(r.Context(), objectTypeRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListSecurityPoliciesFailed", nil))
+		return
+	}
+
+	if list == nil {
+		list = []SecurityPolicy{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": list,
+	})
+}
+
+// GetSecurityPolicy handles GET /api/admin/securityPolicies/{securityPolicyRid}.
+func (h *OMSHandler) GetSecurityPolicy(w http.ResponseWriter, r *http.Request) {
+	spRID := chi.URLParam(r, "securityPolicyRid")
+
+	sp, err := h.repo.GetSecurityPolicy(r.Context(), spRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("SecurityPolicyNotFound", map[string]string{
+				"securityPolicyRid": spRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetSecurityPolicyFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, sp)
+}
+
+// UpdateSecurityPolicy handles PUT /api/admin/securityPolicies/{securityPolicyRid}.
+func (h *OMSHandler) UpdateSecurityPolicy(w http.ResponseWriter, r *http.Request) {
+	spRID := chi.URLParam(r, "securityPolicyRid")
+
+	var req UpdateSecurityPolicyRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	existing, err := h.repo.GetSecurityPolicy(r.Context(), spRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("SecurityPolicyNotFound", map[string]string{
+				"securityPolicyRid": spRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetSecurityPolicyFailed", nil))
+		return
+	}
+
+	existing.PolicyType = req.PolicyType
+	existing.Rules = req.Rules
+
+	if err := h.repo.UpdateSecurityPolicy(r.Context(), existing); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("SecurityPolicyNotFound", map[string]string{
+				"securityPolicyRid": spRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("UpdateSecurityPolicyFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, existing)
+}
+
+// DeleteSecurityPolicy handles DELETE /api/admin/securityPolicies/{securityPolicyRid}.
+func (h *OMSHandler) DeleteSecurityPolicy(w http.ResponseWriter, r *http.Request) {
+	spRID := chi.URLParam(r, "securityPolicyRid")
+
+	if err := h.repo.DeleteSecurityPolicy(r.Context(), spRID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("SecurityPolicyNotFound", map[string]string{
+				"securityPolicyRid": spRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("DeleteSecurityPolicyFailed", nil))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- Snapshot handlers ---
 
 // CreateSnapshotRequest is the request body for creating a snapshot.

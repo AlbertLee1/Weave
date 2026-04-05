@@ -1153,3 +1153,9 @@ func TestCreateActionType_Success(t *testing.T) {
 		t.Errorf("expected valid action-type RID, got %v", resp["rid"])
 	}
 }
+
+func (m *mockRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }

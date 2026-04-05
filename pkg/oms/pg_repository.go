@@ -1052,6 +1052,88 @@ func searchString(s, substr string) bool {
 	return false
 }
 
+// --- SecurityPolicy ---
+
+func (r *PGRepository) CreateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error {
+	rules := sp.Rules
+	if len(rules) == 0 {
+		rules = json.RawMessage(`{}`)
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO security_policies (rid, object_type_rid, policy_type, rules)
+		 VALUES ($1, $2, $3, $4)`,
+		sp.RID, sp.ObjectTypeRID, sp.PolicyType, rules)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) GetSecurityPolicy(ctx context.Context, rid string) (*SecurityPolicy, error) {
+	sp := &SecurityPolicy{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, object_type_rid, policy_type, rules, created_at
+		 FROM security_policies WHERE rid = $1`, rid).
+		Scan(&sp.RID, &sp.ObjectTypeRID, &sp.PolicyType, &sp.Rules, &sp.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return sp, nil
+}
+
+func (r *PGRepository) ListSecurityPolicies(ctx context.Context, objectTypeRID string) ([]SecurityPolicy, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT rid, object_type_rid, policy_type, rules, created_at
+		 FROM security_policies WHERE object_type_rid = $1
+		 ORDER BY created_at`, objectTypeRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []SecurityPolicy
+	for rows.Next() {
+		var sp SecurityPolicy
+		if err := rows.Scan(&sp.RID, &sp.ObjectTypeRID, &sp.PolicyType, &sp.Rules, &sp.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, sp)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) UpdateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error {
+	rules := sp.Rules
+	if len(rules) == 0 {
+		rules = json.RawMessage(`{}`)
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE security_policies SET policy_type=$1, rules=$2
+		 WHERE rid=$3`,
+		sp.PolicyType, rules, sp.RID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PGRepository) DeleteSecurityPolicy(ctx context.Context, rid string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM security_policies WHERE rid = $1`, rid)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- ActionLog ---
 
 func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error) {

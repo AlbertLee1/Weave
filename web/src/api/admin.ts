@@ -1,5 +1,5 @@
 import { request } from './client';
-import type { Ontology, ObjectType, Property, LinkType, ActionType, ActionLog, OntologyInterface, ObjectTypeInterface } from './types';
+import type { Ontology, ObjectType, Property, LinkType, ActionType, ActionLog, OntologyInterface, ObjectTypeInterface, OntologySnapshot } from './types';
 
 export interface CreateOntologyInput {
   apiName: string;
@@ -258,5 +258,28 @@ export function listActionLogs(
   return request<{ data: ActionLog[]; total: number }>(
     'GET',
     `/api/admin/actionTypes/${encodeURIComponent(actionTypeRid)}/logs?limit=${limit}&offset=${offset}`,
+  );
+}
+
+// --- Snapshot API ---
+
+export function createSnapshot(ontologyApiName: string): Promise<OntologySnapshot> {
+  return request<OntologySnapshot>(
+    'POST',
+    `/api/admin/ontologies/${ontologyApiName}/snapshots`,
+  );
+}
+
+export function listSnapshots(ontologyApiName: string): Promise<OntologySnapshot[]> {
+  return request<OntologySnapshot[]>(
+    'GET',
+    `/api/admin/ontologies/${ontologyApiName}/snapshots`,
+  );
+}
+
+export function getSnapshot(ontologyApiName: string, version: number): Promise<OntologySnapshot> {
+  return request<OntologySnapshot>(
+    'GET',
+    `/api/admin/ontologies/${ontologyApiName}/snapshots/${version}`,
   );
 }

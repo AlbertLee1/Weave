@@ -1619,3 +1619,9 @@ func TestE2E_InvalidRequest_400(t *testing.T) {
 		t.Errorf("expected errorCode=INVALID_ARGUMENT, got %v", body["errorCode"])
 	}
 }
+
+func (r *inMemoryOmsRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (r *inMemoryOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
+func (r *inMemoryOmsRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (r *inMemoryOmsRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (r *inMemoryOmsRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }

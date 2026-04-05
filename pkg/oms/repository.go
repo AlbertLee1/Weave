@@ -76,6 +76,13 @@ type Repository interface {
 	UpdateValueType(ctx context.Context, vt *ValueType) error
 	DeleteValueType(ctx context.Context, rid string) error
 
+	// SecurityPolicy
+	CreateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error
+	GetSecurityPolicy(ctx context.Context, rid string) (*SecurityPolicy, error)
+	ListSecurityPolicies(ctx context.Context, objectTypeRID string) ([]SecurityPolicy, error)
+	UpdateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error
+	DeleteSecurityPolicy(ctx context.Context, rid string) error
+
 	// ActionLog
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)

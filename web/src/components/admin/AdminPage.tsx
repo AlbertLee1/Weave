@@ -25,12 +25,13 @@ import { LinkTypeForm } from './LinkTypeForm';
 import { ActionTypeForm } from './ActionTypeForm';
 import { CommandPalette } from './CommandPalette';
 import { InterfaceListPage } from './InterfaceListPage';
+import { SnapshotListPage } from './SnapshotListPage';
 import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { Badge, statusVariant } from '../common/Badge';
 
-type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes' | 'interfaces';
+type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes' | 'interfaces' | 'snapshots';
 
 export function AdminPage() {
   const navigate = useNavigate();
@@ -129,6 +130,7 @@ export function AdminPage() {
     { key: 'linkTypes', label: 'Link Types', count: linkTypes?.length },
     { key: 'actionTypes', label: 'Action Types', count: actionTypes?.length },
     { key: 'interfaces', label: 'Interfaces' },
+    { key: 'snapshots', label: 'Snapshots' },
   ];
 
   return (
@@ -387,6 +389,10 @@ export function AdminPage() {
 
               {activeTab === 'interfaces' && (
                 <InterfaceListPage ontologyApiName={selectedOntology} />
+              )}
+
+              {activeTab === 'snapshots' && (
+                <SnapshotListPage ontologyApiName={selectedOntology} />
               )}
             </div>
           </>

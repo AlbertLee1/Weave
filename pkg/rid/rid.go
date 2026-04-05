@@ -70,6 +70,11 @@ func NewValueTypeRID() string {
 	return New("ontology", "main", "value-type")
 }
 
+// NewSecurityPolicyRID generates a new RID for a security policy.
+func NewSecurityPolicyRID() string {
+	return New("ontology", "main", "security-policy")
+}
+
 // Parse parses a RID string into its constituent parts.
 // Expected format: ri.{service}.{realm}.{resourceType}.{uuid}
 func Parse(rid string) (*RID, error) {

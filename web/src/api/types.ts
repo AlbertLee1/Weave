@@ -150,3 +150,12 @@ export interface ObjectTypeInterface {
   interfaceRid: string;
   propertyMapping: Record<string, string>;
 }
+
+export interface OntologySnapshot {
+  id: number;
+  ontologyRid: string;
+  version: number;
+  data: unknown;
+  createdAt: string;
+  createdBy?: string;
+}

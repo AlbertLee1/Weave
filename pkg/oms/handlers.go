@@ -151,6 +151,77 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetFullMetadata handles GET /api/v2/ontologies/{ontologyApiName}/fullMetadata.
+// It returns the complete ontology metadata in a single response.
+func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+
+	ontology, err := h.repo.GetOntology(r.Context(), ontologyRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
+				"ontologyApiName": ontologyRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetOntologyFailed", nil))
+		return
+	}
+
+	objectTypes, err := h.repo.ListObjectTypes(r.Context(), ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListObjectTypesFailed", nil))
+		return
+	}
+	for i := range objectTypes {
+		props, err := h.repo.ListProperties(r.Context(), objectTypes[i].RID)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ListPropertiesFailed", nil))
+			return
+		}
+		objectTypes[i].Properties = props
+	}
+
+	linkTypes, err := h.repo.ListLinkTypes(r.Context(), ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListLinkTypesFailed", nil))
+		return
+	}
+
+	actionTypes, err := h.repo.ListActionTypes(r.Context(), ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
+		return
+	}
+
+	interfaces, err := h.repo.ListInterfaces(r.Context(), ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListInterfacesFailed", nil))
+		return
+	}
+
+	if objectTypes == nil {
+		objectTypes = []ObjectType{}
+	}
+	if linkTypes == nil {
+		linkTypes = []LinkType{}
+	}
+	if actionTypes == nil {
+		actionTypes = []ActionType{}
+	}
+	if interfaces == nil {
+		interfaces = []Interface{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, OntologyExport{
+		Ontology:    *ontology,
+		ObjectTypes: objectTypes,
+		LinkTypes:   linkTypes,
+		ActionTypes: actionTypes,
+		Interfaces:  interfaces,
+	})
+}
+
 // GetActionType handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}.
 func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
 	actionRID := chi.URLParam(r, "actionTypeRid")

@@ -247,6 +247,15 @@ type SharedProperty struct {
 	CreatedAt   time.Time       `json:"-"`
 }
 
+// SecurityPolicy controls access to object types and their properties.
+type SecurityPolicy struct {
+	RID           string          `json:"rid"`
+	ObjectTypeRID string          `json:"objectTypeRid"`
+	PolicyType    string          `json:"policyType"` // "OBJECT" or "PROPERTY"
+	Rules         json.RawMessage `json:"rules"`
+	CreatedAt     time.Time       `json:"-"`
+}
+
 // ActionLog records the execution of an action.
 type ActionLog struct {
 	ID            int64           `json:"id"`

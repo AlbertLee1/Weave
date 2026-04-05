@@ -1112,3 +1112,9 @@ func TestHandler_ListObjects_200(t *testing.T) {
 
 	_ = strings.NewReader("") // keep import
 }
+
+func (m *mockOmsRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockOmsRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockOmsRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockOmsRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }

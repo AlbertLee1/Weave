@@ -693,3 +693,9 @@ func TestResolve_SourceObjectNotInIndex(t *testing.T) {
 		t.Fatalf("expected nil result for source PK not in index, got %v", pks)
 	}
 }
+
+func (m *mockRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }
