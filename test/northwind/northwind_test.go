@@ -516,6 +516,35 @@ func (r *inMemoryOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, er
 func (r *inMemoryOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (r *inMemoryOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
 
+// DatasourceBinding stubs
+func (r *inMemoryOmsRepo) CreateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) GetDatasourceBinding(_ context.Context, _ string) (*oms.DatasourceBinding, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) ListDatasourceBindings(_ context.Context, _ string) ([]oms.DatasourceBinding, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) DeleteDatasourceBinding(_ context.Context, _ string) error { return nil }
+
+// QueryType stubs
+func (r *inMemoryOmsRepo) CreateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
+func (r *inMemoryOmsRepo) GetQueryType(_ context.Context, _ string) (*oms.QueryType, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) GetQueryTypeByAPIName(_ context.Context, _, _ string) (*oms.QueryType, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) ListQueryTypes(_ context.Context, _ string) ([]oms.QueryType, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
+func (r *inMemoryOmsRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
+
 // ActionLog stubs
 func (r *inMemoryOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil

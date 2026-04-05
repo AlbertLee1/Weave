@@ -75,6 +75,16 @@ func NewSecurityPolicyRID() string {
 	return New("ontology", "main", "security-policy")
 }
 
+// NewDatasourceBindingRID generates a new RID for a datasource binding.
+func NewDatasourceBindingRID() string {
+	return New("ontology", "main", "datasource-binding")
+}
+
+// NewQueryTypeRID generates a new RID for a query type.
+func NewQueryTypeRID() string {
+	return New("ontology", "main", "query-type")
+}
+
 // Parse parses a RID string into its constituent parts.
 // Expected format: ri.{service}.{realm}.{resourceType}.{uuid}
 func Parse(rid string) (*RID, error) {

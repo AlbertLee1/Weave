@@ -268,6 +268,31 @@ type ActionLog struct {
 	CreatedAt     time.Time       `json:"createdAt"`
 }
 
+// DatasourceBinding connects an ObjectType to its underlying data source.
+type DatasourceBinding struct {
+	RID           string          `json:"rid"`
+	ObjectTypeRID string          `json:"-"`
+	DatasetRID    string          `json:"datasetRid"`
+	Branch        string          `json:"branch"`
+	ColumnMapping json.RawMessage `json:"columnMapping"`
+	IsPrimary     bool            `json:"isPrimary"`
+	CreatedAt     time.Time       `json:"-"`
+}
+
+// QueryType defines a predefined filter+aggregation combo stored as metadata.
+type QueryType struct {
+	RID         string          `json:"rid"`
+	OntologyRID string          `json:"-"`
+	APIName     string          `json:"apiName"`
+	DisplayName string          `json:"displayName"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
+	Output      json.RawMessage `json:"output"`
+	Query       json.RawMessage `json:"query"`
+	Status      string          `json:"status"`
+	CreatedAt   time.Time       `json:"-"`
+}
+
 // TypeGroup organizes object types into categories.
 type TypeGroup struct {
 	RID         string    `json:"rid"`

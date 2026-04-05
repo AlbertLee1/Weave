@@ -1,5 +1,5 @@
 import { request } from './client';
-import type { Ontology, ObjectType, Property, LinkType, ActionType, ActionLog, OntologyInterface, ObjectTypeInterface, OntologySnapshot } from './types';
+import type { Ontology, ObjectType, Property, LinkType, ActionType, ActionLog, OntologyInterface, ObjectTypeInterface, OntologySnapshot, ValueType, SecurityPolicy } from './types';
 
 export interface CreateOntologyInput {
   apiName: string;
@@ -282,4 +282,54 @@ export function getSnapshot(ontologyApiName: string, version: number): Promise<O
     'GET',
     `/api/admin/ontologies/${ontologyApiName}/snapshots/${version}`,
   );
+}
+
+// --- Value Type API ---
+
+export interface CreateValueTypeInput {
+  apiName: string;
+  displayName: string;
+  baseType: string;
+  constraints?: unknown;
+}
+
+export function listValueTypes(): Promise<{ data: ValueType[] }> {
+  return request<{ data: ValueType[] }>('GET', '/api/admin/value-types');
+}
+
+export function createValueType(input: CreateValueTypeInput): Promise<ValueType> {
+  return request<ValueType>('POST', '/api/admin/value-types', input);
+}
+
+export function deleteValueType(rid: string): Promise<void> {
+  return request<void>('DELETE', `/api/admin/value-types/${rid}`);
+}
+
+// --- Security Policy API ---
+
+export interface CreateSecurityPolicyInput {
+  policyType: 'OBJECT' | 'PROPERTY';
+  rules: unknown;
+}
+
+export function listSecurityPolicies(objectTypeRid: string): Promise<{ data: SecurityPolicy[] }> {
+  return request<{ data: SecurityPolicy[] }>(
+    'GET',
+    `/api/admin/objectTypes/${objectTypeRid}/securityPolicies`,
+  );
+}
+
+export function createSecurityPolicy(
+  objectTypeRid: string,
+  input: CreateSecurityPolicyInput,
+): Promise<SecurityPolicy> {
+  return request<SecurityPolicy>(
+    'POST',
+    `/api/admin/objectTypes/${objectTypeRid}/securityPolicies`,
+    input,
+  );
+}
+
+export function deleteSecurityPolicy(rid: string): Promise<void> {
+  return request<void>('DELETE', `/api/admin/securityPolicies/${rid}`);
 }

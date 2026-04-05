@@ -1134,6 +1134,215 @@ func (r *PGRepository) DeleteSecurityPolicy(ctx context.Context, rid string) err
 	return nil
 }
 
+// --- DatasourceBinding ---
+
+func (r *PGRepository) CreateDatasourceBinding(ctx context.Context, db *DatasourceBinding) error {
+	colMapping := db.ColumnMapping
+	if len(colMapping) == 0 {
+		colMapping = json.RawMessage(`{}`)
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO datasource_bindings (rid, object_type_rid, dataset_rid, branch, column_mapping, is_primary)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		db.RID, db.ObjectTypeRID, db.DatasetRID, db.Branch, colMapping, db.IsPrimary)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) GetDatasourceBinding(ctx context.Context, rid string) (*DatasourceBinding, error) {
+	db := &DatasourceBinding{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, object_type_rid, dataset_rid, COALESCE(branch, 'main'), column_mapping, is_primary, created_at
+		 FROM datasource_bindings WHERE rid = $1`, rid).
+		Scan(&db.RID, &db.ObjectTypeRID, &db.DatasetRID, &db.Branch, &db.ColumnMapping, &db.IsPrimary, &db.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return db, nil
+}
+
+func (r *PGRepository) ListDatasourceBindings(ctx context.Context, objectTypeRID string) ([]DatasourceBinding, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT rid, object_type_rid, dataset_rid, COALESCE(branch, 'main'), column_mapping, is_primary, created_at
+		 FROM datasource_bindings WHERE object_type_rid = $1 ORDER BY created_at`, objectTypeRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []DatasourceBinding
+	for rows.Next() {
+		var db DatasourceBinding
+		if err := rows.Scan(&db.RID, &db.ObjectTypeRID, &db.DatasetRID, &db.Branch,
+			&db.ColumnMapping, &db.IsPrimary, &db.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, db)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) UpdateDatasourceBinding(ctx context.Context, db *DatasourceBinding) error {
+	colMapping := db.ColumnMapping
+	if len(colMapping) == 0 {
+		colMapping = json.RawMessage(`{}`)
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE datasource_bindings SET dataset_rid=$1, branch=$2, column_mapping=$3, is_primary=$4
+		 WHERE rid=$5`,
+		db.DatasetRID, db.Branch, colMapping, db.IsPrimary, db.RID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PGRepository) DeleteDatasourceBinding(ctx context.Context, rid string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM datasource_bindings WHERE rid = $1`, rid)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// --- QueryType ---
+
+func (r *PGRepository) CreateQueryType(ctx context.Context, qt *QueryType) error {
+	params := qt.Parameters
+	if len(params) == 0 {
+		params = json.RawMessage(`[]`)
+	}
+	output := qt.Output
+	if len(output) == 0 {
+		output = json.RawMessage(`{}`)
+	}
+	query := qt.Query
+	if len(query) == 0 {
+		query = json.RawMessage(`{}`)
+	}
+	status := qt.Status
+	if status == "" {
+		status = "ACTIVE"
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO query_types (rid, ontology_rid, api_name, display_name, description, parameters, output, query, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		qt.RID, qt.OntologyRID, qt.APIName, qt.DisplayName, qt.Description,
+		params, output, query, status)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) GetQueryType(ctx context.Context, rid string) (*QueryType, error) {
+	qt := &QueryType{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
+		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
+		 FROM query_types WHERE rid = $1`, rid).
+		Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
+			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return qt, nil
+}
+
+func (r *PGRepository) GetQueryTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*QueryType, error) {
+	qt := &QueryType{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
+		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
+		 FROM query_types
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND api_name = $2`, ontologyRID, apiName).
+		Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
+			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return qt, nil
+}
+
+func (r *PGRepository) ListQueryTypes(ctx context.Context, ontologyRID string) ([]QueryType, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
+		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
+		 FROM query_types
+		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
+		 ORDER BY api_name`, ontologyRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []QueryType
+	for rows.Next() {
+		var qt QueryType
+		if err := rows.Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
+			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, qt)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) UpdateQueryType(ctx context.Context, qt *QueryType) error {
+	params := qt.Parameters
+	if len(params) == 0 {
+		params = json.RawMessage(`[]`)
+	}
+	output := qt.Output
+	if len(output) == 0 {
+		output = json.RawMessage(`{}`)
+	}
+	query := qt.Query
+	if len(query) == 0 {
+		query = json.RawMessage(`{}`)
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE query_types SET display_name=$1, description=$2, parameters=$3, output=$4, query=$5, status=$6
+		 WHERE rid=$7`,
+		qt.DisplayName, qt.Description, params, output, query, qt.Status, qt.RID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PGRepository) DeleteQueryType(ctx context.Context, rid string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM query_types WHERE rid = $1`, rid)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- ActionLog ---
 
 func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error) {

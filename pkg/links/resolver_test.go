@@ -128,6 +128,33 @@ func (m *mockRepo) ListValueTypes(context.Context) ([]oms.ValueType, error)     
 func (m *mockRepo) UpdateValueType(context.Context, *oms.ValueType) error             { return nil }
 func (m *mockRepo) DeleteValueType(context.Context, string) error                     { return nil }
 
+// DatasourceBinding stubs
+func (m *mockRepo) CreateDatasourceBinding(context.Context, *oms.DatasourceBinding) error {
+	return nil
+}
+func (m *mockRepo) GetDatasourceBinding(context.Context, string) (*oms.DatasourceBinding, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListDatasourceBindings(context.Context, string) ([]oms.DatasourceBinding, error) {
+	return nil, nil
+}
+func (m *mockRepo) UpdateDatasourceBinding(context.Context, *oms.DatasourceBinding) error {
+	return nil
+}
+func (m *mockRepo) DeleteDatasourceBinding(context.Context, string) error { return nil }
+
+// QueryType stubs
+func (m *mockRepo) CreateQueryType(context.Context, *oms.QueryType) error { return nil }
+func (m *mockRepo) GetQueryType(context.Context, string) (*oms.QueryType, error) {
+	return nil, nil
+}
+func (m *mockRepo) GetQueryTypeByAPIName(context.Context, string, string) (*oms.QueryType, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListQueryTypes(context.Context, string) ([]oms.QueryType, error) { return nil, nil }
+func (m *mockRepo) UpdateQueryType(context.Context, *oms.QueryType) error            { return nil }
+func (m *mockRepo) DeleteQueryType(context.Context, string) error                    { return nil }
+
 // ActionLog stubs
 func (m *mockRepo) ListActionLogs(context.Context, string, int, int) ([]oms.ActionLog, error) {
 	return nil, nil

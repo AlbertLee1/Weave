@@ -159,3 +159,19 @@ export interface OntologySnapshot {
   createdAt: string;
   createdBy?: string;
 }
+
+export interface ValueType {
+  rid: string;
+  apiName: string;
+  displayName: string;
+  baseType: string;
+  constraints?: unknown;
+  version: number;
+}
+
+export interface SecurityPolicy {
+  rid: string;
+  objectTypeRid: string;
+  policyType: 'OBJECT' | 'PROPERTY';
+  rules: unknown;
+}

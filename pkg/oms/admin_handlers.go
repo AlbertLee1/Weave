@@ -2334,3 +2334,421 @@ func (h *OMSHandler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	httputil.WriteJSON(w, http.StatusOK, snapshot)
 }
+
+// --- Request structs for DatasourceBinding ---
+
+// CreateDatasourceBindingRequest is the request body for creating a datasource binding.
+type CreateDatasourceBindingRequest struct {
+	DatasetRID    string          `json:"datasetRid"`
+	Branch        string          `json:"branch,omitempty"`
+	ColumnMapping json.RawMessage `json:"columnMapping"`
+	IsPrimary     bool            `json:"isPrimary"`
+}
+
+// UpdateDatasourceBindingRequest is the request body for updating a datasource binding.
+type UpdateDatasourceBindingRequest struct {
+	DatasetRID    string          `json:"datasetRid"`
+	Branch        string          `json:"branch,omitempty"`
+	ColumnMapping json.RawMessage `json:"columnMapping"`
+	IsPrimary     bool            `json:"isPrimary"`
+}
+
+// --- DatasourceBinding handlers ---
+
+// CreateDatasourceBinding handles POST /api/admin/objectTypes/{objectTypeRid}/datasourceBindings.
+func (h *OMSHandler) CreateDatasourceBinding(w http.ResponseWriter, r *http.Request) {
+	objectTypeRID := chi.URLParam(r, "objectTypeRid")
+
+	var req CreateDatasourceBindingRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	if req.DatasetRID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:datasetRid", map[string]string{
+			"parameter": "datasetRid",
+			"reason":    "datasetRid is required",
+		}))
+		return
+	}
+
+	branch := req.Branch
+	if branch == "" {
+		branch = "main"
+	}
+
+	colMapping := req.ColumnMapping
+	if len(colMapping) == 0 {
+		colMapping = json.RawMessage(`{}`)
+	}
+
+	db := &DatasourceBinding{
+		RID:           rid.NewDatasourceBindingRID(),
+		ObjectTypeRID: objectTypeRID,
+		DatasetRID:    req.DatasetRID,
+		Branch:        branch,
+		ColumnMapping: colMapping,
+		IsPrimary:     req.IsPrimary,
+	}
+
+	if err := h.repo.CreateDatasourceBinding(r.Context(), db); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("CreateDatasourceBindingFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusCreated, db)
+}
+
+// ListDatasourceBindings handles GET /api/admin/objectTypes/{objectTypeRid}/datasourceBindings.
+func (h *OMSHandler) ListDatasourceBindings(w http.ResponseWriter, r *http.Request) {
+	objectTypeRID := chi.URLParam(r, "objectTypeRid")
+
+	list, err := h.repo.ListDatasourceBindings(r.Context(), objectTypeRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListDatasourceBindingsFailed", nil))
+		return
+	}
+
+	if list == nil {
+		list = []DatasourceBinding{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": list,
+	})
+}
+
+// GetDatasourceBinding handles GET /api/admin/datasourceBindings/{datasourceBindingRid}.
+func (h *OMSHandler) GetDatasourceBinding(w http.ResponseWriter, r *http.Request) {
+	dbRID := chi.URLParam(r, "datasourceBindingRid")
+
+	db, err := h.repo.GetDatasourceBinding(r.Context(), dbRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("DatasourceBindingNotFound", map[string]string{
+				"datasourceBindingRid": dbRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetDatasourceBindingFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, db)
+}
+
+// UpdateDatasourceBinding handles PUT /api/admin/datasourceBindings/{datasourceBindingRid}.
+func (h *OMSHandler) UpdateDatasourceBinding(w http.ResponseWriter, r *http.Request) {
+	dbRID := chi.URLParam(r, "datasourceBindingRid")
+
+	var req UpdateDatasourceBindingRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	existing, err := h.repo.GetDatasourceBinding(r.Context(), dbRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("DatasourceBindingNotFound", map[string]string{
+				"datasourceBindingRid": dbRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetDatasourceBindingFailed", nil))
+		return
+	}
+
+	if req.DatasetRID != "" {
+		existing.DatasetRID = req.DatasetRID
+	}
+	if req.Branch != "" {
+		existing.Branch = req.Branch
+	}
+	if len(req.ColumnMapping) > 0 {
+		existing.ColumnMapping = req.ColumnMapping
+	}
+	existing.IsPrimary = req.IsPrimary
+
+	if err := h.repo.UpdateDatasourceBinding(r.Context(), existing); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("DatasourceBindingNotFound", map[string]string{
+				"datasourceBindingRid": dbRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("UpdateDatasourceBindingFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, existing)
+}
+
+// DeleteDatasourceBinding handles DELETE /api/admin/datasourceBindings/{datasourceBindingRid}.
+func (h *OMSHandler) DeleteDatasourceBinding(w http.ResponseWriter, r *http.Request) {
+	dbRID := chi.URLParam(r, "datasourceBindingRid")
+
+	if err := h.repo.DeleteDatasourceBinding(r.Context(), dbRID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("DatasourceBindingNotFound", map[string]string{
+				"datasourceBindingRid": dbRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("DeleteDatasourceBindingFailed", nil))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Request structs for QueryType ---
+
+// CreateQueryTypeRequest is the request body for creating a query type.
+type CreateQueryTypeRequest struct {
+	APIName     string          `json:"apiName"`
+	DisplayName string          `json:"displayName"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
+	Output      json.RawMessage `json:"output"`
+	Query       json.RawMessage `json:"query"`
+	Status      string          `json:"status,omitempty"`
+}
+
+// UpdateQueryTypeRequest is the request body for updating a query type.
+type UpdateQueryTypeRequest struct {
+	DisplayName string          `json:"displayName"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Output      json.RawMessage `json:"output,omitempty"`
+	Query       json.RawMessage `json:"query,omitempty"`
+	Status      string          `json:"status,omitempty"`
+}
+
+// --- QueryType handlers ---
+
+// CreateQueryType handles POST /api/admin/ontologies/{ontologyApiName}/queryTypes.
+func (h *OMSHandler) CreateQueryType(w http.ResponseWriter, r *http.Request) {
+	ontologyRID, err := h.resolveOntologyRID(r.Context(), chi.URLParam(r, "ontologyApiName"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
+				"ontologyApiName": chi.URLParam(r, "ontologyApiName"),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ResolveOntologyFailed", nil))
+		return
+	}
+
+	var req CreateQueryTypeRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	if req.APIName == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:apiName", map[string]string{
+			"parameter": "apiName",
+			"reason":    "apiName is required",
+		}))
+		return
+	}
+	if req.DisplayName == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:displayName", map[string]string{
+			"parameter": "displayName",
+			"reason":    "displayName is required",
+		}))
+		return
+	}
+
+	status := req.Status
+	if status == "" {
+		status = "ACTIVE"
+	}
+	params := req.Parameters
+	if len(params) == 0 {
+		params = json.RawMessage(`[]`)
+	}
+	output := req.Output
+	if len(output) == 0 {
+		output = json.RawMessage(`{}`)
+	}
+	query := req.Query
+	if len(query) == 0 {
+		query = json.RawMessage(`{}`)
+	}
+
+	qt := &QueryType{
+		RID:         rid.NewQueryTypeRID(),
+		OntologyRID: ontologyRID,
+		APIName:     req.APIName,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		Parameters:  params,
+		Output:      output,
+		Query:       query,
+		Status:      status,
+	}
+
+	if err := h.repo.CreateQueryType(r.Context(), qt); err != nil {
+		if errors.Is(err, ErrDuplicate) {
+			apierror.WriteJSON(w, apierror.NewConflict("QueryTypeAlreadyExists", map[string]string{
+				"apiName": req.APIName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("CreateQueryTypeFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusCreated, qt)
+}
+
+// ListQueryTypes handles GET /api/admin/ontologies/{ontologyApiName}/queryTypes.
+func (h *OMSHandler) ListQueryTypes(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+
+	list, err := h.repo.ListQueryTypes(r.Context(), ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListQueryTypesFailed", nil))
+		return
+	}
+
+	if list == nil {
+		list = []QueryType{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": list,
+	})
+}
+
+// GetQueryType handles GET /api/admin/queryTypes/{queryTypeRid}.
+func (h *OMSHandler) GetQueryType(w http.ResponseWriter, r *http.Request) {
+	qtRID := chi.URLParam(r, "queryTypeRid")
+
+	qt, err := h.repo.GetQueryType(r.Context(), qtRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
+				"queryTypeRid": qtRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetQueryTypeFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, qt)
+}
+
+// UpdateQueryType handles PUT /api/admin/queryTypes/{queryTypeRid}.
+func (h *OMSHandler) UpdateQueryType(w http.ResponseWriter, r *http.Request) {
+	qtRID := chi.URLParam(r, "queryTypeRid")
+
+	var req UpdateQueryTypeRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	existing, err := h.repo.GetQueryType(r.Context(), qtRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
+				"queryTypeRid": qtRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetQueryTypeFailed", nil))
+		return
+	}
+
+	if req.DisplayName != "" {
+		existing.DisplayName = req.DisplayName
+	}
+	existing.Description = req.Description
+	if len(req.Parameters) > 0 {
+		existing.Parameters = req.Parameters
+	}
+	if len(req.Output) > 0 {
+		existing.Output = req.Output
+	}
+	if len(req.Query) > 0 {
+		existing.Query = req.Query
+	}
+	if req.Status != "" {
+		existing.Status = req.Status
+	}
+
+	if err := h.repo.UpdateQueryType(r.Context(), existing); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
+				"queryTypeRid": qtRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("UpdateQueryTypeFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, existing)
+}
+
+// DeleteQueryType handles DELETE /api/admin/queryTypes/{queryTypeRid}.
+func (h *OMSHandler) DeleteQueryType(w http.ResponseWriter, r *http.Request) {
+	qtRID := chi.URLParam(r, "queryTypeRid")
+
+	if err := h.repo.DeleteQueryType(r.Context(), qtRID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
+				"queryTypeRid": qtRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("DeleteQueryTypeFailed", nil))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ExecuteQueryType handles POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute.
+func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontology")
+	queryAPIName := chi.URLParam(r, "queryApiName")
+
+	qt, err := h.repo.GetQueryTypeByAPIName(r.Context(), ontologyRID, queryAPIName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
+				"queryApiName": queryAPIName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetQueryTypeFailed", nil))
+		return
+	}
+
+	var inputParams map[string]interface{}
+	if err := httputil.ReadJSON(r, &inputParams); err != nil {
+		inputParams = map[string]interface{}{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"queryTypeRid": qt.RID,
+		"apiName":      qt.APIName,
+		"query":        qt.Query,
+		"parameters":   inputParams,
+	})
+}

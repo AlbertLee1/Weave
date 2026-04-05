@@ -73,6 +73,23 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Put("/api/admin/value-types/{valueTypeRid}", omsHandler.UpdateValueType)
 	r.Delete("/api/admin/value-types/{valueTypeRid}", omsHandler.DeleteValueType)
 
+	// DatasourceBinding admin routes
+	r.Post("/api/admin/objectTypes/{objectTypeRid}/datasourceBindings", omsHandler.CreateDatasourceBinding)
+	r.Get("/api/admin/objectTypes/{objectTypeRid}/datasourceBindings", omsHandler.ListDatasourceBindings)
+	r.Get("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.GetDatasourceBinding)
+	r.Put("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.UpdateDatasourceBinding)
+	r.Delete("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.DeleteDatasourceBinding)
+
+	// QueryType admin routes
+	r.Post("/api/admin/ontologies/{ontologyApiName}/queryTypes", omsHandler.CreateQueryType)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/queryTypes", omsHandler.ListQueryTypes)
+	r.Get("/api/admin/queryTypes/{queryTypeRid}", omsHandler.GetQueryType)
+	r.Put("/api/admin/queryTypes/{queryTypeRid}", omsHandler.UpdateQueryType)
+	r.Delete("/api/admin/queryTypes/{queryTypeRid}", omsHandler.DeleteQueryType)
+
+	// QueryType execute route
+	r.Post("/api/v2/ontologies/{ontology}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
+
 	// Search, Export, Import
 	r.Get("/api/admin/ontologies/{ontologyApiName}/search", omsHandler.SearchOntologyResources)
 	r.Get("/api/admin/ontologies/{ontologyApiName}/export", omsHandler.ExportOntology)

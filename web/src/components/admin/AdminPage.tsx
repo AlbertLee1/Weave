@@ -26,12 +26,14 @@ import { ActionTypeForm } from './ActionTypeForm';
 import { CommandPalette } from './CommandPalette';
 import { InterfaceListPage } from './InterfaceListPage';
 import { SnapshotListPage } from './SnapshotListPage';
+import { ValueTypeListPage } from './ValueTypeListPage';
+import { SecurityPolicyListPage } from './SecurityPolicyListPage';
 import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { Badge, statusVariant } from '../common/Badge';
 
-type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes' | 'interfaces' | 'snapshots';
+type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes' | 'interfaces' | 'snapshots' | 'valueTypes' | 'security';
 
 export function AdminPage() {
   const navigate = useNavigate();
@@ -49,6 +51,7 @@ export function AdminPage() {
   }, [urlOntology]);
   const [showCreateOntology, setShowCreateOntology] = useState(false);
   const [showCreateObjectType, setShowCreateObjectType] = useState(false);
+  const [justCreatedOT, setJustCreatedOT] = useState<string | null>(null);
   const [showCreateLinkType, setShowCreateLinkType] = useState(false);
   const [showCreateActionType, setShowCreateActionType] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: string; rid: string; name: string } | null>(null);
@@ -84,9 +87,9 @@ export function AdminPage() {
 
   const createObjectTypeMutation = useMutation({
     mutationFn: (input: CreateObjectTypeInput) => createObjectType(selectedOntology, input),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['objectTypes', selectedOntology] });
-      setShowCreateObjectType(false);
+      setJustCreatedOT(variables.apiName);
     },
   });
 
@@ -131,6 +134,8 @@ export function AdminPage() {
     { key: 'actionTypes', label: 'Action Types', count: actionTypes?.length },
     { key: 'interfaces', label: 'Interfaces' },
     { key: 'snapshots', label: 'Snapshots' },
+    { key: 'valueTypes', label: 'Value Types' },
+    { key: 'security', label: 'Security' },
   ];
 
   return (
@@ -394,6 +399,14 @@ export function AdminPage() {
               {activeTab === 'snapshots' && (
                 <SnapshotListPage ontologyApiName={selectedOntology} />
               )}
+
+              {activeTab === 'valueTypes' && (
+                <ValueTypeListPage />
+              )}
+
+              {activeTab === 'security' && (
+                <SecurityPolicyListPage ontologyApiName={selectedOntology} />
+              )}
             </div>
           </>
         )}
@@ -407,11 +420,55 @@ export function AdminPage() {
         />
       </Modal>
 
-      <Modal open={showCreateObjectType} onClose={() => setShowCreateObjectType(false)} title="Create Object Type">
-        <ObjectTypeForm
-          onSubmit={(values) => createObjectTypeMutation.mutate(values)}
-          isLoading={createObjectTypeMutation.isPending}
-        />
+      <Modal
+        open={showCreateObjectType}
+        onClose={() => {
+          setShowCreateObjectType(false);
+          setJustCreatedOT(null);
+        }}
+        title="Create Object Type"
+      >
+        {justCreatedOT ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 text-green-400">
+              <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-sm font-medium">
+                Object type <span className="font-mono">&quot;{justCreatedOT}&quot;</span> created successfully!
+              </span>
+            </div>
+            <p className="text-sm text-text-secondary">
+              Would you like to add properties to this object type?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCreateObjectType(false);
+                  setJustCreatedOT(null);
+                }}
+                className="px-4 py-2 rounded text-sm text-text-secondary hover:text-text-primary border border-border"
+              >
+                Done
+              </button>
+              <button
+                onClick={() => {
+                  navigate(`/admin/${selectedOntology}/object-types/${justCreatedOT}`);
+                  setShowCreateObjectType(false);
+                  setJustCreatedOT(null);
+                }}
+                className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80"
+              >
+                Add Properties →
+              </button>
+            </div>
+          </div>
+        ) : (
+          <ObjectTypeForm
+            onSubmit={(values) => createObjectTypeMutation.mutate(values)}
+            isLoading={createObjectTypeMutation.isPending}
+          />
+        )}
       </Modal>
 
       <Modal open={showCreateLinkType} onClose={() => setShowCreateLinkType(false)} title="Create Link Type">

@@ -227,6 +227,35 @@ func (m *mockOmsRepo) ListObjectTypeInterfaces(_ context.Context, _ string) ([]o
 	return nil, nil
 }
 
+// DatasourceBinding stubs
+func (m *mockOmsRepo) CreateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
+	return nil
+}
+func (m *mockOmsRepo) GetDatasourceBinding(_ context.Context, _ string) (*oms.DatasourceBinding, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListDatasourceBindings(_ context.Context, _ string) ([]oms.DatasourceBinding, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
+	return nil
+}
+func (m *mockOmsRepo) DeleteDatasourceBinding(_ context.Context, _ string) error { return nil }
+
+// QueryType stubs
+func (m *mockOmsRepo) CreateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
+func (m *mockOmsRepo) GetQueryType(_ context.Context, _ string) (*oms.QueryType, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetQueryTypeByAPIName(_ context.Context, _, _ string) (*oms.QueryType, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListQueryTypes(_ context.Context, _ string) ([]oms.QueryType, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
+func (m *mockOmsRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
+
 // ActionLog stubs
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil

@@ -83,6 +83,21 @@ type Repository interface {
 	UpdateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error
 	DeleteSecurityPolicy(ctx context.Context, rid string) error
 
+	// DatasourceBinding
+	CreateDatasourceBinding(ctx context.Context, db *DatasourceBinding) error
+	GetDatasourceBinding(ctx context.Context, rid string) (*DatasourceBinding, error)
+	ListDatasourceBindings(ctx context.Context, objectTypeRID string) ([]DatasourceBinding, error)
+	UpdateDatasourceBinding(ctx context.Context, db *DatasourceBinding) error
+	DeleteDatasourceBinding(ctx context.Context, rid string) error
+
+	// QueryType
+	CreateQueryType(ctx context.Context, qt *QueryType) error
+	GetQueryType(ctx context.Context, rid string) (*QueryType, error)
+	GetQueryTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*QueryType, error)
+	ListQueryTypes(ctx context.Context, ontologyRID string) ([]QueryType, error)
+	UpdateQueryType(ctx context.Context, qt *QueryType) error
+	DeleteQueryType(ctx context.Context, rid string) error
+
 	// ActionLog
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
