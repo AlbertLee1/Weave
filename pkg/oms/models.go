@@ -5,6 +5,37 @@ import (
 	"time"
 )
 
+// SearchResult represents a search hit across ontology resources.
+type SearchResult struct {
+	RID          string `json:"rid"`
+	ResourceType string `json:"resourceType"`
+	APIName      string `json:"apiName"`
+	DisplayName  string `json:"displayName"`
+	Description  string `json:"description,omitempty"`
+	Status       string `json:"status,omitempty"`
+}
+
+// OntologySnapshot represents a versioned snapshot of an ontology's state.
+type OntologySnapshot struct {
+	ID          int64           `json:"id"`
+	OntologyRID string          `json:"ontologyRid"`
+	Version     int             `json:"version"`
+	Label       string          `json:"label,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Snapshot    json.RawMessage `json:"snapshot"`
+	CreatedBy   string          `json:"createdBy"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
+// OntologyExport represents the full export format for an ontology.
+type OntologyExport struct {
+	Ontology    Ontology     `json:"ontology"`
+	ObjectTypes []ObjectType `json:"objectTypes"`
+	LinkTypes   []LinkType   `json:"linkTypes"`
+	ActionTypes []ActionType `json:"actionTypes"`
+	Interfaces  []Interface  `json:"interfaces"`
+}
+
 // Ontology represents a top-level ontology container.
 type Ontology struct {
 	RID         string    `json:"rid"`
@@ -29,6 +60,8 @@ type ObjectType struct {
 	Visibility         string     `json:"visibility"`
 	IconName           string     `json:"icon,omitempty"`
 	Color              string     `json:"color,omitempty"`
+	DeprecatedReason   string     `json:"deprecatedReason,omitempty"`
+	DeprecatedDeadline *time.Time `json:"deprecatedDeadline,omitempty"`
 	Properties         []Property `json:"properties,omitempty"`
 	CreatedAt          time.Time  `json:"-"`
 	UpdatedAt          time.Time  `json:"-"`
@@ -81,8 +114,10 @@ type Property struct {
 	IsArray       bool            `json:"isArray"`
 	IsNullable    bool            `json:"isNullable"`
 	IsSearchable  bool            `json:"isSearchable"`
-	IsSortable    bool            `json:"isSortable"`
-	CreatedAt     time.Time       `json:"-"`
+	IsSortable       bool            `json:"isSortable"`
+	Status           string          `json:"status,omitempty"`
+	DeprecatedReason string          `json:"deprecatedReason,omitempty"`
+	CreatedAt        time.Time       `json:"-"`
 }
 
 // DataTypeJSON returns the Palantir V2 dataType JSON representation.
@@ -186,4 +221,51 @@ type ObjectTypeInterface struct {
 	ObjectTypeRID  string          `json:"objectTypeRid"`
 	InterfaceRID   string          `json:"interfaceRid"`
 	PropertyMapping json.RawMessage `json:"propertyMapping"`
+}
+
+// ValueType defines a reusable custom value type (e.g., currency, email).
+type ValueType struct {
+	RID         string          `json:"rid"`
+	APIName     string          `json:"apiName"`
+	DisplayName string          `json:"displayName"`
+	BaseType    string          `json:"baseType"`
+	Constraints json.RawMessage `json:"constraints,omitempty"`
+	Version     int             `json:"version"`
+	CreatedAt   time.Time       `json:"-"`
+}
+
+// SharedProperty defines a reusable property definition across object types.
+type SharedProperty struct {
+	RID         string          `json:"rid"`
+	OntologyRID string          `json:"-"`
+	APIName     string          `json:"apiName"`
+	DisplayName string          `json:"displayName,omitempty"`
+	Description string          `json:"description,omitempty"`
+	BaseType    string          `json:"baseType"`
+	TypeConfig  json.RawMessage `json:"typeConfig,omitempty"`
+	IsArray     bool            `json:"isArray"`
+	CreatedAt   time.Time       `json:"-"`
+}
+
+// ActionLog records the execution of an action.
+type ActionLog struct {
+	ID            int64           `json:"id"`
+	ActionTypeRID string          `json:"actionTypeRid"`
+	UserID        string          `json:"userId"`
+	Parameters    json.RawMessage `json:"parameters"`
+	Edits         json.RawMessage `json:"edits"`
+	Status        string          `json:"status"`
+	ErrorMessage  string          `json:"errorMessage,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+}
+
+// TypeGroup organizes object types into categories.
+type TypeGroup struct {
+	RID         string    `json:"rid"`
+	OntologyRID string    `json:"-"`
+	APIName     string    `json:"apiName"`
+	DisplayName string    `json:"displayName"`
+	Description string    `json:"description,omitempty"`
+	Color       string    `json:"color,omitempty"`
+	CreatedAt   time.Time `json:"-"`
 }

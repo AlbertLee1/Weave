@@ -8,6 +8,7 @@ type Repository interface {
 	CreateOntology(ctx context.Context, o *Ontology) error
 	GetOntology(ctx context.Context, rid string) (*Ontology, error)
 	ListOntologies(ctx context.Context) ([]Ontology, error)
+	UpdateOntology(ctx context.Context, o *Ontology) error
 
 	// ObjectType
 	CreateObjectType(ctx context.Context, ot *ObjectType) error
@@ -19,22 +20,73 @@ type Repository interface {
 
 	// Property
 	CreateProperty(ctx context.Context, p *Property) error
+	GetProperty(ctx context.Context, rid string) (*Property, error)
 	ListProperties(ctx context.Context, objectTypeRID string) ([]Property, error)
+	UpdateProperty(ctx context.Context, p *Property) error
 	DeleteProperty(ctx context.Context, rid string) error
 
 	// LinkType
 	CreateLinkType(ctx context.Context, lt *LinkType) error
 	GetLinkType(ctx context.Context, rid string) (*LinkType, error)
 	ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]LinkType, error)
+	ListLinkTypes(ctx context.Context, ontologyRID string) ([]LinkType, error)
+	UpdateLinkType(ctx context.Context, lt *LinkType) error
+	DeleteLinkType(ctx context.Context, rid string) error
 
 	// ActionType
 	CreateActionType(ctx context.Context, at *ActionType) error
 	GetActionType(ctx context.Context, rid string) (*ActionType, error)
 	ListActionTypes(ctx context.Context, ontologyRID string) ([]ActionType, error)
 	UpdateActionType(ctx context.Context, at *ActionType) error
+	DeleteActionType(ctx context.Context, rid string) error
 
 	// Interface
 	CreateInterface(ctx context.Context, iface *Interface) error
+	GetInterface(ctx context.Context, rid string) (*Interface, error)
+	GetInterfaceByAPIName(ctx context.Context, ontologyRID, apiName string) (*Interface, error)
 	ListInterfaces(ctx context.Context, ontologyRID string) ([]Interface, error)
+	UpdateInterface(ctx context.Context, iface *Interface) error
+	DeleteInterface(ctx context.Context, rid string) error
 	AttachInterface(ctx context.Context, oti *ObjectTypeInterface) error
+	DetachInterface(ctx context.Context, objectTypeRID, interfaceRID string) error
+	ListObjectTypeInterfaces(ctx context.Context, objectTypeRID string) ([]ObjectTypeInterface, error)
+	ListInterfaceObjectTypes(ctx context.Context, interfaceRID string) ([]ObjectType, error)
+
+	// SharedProperty
+	CreateSharedProperty(ctx context.Context, sp *SharedProperty) error
+	GetSharedProperty(ctx context.Context, rid string) (*SharedProperty, error)
+	ListSharedProperties(ctx context.Context, ontologyRID string) ([]SharedProperty, error)
+	UpdateSharedProperty(ctx context.Context, sp *SharedProperty) error
+	DeleteSharedProperty(ctx context.Context, rid string) error
+
+	// TypeGroup
+	CreateTypeGroup(ctx context.Context, tg *TypeGroup) error
+	GetTypeGroup(ctx context.Context, rid string) (*TypeGroup, error)
+	ListTypeGroups(ctx context.Context, ontologyRID string) ([]TypeGroup, error)
+	UpdateTypeGroup(ctx context.Context, tg *TypeGroup) error
+	DeleteTypeGroup(ctx context.Context, rid string) error
+	AssignTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error
+	RemoveTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error
+	ListTypeGroupsForObjectType(ctx context.Context, objectTypeRID string) ([]TypeGroup, error)
+
+	// ValueType
+	CreateValueType(ctx context.Context, vt *ValueType) error
+	GetValueType(ctx context.Context, rid string) (*ValueType, error)
+	ListValueTypes(ctx context.Context) ([]ValueType, error)
+	UpdateValueType(ctx context.Context, vt *ValueType) error
+	DeleteValueType(ctx context.Context, rid string) error
+
+	// ActionLog
+	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
+	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
+
+	// Search
+	SearchOntologyResources(ctx context.Context, ontologyRID, query string) ([]SearchResult, error)
+
+	// Snapshot
+	CreateSnapshot(ctx context.Context, snapshot *OntologySnapshot) error
+	ListSnapshots(ctx context.Context, ontologyRID string) ([]OntologySnapshot, error)
+	GetSnapshot(ctx context.Context, ontologyRID string, version int) (*OntologySnapshot, error)
+	GetOntologyVersion(ctx context.Context, ontologyRID string) (int, error)
+	IncrementOntologyVersion(ctx context.Context, ontologyRID string) (int, error)
 }

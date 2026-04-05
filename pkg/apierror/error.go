@@ -78,6 +78,11 @@ func NewConflict(name string, params map[string]string) *APIError {
 	return newAPIError("CONFLICT", name, params, http.StatusConflict)
 }
 
+// NewInternal creates an INTERNAL error (HTTP 500).
+func NewInternal(name string, params map[string]string) *APIError {
+	return newAPIError("INTERNAL", name, params, http.StatusInternalServerError)
+}
+
 // WriteJSON writes an APIError as a JSON HTTP response with the appropriate status code.
 func WriteJSON(w http.ResponseWriter, err *APIError) {
 	w.Header().Set("Content-Type", "application/json")

@@ -50,6 +50,26 @@ func NewActionTypeRID() string {
 	return New("ontology", "main", "action-type")
 }
 
+// NewInterfaceRID generates a new RID for an interface.
+func NewInterfaceRID() string {
+	return New("ontology", "main", "interface")
+}
+
+// NewSharedPropertyRID generates a new RID for a shared property.
+func NewSharedPropertyRID() string {
+	return New("ontology", "main", "shared-property")
+}
+
+// NewTypeGroupRID generates a new RID for a type group.
+func NewTypeGroupRID() string {
+	return New("ontology", "main", "type-group")
+}
+
+// NewValueTypeRID generates a new RID for a value type.
+func NewValueTypeRID() string {
+	return New("ontology", "main", "value-type")
+}
+
 // Parse parses a RID string into its constituent parts.
 // Expected format: ri.{service}.{realm}.{resourceType}.{uuid}
 func Parse(rid string) (*RID, error) {

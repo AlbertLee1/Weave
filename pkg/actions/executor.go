@@ -68,19 +68,25 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		return nil, fmt.Errorf("validate params: %w", err)
 	}
 
-	// Step 4: Parse rules
+	// Step 4: Evaluate submission criteria
+	actCtx := ActionContext{Parameters: req.Parameters, UserID: "system"}
+	if err := EvaluateCriteria(actionType.SubmissionCriteria, actCtx); err != nil {
+		return nil, fmt.Errorf("submission criteria: %w", err)
+	}
+
+	// Step 5: Parse rules
 	rules, err := ParseRules(actionType.Rules)
 	if err != nil {
 		return nil, fmt.Errorf("parse rules: %w", err)
 	}
 
-	// Step 5: Execute rules to generate edits
+	// Step 6: Execute rules to generate edits
 	edits, err := ExecuteRules(rules, req.Parameters)
 	if err != nil {
 		return nil, fmt.Errorf("execute rules: %w", err)
 	}
 
-	// Step 6: Collapse edits
+	// Step 7: Collapse edits
 	edits = CollapseEdits(edits)
 
 	if len(edits) == 0 {
@@ -90,7 +96,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		}, nil
 	}
 
-	// Step 7: Create EditBatch
+	// Step 8: Create EditBatch
 	batch := &funnel.EditBatch{
 		ID:        uuid.New().String(),
 		Edits:     edits,
@@ -98,7 +104,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		Timestamp: time.Now(),
 	}
 
-	// Step 8: Publish to funnel
+	// Step 9: Publish to funnel
 	var offset uint64
 	if e.publisher != nil {
 		offset, err = e.publisher.Publish(batch)
@@ -107,11 +113,19 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		}
 	}
 
-	// Step 9: Return result
-	return &ApplyResult{
+	result := &ApplyResult{
 		ActionRID: actionType.RID,
 		Edits:     edits,
 		BatchID:   batch.ID,
 		Offset:    offset,
-	}, nil
+	}
+
+	// Step 10: Execute side effects (best-effort, non-blocking)
+	ExecuteSideEffects(actionType.SideEffects, ActionResult{
+		ActionRID: result.ActionRID,
+		BatchID:   result.BatchID,
+		Edits:     edits,
+	})
+
+	return result, nil
 }

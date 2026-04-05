@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOntologies } from '../../hooks/useOntologies';
-import { useObjectTypes } from '../../hooks/useObjectTypes';
+import { useObjectTypes, useLinkTypes } from '../../hooks/useObjectTypes';
 import { useActionTypes } from '../../hooks/useActions';
 import {
   createOntology,
@@ -13,48 +14,64 @@ import {
   type CreateLinkTypeInput,
   type CreateActionTypeInput,
 } from '../../api/admin';
-import { listOutgoingLinkTypes } from '../../api/ontologies';
-import type { LinkType } from '../../api/types';
+import {
+  useDeleteObjectType,
+  useDeleteLinkType,
+  useDeleteActionType,
+} from '../../hooks/useAdminMutations';
 import { OntologyForm } from './OntologyForm';
 import { ObjectTypeForm } from './ObjectTypeForm';
 import { LinkTypeForm } from './LinkTypeForm';
 import { ActionTypeForm } from './ActionTypeForm';
+import { CommandPalette } from './CommandPalette';
+import { InterfaceListPage } from './InterfaceListPage';
 import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
-import { Badge } from '../common/Badge';
+import { Badge, statusVariant } from '../common/Badge';
 
-type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes';
+type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes' | 'interfaces';
 
 export function AdminPage() {
+  const navigate = useNavigate();
+  const { ontology: urlOntology } = useParams<{ ontology?: string }>();
   const queryClient = useQueryClient();
   const { data: ontologies, isLoading: ontologiesLoading } = useOntologies();
 
-  const [selectedOntology, setSelectedOntology] = useState<string>('');
+  const [selectedOntology, setSelectedOntology] = useState<string>(urlOntology ?? '');
   const [activeTab, setActiveTab] = useState<TabKey>('objectTypes');
+
+  useEffect(() => {
+    if (urlOntology && urlOntology !== selectedOntology) {
+      setSelectedOntology(urlOntology);
+    }
+  }, [urlOntology]);
   const [showCreateOntology, setShowCreateOntology] = useState(false);
   const [showCreateObjectType, setShowCreateObjectType] = useState(false);
   const [showCreateLinkType, setShowCreateLinkType] = useState(false);
   const [showCreateActionType, setShowCreateActionType] = useState(false);
-  const [linkTypes, setLinkTypes] = useState<LinkType[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: string; rid: string; name: string } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
 
   const { data: objectTypes, isLoading: objectTypesLoading } = useObjectTypes(selectedOntology);
+  const { data: linkTypes, isLoading: linkTypesLoading } = useLinkTypes(selectedOntology);
   const { data: actionTypes, isLoading: actionTypesLoading } = useActionTypes(selectedOntology);
 
-  // Fetch link types when ontology and first object type are available
-  useState(() => {
-    if (selectedOntology && objectTypes && objectTypes.length > 0) {
-      Promise.all(
-        objectTypes.map((ot) => listOutgoingLinkTypes(selectedOntology, ot.apiName)),
-      ).then((results) => {
-        const allLinks = results.flat();
-        const unique = allLinks.filter(
-          (lt, i, arr) => arr.findIndex((x) => x.rid === lt.rid) === i,
-        );
-        setLinkTypes(unique);
-      });
-    }
-  });
+  const deleteObjectTypeMutation = useDeleteObjectType(selectedOntology);
+  const deleteLinkTypeMutation = useDeleteLinkType(selectedOntology);
+  const deleteActionTypeMutation = useDeleteActionType(selectedOntology);
 
   const createOntologyMutation = useMutation({
     mutationFn: (input: CreateOntologyInput) => createOntology(input),
@@ -75,7 +92,7 @@ export function AdminPage() {
   const createLinkTypeMutation = useMutation({
     mutationFn: (input: CreateLinkTypeInput) => createLinkType(selectedOntology, input),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['linkTypes'] });
+      queryClient.invalidateQueries({ queryKey: ['linkTypes', selectedOntology] });
       setShowCreateLinkType(false);
     },
   });
@@ -88,10 +105,30 @@ export function AdminPage() {
     },
   });
 
-  const tabs: { key: TabKey; label: string }[] = [
-    { key: 'objectTypes', label: 'Object Types' },
-    { key: 'linkTypes', label: 'Link Types' },
-    { key: 'actionTypes', label: 'Action Types' },
+  function handleConfirmDelete() {
+    if (!deleteTarget) return;
+    const { type, rid } = deleteTarget;
+    if (type === 'objectType') deleteObjectTypeMutation.mutate(rid, { onSuccess: () => setDeleteTarget(null) });
+    if (type === 'linkType') deleteLinkTypeMutation.mutate(rid, { onSuccess: () => setDeleteTarget(null) });
+    if (type === 'actionType') deleteActionTypeMutation.mutate(rid, { onSuccess: () => setDeleteTarget(null) });
+  }
+
+  const lowerFilter = searchFilter.toLowerCase();
+  const filteredObjectTypes = objectTypes?.filter((ot) =>
+    !searchFilter || ot.apiName.toLowerCase().includes(lowerFilter) || ot.displayName.toLowerCase().includes(lowerFilter)
+  );
+  const filteredLinkTypes = linkTypes?.filter((lt) =>
+    !searchFilter || lt.apiName.toLowerCase().includes(lowerFilter) || lt.displayName.toLowerCase().includes(lowerFilter)
+  );
+  const filteredActionTypes = actionTypes?.filter((at) =>
+    !searchFilter || at.apiName.toLowerCase().includes(lowerFilter) || at.displayName.toLowerCase().includes(lowerFilter)
+  );
+
+  const tabs: { key: TabKey; label: string; count?: number }[] = [
+    { key: 'objectTypes', label: 'Object Types', count: objectTypes?.length },
+    { key: 'linkTypes', label: 'Link Types', count: linkTypes?.length },
+    { key: 'actionTypes', label: 'Action Types', count: actionTypes?.length },
+    { key: 'interfaces', label: 'Interfaces' },
   ];
 
   return (
@@ -147,21 +184,42 @@ export function AdminPage() {
           </div>
         ) : (
           <>
-            {/* Tabs */}
-            <div className="flex border-b border-border bg-bg-primary">
-              {tabs.map((tab) => (
+            {/* Tabs + Search */}
+            <div className="flex items-center border-b border-border bg-bg-primary">
+              <div className="flex flex-1">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
+                      activeTab === tab.key
+                        ? 'border-accent-cyan text-accent-cyan'
+                        : 'border-transparent text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    {tab.label}
+                    {tab.count !== undefined && (
+                      <span className="ml-1.5 text-xs text-text-muted">({tab.count})</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 px-3">
+                <input
+                  type="text"
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
+                  placeholder="Filter..."
+                  className="bg-bg-tertiary border border-border rounded px-2 py-1 text-xs text-text-primary font-mono w-40 focus:border-accent-cyan focus:outline-none"
+                />
                 <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
-                    activeTab === tab.key
-                      ? 'border-accent-cyan text-accent-cyan'
-                      : 'border-transparent text-text-secondary hover:text-text-primary'
-                  }`}
+                  onClick={() => setPaletteOpen(true)}
+                  className="text-xs text-text-muted hover:text-text-primary border border-border rounded px-2 py-1 font-mono"
+                  title="Search (Cmd+K)"
                 >
-                  {tab.label}
+                  &#8984;K
                 </button>
-              ))}
+              </div>
             </div>
 
             {/* Tab content */}
@@ -179,38 +237,41 @@ export function AdminPage() {
                   </div>
                   {objectTypesLoading ? (
                     <LoadingSpinner />
-                  ) : !objectTypes || objectTypes.length === 0 ? (
+                  ) : !filteredObjectTypes || filteredObjectTypes.length === 0 ? (
                     <EmptyState
                       title="No Object Types"
-                      description="Create your first object type to get started."
+                      description={searchFilter ? 'No matches found.' : 'Create your first object type to get started.'}
                     />
                   ) : (
                     <div className="flex flex-col gap-2">
-                      {objectTypes.map((ot) => (
+                      {filteredObjectTypes.map((ot) => (
                         <div
                           key={ot.rid}
-                          className="flex items-center justify-between p-3 bg-bg-tertiary border border-border rounded"
+                          className="flex items-center justify-between p-3 bg-bg-tertiary border border-border rounded cursor-pointer hover:border-accent-cyan/50 transition-colors"
+                          onClick={() => navigate(`/admin/${selectedOntology}/object-types/${ot.apiName}`)}
                         >
                           <div>
                             <div className="text-sm font-mono text-text-primary">{ot.apiName}</div>
                             <div className="text-xs text-text-secondary mt-0.5">
                               {ot.displayName}
-                              {ot.description && ` - ${ot.description}`}
+                              {ot.description && ` — ${ot.description}`}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge
-                              variant={
-                                ot.status === 'ACTIVE'
-                                  ? 'success'
-                                  : ot.status === 'EXPERIMENTAL'
-                                    ? 'warning'
-                                    : 'error'
-                              }
-                            >
-                              {ot.status}
-                            </Badge>
+                            <Badge variant={statusVariant(ot.status)}>{ot.status}</Badge>
                             <Badge>{ot.visibility}</Badge>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget({ type: 'objectType', rid: ot.rid, name: ot.apiName });
+                              }}
+                              className="p-1 text-text-muted hover:text-red-400 transition-colors"
+                              title="Delete"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                              </svg>
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -230,14 +291,16 @@ export function AdminPage() {
                       + Create
                     </button>
                   </div>
-                  {linkTypes.length === 0 ? (
+                  {linkTypesLoading ? (
+                    <LoadingSpinner />
+                  ) : !filteredLinkTypes || filteredLinkTypes.length === 0 ? (
                     <EmptyState
                       title="No Link Types"
-                      description="Create a link type to connect object types."
+                      description={searchFilter ? 'No matches found.' : 'Create a link type to connect object types.'}
                     />
                   ) : (
                     <div className="flex flex-col gap-2">
-                      {linkTypes.map((lt) => (
+                      {filteredLinkTypes.map((lt) => (
                         <div
                           key={lt.rid}
                           className="flex items-center justify-between p-3 bg-bg-tertiary border border-border rounded"
@@ -248,7 +311,18 @@ export function AdminPage() {
                               {lt.objectTypeApiName} &rarr; {lt.linkedObjectTypeApiName}
                             </div>
                           </div>
-                          <Badge>{lt.cardinality}</Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge>{lt.cardinality}</Badge>
+                            <button
+                              onClick={() => setDeleteTarget({ type: 'linkType', rid: lt.rid, name: lt.apiName })}
+                              className="p-1 text-text-muted hover:text-red-400 transition-colors"
+                              title="Delete"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -269,75 +343,72 @@ export function AdminPage() {
                   </div>
                   {actionTypesLoading ? (
                     <LoadingSpinner />
-                  ) : !actionTypes || actionTypes.length === 0 ? (
+                  ) : !filteredActionTypes || filteredActionTypes.length === 0 ? (
                     <EmptyState
                       title="No Action Types"
-                      description="Create an action type to define operations."
+                      description={searchFilter ? 'No matches found.' : 'Create an action type to define operations.'}
                     />
                   ) : (
                     <div className="flex flex-col gap-2">
-                      {actionTypes.map((at) => (
+                      {filteredActionTypes.map((at) => (
                         <div
                           key={at.rid}
-                          className="flex items-center justify-between p-3 bg-bg-tertiary border border-border rounded"
+                          className="flex items-center justify-between p-3 bg-bg-tertiary border border-border rounded cursor-pointer hover:border-accent-cyan/50 transition-colors"
+                          onClick={() => navigate(`/admin/${selectedOntology}/action-types/${at.apiName}`)}
                         >
                           <div>
                             <div className="text-sm font-mono text-text-primary">{at.apiName}</div>
                             <div className="text-xs text-text-secondary mt-0.5">
                               {at.displayName}
-                              {at.description && ` - ${at.description}`}
+                              {at.description && ` — ${at.description}`}
                             </div>
                           </div>
-                          <Badge
-                            variant={
-                              at.status === 'ACTIVE'
-                                ? 'success'
-                                : at.status === 'EXPERIMENTAL'
-                                  ? 'warning'
-                                  : 'error'
-                            }
-                          >
-                            {at.status}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={statusVariant(at.status)}>{at.status}</Badge>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget({ type: 'actionType', rid: at.rid, name: at.apiName });
+                              }}
+                              className="p-1 text-text-muted hover:text-red-400 transition-colors"
+                              title="Delete"
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
               )}
+
+              {activeTab === 'interfaces' && (
+                <InterfaceListPage ontologyApiName={selectedOntology} />
+              )}
             </div>
           </>
         )}
       </div>
 
-      {/* Modals */}
-      <Modal
-        open={showCreateOntology}
-        onClose={() => setShowCreateOntology(false)}
-        title="Create Ontology"
-      >
+      {/* Create Modals */}
+      <Modal open={showCreateOntology} onClose={() => setShowCreateOntology(false)} title="Create Ontology">
         <OntologyForm
           onSubmit={(values) => createOntologyMutation.mutate(values)}
           isLoading={createOntologyMutation.isPending}
         />
       </Modal>
 
-      <Modal
-        open={showCreateObjectType}
-        onClose={() => setShowCreateObjectType(false)}
-        title="Create Object Type"
-      >
+      <Modal open={showCreateObjectType} onClose={() => setShowCreateObjectType(false)} title="Create Object Type">
         <ObjectTypeForm
           onSubmit={(values) => createObjectTypeMutation.mutate(values)}
           isLoading={createObjectTypeMutation.isPending}
         />
       </Modal>
 
-      <Modal
-        open={showCreateLinkType}
-        onClose={() => setShowCreateLinkType(false)}
-        title="Create Link Type"
-      >
+      <Modal open={showCreateLinkType} onClose={() => setShowCreateLinkType(false)} title="Create Link Type">
         <LinkTypeForm
           onSubmit={(values) => createLinkTypeMutation.mutate(values)}
           objectTypes={objectTypes ?? []}
@@ -345,16 +416,43 @@ export function AdminPage() {
         />
       </Modal>
 
-      <Modal
-        open={showCreateActionType}
-        onClose={() => setShowCreateActionType(false)}
-        title="Create Action Type"
-      >
+      <Modal open={showCreateActionType} onClose={() => setShowCreateActionType(false)} title="Create Action Type">
         <ActionTypeForm
           onSubmit={(values) => createActionTypeMutation.mutate(values)}
           isLoading={createActionTypeMutation.isPending}
         />
       </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Confirm Delete"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-text-secondary">
+            Are you sure you want to delete <span className="font-mono text-text-primary">{deleteTarget?.name}</span>?
+            This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setDeleteTarget(null)}
+              className="px-4 py-2 rounded text-sm text-text-secondary hover:text-text-primary border border-border"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              className="bg-red-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-red-700"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Command Palette */}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

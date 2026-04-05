@@ -26,6 +26,7 @@ func (m *mockOmsRepo) GetOntology(_ context.Context, _ string) (*oms.Ontology, e
 	return nil, nil
 }
 func (m *mockOmsRepo) ListOntologies(_ context.Context) ([]oms.Ontology, error) { return nil, nil }
+func (m *mockOmsRepo) UpdateOntology(_ context.Context, _ *oms.Ontology) error  { return nil }
 
 func (m *mockOmsRepo) CreateObjectType(_ context.Context, _ *oms.ObjectType) error { return nil }
 func (m *mockOmsRepo) GetObjectType(_ context.Context, _ string) (*oms.ObjectType, error) {
@@ -41,10 +42,14 @@ func (m *mockOmsRepo) UpdateObjectType(_ context.Context, _ *oms.ObjectType) err
 func (m *mockOmsRepo) DeleteObjectType(_ context.Context, _ string) error          { return nil }
 
 func (m *mockOmsRepo) CreateProperty(_ context.Context, _ *oms.Property) error { return nil }
+func (m *mockOmsRepo) GetProperty(_ context.Context, _ string) (*oms.Property, error) {
+	return nil, nil
+}
 func (m *mockOmsRepo) ListProperties(_ context.Context, _ string) ([]oms.Property, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) DeleteProperty(_ context.Context, _ string) error { return nil }
+func (m *mockOmsRepo) UpdateProperty(_ context.Context, _ *oms.Property) error { return nil }
+func (m *mockOmsRepo) DeleteProperty(_ context.Context, _ string) error        { return nil }
 
 func (m *mockOmsRepo) CreateLinkType(_ context.Context, _ *oms.LinkType) error { return nil }
 func (m *mockOmsRepo) GetLinkType(_ context.Context, _ string) (*oms.LinkType, error) {
@@ -53,6 +58,11 @@ func (m *mockOmsRepo) GetLinkType(_ context.Context, _ string) (*oms.LinkType, e
 func (m *mockOmsRepo) ListOutgoingLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {
 	return nil, nil
 }
+func (m *mockOmsRepo) ListLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateLinkType(_ context.Context, _ *oms.LinkType) error { return nil }
+func (m *mockOmsRepo) DeleteLinkType(_ context.Context, _ string) error        { return nil }
 
 func (m *mockOmsRepo) CreateActionType(_ context.Context, _ *oms.ActionType) error { return nil }
 func (m *mockOmsRepo) GetActionType(_ context.Context, _ string) (*oms.ActionType, error) {
@@ -62,14 +72,92 @@ func (m *mockOmsRepo) ListActionTypes(_ context.Context, _ string) ([]oms.Action
 	return m.actionTypes, nil
 }
 func (m *mockOmsRepo) UpdateActionType(_ context.Context, _ *oms.ActionType) error { return nil }
+func (m *mockOmsRepo) DeleteActionType(_ context.Context, _ string) error          { return nil }
 
 func (m *mockOmsRepo) CreateInterface(_ context.Context, _ *oms.Interface) error { return nil }
+func (m *mockOmsRepo) GetInterface(_ context.Context, _ string) (*oms.Interface, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetInterfaceByAPIName(_ context.Context, _, _ string) (*oms.Interface, error) {
+	return nil, nil
+}
 func (m *mockOmsRepo) ListInterfaces(_ context.Context, _ string) ([]oms.Interface, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateInterface(_ context.Context, _ *oms.Interface) error { return nil }
+func (m *mockOmsRepo) DeleteInterface(_ context.Context, _ string) error { return nil }
+func (m *mockOmsRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
 	return nil, nil
 }
 func (m *mockOmsRepo) AttachInterface(_ context.Context, _ *oms.ObjectTypeInterface) error {
 	return nil
 }
+func (m *mockOmsRepo) DetachInterface(_ context.Context, _, _ string) error { return nil }
+func (m *mockOmsRepo) ListObjectTypeInterfaces(_ context.Context, _ string) ([]oms.ObjectTypeInterface, error) {
+	return nil, nil
+}
+
+// SharedProperty stubs
+func (m *mockOmsRepo) CreateSharedProperty(_ context.Context, _ *oms.SharedProperty) error {
+	return nil
+}
+func (m *mockOmsRepo) GetSharedProperty(_ context.Context, _ string) (*oms.SharedProperty, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListSharedProperties(_ context.Context, _ string) ([]oms.SharedProperty, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedProperty) error {
+	return nil
+}
+func (m *mockOmsRepo) DeleteSharedProperty(_ context.Context, _ string) error { return nil }
+
+// TypeGroup stubs
+func (m *mockOmsRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
+func (m *mockOmsRepo) GetTypeGroup(_ context.Context, _ string) (*oms.TypeGroup, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListTypeGroups(_ context.Context, _ string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
+func (m *mockOmsRepo) DeleteTypeGroup(_ context.Context, _ string) error         { return nil }
+func (m *mockOmsRepo) AssignTypeGroup(_ context.Context, _, _ string) error      { return nil }
+func (m *mockOmsRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
+func (m *mockOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+
+// ValueType stubs
+func (m *mockOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (m *mockOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
+func (m *mockOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (m *mockOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
+
+// ActionLog stubs
+func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+
+// Search stubs
+func (m *mockOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {
+	return nil, nil
+}
+
+// Snapshot stubs
+func (m *mockOmsRepo) CreateSnapshot(_ context.Context, _ *oms.OntologySnapshot) error { return nil }
+func (m *mockOmsRepo) ListSnapshots(_ context.Context, _ string) ([]oms.OntologySnapshot, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetSnapshot(_ context.Context, _ string, _ int) (*oms.OntologySnapshot, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetOntologyVersion(_ context.Context, _ string) (int, error)       { return 0, nil }
+func (m *mockOmsRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) { return 1, nil }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -733,5 +821,226 @@ func TestHandler_ApplyBatch_200(t *testing.T) {
 	}
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Submission Criteria Tests (31–38)
+// ---------------------------------------------------------------------------
+
+func TestEvaluateCriteria_Nil(t *testing.T) {
+	if err := EvaluateCriteria(nil, ActionContext{}); err != nil {
+		t.Fatalf("expected nil for nil criteria, got: %v", err)
+	}
+}
+
+func TestEvaluateCriteria_Empty(t *testing.T) {
+	if err := EvaluateCriteria(json.RawMessage("[]"), ActionContext{}); err != nil {
+		t.Fatalf("expected nil for empty array criteria, got: %v", err)
+	}
+}
+
+func TestEvaluateCriteria_Always(t *testing.T) {
+	criteria := mustJSON(SubmissionCriteria{Type: "always"})
+	if err := EvaluateCriteria(criteria, ActionContext{}); err != nil {
+		t.Fatalf("expected nil for 'always' criteria, got: %v", err)
+	}
+}
+
+func TestEvaluateCriteria_ParameterMatch_Equal_Pass(t *testing.T) {
+	criteria := mustJSON([]SubmissionCriteria{
+		{
+			Type: "parameterMatch",
+			Value: mustJSON(map[string]interface{}{
+				"parameter": "status",
+				"operator":  "eq",
+				"value":     "ACTIVE",
+			}),
+		},
+	})
+	ctx := ActionContext{Parameters: map[string]interface{}{"status": "ACTIVE"}}
+	if err := EvaluateCriteria(criteria, ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestEvaluateCriteria_ParameterMatch_Equal_Fail(t *testing.T) {
+	criteria := mustJSON([]SubmissionCriteria{
+		{
+			Type: "parameterMatch",
+			Value: mustJSON(map[string]interface{}{
+				"parameter": "status",
+				"operator":  "eq",
+				"value":     "ACTIVE",
+			}),
+		},
+	})
+	ctx := ActionContext{Parameters: map[string]interface{}{"status": "INACTIVE"}}
+	if err := EvaluateCriteria(criteria, ctx); err == nil {
+		t.Fatal("expected error for mismatched parameterMatch, got nil")
+	}
+}
+
+func TestEvaluateCriteria_ParameterMatch_Numeric_Pass(t *testing.T) {
+	criteria := mustJSON(SubmissionCriteria{
+		Type: "parameterMatch",
+		Value: mustJSON(map[string]interface{}{
+			"parameter": "age",
+			"operator":  "gte",
+			"value":     float64(18),
+		}),
+	})
+	ctx := ActionContext{Parameters: map[string]interface{}{"age": float64(21)}}
+	if err := EvaluateCriteria(criteria, ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestEvaluateCriteria_ParameterMatch_Numeric_Fail(t *testing.T) {
+	criteria := mustJSON(SubmissionCriteria{
+		Type: "parameterMatch",
+		Value: mustJSON(map[string]interface{}{
+			"parameter": "age",
+			"operator":  "gte",
+			"value":     float64(18),
+		}),
+	})
+	ctx := ActionContext{Parameters: map[string]interface{}{"age": float64(16)}}
+	if err := EvaluateCriteria(criteria, ctx); err == nil {
+		t.Fatal("expected error for age < 18, got nil")
+	}
+}
+
+func TestEvaluateCriteria_MissingParameter(t *testing.T) {
+	criteria := mustJSON(SubmissionCriteria{
+		Type: "parameterMatch",
+		Value: mustJSON(map[string]interface{}{
+			"parameter": "status",
+			"operator":  "eq",
+			"value":     "ACTIVE",
+		}),
+	})
+	ctx := ActionContext{Parameters: map[string]interface{}{}}
+	if err := EvaluateCriteria(criteria, ctx); err == nil {
+		t.Fatal("expected error for missing parameter, got nil")
+	}
+}
+
+func TestEvaluateCriteria_UnknownType(t *testing.T) {
+	criteria := mustJSON(SubmissionCriteria{Type: "userMatch"})
+	if err := EvaluateCriteria(criteria, ActionContext{}); err == nil {
+		t.Fatal("expected error for unknown criteria type, got nil")
+	}
+}
+
+func TestExecutor_Apply_CriteriaBlocked(t *testing.T) {
+	criteria := mustJSON([]SubmissionCriteria{
+		{
+			Type: "parameterMatch",
+			Value: mustJSON(map[string]interface{}{
+				"parameter": "role",
+				"operator":  "eq",
+				"value":     "admin",
+			}),
+		},
+	})
+	at := newTestActionType("adminAction", []ParameterDef{
+		{ID: "role", Type: "string", Required: true},
+	}, []Rule{
+		{Type: "createObject", ObjectType: "Log"},
+	})
+	at.SubmissionCriteria = criteria
+
+	repo := &mockOmsRepo{actionTypes: []oms.ActionType{at}}
+	exec := NewExecutor(repo, nil)
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "adminAction",
+		Parameters: map[string]interface{}{"role": "viewer"},
+	})
+	if err == nil {
+		t.Fatal("expected submission criteria error, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Side Effects Tests (40–44)
+// ---------------------------------------------------------------------------
+
+func TestExecuteSideEffects_Nil(t *testing.T) {
+	if err := ExecuteSideEffects(nil, ActionResult{ActionRID: "rid-1"}); err != nil {
+		t.Fatalf("expected nil for nil effects, got: %v", err)
+	}
+}
+
+func TestExecuteSideEffects_Empty(t *testing.T) {
+	if err := ExecuteSideEffects(json.RawMessage("[]"), ActionResult{ActionRID: "rid-1"}); err != nil {
+		t.Fatalf("expected nil for empty effects, got: %v", err)
+	}
+}
+
+func TestExecuteSideEffects_Log(t *testing.T) {
+	effects := mustJSON([]SideEffect{
+		{Type: "log", Config: mustJSON(map[string]interface{}{})},
+	})
+	result := ActionResult{ActionRID: "rid-log", BatchID: "batch-1"}
+	// log effect should succeed without error
+	if err := ExecuteSideEffects(effects, result); err != nil {
+		t.Fatalf("expected nil for log effect, got: %v", err)
+	}
+}
+
+func TestExecuteSideEffects_Webhook_Success(t *testing.T) {
+	// Start a test HTTP server to receive the webhook.
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(r.Body)
+		received = buf.Bytes()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	effects := mustJSON([]SideEffect{
+		{
+			Type: "webhook",
+			Config: mustJSON(webhookConfig{
+				URL: srv.URL,
+			}),
+		},
+	})
+	result := ActionResult{ActionRID: "rid-wh", BatchID: "batch-wh"}
+	if err := ExecuteSideEffects(effects, result); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+	if len(received) == 0 {
+		t.Fatal("expected webhook body to be non-empty")
+	}
+	var got ActionResult
+	if err := json.Unmarshal(received, &got); err != nil {
+		t.Fatalf("unmarshal webhook body: %v", err)
+	}
+	if got.ActionRID != "rid-wh" {
+		t.Fatalf("expected actionRid=rid-wh, got %s", got.ActionRID)
+	}
+}
+
+func TestExecuteSideEffects_Webhook_NonSuccess_BestEffort(t *testing.T) {
+	// Server returns 500 — side effect should log but not propagate error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	effects := mustJSON([]SideEffect{
+		{
+			Type: "webhook",
+			Config: mustJSON(webhookConfig{
+				URL: srv.URL,
+			}),
+		},
+	})
+	// ExecuteSideEffects swallows the error (best-effort).
+	if err := ExecuteSideEffects(effects, ActionResult{ActionRID: "rid-fail"}); err != nil {
+		t.Fatalf("expected nil (best-effort), got: %v", err)
 	}
 }

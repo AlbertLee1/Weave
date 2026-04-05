@@ -18,12 +18,67 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 
 	// Admin routes
 	r.Post("/api/admin/ontologies", omsHandler.CreateOntology)
+	r.Put("/api/admin/ontologies/{ontologyRid}", omsHandler.UpdateOntology)
+
 	r.Post("/api/admin/ontologies/{ontologyApiName}/objectTypes", omsHandler.CreateObjectType)
 	r.Put("/api/admin/objectTypes/{objectTypeRid}", omsHandler.UpdateObjectType)
 	r.Delete("/api/admin/objectTypes/{objectTypeRid}", omsHandler.DeleteObjectType)
+
 	r.Post("/api/admin/objectTypes/{objectTypeRid}/properties", omsHandler.CreateProperty)
+	r.Put("/api/admin/properties/{propertyRid}", omsHandler.UpdateProperty)
 	r.Delete("/api/admin/properties/{propertyRid}", omsHandler.DeleteProperty)
+
 	r.Post("/api/admin/ontologies/{ontologyApiName}/linkTypes", omsHandler.CreateLinkType)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/linkTypes", omsHandler.ListAllLinkTypes)
+	r.Put("/api/admin/linkTypes/{linkTypeRid}", omsHandler.UpdateLinkType)
+	r.Delete("/api/admin/linkTypes/{linkTypeRid}", omsHandler.DeleteLinkType)
+
 	r.Post("/api/admin/ontologies/{ontologyApiName}/actionTypes", omsHandler.CreateActionType)
 	r.Put("/api/admin/actionTypes/{actionTypeRid}", omsHandler.UpdateActionType)
+	r.Delete("/api/admin/actionTypes/{actionTypeRid}", omsHandler.DeleteActionType)
+	r.Get("/api/admin/actionTypes/{actionTypeRid}/logs", omsHandler.ListActionLogs)
+
+	// Interface admin routes
+	r.Post("/api/admin/ontologies/{ontologyApiName}/interfaces", omsHandler.CreateInterface)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/interfaces", omsHandler.ListInterfaces)
+	r.Get("/api/admin/interfaces/{interfaceRid}", omsHandler.GetInterface)
+	r.Put("/api/admin/interfaces/{interfaceRid}", omsHandler.UpdateInterface)
+	r.Delete("/api/admin/interfaces/{interfaceRid}", omsHandler.DeleteInterface)
+	r.Post("/api/admin/objectTypes/{objectTypeRid}/interfaces", omsHandler.AttachInterfaceHandler)
+	r.Delete("/api/admin/objectTypes/{objectTypeRid}/interfaces/{interfaceRid}", omsHandler.DetachInterface)
+	r.Get("/api/admin/objectTypes/{objectTypeRid}/interfaces", omsHandler.ListObjectTypeInterfaces)
+
+	// Shared Property admin routes
+	r.Post("/api/admin/ontologies/{ontologyApiName}/shared-properties", omsHandler.CreateSharedProperty)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/shared-properties", omsHandler.ListSharedProperties)
+	r.Get("/api/admin/shared-properties/{sharedPropertyRid}", omsHandler.GetSharedProperty)
+	r.Put("/api/admin/shared-properties/{sharedPropertyRid}", omsHandler.UpdateSharedProperty)
+	r.Delete("/api/admin/shared-properties/{sharedPropertyRid}", omsHandler.DeleteSharedProperty)
+
+	// Type Group admin routes
+	r.Post("/api/admin/ontologies/{ontologyApiName}/type-groups", omsHandler.CreateTypeGroup)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/type-groups", omsHandler.ListTypeGroups)
+	r.Get("/api/admin/type-groups/{typeGroupRid}", omsHandler.GetTypeGroup)
+	r.Put("/api/admin/type-groups/{typeGroupRid}", omsHandler.UpdateTypeGroup)
+	r.Delete("/api/admin/type-groups/{typeGroupRid}", omsHandler.DeleteTypeGroup)
+	r.Post("/api/admin/objectTypes/{objectTypeRid}/groups/{typeGroupRid}", omsHandler.AssignTypeGroup)
+	r.Delete("/api/admin/objectTypes/{objectTypeRid}/groups/{typeGroupRid}", omsHandler.RemoveTypeGroup)
+	r.Get("/api/admin/objectTypes/{objectTypeRid}/groups", omsHandler.ListTypeGroupsForObjectType)
+
+	// Value Type admin routes
+	r.Post("/api/admin/value-types", omsHandler.CreateValueType)
+	r.Get("/api/admin/value-types", omsHandler.ListValueTypes)
+	r.Get("/api/admin/value-types/{valueTypeRid}", omsHandler.GetValueType)
+	r.Put("/api/admin/value-types/{valueTypeRid}", omsHandler.UpdateValueType)
+	r.Delete("/api/admin/value-types/{valueTypeRid}", omsHandler.DeleteValueType)
+
+	// Search, Export, Import
+	r.Get("/api/admin/ontologies/{ontologyApiName}/search", omsHandler.SearchOntologyResources)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/export", omsHandler.ExportOntology)
+	r.Post("/api/admin/ontologies/import", omsHandler.ImportOntology)
+
+	// Snapshot routes
+	r.Post("/api/admin/ontologies/{ontologyApiName}/snapshots", omsHandler.CreateSnapshot)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/snapshots", omsHandler.ListSnapshots)
+	r.Get("/api/admin/ontologies/{ontologyApiName}/snapshots/{version}", omsHandler.GetSnapshot)
 }

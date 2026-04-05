@@ -27,12 +27,19 @@ type AggregationSpec struct {
 
 // GroupBySpec defines how to group results.
 type GroupBySpec struct {
-	Type      string   `json:"type"`                    // "exact", "fixedWidth", "ranges", "duration"
-	Field     string   `json:"field"`
-	MaxGroups *int     `json:"maxGroupCount,omitempty"`
-	Width     *float64 `json:"fixedWidth,omitempty"`    // for fixedWidth
-	Ranges    []Range  `json:"ranges,omitempty"`        // for ranges
-	Duration  string   `json:"duration,omitempty"`      // ISO 8601: P1D, P1W, P1M, P1Y
+	Type          string         `json:"type"`                    // "exact", "fixedWidth", "range", "ranges", "duration", "topValues"
+	Field         string         `json:"field"`
+	MaxGroups     *int           `json:"maxGroupCount,omitempty"`
+	Width         *float64       `json:"fixedWidth,omitempty"`    // for fixedWidth
+	Ranges        []Range        `json:"ranges,omitempty"`        // for range/ranges
+	Duration      string         `json:"duration,omitempty"`      // ISO 8601: P1D, P1W, P1M, P1Y
+	DurationValue *DurationValue `json:"value,omitempty"`         // for duration: {unit: "DAYS", value: 30}
+}
+
+// DurationValue represents a duration using Palantir V2 unit/value format.
+type DurationValue struct {
+	Unit  string  `json:"unit"`  // "DAYS", "WEEKS", "MONTHS", "YEARS", "HOURS", "MINUTES", "SECONDS"
+	Value float64 `json:"value"` // number of units
 }
 
 // Range defines a range bucket using Palantir V2 startValue/endValue format.
@@ -127,10 +134,12 @@ func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, re
 		return e.groupByExact(idx, baseQuery, gb, req.Aggregations)
 	case "fixedWidth":
 		return e.groupByFixedWidth(idx, baseQuery, gb, req.Aggregations)
-	case "ranges":
+	case "range", "ranges":
 		return e.groupByRanges(idx, baseQuery, gb, req.Aggregations)
 	case "duration":
 		return e.groupByDuration(idx, baseQuery, gb, req.Aggregations)
+	case "topValues":
+		return e.groupByTopValues(idx, baseQuery, gb, req.Aggregations)
 	default:
 		return nil, fmt.Errorf("unsupported groupBy type: %q", gb.Type)
 	}
@@ -339,11 +348,49 @@ func parseDuration(iso string) (time.Duration, error) {
 	}
 }
 
+// durationValueToSeconds converts a DurationValue to seconds.
+func durationValueToSeconds(dv *DurationValue) (float64, error) {
+	switch dv.Unit {
+	case "SECONDS":
+		return dv.Value, nil
+	case "MINUTES":
+		return dv.Value * 60, nil
+	case "HOURS":
+		return dv.Value * 3600, nil
+	case "DAYS":
+		return dv.Value * 86400, nil
+	case "WEEKS":
+		return dv.Value * 7 * 86400, nil
+	case "MONTHS":
+		return dv.Value * 30 * 86400, nil
+	case "YEARS":
+		return dv.Value * 365 * 86400, nil
+	default:
+		return 0, fmt.Errorf("unsupported duration unit: %q (supported: SECONDS, MINUTES, HOURS, DAYS, WEEKS, MONTHS, YEARS)", dv.Unit)
+	}
+}
+
 // groupByDuration groups timestamp values into duration-based buckets.
 func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb GroupBySpec, specs []AggregationSpec) (*AggregationResponse, error) {
-	dur, err := parseDuration(gb.Duration)
-	if err != nil {
-		return nil, fmt.Errorf("parse duration: %w", err)
+	var durSec float64
+
+	switch {
+	case gb.DurationValue != nil:
+		// Palantir V2 unit/value format: {"unit": "DAYS", "value": 30}
+		secs, err := durationValueToSeconds(gb.DurationValue)
+		if err != nil {
+			return nil, fmt.Errorf("parse duration value: %w", err)
+		}
+		durSec = secs
+	case gb.Duration != "":
+		// ISO 8601 format: P1D, P1W, P1M, P1Y
+		dur, err := parseDuration(gb.Duration)
+		if err != nil {
+			return nil, fmt.Errorf("parse duration: %w", err)
+		}
+		durSec = dur.Seconds()
+	default:
+		return nil, fmt.Errorf("duration groupBy requires either 'duration' (ISO 8601) or 'value' ({unit, value})")
 	}
 
 	// Fetch all documents with the timestamp field.
@@ -361,7 +408,6 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 	}
 
 	// Bucket timestamps by duration. Timestamps may be stored as strings or numeric (epoch).
-	durSec := dur.Seconds()
 	buckets := make(map[int64][]string) // bucket start epoch -> doc IDs
 
 	for _, hit := range result.Hits {
@@ -402,6 +448,57 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		startTime := time.Unix(bucketStart, 0).UTC().Format(time.RFC3339)
 		rows = append(rows, AggregationRow{
 			Group:   map[string]interface{}{gb.Field: startTime},
+			Metrics: metrics,
+		})
+	}
+
+	return &AggregationResponse{Data: rows}, nil
+}
+
+// groupByTopValues groups by the top N most frequent values for a field.
+// It uses a term facet sorted by count descending and returns the top maxGroupCount groups.
+func (e *Engine) groupByTopValues(idx bleve.Index, baseQuery query.Query, gb GroupBySpec, specs []AggregationSpec) (*AggregationResponse, error) {
+	maxGroups := 10
+	if gb.MaxGroups != nil {
+		maxGroups = *gb.MaxGroups
+	}
+
+	searchReq := bleve.NewSearchRequest(baseQuery)
+	searchReq.Size = 0
+	facet := bleve.NewFacetRequest(gb.Field, maxGroups)
+	searchReq.AddFacet("topvalues", facet)
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, fmt.Errorf("topValues facet search: %w", err)
+	}
+
+	facetResult, ok := result.Facets["topvalues"]
+	if !ok {
+		return &AggregationResponse{Data: []AggregationRow{}}, nil
+	}
+
+	if facetResult.Terms == nil {
+		return &AggregationResponse{Data: []AggregationRow{}}, nil
+	}
+
+	// Bleve returns terms sorted by count descending already.
+	terms := facetResult.Terms.Terms()
+	rows := make([]AggregationRow, 0, len(terms))
+
+	for _, term := range terms {
+		termQuery := bleve.NewTermQuery(term.Term)
+		termQuery.SetField(gb.Field)
+
+		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
+
+		metrics, err := computeMetrics(idx, scopedQuery, specs)
+		if err != nil {
+			return nil, fmt.Errorf("compute metrics for topValues group %q: %w", term.Term, err)
+		}
+
+		rows = append(rows, AggregationRow{
+			Group:   map[string]interface{}{gb.Field: term.Term},
 			Metrics: metrics,
 		})
 	}

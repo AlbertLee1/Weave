@@ -46,6 +46,7 @@ func (m *mockRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID string
 func (m *mockRepo) CreateOntology(context.Context, *oms.Ontology) error           { return nil }
 func (m *mockRepo) GetOntology(context.Context, string) (*oms.Ontology, error)    { return nil, nil }
 func (m *mockRepo) ListOntologies(context.Context) ([]oms.Ontology, error)        { return nil, nil }
+func (m *mockRepo) UpdateOntology(context.Context, *oms.Ontology) error           { return nil }
 func (m *mockRepo) CreateObjectType(context.Context, *oms.ObjectType) error       { return nil }
 func (m *mockRepo) GetObjectTypeByAPIName(context.Context, string, string) (*oms.ObjectType, error) {
 	return nil, nil
@@ -55,25 +56,99 @@ func (m *mockRepo) ListObjectTypes(context.Context, string) ([]oms.ObjectType, e
 }
 func (m *mockRepo) UpdateObjectType(context.Context, *oms.ObjectType) error { return nil }
 func (m *mockRepo) DeleteObjectType(context.Context, string) error          { return nil }
-func (m *mockRepo) CreateProperty(context.Context, *oms.Property) error     { return nil }
+func (m *mockRepo) CreateProperty(context.Context, *oms.Property) error { return nil }
+func (m *mockRepo) GetProperty(context.Context, string) (*oms.Property, error) {
+	return nil, nil
+}
 func (m *mockRepo) ListProperties(context.Context, string) ([]oms.Property, error) {
 	return nil, nil
 }
-func (m *mockRepo) DeleteProperty(context.Context, string) error          { return nil }
-func (m *mockRepo) CreateLinkType(context.Context, *oms.LinkType) error   { return nil }
-func (m *mockRepo) CreateActionType(context.Context, *oms.ActionType) error { return nil }
+func (m *mockRepo) UpdateProperty(context.Context, *oms.Property) error { return nil }
+func (m *mockRepo) DeleteProperty(context.Context, string) error        { return nil }
+func (m *mockRepo) CreateLinkType(context.Context, *oms.LinkType) error            { return nil }
+func (m *mockRepo) ListLinkTypes(context.Context, string) ([]oms.LinkType, error)  { return nil, nil }
+func (m *mockRepo) UpdateLinkType(context.Context, *oms.LinkType) error            { return nil }
+func (m *mockRepo) DeleteLinkType(context.Context, string) error                   { return nil }
+func (m *mockRepo) CreateActionType(context.Context, *oms.ActionType) error        { return nil }
 func (m *mockRepo) GetActionType(context.Context, string) (*oms.ActionType, error) {
 	return nil, nil
 }
 func (m *mockRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
 	return nil, nil
 }
-func (m *mockRepo) UpdateActionType(context.Context, *oms.ActionType) error   { return nil }
-func (m *mockRepo) CreateInterface(context.Context, *oms.Interface) error     { return nil }
+func (m *mockRepo) UpdateActionType(context.Context, *oms.ActionType) error { return nil }
+func (m *mockRepo) DeleteActionType(context.Context, string) error         { return nil }
+func (m *mockRepo) CreateInterface(context.Context, *oms.Interface) error            { return nil }
+func (m *mockRepo) GetInterface(context.Context, string) (*oms.Interface, error)     { return nil, nil }
+func (m *mockRepo) GetInterfaceByAPIName(context.Context, string, string) (*oms.Interface, error) {
+	return nil, nil
+}
 func (m *mockRepo) ListInterfaces(context.Context, string) ([]oms.Interface, error) {
 	return nil, nil
 }
-func (m *mockRepo) AttachInterface(context.Context, *oms.ObjectTypeInterface) error { return nil }
+func (m *mockRepo) UpdateInterface(context.Context, *oms.Interface) error            { return nil }
+func (m *mockRepo) DeleteInterface(context.Context, string) error                    { return nil }
+func (m *mockRepo) AttachInterface(context.Context, *oms.ObjectTypeInterface) error  { return nil }
+func (m *mockRepo) DetachInterface(context.Context, string, string) error            { return nil }
+func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
+	return nil, nil
+}
+
+func (m *mockRepo) ListObjectTypeInterfaces(context.Context, string) ([]oms.ObjectTypeInterface, error) {
+	return nil, nil
+}
+
+// SharedProperty stubs
+func (m *mockRepo) CreateSharedProperty(context.Context, *oms.SharedProperty) error   { return nil }
+func (m *mockRepo) GetSharedProperty(context.Context, string) (*oms.SharedProperty, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListSharedProperties(context.Context, string) ([]oms.SharedProperty, error) {
+	return nil, nil
+}
+func (m *mockRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error   { return nil }
+func (m *mockRepo) DeleteSharedProperty(context.Context, string) error                { return nil }
+
+// TypeGroup stubs
+func (m *mockRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error             { return nil }
+func (m *mockRepo) GetTypeGroup(context.Context, string) (*oms.TypeGroup, error)      { return nil, nil }
+func (m *mockRepo) ListTypeGroups(context.Context, string) ([]oms.TypeGroup, error)   { return nil, nil }
+func (m *mockRepo) UpdateTypeGroup(context.Context, *oms.TypeGroup) error             { return nil }
+func (m *mockRepo) DeleteTypeGroup(context.Context, string) error                     { return nil }
+func (m *mockRepo) AssignTypeGroup(context.Context, string, string) error             { return nil }
+func (m *mockRepo) RemoveTypeGroup(context.Context, string, string) error             { return nil }
+func (m *mockRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+
+// ValueType stubs
+func (m *mockRepo) CreateValueType(context.Context, *oms.ValueType) error             { return nil }
+func (m *mockRepo) GetValueType(context.Context, string) (*oms.ValueType, error)      { return nil, nil }
+func (m *mockRepo) ListValueTypes(context.Context) ([]oms.ValueType, error)           { return nil, nil }
+func (m *mockRepo) UpdateValueType(context.Context, *oms.ValueType) error             { return nil }
+func (m *mockRepo) DeleteValueType(context.Context, string) error                     { return nil }
+
+// ActionLog stubs
+func (m *mockRepo) ListActionLogs(context.Context, string, int, int) ([]oms.ActionLog, error) {
+	return nil, nil
+}
+func (m *mockRepo) CountActionLogs(context.Context, string) (int, error) { return 0, nil }
+
+// Search stubs
+func (m *mockRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {
+	return nil, nil
+}
+
+// Snapshot stubs
+func (m *mockRepo) CreateSnapshot(context.Context, *oms.OntologySnapshot) error { return nil }
+func (m *mockRepo) ListSnapshots(context.Context, string) ([]oms.OntologySnapshot, error) {
+	return nil, nil
+}
+func (m *mockRepo) GetSnapshot(context.Context, string, int) (*oms.OntologySnapshot, error) {
+	return nil, nil
+}
+func (m *mockRepo) GetOntologyVersion(context.Context, string) (int, error)       { return 0, nil }
+func (m *mockRepo) IncrementOntologyVersion(context.Context, string) (int, error) { return 1, nil }
 
 // mustJSON marshals v to json.RawMessage; panics on failure.
 func mustJSON(v interface{}) json.RawMessage {

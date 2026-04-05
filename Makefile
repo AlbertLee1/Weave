@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration build run docker-up docker-down lint web-install web-dev web-build web-test build-with-ui dev
+.PHONY: test test-unit test-integration build run docker-up docker-down lint web-install web-dev web-build web-test web-e2e build-with-ui dev
 
 test: test-unit
 
@@ -37,6 +37,9 @@ web-build:
 
 web-test:
 	cd web && npm test
+
+web-e2e:
+	cd web && npx playwright test
 
 build-with-ui: web-build build
 

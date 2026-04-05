@@ -40,12 +40,12 @@ func (m *mockRepo) CreateOntology(_ context.Context, o *oms.Ontology) error {
 	return nil
 }
 
-func (m *mockRepo) GetOntology(_ context.Context, rid string) (*oms.Ontology, error) {
+func (m *mockRepo) GetOntology(_ context.Context, ridOrApiName string) (*oms.Ontology, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	for i := range m.ontologies {
-		if m.ontologies[i].RID == rid {
+		if m.ontologies[i].RID == ridOrApiName || m.ontologies[i].APIName == ridOrApiName {
 			return &m.ontologies[i], nil
 		}
 	}
@@ -264,8 +264,218 @@ func (m *mockRepo) ListInterfaces(_ context.Context, ontologyRID string) ([]oms.
 	return result, nil
 }
 
+func (m *mockRepo) GetInterface(_ context.Context, rid string) (*oms.Interface, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.interfaces {
+		if m.interfaces[i].RID == rid {
+			return &m.interfaces[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) GetInterfaceByAPIName(_ context.Context, _, apiName string) (*oms.Interface, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.interfaces {
+		if m.interfaces[i].APIName == apiName {
+			return &m.interfaces[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) UpdateInterface(_ context.Context, iface *oms.Interface) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.interfaces {
+		if m.interfaces[i].RID == iface.RID {
+			m.interfaces[i] = *iface
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (m *mockRepo) DeleteInterface(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.interfaces {
+		if m.interfaces[i].RID == rid {
+			m.interfaces = append(m.interfaces[:i], m.interfaces[i+1:]...)
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
 func (m *mockRepo) AttachInterface(_ context.Context, _ *oms.ObjectTypeInterface) error {
 	return m.createErr
+}
+
+func (m *mockRepo) DetachInterface(_ context.Context, _, _ string) error {
+	return m.deleteErr
+}
+
+func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
+	return nil, nil
+}
+
+func (m *mockRepo) ListObjectTypeInterfaces(_ context.Context, _ string) ([]oms.ObjectTypeInterface, error) {
+	return nil, nil
+}
+
+// SharedProperty stubs
+func (m *mockRepo) CreateSharedProperty(_ context.Context, _ *oms.SharedProperty) error { return nil }
+func (m *mockRepo) GetSharedProperty(_ context.Context, _ string) (*oms.SharedProperty, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) ListSharedProperties(_ context.Context, _ string) ([]oms.SharedProperty, error) {
+	return nil, nil
+}
+func (m *mockRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedProperty) error { return nil }
+func (m *mockRepo) DeleteSharedProperty(_ context.Context, _ string) error              { return nil }
+
+// TypeGroup stubs
+func (m *mockRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
+func (m *mockRepo) GetTypeGroup(_ context.Context, _ string) (*oms.TypeGroup, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) ListTypeGroups(_ context.Context, _ string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+func (m *mockRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error          { return nil }
+func (m *mockRepo) DeleteTypeGroup(_ context.Context, _ string) error                  { return nil }
+func (m *mockRepo) AssignTypeGroup(_ context.Context, _, _ string) error               { return nil }
+func (m *mockRepo) RemoveTypeGroup(_ context.Context, _, _ string) error               { return nil }
+func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+
+// ValueType stubs
+func (m *mockRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (m *mockRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
+func (m *mockRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (m *mockRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
+
+// ActionLog stubs
+func (m *mockRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
+	return nil, nil
+}
+func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+
+// Search stubs
+func (m *mockRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {
+	return nil, nil
+}
+
+// Snapshot stubs
+func (m *mockRepo) CreateSnapshot(_ context.Context, _ *oms.OntologySnapshot) error { return nil }
+func (m *mockRepo) ListSnapshots(_ context.Context, _ string) ([]oms.OntologySnapshot, error) {
+	return nil, nil
+}
+func (m *mockRepo) GetSnapshot(_ context.Context, _ string, _ int) (*oms.OntologySnapshot, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) GetOntologyVersion(_ context.Context, _ string) (int, error)       { return 0, nil }
+func (m *mockRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) { return 1, nil }
+
+func (m *mockRepo) UpdateOntology(_ context.Context, o *oms.Ontology) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.ontologies {
+		if m.ontologies[i].RID == o.RID {
+			m.ontologies[i] = *o
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (m *mockRepo) GetProperty(_ context.Context, rid string) (*oms.Property, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.properties {
+		if m.properties[i].RID == rid {
+			return &m.properties[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) UpdateProperty(_ context.Context, p *oms.Property) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.properties {
+		if m.properties[i].RID == p.RID {
+			m.properties[i] = *p
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (m *mockRepo) ListLinkTypes(_ context.Context, ontologyRID string) ([]oms.LinkType, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var result []oms.LinkType
+	for _, lt := range m.linkTypes {
+		if lt.OntologyRID == ontologyRID {
+			result = append(result, lt)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockRepo) UpdateLinkType(_ context.Context, lt *oms.LinkType) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.linkTypes {
+		if m.linkTypes[i].RID == lt.RID {
+			m.linkTypes[i] = *lt
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (m *mockRepo) DeleteLinkType(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.linkTypes {
+		if m.linkTypes[i].RID == rid {
+			m.linkTypes = append(m.linkTypes[:i], m.linkTypes[i+1:]...)
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (m *mockRepo) DeleteActionType(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.actionTypes {
+		if m.actionTypes[i].RID == rid {
+			m.actionTypes = append(m.actionTypes[:i], m.actionTypes[i+1:]...)
+			return nil
+		}
+	}
+	return oms.ErrNotFound
 }
 
 // --- Helper ---
@@ -693,7 +903,11 @@ func TestCreateOntology_Duplicate(t *testing.T) {
 }
 
 func TestCreateObjectType_Success(t *testing.T) {
-	repo := &mockRepo{}
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test", DisplayName: "Test"},
+		},
+	}
 	handler := oms.NewOMSHandler(repo)
 
 	r := chi.NewRouter()
@@ -720,7 +934,11 @@ func TestCreateObjectType_Success(t *testing.T) {
 }
 
 func TestCreateObjectType_MissingFields(t *testing.T) {
-	repo := &mockRepo{}
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test", DisplayName: "Test"},
+		},
+	}
 	handler := oms.NewOMSHandler(repo)
 
 	r := chi.NewRouter()
@@ -801,7 +1019,7 @@ func TestDeleteObjectType_Success(t *testing.T) {
 			{
 				RID: "ri.ontology.main.object-type.1", OntologyRID: "ri.ontology.main.ontology.1",
 				APIName: "employee", DisplayName: "Employee", PrimaryKey: "id",
-				Status: "ACTIVE", Visibility: "NORMAL",
+				Status: "EXPERIMENTAL", Visibility: "NORMAL",
 			},
 		},
 	}
@@ -867,7 +1085,11 @@ func TestCreateProperty_Success(t *testing.T) {
 }
 
 func TestCreateLinkType_Success(t *testing.T) {
-	repo := &mockRepo{}
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test", DisplayName: "Test"},
+		},
+	}
 	handler := oms.NewOMSHandler(repo)
 
 	r := chi.NewRouter()
@@ -894,7 +1116,11 @@ func TestCreateLinkType_Success(t *testing.T) {
 }
 
 func TestCreateActionType_Success(t *testing.T) {
-	repo := &mockRepo{}
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test", DisplayName: "Test"},
+		},
+	}
 	handler := oms.NewOMSHandler(repo)
 
 	r := chi.NewRouter()

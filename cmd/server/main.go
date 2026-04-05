@@ -217,7 +217,7 @@ func main() {
 	if err != nil {
 		log.Printf("warning: webui not available: %v", err)
 	} else {
-		router.Get("/*", spaHandler(dist))
+		router.NotFound(spaHandler(dist))
 		log.Println("webui enabled at /")
 	}
 

@@ -20,8 +20,8 @@ export function LinkTypeForm({ onSubmit, objectTypes, isLoading }: LinkTypeFormP
     onSubmit({
       apiName,
       displayName,
-      sourceObjectType,
-      targetObjectType,
+      objectTypeApiName: sourceObjectType,
+      linkedObjectTypeApiName: targetObjectType,
       cardinality,
     });
   }
@@ -66,7 +66,7 @@ export function LinkTypeForm({ onSubmit, objectTypes, isLoading }: LinkTypeFormP
         >
           <option value="">Select source...</option>
           {objectTypes.map((ot) => (
-            <option key={ot.apiName} value={ot.apiName}>
+            <option key={ot.rid} value={ot.apiName}>
               {ot.displayName} ({ot.apiName})
             </option>
           ))}
@@ -83,7 +83,7 @@ export function LinkTypeForm({ onSubmit, objectTypes, isLoading }: LinkTypeFormP
         >
           <option value="">Select target...</option>
           {objectTypes.map((ot) => (
-            <option key={ot.apiName} value={ot.apiName}>
+            <option key={ot.rid} value={ot.apiName}>
               {ot.displayName} ({ot.apiName})
             </option>
           ))}

@@ -90,6 +90,18 @@ func (r *inMemoryOmsRepo) ListOntologies(_ context.Context) ([]oms.Ontology, err
 	return result, nil
 }
 
+func (r *inMemoryOmsRepo) UpdateOntology(_ context.Context, o *oms.Ontology) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.ontologies[o.RID]; !ok {
+		return oms.ErrNotFound
+	}
+	cp := *o
+	cp.UpdatedAt = time.Now()
+	r.ontologies[o.RID] = &cp
+	return nil
+}
+
 func (r *inMemoryOmsRepo) CreateObjectType(_ context.Context, ot *oms.ObjectType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -190,6 +202,17 @@ func (r *inMemoryOmsRepo) CreateProperty(_ context.Context, p *oms.Property) err
 	return nil
 }
 
+func (r *inMemoryOmsRepo) GetProperty(_ context.Context, rid string) (*oms.Property, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	p, ok := r.properties[rid]
+	if !ok {
+		return nil, oms.ErrNotFound
+	}
+	cp := *p
+	return &cp, nil
+}
+
 func (r *inMemoryOmsRepo) ListProperties(_ context.Context, objectTypeRID string) ([]oms.Property, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -200,6 +223,17 @@ func (r *inMemoryOmsRepo) ListProperties(_ context.Context, objectTypeRID string
 		}
 	}
 	return result, nil
+}
+
+func (r *inMemoryOmsRepo) UpdateProperty(_ context.Context, p *oms.Property) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.properties[p.RID]; !ok {
+		return oms.ErrNotFound
+	}
+	cp := *p
+	r.properties[p.RID] = &cp
+	return nil
 }
 
 func (r *inMemoryOmsRepo) DeleteProperty(_ context.Context, rid string) error {
@@ -247,6 +281,39 @@ func (r *inMemoryOmsRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID
 		}
 	}
 	return result, nil
+}
+
+func (r *inMemoryOmsRepo) ListLinkTypes(_ context.Context, ontologyRID string) ([]oms.LinkType, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []oms.LinkType
+	for _, lt := range r.linkTypes {
+		if lt.OntologyRID == ontologyRID {
+			result = append(result, *lt)
+		}
+	}
+	return result, nil
+}
+
+func (r *inMemoryOmsRepo) UpdateLinkType(_ context.Context, lt *oms.LinkType) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.linkTypes[lt.RID]; !ok {
+		return oms.ErrNotFound
+	}
+	cp := *lt
+	r.linkTypes[lt.RID] = &cp
+	return nil
+}
+
+func (r *inMemoryOmsRepo) DeleteLinkType(_ context.Context, rid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.linkTypes[rid]; !ok {
+		return oms.ErrNotFound
+	}
+	delete(r.linkTypes, rid)
+	return nil
 }
 
 func (r *inMemoryOmsRepo) CreateActionType(_ context.Context, at *oms.ActionType) error {
@@ -297,6 +364,16 @@ func (r *inMemoryOmsRepo) UpdateActionType(_ context.Context, at *oms.ActionType
 	return nil
 }
 
+func (r *inMemoryOmsRepo) DeleteActionType(_ context.Context, rid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.actionTypes[rid]; !ok {
+		return oms.ErrNotFound
+	}
+	delete(r.actionTypes, rid)
+	return nil
+}
+
 func (r *inMemoryOmsRepo) CreateInterface(_ context.Context, iface *oms.Interface) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -304,6 +381,29 @@ func (r *inMemoryOmsRepo) CreateInterface(_ context.Context, iface *oms.Interfac
 	cp.CreatedAt = time.Now()
 	r.interfaces[iface.RID] = &cp
 	return nil
+}
+
+func (r *inMemoryOmsRepo) GetInterface(_ context.Context, rid string) (*oms.Interface, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	i, ok := r.interfaces[rid]
+	if !ok {
+		return nil, oms.ErrNotFound
+	}
+	cp := *i
+	return &cp, nil
+}
+
+func (r *inMemoryOmsRepo) GetInterfaceByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.Interface, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, i := range r.interfaces {
+		if i.OntologyRID == ontologyRID && i.APIName == apiName {
+			cp := *i
+			return &cp, nil
+		}
+	}
+	return nil, oms.ErrNotFound
 }
 
 func (r *inMemoryOmsRepo) ListInterfaces(_ context.Context, ontologyRID string) ([]oms.Interface, error) {
@@ -318,11 +418,130 @@ func (r *inMemoryOmsRepo) ListInterfaces(_ context.Context, ontologyRID string) 
 	return result, nil
 }
 
+func (r *inMemoryOmsRepo) UpdateInterface(_ context.Context, iface *oms.Interface) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.interfaces[iface.RID]; !ok {
+		return oms.ErrNotFound
+	}
+	cp := *iface
+	r.interfaces[iface.RID] = &cp
+	return nil
+}
+
+func (r *inMemoryOmsRepo) DeleteInterface(_ context.Context, rid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.interfaces[rid]; !ok {
+		return oms.ErrNotFound
+	}
+	delete(r.interfaces, rid)
+	return nil
+}
+
 func (r *inMemoryOmsRepo) AttachInterface(_ context.Context, oti *oms.ObjectTypeInterface) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.otiLinks = append(r.otiLinks, *oti)
 	return nil
+}
+
+func (r *inMemoryOmsRepo) DetachInterface(_ context.Context, objectTypeRID, interfaceRID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, oti := range r.otiLinks {
+		if oti.ObjectTypeRID == objectTypeRID && oti.InterfaceRID == interfaceRID {
+			r.otiLinks = append(r.otiLinks[:i], r.otiLinks[i+1:]...)
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (r *inMemoryOmsRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
+	return nil, nil
+}
+
+func (r *inMemoryOmsRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []oms.ObjectTypeInterface
+	for _, oti := range r.otiLinks {
+		if oti.ObjectTypeRID == objectTypeRID {
+			result = append(result, oti)
+		}
+	}
+	return result, nil
+}
+
+// SharedProperty stubs
+func (r *inMemoryOmsRepo) CreateSharedProperty(_ context.Context, _ *oms.SharedProperty) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) GetSharedProperty(_ context.Context, _ string) (*oms.SharedProperty, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) ListSharedProperties(_ context.Context, _ string) ([]oms.SharedProperty, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedProperty) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) DeleteSharedProperty(_ context.Context, _ string) error { return nil }
+
+// TypeGroup stubs
+func (r *inMemoryOmsRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
+func (r *inMemoryOmsRepo) GetTypeGroup(_ context.Context, _ string) (*oms.TypeGroup, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) ListTypeGroups(_ context.Context, _ string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
+func (r *inMemoryOmsRepo) DeleteTypeGroup(_ context.Context, _ string) error         { return nil }
+func (r *inMemoryOmsRepo) AssignTypeGroup(_ context.Context, _, _ string) error      { return nil }
+func (r *inMemoryOmsRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
+func (r *inMemoryOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
+	return nil, nil
+}
+
+// ValueType stubs
+func (r *inMemoryOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (r *inMemoryOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (r *inMemoryOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
+
+// ActionLog stubs
+func (r *inMemoryOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+
+// Search stubs
+func (r *inMemoryOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {
+	return nil, nil
+}
+
+// Snapshot stubs
+func (r *inMemoryOmsRepo) CreateSnapshot(_ context.Context, _ *oms.OntologySnapshot) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) ListSnapshots(_ context.Context, _ string) ([]oms.OntologySnapshot, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) GetSnapshot(_ context.Context, _ string, _ int) (*oms.OntologySnapshot, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) GetOntologyVersion(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (r *inMemoryOmsRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) {
+	return 1, nil
 }
 
 // ---------------------------------------------------------------------------

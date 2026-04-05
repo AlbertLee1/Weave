@@ -15,7 +15,7 @@ export interface ObjectType {
   description?: string;
   primaryKey: string;
   titleProperty?: string;
-  status: 'ACTIVE' | 'EXPERIMENTAL' | 'DEPRECATED';
+  status: 'PROMOTED' | 'ACTIVE' | 'EXPERIMENTAL' | 'DEPRECATED' | 'EXAMPLE';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   icon?: string;
   color?: string;
@@ -38,6 +38,8 @@ export interface Property {
   isNullable: boolean;
   isSearchable: boolean;
   isSortable: boolean;
+  status?: string;
+  deprecatedReason?: string;
 }
 
 export interface LinkType {
@@ -59,6 +61,19 @@ export interface ActionType {
   status: string;
   parameters: unknown;
   rules?: unknown;
+  submissionCriteria?: unknown;
+  sideEffects?: unknown;
+}
+
+export interface ActionLog {
+  id: number;
+  actionTypeRid: string;
+  userId: string;
+  parameters: unknown;
+  edits: unknown;
+  status: string;
+  errorMessage?: string;
+  createdAt: string;
 }
 
 export interface WireObject {
@@ -120,4 +135,18 @@ export interface ApiError {
   errorInstanceId: string;
   parameters?: Record<string, string>;
   statusCode: number;
+}
+
+export interface OntologyInterface {
+  rid: string;
+  apiName: string;
+  displayName: string;
+  extendsRid?: string;
+  sharedProperties?: unknown;
+}
+
+export interface ObjectTypeInterface {
+  objectTypeRid: string;
+  interfaceRid: string;
+  propertyMapping: Record<string, string>;
 }

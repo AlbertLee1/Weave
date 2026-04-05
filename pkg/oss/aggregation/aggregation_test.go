@@ -809,3 +809,272 @@ func TestAggregate_AccuracyAndComputeUsage(t *testing.T) {
 func floatApproxEqual(a, b, tolerance float64) bool {
 	return math.Abs(a-b) < tolerance
 }
+
+// --- GroupBy range alias (27) ---
+
+func TestAggregate_GroupByRange_Alias(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+
+	low := 0.0
+	mid := 100000.0
+	high := 200000.0
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{
+				Type:  "range", // singular alias
+				Field: "salary",
+				Ranges: []Range{
+					{Name: "low", StartValue: &low, EndValue: &mid},  // [0, 100000)
+					{Name: "high", StartValue: &mid, EndValue: &high}, // [100000, 200000)
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	rangeCounts := make(map[string]uint64)
+	for _, row := range resp.Data {
+		name := row.Group["salary"].(string)
+		count, ok := findMetric(row.Metrics, "count")
+		if !ok {
+			t.Fatalf("missing count metric for range %s", name)
+		}
+		rangeCounts[name] = count.(uint64)
+	}
+
+	// low [0, 100000): salary 75000, 80000, 90000 => 3
+	if rangeCounts["low"] != 3 {
+		t.Errorf("low count = %d, want 3", rangeCounts["low"])
+	}
+	// high [100000, 200000): salary 100000, 120000 => 2
+	if rangeCounts["high"] != 2 {
+		t.Errorf("high count = %d, want 2", rangeCounts["high"])
+	}
+}
+
+// --- GroupBy topValues (28-30) ---
+
+func TestAggregate_GroupByTopValues_Basic(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "topValues", Field: "department"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	// 3 distinct departments: engineering(2), sales(2), hr(1)
+	if len(resp.Data) != 3 {
+		t.Fatalf("got %d groups, want 3", len(resp.Data))
+	}
+
+	groupCounts := make(map[string]uint64)
+	for _, row := range resp.Data {
+		dept := row.Group["department"].(string)
+		count, ok := findMetric(row.Metrics, "count")
+		if !ok {
+			t.Fatalf("missing count metric for group %v", row.Group)
+		}
+		groupCounts[dept] = count.(uint64)
+	}
+
+	if groupCounts["engineering"] != 2 {
+		t.Errorf("engineering count = %d, want 2", groupCounts["engineering"])
+	}
+	if groupCounts["sales"] != 2 {
+		t.Errorf("sales count = %d, want 2", groupCounts["sales"])
+	}
+	if groupCounts["hr"] != 1 {
+		t.Errorf("hr count = %d, want 1", groupCounts["hr"])
+	}
+}
+
+func TestAggregate_GroupByTopValues_MaxGroupCount(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+
+	maxGroups := 2
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "topValues", Field: "department", MaxGroups: &maxGroups},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	// maxGroupCount=2 means only top 2 by frequency are returned
+	if len(resp.Data) != 2 {
+		t.Fatalf("got %d groups, want 2 (maxGroupCount=2)", len(resp.Data))
+	}
+
+	// The top 2 by frequency should be engineering(2) and sales(2); hr(1) is excluded.
+	for _, row := range resp.Data {
+		dept := row.Group["department"].(string)
+		if dept == "hr" {
+			t.Errorf("expected hr to be excluded from top 2, but it was included")
+		}
+	}
+}
+
+func TestAggregate_GroupByTopValues_Empty(t *testing.T) {
+	idx := setupEmptyIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "topValues", Field: "department"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	if len(resp.Data) != 0 {
+		t.Errorf("got %d groups, want 0 for empty index", len(resp.Data))
+	}
+}
+
+// --- GroupBy duration with DurationValue format (31-32) ---
+
+func setupTimestampIndex(t *testing.T) bleve.Index {
+	t.Helper()
+	indexMapping := bleve.NewIndexMapping()
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("name", mapping.NewTextFieldMapping())
+	docMapping.AddFieldMappingsAt("value", mapping.NewNumericFieldMapping())
+	docMapping.AddFieldMappingsAt("startDate", mapping.NewNumericFieldMapping())
+	indexMapping.DefaultMapping = docMapping
+
+	dir := t.TempDir()
+	idx, err := bleve.New(filepath.Join(dir, "ts"), indexMapping)
+	if err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+
+	// Create docs with startDate as epoch seconds in two distinct 30-day buckets.
+	// Day 0: epoch 0 (1970-01-01)
+	// Day 31: epoch 31*86400 (1970-02-01) -> different 30-day bucket
+	docs := []struct {
+		id  string
+		doc map[string]interface{}
+	}{
+		{"1", map[string]interface{}{"name": "a", "value": 1.0, "startDate": 0.0}},
+		{"2", map[string]interface{}{"name": "b", "value": 2.0, "startDate": float64(10 * 86400)}},   // day 10, same bucket as doc1
+		{"3", map[string]interface{}{"name": "c", "value": 3.0, "startDate": float64(31 * 86400)}},  // day 31, new bucket
+	}
+	for _, d := range docs {
+		if err := idx.Index(d.id, d.doc); err != nil {
+			t.Fatalf("failed to index doc %s: %v", d.id, err)
+		}
+	}
+	return idx
+}
+
+func TestAggregate_GroupByDuration_DurationValueFormat(t *testing.T) {
+	idx := setupTimestampIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{
+				Type:  "duration",
+				Field: "startDate",
+				DurationValue: &DurationValue{Unit: "DAYS", Value: 30},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	// docs 1,2 fall in the [0, 30d) bucket; doc 3 falls in the [31d, 61d) bucket.
+	if len(resp.Data) != 2 {
+		t.Fatalf("got %d buckets, want 2", len(resp.Data))
+	}
+
+	total := uint64(0)
+	for _, row := range resp.Data {
+		count, ok := findMetric(row.Metrics, "count")
+		if !ok {
+			t.Fatalf("missing count metric for bucket %v", row.Group)
+		}
+		total += count.(uint64)
+	}
+	if total != 3 {
+		t.Errorf("total count across duration buckets = %d, want 3", total)
+	}
+}
+
+func TestAggregate_GroupByDuration_MissingDuration(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+
+	// Neither Duration nor DurationValue set — should return error.
+	_, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{{Type: "count"}},
+		GroupBy: []GroupBySpec{
+			{Type: "duration", Field: "salary"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for duration groupBy with no duration spec, got nil")
+	}
+}
+
+// --- DurationValue unit conversion (33) ---
+
+func TestDurationValueToSeconds(t *testing.T) {
+	cases := []struct {
+		dv      DurationValue
+		wantSec float64
+	}{
+		{DurationValue{Unit: "SECONDS", Value: 60}, 60},
+		{DurationValue{Unit: "MINUTES", Value: 2}, 120},
+		{DurationValue{Unit: "HOURS", Value: 1}, 3600},
+		{DurationValue{Unit: "DAYS", Value: 1}, 86400},
+		{DurationValue{Unit: "WEEKS", Value: 1}, 7 * 86400},
+		{DurationValue{Unit: "MONTHS", Value: 1}, 30 * 86400},
+		{DurationValue{Unit: "YEARS", Value: 1}, 365 * 86400},
+	}
+	for _, tc := range cases {
+		got, err := durationValueToSeconds(&tc.dv)
+		if err != nil {
+			t.Errorf("durationValueToSeconds(%v) returned error: %v", tc.dv, err)
+			continue
+		}
+		if got != tc.wantSec {
+			t.Errorf("durationValueToSeconds(%v) = %v, want %v", tc.dv, got, tc.wantSec)
+		}
+	}
+
+	// Unknown unit
+	_, err := durationValueToSeconds(&DurationValue{Unit: "FORTNIGHTS", Value: 1})
+	if err == nil {
+		t.Error("expected error for unknown unit, got nil")
+	}
+}
