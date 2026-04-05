@@ -108,7 +108,7 @@ export async function navigateToAdmin(page: Page, ontologyApiName?: string) {
   } else {
     await page.goto('/admin');
   }
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
 }
 
 /** Generate a unique name for test isolation. */

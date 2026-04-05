@@ -1,5 +1,13 @@
 import { useState } from 'react';
 import type { CreateActionTypeInput } from '../../api/admin';
+import { ParameterBuilder } from './ParameterBuilder';
+
+interface Parameter {
+  name: string;
+  type: string;
+  required: boolean;
+  description?: string;
+}
 
 interface ActionTypeFormProps {
   onSubmit: (values: CreateActionTypeInput) => void;
@@ -7,34 +15,29 @@ interface ActionTypeFormProps {
   isLoading: boolean;
 }
 
+function parseInitialParams(parameters: unknown): Parameter[] {
+  if (!parameters) return [];
+  if (Array.isArray(parameters)) return parameters as Parameter[];
+  return [];
+}
+
 export function ActionTypeForm({ onSubmit, initialValues, isLoading }: ActionTypeFormProps) {
   const [apiName, setApiName] = useState(initialValues?.apiName ?? '');
   const [displayName, setDisplayName] = useState(initialValues?.displayName ?? '');
   const [description, setDescription] = useState(initialValues?.description ?? '');
   const [status, setStatus] = useState(initialValues?.status ?? 'ACTIVE');
-  const [parametersJson, setParametersJson] = useState(
-    initialValues?.parameters ? JSON.stringify(initialValues.parameters, null, 2) : '',
+  const [params, setParams] = useState<Parameter[]>(() =>
+    parseInitialParams(initialValues?.parameters),
   );
-  const [jsonError, setJsonError] = useState('');
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    let parameters: unknown = undefined;
-    if (parametersJson.trim()) {
-      try {
-        parameters = JSON.parse(parametersJson);
-        setJsonError('');
-      } catch {
-        setJsonError('Invalid JSON');
-        return;
-      }
-    }
     onSubmit({
       apiName,
       displayName,
       description: description || undefined,
       status: status || undefined,
-      parameters,
+      parameters: params.length > 0 ? params : undefined,
     });
   }
 
@@ -92,22 +95,7 @@ export function ActionTypeForm({ onSubmit, initialValues, isLoading }: ActionTyp
         </select>
       </div>
 
-      <div className="flex flex-col">
-        <label className={labelClass}>Parameters (JSON)</label>
-        <textarea
-          value={parametersJson}
-          onChange={(e) => {
-            setParametersJson(e.target.value);
-            setJsonError('');
-          }}
-          rows={6}
-          className={`${inputClass} resize-y ${jsonError ? 'border-accent-error' : ''}`}
-          placeholder='{"name": {"type": "string", "required": true}}'
-        />
-        {jsonError && (
-          <span className="text-xs text-accent-error mt-1">{jsonError}</span>
-        )}
-      </div>
+      <ParameterBuilder value={params} onChange={setParams} />
 
       <button
         type="submit"

@@ -27,13 +27,19 @@ test.describe('ObjectType CRUD', () => {
     // Click "+ Create" on Object Types tab
     await page.click('button:has-text("+ Create")');
 
-    // Fill form — ObjectTypeForm placeholders: "employee" (API Name), "Employee" (Display Name), "id" (Primary Key)
-    await page.fill('input[placeholder="employee"]', otName);
+    // Step 1: Fill display name (apiName auto-generates)
     await page.fill('input[placeholder="Employee"]', `Display ${otName}`);
+    // Override auto-generated apiName
+    await page.fill('input[placeholder="employee"]', otName);
+
+    // Click Next to go to Step 2
+    await page.click('button:has-text("Next")');
+
+    // Step 2: Primary Key defaults to "id", override it
     await page.fill('input[placeholder="id"]', 'pk');
 
-    // Submit
-    await page.click('button[type="submit"]:has-text("Create Object Type")');
+    // Submit (use type=submit inside the modal to avoid matching "+ Create" button)
+    await page.locator('[data-testid="modal-overlay"] button[type="submit"]').click();
 
     // Should appear in the list
     await expect(page.locator(`text=${otName}`).first()).toBeVisible({ timeout: 5000 });

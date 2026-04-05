@@ -50,12 +50,7 @@ test.describe('LinkType CRUD', () => {
     // Click "+ Create"
     await page.click('button:has-text("+ Create")');
 
-    // Fill form — LinkTypeForm placeholders: "employee-department" (API Name), "Employee Department" (Display Name)
-    await page.fill('input[placeholder="employee-department"]', ltName);
-    await page.fill('input[placeholder="Employee Department"]', `Display ${ltName}`);
-
-    // Select source and target from dropdowns (option values are RIDs)
-    // Use value matching: find the OT RID from the option that contains our name
+    // Select source and target first (apiName/displayName auto-generate)
     const srcSelect = page.locator('select').nth(0);
     const srcOption = srcSelect.locator(`option:has-text("${srcOtName}")`);
     const srcValue = await srcOption.getAttribute('value');
@@ -65,6 +60,10 @@ test.describe('LinkType CRUD', () => {
     const tgtOption = tgtSelect.locator(`option:has-text("${tgtOtName}")`);
     const tgtValue = await tgtOption.getAttribute('value');
     await tgtSelect.selectOption(tgtValue!);
+
+    // Override auto-generated apiName with our test name
+    await page.fill('input[placeholder="employeeDepartment"]', ltName);
+    await page.fill('input[placeholder="Employee → Department"]', `Display ${ltName}`);
 
     // Submit
     await page.click('button[type="submit"]:has-text("Create Link Type")');

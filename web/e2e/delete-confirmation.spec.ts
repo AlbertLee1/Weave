@@ -57,7 +57,7 @@ test.describe('Delete Confirmation Flow', () => {
     });
 
     await navigateToAdmin(page, ontologyApiName);
-    await expect(page.locator(`text=${otName}`).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator(`text=${otName}`).first()).toBeVisible({ timeout: 10000 });
 
     // Click delete
     const row = page.locator(`text=${otName}`).first().locator('..').locator('..');
