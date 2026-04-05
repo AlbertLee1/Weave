@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/internal/testutil"
@@ -619,5 +620,238 @@ func TestInterface_Attach(t *testing.T) {
 	err := repo.AttachInterface(context.Background(), oti)
 	if err != nil {
 		t.Fatalf("attach failed: %v", err)
+	}
+}
+
+// --- Bug fix: ListInterfaceObjectTypes (C2) ---
+
+func TestListInterfaceObjectTypes_ReturnsAttachedObjectTypes(t *testing.T) {
+	repo := setupRepo(t)
+	o := seedOntology(t, repo)
+	ot := seedObjectType(t, repo, o.RID)
+
+	iface := &oms.Interface{
+		RID: "ri.ontology.main.interface.i1", OntologyRID: o.RID,
+		APIName: "GeoLocatable", DisplayName: "Geo Locatable",
+	}
+	repo.CreateInterface(context.Background(), iface)
+
+	oti := &oms.ObjectTypeInterface{
+		ObjectTypeRID:   ot.RID,
+		InterfaceRID:    iface.RID,
+		PropertyMapping: json.RawMessage(`{}`),
+	}
+	repo.AttachInterface(context.Background(), oti)
+
+	result, err := repo.ListInterfaceObjectTypes(context.Background(), iface.RID)
+	if err != nil {
+		t.Fatalf("ListInterfaceObjectTypes failed: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 object type, got %d", len(result))
+	}
+	if result[0].RID != ot.RID {
+		t.Errorf("expected RID %q, got %q", ot.RID, result[0].RID)
+	}
+	if result[0].PrimaryKey != "employeeId" {
+		t.Errorf("expected PrimaryKey 'employeeId', got %q", result[0].PrimaryKey)
+	}
+	if result[0].Status != "ACTIVE" {
+		t.Errorf("expected Status 'ACTIVE', got %q", result[0].Status)
+	}
+}
+
+// --- Bug fix: CreateObjectType with deprecated fields ---
+
+func TestCreateObjectType_WithDeprecatedFields(t *testing.T) {
+	repo := setupRepo(t)
+	o := seedOntology(t, repo)
+
+	deadline := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	ot := &oms.ObjectType{
+		RID:                "ri.ontology.main.object-type.dep1",
+		OntologyRID:        o.RID,
+		APIName:            "legacyWidget",
+		DisplayName:        "Legacy Widget",
+		PrimaryKey:         "widgetId",
+		Status:             "DEPRECATED",
+		Visibility:         "NORMAL",
+		DeprecatedReason:   "Replaced by NewWidget",
+		DeprecatedDeadline: &deadline,
+	}
+	err := repo.CreateObjectType(context.Background(), ot)
+	if err != nil {
+		t.Fatalf("create with deprecated fields failed: %v", err)
+	}
+
+	got, err := repo.GetObjectType(context.Background(), ot.RID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.DeprecatedReason != "Replaced by NewWidget" {
+		t.Errorf("expected deprecatedReason 'Replaced by NewWidget', got %q", got.DeprecatedReason)
+	}
+	if got.DeprecatedDeadline == nil || !got.DeprecatedDeadline.Equal(deadline) {
+		t.Errorf("expected deprecatedDeadline %v, got %v", deadline, got.DeprecatedDeadline)
+	}
+}
+
+// --- Bug fix: InsertActionLog (C3) ---
+
+func TestInsertActionLog(t *testing.T) {
+	repo := setupRepo(t)
+
+	al := &oms.ActionLog{
+		ActionTypeRID: "ri.ontology.main.action-type.at1",
+		UserID:        "user-123",
+		Parameters:    json.RawMessage(`{"name":"test"}`),
+		Edits:         json.RawMessage(`[{"type":"CREATE"}]`),
+		Status:        "SUCCESS",
+	}
+	err := repo.InsertActionLog(context.Background(), al)
+	if err != nil {
+		t.Fatalf("InsertActionLog failed: %v", err)
+	}
+	if al.ID == 0 {
+		t.Error("expected non-zero ID after insert")
+	}
+	if al.CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt after insert")
+	}
+
+	// Verify via ListActionLogs
+	logs, err := repo.ListActionLogs(context.Background(), al.ActionTypeRID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListActionLogs failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].UserID != "user-123" {
+		t.Errorf("expected userId 'user-123', got %q", logs[0].UserID)
+	}
+	if logs[0].Status != "SUCCESS" {
+		t.Errorf("expected status 'SUCCESS', got %q", logs[0].Status)
+	}
+}
+
+func TestInsertActionLog_WithError(t *testing.T) {
+	repo := setupRepo(t)
+
+	al := &oms.ActionLog{
+		ActionTypeRID: "ri.ontology.main.action-type.at2",
+		UserID:        "user-456",
+		Parameters:    json.RawMessage(`{}`),
+		Edits:         json.RawMessage(`[]`),
+		Status:        "FAILED",
+		ErrorMessage:  "validation error: missing required field",
+	}
+	err := repo.InsertActionLog(context.Background(), al)
+	if err != nil {
+		t.Fatalf("InsertActionLog with error failed: %v", err)
+	}
+
+	logs, _ := repo.ListActionLogs(context.Background(), al.ActionTypeRID, 10, 0)
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].ErrorMessage != "validation error: missing required field" {
+		t.Errorf("expected error message, got %q", logs[0].ErrorMessage)
+	}
+}
+
+// --- Bug fix: Ontology CurrentVersion field ---
+
+func TestOntology_CurrentVersion(t *testing.T) {
+	repo := setupRepo(t)
+	o := seedOntology(t, repo)
+
+	got, err := repo.GetOntology(context.Background(), o.RID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.CurrentVersion != 0 {
+		t.Errorf("expected CurrentVersion 0 for new ontology, got %d", got.CurrentVersion)
+	}
+
+	// Increment version and verify
+	newVer, err := repo.IncrementOntologyVersion(context.Background(), o.RID)
+	if err != nil {
+		t.Fatalf("IncrementOntologyVersion failed: %v", err)
+	}
+	if newVer != 1 {
+		t.Errorf("expected version 1, got %d", newVer)
+	}
+
+	got, _ = repo.GetOntology(context.Background(), o.RID)
+	if got.CurrentVersion != 1 {
+		t.Errorf("expected CurrentVersion 1 after increment, got %d", got.CurrentVersion)
+	}
+}
+
+func TestOntology_ListIncludesCurrentVersion(t *testing.T) {
+	repo := setupRepo(t)
+	seedOntology(t, repo)
+
+	list, err := repo.ListOntologies(context.Background())
+	if err != nil {
+		t.Fatalf("ListOntologies failed: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1, got %d", len(list))
+	}
+	if list[0].CurrentVersion != 0 {
+		t.Errorf("expected CurrentVersion 0, got %d", list[0].CurrentVersion)
+	}
+}
+
+// --- Bug fix: Property SharedPropertyRID field ---
+
+func TestProperty_WithSharedPropertyRID(t *testing.T) {
+	repo := setupRepo(t)
+	o := seedOntology(t, repo)
+	ot := seedObjectType(t, repo, o.RID)
+
+	// Create a shared property first
+	sp := &oms.SharedProperty{
+		RID: "ri.ontology.main.shared-property.sp1", OntologyRID: o.RID,
+		APIName: "latitude", DisplayName: "Latitude", BaseType: "double",
+	}
+	err := repo.CreateSharedProperty(context.Background(), sp)
+	if err != nil {
+		t.Fatalf("create shared property failed: %v", err)
+	}
+
+	// Create property linked to shared property
+	p := &oms.Property{
+		RID:               "ri.ontology.main.property.psp1",
+		ObjectTypeRID:     ot.RID,
+		APIName:           "lat",
+		BaseType:          "double",
+		IsNullable:        true,
+		IsSearchable:      true,
+		IsSortable:        true,
+		SharedPropertyRID: sp.RID,
+	}
+	err = repo.CreateProperty(context.Background(), p)
+	if err != nil {
+		t.Fatalf("create property with shared_property_rid failed: %v", err)
+	}
+
+	got, err := repo.GetProperty(context.Background(), p.RID)
+	if err != nil {
+		t.Fatalf("get property failed: %v", err)
+	}
+	if got.SharedPropertyRID != sp.RID {
+		t.Errorf("expected SharedPropertyRID %q, got %q", sp.RID, got.SharedPropertyRID)
+	}
+
+	// Verify via ListProperties too
+	list, _ := repo.ListProperties(context.Background(), ot.RID)
+	if len(list) != 1 {
+		t.Fatalf("expected 1, got %d", len(list))
+	}
+	if list[0].SharedPropertyRID != sp.RID {
+		t.Errorf("ListProperties: expected SharedPropertyRID %q, got %q", sp.RID, list[0].SharedPropertyRID)
 	}
 }

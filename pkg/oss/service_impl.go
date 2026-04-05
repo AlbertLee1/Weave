@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -80,6 +81,11 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 	searchReq.Size = pageSize
 	searchReq.From = cursor.Offset
 
+	// Apply ordering if specified.
+	if req.OrderBy != "" {
+		searchReq.SortBy(parseOrderBy(req.OrderBy))
+	}
+
 	result, err := s.indexMgr.Search(req.ObjectType, searchReq)
 	if err != nil {
 		return nil, err
@@ -143,6 +149,11 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	searchReq.Size = pageSize
 	searchReq.From = cursor.Offset
 
+	// Apply ordering if specified.
+	if req.OrderBy != "" {
+		searchReq.SortBy(parseOrderBy(req.OrderBy))
+	}
+
 	result, err := s.indexMgr.Search(req.ObjectType, searchReq)
 	if err != nil {
 		return nil, err
@@ -169,6 +180,32 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	}
 
 	return page, nil
+}
+
+// parseOrderBy converts an orderBy string like "field:asc" or "field:desc" into
+// a Bleve sort order slice. Bleve uses "-field" for descending, "field" for ascending.
+// Multiple fields can be comma-separated: "field1:asc,field2:desc".
+func parseOrderBy(orderBy string) []string {
+	parts := strings.Split(orderBy, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// Split on ":" to separate field and direction.
+		fieldDir := strings.SplitN(part, ":", 2)
+		field := strings.TrimSpace(fieldDir[0])
+		if field == "" {
+			continue
+		}
+		if len(fieldDir) == 2 && strings.TrimSpace(fieldDir[1]) == "desc" {
+			result = append(result, "-"+field)
+		} else {
+			result = append(result, field)
+		}
+	}
+	return result
 }
 
 // ListLinkedObjects lists objects linked to a source object through a link type.

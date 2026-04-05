@@ -14,23 +14,41 @@ import (
 	"github.com/liyang/weave/pkg/index"
 )
 
+const (
+	// DefaultMaxDeliveries is the maximum number of delivery attempts before
+	// a message is terminated (dead-lettered).
+	DefaultMaxDeliveries = 5
+)
+
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
 type Consumer struct {
-	js         nats.JetStreamContext
-	indexMgr   *index.Manager
-	sub        *nats.Subscription
-	mu         sync.Mutex
-	running    bool
-	lastOffset atomic.Uint64
-	onChange   func(ChangeEvent) // optional callback
+	js            nats.JetStreamContext
+	indexMgr      *index.Manager
+	sub           *nats.Subscription
+	mu            sync.Mutex
+	running       bool
+	lastOffset    atomic.Uint64
+	onChange      func(ChangeEvent) // optional callback
+	maxDeliveries uint64
 }
 
 // NewConsumer creates a new edit consumer.
 func NewConsumer(js nats.JetStreamContext, indexMgr *index.Manager) *Consumer {
 	return &Consumer{
-		js:       js,
-		indexMgr: indexMgr,
+		js:            js,
+		indexMgr:      indexMgr,
+		maxDeliveries: DefaultMaxDeliveries,
 	}
+}
+
+// SetMaxDeliveries sets the maximum delivery attempts before a message is terminated.
+func (c *Consumer) SetMaxDeliveries(n uint64) {
+	c.maxDeliveries = n
+}
+
+// shouldTerminate returns true if the delivery count exceeds the max deliveries threshold.
+func (c *Consumer) shouldTerminate(numDelivered uint64) bool {
+	return numDelivered > c.maxDeliveries
 }
 
 // SetOnChange sets a callback for change events.
@@ -87,6 +105,17 @@ func (c *Consumer) LastOffset() uint64 {
 }
 
 func (c *Consumer) handleMessage(msg *nats.Msg) {
+	// Check delivery count for dead-letter logic
+	meta, metaErr := msg.Metadata()
+	if metaErr == nil && c.shouldTerminate(meta.NumDelivered) {
+		log.Printf("funnel: message exceeded max deliveries (%d/%d), terminating batch",
+			meta.NumDelivered, c.maxDeliveries)
+		if err := msg.Term(); err != nil {
+			log.Printf("funnel: term error: %v", err)
+		}
+		return
+	}
+
 	var batch EditBatch
 	if err := json.Unmarshal(msg.Data, &batch); err != nil {
 		log.Printf("funnel: unmarshal error: %v", err)

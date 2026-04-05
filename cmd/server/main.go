@@ -16,6 +16,7 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/index"
@@ -96,20 +97,26 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				objectType := chi.URLParam(r, "objectType")
 				var req aggregation.AggregationRequest
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					http.Error(w, err.Error(), 400)
+					apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAggregationRequest", map[string]string{
+						"reason": err.Error(),
+					}))
 					return
 				}
 				req.ObjectType = objectType
 
 				idx := deps.IndexMgr.GetIndex(objectType)
 				if idx == nil {
-					http.Error(w, "index not found", 404)
+					apierror.WriteJSON(w, apierror.NewNotFound("IndexNotFound", map[string]string{
+						"objectType": objectType,
+					}))
 					return
 				}
 
 				result, err := deps.AggEngine.Aggregate(idx, &req)
 				if err != nil {
-					http.Error(w, err.Error(), 500)
+					apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{
+						"reason": err.Error(),
+					}))
 					return
 				}
 
@@ -128,6 +135,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	})
 
 	return r
+}
+
+// NewServer creates an http.Server with production timeouts.
+func NewServer(handler http.Handler, port int) *http.Server {
+	return &http.Server{
+		Addr:         fmt.Sprintf(":%d", port),
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 }
 
 func main() {
@@ -222,10 +240,7 @@ func main() {
 	}
 
 	// Graceful shutdown
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: router,
-	}
+	srv := NewServer(router, cfg.Port)
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)

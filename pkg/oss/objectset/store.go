@@ -13,6 +13,8 @@ type Store struct {
 	mu      sync.RWMutex
 	entries map[string]*storeEntry
 	ttl     time.Duration
+	stopCh  chan struct{}
+	stopped sync.Once
 }
 
 type storeEntry struct {
@@ -21,11 +23,47 @@ type storeEntry struct {
 }
 
 // NewStore creates a new ObjectSet store with the given TTL.
+// No background cleanup is started; call Cleanup() manually or use NewStoreWithCleanup.
 func NewStore(ttl time.Duration) *Store {
 	return &Store{
 		entries: make(map[string]*storeEntry),
 		ttl:     ttl,
 	}
+}
+
+// NewStoreWithCleanup creates a new ObjectSet store that runs a background goroutine
+// to clean up expired entries at the given interval. Call Stop() to shut down the goroutine.
+func NewStoreWithCleanup(ttl, cleanupInterval time.Duration) *Store {
+	s := &Store{
+		entries: make(map[string]*storeEntry),
+		ttl:     ttl,
+		stopCh:  make(chan struct{}),
+	}
+	go s.cleanupLoop(cleanupInterval)
+	return s
+}
+
+// cleanupLoop periodically calls Cleanup until the store is stopped.
+func (s *Store) cleanupLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.Cleanup()
+		case <-s.stopCh:
+			return
+		}
+	}
+}
+
+// Stop shuts down the background cleanup goroutine. Safe to call multiple times.
+func (s *Store) Stop() {
+	s.stopped.Do(func() {
+		if s.stopCh != nil {
+			close(s.stopCh)
+		}
+	})
 }
 
 // Put stores an ObjectSet definition and returns its reference ID.

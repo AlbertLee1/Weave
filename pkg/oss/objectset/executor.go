@@ -11,6 +11,12 @@ import (
 	"github.com/liyang/weave/pkg/oss/where"
 )
 
+// LinkTargetTypeResolver is an optional interface that link resolvers can implement
+// to provide the target object type API name for a given link type.
+type LinkTargetTypeResolver interface {
+	ResolveTargetObjectType(ctx context.Context, sourceObjectType, linkTypeAPIName string) (string, error)
+}
+
 // Executor evaluates ObjectSet definitions.
 type Executor struct {
 	indexMgr     *index.Manager
@@ -230,8 +236,14 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 		return nil, fmt.Errorf("resolve searchAround links: %w", err)
 	}
 
+	// Resolve target object type if the link resolver supports it.
+	targetType := ""
+	if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok {
+		targetType, _ = resolver.ResolveTargetObjectType(ctx, sourceResult.ObjectType, def.Link)
+	}
+
 	return &Result{
-		ObjectType:  "", // target type determined by caller or link type metadata
+		ObjectType:  targetType,
 		PrimaryKeys: linkedPKs,
 	}, nil
 }

@@ -80,6 +80,13 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Put("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.UpdateDatasourceBinding)
 	r.Delete("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.DeleteDatasourceBinding)
 
+	// SecurityPolicy admin routes
+	r.Post("/api/admin/objectTypes/{objectTypeRid}/securityPolicies", omsHandler.CreateSecurityPolicy)
+	r.Get("/api/admin/objectTypes/{objectTypeRid}/securityPolicies", omsHandler.ListSecurityPolicies)
+	r.Get("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.GetSecurityPolicy)
+	r.Put("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.UpdateSecurityPolicy)
+	r.Delete("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.DeleteSecurityPolicy)
+
 	// QueryType admin routes
 	r.Post("/api/admin/ontologies/{ontologyApiName}/queryTypes", omsHandler.CreateQueryType)
 	r.Get("/api/admin/ontologies/{ontologyApiName}/queryTypes", omsHandler.ListQueryTypes)

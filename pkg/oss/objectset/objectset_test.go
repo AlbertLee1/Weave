@@ -517,6 +517,69 @@ func TestExecute_SearchAround(t *testing.T) {
 	}
 }
 
+func TestExecute_SearchAround_ObjectType(t *testing.T) {
+	// The searchAround result should have a non-empty ObjectType from the link resolver.
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { mgr.Close() })
+
+	props := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("employee", props)
+	if err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+	if err := mgr.IndexDocument("employee", "e1", map[string]interface{}{"id": "e1", "name": "alice"}); err != nil {
+		t.Fatalf("IndexDocument: %v", err)
+	}
+
+	linkResolver := &mockLinkResolverWithType{
+		results:    map[string][]string{"employeeDept": {"d1"}},
+		targetType: map[string]string{"employeeDept": "department"},
+	}
+
+	store := objectset.NewStore(1 * time.Hour)
+	executor := objectset.NewExecutor(mgr, linkResolver, store)
+
+	def := &objectset.Definition{
+		Type:      "searchAround",
+		ObjectSet: &objectset.Definition{Type: "base", ObjectType: "employee"},
+		Link:      "employeeDept",
+	}
+
+	result, err := executor.Execute(context.Background(), def)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if result.ObjectType != "department" {
+		t.Errorf("expected ObjectType 'department', got %q", result.ObjectType)
+	}
+}
+
+// mockLinkResolverWithType implements LinkResolver and LinkTargetTypeResolver.
+type mockLinkResolverWithType struct {
+	results    map[string][]string // linkAPIName -> target PKs
+	targetType map[string]string   // linkAPIName -> target object type API name
+}
+
+func (m *mockLinkResolverWithType) ResolveLinkedObjects(ctx context.Context, linkTypeRID string, sourcePKs []string) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockLinkResolverWithType) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceOTAPIName, linkAPIName string, sourcePKs []string) ([]string, error) {
+	return m.results[linkAPIName], nil
+}
+
+func (m *mockLinkResolverWithType) ResolveTargetObjectType(ctx context.Context, sourceObjectType, linkTypeAPIName string) (string, error) {
+	if tt, ok := m.targetType[linkTypeAPIName]; ok {
+		return tt, nil
+	}
+	return "", nil
+}
+
 // --- Store Tests (3) ---
 
 func TestStore_PutGet(t *testing.T) {
@@ -572,6 +635,34 @@ func TestStore_Cleanup(t *testing.T) {
 	if store.Count() != 0 {
 		t.Errorf("expected 0 entries after cleanup, got %d", store.Count())
 	}
+}
+
+func TestStore_BackgroundCleanup(t *testing.T) {
+	// Store should automatically clean up expired entries via background goroutine.
+	store := objectset.NewStoreWithCleanup(10*time.Millisecond, 20*time.Millisecond)
+	defer store.Stop()
+
+	def := &objectset.Definition{Type: "base", ObjectType: "employee"}
+	store.Put(def)
+	store.Put(def)
+
+	if store.Count() != 2 {
+		t.Fatalf("expected 2 entries, got %d", store.Count())
+	}
+
+	// Wait for entries to expire and cleanup goroutine to run.
+	time.Sleep(100 * time.Millisecond)
+
+	if store.Count() != 0 {
+		t.Errorf("expected 0 entries after background cleanup, got %d", store.Count())
+	}
+}
+
+func TestStore_Stop(t *testing.T) {
+	// Stop should be safe to call multiple times.
+	store := objectset.NewStoreWithCleanup(1*time.Hour, 50*time.Millisecond)
+	store.Stop()
+	store.Stop() // should not panic
 }
 
 // --- Execute Reference Test (1) ---

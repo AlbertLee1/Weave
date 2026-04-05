@@ -543,6 +543,7 @@ func (r *inMemoryOmsRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) e
 func (r *inMemoryOmsRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
 
 // ActionLog stubs
+func (r *inMemoryOmsRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
 func (r *inMemoryOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil
 }

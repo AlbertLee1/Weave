@@ -396,6 +396,7 @@ func (m *mockRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error { 
 func (m *mockRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
 
 // ActionLog stubs
+func (m *mockRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
 func (m *mockRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil
 }

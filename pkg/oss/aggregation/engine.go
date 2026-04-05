@@ -50,11 +50,15 @@ type Range struct {
 }
 
 // Engine computes aggregations.
-type Engine struct{}
+type Engine struct {
+	// MaxDocScanSize is the maximum number of documents fetched in a single scan.
+	// When results are truncated, accuracy is marked as APPROXIMATE.
+	MaxDocScanSize int
+}
 
 // NewEngine creates a new aggregation engine.
 func NewEngine() *Engine {
-	return &Engine{}
+	return &Engine{MaxDocScanSize: 10000}
 }
 
 // Aggregate performs aggregation on the given index.
@@ -76,7 +80,9 @@ func (e *Engine) Aggregate(idx bleve.Index, req *AggregationRequest) (*Aggregati
 		return nil, err
 	}
 
-	resp.Accuracy = "ACCURATE"
+	if resp.Accuracy == "" {
+		resp.Accuracy = "ACCURATE"
+	}
 	resp.ComputeUsage = 4.0
 	return resp, nil
 }
@@ -101,7 +107,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		return nil, err
 	}
 
-	resp.Accuracy = "ACCURATE"
+	if resp.Accuracy == "" {
+		resp.Accuracy = "ACCURATE"
+	}
 	resp.ComputeUsage = 4.0
 	return resp, nil
 }
@@ -120,29 +128,342 @@ func (e *Engine) aggregateSimple(idx bleve.Index, baseQuery query.Query, req *Ag
 	}, nil
 }
 
+// groupEntry pairs a group key value with its scoped Bleve query.
+type groupEntry struct {
+	value      interface{}
+	scopeQuery query.Query
+}
+
 // aggregateWithGroupBy performs aggregation with groupBy using Bleve facets.
+// Supports multiple groupBy specs by recursive nesting.
 func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
 	if len(req.GroupBy) == 0 {
 		return nil, fmt.Errorf("groupBy is empty")
 	}
 
-	// We only support a single groupBy for now.
-	gb := req.GroupBy[0]
+	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations)
+	if err != nil {
+		return nil, err
+	}
 
+	resp := &AggregationResponse{Data: rows}
+	if truncated {
+		resp.Accuracy = "APPROXIMATE"
+	}
+	return resp, nil
+}
+
+// recursiveGroupBy processes groupBy specs one at a time, nesting results.
+func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec) ([]AggregationRow, bool, error) {
+	gb := groupBys[0]
+	remaining := groupBys[1:]
+
+	entries, truncated, err := e.getGroupEntries(idx, baseQuery, gb)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var rows []AggregationRow
+	for _, entry := range entries {
+		if len(remaining) > 0 {
+			// Recurse with narrowed scope
+			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs)
+			if err != nil {
+				return nil, false, err
+			}
+			if subTrunc {
+				truncated = true
+			}
+			for _, subRow := range subRows {
+				combined := make(map[string]interface{})
+				combined[gb.Field] = entry.value
+				for k, v := range subRow.Group {
+					combined[k] = v
+				}
+				rows = append(rows, AggregationRow{Group: combined, Metrics: subRow.Metrics})
+			}
+		} else {
+			// Leaf level — compute metrics
+			metrics, err := computeMetrics(idx, entry.scopeQuery, specs)
+			if err != nil {
+				return nil, false, fmt.Errorf("compute metrics for group %v: %w", entry.value, err)
+			}
+			rows = append(rows, AggregationRow{
+				Group:   map[string]interface{}{gb.Field: entry.value},
+				Metrics: metrics,
+			})
+		}
+	}
+
+	return rows, truncated, nil
+}
+
+// getGroupEntries dispatches to the appropriate groupBy type and returns scoped entries.
+func (e *Engine) getGroupEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
 	switch gb.Type {
 	case "exact":
-		return e.groupByExact(idx, baseQuery, gb, req.Aggregations)
+		return e.getExactEntries(idx, baseQuery, gb)
 	case "fixedWidth":
-		return e.groupByFixedWidth(idx, baseQuery, gb, req.Aggregations)
+		return e.getFixedWidthEntries(idx, baseQuery, gb)
 	case "range", "ranges":
-		return e.groupByRanges(idx, baseQuery, gb, req.Aggregations)
+		return e.getRangesEntries(idx, baseQuery, gb)
 	case "duration":
-		return e.groupByDuration(idx, baseQuery, gb, req.Aggregations)
+		return e.getDurationEntries(idx, baseQuery, gb)
 	case "topValues":
-		return e.groupByTopValues(idx, baseQuery, gb, req.Aggregations)
+		return e.getTopValuesEntries(idx, baseQuery, gb)
 	default:
-		return nil, fmt.Errorf("unsupported groupBy type: %q", gb.Type)
+		return nil, false, fmt.Errorf("unsupported groupBy type: %q", gb.Type)
 	}
+}
+
+// getExactEntries returns group entries for exact term grouping.
+func (e *Engine) getExactEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
+	maxGroups := 100
+	if gb.MaxGroups != nil {
+		maxGroups = *gb.MaxGroups
+	}
+
+	searchReq := bleve.NewSearchRequest(baseQuery)
+	searchReq.Size = 0
+	facet := bleve.NewFacetRequest(gb.Field, maxGroups)
+	searchReq.AddFacet("groupby", facet)
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, fmt.Errorf("facet search: %w", err)
+	}
+
+	facetResult, ok := result.Facets["groupby"]
+	if !ok || facetResult.Terms == nil {
+		return nil, false, nil
+	}
+
+	terms := facetResult.Terms.Terms()
+	entries := make([]groupEntry, 0, len(terms))
+	for _, term := range terms {
+		termQ := bleve.NewTermQuery(term.Term)
+		termQ.SetField(gb.Field)
+		entries = append(entries, groupEntry{
+			value:      term.Term,
+			scopeQuery: bleve.NewConjunctionQuery(baseQuery, termQ),
+		})
+	}
+	return entries, false, nil
+}
+
+// getTopValuesEntries returns group entries for top N term grouping.
+func (e *Engine) getTopValuesEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
+	maxGroups := 10
+	if gb.MaxGroups != nil {
+		maxGroups = *gb.MaxGroups
+	}
+
+	searchReq := bleve.NewSearchRequest(baseQuery)
+	searchReq.Size = 0
+	facet := bleve.NewFacetRequest(gb.Field, maxGroups)
+	searchReq.AddFacet("topvalues", facet)
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, fmt.Errorf("topValues facet search: %w", err)
+	}
+
+	facetResult, ok := result.Facets["topvalues"]
+	if !ok || facetResult.Terms == nil {
+		return nil, false, nil
+	}
+
+	terms := facetResult.Terms.Terms()
+	entries := make([]groupEntry, 0, len(terms))
+	for _, term := range terms {
+		termQ := bleve.NewTermQuery(term.Term)
+		termQ.SetField(gb.Field)
+		entries = append(entries, groupEntry{
+			value:      term.Term,
+			scopeQuery: bleve.NewConjunctionQuery(baseQuery, termQ),
+		})
+	}
+	return entries, false, nil
+}
+
+// getFixedWidthEntries returns group entries for fixed-width numeric range grouping.
+func (e *Engine) getFixedWidthEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
+	if gb.Width == nil {
+		return nil, false, fmt.Errorf("fixedWidth groupBy requires a width")
+	}
+	width := *gb.Width
+
+	minVal, maxVal, truncated, err := e.findMinMax(idx, baseQuery, gb.Field)
+	if err != nil {
+		return nil, false, fmt.Errorf("find min/max for fixedWidth: %w", err)
+	}
+	if minVal == nil || maxVal == nil {
+		return nil, false, nil
+	}
+
+	searchReq := bleve.NewSearchRequest(baseQuery)
+	searchReq.Size = 0
+	facet := bleve.NewFacetRequest(gb.Field, 10000)
+
+	start := math.Floor(*minVal/width) * width
+	for lo := start; lo <= *maxVal; lo += width {
+		loVal := lo
+		hiVal := lo + width
+		name := fmt.Sprintf("[%.0f,%.0f)", loVal, hiVal)
+		facet.AddNumericRange(name, &loVal, &hiVal)
+	}
+	searchReq.AddFacet("groupby", facet)
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, fmt.Errorf("fixed width facet search: %w", err)
+	}
+
+	facetResult, ok := result.Facets["groupby"]
+	if !ok {
+		return nil, truncated, nil
+	}
+
+	entries := make([]groupEntry, 0)
+	for _, nr := range facetResult.NumericRanges {
+		if nr.Count == 0 {
+			continue
+		}
+		lo := nr.Min
+		hi := nr.Max
+		inclusive := true
+		exclusive := false
+		rangeQuery := bleve.NewNumericRangeInclusiveQuery(lo, hi, &inclusive, &exclusive)
+		rangeQuery.SetField(gb.Field)
+		entries = append(entries, groupEntry{
+			value:      nr.Name,
+			scopeQuery: bleve.NewConjunctionQuery(baseQuery, rangeQuery),
+		})
+	}
+	return entries, truncated, nil
+}
+
+// getRangesEntries returns group entries for user-specified numeric range grouping.
+func (e *Engine) getRangesEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
+	searchReq := bleve.NewSearchRequest(baseQuery)
+	searchReq.Size = 0
+	facet := bleve.NewFacetRequest(gb.Field, 10000)
+
+	for i, r := range gb.Ranges {
+		name := r.Name
+		if name == "" {
+			name = fmt.Sprintf("range_%d", i)
+		}
+		facet.AddNumericRange(name, r.StartValue, r.EndValue)
+	}
+	searchReq.AddFacet("groupby", facet)
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, fmt.Errorf("ranges facet search: %w", err)
+	}
+
+	facetResult, ok := result.Facets["groupby"]
+	if !ok {
+		return nil, false, nil
+	}
+
+	entries := make([]groupEntry, 0)
+	for _, nr := range facetResult.NumericRanges {
+		if nr.Count == 0 {
+			continue
+		}
+		lo := nr.Min
+		hi := nr.Max
+		inclusive := true
+		exclusive := false
+		var minIncPtr, maxIncPtr *bool
+		if lo != nil {
+			minIncPtr = &inclusive
+		}
+		if hi != nil {
+			maxIncPtr = &exclusive
+		}
+		rangeQuery := bleve.NewNumericRangeInclusiveQuery(lo, hi, minIncPtr, maxIncPtr)
+		rangeQuery.SetField(gb.Field)
+		entries = append(entries, groupEntry{
+			value:      nr.Name,
+			scopeQuery: bleve.NewConjunctionQuery(baseQuery, rangeQuery),
+		})
+	}
+	return entries, false, nil
+}
+
+// getDurationEntries returns group entries for duration-based timestamp grouping.
+func (e *Engine) getDurationEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
+	var durSec float64
+
+	switch {
+	case gb.DurationValue != nil:
+		secs, err := durationValueToSeconds(gb.DurationValue)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse duration value: %w", err)
+		}
+		durSec = secs
+	case gb.Duration != "":
+		dur, err := parseDuration(gb.Duration)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse duration: %w", err)
+		}
+		durSec = dur.Seconds()
+	default:
+		return nil, false, fmt.Errorf("duration groupBy requires either 'duration' (ISO 8601) or 'value' ({unit, value})")
+	}
+
+	searchReq := bleve.NewSearchRequest(baseQuery)
+	searchReq.Size = e.MaxDocScanSize
+	searchReq.Fields = []string{gb.Field}
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, fmt.Errorf("duration search: %w", err)
+	}
+
+	if len(result.Hits) == 0 {
+		return nil, false, nil
+	}
+
+	truncated := result.Total > uint64(len(result.Hits))
+
+	buckets := make(map[int64][]string) // bucket start epoch -> doc IDs
+	for _, hit := range result.Hits {
+		val, ok := hit.Fields[gb.Field]
+		if !ok {
+			continue
+		}
+		var epoch float64
+		switch v := val.(type) {
+		case float64:
+			epoch = v
+		case string:
+			t, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				continue
+			}
+			epoch = float64(t.Unix())
+		default:
+			continue
+		}
+		bucketStart := int64(math.Floor(epoch/durSec) * durSec)
+		buckets[bucketStart] = append(buckets[bucketStart], hit.ID)
+	}
+
+	entries := make([]groupEntry, 0, len(buckets))
+	for bucketStart, docIDs := range buckets {
+		docIDQ := bleve.NewDocIDQuery(docIDs)
+		scopedQuery := bleve.NewConjunctionQuery(baseQuery, docIDQ)
+		startTime := time.Unix(bucketStart, 0).UTC().Format(time.RFC3339)
+		entries = append(entries, groupEntry{
+			value:      startTime,
+			scopeQuery: scopedQuery,
+		})
+	}
+	return entries, truncated, nil
 }
 
 // groupByExact uses Bleve TermsFacet to group by exact field values.
@@ -203,7 +524,7 @@ func (e *Engine) groupByFixedWidth(idx bleve.Index, baseQuery query.Query, gb Gr
 	width := *gb.Width
 
 	// First, find the min and max values for the field to determine the range.
-	minVal, maxVal, err := e.findMinMax(idx, baseQuery, gb.Field)
+	minVal, maxVal, truncated, err := e.findMinMax(idx, baseQuery, gb.Field)
 	if err != nil {
 		return nil, fmt.Errorf("find min/max for fixedWidth: %w", err)
 	}
@@ -262,7 +583,11 @@ func (e *Engine) groupByFixedWidth(idx bleve.Index, baseQuery query.Query, gb Gr
 		})
 	}
 
-	return &AggregationResponse{Data: rows}, nil
+	resp := &AggregationResponse{Data: rows}
+	if truncated {
+		resp.Accuracy = "APPROXIMATE"
+	}
+	return resp, nil
 }
 
 // groupByRanges uses user-specified numeric ranges to create buckets.
@@ -395,7 +720,7 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 
 	// Fetch all documents with the timestamp field.
 	searchReq := bleve.NewSearchRequest(baseQuery)
-	searchReq.Size = 10000
+	searchReq.Size = e.MaxDocScanSize
 	searchReq.Fields = []string{gb.Field}
 
 	result, err := idx.Search(searchReq)
@@ -406,6 +731,8 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 	if len(result.Hits) == 0 {
 		return &AggregationResponse{Data: []AggregationRow{}}, nil
 	}
+
+	truncated := result.Total > uint64(len(result.Hits))
 
 	// Bucket timestamps by duration. Timestamps may be stored as strings or numeric (epoch).
 	buckets := make(map[int64][]string) // bucket start epoch -> doc IDs
@@ -452,7 +779,11 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		})
 	}
 
-	return &AggregationResponse{Data: rows}, nil
+	resp := &AggregationResponse{Data: rows}
+	if truncated {
+		resp.Accuracy = "APPROXIMATE"
+	}
+	return resp, nil
 }
 
 // groupByTopValues groups by the top N most frequent values for a field.
@@ -507,19 +838,22 @@ func (e *Engine) groupByTopValues(idx bleve.Index, baseQuery query.Query, gb Gro
 }
 
 // findMinMax finds the minimum and maximum values for a numeric field.
-func (e *Engine) findMinMax(idx bleve.Index, baseQuery query.Query, field string) (*float64, *float64, error) {
+// Returns (min, max, truncated, error). truncated is true when total docs exceed scan size.
+func (e *Engine) findMinMax(idx bleve.Index, baseQuery query.Query, field string) (*float64, *float64, bool, error) {
 	searchReq := bleve.NewSearchRequest(baseQuery)
-	searchReq.Size = 10000
+	searchReq.Size = e.MaxDocScanSize
 	searchReq.Fields = []string{field}
 
 	result, err := idx.Search(searchReq)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
 	if len(result.Hits) == 0 {
-		return nil, nil, nil
+		return nil, nil, false, nil
 	}
+
+	truncated := result.Total > uint64(len(result.Hits))
 
 	minVal := math.MaxFloat64
 	maxVal := -math.MaxFloat64
@@ -544,8 +878,8 @@ func (e *Engine) findMinMax(idx bleve.Index, baseQuery query.Query, field string
 	}
 
 	if !found {
-		return nil, nil, nil
+		return nil, nil, false, nil
 	}
 
-	return &minVal, &maxVal, nil
+	return &minVal, &maxVal, truncated, nil
 }

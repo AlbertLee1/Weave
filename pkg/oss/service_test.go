@@ -257,6 +257,7 @@ func (m *mockOmsRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error
 func (m *mockOmsRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
 
 // ActionLog stubs
+func (m *mockOmsRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
@@ -1140,6 +1141,103 @@ func TestHandler_ListObjects_200(t *testing.T) {
 	}
 
 	_ = strings.NewReader("") // keep import
+}
+
+// --- OrderBy Tests ---
+
+func TestListObjects_OrderByAsc(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		OrderBy:     "age:asc",
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	if len(page.Data) != 3 {
+		t.Fatalf("expected 3 objects, got %d", len(page.Data))
+	}
+
+	// Ages: bob=25, alice=30, charlie=35 => ascending order
+	ages := make([]float64, len(page.Data))
+	for i, obj := range page.Data {
+		ages[i] = obj.Properties["age"].(float64)
+	}
+	for i := 1; i < len(ages); i++ {
+		if ages[i] < ages[i-1] {
+			t.Errorf("expected ascending order, got ages %v", ages)
+			break
+		}
+	}
+}
+
+func TestListObjects_OrderByDesc(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		OrderBy:     "age:desc",
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	if len(page.Data) != 3 {
+		t.Fatalf("expected 3 objects, got %d", len(page.Data))
+	}
+
+	// Ages: charlie=35, alice=30, bob=25 => descending order
+	ages := make([]float64, len(page.Data))
+	for i, obj := range page.Data {
+		ages[i] = obj.Properties["age"].(float64)
+	}
+	for i := 1; i < len(ages); i++ {
+		if ages[i] > ages[i-1] {
+			t.Errorf("expected descending order, got ages %v", ages)
+			break
+		}
+	}
+}
+
+func TestSearchObjects_OrderByAsc(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "active",
+			Value: json.RawMessage(`true`),
+		},
+		OrderBy: "age:asc",
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+
+	if len(page.Data) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(page.Data))
+	}
+
+	// active=true: alice(30), charlie(35) => asc order
+	ages := make([]float64, len(page.Data))
+	for i, obj := range page.Data {
+		ages[i] = obj.Properties["age"].(float64)
+	}
+	for i := 1; i < len(ages); i++ {
+		if ages[i] < ages[i-1] {
+			t.Errorf("expected ascending order, got ages %v", ages)
+			break
+		}
+	}
 }
 
 func (m *mockOmsRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }

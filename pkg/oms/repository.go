@@ -99,6 +99,7 @@ type Repository interface {
 	DeleteQueryType(ctx context.Context, rid string) error
 
 	// ActionLog
+	InsertActionLog(ctx context.Context, log *ActionLog) error
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
 

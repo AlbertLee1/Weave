@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
+
 	"github.com/liyang/weave/pkg/index"
 )
 
@@ -25,7 +27,8 @@ func setupTestConsumer(t *testing.T) (*Consumer, *index.Manager) {
 	}
 
 	consumer := &Consumer{
-		indexMgr: mgr,
+		indexMgr:      mgr,
+		maxDeliveries: DefaultMaxDeliveries,
 	}
 	t.Cleanup(func() { mgr.Close() })
 	return consumer, mgr
@@ -437,6 +440,115 @@ func TestPublisher_BatchID(t *testing.T) {
 	id2 := GenerateBatchID()
 	if id == id2 {
 		t.Fatal("expected unique batch IDs")
+	}
+}
+
+// --- MaxDeliveries tests ---
+
+func TestConsumer_DefaultMaxDeliveries(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	if consumer.maxDeliveries != DefaultMaxDeliveries {
+		t.Fatalf("expected default maxDeliveries %d, got %d", DefaultMaxDeliveries, consumer.maxDeliveries)
+	}
+}
+
+func TestConsumer_SetMaxDeliveries(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	consumer.SetMaxDeliveries(10)
+	if consumer.maxDeliveries != 10 {
+		t.Fatalf("expected maxDeliveries 10, got %d", consumer.maxDeliveries)
+	}
+}
+
+func TestConsumer_ShouldTerminate(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	consumer.maxDeliveries = 5
+
+	if consumer.shouldTerminate(4) {
+		t.Fatal("should not terminate at delivery 4 with max 5")
+	}
+	if consumer.shouldTerminate(5) {
+		t.Fatal("should not terminate at delivery 5 with max 5 (exactly at limit)")
+	}
+	if !consumer.shouldTerminate(6) {
+		t.Fatal("should terminate at delivery 6 with max 5")
+	}
+}
+
+// --- ConnectOptions tests ---
+
+func TestDefaultConnectOptions_HasMaxReconnects(t *testing.T) {
+	opts := DefaultConnectOptions()
+	found := false
+	for _, opt := range opts {
+		// Apply option to a default nats.Options to inspect
+		o := &nats.Options{}
+		if err := opt(o); err != nil {
+			t.Fatalf("applying option: %v", err)
+		}
+		if o.MaxReconnect > 0 {
+			found = true
+			if o.MaxReconnect < 10 {
+				t.Fatalf("MaxReconnect too low: %d", o.MaxReconnect)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected MaxReconnect option to be set")
+	}
+}
+
+func TestDefaultConnectOptions_HasReconnectWait(t *testing.T) {
+	opts := DefaultConnectOptions()
+	found := false
+	for _, opt := range opts {
+		o := &nats.Options{}
+		if err := opt(o); err != nil {
+			t.Fatalf("applying option: %v", err)
+		}
+		if o.ReconnectWait > 0 {
+			found = true
+			if o.ReconnectWait < time.Second {
+				t.Fatalf("ReconnectWait too low: %v", o.ReconnectWait)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected ReconnectWait option to be set")
+	}
+}
+
+func TestDefaultConnectOptions_HasDisconnectHandler(t *testing.T) {
+	opts := DefaultConnectOptions()
+	found := false
+	for _, opt := range opts {
+		o := &nats.Options{}
+		if err := opt(o); err != nil {
+			t.Fatalf("applying option: %v", err)
+		}
+		if o.DisconnectedErrCB != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected DisconnectedErrCB handler to be set")
+	}
+}
+
+func TestDefaultConnectOptions_HasReconnectHandler(t *testing.T) {
+	opts := DefaultConnectOptions()
+	found := false
+	for _, opt := range opts {
+		o := &nats.Options{}
+		if err := opt(o); err != nil {
+			t.Fatalf("applying option: %v", err)
+		}
+		if o.ReconnectedCB != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected ReconnectedCB handler to be set")
 	}
 }
 

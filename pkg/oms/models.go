@@ -38,12 +38,13 @@ type OntologyExport struct {
 
 // Ontology represents a top-level ontology container.
 type Ontology struct {
-	RID         string    `json:"rid"`
-	APIName     string    `json:"apiName"`
-	DisplayName string    `json:"displayName"`
-	Description string    `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"-"`
-	UpdatedAt   time.Time `json:"-"`
+	RID            string    `json:"rid"`
+	APIName        string    `json:"apiName"`
+	DisplayName    string    `json:"displayName"`
+	Description    string    `json:"description,omitempty"`
+	CurrentVersion int       `json:"currentVersion"`
+	CreatedAt      time.Time `json:"-"`
+	UpdatedAt      time.Time `json:"-"`
 }
 
 // ObjectType defines a type of object in the ontology.
@@ -104,19 +105,20 @@ func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 
 // Property defines a property on an ObjectType.
 type Property struct {
-	RID           string          `json:"rid"`
-	ObjectTypeRID string          `json:"-"`
-	APIName       string          `json:"apiName"`
-	DisplayName   string          `json:"displayName,omitempty"`
-	Description   string          `json:"description,omitempty"`
-	BaseType      string          `json:"baseType"`
-	TypeConfig    json.RawMessage `json:"typeConfig,omitempty"`
-	IsArray       bool            `json:"isArray"`
-	IsNullable    bool            `json:"isNullable"`
-	IsSearchable  bool            `json:"isSearchable"`
+	RID              string          `json:"rid"`
+	ObjectTypeRID    string          `json:"-"`
+	APIName          string          `json:"apiName"`
+	DisplayName      string          `json:"displayName,omitempty"`
+	Description      string          `json:"description,omitempty"`
+	BaseType         string          `json:"baseType"`
+	TypeConfig       json.RawMessage `json:"typeConfig,omitempty"`
+	IsArray          bool            `json:"isArray"`
+	IsNullable       bool            `json:"isNullable"`
+	IsSearchable     bool            `json:"isSearchable"`
 	IsSortable       bool            `json:"isSortable"`
 	Status           string          `json:"status,omitempty"`
 	DeprecatedReason string          `json:"deprecatedReason,omitempty"`
+	SharedPropertyRID string         `json:"sharedPropertyRid,omitempty"`
 	CreatedAt        time.Time       `json:"-"`
 }
 

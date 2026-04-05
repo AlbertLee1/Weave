@@ -2,10 +2,13 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -68,8 +71,14 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		return nil, fmt.Errorf("validate params: %w", err)
 	}
 
-	// Step 4: Evaluate submission criteria
-	actCtx := ActionContext{Parameters: req.Parameters, UserID: "system"}
+	// Step 4: Extract UserID from auth context
+	userID := "system"
+	if u := auth.UserFromContext(ctx); u != nil {
+		userID = u.ID
+	}
+
+	// Step 5: Evaluate submission criteria
+	actCtx := ActionContext{Parameters: req.Parameters, UserID: userID}
 	if err := EvaluateCriteria(actionType.SubmissionCriteria, actCtx); err != nil {
 		return nil, fmt.Errorf("submission criteria: %w", err)
 	}
@@ -100,7 +109,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 	batch := &funnel.EditBatch{
 		ID:        uuid.New().String(),
 		Edits:     edits,
-		UserID:    "system", // TODO: get from context when auth is wired
+		UserID:    userID,
 		Timestamp: time.Now(),
 	}
 
@@ -120,7 +129,21 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		Offset:    offset,
 	}
 
-	// Step 10: Execute side effects (best-effort, non-blocking)
+	// Step 10: Write action log (best-effort, non-fatal)
+	paramsJSON, _ := json.Marshal(req.Parameters)
+	editsJSON, _ := json.Marshal(edits)
+	actionLog := &oms.ActionLog{
+		ActionTypeRID: actionType.RID,
+		UserID:        userID,
+		Parameters:    paramsJSON,
+		Edits:         editsJSON,
+		Status:        "SUCCESS",
+	}
+	if logErr := e.omsRepo.InsertActionLog(ctx, actionLog); logErr != nil {
+		log.Printf("actions: failed to write action log: %v", logErr)
+	}
+
+	// Step 11: Execute side effects (best-effort, non-blocking)
 	ExecuteSideEffects(actionType.SideEffects, ActionResult{
 		ActionRID: result.ActionRID,
 		BatchID:   result.BatchID,

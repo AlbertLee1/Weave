@@ -38,9 +38,9 @@ func (r *PGRepository) CreateOntology(ctx context.Context, o *Ontology) error {
 func (r *PGRepository) GetOntology(ctx context.Context, ridOrApiName string) (*Ontology, error) {
 	o := &Ontology{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT rid, api_name, display_name, COALESCE(description, ''), created_at, updated_at
+		`SELECT rid, api_name, display_name, COALESCE(description, ''), COALESCE(current_version, 0), created_at, updated_at
 		 FROM ontologies WHERE rid = $1 OR api_name = $1`, ridOrApiName).
-		Scan(&o.RID, &o.APIName, &o.DisplayName, &o.Description, &o.CreatedAt, &o.UpdatedAt)
+		Scan(&o.RID, &o.APIName, &o.DisplayName, &o.Description, &o.CurrentVersion, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -52,7 +52,7 @@ func (r *PGRepository) GetOntology(ctx context.Context, ridOrApiName string) (*O
 
 func (r *PGRepository) ListOntologies(ctx context.Context) ([]Ontology, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT rid, api_name, display_name, COALESCE(description, ''), created_at, updated_at
+		`SELECT rid, api_name, display_name, COALESCE(description, ''), COALESCE(current_version, 0), created_at, updated_at
 		 FROM ontologies ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (r *PGRepository) ListOntologies(ctx context.Context) ([]Ontology, error) {
 	var result []Ontology
 	for rows.Next() {
 		var o Ontology
-		if err := rows.Scan(&o.RID, &o.APIName, &o.DisplayName, &o.Description, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.RID, &o.APIName, &o.DisplayName, &o.Description, &o.CurrentVersion, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, o)
@@ -89,11 +89,12 @@ func (r *PGRepository) UpdateOntology(ctx context.Context, o *Ontology) error {
 func (r *PGRepository) CreateObjectType(ctx context.Context, ot *ObjectType) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO object_types (rid, ontology_rid, api_name, display_name, plural_display_name,
-		 description, primary_key_prop, title_property, status, visibility, icon_name, color)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		 description, primary_key_prop, title_property, status, visibility, icon_name, color,
+		 deprecated_reason, deprecated_deadline)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		ot.RID, ot.OntologyRID, ot.APIName, ot.DisplayName, ot.PluralDisplayName,
 		ot.Description, ot.PrimaryKey, ot.TitleProperty, ot.Status, ot.Visibility,
-		ot.IconName, ot.Color)
+		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -221,10 +222,10 @@ func (r *PGRepository) CreateProperty(ctx context.Context, p *Property) error {
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO properties (rid, object_type_rid, api_name, display_name, description,
-		 base_type, type_config, is_array, is_nullable, is_searchable, is_sortable, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		 base_type, type_config, is_array, is_nullable, is_searchable, is_sortable, status, shared_property_rid)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		p.RID, p.ObjectTypeRID, p.APIName, p.DisplayName, p.Description,
-		p.BaseType, typeConfig, p.IsArray, p.IsNullable, p.IsSearchable, p.IsSortable, status)
+		p.BaseType, typeConfig, p.IsArray, p.IsNullable, p.IsSearchable, p.IsSortable, status, nilIfEmpty(p.SharedPropertyRID))
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -235,7 +236,7 @@ func (r *PGRepository) ListProperties(ctx context.Context, objectTypeRID string)
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, object_type_rid, api_name, COALESCE(display_name, ''), COALESCE(description, ''),
 		 base_type, COALESCE(type_config, '{}'), is_array, is_nullable, is_searchable, is_sortable,
-		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), created_at
+		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), created_at
 		 FROM properties WHERE object_type_rid = $1 ORDER BY api_name`, objectTypeRID)
 	if err != nil {
 		return nil, err
@@ -247,7 +248,7 @@ func (r *PGRepository) ListProperties(ctx context.Context, objectTypeRID string)
 		var p Property
 		if err := rows.Scan(&p.RID, &p.ObjectTypeRID, &p.APIName, &p.DisplayName, &p.Description,
 			&p.BaseType, &p.TypeConfig, &p.IsArray, &p.IsNullable, &p.IsSearchable, &p.IsSortable,
-			&p.Status, &p.DeprecatedReason, &p.CreatedAt); err != nil {
+			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, p)
@@ -260,11 +261,11 @@ func (r *PGRepository) GetProperty(ctx context.Context, rid string) (*Property, 
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, object_type_rid, api_name, COALESCE(display_name, ''), COALESCE(description, ''),
 		 base_type, COALESCE(type_config, '{}'), is_array, is_nullable, is_searchable, is_sortable,
-		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), created_at
+		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), created_at
 		 FROM properties WHERE rid = $1`, rid).
 		Scan(&p.RID, &p.ObjectTypeRID, &p.APIName, &p.DisplayName, &p.Description,
 			&p.BaseType, &p.TypeConfig, &p.IsArray, &p.IsNullable, &p.IsSearchable, &p.IsSortable,
-			&p.Status, &p.DeprecatedReason, &p.CreatedAt)
+			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -692,9 +693,11 @@ func (r *PGRepository) ListObjectTypeInterfaces(ctx context.Context, objectTypeR
 func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRID string) ([]ObjectType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT ot.rid, ot.ontology_rid, ot.api_name, ot.display_name, COALESCE(ot.plural_display_name, ''),
-		 COALESCE(ot.description, ''), ot.primary_key, COALESCE(ot.title_property, ''),
+		 COALESCE(ot.description, ''), ot.primary_key_prop, COALESCE(ot.title_property, ''),
 		 COALESCE(ot.status, 'ACTIVE'), COALESCE(ot.visibility, 'NORMAL'),
-		 COALESCE(ot.icon, ''), COALESCE(ot.color, ''), ot.created_at
+		 COALESCE(ot.icon_name, ''), COALESCE(ot.color, ''),
+		 COALESCE(ot.deprecated_reason, ''), ot.deprecated_deadline,
+		 ot.created_at, ot.updated_at
 		 FROM object_types ot
 		 JOIN object_type_interfaces oti ON ot.rid = oti.object_type_rid
 		 WHERE oti.interface_rid = $1
@@ -709,8 +712,9 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 		var ot ObjectType
 		if err := rows.Scan(&ot.RID, &ot.OntologyRID, &ot.APIName, &ot.DisplayName, &ot.PluralDisplayName,
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
-			&ot.Status, &ot.Visibility,
-			&ot.IconName, &ot.Color, &ot.CreatedAt); err != nil {
+			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
+			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
+			&ot.CreatedAt, &ot.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, ot)
@@ -1027,6 +1031,13 @@ func (r *PGRepository) DeleteValueType(ctx context.Context, rid string) error {
 }
 
 // wrapPGError maps common PG errors to domain errors.
+func nilIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func wrapPGError(err error) error {
 	if err == nil {
 		return nil
@@ -1378,6 +1389,19 @@ func (r *PGRepository) CountActionLogs(ctx context.Context, actionTypeRID string
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *PGRepository) InsertActionLog(ctx context.Context, al *ActionLog) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO action_logs (action_type_rid, user_id, parameters, edits, status, error_message)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, created_at`,
+		al.ActionTypeRID, al.UserID, al.Parameters, al.Edits, al.Status, nilIfEmpty(al.ErrorMessage)).
+		Scan(&al.ID, &al.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // --- Search ---

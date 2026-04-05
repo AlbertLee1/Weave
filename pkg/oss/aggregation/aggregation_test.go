@@ -1078,3 +1078,191 @@ func TestDurationValueToSeconds(t *testing.T) {
 		t.Error("expected error for unknown unit, got nil")
 	}
 }
+
+// --- Accuracy APPROXIMATE when truncated ---
+
+func TestAggregate_Duration_Accuracy_Approximate_WhenTruncated(t *testing.T) {
+	idx := setupAggIndex(t) // 5 docs
+	eng := NewEngine()
+	eng.MaxDocScanSize = 3 // only scan 3 of 5
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "duration", Field: "age", Duration: "P1Y"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+	if resp.Accuracy != "APPROXIMATE" {
+		t.Errorf("got accuracy %q, want APPROXIMATE", resp.Accuracy)
+	}
+}
+
+func TestAggregate_Duration_Accuracy_Accurate_WhenNotTruncated(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine() // default MaxDocScanSize=10000, 5 docs won't truncate
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "duration", Field: "age", Duration: "P1Y"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+	if resp.Accuracy != "ACCURATE" {
+		t.Errorf("got accuracy %q, want ACCURATE", resp.Accuracy)
+	}
+}
+
+func TestAggregate_FixedWidth_Accuracy_Approximate_WhenTruncated(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+	eng.MaxDocScanSize = 3
+
+	width := 10.0
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "fixedWidth", Field: "age", Width: &width},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+	if resp.Accuracy != "APPROXIMATE" {
+		t.Errorf("got accuracy %q, want APPROXIMATE", resp.Accuracy)
+	}
+}
+
+// --- Multi-field groupBy ---
+
+func setupMultiGroupByIndex(t *testing.T) bleve.Index {
+	t.Helper()
+	indexMapping := bleve.NewIndexMapping()
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("department", mapping.NewTextFieldMapping())
+	docMapping.AddFieldMappingsAt("level", mapping.NewTextFieldMapping())
+	docMapping.AddFieldMappingsAt("salary", mapping.NewNumericFieldMapping())
+	indexMapping.DefaultMapping = docMapping
+
+	dir := t.TempDir()
+	idx, err := bleve.New(filepath.Join(dir, "multigb"), indexMapping)
+	if err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+
+	docs := []struct {
+		id  string
+		doc map[string]interface{}
+	}{
+		{"1", map[string]interface{}{"department": "eng", "level": "senior", "salary": 120000.0}},
+		{"2", map[string]interface{}{"department": "eng", "level": "junior", "salary": 80000.0}},
+		{"3", map[string]interface{}{"department": "eng", "level": "junior", "salary": 85000.0}},
+		{"4", map[string]interface{}{"department": "sales", "level": "senior", "salary": 100000.0}},
+		{"5", map[string]interface{}{"department": "sales", "level": "junior", "salary": 70000.0}},
+	}
+	for _, d := range docs {
+		if err := idx.Index(d.id, d.doc); err != nil {
+			t.Fatalf("index doc %s: %v", d.id, err)
+		}
+	}
+	return idx
+}
+
+func TestAggregate_MultipleGroupBy_ExactExact(t *testing.T) {
+	idx := setupMultiGroupByIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "count"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "exact", Field: "department"},
+			{Type: "exact", Field: "level"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	// Expected groups: eng/senior(1), eng/junior(2), sales/senior(1), sales/junior(1)
+	if len(resp.Data) != 4 {
+		t.Fatalf("got %d groups, want 4; data=%+v", len(resp.Data), resp.Data)
+	}
+
+	// Build map of "dept|level" -> count
+	groupCounts := make(map[string]uint64)
+	for _, row := range resp.Data {
+		dept := row.Group["department"].(string)
+		level := row.Group["level"].(string)
+		count, ok := findMetric(row.Metrics, "count")
+		if !ok {
+			t.Fatalf("missing count for group %v", row.Group)
+		}
+		groupCounts[dept+"|"+level] = count.(uint64)
+	}
+
+	if groupCounts["eng|senior"] != 1 {
+		t.Errorf("eng|senior count = %d, want 1", groupCounts["eng|senior"])
+	}
+	if groupCounts["eng|junior"] != 2 {
+		t.Errorf("eng|junior count = %d, want 2", groupCounts["eng|junior"])
+	}
+	if groupCounts["sales|senior"] != 1 {
+		t.Errorf("sales|senior count = %d, want 1", groupCounts["sales|senior"])
+	}
+	if groupCounts["sales|junior"] != 1 {
+		t.Errorf("sales|junior count = %d, want 1", groupCounts["sales|junior"])
+	}
+}
+
+func TestAggregate_MultipleGroupBy_Metrics(t *testing.T) {
+	idx := setupMultiGroupByIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "avg", Field: "salary"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "exact", Field: "department"},
+			{Type: "exact", Field: "level"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	// Build map of "dept|level" -> avg salary
+	groupAvg := make(map[string]float64)
+	for _, row := range resp.Data {
+		dept := row.Group["department"].(string)
+		level := row.Group["level"].(string)
+		val, ok := findMetric(row.Metrics, "salary.avg")
+		if !ok {
+			t.Fatalf("missing salary.avg for group %v", row.Group)
+		}
+		groupAvg[dept+"|"+level] = val.(float64)
+	}
+
+	// eng/junior: (80000+85000)/2 = 82500
+	if groupAvg["eng|junior"] != 82500.0 {
+		t.Errorf("eng|junior avg = %v, want 82500", groupAvg["eng|junior"])
+	}
+	// eng/senior: 120000
+	if groupAvg["eng|senior"] != 120000.0 {
+		t.Errorf("eng|senior avg = %v, want 120000", groupAvg["eng|senior"])
+	}
+}

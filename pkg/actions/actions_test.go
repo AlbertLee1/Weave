@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -18,7 +20,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockOmsRepo struct {
-	actionTypes []oms.ActionType
+	actionTypes  []oms.ActionType
+	insertedLogs []*oms.ActionLog
+	insertLogErr error
 }
 
 func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error   { return nil }
@@ -167,6 +171,10 @@ func (m *mockOmsRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error
 func (m *mockOmsRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
 
 // ActionLog stubs
+func (m *mockOmsRepo) InsertActionLog(_ context.Context, log *oms.ActionLog) error {
+	m.insertedLogs = append(m.insertedLogs, log)
+	return m.insertLogErr
+}
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
@@ -727,6 +735,147 @@ func TestExecutor_Apply_MultipleRules(t *testing.T) {
 	}
 	if result.Edits[1].Type != funnel.EditTypeCreate {
 		t.Fatalf("expected second edit CREATE, got %s", result.Edits[1].Type)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UserID & ActionLog Tests
+// ---------------------------------------------------------------------------
+
+func TestExecutor_Apply_ExtractsUserIDFromContext(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+
+	// Inject auth user into context
+	ctx := auth.WithUser(context.Background(), &auth.User{ID: "alice", Roles: []string{"admin"}})
+	_, err := exec.Apply(ctx, "ont-1", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{"name": "Bob"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	if repo.insertedLogs[0].UserID != "alice" {
+		t.Fatalf("expected UserID 'alice', got %q", repo.insertedLogs[0].UserID)
+	}
+}
+
+func TestExecutor_Apply_FallsBackToSystemUser(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+
+	// No auth user in context
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{"name": "Bob"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	if repo.insertedLogs[0].UserID != "system" {
+		t.Fatalf("expected UserID 'system', got %q", repo.insertedLogs[0].UserID)
+	}
+}
+
+func TestExecutor_Apply_WritesActionLog(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{"name": "Alice"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	if log.ActionTypeRID != result.ActionRID {
+		t.Fatalf("expected ActionTypeRID %q, got %q", result.ActionRID, log.ActionTypeRID)
+	}
+	if log.Status != "SUCCESS" {
+		t.Fatalf("expected status SUCCESS, got %q", log.Status)
+	}
+}
+
+func TestExecutor_Apply_ActionLogErrorNonFatal(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+		insertLogErr: fmt.Errorf("db connection lost"),
+	}
+	exec := NewExecutor(repo, nil)
+
+	// Action should still succeed even if log insert fails
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{"name": "Alice"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error (log failure is non-fatal), got: %v", err)
 	}
 }
 
