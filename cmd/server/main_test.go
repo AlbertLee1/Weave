@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +143,110 @@ func TestHealthEndpoint_ContentType(t *testing.T) {
 	ct := w.Header().Get("Content-Type")
 	if ct != "application/json" {
 		t.Errorf("expected Content-Type 'application/json', got %q", ct)
+	}
+}
+
+// fakeFunnelConsumer captures Stop() calls so the shutdown sequence test can
+// assert that the funnel consumer is stopped during graceful shutdown.
+type fakeFunnelConsumer struct {
+	stopCalls int
+	stopErr   error
+}
+
+func (f *fakeFunnelConsumer) Stop() error {
+	f.stopCalls++
+	return f.stopErr
+}
+
+// fakeShutdownableServer captures Shutdown() calls and the order in which
+// things happen, so we can assert HTTP shutdown happens before consumer stop.
+type fakeShutdownableServer struct {
+	shutdownCalls int
+	shutdownErr   error
+	stoppedAfter  bool // set true if consumer was stopped after server shutdown
+	consumer      *fakeFunnelConsumer
+}
+
+func (f *fakeShutdownableServer) Shutdown(ctx context.Context) error {
+	f.shutdownCalls++
+	if f.consumer != nil && f.consumer.stopCalls > 0 {
+		// consumer was stopped before us — order violation
+		f.stoppedAfter = false
+	} else {
+		f.stoppedAfter = true
+	}
+	return f.shutdownErr
+}
+
+func TestGracefulShutdown_StopsFunnelConsumer(t *testing.T) {
+	consumer := &fakeFunnelConsumer{}
+	srv := &fakeShutdownableServer{consumer: consumer}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := gracefulShutdown(ctx, srv, consumer); err != nil {
+		t.Fatalf("gracefulShutdown returned error: %v", err)
+	}
+
+	if srv.shutdownCalls != 1 {
+		t.Errorf("expected srv.Shutdown to be called once, got %d", srv.shutdownCalls)
+	}
+	if consumer.stopCalls != 1 {
+		t.Errorf("expected consumer.Stop to be called once, got %d", consumer.stopCalls)
+	}
+	if !srv.stoppedAfter {
+		t.Errorf("expected consumer.Stop to be called AFTER srv.Shutdown")
+	}
+}
+
+func TestGracefulShutdown_NilConsumer(t *testing.T) {
+	srv := &fakeShutdownableServer{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := gracefulShutdown(ctx, srv, nil); err != nil {
+		t.Fatalf("gracefulShutdown with nil consumer returned error: %v", err)
+	}
+	if srv.shutdownCalls != 1 {
+		t.Errorf("expected srv.Shutdown to be called once, got %d", srv.shutdownCalls)
+	}
+}
+
+func TestGracefulShutdown_PropagatesShutdownError(t *testing.T) {
+	consumer := &fakeFunnelConsumer{}
+	srv := &fakeShutdownableServer{
+		shutdownErr: errors.New("shutdown failed"),
+		consumer:    consumer,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	err := gracefulShutdown(ctx, srv, consumer)
+	if err == nil {
+		t.Fatal("expected shutdown error to propagate")
+	}
+	// Even on shutdown error, the consumer should still be stopped to release
+	// the NATS subscription.
+	if consumer.stopCalls != 1 {
+		t.Errorf("expected consumer.Stop to be called once even on shutdown error, got %d", consumer.stopCalls)
+	}
+}
+
+// TestNATSBootstrap_UsesFunnelConnect locks the wiring path: main.go must
+// route through funnel.Connect (which sets reconnect options) and NOT use
+// the bare nats.Connect helper, otherwise production NATS reconnect handling
+// is silently disabled.
+func TestNATSBootstrap_UsesFunnelConnect(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(src)
+	if strings.Contains(body, "nats.Connect(") {
+		t.Errorf("main.go must not use bare nats.Connect; use funnel.Connect to enable reconnect handling")
+	}
+	if !strings.Contains(body, "funnel.Connect(") {
+		t.Errorf("main.go must call funnel.Connect to bootstrap NATS with reconnect options")
 	}
 }

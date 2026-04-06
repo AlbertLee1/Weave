@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -805,5 +806,86 @@ func TestExecute_WithProperties_DelegatesToInnerObjectSet(t *testing.T) {
 		if pk != expected[i] {
 			t.Errorf("PK[%d]: expected %s, got %s", i, expected[i], pk)
 		}
+	}
+}
+
+// --- Truncation marker tests (Fix 4) ---
+
+// TestExecute_Base_NotTruncated verifies the Truncated flag is false when the
+// base ObjectSet query returns fewer rows than the executor's hard cap.
+func TestExecute_Base_NotTruncated(t *testing.T) {
+	executor, _ := setupExecutorTest(t)
+	ctx := context.Background()
+
+	def := &objectset.Definition{Type: "base", ObjectType: "employee"}
+	result, err := executor.Execute(ctx, def)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Truncated {
+		t.Errorf("expected Truncated=false for small result, got true")
+	}
+}
+
+// TestExecute_Base_Truncated verifies that when the base query hits the
+// executor's hard cap of 10000 rows the Truncated/Approximate flag is set so
+// callers can warn the user that the result is partial.
+func TestExecute_Base_Truncated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping truncation test in short mode (seeds 10001 docs)")
+	}
+
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { mgr.Close() })
+
+	props := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("bigtype", props); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	// Seed > 10000 docs in batches via ApplyBatch — single-doc IndexDocument
+	// is too slow because it forces a fsync per call.
+	const total = 10001
+	const batchSize = 500
+	ops := make([]index.BatchOp, 0, batchSize)
+	for i := 0; i < total; i++ {
+		id := "obj-" + strconv.Itoa(i)
+		ops = append(ops, index.BatchOp{
+			Type:       index.BatchOpIndex,
+			PrimaryKey: id,
+			Document: map[string]interface{}{
+				"id":   id,
+				"name": "name-" + strconv.Itoa(i),
+			},
+		})
+		if len(ops) == batchSize {
+			if err := mgr.ApplyBatch("bigtype", ops); err != nil {
+				t.Fatalf("ApplyBatch %d: %v", i, err)
+			}
+			ops = ops[:0]
+		}
+	}
+	if len(ops) > 0 {
+		if err := mgr.ApplyBatch("bigtype", ops); err != nil {
+			t.Fatalf("ApplyBatch tail: %v", err)
+		}
+	}
+
+	store := objectset.NewStore(1 * time.Hour)
+	executor := objectset.NewExecutor(mgr, nil, store)
+	def := &objectset.Definition{Type: "base", ObjectType: "bigtype"}
+	result, err := executor.Execute(context.Background(), def)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.Truncated {
+		t.Errorf("expected Truncated=true when result hits the 10000 cap, got false (returned %d PKs)", len(result.PrimaryKeys))
+	}
+	if len(result.PrimaryKeys) != 10000 {
+		t.Errorf("expected exactly 10000 PKs at the cap, got %d", len(result.PrimaryKeys))
 	}
 }

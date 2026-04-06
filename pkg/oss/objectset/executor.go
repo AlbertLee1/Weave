@@ -43,10 +43,21 @@ func NewExecutor(indexMgr *index.Manager, linkResolver links.LinkResolver, store
 	}
 }
 
+// BaseExecutionCap is the maximum number of primary keys executeBase will
+// return from a single Bleve query. When a result hits this cap the Result's
+// Truncated flag is set so callers can warn the user that the answer is
+// approximate.
+const BaseExecutionCap = 10000
+
 // Result holds the execution result.
 type Result struct {
 	ObjectType  string   // the object type API name
 	PrimaryKeys []string // the matching primary keys
+	// Truncated is set to true when the underlying query hit the executor's
+	// hard cap (BaseExecutionCap) and the returned PrimaryKeys are only an
+	// approximate prefix of the true result. Downstream APIs should surface
+	// this as an APPROXIMATE marker so the user knows the answer is partial.
+	Truncated bool
 }
 
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
@@ -82,10 +93,12 @@ func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error
 	}
 }
 
-// executeBase queries the Bleve index for ALL objects of the given type.
+// executeBase queries the Bleve index for ALL objects of the given type, up
+// to BaseExecutionCap. If the returned hit count equals the cap the result is
+// flagged as Truncated so the caller can surface an APPROXIMATE warning.
 func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, error) {
 	searchReq := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
-	searchReq.Size = 10000 // reasonable limit
+	searchReq.Size = BaseExecutionCap
 	searchReq.Fields = []string{"*"}
 
 	result, err := e.indexMgr.Search(def.ObjectType, searchReq)
@@ -101,6 +114,7 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 	return &Result{
 		ObjectType:  def.ObjectType,
 		PrimaryKeys: pks,
+		Truncated:   len(pks) >= BaseExecutionCap,
 	}, nil
 }
 
@@ -129,7 +143,7 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 	conjQ := bleve.NewConjunctionQuery(docIDQ, bleveQuery)
 
 	searchReq := bleve.NewSearchRequest(conjQ)
-	searchReq.Size = 10000
+	searchReq.Size = BaseExecutionCap
 	result, err := e.indexMgr.Search(baseResult.ObjectType, searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search filter objectSet: %w", err)
@@ -143,6 +157,9 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 	return &Result{
 		ObjectType:  baseResult.ObjectType,
 		PrimaryKeys: pks,
+		// Propagate truncation from the inner set, and also flag the filter
+		// itself if it hit the cap.
+		Truncated: baseResult.Truncated || len(pks) >= BaseExecutionCap,
 	}, nil
 }
 
@@ -151,6 +168,7 @@ func (e *Executor) executeUnion(ctx context.Context, def *Definition) (*Result, 
 	seen := make(map[string]bool)
 	var allPKs []string
 	var objectType string
+	truncated := false
 
 	for _, sub := range def.ObjectSets {
 		result, err := e.execute(ctx, sub)
@@ -160,6 +178,9 @@ func (e *Executor) executeUnion(ctx context.Context, def *Definition) (*Result, 
 		if objectType == "" {
 			objectType = result.ObjectType
 		}
+		if result.Truncated {
+			truncated = true
+		}
 		for _, pk := range result.PrimaryKeys {
 			if !seen[pk] {
 				allPKs = append(allPKs, pk)
@@ -168,12 +189,13 @@ func (e *Executor) executeUnion(ctx context.Context, def *Definition) (*Result, 
 		}
 	}
 
-	return &Result{ObjectType: objectType, PrimaryKeys: allPKs}, nil
+	return &Result{ObjectType: objectType, PrimaryKeys: allPKs, Truncated: truncated}, nil
 }
 
 // executeIntersect executes all sub-ObjectSets and intersects the results.
 func (e *Executor) executeIntersect(ctx context.Context, def *Definition) (*Result, error) {
 	var objectType string
+	truncated := false
 
 	// Count occurrences of each PK across all sub-ObjectSets
 	counts := make(map[string]int)
@@ -184,6 +206,9 @@ func (e *Executor) executeIntersect(ctx context.Context, def *Definition) (*Resu
 		}
 		if i == 0 {
 			objectType = result.ObjectType
+		}
+		if result.Truncated {
+			truncated = true
 		}
 		for _, pk := range result.PrimaryKeys {
 			counts[pk]++
@@ -199,7 +224,7 @@ func (e *Executor) executeIntersect(ctx context.Context, def *Definition) (*Resu
 		}
 	}
 
-	return &Result{ObjectType: objectType, PrimaryKeys: pks}, nil
+	return &Result{ObjectType: objectType, PrimaryKeys: pks, Truncated: truncated}, nil
 }
 
 // executeSubtract executes all sub-ObjectSets and subtracts subsequent sets from the first.
@@ -209,6 +234,7 @@ func (e *Executor) executeSubtract(ctx context.Context, def *Definition) (*Resul
 	if err != nil {
 		return nil, fmt.Errorf("execute subtract base: %w", err)
 	}
+	truncated := firstResult.Truncated
 
 	// Collect all PKs to exclude from subsequent sub-ObjectSets
 	exclude := make(map[string]bool)
@@ -216,6 +242,9 @@ func (e *Executor) executeSubtract(ctx context.Context, def *Definition) (*Resul
 		result, err := e.execute(ctx, sub)
 		if err != nil {
 			return nil, fmt.Errorf("execute subtract sub: %w", err)
+		}
+		if result.Truncated {
+			truncated = true
 		}
 		for _, pk := range result.PrimaryKeys {
 			exclude[pk] = true
@@ -230,7 +259,7 @@ func (e *Executor) executeSubtract(ctx context.Context, def *Definition) (*Resul
 		}
 	}
 
-	return &Result{ObjectType: firstResult.ObjectType, PrimaryKeys: pks}, nil
+	return &Result{ObjectType: firstResult.ObjectType, PrimaryKeys: pks, Truncated: truncated}, nil
 }
 
 // executeSearchAround uses the link resolver to find objects linked to the source set.
@@ -279,6 +308,9 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 	return &Result{
 		ObjectType:  targetType,
 		PrimaryKeys: linkedPKs,
+		// Inherit truncation from the source set: if the inner set was already
+		// approximate, the searchAround output is also approximate.
+		Truncated: sourceResult.Truncated,
 	}, nil
 }
 

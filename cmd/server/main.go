@@ -26,8 +26,6 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
-
-	"github.com/nats-io/nats.go"
 )
 
 // ServerDeps holds all server dependencies.
@@ -178,6 +176,38 @@ func NewServer(handler http.Handler, port int) *http.Server {
 	}
 }
 
+// shutdownableServer is the minimal subset of *http.Server needed by
+// gracefulShutdown so the function is unit-testable with a fake.
+type shutdownableServer interface {
+	Shutdown(ctx context.Context) error
+}
+
+// stoppableConsumer is the minimal subset of *funnel.Consumer needed by
+// gracefulShutdown so the function is unit-testable with a fake.
+type stoppableConsumer interface {
+	Stop() error
+}
+
+// gracefulShutdown stops the HTTP server first (so no new edits enter the
+// pipeline) and then stops the funnel consumer (releasing the NATS
+// subscription cleanly). The consumer is stopped even if the HTTP shutdown
+// errors so the NATS subscription does not leak. The first non-nil error is
+// returned to the caller.
+func gracefulShutdown(ctx context.Context, srv shutdownableServer, consumer stoppableConsumer) error {
+	var firstErr error
+	if srv != nil {
+		if err := srv.Shutdown(ctx); err != nil {
+			firstErr = err
+		}
+	}
+	if consumer != nil {
+		if err := consumer.Stop(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -293,7 +323,7 @@ func main() {
 	// 7. NATS
 	var publisher *funnel.Publisher
 	if cfg.NATSURL != "" {
-		nc, err := nats.Connect(cfg.NATSURL)
+		nc, err := funnel.Connect(cfg.NATSURL)
 		if err != nil {
 			log.Fatalf("nats connect: %v", err)
 		}
@@ -342,7 +372,9 @@ func main() {
 		log.Println("shutting down...")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
-		srv.Shutdown(shutdownCtx)
+		if err := gracefulShutdown(shutdownCtx, srv, deps.FunnelConsumer); err != nil {
+			log.Printf("graceful shutdown error: %v", err)
+		}
 	}()
 
 	log.Printf("starting Weave server on :%d", cfg.Port)

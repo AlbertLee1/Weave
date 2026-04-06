@@ -40,6 +40,11 @@ type LoadObjectSetResponse struct {
 	Data          []*oss.WireObject `json:"data"`
 	NextPageToken string            `json:"nextPageToken,omitempty"`
 	TotalCount    string            `json:"totalCount,omitempty"`
+	// TotalCountAccuracy is "EXACT" when the ObjectSet was fully materialized
+	// and "APPROXIMATE" when the executor hit its hard cap (10000 PKs) and
+	// truncated the result. Callers should warn the user that totalCount and
+	// data are partial when this is "APPROXIMATE".
+	TotalCountAccuracy string `json:"totalCountAccuracy,omitempty"`
 }
 
 // CreateTemporaryRequest is the request for creating a temporary ObjectSet.
@@ -153,9 +158,14 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		data = append(data, oss.FormatObject(result.ObjectType, pk, props))
 	}
 
+	accuracy := "EXACT"
+	if result.Truncated {
+		accuracy = "APPROXIMATE"
+	}
 	resp := &LoadObjectSetResponse{
-		Data:       data,
-		TotalCount: strconv.Itoa(totalCount),
+		Data:               data,
+		TotalCount:         strconv.Itoa(totalCount),
+		TotalCountAccuracy: accuracy,
 	}
 
 	// Set next page token

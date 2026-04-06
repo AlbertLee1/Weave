@@ -174,3 +174,102 @@ func TestRoleResolver_NilRepoNoOp(t *testing.T) {
 		t.Errorf("expected empty results, got global=%v scoped=%v", global, scoped)
 	}
 }
+
+func TestRoleResolver_LRU_EvictsOldest(t *testing.T) {
+	repo := newFakeUserRepo()
+
+	// Build a resolver with a tiny capacity so the test runs fast.
+	const capacity = 3
+	resolver := NewRoleResolverWithSize(repo, 5*time.Minute, capacity)
+
+	// Insert capacity+1 distinct users; the first one inserted should be the
+	// oldest and therefore evicted.
+	users := []string{"u1", "u2", "u3", "u4"}
+	for _, id := range users {
+		repo.users[id] = &UserRecord{ID: id}
+		repo.roles[id] = []string{"viewer"}
+		if _, _, err := resolver.Resolve(context.Background(), id); err != nil {
+			t.Fatalf("resolve %s: %v", id, err)
+		}
+	}
+
+	if got := resolver.CacheSize(); got != capacity {
+		t.Errorf("expected cache size %d after eviction, got %d", capacity, got)
+	}
+
+	// Verify the OLDEST entry (u1) was evicted: re-resolving must hit the repo
+	// again, incrementing the call counter.
+	rolesCallsBefore := repo.rolesCalls
+	if _, _, err := resolver.Resolve(context.Background(), "u1"); err != nil {
+		t.Fatalf("resolve u1: %v", err)
+	}
+	if repo.rolesCalls != rolesCallsBefore+1 {
+		t.Errorf("expected u1 to be evicted (repo hit), but got cached result")
+	}
+
+	// Verify the most recently used entry (u4) is still in the cache: it must
+	// NOT increment the call counter.
+	rolesCallsBefore = repo.rolesCalls
+	if _, _, err := resolver.Resolve(context.Background(), "u4"); err != nil {
+		t.Fatalf("resolve u4: %v", err)
+	}
+	if repo.rolesCalls != rolesCallsBefore {
+		t.Errorf("expected u4 to still be cached, but repo was hit (calls=%d)", repo.rolesCalls)
+	}
+}
+
+func TestRoleResolver_LRU_RefreshesOnAccess(t *testing.T) {
+	repo := newFakeUserRepo()
+	for _, id := range []string{"u1", "u2", "u3"} {
+		repo.users[id] = &UserRecord{ID: id}
+		repo.roles[id] = []string{"viewer"}
+	}
+
+	const capacity = 3
+	resolver := NewRoleResolverWithSize(repo, 5*time.Minute, capacity)
+
+	// Fill the cache.
+	for _, id := range []string{"u1", "u2", "u3"} {
+		if _, _, err := resolver.Resolve(context.Background(), id); err != nil {
+			t.Fatalf("seed resolve %s: %v", id, err)
+		}
+	}
+
+	// Touch u1 so it becomes the most recently used.
+	if _, _, err := resolver.Resolve(context.Background(), "u1"); err != nil {
+		t.Fatalf("touch u1: %v", err)
+	}
+
+	// Insert u4 — this should evict u2 (now the oldest), NOT u1.
+	repo.users["u4"] = &UserRecord{ID: "u4"}
+	repo.roles["u4"] = []string{"viewer"}
+	if _, _, err := resolver.Resolve(context.Background(), "u4"); err != nil {
+		t.Fatalf("insert u4: %v", err)
+	}
+
+	// u1 should still be cached (no repo hit).
+	rolesBefore := repo.rolesCalls
+	if _, _, err := resolver.Resolve(context.Background(), "u1"); err != nil {
+		t.Fatalf("re-resolve u1: %v", err)
+	}
+	if repo.rolesCalls != rolesBefore {
+		t.Errorf("expected u1 to remain cached after touch, but repo was hit")
+	}
+
+	// u2 should be evicted (repo hit).
+	rolesBefore = repo.rolesCalls
+	if _, _, err := resolver.Resolve(context.Background(), "u2"); err != nil {
+		t.Fatalf("re-resolve u2: %v", err)
+	}
+	if repo.rolesCalls != rolesBefore+1 {
+		t.Errorf("expected u2 to be evicted (repo hit), but got cached result")
+	}
+}
+
+func TestRoleResolver_DefaultMaxSize(t *testing.T) {
+	// NewRoleResolver (no explicit size) should default to a sane bound.
+	resolver := NewRoleResolver(newFakeUserRepo(), time.Minute)
+	if resolver.MaxSize() <= 0 {
+		t.Errorf("expected default max size > 0, got %d", resolver.MaxSize())
+	}
+}
