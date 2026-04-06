@@ -1,5 +1,5 @@
 import { request } from './client';
-import type { Ontology, ObjectType, Property, LinkType, ActionType, ActionLog, OntologyInterface, ObjectTypeInterface, OntologySnapshot, ValueType, SecurityPolicy } from './types';
+import type { Ontology, ObjectType, Property, LinkType, ActionType, ActionLog, OntologyInterface, ObjectTypeInterface, OntologySnapshot, ValueType, SecurityPolicy, SharedProperty, TypeGroup, DatasourceBinding, QueryType } from './types';
 
 export interface CreateOntologyInput {
   apiName: string;
@@ -332,4 +332,218 @@ export function createSecurityPolicy(
 
 export function deleteSecurityPolicy(rid: string): Promise<void> {
   return request<void>('DELETE', `/api/admin/securityPolicies/${rid}`);
+}
+
+// --- Shared Property API ---
+
+export interface CreateSharedPropertyInput {
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  baseType: string;
+  typeConfig?: unknown;
+  isArray?: boolean;
+}
+
+export function listSharedProperties(
+  ontologyApiName: string,
+): Promise<{ data: SharedProperty[] }> {
+  return request<{ data: SharedProperty[] }>(
+    'GET',
+    `/api/admin/ontologies/${ontologyApiName}/shared-properties`,
+  );
+}
+
+export function createSharedProperty(
+  ontologyApiName: string,
+  input: CreateSharedPropertyInput,
+): Promise<SharedProperty> {
+  return request<SharedProperty>(
+    'POST',
+    `/api/admin/ontologies/${ontologyApiName}/shared-properties`,
+    input,
+  );
+}
+
+export function updateSharedProperty(
+  rid: string,
+  input: Partial<CreateSharedPropertyInput>,
+): Promise<SharedProperty> {
+  return request<SharedProperty>(
+    'PUT',
+    `/api/admin/shared-properties/${rid}`,
+    input,
+  );
+}
+
+export function deleteSharedProperty(rid: string): Promise<void> {
+  return request<void>('DELETE', `/api/admin/shared-properties/${rid}`);
+}
+
+// --- Type Group API ---
+
+export interface CreateTypeGroupInput {
+  apiName: string;
+  displayName: string;
+  description?: string;
+  color?: string;
+}
+
+export function listTypeGroups(
+  ontologyApiName: string,
+): Promise<{ data: TypeGroup[] }> {
+  return request<{ data: TypeGroup[] }>(
+    'GET',
+    `/api/admin/ontologies/${ontologyApiName}/type-groups`,
+  );
+}
+
+export function createTypeGroup(
+  ontologyApiName: string,
+  input: CreateTypeGroupInput,
+): Promise<TypeGroup> {
+  return request<TypeGroup>(
+    'POST',
+    `/api/admin/ontologies/${ontologyApiName}/type-groups`,
+    input,
+  );
+}
+
+export function updateTypeGroup(
+  rid: string,
+  input: Partial<CreateTypeGroupInput>,
+): Promise<TypeGroup> {
+  return request<TypeGroup>('PUT', `/api/admin/type-groups/${rid}`, input);
+}
+
+export function deleteTypeGroup(rid: string): Promise<void> {
+  return request<void>('DELETE', `/api/admin/type-groups/${rid}`);
+}
+
+export function assignTypeGroup(
+  objectTypeRid: string,
+  typeGroupRid: string,
+): Promise<void> {
+  return request<void>(
+    'POST',
+    `/api/admin/objectTypes/${objectTypeRid}/groups/${typeGroupRid}`,
+  );
+}
+
+export function removeTypeGroup(
+  objectTypeRid: string,
+  typeGroupRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/admin/objectTypes/${objectTypeRid}/groups/${typeGroupRid}`,
+  );
+}
+
+export function listTypeGroupsForObjectType(
+  objectTypeRid: string,
+): Promise<{ data: TypeGroup[] }> {
+  return request<{ data: TypeGroup[] }>(
+    'GET',
+    `/api/admin/objectTypes/${objectTypeRid}/groups`,
+  );
+}
+
+// --- Datasource Binding API ---
+
+export interface CreateDatasourceBindingInput {
+  datasetRid: string;
+  branch: string;
+  columnMapping?: unknown;
+  isPrimary?: boolean;
+}
+
+export function listDatasourceBindings(
+  objectTypeRid: string,
+): Promise<{ data: DatasourceBinding[] }> {
+  return request<{ data: DatasourceBinding[] }>(
+    'GET',
+    `/api/admin/objectTypes/${objectTypeRid}/datasourceBindings`,
+  );
+}
+
+export function createDatasourceBinding(
+  objectTypeRid: string,
+  input: CreateDatasourceBindingInput,
+): Promise<DatasourceBinding> {
+  return request<DatasourceBinding>(
+    'POST',
+    `/api/admin/objectTypes/${objectTypeRid}/datasourceBindings`,
+    input,
+  );
+}
+
+export function updateDatasourceBinding(
+  rid: string,
+  input: Partial<CreateDatasourceBindingInput>,
+): Promise<DatasourceBinding> {
+  return request<DatasourceBinding>(
+    'PUT',
+    `/api/admin/datasourceBindings/${rid}`,
+    input,
+  );
+}
+
+export function deleteDatasourceBinding(rid: string): Promise<void> {
+  return request<void>('DELETE', `/api/admin/datasourceBindings/${rid}`);
+}
+
+// --- Query Type API ---
+
+export interface CreateQueryTypeInput {
+  apiName: string;
+  displayName: string;
+  description?: string;
+  parameters: unknown;
+  output: unknown;
+  query: unknown;
+  status?: string;
+}
+
+export function listQueryTypes(
+  ontologyApiName: string,
+): Promise<{ data: QueryType[] }> {
+  return request<{ data: QueryType[] }>(
+    'GET',
+    `/api/admin/ontologies/${ontologyApiName}/queryTypes`,
+  );
+}
+
+export function createQueryType(
+  ontologyApiName: string,
+  input: CreateQueryTypeInput,
+): Promise<QueryType> {
+  return request<QueryType>(
+    'POST',
+    `/api/admin/ontologies/${ontologyApiName}/queryTypes`,
+    input,
+  );
+}
+
+export function updateQueryType(
+  rid: string,
+  input: Partial<CreateQueryTypeInput>,
+): Promise<QueryType> {
+  return request<QueryType>('PUT', `/api/admin/queryTypes/${rid}`, input);
+}
+
+export function deleteQueryType(rid: string): Promise<void> {
+  return request<void>('DELETE', `/api/admin/queryTypes/${rid}`);
+}
+
+export function executeQueryType(
+  ontologyApiName: string,
+  queryApiName: string,
+  parameters: Record<string, unknown>,
+): Promise<unknown> {
+  return request<unknown>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/queries/${queryApiName}/execute`,
+    parameters,
+  );
 }

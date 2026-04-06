@@ -28,12 +28,27 @@ import { InterfaceListPage } from './InterfaceListPage';
 import { SnapshotListPage } from './SnapshotListPage';
 import { ValueTypeListPage } from './ValueTypeListPage';
 import { SecurityPolicyListPage } from './SecurityPolicyListPage';
+import { SharedPropertyListPage } from './SharedPropertyListPage';
+import { TypeGroupListPage } from './TypeGroupListPage';
+import { DatasourceBindingListPage } from './DatasourceBindingListPage';
+import { QueryTypeListPage } from './QueryTypeListPage';
 import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { Badge, statusVariant } from '../common/Badge';
 
-type TabKey = 'objectTypes' | 'linkTypes' | 'actionTypes' | 'interfaces' | 'snapshots' | 'valueTypes' | 'security';
+type TabKey =
+  | 'objectTypes'
+  | 'linkTypes'
+  | 'actionTypes'
+  | 'interfaces'
+  | 'snapshots'
+  | 'valueTypes'
+  | 'security'
+  | 'sharedProperties'
+  | 'typeGroups'
+  | 'datasourceBindings'
+  | 'queryTypes';
 
 export function AdminPage() {
   const navigate = useNavigate();
@@ -136,6 +151,10 @@ export function AdminPage() {
     { key: 'snapshots', label: 'Snapshots' },
     { key: 'valueTypes', label: 'Value Types' },
     { key: 'security', label: 'Security' },
+    { key: 'sharedProperties', label: 'Shared Properties' },
+    { key: 'typeGroups', label: 'Type Groups' },
+    { key: 'datasourceBindings', label: 'Datasources' },
+    { key: 'queryTypes', label: 'Query Types' },
   ];
 
   return (
@@ -406,6 +425,22 @@ export function AdminPage() {
 
               {activeTab === 'security' && (
                 <SecurityPolicyListPage ontologyApiName={selectedOntology} />
+              )}
+
+              {activeTab === 'sharedProperties' && (
+                <SharedPropertyListPage ontologyApiName={selectedOntology} />
+              )}
+
+              {activeTab === 'typeGroups' && (
+                <TypeGroupListPage ontologyApiName={selectedOntology} />
+              )}
+
+              {activeTab === 'datasourceBindings' && (
+                <DatasourceBindingListPage ontologyApiName={selectedOntology} />
+              )}
+
+              {activeTab === 'queryTypes' && (
+                <QueryTypeListPage ontologyApiName={selectedOntology} />
               )}
             </div>
           </>

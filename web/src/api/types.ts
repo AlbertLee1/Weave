@@ -175,3 +175,41 @@ export interface SecurityPolicy {
   policyType: 'OBJECT' | 'PROPERTY';
   rules: unknown;
 }
+
+export interface SharedProperty {
+  rid: string;
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  baseType: string;
+  typeConfig?: unknown;
+  isArray: boolean;
+}
+
+export interface TypeGroup {
+  rid: string;
+  apiName: string;
+  displayName: string;
+  description?: string;
+  color?: string;
+}
+
+export interface DatasourceBinding {
+  rid: string;
+  objectTypeRid?: string;
+  datasetRid: string;
+  branch: string;
+  columnMapping?: unknown;
+  isPrimary: boolean;
+}
+
+export interface QueryType {
+  rid: string;
+  apiName: string;
+  displayName: string;
+  description?: string;
+  parameters: unknown;
+  output: unknown;
+  query: unknown;
+  status: string;
+}
