@@ -414,6 +414,73 @@ func TestWaitForOffset_Timeout(t *testing.T) {
 	}
 }
 
+// --- Consumer batch-atomicity tests ---
+
+// TestConsumer_BatchAtomicity_PerIndex verifies that applyBatchEdits groups
+// edits by object type and commits each group atomically via the index
+// manager's ApplyBatch. A batch spanning two object types should result in
+// two atomic per-index commits, and all edits should be visible at the end.
+func TestConsumer_BatchAtomicity_PerIndex(t *testing.T) {
+	consumer, mgr := setupTestConsumer(t)
+
+	// Ensure a second object type exists for cross-type testing.
+	props := []index.Property{
+		{APIName: "title", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("project", props); err != nil {
+		t.Fatalf("EnsureIndex project: %v", err)
+	}
+
+	edits := []Edit{
+		{Type: EditTypeCreate, ObjectType: "employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "Alice", "age": float64(30)}},
+		{Type: EditTypeCreate, ObjectType: "project", PrimaryKey: "proj-1", Properties: map[string]interface{}{"title": "Weave"}},
+		{Type: EditTypeCreate, ObjectType: "employee", PrimaryKey: "emp-2", Properties: map[string]interface{}{"name": "Bob", "age": float64(28)}},
+	}
+
+	if err := consumer.applyBatchEdits(edits); err != nil {
+		t.Fatalf("applyBatchEdits: %v", err)
+	}
+
+	empCount, err := mgr.DocCount("employee")
+	if err != nil {
+		t.Fatalf("DocCount employee: %v", err)
+	}
+	if empCount != 2 {
+		t.Fatalf("expected 2 employees, got %d", empCount)
+	}
+
+	projCount, err := mgr.DocCount("project")
+	if err != nil {
+		t.Fatalf("DocCount project: %v", err)
+	}
+	if projCount != 1 {
+		t.Fatalf("expected 1 project, got %d", projCount)
+	}
+}
+
+// TestConsumer_BatchAtomicity_UnknownType verifies the consumer returns an
+// error when a batch includes an edit for an unknown object type (so the
+// caller can Nak the NATS message).
+func TestConsumer_BatchAtomicity_UnknownType(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+
+	edits := []Edit{
+		{Type: EditTypeCreate, ObjectType: "employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "Alice"}},
+		{Type: EditTypeCreate, ObjectType: "nonexistent", PrimaryKey: "x-1", Properties: map[string]interface{}{"foo": "bar"}},
+	}
+
+	if err := consumer.applyBatchEdits(edits); err == nil {
+		t.Fatal("expected error for unknown object type in batch")
+	}
+}
+
+func TestConsumer_BatchAtomicity_Empty(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	if err := consumer.applyBatchEdits(nil); err != nil {
+		t.Fatalf("empty batch should be no-op: %v", err)
+	}
+}
+
 // --- Publisher tests (2) ---
 
 func TestPublisher_SubjectFormat(t *testing.T) {

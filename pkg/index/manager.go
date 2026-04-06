@@ -128,6 +128,63 @@ func (m *Manager) DeleteDocument(objectType, docID string) error {
 	return idx.Delete(docID)
 }
 
+// BatchOpType enumerates the kinds of operation supported by ApplyBatch.
+type BatchOpType string
+
+const (
+	// BatchOpIndex upserts a document into the index (CREATE or MODIFY).
+	BatchOpIndex BatchOpType = "INDEX"
+	// BatchOpDelete removes a document from the index.
+	BatchOpDelete BatchOpType = "DELETE"
+)
+
+// BatchOp is a single operation in a batch commit. It is defined in the index
+// package (rather than taking a funnel.Edit) to avoid an import cycle between
+// pkg/funnel and pkg/index.
+type BatchOp struct {
+	Type       BatchOpType
+	PrimaryKey string
+	// Document is required for BatchOpIndex and ignored for BatchOpDelete.
+	Document map[string]interface{}
+}
+
+// ApplyBatch commits the given operations to a single object type's index as
+// one atomic bleve.Batch. Atomicity is guaranteed per index: if the batch fails
+// to commit, none of the operations in it are visible. An empty ops slice is a
+// no-op.
+func (m *Manager) ApplyBatch(objectType string, ops []BatchOp) error {
+	if len(ops) == 0 {
+		return nil
+	}
+
+	m.mu.RLock()
+	idx, ok := m.indexes[objectType]
+	m.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("index not found for object type %q", objectType)
+	}
+
+	batch := idx.NewBatch()
+	for _, op := range ops {
+		switch op.Type {
+		case BatchOpIndex:
+			if err := batch.Index(op.PrimaryKey, op.Document); err != nil {
+				return fmt.Errorf("batch index %q: %w", op.PrimaryKey, err)
+			}
+		case BatchOpDelete:
+			batch.Delete(op.PrimaryKey)
+		default:
+			return fmt.Errorf("unknown batch op type: %q", op.Type)
+		}
+	}
+
+	if err := idx.Batch(batch); err != nil {
+		return fmt.Errorf("commit batch for %q: %w", objectType, err)
+	}
+	return nil
+}
+
 // Search executes a search on the specified object type's index.
 func (m *Manager) Search(objectType string, req *bleve.SearchRequest) (*bleve.SearchResult, error) {
 	m.mu.RLock()

@@ -62,6 +62,9 @@ func (m *mockOmsRepo) GetLinkType(_ context.Context, _ string) (*oms.LinkType, e
 func (m *mockOmsRepo) ListOutgoingLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {
 	return nil, nil
 }
+func (m *mockOmsRepo) ListIncomingLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {
+	return nil, nil
+}
 func (m *mockOmsRepo) ListLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {
 	return nil, nil
 }

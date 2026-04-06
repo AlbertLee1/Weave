@@ -125,14 +125,12 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 		return
 	}
 
-	for _, edit := range batch.Edits {
-		if err := c.applyEdit(edit); err != nil {
-			log.Printf("funnel: apply edit error: %v", err)
-			if err := msg.Nak(); err != nil {
-				log.Printf("funnel: nak error: %v", err)
-			}
-			return
+	if err := c.applyBatchEdits(batch.Edits); err != nil {
+		log.Printf("funnel: apply batch error: %v", err)
+		if err := msg.Nak(); err != nil {
+			log.Printf("funnel: nak error: %v", err)
 		}
+		return
 	}
 
 	// Get the sequence number from message metadata
@@ -169,5 +167,75 @@ func (c *Consumer) applyEdit(edit Edit) error {
 		return c.indexMgr.DeleteDocument(edit.ObjectType, edit.PrimaryKey)
 	default:
 		return fmt.Errorf("unknown edit type: %q", edit.Type)
+	}
+}
+
+// applyBatchEdits groups edits by object type (preserving per-type order) and
+// commits each group as a single atomic bleve batch via the index manager.
+// An empty edits slice is a no-op. If any per-index commit fails the method
+// returns an error; the caller is responsible for Nak-ing the upstream message.
+//
+// Atomicity is guaranteed per index only. For a batch spanning N object types
+// the commit may partially succeed across indexes on the first delivery; in
+// that case the caller Naks and the redelivered message re-applies every
+// group. CREATE/MODIFY replay is idempotent via bleve upsert; DELETE+CREATE
+// across types during redelivery is at-least-once and documented in the
+// design report.
+func (c *Consumer) applyBatchEdits(edits []Edit) error {
+	if len(edits) == 0 {
+		return nil
+	}
+
+	// Preserve insertion order of object types so single-type batches keep
+	// their historical per-type ordering for downstream consumers.
+	type group struct {
+		objectType string
+		ops        []index.BatchOp
+	}
+	groupIdx := make(map[string]int)
+	var groups []group
+
+	for _, edit := range edits {
+		op, err := toBatchOp(edit)
+		if err != nil {
+			return err
+		}
+		if i, ok := groupIdx[edit.ObjectType]; ok {
+			groups[i].ops = append(groups[i].ops, op)
+			continue
+		}
+		groupIdx[edit.ObjectType] = len(groups)
+		groups = append(groups, group{objectType: edit.ObjectType, ops: []index.BatchOp{op}})
+	}
+
+	for _, g := range groups {
+		if err := c.indexMgr.ApplyBatch(g.objectType, g.ops); err != nil {
+			return fmt.Errorf("apply batch for %q: %w", g.objectType, err)
+		}
+	}
+	return nil
+}
+
+// toBatchOp converts a funnel.Edit into an index.BatchOp, copying the
+// properties map so downstream mutations cannot race with bleve.
+func toBatchOp(edit Edit) (index.BatchOp, error) {
+	switch edit.Type {
+	case EditTypeCreate, EditTypeModify:
+		doc := make(map[string]interface{}, len(edit.Properties))
+		for k, v := range edit.Properties {
+			doc[k] = v
+		}
+		return index.BatchOp{
+			Type:       index.BatchOpIndex,
+			PrimaryKey: edit.PrimaryKey,
+			Document:   doc,
+		}, nil
+	case EditTypeDelete:
+		return index.BatchOp{
+			Type:       index.BatchOpDelete,
+			PrimaryKey: edit.PrimaryKey,
+		}, nil
+	default:
+		return index.BatchOp{}, fmt.Errorf("unknown edit type: %q", edit.Type)
 	}
 }

@@ -8,6 +8,131 @@ import (
 	"github.com/liyang/weave/pkg/index"
 )
 
+// --- ApplyBatch tests ---
+
+func TestManager_ApplyBatch_AtomicPerIndex(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	if _, err := mgr.EnsureIndex("employee", sampleProperties()); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	ops := []index.BatchOp{
+		{
+			Type:       index.BatchOpIndex,
+			PrimaryKey: "emp-1",
+			Document:   map[string]interface{}{"name": "Alice", "age": 30, "active": true},
+		},
+		{
+			Type:       index.BatchOpIndex,
+			PrimaryKey: "emp-2",
+			Document:   map[string]interface{}{"name": "Bob", "age": 28, "active": true},
+		},
+	}
+
+	if err := mgr.ApplyBatch("employee", ops); err != nil {
+		t.Fatalf("ApplyBatch: %v", err)
+	}
+
+	count, err := mgr.DocCount("employee")
+	if err != nil {
+		t.Fatalf("DocCount: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected doc count 2 after atomic batch, got %d", count)
+	}
+}
+
+func TestManager_ApplyBatch_MixedIndexAndDelete(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	if _, err := mgr.EnsureIndex("employee", sampleProperties()); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	// Pre-populate emp-1.
+	if err := mgr.IndexDocument("employee", "emp-1", map[string]interface{}{"name": "Alice"}); err != nil {
+		t.Fatalf("IndexDocument: %v", err)
+	}
+
+	// Batch: delete emp-1, create emp-2.
+	ops := []index.BatchOp{
+		{Type: index.BatchOpDelete, PrimaryKey: "emp-1"},
+		{
+			Type:       index.BatchOpIndex,
+			PrimaryKey: "emp-2",
+			Document:   map[string]interface{}{"name": "Bob"},
+		},
+	}
+	if err := mgr.ApplyBatch("employee", ops); err != nil {
+		t.Fatalf("ApplyBatch: %v", err)
+	}
+
+	count, err := mgr.DocCount("employee")
+	if err != nil {
+		t.Fatalf("DocCount: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected doc count 1 (emp-1 deleted, emp-2 created), got %d", count)
+	}
+
+	idx := mgr.GetIndex("employee")
+	doc, err := idx.Document("emp-2")
+	if err != nil {
+		t.Fatalf("Document: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("expected emp-2 in index after ApplyBatch")
+	}
+}
+
+func TestManager_ApplyBatch_UnknownIndex(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	ops := []index.BatchOp{
+		{Type: index.BatchOpIndex, PrimaryKey: "x", Document: map[string]interface{}{"foo": "bar"}},
+	}
+	if err := mgr.ApplyBatch("nonexistent", ops); err == nil {
+		t.Fatal("expected error for unknown object type")
+	}
+}
+
+func TestManager_ApplyBatch_Empty(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	if _, err := mgr.EnsureIndex("employee", sampleProperties()); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	// Empty batch is a no-op.
+	if err := mgr.ApplyBatch("employee", nil); err != nil {
+		t.Fatalf("ApplyBatch(nil): %v", err)
+	}
+	if err := mgr.ApplyBatch("employee", []index.BatchOp{}); err != nil {
+		t.Fatalf("ApplyBatch([]): %v", err)
+	}
+}
+
+func TestManager_ApplyBatch_UnknownOpType(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	if _, err := mgr.EnsureIndex("employee", sampleProperties()); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	ops := []index.BatchOp{
+		{Type: "INVALID", PrimaryKey: "emp-1"},
+	}
+	if err := mgr.ApplyBatch("employee", ops); err == nil {
+		t.Fatal("expected error for unknown op type")
+	}
+}
+
 // --- FieldMappingForBaseType tests ---
 
 func TestFieldMapping_String(t *testing.T) {
