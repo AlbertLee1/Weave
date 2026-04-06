@@ -1,0 +1,176 @@
+import { describe, it, expect } from 'vitest';
+import {
+  emptyBase,
+  nodeToDefinition,
+  definitionToNode,
+  validateNode,
+  newId,
+  localStorageKey,
+  type ObjectSetNode,
+} from '../objectSetBuilder';
+import type { ObjectSetDefinition } from '../../api/types';
+
+describe('emptyBase', () => {
+  it('creates a base node with given object type', () => {
+    const node = emptyBase('Employee');
+    expect(node.type).toBe('base');
+    if (node.type === 'base') {
+      expect(node.objectType).toBe('Employee');
+    }
+    expect(node.id).toBeTruthy();
+  });
+});
+
+describe('newId', () => {
+  it('returns a unique string', () => {
+    const a = newId();
+    const b = newId();
+    expect(a).not.toEqual(b);
+    expect(typeof a).toBe('string');
+  });
+});
+
+describe('nodeToDefinition / definitionToNode round-trip', () => {
+  it('round-trips a base node', () => {
+    const node = emptyBase('Employee');
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({ type: 'base', objectType: 'Employee' });
+    const back = definitionToNode(def);
+    expect(back.type).toBe('base');
+    if (back.type === 'base') {
+      expect(back.objectType).toBe('Employee');
+    }
+  });
+
+  it('round-trips a filter node', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'filter',
+      objectSet: emptyBase('Employee'),
+      where: { type: 'eq', field: 'department', value: 'Engineering' },
+    };
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({
+      type: 'filter',
+      objectSet: { type: 'base', objectType: 'Employee' },
+      where: { type: 'eq', field: 'department', value: 'Engineering' },
+    });
+    const back = definitionToNode(def);
+    expect(back.type).toBe('filter');
+  });
+
+  it('round-trips a union node with two children', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'union',
+      objectSets: [emptyBase('Employee'), emptyBase('Manager')],
+    };
+    const def = nodeToDefinition(node) as { objectSets: ObjectSetDefinition[] };
+    expect(def.objectSets).toHaveLength(2);
+    const back = definitionToNode(node as ObjectSetNode as never as ObjectSetDefinition);
+    // direct path: build def then back
+    const back2 = definitionToNode(nodeToDefinition(node));
+    expect(back2.type).toBe('union');
+    if (back2.type === 'union') {
+      expect(back2.objectSets).toHaveLength(2);
+    }
+    // silence unused variable lint
+    expect(back).toBeDefined();
+  });
+
+  it('round-trips a searchAround node', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'searchAround',
+      objectSet: emptyBase('Employee'),
+      link: 'reportsTo',
+      direction: 'forward',
+    };
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({
+      type: 'searchAround',
+      objectSet: { type: 'base', objectType: 'Employee' },
+      link: 'reportsTo',
+      direction: 'forward',
+    });
+  });
+
+  it('omits ids in the produced definition', () => {
+    const node: ObjectSetNode = {
+      id: 'root-id',
+      type: 'filter',
+      objectSet: { id: 'child-id', type: 'base', objectType: 'Employee' },
+      where: { type: 'eq', field: 'x', value: 'y' },
+    };
+    const def = nodeToDefinition(node);
+    expect(JSON.stringify(def)).not.toContain('root-id');
+    expect(JSON.stringify(def)).not.toContain('child-id');
+  });
+});
+
+describe('validateNode', () => {
+  it('returns no errors for a valid base node', () => {
+    expect(validateNode(emptyBase('Employee'))).toEqual([]);
+  });
+
+  it('flags base node missing objectType', () => {
+    const errs = validateNode({ id: '1', type: 'base', objectType: '' });
+    expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it('flags filter node missing where clause', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'filter',
+      objectSet: emptyBase('Employee'),
+      where: undefined as never,
+    });
+    expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it('flags union with fewer than 2 children', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'union',
+      objectSets: [emptyBase('Employee')],
+    });
+    expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it('flags searchAround missing link', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'searchAround',
+      objectSet: emptyBase('Employee'),
+      link: '',
+    });
+    expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it('recurses into child nodes', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'filter',
+      objectSet: { id: '2', type: 'base', objectType: '' },
+      where: { type: 'eq', field: 'x', value: 'y' },
+    });
+    expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it('flags nearestNeighbors as not yet supported', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'nearestNeighbors',
+      objectSet: emptyBase('Employee'),
+    });
+    expect(errs.length).toBeGreaterThan(0);
+    expect(errs.join(' ')).toMatch(/not yet supported|not supported/i);
+  });
+});
+
+describe('localStorageKey', () => {
+  it('namespaces by ontology', () => {
+    expect(localStorageKey('northwind')).toBe('weave:objectSets:northwind');
+    expect(localStorageKey('chinook')).toBe('weave:objectSets:chinook');
+  });
+});

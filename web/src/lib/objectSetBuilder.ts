@@ -1,0 +1,257 @@
+import type { ObjectSetDefinition, WhereClause } from '../api/types';
+
+// ObjectSetNode is a tree node mirroring ObjectSetDefinition with a stable id
+// for React rendering. The `id` field is stripped when converting to a wire
+// definition.
+export type ObjectSetNode =
+  | BaseNode
+  | FilterNode
+  | UnionNode
+  | IntersectNode
+  | SubtractNode
+  | SearchAroundNode
+  | ReferenceNode
+  | WithPropertiesNode
+  | NearestNeighborsNode;
+
+interface NodeBase {
+  id: string;
+}
+
+export interface BaseNode extends NodeBase {
+  type: 'base';
+  objectType: string;
+}
+
+export interface FilterNode extends NodeBase {
+  type: 'filter';
+  objectSet: ObjectSetNode;
+  where: WhereClause;
+}
+
+export interface UnionNode extends NodeBase {
+  type: 'union';
+  objectSets: ObjectSetNode[];
+}
+
+export interface IntersectNode extends NodeBase {
+  type: 'intersect';
+  objectSets: ObjectSetNode[];
+}
+
+export interface SubtractNode extends NodeBase {
+  type: 'subtract';
+  objectSets: ObjectSetNode[];
+}
+
+export interface SearchAroundNode extends NodeBase {
+  type: 'searchAround';
+  objectSet: ObjectSetNode;
+  link: string;
+  direction?: 'forward' | 'reverse';
+}
+
+export interface ReferenceNode extends NodeBase {
+  type: 'reference';
+  reference: string;
+}
+
+export interface WithPropertiesNode extends NodeBase {
+  type: 'withProperties';
+  objectSet: ObjectSetNode;
+  properties?: string[];
+}
+
+export interface NearestNeighborsNode extends NodeBase {
+  type: 'nearestNeighbors';
+  objectSet: ObjectSetNode;
+  propertyIdentifier?: { property: { apiName: string } };
+  numNeighbors?: number;
+  similarityThreshold?: number;
+  query?: {
+    vector?: { value: number[] };
+    text?: { value: string };
+  };
+}
+
+export interface SavedObjectSet {
+  id: string;
+  name: string;
+  def: ObjectSetDefinition;
+  createdAt: string;
+}
+
+let idCounter = 0;
+export function newId(): string {
+  idCounter += 1;
+  return `n${Date.now().toString(36)}-${idCounter}`;
+}
+
+export function emptyBase(objectType: string): BaseNode {
+  return { id: newId(), type: 'base', objectType };
+}
+
+// nodeToDefinition strips ids and produces the wire-format Definition.
+export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
+  switch (node.type) {
+    case 'base':
+      return { type: 'base', objectType: node.objectType };
+    case 'filter':
+      return {
+        type: 'filter',
+        objectSet: nodeToDefinition(node.objectSet),
+        where: node.where,
+      };
+    case 'union':
+      return {
+        type: 'union',
+        objectSets: node.objectSets.map(nodeToDefinition),
+      };
+    case 'intersect':
+      return {
+        type: 'intersect',
+        objectSets: node.objectSets.map(nodeToDefinition),
+      };
+    case 'subtract':
+      return {
+        type: 'subtract',
+        objectSets: node.objectSets.map(nodeToDefinition),
+      };
+    case 'searchAround': {
+      const def: ObjectSetDefinition = {
+        type: 'searchAround',
+        objectSet: nodeToDefinition(node.objectSet),
+        link: node.link,
+      };
+      if (node.direction) {
+        (def as { direction?: 'forward' | 'reverse' }).direction = node.direction;
+      }
+      return def;
+    }
+    case 'reference':
+      return { type: 'reference', reference: node.reference };
+    case 'withProperties':
+      return {
+        type: 'withProperties',
+        objectSet: nodeToDefinition(node.objectSet),
+        properties: node.properties,
+      };
+    case 'nearestNeighbors':
+      return {
+        type: 'nearestNeighbors',
+        objectSet: nodeToDefinition(node.objectSet),
+        propertyIdentifier: node.propertyIdentifier,
+        numNeighbors: node.numNeighbors,
+        similarityThreshold: node.similarityThreshold,
+        query: node.query,
+      };
+  }
+}
+
+// definitionToNode wraps a wire Definition in node form, generating fresh ids.
+export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
+  switch (def.type) {
+    case 'base':
+      return { id: newId(), type: 'base', objectType: def.objectType };
+    case 'filter':
+      return {
+        id: newId(),
+        type: 'filter',
+        objectSet: definitionToNode(def.objectSet),
+        where: def.where,
+      };
+    case 'union':
+      return {
+        id: newId(),
+        type: 'union',
+        objectSets: def.objectSets.map(definitionToNode),
+      };
+    case 'intersect':
+      return {
+        id: newId(),
+        type: 'intersect',
+        objectSets: def.objectSets.map(definitionToNode),
+      };
+    case 'subtract':
+      return {
+        id: newId(),
+        type: 'subtract',
+        objectSets: def.objectSets.map(definitionToNode),
+      };
+    case 'searchAround':
+      return {
+        id: newId(),
+        type: 'searchAround',
+        objectSet: definitionToNode(def.objectSet),
+        link: def.link,
+        direction: def.direction,
+      };
+    case 'reference':
+      return { id: newId(), type: 'reference', reference: def.reference };
+    case 'withProperties':
+      return {
+        id: newId(),
+        type: 'withProperties',
+        objectSet: definitionToNode(def.objectSet),
+        properties: def.properties,
+      };
+    case 'nearestNeighbors':
+      return {
+        id: newId(),
+        type: 'nearestNeighbors',
+        objectSet: definitionToNode(def.objectSet),
+        propertyIdentifier: def.propertyIdentifier,
+        numNeighbors: def.numNeighbors,
+        similarityThreshold: def.similarityThreshold,
+        query: def.query,
+      };
+  }
+}
+
+// validateNode returns a flat list of human-readable errors. An empty array
+// means the tree is ready to execute.
+export function validateNode(node: ObjectSetNode): string[] {
+  const errors: string[] = [];
+  walk(node, errors);
+  return errors;
+}
+
+function walk(node: ObjectSetNode, errors: string[]): void {
+  switch (node.type) {
+    case 'base':
+      if (!node.objectType) errors.push('base node requires an object type');
+      break;
+    case 'filter':
+      if (!node.where || !(node.where as WhereClause).type) {
+        errors.push('filter node requires a where clause');
+      }
+      walk(node.objectSet, errors);
+      break;
+    case 'union':
+    case 'intersect':
+    case 'subtract':
+      if (node.objectSets.length < 2) {
+        errors.push(`${node.type} node requires at least 2 child object sets`);
+      }
+      for (const child of node.objectSets) walk(child, errors);
+      break;
+    case 'searchAround':
+      if (!node.link) errors.push('searchAround node requires a link');
+      walk(node.objectSet, errors);
+      break;
+    case 'reference':
+      if (!node.reference) errors.push('reference node requires a reference id');
+      break;
+    case 'withProperties':
+      walk(node.objectSet, errors);
+      break;
+    case 'nearestNeighbors':
+      errors.push('nearestNeighbors is not yet supported by the backend');
+      walk(node.objectSet, errors);
+      break;
+  }
+}
+
+export function localStorageKey(ontologyApiName: string): string {
+  return `weave:objectSets:${ontologyApiName}`;
+}

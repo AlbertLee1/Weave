@@ -213,3 +213,100 @@ export interface QueryType {
   query: unknown;
   status: string;
 }
+
+// --- ObjectSet Definition (mirrors pkg/oss/objectset/definition.go) ---
+
+export type ObjectSetDefinition =
+  | BaseObjectSet
+  | FilterObjectSet
+  | UnionObjectSet
+  | IntersectObjectSet
+  | SubtractObjectSet
+  | SearchAroundObjectSet
+  | ReferenceObjectSet
+  | WithPropertiesObjectSet
+  | NearestNeighborsObjectSet;
+
+export interface BaseObjectSet {
+  type: 'base';
+  objectType: string;
+}
+
+export interface FilterObjectSet {
+  type: 'filter';
+  objectSet: ObjectSetDefinition;
+  where: WhereClause;
+}
+
+export interface UnionObjectSet {
+  type: 'union';
+  objectSets: ObjectSetDefinition[];
+}
+
+export interface IntersectObjectSet {
+  type: 'intersect';
+  objectSets: ObjectSetDefinition[];
+}
+
+export interface SubtractObjectSet {
+  type: 'subtract';
+  objectSets: ObjectSetDefinition[];
+}
+
+export interface SearchAroundObjectSet {
+  type: 'searchAround';
+  objectSet: ObjectSetDefinition;
+  link: string;
+  direction?: 'forward' | 'reverse';
+}
+
+export interface ReferenceObjectSet {
+  type: 'reference';
+  reference: string;
+}
+
+export interface WithPropertiesObjectSet {
+  type: 'withProperties';
+  objectSet: ObjectSetDefinition;
+  properties?: string[];
+}
+
+export interface NearestNeighborsObjectSet {
+  type: 'nearestNeighbors';
+  objectSet: ObjectSetDefinition;
+  propertyIdentifier?: { property: { apiName: string } };
+  numNeighbors?: number;
+  similarityThreshold?: number;
+  query?: {
+    vector?: { value: number[] };
+    text?: { value: string };
+  };
+}
+
+export interface OrderByField {
+  field: string;
+  direction: 'asc' | 'desc';
+}
+
+export interface OrderBy {
+  fields: OrderByField[];
+}
+
+export interface LoadObjectSetRequest {
+  objectSet: ObjectSetDefinition;
+  select?: string[];
+  orderBy?: OrderBy;
+  pageSize?: number;
+  pageToken?: string;
+  snapshot?: boolean;
+}
+
+export interface LoadObjectSetResponse {
+  data: WireObject[];
+  nextPageToken?: string;
+  totalCount?: string;
+}
+
+export interface CreateTemporaryResponse {
+  objectSetRid: string;
+}

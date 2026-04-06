@@ -1,10 +1,5 @@
-import { NavLink } from 'react-router';
+import { NavLink, useParams } from 'react-router';
 import { useOntologyStore } from '../../stores/ontologyStore';
-
-const navItems = [
-  { to: '/', label: 'Dashboard', icon: 'grid' },
-  { to: '/admin', label: 'Admin', icon: 'settings' },
-];
 
 const iconPaths: Record<string, string> = {
   grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
@@ -14,6 +9,8 @@ const iconPaths: Record<string, string> = {
   compass: 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 0l4.5 4.5L12 12l-4.5-4.5L12 2z',
   zap: 'M13 2L3 14h9l-1 10 10-12h-9l1-10z',
   'bar-chart': 'M12 20V10M18 20V4M6 20v-4',
+  layers:
+    'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -37,6 +34,20 @@ function SvgIcon({ name }: { name: string }) {
 export function Sidebar() {
   const collapsed = useOntologyStore((s) => s.sidebarCollapsed);
   const toggle = useOntologyStore((s) => s.toggleSidebar);
+  const selectedOntology = useOntologyStore((s) => s.selectedOntology);
+  const params = useParams();
+  const activeOntology =
+    (params.ontology as string | undefined) ?? selectedOntology ?? null;
+
+  const navItems = [
+    { to: '/', label: 'Dashboard', icon: 'grid' },
+    {
+      to: activeOntology ? `/objectsets/${activeOntology}` : '/',
+      label: 'Query Builder',
+      icon: 'layers',
+    },
+    { to: '/admin', label: 'Admin', icon: 'settings' },
+  ];
 
   return (
     <aside

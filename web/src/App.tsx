@@ -9,6 +9,7 @@ import { ObjectTypeDetailPage } from './components/admin/ObjectTypeDetailPage';
 import { ActionTypeDetailPage } from './components/admin/ActionTypeDetailPage';
 import { ActionConsolePage } from './components/actions/ActionConsolePage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
+import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="admin/:ontology/action-types/:actionType" element={<ActionTypeDetailPage />} />
             <Route path="actions/:ontology" element={<ActionConsolePage />} />
             <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
+            <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
