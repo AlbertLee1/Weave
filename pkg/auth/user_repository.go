@@ -34,6 +34,9 @@ type UserRepository interface {
 	ListUserRoles(ctx context.Context, userID string) ([]string, error)
 	ListUserOntologyRoles(ctx context.Context, userID string) (map[string]string, error)
 	UpsertUserRole(ctx context.Context, userID, role string) error
+	// SetPassword updates the bcrypt password_hash column for a user.
+	// Used by JWT bootstrap and any future password-reset endpoint.
+	SetPassword(ctx context.Context, userID, passwordHash string) error
 }
 
 // PGUserRepository is the Postgres implementation of UserRepository.
@@ -126,4 +129,19 @@ func (r *PGUserRepository) UpsertUserRole(ctx context.Context, userID, role stri
 		 ON CONFLICT (user_id, role) DO NOTHING`,
 		userID, role)
 	return err
+}
+
+// SetPassword writes the bcrypt password_hash for the given user. Returns
+// ErrUserNotFound if no user matches.
+func (r *PGUserRepository) SetPassword(ctx context.Context, userID, passwordHash string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`,
+		passwordHash, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }

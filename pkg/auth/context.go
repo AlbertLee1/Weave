@@ -12,6 +12,8 @@ import "context"
 // are checked by EnforceOntologyScope for resource-scoped writes.
 type User struct {
 	ID            string
+	Email         string
+	Name          string
 	Roles         []string
 	OntologyRoles map[string]string
 }

@@ -1,4 +1,5 @@
 import type { ApiError } from './types';
+import { authedFetch } from '../auth/interceptor';
 
 export class ApiRequestError extends Error {
   public statusCode: number;
@@ -34,7 +35,7 @@ export async function request<T>(
     options.body = JSON.stringify(body);
   }
 
-  const response = await fetch(path, options);
+  const response = await authedFetch(path, options);
 
   if (!response.ok) {
     let errorData: Partial<ApiError>;

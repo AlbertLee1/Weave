@@ -1,0 +1,246 @@
+package auth
+
+import (
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/liyang/weave/pkg/apierror"
+)
+
+// LoginRequest is the JSON request body for POST /api/auth/login.
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// LoginUser is the user payload returned on successful login.
+type LoginUser struct {
+	ID            string            `json:"id"`
+	Email         string            `json:"email"`
+	Name          string            `json:"name"`
+	Roles         []string          `json:"roles"`
+	OntologyRoles map[string]string `json:"ontologyRoles"`
+}
+
+// LoginResponse is the JSON response for POST /api/auth/login and refresh.
+type LoginResponse struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	TokenType    string    `json:"token_type"`
+	ExpiresIn    int       `json:"expires_in"`
+	User         LoginUser `json:"user"`
+}
+
+// LoginHandlerDeps groups all collaborators for the login handler.
+type LoginHandlerDeps struct {
+	Users          UserRepository
+	Resolver       *RoleResolver
+	Signer         *JWTSigner
+	RefreshService *RefreshService
+	// RateLimit is the max attempts per IP per minute. <=0 disables.
+	RateLimit int
+}
+
+// LoginHandler implements POST /api/auth/login. It returns access + refresh
+// tokens on success, and a generic 401 on any failure (wrong password,
+// missing user, password not set, etc.) to avoid user enumeration.
+type LoginHandler struct {
+	deps     LoginHandlerDeps
+	limiter  *ipRateLimiter
+	signerAccessTTL time.Duration
+}
+
+// NewLoginHandler builds a handler. Pass RateLimit=0 to disable.
+func NewLoginHandler(deps LoginHandlerDeps) *LoginHandler {
+	var limiter *ipRateLimiter
+	if deps.RateLimit > 0 {
+		limiter = newIPRateLimiter(deps.RateLimit, time.Minute)
+	}
+	ttl := 15 * time.Minute
+	if deps.Signer != nil && deps.Signer.ttl > 0 {
+		ttl = deps.Signer.ttl
+	}
+	return &LoginHandler{deps: deps, limiter: limiter, signerAccessTTL: ttl}
+}
+
+// ServeHTTP makes LoginHandler an http.Handler.
+func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MethodNotAllowed", map[string]string{
+			"reason": "POST required",
+		}))
+		return
+	}
+
+	if h.limiter != nil {
+		ip := clientIP(r)
+		if !h.limiter.allow(ip) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"errorCode": "RATE_LIMITED",
+				"errorName": "TooManyLoginAttempts",
+			})
+			return
+		}
+	}
+
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidLoginRequest", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if req.Email == "" || req.Password == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingCredentials", map[string]string{
+			"reason": "email and password are required",
+		}))
+		return
+	}
+
+	ctx := r.Context()
+	user, err := h.deps.Users.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			// Constant-time dummy compare to keep timing flat.
+			_ = VerifyDummyPassword(req.Password)
+			writeInvalidCredentials(w)
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("LoginLookupFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+
+	if user.PasswordHash == "" {
+		_ = VerifyDummyPassword(req.Password)
+		writeInvalidCredentials(w)
+		return
+	}
+	if err := VerifyPassword(user.PasswordHash, req.Password); err != nil {
+		writeInvalidCredentials(w)
+		return
+	}
+
+	// Resolve fresh role grants for the access-token claims.
+	global, scoped, err := h.deps.Resolver.Resolve(ctx, user.ID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("LoginRoleResolveFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+
+	access, err := h.deps.Signer.Sign(SignInput{
+		UserID:        user.ID,
+		Email:         user.Email,
+		Name:          user.Name,
+		Roles:         global,
+		OntologyRoles: scoped,
+	})
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("LoginSignFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+
+	refreshPlain, _, err := h.deps.RefreshService.Generate(ctx, user.ID, "")
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("LoginRefreshFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+
+	resp := LoginResponse{
+		AccessToken:  access,
+		RefreshToken: refreshPlain,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(h.signerAccessTTL.Seconds()),
+		User: LoginUser{
+			ID:            user.ID,
+			Email:         user.Email,
+			Name:          user.Name,
+			Roles:         emptyIfNilStrings(global),
+			OntologyRoles: emptyIfNilMap(scoped),
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func writeInvalidCredentials(w http.ResponseWriter) {
+	apierror.WriteJSON(w, apierror.NewUnauthorized("InvalidCredentials", map[string]string{
+		"reason": "invalid email or password",
+	}))
+}
+
+func clientIP(r *http.Request) string {
+	// chi's middleware.RealIP populates RemoteAddr; honour any X-Forwarded-For too.
+	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
+		parts := strings.Split(xf, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func emptyIfNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func emptyIfNilMap(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+// ipRateLimiter is a tiny per-IP fixed-window counter.
+type ipRateLimiter struct {
+	mu     sync.Mutex
+	max    int
+	window time.Duration
+	hits   map[string][]time.Time
+}
+
+func newIPRateLimiter(max int, window time.Duration) *ipRateLimiter {
+	return &ipRateLimiter{
+		max:    max,
+		window: window,
+		hits:   map[string][]time.Time{},
+	}
+}
+
+func (l *ipRateLimiter) allow(ip string) bool {
+	now := time.Now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	hits := l.hits[ip]
+	// drop expired
+	pruned := hits[:0]
+	for _, t := range hits {
+		if t.After(cutoff) {
+			pruned = append(pruned, t)
+		}
+	}
+	if len(pruned) >= l.max {
+		l.hits[ip] = pruned
+		return false
+	}
+	pruned = append(pruned, now)
+	l.hits[ip] = pruned
+	return true
+}
+
+// Compile-time interface check.
+var _ http.Handler = (*LoginHandler)(nil)

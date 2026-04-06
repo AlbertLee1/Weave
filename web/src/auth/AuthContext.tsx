@@ -1,4 +1,6 @@
 import { createContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { authedFetch } from './interceptor';
+import { useAuthStore } from './authStore';
 
 /**
  * MeResponse mirrors pkg/auth/handlers.go:MeResponse on the backend.
@@ -138,11 +140,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v2/me', {
+      const res = await authedFetch('/api/v2/me', {
         headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) {
         setUser(null);
+        useAuthStore.getState().clear();
         return;
       }
       const data: MeResponse = await res.json();
@@ -157,6 +160,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     fetchMe();
+    // Re-fetch when the in-memory access token changes (e.g. after login).
+    const unsub = useAuthStore.subscribe((state, prev) => {
+      if (state.accessToken !== prev.accessToken && state.accessToken !== null) {
+        fetchMe();
+      }
+    });
+    return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

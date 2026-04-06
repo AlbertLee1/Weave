@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -34,6 +35,8 @@ type ServerDeps struct {
 	OmsRepo        oms.Repository
 	UserRepo       auth.UserRepository
 	RoleResolver   *auth.RoleResolver
+	JWTSigner      *auth.JWTSigner
+	RefreshService *auth.RefreshService
 	IndexMgr       *index.Manager
 	LinkResolver   links.LinkResolver
 	OssSvc         oss.Service
@@ -70,9 +73,31 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
+	// Public auth endpoints — login/refresh/logout are NOT behind the
+	// auth middleware because they are how clients obtain or rotate tokens.
+	if deps.JWTSigner != nil && deps.RefreshService != nil && deps.UserRepo != nil {
+		loginHandler := auth.NewLoginHandler(auth.LoginHandlerDeps{
+			Users:          deps.UserRepo,
+			Resolver:       deps.RoleResolver,
+			Signer:         deps.JWTSigner,
+			RefreshService: deps.RefreshService,
+			RateLimit:      10,
+		})
+		refreshHandler := auth.NewRefreshHandler(auth.RefreshHandlerDeps{
+			Users:          deps.UserRepo,
+			Resolver:       deps.RoleResolver,
+			Signer:         deps.JWTSigner,
+			RefreshService: deps.RefreshService,
+		})
+		logoutHandler := auth.NewLogoutHandler(deps.RefreshService)
+		r.Method(http.MethodPost, "/api/auth/login", loginHandler)
+		r.Method(http.MethodPost, "/api/auth/refresh", refreshHandler)
+		r.Method(http.MethodPost, "/api/auth/logout", logoutHandler)
+	}
+
 	// Auth-protected API routes
 	r.Group(func(api chi.Router) {
-		api.Use(auth.Middleware())
+		api.Use(auth.Middleware(deps.JWTSigner))
 
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
@@ -178,15 +203,68 @@ func main() {
 
 		deps.OmsRepo = oms.NewPGRepository(pool)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
+		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
+		deps.RefreshService = auth.NewRefreshService(
+			auth.NewPGRefreshStore(pool),
+			auth.RefreshServiceOptions{AbsoluteTTL: cfg.JWT.RefreshTokenTTL},
+		)
 
-		// Bootstrap initial admin from env (idempotent).
+		// Bootstrap initial admin from env (idempotent). If a password is also
+		// supplied, set it via bcrypt so the user can immediately log in via
+		// the JWT login flow.
 		if email := os.Getenv("WEAVE_BOOTSTRAP_ADMIN"); email != "" {
 			if err := auth.BootstrapAdmin(ctx, deps.UserRepo, email); err != nil {
 				log.Printf("warning: bootstrap admin failed: %v", err)
 			} else {
 				log.Printf("[RBAC] Bootstrapped initial admin: %s", email)
+				if pwd := os.Getenv("WEAVE_BOOTSTRAP_ADMIN_PASSWORD"); pwd != "" {
+					hash, herr := auth.HashPassword(pwd)
+					if herr != nil {
+						log.Printf("warning: bootstrap password hash failed: %v", herr)
+					} else if serr := deps.UserRepo.SetPassword(ctx, "user:"+email, hash); serr != nil {
+						log.Printf("warning: bootstrap password set failed: %v", serr)
+					} else {
+						log.Printf("[AUTH] Bootstrapped admin password for %s", email)
+					}
+				}
 			}
 		}
+	}
+
+	// JWT signer setup. If AUTH_MODE=jwt the keys are mandatory; otherwise
+	// the signer is optional and login/refresh routes simply do not register.
+	if cfg.JWT.PrivateKeyPath != "" || cfg.JWT.PrivateKeyPEM != "" {
+		var priv *rsa.PrivateKey
+		var pub *rsa.PublicKey
+		var lerr error
+		if cfg.JWT.PrivateKeyPath != "" {
+			priv, pub, lerr = auth.LoadRSAKeysFromFiles(cfg.JWT.PrivateKeyPath, cfg.JWT.PublicKeyPath)
+		} else {
+			priv, pub, lerr = auth.LoadRSAKeysFromPEM(cfg.JWT.PrivateKeyPEM, cfg.JWT.PublicKeyPEM)
+		}
+		if lerr != nil {
+			if cfg.AuthMode == "jwt" {
+				log.Fatalf("[AUTH] FATAL: AUTH_MODE=jwt but key load failed: %v", lerr)
+			}
+			log.Printf("warning: JWT key load failed: %v", lerr)
+		} else {
+			signer, serr := auth.NewJWTSigner(priv, pub, auth.JWTSignerOptions{
+				Issuer:         cfg.JWT.Issuer,
+				Audience:       cfg.JWT.Audience,
+				AccessTokenTTL: cfg.JWT.AccessTokenTTL,
+			})
+			if serr != nil {
+				log.Fatalf("[AUTH] FATAL: jwt signer init: %v", serr)
+			}
+			deps.JWTSigner = signer
+			log.Printf("[AUTH] JWT tier B (RS256) enabled, issuer=%s", cfg.JWT.Issuer)
+		}
+	} else if cfg.AuthMode == "jwt" {
+		log.Fatalf("[AUTH] FATAL: AUTH_MODE=jwt but WEAVE_JWT_PRIVATE_KEY_PATH (or _PEM) is not set")
+	}
+
+	if cfg.AuthMode == "token" {
+		log.Printf("[AUTH] WARNING: AUTH_MODE=token is deprecated and accepts unauthenticated tokens. Use AUTH_MODE=jwt in production.")
 	}
 
 	// 2. Index Manager

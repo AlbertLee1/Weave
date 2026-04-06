@@ -76,6 +76,15 @@ func (f *fakeUserRepo) UpsertUserRole(_ context.Context, userID, role string) er
 	return nil
 }
 
+func (f *fakeUserRepo) SetPassword(_ context.Context, userID, passwordHash string) error {
+	u, ok := f.users[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.PasswordHash = passwordHash
+	return nil
+}
+
 func TestRoleResolver_ResolvesGlobalAndScopedRoles(t *testing.T) {
 	repo := newFakeUserRepo()
 	repo.users["alice"] = &UserRecord{ID: "alice"}

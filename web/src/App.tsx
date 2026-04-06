@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthContext';
+import { LoginPage } from './auth/LoginPage';
+import { ProtectedRoute } from './auth/ProtectedRoute';
 import { Shell } from './components/layout/Shell';
 import { DashboardPage } from './components/dashboard/DashboardPage';
 import { ExplorerPage } from './components/explorer/ExplorerPage';
@@ -24,10 +26,17 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
+      <BrowserRouter>
+        <AuthProvider>
           <Routes>
-            <Route element={<Shell />}>
+            <Route path="/login" element={<LoginPage />} />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <Shell />
+                </ProtectedRoute>
+              }
+            >
               <Route index element={<DashboardPage />} />
               <Route path="explorer/:ontology" element={<ExplorerPage />} />
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
@@ -41,8 +50,8 @@ export default function App() {
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
             </Route>
           </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </QueryClientProvider>
   );
 }
