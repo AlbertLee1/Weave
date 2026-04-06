@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/oms"
 )
 
@@ -80,12 +81,17 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Put("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.UpdateDatasourceBinding)
 	r.Delete("/api/admin/datasourceBindings/{datasourceBindingRid}", omsHandler.DeleteDatasourceBinding)
 
-	// SecurityPolicy admin routes
-	r.Post("/api/admin/objectTypes/{objectTypeRid}/securityPolicies", omsHandler.CreateSecurityPolicy)
-	r.Get("/api/admin/objectTypes/{objectTypeRid}/securityPolicies", omsHandler.ListSecurityPolicies)
-	r.Get("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.GetSecurityPolicy)
-	r.Put("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.UpdateSecurityPolicy)
-	r.Delete("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.DeleteSecurityPolicy)
+	// SecurityPolicy admin routes — gated to admin-only via securityPolicy.manage permission.
+	r.With(auth.RequirePermission(auth.PermSecurityPolicyManage)).
+		Post("/api/admin/objectTypes/{objectTypeRid}/securityPolicies", omsHandler.CreateSecurityPolicy)
+	r.With(auth.RequirePermission(auth.PermSecurityPolicyManage)).
+		Get("/api/admin/objectTypes/{objectTypeRid}/securityPolicies", omsHandler.ListSecurityPolicies)
+	r.With(auth.RequirePermission(auth.PermSecurityPolicyManage)).
+		Get("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.GetSecurityPolicy)
+	r.With(auth.RequirePermission(auth.PermSecurityPolicyManage)).
+		Put("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.UpdateSecurityPolicy)
+	r.With(auth.RequirePermission(auth.PermSecurityPolicyManage)).
+		Delete("/api/admin/securityPolicies/{securityPolicyRid}", omsHandler.DeleteSecurityPolicy)
 
 	// QueryType admin routes
 	r.Post("/api/admin/ontologies/{ontologyApiName}/queryTypes", omsHandler.CreateQueryType)

@@ -36,6 +36,7 @@ import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { Badge, statusVariant } from '../common/Badge';
+import { PermissionGate } from '../common/PermissionGate';
 
 type TabKey =
   | 'objectTypes'
@@ -163,12 +164,14 @@ export function AdminPage() {
       <div className="w-64 border-r border-border flex flex-col bg-bg-primary">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h2 className="text-sm font-medium text-text-primary">Ontologies</h2>
-          <button
-            onClick={() => setShowCreateOntology(true)}
-            className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80"
-          >
-            + New
-          </button>
+          <PermissionGate permission="ontology.write">
+            <button
+              onClick={() => setShowCreateOntology(true)}
+              className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              + New
+            </button>
+          </PermissionGate>
         </div>
         <div className="flex-1 overflow-y-auto">
           {ontologiesLoading ? (
@@ -254,12 +257,14 @@ export function AdminPage() {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-text-primary">Object Types</h3>
-                    <button
-                      onClick={() => setShowCreateObjectType(true)}
-                      className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80"
-                    >
-                      + Create
-                    </button>
+                    <PermissionGate permission="objectType.write">
+                      <button
+                        onClick={() => setShowCreateObjectType(true)}
+                        className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        + Create
+                      </button>
+                    </PermissionGate>
                   </div>
                   {objectTypesLoading ? (
                     <LoadingSpinner />
@@ -310,12 +315,14 @@ export function AdminPage() {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-text-primary">Link Types</h3>
-                    <button
-                      onClick={() => setShowCreateLinkType(true)}
-                      className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80"
-                    >
-                      + Create
-                    </button>
+                    <PermissionGate permission="linkType.write">
+                      <button
+                        onClick={() => setShowCreateLinkType(true)}
+                        className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        + Create
+                      </button>
+                    </PermissionGate>
                   </div>
                   {linkTypesLoading ? (
                     <LoadingSpinner />
@@ -360,12 +367,14 @@ export function AdminPage() {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-text-primary">Action Types</h3>
-                    <button
-                      onClick={() => setShowCreateActionType(true)}
-                      className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80"
-                    >
-                      + Create
-                    </button>
+                    <PermissionGate permission="actionType.write">
+                      <button
+                        onClick={() => setShowCreateActionType(true)}
+                        className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        + Create
+                      </button>
+                    </PermissionGate>
                   </div>
                   {actionTypesLoading ? (
                     <LoadingSpinner />

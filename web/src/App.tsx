@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider } from './auth/AuthContext';
 import { Shell } from './components/layout/Shell';
 import { DashboardPage } from './components/dashboard/DashboardPage';
 import { ExplorerPage } from './components/explorer/ExplorerPage';
@@ -23,23 +24,25 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route element={<Shell />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="explorer/:ontology" element={<ExplorerPage />} />
-            <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
-            <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
-            <Route path="admin" element={<AdminPage />} />
-            <Route path="admin/:ontology" element={<AdminPage />} />
-            <Route path="admin/:ontology/object-types/:objectType" element={<ObjectTypeDetailPage />} />
-            <Route path="admin/:ontology/action-types/:actionType" element={<ActionTypeDetailPage />} />
-            <Route path="actions/:ontology" element={<ActionConsolePage />} />
-            <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
-            <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<Shell />}>
+              <Route index element={<DashboardPage />} />
+              <Route path="explorer/:ontology" element={<ExplorerPage />} />
+              <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
+              <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
+              <Route path="admin" element={<AdminPage />} />
+              <Route path="admin/:ontology" element={<AdminPage />} />
+              <Route path="admin/:ontology/object-types/:objectType" element={<ObjectTypeDetailPage />} />
+              <Route path="admin/:ontology/action-types/:actionType" element={<ActionTypeDetailPage />} />
+              <Route path="actions/:ontology" element={<ActionConsolePage />} />
+              <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
+              <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

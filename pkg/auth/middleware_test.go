@@ -230,3 +230,39 @@ func TestUserFromContext_Nil(t *testing.T) {
 		t.Errorf("expected nil user from empty context, got %+v", u)
 	}
 }
+
+func TestUser_OntologyRolesField(t *testing.T) {
+	u := &User{
+		ID:    "alice",
+		Roles: []string{"editor"},
+		OntologyRoles: map[string]string{
+			"ri.ontology.main.ontology.northwind": "ontology-owner",
+		},
+	}
+	if u.OntologyRoles["ri.ontology.main.ontology.northwind"] != "ontology-owner" {
+		t.Errorf("expected ontology-owner, got %v", u.OntologyRoles)
+	}
+}
+
+func TestDevMode_OntologyRolesEmpty(t *testing.T) {
+	t.Setenv("AUTH_MODE", "dev")
+	mw := Middleware()
+	srv := mw(handler())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	var u User
+	if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	// Dev mode is global admin: OntologyRoles is allowed to be nil/empty
+	// because the global admin role grants everything.
+	if len(u.OntologyRoles) != 0 {
+		t.Errorf("expected dev mode OntologyRoles to be empty, got %v", u.OntologyRoles)
+	}
+}

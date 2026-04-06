@@ -2,10 +2,18 @@ package auth
 
 import "context"
 
-// User represents an authenticated user.
+// User represents an authenticated user resolved from a request.
+//
+// Roles holds global role grants (e.g. "admin", "editor", "viewer"); these
+// are checked by the static permission matrix in permissions.go.
+//
+// OntologyRoles holds per-ontology scoped grants keyed by ontology RID
+// (e.g. {"ri.ontology.main.ontology.northwind": "ontology-owner"}); these
+// are checked by EnforceOntologyScope for resource-scoped writes.
 type User struct {
-	ID    string
-	Roles []string
+	ID            string
+	Roles         []string
+	OntologyRoles map[string]string
 }
 
 type contextKey string

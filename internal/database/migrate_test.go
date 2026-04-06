@@ -39,6 +39,91 @@ func TestMigrateUp_CreatesAllTables(t *testing.T) {
 	}
 }
 
+func TestMigrateUp_RBACTables(t *testing.T) {
+	pg := testutil.StartPGContainer(t)
+
+	err := database.RunMigrationsUp(pg.DSN, testutil.MigrationsDir())
+	if err != nil {
+		t.Fatalf("migration up failed: %v", err)
+	}
+
+	expectedTables := []string{
+		"users",
+		"user_roles",
+		"user_ontology_roles",
+	}
+
+	for _, table := range expectedTables {
+		if !pg.TableExists(t, table) {
+			t.Errorf("expected RBAC table %q to exist", table)
+		}
+	}
+
+	ctx := context.Background()
+
+	// Insert a user
+	_, err = pg.Pool.Exec(ctx,
+		`INSERT INTO users (id, email, name) VALUES ($1, $2, $3)`,
+		"user-1", "alice@example.com", "Alice")
+	if err != nil {
+		t.Fatalf("insert user failed: %v", err)
+	}
+
+	// Grant a global role
+	_, err = pg.Pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role) VALUES ($1, $2)`,
+		"user-1", "admin")
+	if err != nil {
+		t.Fatalf("insert user_role failed: %v", err)
+	}
+
+	// Reject invalid role via CHECK constraint
+	_, err = pg.Pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role) VALUES ($1, $2)`,
+		"user-1", "not-a-real-role")
+	if err == nil {
+		t.Error("expected CHECK constraint to reject invalid global role")
+	}
+
+	// Set up an ontology row to test the FK on user_ontology_roles
+	_, err = pg.Pool.Exec(ctx,
+		`INSERT INTO ontologies (rid, api_name, display_name) VALUES ($1, $2, $3)`,
+		"ri.ontology.main.ontology.scoped", "scoped", "Scoped")
+	if err != nil {
+		t.Fatalf("insert ontology failed: %v", err)
+	}
+
+	_, err = pg.Pool.Exec(ctx,
+		`INSERT INTO user_ontology_roles (user_id, ontology_rid, role) VALUES ($1, $2, $3)`,
+		"user-1", "ri.ontology.main.ontology.scoped", "ontology-owner")
+	if err != nil {
+		t.Fatalf("insert user_ontology_role failed: %v", err)
+	}
+
+	// Reject non-ontology-owner scoped role
+	_, err = pg.Pool.Exec(ctx,
+		`INSERT INTO user_ontology_roles (user_id, ontology_rid, role) VALUES ($1, $2, $3)`,
+		"user-1", "ri.ontology.main.ontology.scoped", "viewer")
+	if err == nil {
+		t.Error("expected CHECK constraint to reject non-ontology-owner scoped role")
+	}
+
+	// Cascade delete: delete user, both grant rows must vanish
+	_, err = pg.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, "user-1")
+	if err != nil {
+		t.Fatalf("delete user failed: %v", err)
+	}
+	var count int
+	pg.Pool.QueryRow(ctx, "SELECT count(*) FROM user_roles WHERE user_id = $1", "user-1").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected user_roles cascade delete, got %d rows", count)
+	}
+	pg.Pool.QueryRow(ctx, "SELECT count(*) FROM user_ontology_roles WHERE user_id = $1", "user-1").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected user_ontology_roles cascade delete, got %d rows", count)
+	}
+}
+
 func TestMigrateUp_Idempotent(t *testing.T) {
 	pg := testutil.StartPGContainer(t)
 

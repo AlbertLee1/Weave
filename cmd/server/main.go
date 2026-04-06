@@ -32,6 +32,8 @@ import (
 // ServerDeps holds all server dependencies.
 type ServerDeps struct {
 	OmsRepo        oms.Repository
+	UserRepo       auth.UserRepository
+	RoleResolver   *auth.RoleResolver
 	IndexMgr       *index.Manager
 	LinkResolver   links.LinkResolver
 	OssSvc         oss.Service
@@ -71,6 +73,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// Auth-protected API routes
 	r.Group(func(api chi.Router) {
 		api.Use(auth.Middleware())
+
+		// Current-user endpoint (RBAC Phase 1)
+		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
 
 		// OMS routes
 		if deps.OmsRepo != nil {
@@ -172,6 +177,16 @@ func main() {
 		}
 
 		deps.OmsRepo = oms.NewPGRepository(pool)
+		deps.UserRepo = auth.NewPGUserRepository(pool)
+
+		// Bootstrap initial admin from env (idempotent).
+		if email := os.Getenv("WEAVE_BOOTSTRAP_ADMIN"); email != "" {
+			if err := auth.BootstrapAdmin(ctx, deps.UserRepo, email); err != nil {
+				log.Printf("warning: bootstrap admin failed: %v", err)
+			} else {
+				log.Printf("[RBAC] Bootstrapped initial admin: %s", email)
+			}
+		}
 	}
 
 	// 2. Index Manager
