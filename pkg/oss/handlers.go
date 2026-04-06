@@ -196,6 +196,7 @@ func (h *Handler) ListLinkedObjects(w http.ResponseWriter, r *http.Request) {
 		ObjectType:  objectType,
 		PrimaryKey:  primaryKey,
 		LinkType:    linkType,
+		Direction:   r.URL.Query().Get("direction"),
 		PageSize:    pageSize,
 		PageToken:   r.URL.Query().Get("pageToken"),
 	})

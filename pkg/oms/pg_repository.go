@@ -370,6 +370,32 @@ func (r *PGRepository) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID 
 	return result, nil
 }
 
+// ListIncomingLinkTypes returns link types whose target is the given object type.
+// Used by reverse traversal to discover which link types can land at a given type.
+func (r *PGRepository) ListIncomingLinkTypes(ctx context.Context, objectTypeRID string) ([]LinkType, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
+		 source_object_type, target_object_type, cardinality,
+		 foreign_key_config, join_table_config, is_required, created_at
+		 FROM link_types WHERE target_object_type = $1 ORDER BY api_name`, objectTypeRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []LinkType
+	for rows.Next() {
+		var lt LinkType
+		if err := rows.Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
+			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
+			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired, &lt.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, lt)
+	}
+	return result, nil
+}
+
 func (r *PGRepository) ListLinkTypes(ctx context.Context, ontologyRID string) ([]LinkType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),

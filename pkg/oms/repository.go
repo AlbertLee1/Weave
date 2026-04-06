@@ -29,6 +29,7 @@ type Repository interface {
 	CreateLinkType(ctx context.Context, lt *LinkType) error
 	GetLinkType(ctx context.Context, rid string) (*LinkType, error)
 	ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]LinkType, error)
+	ListIncomingLinkTypes(ctx context.Context, objectTypeRID string) ([]LinkType, error)
 	ListLinkTypes(ctx context.Context, ontologyRID string) ([]LinkType, error)
 	UpdateLinkType(ctx context.Context, lt *LinkType) error
 	DeleteLinkType(ctx context.Context, rid string) error

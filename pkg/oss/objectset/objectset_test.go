@@ -9,12 +9,17 @@ import (
 	"time"
 
 	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oss/objectset"
 )
 
 // mockLinkResolver for testing
 type mockLinkResolver struct {
 	results map[string][]string // linkAPIName -> target PKs
+}
+
+func (m *mockLinkResolver) ResolveLinked(ctx context.Context, linkTypeKey string, sourcePKs []string, dir links.Direction) ([]string, error) {
+	return m.results[linkTypeKey], nil
 }
 
 func (m *mockLinkResolver) ResolveLinkedObjects(ctx context.Context, linkTypeRID string, sourcePKs []string) ([]string, error) {
@@ -571,6 +576,10 @@ func (m *mockLinkResolverWithType) ResolveLinkedObjects(ctx context.Context, lin
 
 func (m *mockLinkResolverWithType) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceOTAPIName, linkAPIName string, sourcePKs []string) ([]string, error) {
 	return m.results[linkAPIName], nil
+}
+
+func (m *mockLinkResolverWithType) ResolveLinked(ctx context.Context, linkTypeKey string, sourcePKs []string, dir links.Direction) ([]string, error) {
+	return m.results[linkTypeKey], nil
 }
 
 func (m *mockLinkResolverWithType) ResolveTargetObjectType(ctx context.Context, sourceObjectType, linkTypeAPIName string) (string, error) {

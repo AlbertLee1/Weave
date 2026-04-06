@@ -38,8 +38,12 @@ type LinkedObjectsRequest struct {
 	ObjectType  string
 	PrimaryKey  string
 	LinkType    string // link type API name
-	PageSize    int
-	PageToken   string
+	// Direction selects traversal direction. "" (default) or "forward" walks
+	// the link in its declared source -> target direction. "reverse" walks
+	// target -> source, allowing incoming-link discovery.
+	Direction string
+	PageSize  int
+	PageToken string
 }
 
 // Service defines the Object Set Service interface.

@@ -197,6 +197,19 @@ func (m *mockRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID string
 	return result, nil
 }
 
+func (m *mockRepo) ListIncomingLinkTypes(_ context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var result []oms.LinkType
+	for _, lt := range m.linkTypes {
+		if lt.TargetObjectType == objectTypeRID {
+			result = append(result, lt)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockRepo) CreateActionType(_ context.Context, at *oms.ActionType) error {
 	if m.createErr != nil {
 		return m.createErr

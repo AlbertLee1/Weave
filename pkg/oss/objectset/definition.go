@@ -14,7 +14,10 @@ type Definition struct {
 	ObjectSets []*Definition   `json:"objectSets,omitempty"`  // for "union", "intersect", "subtract"
 	Where      json.RawMessage `json:"where,omitempty"`       // for "filter" — raw JSON of WhereClause
 	Link       string          `json:"link,omitempty"`        // for "searchAround" — link type API name
-	Reference  string          `json:"reference,omitempty"`   // for "reference" — stored objectSet ID
+	// Direction is optional on "searchAround". "" / "forward" walks the link in
+	// its declared source -> target direction; "reverse" walks target -> source.
+	Direction string `json:"direction,omitempty"`
+	Reference string `json:"reference,omitempty"` // for "reference" — stored objectSet ID
 
 	// For "nearestNeighbors"
 	PropertyIdentifier  *PropertyIdentifier `json:"propertyIdentifier,omitempty"`

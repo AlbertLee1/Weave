@@ -16,6 +16,7 @@ type mockRepo struct {
 	objectTypes map[string]*oms.ObjectType // rid -> ObjectType
 	linkTypes   map[string]*oms.LinkType   // rid -> LinkType
 	outgoing    map[string][]oms.LinkType  // sourceObjectType RID -> []LinkType
+	incoming    map[string][]oms.LinkType  // targetObjectType RID -> []LinkType (optional override)
 }
 
 func (m *mockRepo) GetObjectType(_ context.Context, rid string) (*oms.ObjectType, error) {
@@ -40,6 +41,22 @@ func (m *mockRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID string
 		return nil, nil
 	}
 	return lts, nil
+}
+
+func (m *mockRepo) ListIncomingLinkTypes(_ context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	if m.incoming != nil {
+		return m.incoming[objectTypeRID], nil
+	}
+	// Fallback: derive incoming by filtering outgoing across all sources.
+	var result []oms.LinkType
+	for _, lts := range m.outgoing {
+		for _, lt := range lts {
+			if lt.TargetObjectType == objectTypeRID {
+				result = append(result, lt)
+			}
+		}
+	}
+	return result, nil
 }
 
 // Unused Repository methods — satisfy the interface.

@@ -12,9 +12,19 @@ import (
 )
 
 // LinkTargetTypeResolver is an optional interface that link resolvers can implement
-// to provide the target object type API name for a given link type.
+// to provide the "other end" object type API name for a given link traversal.
+// For forward traversal "the other end" is the link's declared target; for
+// reverse traversal it is the declared source.
 type LinkTargetTypeResolver interface {
 	ResolveTargetObjectType(ctx context.Context, sourceObjectType, linkTypeAPIName string) (string, error)
+}
+
+// DirectionalLinkTargetTypeResolver is the direction-aware superset of
+// LinkTargetTypeResolver. Implementations that wish to support reverse
+// searchAround traversal should implement this interface in addition to
+// LinkTargetTypeResolver.
+type DirectionalLinkTargetTypeResolver interface {
+	ResolveTargetObjectTypeDir(ctx context.Context, callerObjectType, linkTypeAPIName string, dir links.Direction) (string, error)
 }
 
 // Executor evaluates ObjectSet definitions.
@@ -224,21 +234,45 @@ func (e *Executor) executeSubtract(ctx context.Context, def *Definition) (*Resul
 }
 
 // executeSearchAround uses the link resolver to find objects linked to the source set.
+// If def.Direction == "reverse" the link is walked target -> source, meaning
+// the input ObjectSet contains objects of the link's declared *target* and the
+// output contains objects of the declared *source*.
 func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*Result, error) {
 	sourceResult, err := e.execute(ctx, def.ObjectSet)
 	if err != nil {
 		return nil, fmt.Errorf("execute searchAround source: %w", err)
 	}
 
-	// Use the API name-based link resolution
-	linkedPKs, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, sourceResult.ObjectType, def.Link, sourceResult.PrimaryKeys)
+	dir, err := links.ParseDirection(def.Direction)
+	if err != nil {
+		return nil, fmt.Errorf("searchAround direction: %w", err)
+	}
+
+	// Forward: use legacy API name path (unchanged behaviour).
+	// Reverse: the inner set's ObjectType is the link's *target*, so we cannot
+	// use ResolveLinkedObjectsByAPIName (which scans outgoing links from the
+	// source). Instead, find the link via the OMS repo-backed resolver and
+	// call the direction-aware ResolveLinked.
+	var linkedPKs []string
+	if dir == links.DirectionForward {
+		linkedPKs, err = e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, sourceResult.ObjectType, def.Link, sourceResult.PrimaryKeys)
+	} else {
+		if finder, ok := e.linkResolver.(reverseLinkFinder); ok {
+			linkedPKs, err = finder.ResolveLinkedReverseByAPIName(ctx, sourceResult.ObjectType, def.Link, sourceResult.PrimaryKeys)
+		} else {
+			return nil, fmt.Errorf("link resolver does not support reverse searchAround")
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve searchAround links: %w", err)
 	}
 
-	// Resolve target object type if the link resolver supports it.
+	// Resolve the "other end" object type if the link resolver supports it.
+	// Prefer the direction-aware interface, fall back to the legacy forward-only one.
 	targetType := ""
-	if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok {
+	if resolver, ok := e.linkResolver.(DirectionalLinkTargetTypeResolver); ok {
+		targetType, _ = resolver.ResolveTargetObjectTypeDir(ctx, sourceResult.ObjectType, def.Link, dir)
+	} else if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok && dir == links.DirectionForward {
 		targetType, _ = resolver.ResolveTargetObjectType(ctx, sourceResult.ObjectType, def.Link)
 	}
 
@@ -246,6 +280,13 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 		ObjectType:  targetType,
 		PrimaryKeys: linkedPKs,
 	}, nil
+}
+
+// reverseLinkFinder is an optional interface that resolvers implement to
+// expose reverse-traversal-by-API-name for the ObjectSet executor. It is
+// separate from LinkResolver so reverse support remains opt-in.
+type reverseLinkFinder interface {
+	ResolveLinkedReverseByAPIName(ctx context.Context, callerObjectType, linkTypeAPIName string, callerPKs []string) ([]string, error)
 }
 
 // executeWithProperties executes the inner ObjectSet — property filtering happens at the response layer.

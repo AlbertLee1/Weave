@@ -280,6 +280,18 @@ func (r *inMemoryOmsRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID
 	return result, nil
 }
 
+func (r *inMemoryOmsRepo) ListIncomingLinkTypes(_ context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []oms.LinkType
+	for _, lt := range r.linkTypes {
+		if lt.TargetObjectType == objectTypeRID {
+			result = append(result, *lt)
+		}
+	}
+	return result, nil
+}
+
 func (r *inMemoryOmsRepo) ListLinkTypes(_ context.Context, ontologyRID string) ([]oms.LinkType, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -209,15 +209,47 @@ func parseOrderBy(orderBy string) []string {
 }
 
 // ListLinkedObjects lists objects linked to a source object through a link type.
+// When req.Direction is "reverse" the link is walked target -> source, which
+// means the caller's req.ObjectType is the link's declared *target* and the
+// returned objects are instances of the link's declared *source*.
 func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRequest) (*ObjectPage, error) {
-	// Get the source object type to resolve the link
+	dir, err := links.ParseDirection(req.Direction)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the caller's own object type (source for forward, target for reverse).
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err
 	}
 
-	// Resolve linked object primary keys
-	targetPKs, err := s.linkResolver.ResolveLinkedObjectsByAPIName(ctx, ot.RID, req.LinkType, []string{req.PrimaryKey})
+	// Locate the LinkType definition. For forward, the caller's ObjectType is
+	// the link's source, so we look through outgoing links. For reverse, the
+	// caller's ObjectType is the link's target, so we look through incoming.
+	var candidates []oms.LinkType
+	if dir == links.DirectionReverse {
+		candidates, err = s.omsRepo.ListIncomingLinkTypes(ctx, ot.RID)
+	} else {
+		candidates, err = s.omsRepo.ListOutgoingLinkTypes(ctx, ot.RID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var matchedLT *oms.LinkType
+	for i := range candidates {
+		if candidates[i].APIName == req.LinkType {
+			matchedLT = &candidates[i]
+			break
+		}
+	}
+	if matchedLT == nil {
+		return nil, fmt.Errorf("link type %q not found for object type %q (direction=%s)", req.LinkType, req.ObjectType, dir)
+	}
+
+	// Resolve linked primary keys via the direction-aware resolver.
+	targetPKs, err := s.linkResolver.ResolveLinked(ctx, matchedLT.RID, []string{req.PrimaryKey}, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -230,28 +262,18 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 		return page, nil
 	}
 
-	// Get the link type to find the target object type
-	outgoing, err := s.omsRepo.ListOutgoingLinkTypes(ctx, ot.RID)
+	// The "other side" of the link from the caller's perspective:
+	//   forward: caller is source -> look up target object type.
+	//   reverse: caller is target -> look up source object type.
+	otherRID := matchedLT.TargetObjectType
+	if dir == links.DirectionReverse {
+		otherRID = matchedLT.SourceObjectType
+	}
+	otherOT, err := s.omsRepo.GetObjectType(ctx, otherRID)
 	if err != nil {
 		return nil, err
 	}
-
-	var targetOTAPIName string
-	for _, lt := range outgoing {
-		if lt.APIName == req.LinkType {
-			// TargetObjectType is the RID; we need the API name
-			targetOT, err := s.omsRepo.GetObjectType(ctx, lt.TargetObjectType)
-			if err != nil {
-				return nil, err
-			}
-			targetOTAPIName = targetOT.APIName
-			break
-		}
-	}
-
-	if targetOTAPIName == "" {
-		return nil, fmt.Errorf("link type %q not found", req.LinkType)
-	}
+	targetOTAPIName := otherOT.APIName
 
 	// Get the target object type to find its primary key field
 	targetOT, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, targetOTAPIName)

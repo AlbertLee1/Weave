@@ -441,6 +441,41 @@ func TestLinkType_ListOutgoing(t *testing.T) {
 	}
 }
 
+func TestLinkType_ListIncoming(t *testing.T) {
+	repo := setupRepo(t)
+	o := seedOntology(t, repo)
+	src, tgt := seedTwoObjectTypes(t, repo, o.RID)
+
+	lt := &oms.LinkType{
+		RID: "ri.ontology.main.link-type.lt1", OntologyRID: o.RID,
+		APIName: "empDept", DisplayName: "Emp Dept",
+		SourceObjectType: src.RID, TargetObjectType: tgt.RID,
+		Cardinality: "ONE_TO_MANY",
+	}
+	repo.CreateLinkType(context.Background(), lt)
+
+	// Incoming on the target should surface the link.
+	incoming, err := repo.ListIncomingLinkTypes(context.Background(), tgt.RID)
+	if err != nil {
+		t.Fatalf("list incoming failed: %v", err)
+	}
+	if len(incoming) != 1 {
+		t.Fatalf("expected 1 incoming link, got %d", len(incoming))
+	}
+	if incoming[0].RID != lt.RID {
+		t.Errorf("expected %q, got %q", lt.RID, incoming[0].RID)
+	}
+
+	// Incoming on the source should be empty (outgoing, not incoming).
+	srcIncoming, err := repo.ListIncomingLinkTypes(context.Background(), src.RID)
+	if err != nil {
+		t.Fatalf("list incoming on src failed: %v", err)
+	}
+	if len(srcIncoming) != 0 {
+		t.Errorf("expected 0 incoming on source, got %d", len(srcIncoming))
+	}
+}
+
 func TestLinkType_GetNotFound(t *testing.T) {
 	repo := setupRepo(t)
 	_, err := repo.GetLinkType(context.Background(), "nonexistent")

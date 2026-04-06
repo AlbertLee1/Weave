@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/where"
@@ -120,6 +121,18 @@ func (m *mockOmsRepo) GetLinkType(_ context.Context, _ string) (*oms.LinkType, e
 
 func (m *mockOmsRepo) ListOutgoingLinkTypes(_ context.Context, objectTypeRID string) ([]oms.LinkType, error) {
 	return m.linkTypes[objectTypeRID], nil
+}
+
+func (m *mockOmsRepo) ListIncomingLinkTypes(_ context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	var result []oms.LinkType
+	for _, lts := range m.linkTypes {
+		for _, lt := range lts {
+			if lt.TargetObjectType == objectTypeRID {
+				result = append(result, lt)
+			}
+		}
+	}
+	return result, nil
 }
 
 func (m *mockOmsRepo) ListLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {
@@ -282,8 +295,9 @@ func (m *mockOmsRepo) IncrementOntologyVersion(_ context.Context, _ string) (int
 // --- Mock Link Resolver ---
 
 type mockLinkResolver struct {
-	results map[string][]string // linkTypeAPIName -> target PKs
-	err     error
+	results        map[string][]string // linkTypeAPIName or RID -> target PKs
+	reverseResults map[string][]string // linkTypeAPIName or RID -> reverse PKs
+	err            error
 }
 
 func (m *mockLinkResolver) ResolveLinkedObjects(_ context.Context, _ string, _ []string) ([]string, error) {
@@ -295,6 +309,23 @@ func (m *mockLinkResolver) ResolveLinkedObjectsByAPIName(_ context.Context, _, l
 		return nil, m.err
 	}
 	return m.results[linkTypeAPIName], nil
+}
+
+// ResolveLinked resolves links by RID with direction awareness. The service
+// implementation looks up the LinkType first and passes its RID here, so the
+// mock keys results on the RID it was stubbed with. For simplicity the mock
+// stores its results under the *API name* and also under the *RID*, plus
+// optional reverse-direction results via a second map.
+func (m *mockLinkResolver) ResolveLinked(_ context.Context, linkTypeKey string, _ []string, dir links.Direction) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if dir == links.DirectionReverse && m.reverseResults != nil {
+		if v, ok := m.reverseResults[linkTypeKey]; ok {
+			return v, nil
+		}
+	}
+	return m.results[linkTypeKey], nil
 }
 
 // --- Test Setup ---
@@ -884,8 +915,10 @@ func TestListLinkedObjects_Found(t *testing.T) {
 		Cardinality:      "MANY_TO_ONE",
 	})
 
-	// Configure link resolver to return d1 for employeeDept
+	// Configure link resolver to return d1 for employeeDept.
+	// Service calls ResolveLinked with the link type RID.
 	linkResolver.results["employeeDept"] = []string{"d1"}
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
 
 	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
 		OntologyRID: testOntologyRID,
@@ -989,6 +1022,7 @@ func TestListLinkedObjects_WithPagination(t *testing.T) {
 	})
 
 	linkResolver.results["employeeDepts"] = []string{"d1", "d2", "d3"}
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1", "d2", "d3"}
 
 	// First page
 	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
@@ -1013,9 +1047,144 @@ func TestListLinkedObjects_WithPagination(t *testing.T) {
 	}
 }
 
-func TestListLinkedObjects_LinkTypeError(t *testing.T) {
-	svc, _, _, linkResolver := setupOSSTest(t)
+func TestListLinkedObjects_ReverseDirection(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
 	ctx := context.Background()
+
+	// Set up department index and data. For reverse traversal the caller's
+	// ObjectType is the link's TARGET (department), and the response objects
+	// are instances of the SOURCE (employee).
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("department", deptProps); err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d1", map[string]interface{}{
+		"deptId": "d1",
+	}); err != nil {
+		t.Fatalf("IndexDocument d1: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		DisplayName: "Department",
+		PrimaryKey:  "deptId",
+		Status:      "ACTIVE",
+	})
+
+	// Link: employee -> department (forward direction). Querying department
+	// with direction=reverse should return employees in department d1.
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "ONE_TO_MANY",
+	})
+
+	// Reverse traversal returns source (employee) PKs.
+	linkResolver.reverseResults = map[string][]string{
+		"ri.ontology.main.link-type.empDept": {"emp1", "emp2"},
+	}
+
+	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "department",
+		PrimaryKey:  "d1",
+		LinkType:    "employeeDept",
+		Direction:   "reverse",
+	})
+	if err != nil {
+		t.Fatalf("ListLinkedObjects reverse: %v", err)
+	}
+	if len(page.Data) != 2 {
+		t.Fatalf("expected 2 employees, got %d", len(page.Data))
+	}
+	if page.Data[0].APIName != "employee" {
+		t.Errorf("expected APIName employee, got %q", page.Data[0].APIName)
+	}
+}
+
+func TestListLinkedObjects_ForwardDefault(t *testing.T) {
+	// Omitting the direction field must behave like forward traversal.
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	deptProps := []index.Property{{APIName: "deptId", BaseType: "string", IsSearchable: true}}
+	if _, err := mgr.EnsureIndex("department", deptProps); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+	_ = mgr.IndexDocument("department", "d1", map[string]interface{}{"deptId": "d1"})
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID: "ri.ontology.main.object-type.department", OntologyRID: testOntologyRID,
+		APIName: "department", PrimaryKey: "deptId", Status: "ACTIVE",
+	})
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "ONE_TO_MANY",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	// No Direction set.
+	page, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+		LinkType:    "employeeDept",
+	})
+	if err != nil {
+		t.Fatalf("ListLinkedObjects default dir: %v", err)
+	}
+	if len(page.Data) != 1 {
+		t.Fatalf("expected 1 department, got %d", len(page.Data))
+	}
+}
+
+func TestListLinkedObjects_InvalidDirection(t *testing.T) {
+	svc, _, _, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	_, err := svc.ListLinkedObjects(ctx, oss.LinkedObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "emp1",
+		LinkType:    "whatever",
+		Direction:   "sideways",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid direction")
+	}
+}
+
+func TestListLinkedObjects_LinkTypeError(t *testing.T) {
+	svc, _, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Register a valid link type so the service can locate it, then force
+	// the resolver itself to error out.
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.badLink",
+		APIName:          "badLink",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
 
 	linkResolver.err = fmt.Errorf("link resolver error")
 
