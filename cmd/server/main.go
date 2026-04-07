@@ -20,6 +20,7 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/ai"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
@@ -161,7 +162,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// OMS routes
 		if deps.OmsRepo != nil {
 			omsHandler := oms.NewOMSHandler(deps.OmsRepo)
-			RegisterRoutes(api, omsHandler)
+			RegisterRoutes(api, omsHandler, ai.NewProviderFromEnv())
 		}
 
 		// OSS routes

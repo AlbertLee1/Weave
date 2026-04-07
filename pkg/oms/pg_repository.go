@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -1647,4 +1648,123 @@ func (r *PGRepository) IncrementOntologyVersion(ctx context.Context, ontologyRID
 		return 0, err
 	}
 	return version, nil
+}
+
+// --- ObjectEmbedding (Tier 3.1) ---
+//
+// These methods speak to the `object_embeddings` table created by
+// migration 000011. They use github.com/pgvector/pgvector-go's Vector type
+// in TEXT format on the wire so we don't need to register a custom pgx
+// codec — pgvector accepts the `[v1,v2,v3]` literal on INSERT and emits
+// the same form on SELECT.
+
+// UpsertObjectEmbedding inserts a new embedding row or, if one already
+// exists for the (objectTypeRID, primaryKey, model) tuple, replaces the
+// vector and source_text in place. CreatedAt / UpdatedAt on the input
+// struct are populated from the row that ends up in the database so the
+// caller can log or test against them.
+func (r *PGRepository) UpsertObjectEmbedding(ctx context.Context, e *ObjectEmbedding) error {
+	if e == nil {
+		return fmt.Errorf("UpsertObjectEmbedding: nil embedding")
+	}
+	if len(e.Embedding) == 0 {
+		return fmt.Errorf("UpsertObjectEmbedding: empty embedding vector")
+	}
+	vec := pgvector.NewVector(e.Embedding)
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO object_embeddings
+		   (object_type_rid, primary_key, embedding, model, source_text)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (object_type_rid, primary_key, model)
+		 DO UPDATE SET embedding = EXCLUDED.embedding,
+		               source_text = EXCLUDED.source_text,
+		               updated_at = NOW()
+		 RETURNING created_at, updated_at`,
+		e.ObjectTypeRID, e.PrimaryKey, vec, e.Model, nilIfEmpty(e.SourceText)).
+		Scan(&e.CreatedAt, &e.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("upsert object embedding: %w", err)
+	}
+	return nil
+}
+
+// GetObjectEmbedding returns the stored embedding for a single
+// (objectTypeRID, primaryKey, model) tuple, or ErrNotFound when no row
+// exists. The returned struct shares ownership of the float32 slice with
+// the parsed pgvector.Vector — callers MUST treat it as read-only.
+func (r *PGRepository) GetObjectEmbedding(ctx context.Context, objectTypeRID, primaryKey, model string) (*ObjectEmbedding, error) {
+	var (
+		vec        pgvector.Vector
+		sourceText *string
+		out        ObjectEmbedding
+	)
+	err := r.pool.QueryRow(ctx,
+		`SELECT object_type_rid, primary_key, embedding, model, source_text, created_at, updated_at
+		 FROM object_embeddings
+		 WHERE object_type_rid = $1 AND primary_key = $2 AND model = $3`,
+		objectTypeRID, primaryKey, model).
+		Scan(&out.ObjectTypeRID, &out.PrimaryKey, &vec, &out.Model, &sourceText, &out.CreatedAt, &out.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get object embedding: %w", err)
+	}
+	out.Embedding = vec.Slice()
+	if sourceText != nil {
+		out.SourceText = *sourceText
+	}
+	return &out, nil
+}
+
+// FindNearestNeighbors runs a kNN cosine-distance query against the HNSW
+// index and returns up to k closest rows for the given object type and
+// model. Results are ordered by ascending distance (closest first).
+//
+// k is clamped to a sensible maximum to protect against runaway requests.
+// The model filter is applied as a WHERE clause so the planner can use
+// the (object_type_rid, primary_key) btree before walking the HNSW graph
+// — the order matters because HNSW is approximate, so reducing the
+// candidate set first generally yields more accurate top-k results.
+func (r *PGRepository) FindNearestNeighbors(ctx context.Context, objectTypeRID string, queryVector []float32, k int, model string) ([]NearestNeighborResult, error) {
+	if k <= 0 {
+		k = 10
+	}
+	if k > 1000 {
+		k = 1000
+	}
+	if len(queryVector) == 0 {
+		return nil, fmt.Errorf("FindNearestNeighbors: empty query vector")
+	}
+	vec := pgvector.NewVector(queryVector)
+	rows, err := r.pool.Query(ctx,
+		`SELECT primary_key, embedding <=> $1 AS distance
+		 FROM object_embeddings
+		 WHERE object_type_rid = $2 AND model = $3
+		 ORDER BY embedding <=> $1
+		 LIMIT $4`,
+		vec, objectTypeRID, model, k)
+	if err != nil {
+		return nil, fmt.Errorf("nearest neighbors query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []NearestNeighborResult
+	for rows.Next() {
+		var (
+			pk       string
+			distance float64
+		)
+		if err := rows.Scan(&pk, &distance); err != nil {
+			return nil, fmt.Errorf("scan nearest neighbor row: %w", err)
+		}
+		results = append(results, NearestNeighborResult{
+			PrimaryKey: pk,
+			Distance:   float32(distance),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate nearest neighbors: %w", err)
+	}
+	return results, nil
 }

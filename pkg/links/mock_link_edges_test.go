@@ -37,3 +37,17 @@ func (m *mockRepo) ListObjectHistory(_ context.Context, _, _ string, _ int) ([]o
 func (m *mockRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
 	return 0, nil
 }
+
+// ObjectEmbedding stubs (Tier 3.1) — fk resolver tests do not exercise
+// the vector path.
+func (m *mockRepo) UpsertObjectEmbedding(_ context.Context, _ *oms.ObjectEmbedding) error {
+	return nil
+}
+
+func (m *mockRepo) GetObjectEmbedding(_ context.Context, _, _, _ string) (*oms.ObjectEmbedding, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) FindNearestNeighbors(_ context.Context, _ string, _ []float32, _ int, _ string) ([]oms.NearestNeighborResult, error) {
+	return nil, nil
+}

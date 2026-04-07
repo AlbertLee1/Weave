@@ -37,3 +37,17 @@ func (r *inMemoryOmsRepo) ListObjectHistory(_ context.Context, _, _ string, _ in
 func (r *inMemoryOmsRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
 	return 0, nil
 }
+
+// ObjectEmbedding stubs (Tier 3.1) — chinook fixture tests do not
+// exercise the vector path.
+func (r *inMemoryOmsRepo) UpsertObjectEmbedding(_ context.Context, _ *oms.ObjectEmbedding) error {
+	return nil
+}
+
+func (r *inMemoryOmsRepo) GetObjectEmbedding(_ context.Context, _, _, _ string) (*oms.ObjectEmbedding, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (r *inMemoryOmsRepo) FindNearestNeighbors(_ context.Context, _ string, _ []float32, _ int, _ string) ([]oms.NearestNeighborResult, error) {
+	return nil, nil
+}

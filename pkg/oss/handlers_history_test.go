@@ -240,6 +240,15 @@ func (m *historyMockRepo) GetOntologyVersion(_ context.Context, _ string) (int, 
 func (m *historyMockRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) {
 	return 1, nil
 }
+func (m *historyMockRepo) UpsertObjectEmbedding(_ context.Context, _ *oms.ObjectEmbedding) error {
+	return nil
+}
+func (m *historyMockRepo) GetObjectEmbedding(_ context.Context, _, _, _ string) (*oms.ObjectEmbedding, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *historyMockRepo) FindNearestNeighbors(_ context.Context, _ string, _ []float32, _ int, _ string) ([]oms.NearestNeighborResult, error) {
+	return nil, nil
+}
 
 // --- Test cases ---
 

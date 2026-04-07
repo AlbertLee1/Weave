@@ -124,4 +124,9 @@ type Repository interface {
 	GetSnapshot(ctx context.Context, ontologyRID string, version int) (*OntologySnapshot, error)
 	GetOntologyVersion(ctx context.Context, ontologyRID string) (int, error)
 	IncrementOntologyVersion(ctx context.Context, ontologyRID string) (int, error)
+
+	// ObjectEmbedding (Tier 3.1) — pgvector-backed nearest-neighbor search.
+	UpsertObjectEmbedding(ctx context.Context, e *ObjectEmbedding) error
+	GetObjectEmbedding(ctx context.Context, objectTypeRID, primaryKey, model string) (*ObjectEmbedding, error)
+	FindNearestNeighbors(ctx context.Context, objectTypeRID string, queryVector []float32, k int, model string) ([]NearestNeighborResult, error)
 }

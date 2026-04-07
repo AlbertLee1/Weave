@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -1242,3 +1243,191 @@ func (m *mockOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.Secur
 func (m *mockOmsRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
 func (m *mockOmsRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
 func (m *mockOmsRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }
+
+// ---------------------------------------------------------------------------
+// Function-backed Action Tests (Tier 3.2)
+// ---------------------------------------------------------------------------
+
+// mockFunctionDispatcher records calls and returns a configurable result so
+// the executor branch can be exercised without standing up an HTTP server.
+type mockFunctionDispatcher struct {
+	calls       int
+	lastAT      *oms.ActionType
+	lastParams  map[string]interface{}
+	returnEdits []funnel.Edit
+	returnErr   error
+}
+
+func (m *mockFunctionDispatcher) Dispatch(_ context.Context, at *oms.ActionType, params map[string]interface{}) ([]funnel.Edit, error) {
+	m.calls++
+	m.lastAT = at
+	m.lastParams = params
+	if m.returnErr != nil {
+		return nil, m.returnErr
+	}
+	return m.returnEdits, nil
+}
+
+// TestExecutor_FunctionBacked_Dispatches verifies that when an ActionType is
+// marked function-backed, the executor delegates rule evaluation to the
+// dispatcher and uses the returned edits instead of running local rules.
+func TestExecutor_FunctionBacked_Dispatches(t *testing.T) {
+	at := newTestActionType("createEmployeeFn", []ParameterDef{
+		{ID: "name", Type: "string", Required: true},
+	}, []Rule{
+		// Rules array is intentionally non-empty: the test asserts that
+		// the dispatcher's edits are used INSTEAD of the rules' edits.
+		{Type: "createObject", ObjectType: "ShouldNotAppear"},
+	})
+	at.IsFunctionBacked = true
+	at.FunctionRID = "ri.functions.main.function.create-employee-fn"
+
+	repo := &mockOmsRepo{actionTypes: []oms.ActionType{at}}
+	exec := NewExecutor(repo, nil)
+
+	disp := &mockFunctionDispatcher{
+		returnEdits: []funnel.Edit{{
+			Type:       funnel.EditTypeCreate,
+			ObjectType: "Employee",
+			PrimaryKey: "emp-from-fn",
+			Properties: map[string]interface{}{"name": "Alice"},
+		}},
+	}
+	exec.SetFunctionDispatcher(disp)
+
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployeeFn",
+		Parameters: map[string]interface{}{"name": "Alice"},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if disp.calls != 1 {
+		t.Fatalf("expected dispatcher called once, got %d", disp.calls)
+	}
+	if disp.lastAT == nil || disp.lastAT.FunctionRID != at.FunctionRID {
+		t.Errorf("dispatcher received wrong action type: %+v", disp.lastAT)
+	}
+	if disp.lastParams["name"] != "Alice" {
+		t.Errorf("dispatcher received wrong params: %+v", disp.lastParams)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit from dispatcher, got %d", len(result.Edits))
+	}
+	if result.Edits[0].PrimaryKey != "emp-from-fn" {
+		t.Errorf("expected dispatcher edit to win, got pk %q", result.Edits[0].PrimaryKey)
+	}
+	if result.Edits[0].ObjectType != "Employee" {
+		t.Errorf("expected dispatcher's Employee, got %q", result.Edits[0].ObjectType)
+	}
+}
+
+// TestExecutor_FunctionBacked_NoDispatcher_FallsBackToRules verifies that an
+// IsFunctionBacked=true action with no configured dispatcher still runs local
+// rules — preserving graceful degradation for dev environments where the
+// function service is not running.
+func TestExecutor_FunctionBacked_NoDispatcher_FallsBackToRules(t *testing.T) {
+	at := newTestActionType("createEmployeeFn", []ParameterDef{
+		{ID: "name", Type: "string", Required: true},
+	}, []Rule{
+		{
+			Type:       "createObject",
+			ObjectType: "Employee",
+			PropertyBindings: map[string]PropertyBinding{
+				"name": {Type: "parameter", Value: "name"},
+			},
+		},
+	})
+	at.IsFunctionBacked = true
+	at.FunctionRID = "ri.functions.main.function.unconfigured"
+
+	repo := &mockOmsRepo{actionTypes: []oms.ActionType{at}}
+	exec := NewExecutor(repo, nil)
+	// No SetFunctionDispatcher: nil dispatcher path.
+
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployeeFn",
+		Parameters: map[string]interface{}{"name": "Bob"},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 rule-derived edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].ObjectType != "Employee" {
+		t.Errorf("expected rule's Employee, got %q", result.Edits[0].ObjectType)
+	}
+	if result.Edits[0].Properties["name"] != "Bob" {
+		t.Errorf("expected name=Bob from rules, got %v", result.Edits[0].Properties["name"])
+	}
+}
+
+// TestExecutor_FunctionBacked_DispatcherError_Propagates verifies that a
+// failing dispatcher fails the action so the caller sees the function error.
+func TestExecutor_FunctionBacked_DispatcherError_Propagates(t *testing.T) {
+	at := newTestActionType("badFn", nil, nil)
+	at.IsFunctionBacked = true
+	at.FunctionRID = "ri.functions.main.function.bad"
+
+	repo := &mockOmsRepo{actionTypes: []oms.ActionType{at}}
+	exec := NewExecutor(repo, nil)
+	exec.SetFunctionDispatcher(&mockFunctionDispatcher{
+		returnErr: fmt.Errorf("boom"),
+	})
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "badFn",
+		Parameters: map[string]interface{}{},
+	})
+	if err == nil {
+		t.Fatal("expected dispatcher error to propagate")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("expected error to mention 'boom', got %v", err)
+	}
+}
+
+// TestExecutor_NotFunctionBacked_DispatcherIgnored verifies an action type
+// with IsFunctionBacked=false never reaches the dispatcher, even when one is
+// configured. This protects regular actions from accidental redirection.
+func TestExecutor_NotFunctionBacked_DispatcherIgnored(t *testing.T) {
+	at := newTestActionType("createEmployee", []ParameterDef{
+		{ID: "name", Type: "string", Required: true},
+	}, []Rule{
+		{
+			Type:       "createObject",
+			ObjectType: "Employee",
+			PropertyBindings: map[string]PropertyBinding{
+				"name": {Type: "parameter", Value: "name"},
+			},
+		},
+	})
+	at.IsFunctionBacked = false
+
+	repo := &mockOmsRepo{actionTypes: []oms.ActionType{at}}
+	exec := NewExecutor(repo, nil)
+
+	disp := &mockFunctionDispatcher{
+		returnEdits: []funnel.Edit{{
+			Type:       funnel.EditTypeCreate,
+			ObjectType: "ShouldNotBeUsed",
+			PrimaryKey: "x",
+		}},
+	}
+	exec.SetFunctionDispatcher(disp)
+
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{"name": "Alice"},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if disp.calls != 0 {
+		t.Errorf("expected dispatcher NOT called, got %d calls", disp.calls)
+	}
+	if len(result.Edits) != 1 || result.Edits[0].ObjectType != "Employee" {
+		t.Errorf("expected rules path Employee edit, got %+v", result.Edits)
+	}
+}

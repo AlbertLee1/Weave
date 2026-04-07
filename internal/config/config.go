@@ -50,6 +50,18 @@ type TracingConfig struct {
 	ServiceName  string
 }
 
+// FunctionsConfig controls the Tier 3.2 function-backed action runtime.
+// When Enabled, the action executor will dispatch IsFunctionBacked action
+// types to BaseURL/{functionRid} via HTTP. When Enabled is false the
+// dispatcher is not constructed and function-backed action types fall back
+// to the local rules path so dev environments still work without a
+// function service running.
+type FunctionsConfig struct {
+	Enabled bool
+	BaseURL string
+	Timeout time.Duration
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -61,8 +73,9 @@ type Config struct {
 	AuthMode string
 	JWT      JWTConfig
 
-	Metrics MetricsConfig
-	Tracing TracingConfig
+	Metrics   MetricsConfig
+	Tracing   TracingConfig
+	Functions FunctionsConfig
 }
 
 func Load() (*Config, error) {
@@ -86,6 +99,11 @@ func Load() (*Config, error) {
 			Enabled:     false,
 			ServiceName: "weave",
 			Exporter:    "stdout",
+		},
+		Functions: FunctionsConfig{
+			Enabled: false,
+			BaseURL: "",
+			Timeout: 30 * time.Second,
 		},
 	}
 
@@ -185,6 +203,24 @@ func Load() (*Config, error) {
 		cfg.Tracing.OTLPEndpoint = v
 	}
 
+	if v := os.Getenv("WEAVE_FUNCTIONS_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_FUNCTIONS_ENABLED %q: %w", v, err)
+		}
+		cfg.Functions.Enabled = b
+	}
+	if v := os.Getenv("WEAVE_FUNCTIONS_BASE_URL"); v != "" {
+		cfg.Functions.BaseURL = v
+	}
+	if v := os.Getenv("WEAVE_FUNCTIONS_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_FUNCTIONS_TIMEOUT %q: %w", v, err)
+		}
+		cfg.Functions.Timeout = d
+	}
+
 	return cfg, nil
 }
 
@@ -208,6 +244,11 @@ func (c *Config) Validate() error {
 	if c.AuthMode == "jwt" && c.JWT.PrivateKeyPath == "" && c.JWT.PrivateKeyPEM == "" {
 		problems = append(problems,
 			"AUTH_MODE=jwt requires JWT key material: set WEAVE_JWT_PRIVATE_KEY_PATH or WEAVE_JWT_PRIVATE_KEY_PEM")
+	}
+
+	if c.Functions.Enabled && strings.TrimSpace(c.Functions.BaseURL) == "" {
+		problems = append(problems,
+			"Functions.Enabled=true requires WEAVE_FUNCTIONS_BASE_URL to be set")
 	}
 
 	if len(problems) == 0 {

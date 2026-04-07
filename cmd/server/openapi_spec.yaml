@@ -3525,3 +3525,90 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/subscribe:
+    get:
+      operationId: subscribeChanges
+      summary: Stream object changes via Server-Sent Events (Tier 3.5)
+      description: |
+        Opens an SSE stream that emits CREATE/MODIFY/DELETE events as edits
+        are applied to the backing Bleve indexes. Clients should set
+        `Accept: text/event-stream`. Events are filtered by the caller's
+        ontology and (optionally) the `objectType` query parameter. Slow
+        subscribers have events dropped rather than blocking the funnel
+        consumer.
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: objectType
+          schema:
+            type: string
+          description: Optional object type filter
+      responses:
+        "200":
+          description: Event stream (text/event-stream).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "503":
+          description: Broadcast not wired (server in degraded mode).
+  /api/admin/ai/suggest-properties:
+    post:
+      operationId: suggestProperties
+      summary: Suggest ObjectType properties via AI (Tier 3.6)
+      description: |
+        Admin-only endpoint that returns AI-generated property suggestions
+        for a given ObjectType name + description. In development the
+        default provider is a deterministic mock; production deployments
+        can wire an OpenAI provider via `WEAVE_AI_PROVIDER=openai`.
+      tags: [Admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [objectTypeName]
+              properties:
+                objectTypeName:
+                  type: string
+                objectTypeDescription:
+                  type: string
+                existingProperties:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Suggested properties.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        apiName:
+                          type: string
+                        displayName:
+                          type: string
+                        baseType:
+                          type: string
+                        description:
+                          type: string
+                        isArray:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"

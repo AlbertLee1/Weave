@@ -332,6 +332,77 @@ func TestLoadConfig_TracingOverrides(t *testing.T) {
 	}
 }
 
+// --- Tier 3.2 functions config tests ---
+
+func TestLoadConfig_FunctionsDefaults(t *testing.T) {
+	os.Unsetenv("WEAVE_FUNCTIONS_ENABLED")
+	os.Unsetenv("WEAVE_FUNCTIONS_BASE_URL")
+	os.Unsetenv("WEAVE_FUNCTIONS_TIMEOUT")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Functions.Enabled {
+		t.Errorf("Functions.Enabled default: got true, want false")
+	}
+	if cfg.Functions.BaseURL != "" {
+		t.Errorf("Functions.BaseURL default: got %q, want empty", cfg.Functions.BaseURL)
+	}
+	if cfg.Functions.Timeout != 30*time.Second {
+		t.Errorf("Functions.Timeout default: got %v, want 30s", cfg.Functions.Timeout)
+	}
+}
+
+func TestLoadConfig_FunctionsOverrides(t *testing.T) {
+	t.Setenv("WEAVE_FUNCTIONS_ENABLED", "true")
+	t.Setenv("WEAVE_FUNCTIONS_BASE_URL", "http://functions.local:9000/functions")
+	t.Setenv("WEAVE_FUNCTIONS_TIMEOUT", "5s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Functions.Enabled {
+		t.Errorf("Functions.Enabled: got false, want true")
+	}
+	if cfg.Functions.BaseURL != "http://functions.local:9000/functions" {
+		t.Errorf("Functions.BaseURL: got %q", cfg.Functions.BaseURL)
+	}
+	if cfg.Functions.Timeout != 5*time.Second {
+		t.Errorf("Functions.Timeout: got %v, want 5s", cfg.Functions.Timeout)
+	}
+}
+
+func TestLoadConfig_InvalidFunctionsTimeout(t *testing.T) {
+	t.Setenv("WEAVE_FUNCTIONS_TIMEOUT", "not-a-duration")
+	_, err := Load()
+	if err == nil {
+		t.Error("expected error for invalid functions timeout")
+	}
+}
+
+func TestLoadConfig_InvalidFunctionsEnabled(t *testing.T) {
+	t.Setenv("WEAVE_FUNCTIONS_ENABLED", "not-a-bool")
+	_, err := Load()
+	if err == nil {
+		t.Error("expected error for invalid functions enabled flag")
+	}
+}
+
+func TestConfig_Validate_FunctionsEnabledRequiresBaseURL(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.Functions.Enabled = true
+	cfg.Functions.BaseURL = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error when functions enabled without base URL")
+	}
+	if !strings.Contains(err.Error(), "Functions") && !strings.Contains(err.Error(), "function") {
+		t.Errorf("expected error to mention functions, got %v", err)
+	}
+}
+
 func TestConfig_Validate_MultipleErrors(t *testing.T) {
 	cfg := validDevConfig()
 	cfg.Port = -5

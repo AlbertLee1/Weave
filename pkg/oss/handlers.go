@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/where"
@@ -20,6 +21,11 @@ type Handler struct {
 	// SetHistoryRepo from main.go after construction so existing callers
 	// of NewHandler keep their two-argument signature.
 	historyRepo oms.Repository
+	// broadcast, when non-nil, enables the SSE /subscribe endpoint. Wired
+	// via SetBroadcast from main.go after construction. When nil, the
+	// route still registers but returns 503 so callers can detect feature
+	// absence.
+	broadcast *funnel.Broadcast
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -42,6 +48,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	// Link CRUD (M2M edges only) — write-side counterpart to ListLinkedObjects.
 	r.Post("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.CreateLink)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.DeleteLink)
+
+	// Tier 3.5 SSE subscribe endpoint. Always registered; returns 503 when
+	// the broadcast hub has not been wired (degraded mode).
+	r.Get("/api/v2/ontologies/{ontologyApiName}/subscribe", h.SubscribeChanges)
 }
 
 // GetObject handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}.

@@ -2,12 +2,15 @@ package main
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/ai"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/oms"
 )
 
-// RegisterRoutes registers all OMS routes on the given router.
-func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
+// RegisterRoutes registers all OMS routes on the given router. The
+// aiProvider supplies the AI-assisted schema suggestion endpoint; pass
+// ai.NewMockProvider() in tests or environments without an external LLM.
+func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler, aiProvider ai.LLMProvider) {
 	// V2 read-only routes
 	r.Get("/api/v2/ontologies", omsHandler.ListOntologies)
 	r.Get("/api/v2/ontologies/{ontologyApiName}", omsHandler.GetOntology)
@@ -112,4 +115,10 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/admin/ontologies/{ontologyApiName}/snapshots", omsHandler.CreateSnapshot)
 	r.Get("/api/admin/ontologies/{ontologyApiName}/snapshots", omsHandler.ListSnapshots)
 	r.Get("/api/admin/ontologies/{ontologyApiName}/snapshots/{version}", omsHandler.GetSnapshot)
+
+	// AI-assisted schema suggestions (Tier 3.6) — gated by objectType.write so
+	// the same callers who can create object types can use the LLM to scaffold
+	// their property lists.
+	r.With(auth.RequirePermission(auth.PermObjectTypeWrite)).
+		Method("POST", "/api/admin/ai/suggest-properties", ai.NewSuggestHandler(aiProvider))
 }

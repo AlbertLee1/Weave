@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/liyang/weave/pkg/ai"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -18,7 +20,7 @@ func TestSecurityPolicyRoutesRegistered(t *testing.T) {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer) // recover from nil repo panics; we only check route existence
 	handler := oms.NewOMSHandler(routeTestRepo{})
-	RegisterRoutes(r, handler)
+	RegisterRoutes(r, handler, ai.NewMockProvider())
 
 	tests := []struct {
 		method string
@@ -49,7 +51,7 @@ func TestSecurityPolicyRoutes_RequireAdmin(t *testing.T) {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	handler := oms.NewOMSHandler(routeTestRepo{})
-	RegisterRoutes(r, handler)
+	RegisterRoutes(r, handler, ai.NewMockProvider())
 
 	tests := []struct {
 		name     string
@@ -98,6 +100,82 @@ func TestSecurityPolicyRoutes_RequireAdmin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
+			if tt.user != nil {
+				req = req.WithContext(auth.WithUser(req.Context(), tt.user))
+			}
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != tt.wantCode {
+				t.Errorf("expected status %d, got %d (body=%s)", tt.wantCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAISuggestRouteRegistered(t *testing.T) {
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+	handler := oms.NewOMSHandler(routeTestRepo{})
+	RegisterRoutes(r, handler, ai.NewMockProvider())
+
+	body := bytes.NewReader([]byte(`{"objectTypeName":"Customer"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/ai/suggest-properties", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{ID: "admin", Roles: []string{auth.RoleAdmin}}))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("route POST /api/admin/ai/suggest-properties returned 404 — not registered")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 from suggest route, got %d (body=%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAISuggestRoute_RequiresAdmin(t *testing.T) {
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+	handler := oms.NewOMSHandler(routeTestRepo{})
+	RegisterRoutes(r, handler, ai.NewMockProvider())
+
+	tests := []struct {
+		name     string
+		user     *auth.User
+		wantCode int
+	}{
+		{
+			name:     "admin allowed",
+			user:     &auth.User{ID: "admin", Roles: []string{auth.RoleAdmin}},
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "ontology-owner allowed",
+			user:     &auth.User{ID: "owner", Roles: []string{auth.RoleOntologyOwner}},
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "viewer denied",
+			user:     &auth.User{ID: "viewer", Roles: []string{auth.RoleViewer}},
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "editor denied",
+			user:     &auth.User{ID: "editor", Roles: []string{auth.RoleEditor}},
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "unauthenticated denied",
+			user:     nil,
+			wantCode: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := bytes.NewReader([]byte(`{"objectTypeName":"Customer"}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/ai/suggest-properties", body)
+			req.Header.Set("Content-Type", "application/json")
 			if tt.user != nil {
 				req = req.WithContext(auth.WithUser(req.Context(), tt.user))
 			}

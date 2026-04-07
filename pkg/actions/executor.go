@@ -39,17 +39,28 @@ type Publisher interface {
 
 // Executor executes actions.
 type Executor struct {
-	omsRepo   oms.Repository
-	publisher Publisher
+	omsRepo            oms.Repository
+	publisher          Publisher
+	functionDispatcher FunctionDispatcher
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit
 // tests that do not need NATS (edits are still computed, just not committed).
+// A function dispatcher can be attached after construction via
+// SetFunctionDispatcher; it stays nil by default so legacy callers see no
+// behavioral change.
 func NewExecutor(omsRepo oms.Repository, publisher Publisher) *Executor {
 	return &Executor{
 		omsRepo:   omsRepo,
 		publisher: publisher,
 	}
+}
+
+// SetFunctionDispatcher attaches a FunctionDispatcher used for action types
+// flagged IsFunctionBacked. Passing nil restores rules-only behavior. Safe to
+// call once at boot before the executor is shared with handlers.
+func (e *Executor) SetFunctionDispatcher(d FunctionDispatcher) {
+	e.functionDispatcher = d
 }
 
 // PreparedAction is the output of Executor.Prepare: everything computable for
@@ -145,13 +156,32 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		return nil, fmt.Errorf("submission criteria: %w", err)
 	}
 
-	// Step 6: Parse rules
+	// Step 6: Function-backed branch (Tier 3.2). When the action type is
+	// flagged IsFunctionBacked AND a dispatcher is configured on this
+	// executor, delegate edit generation to the function and skip the
+	// local rules path. If the dispatcher is nil (e.g. dev environment
+	// without the function service), fall through to the rules path so
+	// the action still degrades gracefully.
+	if actionType.IsFunctionBacked && e.functionDispatcher != nil {
+		fnEdits, err := e.functionDispatcher.Dispatch(ctx, actionType, req.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("function dispatch: %w", err)
+		}
+		return &PreparedAction{
+			ActionType: actionType,
+			UserID:     userID,
+			Request:    req,
+			Edits:      fnEdits,
+		}, nil
+	}
+
+	// Step 7: Parse rules
 	rules, err := ParseRules(actionType.Rules)
 	if err != nil {
 		return nil, fmt.Errorf("parse rules: %w", err)
 	}
 
-	// Step 7: Execute rules to generate edits (pre-collapse).
+	// Step 8: Execute rules to generate edits (pre-collapse).
 	edits, err := ExecuteRules(rules, req.Parameters)
 	if err != nil {
 		return nil, fmt.Errorf("execute rules: %w", err)
@@ -359,7 +389,8 @@ func classifyPrepareError(err error) string {
 	case strings.Contains(msg, "list action types"),
 		strings.Contains(msg, "parse params"),
 		strings.Contains(msg, "parse rules"),
-		strings.Contains(msg, "execute rules"):
+		strings.Contains(msg, "execute rules"),
+		strings.Contains(msg, "function dispatch"):
 		return "internal"
 	default:
 		return "validation"

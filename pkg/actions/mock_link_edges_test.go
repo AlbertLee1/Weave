@@ -25,3 +25,4 @@ func (m *mockOmsRepo) GetLinkTypeByAPIName(_ context.Context, _, _ string) (*oms
 }
 
 // Object history stubs are declared in actions_test.go for mockOmsRepo.
+// ObjectEmbedding stubs are declared in mock_embedding_test.go.
