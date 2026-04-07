@@ -1,0 +1,112 @@
+"""Pydantic models that mirror the Weave OpenAPI schemas.
+
+The wire protocol uses camelCase, the Python API uses snake_case. Models
+configure ``populate_by_name`` so callers can pass either spelling and access
+either spelling.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+try:
+    from pydantic import BaseModel, ConfigDict, Field
+except Exception:  # pragma: no cover - pydantic v1 fallback
+    from pydantic import BaseModel, Field  # type: ignore
+
+    ConfigDict = None  # type: ignore
+
+
+def _model_config():
+    if ConfigDict is not None:
+        return ConfigDict(populate_by_name=True, extra="allow")
+    return None
+
+
+class _CamelModel(BaseModel):
+    """Base model that accepts both camelCase and snake_case fields."""
+
+    if ConfigDict is not None:
+        model_config = _model_config()
+    else:  # pragma: no cover - pydantic v1
+        class Config:
+            allow_population_by_field_name = True
+            extra = "allow"
+
+
+class Ontology(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    description: Optional[str] = None
+    current_version: int = Field(alias="currentVersion")
+
+
+class ObjectType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    plural_display_name: Optional[str] = Field(default=None, alias="pluralDisplayName")
+    description: Optional[str] = None
+    primary_key: str = Field(alias="primaryKey")
+    title_property: Optional[str] = Field(default=None, alias="titleProperty")
+    status: str
+    visibility: str
+    properties: Optional[Dict[str, Any]] = None
+
+
+class LinkType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    object_type_api_name: str = Field(alias="objectTypeApiName")
+    linked_object_type_api_name: str = Field(alias="linkedObjectTypeApiName")
+    cardinality: str
+    required: bool = False
+
+
+class ActionType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    description: Optional[str] = None
+    status: str
+    parameters: Optional[Dict[str, Any]] = None
+
+
+# WireObject is intentionally a plain dict alias rather than a model — object
+# payloads are unbounded, schema-driven, and cheap to keep raw.
+WireObject = Dict[str, Any]
+
+
+class ObjectPage(_CamelModel):
+    data: List[WireObject] = Field(default_factory=list)
+    next_page_token: Optional[str] = Field(default=None, alias="nextPageToken")
+    total_count: Optional[str] = Field(default=None, alias="totalCount")
+
+
+class Edit(_CamelModel):
+    type: str
+    object_type: Optional[str] = Field(default=None, alias="objectType")
+
+
+class ApplyActionResponse(_CamelModel):
+    action_rid: str = Field(alias="actionRid")
+    edits: List[Dict[str, Any]] = Field(default_factory=list)
+    batch_id: Optional[str] = Field(default=None, alias="batchId")
+    offset: Optional[int] = None
+
+
+class LoginUser(_CamelModel):
+    id: str
+    email: str
+    name: Optional[str] = ""
+    roles: List[str] = Field(default_factory=list)
+    ontology_roles: Dict[str, str] = Field(default_factory=dict, alias="ontologyRoles")
+
+
+class LoginResponse(_CamelModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+    user: LoginUser

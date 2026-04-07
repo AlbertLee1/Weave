@@ -15,6 +15,8 @@ servers:
 tags:
   - name: Health
     description: Liveness/readiness probes.
+  - name: Observability
+    description: Prometheus metrics scrape endpoint.
   - name: Auth
     description: JWT login, refresh, and logout.
   - name: Metadata
@@ -27,6 +29,11 @@ tags:
     description: Apply and apply-batch action execution.
   - name: Admin
     description: Admin CRUD for ontology definitions.
+  - name: MCP
+    description: |
+      Model Context Protocol (JSON-RPC 2.0) endpoint for AI agents.
+      See https://modelcontextprotocol.io/specification for the protocol
+      contract; Weave's tool catalogue is documented in docs/mcp.md.
 components:
   securitySchemes:
     bearerAuth:
@@ -692,6 +699,59 @@ components:
           type: string
         totalCount:
           type: string
+    ObjectHistoryEntry:
+      type: object
+      description: |
+        A single revision of an object's state. Tier 2.3 records one entry
+        for each CREATE / MODIFY / DELETE applied to a primary key.
+      properties:
+        id:
+          type: string
+          description: Server-generated history row id (UUID).
+        objectTypeRid:
+          type: string
+        primaryKey:
+          type: string
+        version:
+          type: integer
+          format: int64
+          description: Monotonically increasing per-primary-key version.
+        prevState:
+          description: |
+            JSONB snapshot of the object's state BEFORE the edit. Null for
+            CREATE rows.
+          type: object
+          additionalProperties: true
+          nullable: true
+        newState:
+          description: |
+            JSONB snapshot of the object's state AFTER the edit. Null for
+            DELETE rows.
+          type: object
+          additionalProperties: true
+          nullable: true
+        editType:
+          type: string
+          enum: [CREATE, MODIFY, DELETE]
+        actionLogRid:
+          type: string
+          description: Optional RID of the action log row that produced this edit.
+        userId:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    ObjectHistoryResponse:
+      type: object
+      properties:
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectHistoryEntry"
+        totalVersions:
+          type: integer
+          format: int64
+          description: Total number of history rows recorded for this object.
     SearchObjectsRequest:
       type: object
       properties:
@@ -1375,6 +1435,112 @@ paths:
                     type: object
                     additionalProperties:
                       type: string
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus metrics scrape endpoint
+      description: |
+        Exposes the Weave metric registry in Prometheus text format. The
+        endpoint is intentionally unauthenticated so a sidecar / scraper
+        can hit it without provisioning credentials. Disable with
+        `WEAVE_METRICS_ENABLED=false` if the deployment runs in an
+        untrusted network. Standard metrics include
+        `weave_http_requests_total`, `weave_http_request_duration_seconds`,
+        `weave_nats_publish_total`, `weave_db_query_duration_seconds`,
+        `weave_bleve_search_duration_seconds`, and `weave_build_info`.
+      tags: [Observability]
+      security: []
+      responses:
+        "200":
+          description: Prometheus exposition format text response.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP weave_http_requests_total Total HTTP requests handled by the Weave server.
+                  # TYPE weave_http_requests_total counter
+                  weave_http_requests_total{method="GET",path="/health",status="200"} 5
+  /mcp:
+    post:
+      operationId: mcpJSONRPC
+      summary: Model Context Protocol JSON-RPC 2.0 endpoint
+      description: |
+        Single JSON-RPC 2.0 endpoint that exposes Weave's ontology to AI
+        agents (Claude Desktop, Cursor, GPT, etc.) via the Model Context
+        Protocol. Supported methods:
+
+        - `initialize` — handshake; returns protocol version, capabilities, and serverInfo
+        - `tools/list` — list registered Weave tools and their input schemas
+        - `tools/call` — invoke a tool by name with arguments
+        - `prompts/list` — returns an empty list (Weave does not yet expose prompts)
+        - `resources/list` — returns an empty list
+        - `ping` — liveness check
+
+        The seven Weave tools are: `weave_list_ontologies`,
+        `weave_list_object_types`, `weave_get_object`, `weave_list_objects`,
+        `weave_search_objects`, `weave_list_action_types`, and
+        `weave_apply_action`. See docs/mcp.md for the full catalogue.
+
+        Per JSON-RPC 2.0, all protocol errors (parse error, invalid request,
+        method not found, invalid params, internal error, application
+        error) are returned in the response envelope with HTTP 200. Non-200
+        status codes are reserved for transport-level failures.
+      tags: [MCP]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: |
+                JSON-RPC 2.0 request envelope. The `id` field is required for
+                requests that expect a response and omitted for notifications.
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc:
+                  type: string
+                  enum: ["2.0"]
+                id:
+                  description: Request id (string, number, or null). Omitted for notifications.
+                method:
+                  type: string
+                  example: tools/call
+                params:
+                  type: object
+      responses:
+        "200":
+          description: |
+            JSON-RPC 2.0 response envelope. Contains either a `result` or an
+            `error` object — never both. Application errors travel here too.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jsonrpc]
+                properties:
+                  jsonrpc:
+                    type: string
+                    enum: ["2.0"]
+                  id:
+                    description: Echo of the request id (or null).
+                  result:
+                    type: object
+                    description: Method-specific result. Present on success.
+                  error:
+                    type: object
+                    description: JSON-RPC error object. Present on failure.
+                    properties:
+                      code:
+                        type: integer
+                      message:
+                        type: string
+                      data: {}
+        "204":
+          description: Notification accepted (request had no `id` field).
+        "405":
+          description: HTTP method other than POST.
   /api/auth/login:
     post:
       operationId: login
@@ -1723,6 +1889,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ObjectPage"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/history:
+    get:
+      operationId: getObjectHistory
+      summary: Get the change history for a single object
+      description: |
+        Returns the most recent revisions of an object's state, ordered by
+        version DESC, plus the total number of versions ever recorded. Each
+        history row carries a pre/post-state snapshot, the edit type
+        (CREATE / MODIFY / DELETE), the user that triggered the change, and
+        the recorded timestamp.
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+        - $ref: "#/components/parameters/PrimaryKey"
+        - in: query
+          name: limit
+          description: Maximum number of history rows to return (default 50, max 500).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: Object history page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectHistoryResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":

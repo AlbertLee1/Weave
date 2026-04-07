@@ -3,13 +3,42 @@ package funnel
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
 
 	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/oms"
 )
+
+// fakeHistoryRepo is a minimal HistoryRecorder used by Tier 2.3 funnel tests
+// to verify that the consumer writes one ObjectHistory row per applied edit.
+type fakeHistoryRepo struct {
+	mu        sync.Mutex
+	rows      []oms.ObjectHistory
+	insertErr error
+}
+
+func (f *fakeHistoryRepo) InsertObjectHistory(_ context.Context, h *oms.ObjectHistory) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.insertErr != nil {
+		return f.insertErr
+	}
+	// Copy by value so callers can mutate the input freely.
+	f.rows = append(f.rows, *h)
+	return nil
+}
+
+func (f *fakeHistoryRepo) snapshot() []oms.ObjectHistory {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]oms.ObjectHistory, len(f.rows))
+	copy(out, f.rows)
+	return out
+}
 
 // setupTestConsumer creates a Consumer with a real index.Manager but no NATS connection.
 func setupTestConsumer(t *testing.T) (*Consumer, *index.Manager) {
@@ -633,5 +662,276 @@ func TestStreamConfig(t *testing.T) {
 	expectedSubject := SubjectPrefix + ".>"
 	if expectedSubject != "edits.>" {
 		t.Fatalf("expected wildcard subject %q, got %q", "edits.>", expectedSubject)
+	}
+}
+
+// --- ObjectHistory tests (Tier 2.3) ---
+
+// TestConsumer_RecordHistory_Create verifies that applying a CREATE edit
+// inside a batch writes one ObjectHistory row with prev_state=nil and
+// new_state populated from the edit's properties.
+func TestConsumer_RecordHistory_Create(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	repo := &fakeHistoryRepo{}
+	consumer.SetHistoryRepo(repo)
+	consumer.SetObjectTypeRIDs(map[string]string{
+		"employee": "ri.ontology.main.object-type.employee",
+	})
+
+	batch := EditBatch{
+		ID:     "batch-create",
+		UserID: "user-1",
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "employee",
+				PrimaryKey: "emp-1",
+				Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(context.Background(), batch); err != nil {
+		t.Fatalf("applyBatchWithHistory: %v", err)
+	}
+
+	rows := repo.snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 history row, got %d", len(rows))
+	}
+	r := rows[0]
+	if r.EditType != "CREATE" {
+		t.Fatalf("expected EditType CREATE, got %q", r.EditType)
+	}
+	if r.PrimaryKey != "emp-1" {
+		t.Fatalf("expected PrimaryKey emp-1, got %q", r.PrimaryKey)
+	}
+	if r.ObjectTypeRID != "ri.ontology.main.object-type.employee" {
+		t.Fatalf("expected ObjectTypeRID resolved, got %q", r.ObjectTypeRID)
+	}
+	if r.UserID != "user-1" {
+		t.Fatalf("expected UserID user-1, got %q", r.UserID)
+	}
+	if r.Version != 1 {
+		t.Fatalf("expected Version 1, got %d", r.Version)
+	}
+	if len(r.PrevState) != 0 {
+		t.Fatalf("expected nil PrevState for CREATE, got %s", string(r.PrevState))
+	}
+	if len(r.NewState) == 0 {
+		t.Fatal("expected non-nil NewState for CREATE")
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(r.NewState, &got); err != nil {
+		t.Fatalf("unmarshal NewState: %v", err)
+	}
+	if got["name"] != "Alice" {
+		t.Fatalf("expected NewState.name=Alice, got %v", got["name"])
+	}
+}
+
+// TestConsumer_RecordHistory_Modify verifies that a MODIFY following a
+// CREATE writes prev_state captured from the prior version and increments
+// the version counter.
+func TestConsumer_RecordHistory_Modify(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	repo := &fakeHistoryRepo{}
+	consumer.SetHistoryRepo(repo)
+	consumer.SetObjectTypeRIDs(map[string]string{
+		"employee": "ri.ontology.main.object-type.employee",
+	})
+
+	createBatch := EditBatch{
+		ID:     "batch-1",
+		UserID: "user-1",
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "employee",
+				PrimaryKey: "emp-1",
+				Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(context.Background(), createBatch); err != nil {
+		t.Fatalf("apply create: %v", err)
+	}
+
+	modBatch := EditBatch{
+		ID:     "batch-2",
+		UserID: "user-2",
+		Edits: []Edit{
+			{
+				Type:       EditTypeModify,
+				ObjectType: "employee",
+				PrimaryKey: "emp-1",
+				Properties: map[string]interface{}{"name": "Alice", "age": float64(31)},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(context.Background(), modBatch); err != nil {
+		t.Fatalf("apply modify: %v", err)
+	}
+
+	rows := repo.snapshot()
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 history rows, got %d", len(rows))
+	}
+	mod := rows[1]
+	if mod.EditType != "MODIFY" {
+		t.Fatalf("expected EditType MODIFY, got %q", mod.EditType)
+	}
+	if mod.Version != 2 {
+		t.Fatalf("expected Version 2, got %d", mod.Version)
+	}
+	if mod.UserID != "user-2" {
+		t.Fatalf("expected UserID user-2, got %q", mod.UserID)
+	}
+	if len(mod.PrevState) == 0 {
+		t.Fatal("expected non-nil PrevState for MODIFY after CREATE")
+	}
+	var prev map[string]interface{}
+	if err := json.Unmarshal(mod.PrevState, &prev); err != nil {
+		t.Fatalf("unmarshal PrevState: %v", err)
+	}
+	if _, hasName := prev["name"]; !hasName {
+		t.Fatal("expected PrevState to include name field captured from index")
+	}
+}
+
+// TestConsumer_RecordHistory_Delete verifies that a DELETE writes a row
+// with prev_state populated and new_state nil.
+func TestConsumer_RecordHistory_Delete(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	repo := &fakeHistoryRepo{}
+	consumer.SetHistoryRepo(repo)
+	consumer.SetObjectTypeRIDs(map[string]string{
+		"employee": "ri.ontology.main.object-type.employee",
+	})
+
+	createBatch := EditBatch{
+		ID: "batch-1",
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "employee",
+				PrimaryKey: "emp-del",
+				Properties: map[string]interface{}{"name": "ToDelete"},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(context.Background(), createBatch); err != nil {
+		t.Fatalf("apply create: %v", err)
+	}
+
+	delBatch := EditBatch{
+		ID:     "batch-2",
+		UserID: "user-d",
+		Edits: []Edit{
+			{
+				Type:       EditTypeDelete,
+				ObjectType: "employee",
+				PrimaryKey: "emp-del",
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(context.Background(), delBatch); err != nil {
+		t.Fatalf("apply delete: %v", err)
+	}
+
+	rows := repo.snapshot()
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 history rows, got %d", len(rows))
+	}
+	del := rows[1]
+	if del.EditType != "DELETE" {
+		t.Fatalf("expected EditType DELETE, got %q", del.EditType)
+	}
+	if del.Version != 2 {
+		t.Fatalf("expected Version 2, got %d", del.Version)
+	}
+	if len(del.NewState) != 0 {
+		t.Fatalf("expected nil NewState for DELETE, got %s", string(del.NewState))
+	}
+	if len(del.PrevState) == 0 {
+		t.Fatal("expected non-nil PrevState for DELETE")
+	}
+}
+
+// TestConsumer_RecordHistory_NilRepo verifies that a consumer with no
+// history repo set still applies edits normally and is a no-op for history.
+func TestConsumer_RecordHistory_NilRepo(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	// no SetHistoryRepo call
+
+	batch := EditBatch{
+		ID: "batch-noop",
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "employee",
+				PrimaryKey: "emp-x",
+				Properties: map[string]interface{}{"name": "X"},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(context.Background(), batch); err != nil {
+		t.Fatalf("applyBatchWithHistory should not error with nil history repo: %v", err)
+	}
+}
+
+// TestConsumer_RecordHistory_VersionsPerPK verifies that version numbers are
+// scoped per primary key and increment independently.
+func TestConsumer_RecordHistory_VersionsPerPK(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	repo := &fakeHistoryRepo{}
+	consumer.SetHistoryRepo(repo)
+	consumer.SetObjectTypeRIDs(map[string]string{
+		"employee": "ri.ontology.main.object-type.employee",
+	})
+
+	for _, pk := range []string{"emp-A", "emp-B"} {
+		b := EditBatch{
+			ID: "create-" + pk,
+			Edits: []Edit{
+				{Type: EditTypeCreate, ObjectType: "employee", PrimaryKey: pk,
+					Properties: map[string]interface{}{"name": pk}},
+			},
+		}
+		if err := consumer.applyBatchWithHistory(context.Background(), b); err != nil {
+			t.Fatalf("create %s: %v", pk, err)
+		}
+	}
+	// Modify A twice, B once.
+	for _, pk := range []string{"emp-A", "emp-A", "emp-B"} {
+		b := EditBatch{
+			ID: "mod-" + pk,
+			Edits: []Edit{
+				{Type: EditTypeModify, ObjectType: "employee", PrimaryKey: pk,
+					Properties: map[string]interface{}{"name": pk + "+"}},
+			},
+		}
+		if err := consumer.applyBatchWithHistory(context.Background(), b); err != nil {
+			t.Fatalf("mod %s: %v", pk, err)
+		}
+	}
+
+	rows := repo.snapshot()
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 rows, got %d", len(rows))
+	}
+	var aVersions, bVersions []int64
+	for _, r := range rows {
+		switch r.PrimaryKey {
+		case "emp-A":
+			aVersions = append(aVersions, r.Version)
+		case "emp-B":
+			bVersions = append(bVersions, r.Version)
+		}
+	}
+	if len(aVersions) != 3 || aVersions[0] != 1 || aVersions[1] != 2 || aVersions[2] != 3 {
+		t.Fatalf("expected emp-A versions [1,2,3], got %v", aVersions)
+	}
+	if len(bVersions) != 2 || bVersions[0] != 1 || bVersions[1] != 2 {
+		t.Fatalf("expected emp-B versions [1,2], got %v", bVersions)
 	}
 }

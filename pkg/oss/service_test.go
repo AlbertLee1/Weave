@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
@@ -33,6 +34,10 @@ type mockOmsRepo struct {
 	deletedEdges  []deletedEdgeKey
 	upsertErr     error
 	deleteErr     error
+
+	// securityPolicies maps objectTypeRID -> attached SecurityPolicies. Tests
+	// populate this directly to exercise the ABAC filter path.
+	securityPolicies map[string][]oms.SecurityPolicy
 }
 
 // deletedEdgeKey records a single DeleteLinkEdge invocation for assertions.
@@ -48,6 +53,7 @@ func newMockOmsRepo() *mockOmsRepo {
 		byRID:              make(map[string]*oms.ObjectType),
 		linkTypes:          make(map[string][]oms.LinkType),
 		linkTypesByAPIName: make(map[string]*oms.LinkType),
+		securityPolicies:   make(map[string][]oms.SecurityPolicy),
 	}
 }
 
@@ -333,6 +339,17 @@ func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]o
 	return nil, nil
 }
 func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+
+// ObjectHistory stubs (Tier 2.3)
+func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {
+	return nil
+}
+func (m *mockOmsRepo) ListObjectHistory(_ context.Context, _, _ string, _ int) ([]oms.ObjectHistory, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
 
 // Search stubs
 func (m *mockOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {
@@ -1468,7 +1485,207 @@ func TestSearchObjects_OrderByAsc(t *testing.T) {
 }
 
 func (m *mockOmsRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
-func (m *mockOmsRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) {
+	return nil, nil
+}
+
+// ListSecurityPolicies returns the policies a test attached to the given
+// objectTypeRID. Returns an empty slice when nothing is attached so the
+// filter's pass-through path is exercised.
+func (m *mockOmsRepo) ListSecurityPolicies(_ context.Context, objectTypeRID string) ([]oms.SecurityPolicy, error) {
+	return m.securityPolicies[objectTypeRID], nil
+}
 func (m *mockOmsRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockOmsRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }
+func (m *mockOmsRepo) DeleteSecurityPolicy(_ context.Context, _ string) error              { return nil }
+
+// --- ABAC integration tests on the OSS read path (3 tests) ---
+
+// attachViewerEqualsPolicy attaches a single OBJECT-scope allow policy that
+// only matches viewer users when classification == "PUBLIC". Other users and
+// objects with non-PUBLIC classification get default-denied.
+func attachViewerEqualsPolicy(t *testing.T, repo *mockOmsRepo, objectTypeRID string) {
+	t.Helper()
+	rules := auth.SecurityPolicyRules{
+		Version:  1,
+		Effect:   "allow",
+		Subjects: auth.SubjectSpec{Roles: []string{auth.RoleViewer}},
+		Condition: auth.ConditionSpec{
+			Op:    "propertyEquals",
+			Field: "classification",
+			Value: "PUBLIC",
+		},
+	}
+	b, err := json.Marshal(rules)
+	if err != nil {
+		t.Fatalf("marshal rules: %v", err)
+	}
+	repo.securityPolicies[objectTypeRID] = []oms.SecurityPolicy{{
+		RID:           "ri.ontology.main.security-policy.viewer-public",
+		ObjectTypeRID: objectTypeRID,
+		PolicyType:    "OBJECT",
+		Rules:         b,
+	}}
+}
+
+// setupOSSTestWithPolicies builds the standard 3-employee fixture and seeds
+// classification values so policy tests can assert on visibility. Also wires
+// in a PolicyFilter on the service.
+func setupOSSTestWithPolicies(t *testing.T) (*oss.ServiceImpl, *mockOmsRepo) {
+	t.Helper()
+
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+
+	props := []index.Property{
+		{APIName: "employeeId", BaseType: "string", IsSearchable: true},
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+		{APIName: "salary", BaseType: "integer", IsSearchable: true},
+		{APIName: "classification", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("employee", props); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	docs := []struct {
+		id  string
+		doc map[string]interface{}
+	}{
+		{"e1", map[string]interface{}{"employeeId": "e1", "name": "alice", "salary": float64(100000), "classification": "PUBLIC"}},
+		{"e2", map[string]interface{}{"employeeId": "e2", "name": "bob", "salary": float64(150000), "classification": "SECRET"}},
+		{"e3", map[string]interface{}{"employeeId": "e3", "name": "charlie", "salary": float64(80000), "classification": "PUBLIC"}},
+	}
+	for _, d := range docs {
+		if err := mgr.IndexDocument("employee", d.id, d.doc); err != nil {
+			t.Fatalf("IndexDocument: %v", err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	repo := newMockOmsRepo()
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.employee",
+		OntologyRID: testOntologyRID,
+		APIName:     "employee",
+		PrimaryKey:  "employeeId",
+		Status:      "ACTIVE",
+	})
+
+	linkResolver := &mockLinkResolver{results: make(map[string][]string)}
+	svc := oss.NewService(repo, mgr, linkResolver)
+	svc.SetPolicyFilter(oss.NewPolicyFilter(repo))
+	return svc, repo
+}
+
+func TestListObjects_WithPolicies_FiltersViewer(t *testing.T) {
+	svc, repo := setupOSSTestWithPolicies(t)
+	attachViewerEqualsPolicy(t, repo, "ri.ontology.main.object-type.employee")
+
+	user := &auth.User{ID: "u1", Roles: []string{auth.RoleViewer}}
+	ctx := auth.WithUser(context.Background(), user)
+
+	page, err := svc.ListObjects(ctx, oss.ListObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+
+	// Only the 2 PUBLIC docs should be returned to a viewer.
+	if len(page.Data) != 2 {
+		t.Fatalf("expected 2 visible objects, got %d", len(page.Data))
+	}
+	for _, o := range page.Data {
+		if o.Properties["classification"] != "PUBLIC" {
+			t.Errorf("expected only PUBLIC docs, got %v", o.Properties["classification"])
+		}
+	}
+}
+
+func TestGetObject_WithPolicies_Denied_Returns404(t *testing.T) {
+	svc, repo := setupOSSTestWithPolicies(t)
+	attachViewerEqualsPolicy(t, repo, "ri.ontology.main.object-type.employee")
+
+	user := &auth.User{ID: "u1", Roles: []string{auth.RoleViewer}}
+	ctx := auth.WithUser(context.Background(), user)
+
+	// e2 is SECRET so the viewer cannot see it. The service must hide its
+	// existence by returning ErrNotFound rather than ErrForbidden.
+	_, err := svc.GetObject(ctx, oss.GetObjectRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "e2",
+	})
+	if err == nil {
+		t.Fatal("expected ErrNotFound for denied object, got nil")
+	}
+	if err != oms.ErrNotFound {
+		t.Errorf("expected ErrNotFound for denied object, got %v", err)
+	}
+
+	// Sanity check: the same viewer can read e1 (PUBLIC).
+	obj, err := svc.GetObject(ctx, oss.GetObjectRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		PrimaryKey:  "e1",
+	})
+	if err != nil {
+		t.Fatalf("GetObject e1: %v", err)
+	}
+	if obj.PrimaryKey != "e1" {
+		t.Errorf("expected e1, got %v", obj.PrimaryKey)
+	}
+}
+
+func TestSearchObjects_WithPolicies_RedactsFields(t *testing.T) {
+	svc, repo := setupOSSTestWithPolicies(t)
+
+	// Two policies: one OBJECT-scope grant for viewer, plus one PROPERTY-scope
+	// mask that hides "salary" from viewers.
+	objRules := auth.SecurityPolicyRules{
+		Version:   1,
+		Effect:    "allow",
+		Subjects:  auth.SubjectSpec{Roles: []string{auth.RoleViewer}},
+		Condition: auth.ConditionSpec{Op: "always"},
+	}
+	maskRules := auth.SecurityPolicyRules{
+		Version:       1,
+		Effect:        "allow",
+		Subjects:      auth.SubjectSpec{Roles: []string{auth.RoleViewer}},
+		Condition:     auth.ConditionSpec{Op: "always"},
+		PropertyMasks: []string{"salary"},
+	}
+	objBytes, _ := json.Marshal(objRules)
+	maskBytes, _ := json.Marshal(maskRules)
+	repo.securityPolicies["ri.ontology.main.object-type.employee"] = []oms.SecurityPolicy{
+		{RID: "ri.ontology.main.security-policy.allow", ObjectTypeRID: "ri.ontology.main.object-type.employee", PolicyType: "OBJECT", Rules: objBytes},
+		{RID: "ri.ontology.main.security-policy.mask-salary", ObjectTypeRID: "ri.ontology.main.object-type.employee", PolicyType: "PROPERTY", Rules: maskBytes},
+	}
+
+	user := &auth.User{ID: "u1", Roles: []string{auth.RoleViewer}}
+	ctx := auth.WithUser(context.Background(), user)
+
+	page, err := svc.SearchObjects(ctx, oss.SearchObjectsRequest{
+		OntologyRID: testOntologyRID,
+		ObjectType:  "employee",
+		Where: &where.WhereClause{
+			Type:  "eq",
+			Field: "classification",
+			Value: json.RawMessage(`"PUBLIC"`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchObjects: %v", err)
+	}
+	if len(page.Data) == 0 {
+		t.Fatal("expected at least one PUBLIC result")
+	}
+	for _, o := range page.Data {
+		if _, ok := o.Properties["salary"]; ok {
+			t.Errorf("expected salary to be redacted, got %v", o.Properties["salary"])
+		}
+		if _, ok := o.Properties["name"]; !ok {
+			t.Errorf("expected name to be retained, got nil")
+		}
+	}
+}

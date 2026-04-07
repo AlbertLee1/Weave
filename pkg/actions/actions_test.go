@@ -183,6 +183,17 @@ func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]o
 }
 func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
 
+// ObjectHistory stubs (Tier 2.3)
+func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {
+	return nil
+}
+func (m *mockOmsRepo) ListObjectHistory(_ context.Context, _, _ string, _ int) ([]oms.ObjectHistory, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 // Search stubs
 func (m *mockOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {
 	return nil, nil

@@ -1430,6 +1430,93 @@ func (r *PGRepository) InsertActionLog(ctx context.Context, al *ActionLog) error
 	return nil
 }
 
+// --- ObjectHistory (Tier 2.3) ---
+
+// InsertObjectHistory writes a new history row and back-fills the generated
+// id and recorded_at timestamps onto h. nil PrevState/NewState are stored as
+// SQL NULL so DELETE rows do not carry stale state.
+func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO object_history
+		   (object_type_rid, primary_key, version, prev_state, new_state,
+		    edit_type, action_log_rid, user_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING id, recorded_at`,
+		h.ObjectTypeRID, h.PrimaryKey, h.Version,
+		nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
+		h.EditType, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID)).
+		Scan(&h.ID, &h.RecordedAt)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ListObjectHistory returns the most recent `limit` history rows for a given
+// (objectTypeRID, primaryKey) tuple, ordered by version DESC.
+func (r *PGRepository) ListObjectHistory(ctx context.Context, objectTypeRID, primaryKey string, limit int) ([]ObjectHistory, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, object_type_rid, primary_key, version,
+		        prev_state, new_state, edit_type,
+		        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
+		        recorded_at
+		 FROM object_history
+		 WHERE object_type_rid = $1 AND primary_key = $2
+		 ORDER BY version DESC
+		 LIMIT $3`,
+		objectTypeRID, primaryKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []ObjectHistory
+	for rows.Next() {
+		var h ObjectHistory
+		var prev, next []byte
+		if err := rows.Scan(&h.ID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
+			&prev, &next, &h.EditType,
+			&h.ActionLogRID, &h.UserID, &h.RecordedAt); err != nil {
+			return nil, err
+		}
+		if len(prev) > 0 {
+			h.PrevState = append(h.PrevState[:0], prev...)
+		}
+		if len(next) > 0 {
+			h.NewState = append(h.NewState[:0], next...)
+		}
+		result = append(result, h)
+	}
+	return result, rows.Err()
+}
+
+// GetObjectVersionCount returns the total number of history rows recorded
+// for a given (objectTypeRID, primaryKey) tuple. Returns 0 (not an error)
+// when no history exists.
+func (r *PGRepository) GetObjectVersionCount(ctx context.Context, objectTypeRID, primaryKey string) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM object_history
+		 WHERE object_type_rid = $1 AND primary_key = $2`,
+		objectTypeRID, primaryKey).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// nilIfNoBytes returns nil for an empty/nil byte slice so jsonb columns
+// receive SQL NULL rather than the literal "" / "null" payload.
+func nilIfNoBytes(b []byte) interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
 // --- Search ---
 
 func (r *PGRepository) SearchOntologyResources(ctx context.Context, ontologyRID, query string) ([]SearchResult, error) {

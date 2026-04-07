@@ -31,6 +31,25 @@ type JWTConfig struct {
 	BcryptCost int
 }
 
+// MetricsConfig controls the Prometheus /metrics endpoint and the
+// metrics middleware. Defaults: enabled=true, path=/metrics. The
+// endpoint is exposed unauthenticated so a sidecar / scraper can hit it.
+type MetricsConfig struct {
+	Enabled bool
+	Path    string
+}
+
+// TracingConfig controls the OpenTelemetry tracer provider built in
+// pkg/tracing. Defaults: disabled, ServiceName=weave, no exporter.
+// Set Exporter to "stdout" for local debugging or "otlp" with an
+// OTLPEndpoint to ship spans to a real collector.
+type TracingConfig struct {
+	Enabled      bool
+	Exporter     string // "stdout" | "otlp" | "none"
+	OTLPEndpoint string
+	ServiceName  string
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -41,6 +60,9 @@ type Config struct {
 
 	AuthMode string
 	JWT      JWTConfig
+
+	Metrics MetricsConfig
+	Tracing TracingConfig
 }
 
 func Load() (*Config, error) {
@@ -55,6 +77,15 @@ func Load() (*Config, error) {
 			AccessTokenTTL:  15 * time.Minute,
 			RefreshTokenTTL: 168 * time.Hour,
 			BcryptCost:      12,
+		},
+		Metrics: MetricsConfig{
+			Enabled: true,
+			Path:    "/metrics",
+		},
+		Tracing: TracingConfig{
+			Enabled:     false,
+			ServiceName: "weave",
+			Exporter:    "stdout",
 		},
 	}
 
@@ -124,6 +155,34 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid BCRYPT_COST %q: %w", v, err)
 		}
 		cfg.JWT.BcryptCost = n
+	}
+
+	if v := os.Getenv("WEAVE_METRICS_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_METRICS_ENABLED %q: %w", v, err)
+		}
+		cfg.Metrics.Enabled = b
+	}
+	if v := os.Getenv("WEAVE_METRICS_PATH"); v != "" {
+		cfg.Metrics.Path = v
+	}
+
+	if v := os.Getenv("WEAVE_TRACING_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_TRACING_ENABLED %q: %w", v, err)
+		}
+		cfg.Tracing.Enabled = b
+	}
+	if v := os.Getenv("WEAVE_TRACING_SERVICE_NAME"); v != "" {
+		cfg.Tracing.ServiceName = v
+	}
+	if v := os.Getenv("WEAVE_TRACING_EXPORTER"); v != "" {
+		cfg.Tracing.Exporter = v
+	}
+	if v := os.Getenv("WEAVE_OTLP_ENDPOINT"); v != "" {
+		cfg.Tracing.OTLPEndpoint = v
 	}
 
 	return cfg, nil

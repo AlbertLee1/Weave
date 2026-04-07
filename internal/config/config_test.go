@@ -253,6 +253,85 @@ func TestConfig_Validate_EmptyNATSURL_OK(t *testing.T) {
 	}
 }
 
+// --- Tier 2.6 metrics + tracing config tests ---
+
+func TestLoadConfig_MetricsDefaults(t *testing.T) {
+	os.Unsetenv("WEAVE_METRICS_ENABLED")
+	os.Unsetenv("WEAVE_METRICS_PATH")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Metrics.Enabled {
+		t.Errorf("Metrics.Enabled default: got false, want true")
+	}
+	if cfg.Metrics.Path != "/metrics" {
+		t.Errorf("Metrics.Path default: got %q, want /metrics", cfg.Metrics.Path)
+	}
+}
+
+func TestLoadConfig_MetricsOverrides(t *testing.T) {
+	t.Setenv("WEAVE_METRICS_ENABLED", "false")
+	t.Setenv("WEAVE_METRICS_PATH", "/internal/metrics")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Metrics.Enabled {
+		t.Errorf("Metrics.Enabled: got true, want false")
+	}
+	if cfg.Metrics.Path != "/internal/metrics" {
+		t.Errorf("Metrics.Path: got %q", cfg.Metrics.Path)
+	}
+}
+
+func TestLoadConfig_TracingDefaults(t *testing.T) {
+	os.Unsetenv("WEAVE_TRACING_ENABLED")
+	os.Unsetenv("WEAVE_TRACING_SERVICE_NAME")
+	os.Unsetenv("WEAVE_OTLP_ENDPOINT")
+	os.Unsetenv("WEAVE_TRACING_EXPORTER")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracing.Enabled {
+		t.Errorf("Tracing.Enabled default: got true, want false")
+	}
+	if cfg.Tracing.ServiceName != "weave" {
+		t.Errorf("Tracing.ServiceName default: got %q, want weave", cfg.Tracing.ServiceName)
+	}
+	if cfg.Tracing.OTLPEndpoint != "" {
+		t.Errorf("Tracing.OTLPEndpoint default: got %q, want empty", cfg.Tracing.OTLPEndpoint)
+	}
+}
+
+func TestLoadConfig_TracingOverrides(t *testing.T) {
+	t.Setenv("WEAVE_TRACING_ENABLED", "true")
+	t.Setenv("WEAVE_TRACING_SERVICE_NAME", "weave-prod")
+	t.Setenv("WEAVE_OTLP_ENDPOINT", "otel-collector:4318")
+	t.Setenv("WEAVE_TRACING_EXPORTER", "otlp")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Tracing.Enabled {
+		t.Errorf("Tracing.Enabled: got false, want true")
+	}
+	if cfg.Tracing.ServiceName != "weave-prod" {
+		t.Errorf("Tracing.ServiceName: got %q", cfg.Tracing.ServiceName)
+	}
+	if cfg.Tracing.OTLPEndpoint != "otel-collector:4318" {
+		t.Errorf("Tracing.OTLPEndpoint: got %q", cfg.Tracing.OTLPEndpoint)
+	}
+	if cfg.Tracing.Exporter != "otlp" {
+		t.Errorf("Tracing.Exporter: got %q", cfg.Tracing.Exporter)
+	}
+}
+
 func TestConfig_Validate_MultipleErrors(t *testing.T) {
 	cfg := validDevConfig()
 	cfg.Port = -5

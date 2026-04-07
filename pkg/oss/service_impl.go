@@ -9,6 +9,7 @@ import (
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
@@ -21,6 +22,11 @@ type ServiceImpl struct {
 	omsRepo      oms.Repository
 	indexMgr     *index.Manager
 	linkResolver links.LinkResolver
+
+	// policyFilter is the optional ABAC enforcement layer applied after every
+	// read. When nil, all object reads bypass policy evaluation (back-compat
+	// for tests and dev mode that haven't wired the filter yet).
+	policyFilter *PolicyFilter
 }
 
 // NewService creates a new OSS service.
@@ -32,7 +38,31 @@ func NewService(omsRepo oms.Repository, indexMgr *index.Manager, linkResolver li
 	}
 }
 
+// SetPolicyFilter installs the ABAC PolicyFilter that gates read responses.
+// Call sites should attach the filter immediately after NewService during
+// server boot. Passing nil disables filtering (used by older tests that
+// don't seed any policies).
+func (s *ServiceImpl) SetPolicyFilter(f *PolicyFilter) {
+	s.policyFilter = f
+}
+
+// applyPolicyFilter is the single chokepoint where every read method funnels
+// its result list through PolicyFilter.FilterObjects. Returning the input
+// unchanged when no filter is installed keeps existing tests green.
+func (s *ServiceImpl) applyPolicyFilter(ctx context.Context, ontologyRID, objectTypeAPIName string, objs []*WireObject) ([]*WireObject, error) {
+	if s.policyFilter == nil {
+		return objs, nil
+	}
+	user := auth.UserFromContext(ctx)
+	return s.policyFilter.FilterObjects(ctx, user, ontologyRID, objectTypeAPIName, objs)
+}
+
 // GetObject retrieves a single object by its primary key.
+//
+// ABAC: when a PolicyFilter is installed, the freshly-loaded object is run
+// through it. If the user can't see the object, the method returns
+// ErrNotFound (not ErrForbidden) so the policy itself does not leak the
+// object's existence. Allowed objects may have property values redacted.
 func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*WireObject, error) {
 	if _, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType); err != nil {
 		return nil, err
@@ -54,7 +84,17 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 	}
 
 	hit := result.Hits[0]
-	return FormatObject(req.ObjectType, req.PrimaryKey, hit.Fields), nil
+	obj := FormatObject(req.ObjectType, req.PrimaryKey, hit.Fields)
+
+	filtered, err := s.applyPolicyFilter(ctx, req.OntologyRID, req.ObjectType, []*WireObject{obj})
+	if err != nil {
+		return nil, err
+	}
+	if len(filtered) == 0 {
+		// Policy denied: hide existence with ErrNotFound rather than 403.
+		return nil, oms.ErrNotFound
+	}
+	return filtered[0], nil
 }
 
 // ListObjects lists objects of a given type with pagination.
@@ -104,6 +144,13 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		}
 		page.Data = append(page.Data, FormatObject(req.ObjectType, pk, hit.Fields))
 	}
+
+	// ABAC: drop denied rows and redact masked properties.
+	filtered, err := s.applyPolicyFilter(ctx, req.OntologyRID, req.ObjectType, page.Data)
+	if err != nil {
+		return nil, err
+	}
+	page.Data = filtered
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -172,6 +219,13 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		}
 		page.Data = append(page.Data, FormatObject(req.ObjectType, pk, hit.Fields))
 	}
+
+	// ABAC: drop denied rows and redact masked properties.
+	filtered, err := s.applyPolicyFilter(ctx, req.OntologyRID, req.ObjectType, page.Data)
+	if err != nil {
+		return nil, err
+	}
+	page.Data = filtered
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -350,6 +404,14 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 		}
 		page.Data = append(page.Data, FormatObject(targetOTAPIName, pk, hit.Fields))
 	}
+
+	// ABAC: enforce policies on the *target* object type, not the caller's
+	// object type. The user must be able to see the linked rows themselves.
+	filtered, err := s.applyPolicyFilter(ctx, req.OntologyRID, targetOTAPIName, page.Data)
+	if err != nil {
+		return nil, err
+	}
+	page.Data = filtered
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize

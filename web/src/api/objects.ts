@@ -1,5 +1,10 @@
 import { request } from './client';
-import type { ObjectPage, WireObject, WhereClause } from './types';
+import type {
+  ObjectPage,
+  ObjectHistoryResponse,
+  WireObject,
+  WhereClause,
+} from './types';
 
 export interface ListObjectsParams {
   ontologyApiName: string;
@@ -77,5 +82,25 @@ export function listLinkedObjects(
   return request<ObjectPage>(
     'GET',
     `/api/v2/ontologies/${params.ontologyApiName}/objects/${params.objectType}/${params.primaryKey}/links/${params.linkType}${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export interface GetObjectHistoryParams {
+  ontologyApiName: string;
+  objectType: string;
+  primaryKey: string;
+  limit?: number;
+}
+
+// Tier 2.3: fetch the change history for a single object.
+export function getObjectHistory(
+  params: GetObjectHistoryParams,
+): Promise<ObjectHistoryResponse> {
+  const query = new URLSearchParams();
+  if (params.limit) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  return request<ObjectHistoryResponse>(
+    'GET',
+    `/api/v2/ontologies/${params.ontologyApiName}/objects/${params.objectType}/${params.primaryKey}/history${qs ? `?${qs}` : ''}`,
   );
 }

@@ -23,3 +23,17 @@ func (m *mockRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ string) e
 func (m *mockRepo) GetLinkTypeByAPIName(_ context.Context, _, _ string) (*oms.LinkType, error) {
 	return nil, oms.ErrNotFound
 }
+
+// Object history stubs — tier 2.3 added these interface methods. The
+// resolver tests do not exercise the history path, so all three are no-ops.
+func (m *mockRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {
+	return nil
+}
+
+func (m *mockRepo) ListObjectHistory(_ context.Context, _, _ string, _ int) ([]oms.ObjectHistory, error) {
+	return nil, nil
+}
+
+func (m *mockRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}

@@ -76,6 +76,25 @@ export interface ActionLog {
   createdAt: string;
 }
 
+// Tier 2.3: object change history.
+export interface ObjectHistoryEntry {
+  id: string;
+  objectTypeRid: string;
+  primaryKey: string;
+  version: number;
+  prevState?: Record<string, unknown> | null;
+  newState?: Record<string, unknown> | null;
+  editType: 'CREATE' | 'MODIFY' | 'DELETE';
+  actionLogRid?: string;
+  userId?: string;
+  recordedAt: string;
+}
+
+export interface ObjectHistoryResponse {
+  history: ObjectHistoryEntry[];
+  totalVersions: number;
+}
+
 export interface WireObject {
   __rid: string;
   __primaryKey: string | number;

@@ -110,6 +110,11 @@ type Repository interface {
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
 
+	// ObjectHistory (Tier 2.3)
+	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error
+	ListObjectHistory(ctx context.Context, objectTypeRID, primaryKey string, limit int) ([]ObjectHistory, error)
+	GetObjectVersionCount(ctx context.Context, objectTypeRID, primaryKey string) (int64, error)
+
 	// Search
 	SearchOntologyResources(ctx context.Context, ontologyRID, query string) ([]SearchResult, error)
 

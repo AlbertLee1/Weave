@@ -24,3 +24,16 @@ func (r *inMemoryOmsRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ st
 func (r *inMemoryOmsRepo) GetLinkTypeByAPIName(_ context.Context, _, _ string) (*oms.LinkType, error) {
 	return nil, oms.ErrNotFound
 }
+
+// Object history stubs — tier 2.3 added these interface methods.
+func (r *inMemoryOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {
+	return nil
+}
+
+func (r *inMemoryOmsRepo) ListObjectHistory(_ context.Context, _, _ string, _ int) ([]oms.ObjectHistory, error) {
+	return nil, nil
+}
+
+func (r *inMemoryOmsRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}

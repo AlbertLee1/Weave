@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
@@ -24,6 +25,8 @@ import (
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
+	"github.com/liyang/weave/pkg/mcp"
+	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
@@ -116,6 +119,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Method(http.MethodGet, "/api/openapi.yaml", openapiSpecHandler())
 	r.Method(http.MethodGet, "/swagger/", swaggerUIHandler())
 	r.Method(http.MethodGet, "/swagger", http.RedirectHandler("/swagger/", http.StatusMovedPermanently))
+
+	// MCP server (public JSON-RPC 2.0 endpoint for AI agents)
+	if deps.OssSvc != nil && deps.OmsRepo != nil {
+		mcpSrv := mcp.NewServer(deps.OssSvc, deps.OmsRepo, deps.ActionExecutor)
+		r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
+	}
+
+	// Prometheus metrics scrape endpoint (public).
+	r.Method(http.MethodGet, "/metrics", promhttp.HandlerFor(metrics.Default(), promhttp.HandlerOpts{}))
 
 	// Public auth endpoints — login/refresh/logout are NOT behind the
 	// auth middleware because they are how clients obtain or rotate tokens.

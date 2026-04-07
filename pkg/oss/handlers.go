@@ -15,6 +15,11 @@ import (
 // Handler handles OSS HTTP requests.
 type Handler struct {
 	svc Service
+	// historyRepo, when non-nil, enables the
+	// /objects/{objectType}/{primaryKey}/history endpoint. Wired via
+	// SetHistoryRepo from main.go after construction so existing callers
+	// of NewHandler keep their two-argument signature.
+	historyRepo oms.Repository
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -28,6 +33,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}", h.GetObject)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search", h.SearchObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
+
+	// Object change history (Tier 2.3). The route is always registered so
+	// the OpenAPI contract test stays in sync; the handler returns a 5xx
+	// when the underlying history repo has not been wired.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/history", h.GetObjectHistory)
 
 	// Link CRUD (M2M edges only) — write-side counterpart to ListLinkedObjects.
 	r.Post("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.CreateLink)

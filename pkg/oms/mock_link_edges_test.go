@@ -23,3 +23,5 @@ func (m *mockRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ string) e
 func (m *mockRepo) GetLinkTypeByAPIName(_ context.Context, _, _ string) (*oms.LinkType, error) {
 	return nil, oms.ErrNotFound
 }
+
+// Object history stubs are declared in handlers_test.go for mockRepo.

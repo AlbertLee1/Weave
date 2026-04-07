@@ -9,9 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/nats-io/nats.go"
 
 	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/oms"
 )
 
 const (
@@ -19,6 +21,13 @@ const (
 	// a message is terminated (dead-lettered).
 	DefaultMaxDeliveries = 5
 )
+
+// HistoryRecorder is the minimal subset of oms.Repository required by the
+// consumer to write ObjectHistory rows. Defined as an interface so the
+// consumer never imports the full PG repo (and tests can supply a fake).
+type HistoryRecorder interface {
+	InsertObjectHistory(ctx context.Context, h *oms.ObjectHistory) error
+}
 
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
 type Consumer struct {
@@ -30,20 +39,53 @@ type Consumer struct {
 	lastOffset    atomic.Uint64
 	onChange      func(ChangeEvent) // optional callback
 	maxDeliveries uint64
+
+	// historyRepo writes a row per applied edit when set. Tier 2.3 wires
+	// this to the OMS PG repo. Nil = history disabled.
+	historyRepo HistoryRecorder
+	// objectTypeRIDs maps API name -> RID for resolving objectType -> RID
+	// when recording history. Updated by callers via SetObjectTypeRIDs.
+	objectTypeRIDs map[string]string
+	// versionCounters tracks the next version number to assign per
+	// (objectTypeRID, primaryKey). Stored in-memory; survives the lifetime
+	// of the consumer process. Sufficient for single-machine Weave; on
+	// restart the counters reset which is acceptable because postgres still
+	// holds the source of truth and downstream UI sorts by recorded_at.
+	versionMu       sync.Mutex
+	versionCounters map[string]int64
 }
 
 // NewConsumer creates a new edit consumer.
 func NewConsumer(js nats.JetStreamContext, indexMgr *index.Manager) *Consumer {
 	return &Consumer{
-		js:            js,
-		indexMgr:      indexMgr,
-		maxDeliveries: DefaultMaxDeliveries,
+		js:              js,
+		indexMgr:        indexMgr,
+		maxDeliveries:   DefaultMaxDeliveries,
+		objectTypeRIDs:  map[string]string{},
+		versionCounters: map[string]int64{},
 	}
 }
 
 // SetMaxDeliveries sets the maximum delivery attempts before a message is terminated.
 func (c *Consumer) SetMaxDeliveries(n uint64) {
 	c.maxDeliveries = n
+}
+
+// SetHistoryRepo enables ObjectHistory recording for every applied edit.
+// Pass nil to disable. Safe to call before Start().
+func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
+	c.historyRepo = repo
+}
+
+// SetObjectTypeRIDs supplies the API-name -> RID lookup table used when
+// writing history rows. The map is copied; subsequent caller mutations have
+// no effect on the consumer's internal state.
+func (c *Consumer) SetObjectTypeRIDs(m map[string]string) {
+	cp := make(map[string]string, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	c.objectTypeRIDs = cp
 }
 
 // shouldTerminate returns true if the delivery count exceeds the max deliveries threshold.
@@ -125,7 +167,7 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 		return
 	}
 
-	if err := c.applyBatchEdits(batch.Edits); err != nil {
+	if err := c.applyBatchWithHistory(context.Background(), batch); err != nil {
 		log.Printf("funnel: apply batch error: %v", err)
 		if err := msg.Nak(); err != nil {
 			log.Printf("funnel: nak error: %v", err)
@@ -238,4 +280,116 @@ func toBatchOp(edit Edit) (index.BatchOp, error) {
 	default:
 		return index.BatchOp{}, fmt.Errorf("unknown edit type: %q", edit.Type)
 	}
+}
+
+// applyBatchWithHistory captures the prior bleve state for each MODIFY/DELETE
+// edit, applies the batch via applyBatchEdits, and then writes one
+// ObjectHistory row per edit when a HistoryRecorder is configured. History
+// failures are logged but never abort the index commit, since the index is
+// the source of truth for read paths and history is best-effort audit data.
+//
+// The empty edits slice is a no-op (matches applyBatchEdits semantics).
+func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) error {
+	if len(batch.Edits) == 0 {
+		return nil
+	}
+
+	// Capture prev_state for each edit BEFORE the batch is applied. CREATE
+	// edits get a nil prev_state by definition; MODIFY/DELETE pull the
+	// current document from bleve. Failures are tolerated as nil prev.
+	prevStates := make([]json.RawMessage, len(batch.Edits))
+	if c.historyRepo != nil {
+		for i, e := range batch.Edits {
+			if e.Type == EditTypeCreate {
+				continue
+			}
+			doc := c.fetchDocument(e.ObjectType, e.PrimaryKey)
+			if doc != nil {
+				if data, err := json.Marshal(doc); err == nil {
+					prevStates[i] = data
+				}
+			}
+		}
+	}
+
+	if err := c.applyBatchEdits(batch.Edits); err != nil {
+		return err
+	}
+
+	if c.historyRepo == nil {
+		return nil
+	}
+
+	for i, edit := range batch.Edits {
+		otRID := c.objectTypeRIDs[edit.ObjectType]
+		if otRID == "" {
+			// Fall back to the API name when no RID mapping is configured.
+			// Callers can supply richer mappings via SetObjectTypeRIDs.
+			otRID = edit.ObjectType
+		}
+
+		var newState json.RawMessage
+		if edit.Type != EditTypeDelete {
+			doc := make(map[string]interface{}, len(edit.Properties))
+			for k, v := range edit.Properties {
+				doc[k] = v
+			}
+			if data, err := json.Marshal(doc); err == nil {
+				newState = data
+			}
+		}
+
+		row := &oms.ObjectHistory{
+			ObjectTypeRID: otRID,
+			PrimaryKey:    edit.PrimaryKey,
+			Version:       c.nextVersion(otRID, edit.PrimaryKey),
+			PrevState:     prevStates[i],
+			NewState:      newState,
+			EditType:      string(edit.Type),
+			UserID:        batch.UserID,
+		}
+		if err := c.historyRepo.InsertObjectHistory(ctx, row); err != nil {
+			log.Printf("funnel: history insert error for %s/%s: %v",
+				edit.ObjectType, edit.PrimaryKey, err)
+		}
+	}
+	return nil
+}
+
+// fetchDocument loads the current bleve document for (objectType, pk) as a
+// flat map[string]interface{}. Returns nil when the index does not exist or
+// the document is missing — both are non-fatal for history capture.
+func (c *Consumer) fetchDocument(objectType, primaryKey string) map[string]interface{} {
+	q := bleve.NewDocIDQuery([]string{primaryKey})
+	req := bleve.NewSearchRequest(q)
+	req.Fields = []string{"*"}
+	req.Size = 1
+	res, err := c.indexMgr.Search(objectType, req)
+	if err != nil || res == nil || res.Total == 0 {
+		return nil
+	}
+	hit := res.Hits[0]
+	if hit == nil || len(hit.Fields) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(hit.Fields))
+	for k, v := range hit.Fields {
+		out[k] = v
+	}
+	return out
+}
+
+// nextVersion returns the next monotonically increasing version number for
+// the given (objectTypeRID, primaryKey) pair. Versions are tracked in
+// memory; on consumer restart they reset to 1, which is acceptable because
+// downstream UIs sort by recorded_at.
+func (c *Consumer) nextVersion(objectTypeRID, primaryKey string) int64 {
+	c.versionMu.Lock()
+	defer c.versionMu.Unlock()
+	if c.versionCounters == nil {
+		c.versionCounters = map[string]int64{}
+	}
+	key := objectTypeRID + "|" + primaryKey
+	c.versionCounters[key]++
+	return c.versionCounters[key]
 }

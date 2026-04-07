@@ -1,0 +1,185 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+
+	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oss"
+)
+
+// ProtocolVersion is the MCP protocol version this server implements. The
+// value is the date-stamped revision Anthropic publishes alongside the spec;
+// it is part of the initialize handshake response.
+const ProtocolVersion = "2024-11-05"
+
+// ServerName and ServerVersion identify Weave's MCP server in the
+// initialize handshake. They are baked in (rather than read from build
+// info) so the value is stable across build environments.
+const (
+	ServerName    = "weave-mcp"
+	ServerVersion = "0.1.0"
+)
+
+// Server is the transport-independent MCP server. It owns a Registry of
+// tools, plus the Weave deps the tools delegate to. Construct one per
+// process; HTTP and stdio transports both wrap a single Server.
+type Server struct {
+	registry *Registry
+	logger   *slog.Logger
+
+	// Deps the built-in Weave tools call into.
+	oss      oss.Service
+	oms      oms.Repository
+	executor *actions.Executor
+}
+
+// ServerOption configures a Server at construction time.
+type ServerOption func(*Server)
+
+// WithLogger overrides the default no-op logger.
+func WithLogger(l *slog.Logger) ServerOption {
+	return func(s *Server) { s.logger = l }
+}
+
+// NewServer wires up a fully-functional MCP server with the seven built-in
+// Weave tools registered. The action executor may be nil — in that case
+// weave_apply_action returns an InternalError when called.
+func NewServer(ossSvc oss.Service, omsRepo oms.Repository, executor *actions.Executor, opts ...ServerOption) *Server {
+	s := &Server{
+		registry: NewRegistry(),
+		logger:   slog.Default(),
+		oss:      ossSvc,
+		oms:      omsRepo,
+		executor: executor,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	registerWeaveTools(s)
+	return s
+}
+
+// Registry exposes the underlying tool registry, primarily for tests that
+// want to invoke a tool directly without round-tripping through Handle.
+func (s *Server) Registry() *Registry { return s.registry }
+
+// Handle dispatches a parsed JSON-RPC 2.0 request to the appropriate
+// method handler. Returns nil for notifications (which never get a reply).
+func (s *Server) Handle(ctx context.Context, req *Request) *Response {
+	if req.IsNotification() {
+		// Notifications are accepted (no error) but never produce a response.
+		// Built-in MCP notifications include "notifications/initialized" sent
+		// by the client after the initialize handshake completes.
+		return nil
+	}
+	switch req.Method {
+	case "initialize":
+		return s.handleInitialize(req)
+	case "tools/list":
+		return s.handleToolsList(req)
+	case "tools/call":
+		return s.handleToolsCall(ctx, req)
+	case "prompts/list":
+		return NewSuccessResponse(req.ID, map[string]any{"prompts": []any{}})
+	case "resources/list":
+		return NewSuccessResponse(req.ID, map[string]any{"resources": []any{}})
+	case "ping":
+		return NewSuccessResponse(req.ID, map[string]any{})
+	default:
+		return NewErrorResponse(req.ID, CodeMethodNotFound,
+			fmt.Sprintf("method %q not found", req.Method), nil)
+	}
+}
+
+// handleInitialize implements the MCP initialize handshake. The response
+// advertises only the tools capability — Weave does not yet expose prompts,
+// resources, or sampling.
+func (s *Server) handleInitialize(req *Request) *Response {
+	result := map[string]any{
+		"protocolVersion": ProtocolVersion,
+		"capabilities": map[string]any{
+			"tools": map[string]any{"listChanged": false},
+		},
+		"serverInfo": map[string]any{
+			"name":    ServerName,
+			"version": ServerVersion,
+		},
+	}
+	return NewSuccessResponse(req.ID, result)
+}
+
+// handleToolsList implements tools/list, which returns the deterministic
+// (sorted) list of registered tool definitions.
+func (s *Server) handleToolsList(req *Request) *Response {
+	defs := s.registry.List()
+	return NewSuccessResponse(req.ID, map[string]any{"tools": defs})
+}
+
+// toolsCallParams is the params shape MCP defines for tools/call: a tool
+// name plus a free-form arguments map.
+type toolsCallParams struct {
+	Name      string                 `json:"name"`
+	Arguments map[string]interface{} `json:"arguments"`
+}
+
+// handleToolsCall implements tools/call. It validates that the requested
+// tool exists, validates the arguments against the tool's input schema,
+// invokes the tool, and packages the result (or error) into the JSON-RPC
+// envelope.
+func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+	var p toolsCallParams
+	if len(req.Params) == 0 {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "params required", nil)
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "decode params: "+err.Error(), nil)
+	}
+	if p.Name == "" {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "name is required", nil)
+	}
+	if p.Arguments == nil {
+		p.Arguments = map[string]any{}
+	}
+
+	if _, ok := s.registry.Get(p.Name); !ok {
+		return NewErrorResponse(req.ID, CodeMethodNotFound,
+			fmt.Sprintf("tool %q not found", p.Name), nil)
+	}
+
+	result, err := s.registry.Call(ctx, p.Name, p.Arguments)
+	if err != nil {
+		// Distinguish validation errors (invalid params) from tool execution
+		// errors so callers see the right JSON-RPC code. Tool-not-found at
+		// this layer would have been caught above; validation failures wrap
+		// fmt.Errorf("invalid params: ...") in registry.Call.
+		switch {
+		case errors.Is(err, ErrToolNotFound):
+			return NewErrorResponse(req.ID, CodeMethodNotFound, err.Error(), nil)
+		case isInvalidParamsError(err):
+			return NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+		default:
+			return NewErrorResponse(req.ID, CodeToolError, err.Error(), nil)
+		}
+	}
+	return NewSuccessResponse(req.ID, result)
+}
+
+// isInvalidParamsError reports whether an error string was produced by
+// Registry.Call's "invalid params: ..." wrapper. The check is intentionally
+// shallow because the validator does not yet expose typed errors.
+func isInvalidParamsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	const prefix = "invalid params:"
+	if len(msg) < len(prefix) {
+		return false
+	}
+	return msg[:len(prefix)] == prefix
+}
