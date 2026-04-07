@@ -1,6 +1,6 @@
 import { type Page, type APIRequestContext } from '@playwright/test';
 
-const API_BASE = 'http://localhost:8080';
+const API_BASE = 'http://localhost:9117';
 
 export interface CreatedOntology {
   rid: string;

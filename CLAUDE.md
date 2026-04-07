@@ -40,7 +40,7 @@ make build-with-ui
 
 | Variable | Default | Description |
 |---|---|---|
-| `WEAVE_PORT` | `8080` | Server port |
+| `WEAVE_PORT` | `9117` | Server port |
 | `PG_DSN` | `postgres://weave:weave@localhost:5432/weave?sslmode=disable` | PostgreSQL DSN |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `WEAVE_DATA_DIR` | `data` | Directory for Bleve indexes |
@@ -100,7 +100,7 @@ Lookup ActionType → validate parameters → execute rules → generate Edit li
 
 ### Frontend (web/)
 
-React 19 + TypeScript + Vite + TailwindCSS. State: TanStack React Query (server) + Zustand (local). Vite dev proxy forwards `/api/` and `/health/` to `:8080`.
+React 19 + TypeScript + Vite + TailwindCSS. State: TanStack React Query (server) + Zustand (local). Vite dev proxy forwards `/api/`, `/health/`, `/metrics`, `/swagger`, and `/mcp` to `:9117`.
 
 Pages: Dashboard (`/`), Explorer (`/explorer/:ontology`), Browser (`/browser/:ontology/:objectType`), Admin (`/admin`), Actions (`/actions/:ontology`), Aggregation (`/aggregation/:ontology/:objectType`).
 

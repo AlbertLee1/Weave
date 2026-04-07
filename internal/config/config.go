@@ -80,7 +80,7 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:     8080,
+		Port:     9117,
 		LogLevel: "info",
 		DataDir:  "./data",
 		AuthMode: "dev",

@@ -29,7 +29,7 @@ CI without network egress, or constrained runtimes.
 ```python
 from weave_client import Client
 
-weave = Client("http://localhost:8080", access_token="eyJhbGciOi…")
+weave = Client("http://localhost:9117", access_token="eyJhbGciOi…")
 
 # Ontologies and types
 for ont in weave.ontologies.list():

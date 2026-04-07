@@ -7,7 +7,7 @@ import {
   uniqueName,
 } from './helpers';
 
-const API_BASE = 'http://localhost:8080';
+const API_BASE = 'http://localhost:9117';
 
 test.describe('Export / Import / Snapshots', () => {
   let ontologyApiName: string;

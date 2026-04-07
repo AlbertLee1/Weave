@@ -19,8 +19,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Port != 8080 {
-		t.Errorf("expected port 8080, got %d", cfg.Port)
+	if cfg.Port != 9117 {
+		t.Errorf("expected port 9117, got %d", cfg.Port)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected log level 'info', got %q", cfg.LogLevel)
@@ -159,7 +159,7 @@ func TestLoadConfig_InvalidJWTAccessTTL(t *testing.T) {
 // Tests build on top of this and mutate the field they want to break.
 func validDevConfig() *Config {
 	return &Config{
-		Port:     8080,
+		Port:     9117,
 		LogLevel: "info",
 		DataDir:  "./data",
 		AuthMode: "dev",

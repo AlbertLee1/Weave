@@ -158,7 +158,7 @@ A complete handshake → list → call sequence over HTTP:
 
 ```bash
 # 1. initialize
-curl -s -X POST http://localhost:8080/mcp \
+curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 # {"jsonrpc":"2.0","id":1,"result":{
@@ -167,12 +167,12 @@ curl -s -X POST http://localhost:8080/mcp \
 #    "serverInfo":{"name":"weave-mcp","version":"0.1.0"}}}
 
 # 2. tools/list
-curl -s -X POST http://localhost:8080/mcp \
+curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 
 # 3. tools/call → weave_list_ontologies
-curl -s -X POST http://localhost:8080/mcp \
+curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
         "name":"weave_list_ontologies",

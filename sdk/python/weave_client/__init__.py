@@ -4,7 +4,7 @@ Quickstart::
 
     from weave_client import Client
 
-    weave = Client("http://localhost:8080", access_token="...")
+    weave = Client("http://localhost:9117", access_token="...")
     for ontology in weave.ontologies.list():
         print(ontology.api_name)
 

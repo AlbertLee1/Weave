@@ -29,7 +29,7 @@ from weave_client import Client
 
 # 1. Construct a client. Use either an access token (JWT from /api/auth/login)
 #    or an API key (starts with "wvk_").
-weave = Client("http://localhost:8080", access_token="eyJhbGciOi…")
+weave = Client("http://localhost:9117", access_token="eyJhbGciOi…")
 
 # 2. Browse ontologies.
 for ontology in weave.ontologies.list():
@@ -68,13 +68,13 @@ There are three ways to authenticate:
 
 ```python
 # 1. Pass an access token directly.
-Client("http://localhost:8080", access_token="…")
+Client("http://localhost:9117", access_token="…")
 
 # 2. Pass an API key (starts with "wvk_").
-Client("http://localhost:8080", api_key="wvk_…")
+Client("http://localhost:9117", api_key="wvk_…")
 
 # 3. Login interactively. This populates the client's access_token in place.
-weave = Client("http://localhost:8080")
+weave = Client("http://localhost:9117")
 weave.login("admin@example.com", "password")
 weave.ontologies.list()  # now authenticated
 ```

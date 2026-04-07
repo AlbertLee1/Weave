@@ -23,7 +23,7 @@ test.describe('Ontology CRUD', () => {
 
   test('select an ontology and see tabs', async ({ page, request }) => {
     const name = uniqueName('ont-tabs');
-    await request.post('http://localhost:8080/api/admin/ontologies', {
+    await request.post('http://localhost:9117/api/admin/ontologies', {
       data: { apiName: name, displayName: `Tabs ${name}` },
     });
 

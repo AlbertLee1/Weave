@@ -28,7 +28,7 @@ always called `config.toml`).
 
 ```toml
 [default]
-base_url     = "http://localhost:8080"
+base_url     = "http://localhost:9117"
 access_token = ""
 api_key      = ""
 ```
@@ -36,7 +36,7 @@ api_key      = ""
 `access_token` takes precedence over `api_key`. Set values via the CLI:
 
 ```bash
-weave config set base_url     http://localhost:8080
+weave config set base_url     http://localhost:9117
 weave config set access_token eyJhbGciOi…
 # or
 weave config set api_key      wvk_secret
@@ -56,7 +56,7 @@ weave auth login --email admin@example.com --password ******
 # Logged in as admin@example.com (token expires in 900 seconds).
 
 weave auth status
-# logged in (token set, base_url=http://localhost:8080)
+# logged in (token set, base_url=http://localhost:9117)
 
 weave auth logout
 # Logged out.
@@ -157,7 +157,7 @@ All require `--ontology <name>` and `--type <api_name>`.
 ## Example session
 
 ```bash
-$ weave config set base_url http://localhost:8080
+$ weave config set base_url http://localhost:9117
 set base_url
 
 $ weave auth login --email admin@example.com --password password

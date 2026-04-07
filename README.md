@@ -48,7 +48,7 @@ make dev
 This will:
 1. Start PostgreSQL and NATS via Docker Compose
 2. Install frontend dependencies (if needed)
-3. Build and start the Go server on `:8080`
+3. Build and start the Go server on `:9117`
 4. Start the Vite dev server on `:5173` with hot reload
 
 ```
@@ -56,7 +56,7 @@ This will:
 ║  Weave Dev Environment Ready                 ║
 ╠══════════════════════════════════════════════╣
 ║  WebUI:   http://localhost:5173              ║
-║  API:     http://localhost:8080              ║
+║  API:     http://localhost:9117              ║
 ║  PG:      localhost:5432                     ║
 ║  NATS:    localhost:4222                     ║
 ╚══════════════════════════════════════════════╝
@@ -109,7 +109,7 @@ make build-with-ui      # Build frontend + embed into Go binary
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `WEAVE_PORT` | `8080` | HTTP server port |
+| `WEAVE_PORT` | `9117` | HTTP server port |
 | `PG_DSN` | `postgres://weave:weave@localhost:5432/weave?sslmode=disable` | PostgreSQL connection string |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `WEAVE_DATA_DIR` | `data` | Directory for Bleve search indexes |
