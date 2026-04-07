@@ -3,7 +3,10 @@ package oms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // LinkEdge represents a single row in the link_edges shared junction table.
@@ -78,4 +81,81 @@ func (r *PGRepository) ListEdgeSources(ctx context.Context, linkTypeRID string, 
 		result = append(result, pk)
 	}
 	return result, rows.Err()
+}
+
+// UpsertLinkEdge inserts or updates a single M2M link edge keyed by
+// (link_type_rid, source_object_rid, target_object_rid). Edge properties are
+// overwritten on conflict so callers can update them without first deleting.
+func (r *PGRepository) UpsertLinkEdge(ctx context.Context, edge *LinkEdge) error {
+	props := edge.EdgeProperties
+	if len(props) == 0 {
+		props = nil
+	}
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO link_edges (link_type_rid, source_object_rid, target_object_rid, edge_properties)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (link_type_rid, source_object_rid, target_object_rid)
+		 DO UPDATE SET edge_properties = EXCLUDED.edge_properties`,
+		edge.LinkTypeRID, edge.SourceObjectPK, edge.TargetObjectPK, props)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+// DeleteLinkEdge removes a single M2M link edge. It is idempotent: deleting a
+// nonexistent edge returns nil rather than ErrNotFound, so callers can safely
+// retry without special-casing missing rows.
+func (r *PGRepository) DeleteLinkEdge(ctx context.Context, linkTypeRID, sourcePK, targetPK string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM link_edges
+		  WHERE link_type_rid = $1
+		    AND source_object_rid = $2
+		    AND target_object_rid = $3`,
+		linkTypeRID, sourcePK, targetPK)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+// DeleteAllLinkEdgesForSource removes every M2M edge of the given link type
+// whose source is sourcePK. Used when an object is being unlinked or deleted.
+// Idempotent: returns nil even if no rows match.
+func (r *PGRepository) DeleteAllLinkEdgesForSource(ctx context.Context, linkTypeRID, sourcePK string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM link_edges
+		  WHERE link_type_rid = $1
+		    AND source_object_rid = $2`,
+		linkTypeRID, sourcePK)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+// GetLinkTypeByAPIName looks up a LinkType by its API name within an ontology.
+// The ontology argument can be either an ontology RID or an api_name; the same
+// disjunctive lookup pattern used by ListLinkTypes applies here.
+func (r *PGRepository) GetLinkTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*LinkType, error) {
+	lt := &LinkType{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
+		 source_object_type, target_object_type, cardinality,
+		 foreign_key_config, join_table_config, is_required, created_at
+		 FROM link_types
+		 WHERE api_name = $2
+		   AND (ontology_rid = $1
+		        OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))`,
+		ontologyRID, apiName).
+		Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
+			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
+			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired, &lt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return lt, nil
 }

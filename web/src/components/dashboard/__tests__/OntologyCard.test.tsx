@@ -28,7 +28,9 @@ describe('OntologyCard', () => {
     render(
       <OntologyCard ontology={mockOntology} objectTypeCount={5} onClick={() => {}} />,
     );
-    expect(screen.getByText('5')).toBeInTheDocument();
+    // The component renders the count and label as sibling text nodes
+    // ("5" + " types"), so use a regex matcher rather than exact text.
+    expect(screen.getByText(/5\s*types?/)).toBeInTheDocument();
   });
 
   it('calls onClick when clicked', () => {

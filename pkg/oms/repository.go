@@ -28,11 +28,17 @@ type Repository interface {
 	// LinkType
 	CreateLinkType(ctx context.Context, lt *LinkType) error
 	GetLinkType(ctx context.Context, rid string) (*LinkType, error)
+	GetLinkTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*LinkType, error)
 	ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]LinkType, error)
 	ListIncomingLinkTypes(ctx context.Context, objectTypeRID string) ([]LinkType, error)
 	ListLinkTypes(ctx context.Context, ontologyRID string) ([]LinkType, error)
 	UpdateLinkType(ctx context.Context, lt *LinkType) error
 	DeleteLinkType(ctx context.Context, rid string) error
+
+	// LinkEdge (M2M junction-table CRUD)
+	UpsertLinkEdge(ctx context.Context, edge *LinkEdge) error
+	DeleteLinkEdge(ctx context.Context, linkTypeRID, sourcePK, targetPK string) error
+	DeleteAllLinkEdgesForSource(ctx context.Context, linkTypeRID, sourcePK string) error
 
 	// ActionType
 	CreateActionType(ctx context.Context, at *ActionType) error

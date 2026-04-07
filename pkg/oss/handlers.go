@@ -28,6 +28,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}", h.GetObject)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search", h.SearchObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
+
+	// Link CRUD (M2M edges only) — write-side counterpart to ListLinkedObjects.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.CreateLink)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.DeleteLink)
 }
 
 // GetObject handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}.

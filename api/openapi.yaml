@@ -1,0 +1,3325 @@
+openapi: 3.0.3
+info:
+  title: Weave Ontology API
+  version: 1.0.0
+  description: |
+    Weave is a single-machine Ontology Layer engine inspired by Palantir Foundry OSv2.
+    This document describes its REST API: ontology metadata, object retrieval and
+    search, ObjectSet composition, aggregation, link traversal, action execution,
+    and authentication.
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:8080
+    description: Local development (port configurable via WEAVE_PORT).
+tags:
+  - name: Health
+    description: Liveness/readiness probes.
+  - name: Auth
+    description: JWT login, refresh, and logout.
+  - name: Metadata
+    description: Read-only ontology metadata (V2).
+  - name: Objects
+    description: Object retrieval, search, listing, and link traversal.
+  - name: ObjectSets
+    description: Composable object set definitions and aggregation.
+  - name: Actions
+    description: Apply and apply-batch action execution.
+  - name: Admin
+    description: Admin CRUD for ontology definitions.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        RS256-signed JWT issued via /api/auth/login. Send as
+        `Authorization: Bearer <token>`.
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-Weave-Api-Key
+      description: Reserved for future API-key-based service-to-service auth.
+  responses:
+    BadRequestError:
+      description: The request was malformed or failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnauthorizedError:
+      description: Missing or invalid credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ForbiddenError:
+      description: The caller is authenticated but lacks the required permission.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFoundError:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: An unexpected server error occurred.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  parameters:
+    OntologyApiName:
+      in: path
+      name: ontologyApiName
+      required: true
+      description: API name (or RID) of the ontology.
+      schema:
+        type: string
+    OntologyRid:
+      in: path
+      name: ontologyRid
+      required: true
+      description: Resource identifier of the ontology.
+      schema:
+        type: string
+    ObjectTypeApiName:
+      in: path
+      name: objectTypeApiName
+      required: true
+      description: API name of the object type.
+      schema:
+        type: string
+    ObjectTypeRid:
+      in: path
+      name: objectTypeRid
+      required: true
+      description: Resource identifier of the object type.
+      schema:
+        type: string
+    ObjectType:
+      in: path
+      name: objectType
+      required: true
+      description: API name of the object type.
+      schema:
+        type: string
+    PrimaryKey:
+      in: path
+      name: primaryKey
+      required: true
+      description: Primary key of the object.
+      schema:
+        type: string
+    PropertyRid:
+      in: path
+      name: propertyRid
+      required: true
+      description: Resource identifier of the property.
+      schema:
+        type: string
+    LinkTypeRid:
+      in: path
+      name: linkTypeRid
+      required: true
+      description: Resource identifier of the link type.
+      schema:
+        type: string
+    ActionTypeRid:
+      in: path
+      name: actionTypeRid
+      required: true
+      description: Resource identifier of the action type.
+      schema:
+        type: string
+    InterfaceRid:
+      in: path
+      name: interfaceRid
+      required: true
+      description: Resource identifier of the interface.
+      schema:
+        type: string
+    SharedPropertyRid:
+      in: path
+      name: sharedPropertyRid
+      required: true
+      description: Resource identifier of the shared property.
+      schema:
+        type: string
+    TypeGroupRid:
+      in: path
+      name: typeGroupRid
+      required: true
+      description: Resource identifier of the type group.
+      schema:
+        type: string
+    ValueTypeRid:
+      in: path
+      name: valueTypeRid
+      required: true
+      description: Resource identifier of the value type.
+      schema:
+        type: string
+    DatasourceBindingRid:
+      in: path
+      name: datasourceBindingRid
+      required: true
+      description: Resource identifier of the datasource binding.
+      schema:
+        type: string
+    SecurityPolicyRid:
+      in: path
+      name: securityPolicyRid
+      required: true
+      description: Resource identifier of the security policy.
+      schema:
+        type: string
+    QueryTypeRid:
+      in: path
+      name: queryTypeRid
+      required: true
+      description: Resource identifier of the query type.
+      schema:
+        type: string
+  schemas:
+    ErrorResponse:
+      type: object
+      description: Palantir-style API error envelope.
+      required: [errorCode, errorName, errorInstanceId, parameters]
+      properties:
+        errorCode:
+          type: string
+          example: NOT_FOUND
+        errorName:
+          type: string
+          example: OntologyNotFound
+        errorInstanceId:
+          type: string
+          format: uuid
+        parameters:
+          type: object
+          additionalProperties:
+            type: string
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+    Ontology:
+      type: object
+      required: [rid, apiName, displayName, currentVersion]
+      properties:
+        rid:
+          type: string
+          example: ri.ontology.main.ontology.northwind
+        apiName:
+          type: string
+          example: northwind
+        displayName:
+          type: string
+        description:
+          type: string
+        currentVersion:
+          type: integer
+    ObjectType:
+      type: object
+      required: [rid, apiName, displayName, primaryKey, status, visibility]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        pluralDisplayName:
+          type: string
+        description:
+          type: string
+        primaryKey:
+          type: string
+        titleProperty:
+          type: string
+        status:
+          type: string
+        visibility:
+          type: string
+        icon:
+          type: string
+        color:
+          type: string
+        deprecatedReason:
+          type: string
+        deprecatedDeadline:
+          type: string
+          format: date-time
+        properties:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/PropertyDataType"
+    PropertyDataType:
+      type: object
+      properties:
+        dataType:
+          type: object
+          additionalProperties: true
+        rid:
+          type: string
+    Property:
+      type: object
+      required: [rid, apiName, baseType]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
+        isNullable:
+          type: boolean
+        isSearchable:
+          type: boolean
+        isSortable:
+          type: boolean
+        status:
+          type: string
+        deprecatedReason:
+          type: string
+        sharedPropertyRid:
+          type: string
+    LinkType:
+      type: object
+      required: [rid, apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality, required]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        objectTypeApiName:
+          type: string
+        linkedObjectTypeApiName:
+          type: string
+        cardinality:
+          type: string
+        foreignKeyConfig:
+          type: object
+          additionalProperties: true
+        joinTableConfig:
+          type: object
+          additionalProperties: true
+        required:
+          type: boolean
+    ActionType:
+      type: object
+      required: [rid, apiName, displayName, status]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        rules:
+          type: object
+          additionalProperties: true
+        submissionCriteria:
+          type: object
+          additionalProperties: true
+        sideEffects:
+          type: object
+          additionalProperties: true
+        functionRid:
+          type: string
+        isFunctionBacked:
+          type: boolean
+    Interface:
+      type: object
+      required: [rid, apiName, displayName]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        extendsRid:
+          type: string
+        sharedProperties:
+          type: object
+          additionalProperties: true
+    ObjectTypeInterface:
+      type: object
+      required: [objectTypeRid, interfaceRid]
+      properties:
+        objectTypeRid:
+          type: string
+        interfaceRid:
+          type: string
+        propertyMapping:
+          type: object
+          additionalProperties: true
+    SharedProperty:
+      type: object
+      required: [rid, apiName, baseType]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
+    TypeGroup:
+      type: object
+      required: [rid, apiName, displayName]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+    DatasourceBinding:
+      type: object
+      required: [rid, datasetRid, branch, isPrimary]
+      properties:
+        rid:
+          type: string
+        datasetRid:
+          type: string
+        branch:
+          type: string
+        columnMapping:
+          type: object
+          additionalProperties: true
+        isPrimary:
+          type: boolean
+    SecurityPolicy:
+      type: object
+      required: [rid, objectTypeRid, policyType]
+      properties:
+        rid:
+          type: string
+        objectTypeRid:
+          type: string
+        policyType:
+          type: string
+          enum: [OBJECT, PROPERTY]
+        rules:
+          type: object
+          additionalProperties: true
+    QueryType:
+      type: object
+      required: [rid, apiName, displayName, status]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+        query:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+    ValueType:
+      type: object
+      required: [rid, apiName, displayName, baseType, version]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        baseType:
+          type: string
+        constraints:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
+    ActionLog:
+      type: object
+      required: [id, actionTypeRid, userId, status, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actionTypeRid:
+          type: string
+        userId:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        edits:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        status:
+          type: string
+        errorMessage:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    OntologySnapshot:
+      type: object
+      required: [id, ontologyRid, version, createdBy, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        ontologyRid:
+          type: string
+        version:
+          type: integer
+        label:
+          type: string
+        description:
+          type: string
+        snapshot:
+          type: object
+          additionalProperties: true
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    OntologyExport:
+      type: object
+      required: [ontology, objectTypes, linkTypes, actionTypes, interfaces]
+      properties:
+        ontology:
+          $ref: "#/components/schemas/Ontology"
+        objectTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectType"
+        linkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkType"
+        actionTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionType"
+        interfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interface"
+    SearchResult:
+      type: object
+      required: [rid, resourceType, apiName, displayName]
+      properties:
+        rid:
+          type: string
+        resourceType:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+    OntologyListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ontology"
+    ObjectTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectType"
+    LinkTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkType"
+    ActionTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionType"
+    InterfaceListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interface"
+    SharedPropertyListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SharedProperty"
+    TypeGroupListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TypeGroup"
+    ValueTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValueType"
+    DatasourceBindingListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatasourceBinding"
+    SecurityPolicyListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SecurityPolicy"
+    QueryTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryType"
+    ActionLogListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionLog"
+    SnapshotListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OntologySnapshot"
+    SearchResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+    WireObject:
+      type: object
+      description: |
+        Palantir V2 wire format for an object: properties are flattened at the
+        top level alongside __rid, __primaryKey, and __apiName.
+      additionalProperties: true
+      properties:
+        __rid:
+          type: string
+        __primaryKey: {}
+        __apiName:
+          type: string
+    ObjectPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/WireObject"
+        nextPageToken:
+          type: string
+        totalCount:
+          type: string
+    SearchObjectsRequest:
+      type: object
+      properties:
+        where:
+          type: object
+          additionalProperties: true
+          description: WhereClause filter (see pkg/oss/where).
+        select:
+          type: array
+          items:
+            type: string
+        pageSize:
+          type: integer
+        pageToken:
+          type: string
+        orderBy:
+          type: object
+          properties:
+            fields:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  direction:
+                    type: string
+                    enum: [asc, desc]
+    ObjectSetDefinition:
+      type: object
+      description: |
+        Composable ObjectSet definition. Supported types include base, filter,
+        union, intersect, subtract, and searchAround. See pkg/oss/objectset.
+      additionalProperties: true
+      properties:
+        type:
+          type: string
+    LoadObjectSetRequest:
+      type: object
+      required: [objectSet]
+      properties:
+        objectSet:
+          $ref: "#/components/schemas/ObjectSetDefinition"
+        select:
+          type: array
+          items:
+            type: string
+        orderBy:
+          type: object
+          properties:
+            fields:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  direction:
+                    type: string
+                    enum: [asc, desc]
+        pageSize:
+          type: integer
+        pageToken:
+          type: string
+        snapshot:
+          type: boolean
+    LoadObjectSetResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/WireObject"
+        nextPageToken:
+          type: string
+        totalCount:
+          type: string
+        totalCountAccuracy:
+          type: string
+          enum: [EXACT, APPROXIMATE]
+    AggregationSpec:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [count, min, max, sum, avg, approximateDistinct, standardDeviation, variance, approximatePercentile]
+        field:
+          type: string
+        name:
+          type: string
+        percentile:
+          type: number
+    GroupBySpec:
+      type: object
+      required: [type, field]
+      properties:
+        type:
+          type: string
+          enum: [exact, fixedWidth, range, ranges, duration, topValues]
+        field:
+          type: string
+        maxGroupCount:
+          type: integer
+        fixedWidth:
+          type: number
+        ranges:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              startValue:
+                type: number
+              endValue:
+                type: number
+        duration:
+          type: string
+        value:
+          type: object
+          properties:
+            unit:
+              type: string
+              enum: [SECONDS, MINUTES, HOURS, DAYS, WEEKS, MONTHS, YEARS]
+            value:
+              type: number
+    AggregationRequest:
+      type: object
+      required: [aggregation]
+      properties:
+        objectType:
+          type: string
+        aggregation:
+          type: array
+          items:
+            $ref: "#/components/schemas/AggregationSpec"
+        groupBy:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupBySpec"
+    AggregationRow:
+      type: object
+      properties:
+        group:
+          type: object
+          additionalProperties: true
+        metrics:
+          type: object
+          additionalProperties: true
+    AggregationResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AggregationRow"
+        accuracy:
+          type: string
+          enum: [ACCURATE, APPROXIMATE]
+        computeUsage:
+          type: number
+    AggregateObjectSetRequest:
+      type: object
+      required: [objectSet, aggregation]
+      properties:
+        objectSet:
+          $ref: "#/components/schemas/ObjectSetDefinition"
+        aggregation:
+          type: array
+          items:
+            $ref: "#/components/schemas/AggregationSpec"
+        groupBy:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupBySpec"
+    CreateTemporaryRequest:
+      type: object
+      required: [objectSet]
+      properties:
+        objectSet:
+          $ref: "#/components/schemas/ObjectSetDefinition"
+    CreateTemporaryResponse:
+      type: object
+      properties:
+        objectSetRid:
+          type: string
+    Edit:
+      type: object
+      description: A single edit produced by action execution.
+      additionalProperties: true
+      properties:
+        type:
+          type: string
+          enum: [CREATE, MODIFY, DELETE]
+    ApplyActionRequest:
+      type: object
+      required: [actionType]
+      properties:
+        actionType:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+    ApplyActionResponse:
+      type: object
+      properties:
+        actionRid:
+          type: string
+        edits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edit"
+        batchId:
+          type: string
+        offset:
+          type: integer
+          format: int64
+    BatchFailure:
+      type: object
+      properties:
+        index:
+          type: integer
+        actionType:
+          type: string
+        phase:
+          type: string
+        message:
+          type: string
+    ApplyBatchRequest:
+      type: object
+      required: [actions]
+      properties:
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplyActionRequest"
+        mode:
+          type: string
+          enum: [atomic, bestEffort]
+          default: atomic
+    ApplyBatchResponse:
+      type: object
+      properties:
+        mode:
+          type: string
+        batchId:
+          type: string
+        offset:
+          type: integer
+          format: int64
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplyActionResponse"
+        appliedEdits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edit"
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/BatchFailure"
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    LoginUser:
+      type: object
+      required: [id, email, name, roles, ontologyRoles]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        ontologyRoles:
+          type: object
+          additionalProperties:
+            type: string
+    LoginResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, user]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+        user:
+          $ref: "#/components/schemas/LoginUser"
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+    RefreshResponse:
+      $ref: "#/components/schemas/LoginResponse"
+    User:
+      type: object
+      required: [id, roles, ontologyRoles, permissions]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        ontologyRoles:
+          type: object
+          additionalProperties:
+            type: string
+        permissions:
+          type: array
+          items:
+            type: string
+    CreateOntologyRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+    UpdateOntologyRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        description:
+          type: string
+    CreateObjectTypeRequest:
+      type: object
+      required: [apiName, displayName, primaryKey]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        pluralDisplayName:
+          type: string
+        description:
+          type: string
+        primaryKey:
+          type: string
+        titleProperty:
+          type: string
+        status:
+          type: string
+        visibility:
+          type: string
+        icon:
+          type: string
+        color:
+          type: string
+    UpdateObjectTypeRequest:
+      type: object
+      additionalProperties: true
+    CreatePropertyRequest:
+      type: object
+      required: [apiName, baseType]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
+        isNullable:
+          type: boolean
+        isSearchable:
+          type: boolean
+        isSortable:
+          type: boolean
+    UpdatePropertyRequest:
+      type: object
+      additionalProperties: true
+    CreateLinkTypeRequest:
+      type: object
+      required: [apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        objectTypeApiName:
+          type: string
+        linkedObjectTypeApiName:
+          type: string
+        cardinality:
+          type: string
+        foreignKeyConfig:
+          type: object
+          additionalProperties: true
+        joinTableConfig:
+          type: object
+          additionalProperties: true
+        required:
+          type: boolean
+    UpdateLinkTypeRequest:
+      type: object
+      additionalProperties: true
+    CreateActionTypeRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        rules:
+          type: object
+          additionalProperties: true
+        submissionCriteria:
+          type: object
+          additionalProperties: true
+        sideEffects:
+          type: object
+          additionalProperties: true
+        functionRid:
+          type: string
+        isFunctionBacked:
+          type: boolean
+    UpdateActionTypeRequest:
+      type: object
+      additionalProperties: true
+    CreateInterfaceRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        extendsRid:
+          type: string
+        sharedProperties:
+          type: object
+          additionalProperties: true
+    UpdateInterfaceRequest:
+      type: object
+      additionalProperties: true
+    AttachInterfaceRequest:
+      type: object
+      required: [interfaceRid]
+      properties:
+        interfaceRid:
+          type: string
+        propertyMapping:
+          type: object
+          additionalProperties: true
+    CreateSharedPropertyRequest:
+      type: object
+      required: [apiName, baseType]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
+    UpdateSharedPropertyRequest:
+      type: object
+      additionalProperties: true
+    CreateTypeGroupRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+    UpdateTypeGroupRequest:
+      type: object
+      additionalProperties: true
+    CreateValueTypeRequest:
+      type: object
+      required: [apiName, displayName, baseType]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        baseType:
+          type: string
+        constraints:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
+    UpdateValueTypeRequest:
+      type: object
+      additionalProperties: true
+    CreateDatasourceBindingRequest:
+      type: object
+      required: [datasetRid, branch]
+      properties:
+        datasetRid:
+          type: string
+        branch:
+          type: string
+        columnMapping:
+          type: object
+          additionalProperties: true
+        isPrimary:
+          type: boolean
+    UpdateDatasourceBindingRequest:
+      type: object
+      additionalProperties: true
+    CreateSecurityPolicyRequest:
+      type: object
+      required: [policyType, rules]
+      properties:
+        policyType:
+          type: string
+          enum: [OBJECT, PROPERTY]
+        rules:
+          type: object
+          additionalProperties: true
+    UpdateSecurityPolicyRequest:
+      type: object
+      additionalProperties: true
+    CreateQueryTypeRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+        query:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+    UpdateQueryTypeRequest:
+      type: object
+      additionalProperties: true
+    ExecuteQueryRequest:
+      type: object
+      properties:
+        parameters:
+          type: object
+          additionalProperties: true
+    ExecuteQueryResponse:
+      type: object
+      additionalProperties: true
+    ImportOntologyRequest:
+      $ref: "#/components/schemas/OntologyExport"
+    ImportOntologyResponse:
+      type: object
+      properties:
+        ontologyRid:
+          type: string
+        imported:
+          type: object
+          additionalProperties:
+            type: integer
+    CreateSnapshotRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      description: |
+        Kubernetes liveness probe. Always returns 200 with
+        `{"status":"alive"}` regardless of downstream dependency state.
+        A passing liveness check means "this process is responsive".
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/ready:
+    get:
+      operationId: getHealthReady
+      summary: Readiness probe
+      description: |
+        Kubernetes readiness probe. Returns 200 with
+        `{"status":"ready","checks":{...}}` when every configured
+        dependency (PostgreSQL, NATS, Bleve) passes its probe, or 503 with
+        `{"status":"unready","checks":{...}}` when any configured dependency
+        fails. Dependencies that are not wired (degraded mode) are reported
+        as `"skipped"` and do not cause readiness to fail.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service is ready (or degraded mode).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready]
+                  checks:
+                    type: object
+                    additionalProperties:
+                      type: string
+        "503":
+          description: Service is unready — at least one configured dependency probe failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [unready]
+                  checks:
+                    type: object
+                    additionalProperties:
+                      type: string
+  /api/auth/login:
+    post:
+      operationId: login
+      summary: Issue access and refresh tokens
+      description: |
+        Validates credentials, mints an RS256 JWT access token and a rotating
+        refresh token. Returns the user's roles, scoped ontology roles, and
+        token TTL.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "429":
+          description: Rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/auth/refresh:
+    post:
+      operationId: refresh
+      summary: Rotate refresh token and mint a new access token
+      description: |
+        Rotates the supplied refresh token (from body or
+        `weave_refresh` cookie) and returns a new access + refresh pair with
+        freshly resolved roles.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Refresh successful.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke a refresh token
+      description: |
+        Revokes the supplied refresh token (or the cookie value), clears the
+        refresh cookie, and always returns 204. Idempotent.
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Logout completed.
+  /api/v2/me:
+    get:
+      operationId: getMe
+      summary: Return the authenticated user
+      description: Returns the resolved roles, scoped roles, and permission set.
+      tags: [Auth]
+      responses:
+        "200":
+          description: Authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies:
+    get:
+      operationId: listOntologies
+      summary: List ontologies
+      tags: [Metadata]
+      responses:
+        "200":
+          description: Ontology list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}:
+    get:
+      operationId: getOntology
+      summary: Get a single ontology
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: The ontology.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ontology"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes:
+    get:
+      operationId: listObjectTypes
+      summary: List object types in an ontology
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Object type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}:
+    get:
+      operationId: getObjectType
+      summary: Get a single object type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: Object type wire format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes:
+    get:
+      operationId: listOutgoingLinkTypes
+      summary: List outgoing link types for an object type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: Link type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypes:
+    get:
+      operationId: listActionTypes
+      summary: List action types in an ontology
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Action type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
+    get:
+      operationId: getActionType
+      summary: Get a single action type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ActionTypeRid"
+      responses:
+        "200":
+          description: Action type wire format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/fullMetadata:
+    get:
+      operationId: getFullMetadata
+      summary: Get the full ontology metadata in one response
+      description: Returns the ontology, its object types (with properties), link types, action types, and interfaces in a single payload.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Full metadata payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyExport"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}:
+    get:
+      operationId: listObjects
+      summary: List objects of a given type
+      description: Paginated, optionally ordered list of objects.
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+        - in: query
+          name: pageToken
+          schema:
+            type: string
+        - in: query
+          name: orderBy
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectPage"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}:
+    get:
+      operationId: getObject
+      summary: Get a single object by primary key
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+        - $ref: "#/components/parameters/PrimaryKey"
+      responses:
+        "200":
+          description: The object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WireObject"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search:
+    post:
+      operationId: searchObjects
+      summary: Search objects with a where clause
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchObjectsRequest"
+      responses:
+        "200":
+          description: Object page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectPage"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}:
+    get:
+      operationId: listLinkedObjects
+      summary: List objects linked to a source object via a link type
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+        - $ref: "#/components/parameters/PrimaryKey"
+        - in: path
+          name: linkType
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: direction
+          schema:
+            type: string
+            enum: [forward, reverse]
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+        - in: query
+          name: pageToken
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Linked object page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectPage"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}:
+    post:
+      operationId: createLink
+      summary: Upsert a single many-to-many link edge
+      description: |
+        Creates or updates a single link edge between two objects via a
+        MANY_TO_MANY link type. Idempotent — calling with identical
+        arguments is a no-op. Returns 404 if the link type does not exist
+        or is declared with a non-M2M cardinality (M2O/O2M links must be
+        mutated via object updates, not the link CRUD API).
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeApiName
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourcePk, targetPk]
+              properties:
+                sourcePk:
+                  type: string
+                  description: Primary key of the source object
+                targetPk:
+                  type: string
+                  description: Primary key of the target object
+                properties:
+                  type: object
+                  additionalProperties: true
+                  description: Edge properties, stored as JSONB
+      responses:
+        "201":
+          description: Link edge created or updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  linkType:
+                    type: string
+                  sourcePrimaryKey:
+                    type: string
+                  targetPrimaryKey:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteLink
+      summary: Delete a single many-to-many link edge
+      description: |
+        Removes a single edge from a MANY_TO_MANY link type. Idempotent —
+        deleting a non-existent edge returns 200 with status=deleted.
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeApiName
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourcePk, targetPk]
+              properties:
+                sourcePk:
+                  type: string
+                targetPk:
+                  type: string
+      responses:
+        "200":
+          description: Link edge deleted (or did not exist).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  linkType:
+                    type: string
+                  sourcePrimaryKey:
+                    type: string
+                  targetPrimaryKey:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate:
+    post:
+      operationId: aggregateObjects
+      summary: Aggregate objects via Bleve facets
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AggregationRequest"
+      responses:
+        "200":
+          description: Aggregation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects:
+    post:
+      operationId: loadObjectSet
+      summary: Materialize an ObjectSet definition into a page of objects
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadObjectSetRequest"
+      responses:
+        "200":
+          description: ObjectSet load response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadObjectSetResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/aggregate:
+    post:
+      operationId: aggregateObjectSet
+      summary: Aggregate objects in an ObjectSet
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AggregateObjectSetRequest"
+      responses:
+        "200":
+          description: Aggregation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/createTemporary:
+    post:
+      operationId: createTemporaryObjectSet
+      summary: Cache an ObjectSet definition for later reuse
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTemporaryRequest"
+      responses:
+        "200":
+          description: Temporary ObjectSet handle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTemporaryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute:
+    post:
+      operationId: executeQueryType
+      summary: Execute a stored QueryType
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: ontology
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: queryApiName
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteQueryRequest"
+      responses:
+        "200":
+          description: Query result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteQueryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actions/apply:
+    post:
+      operationId: applyAction
+      summary: Apply a single action
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyActionRequest"
+      responses:
+        "200":
+          description: Action result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyActionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/applyBatch:
+    post:
+      operationId: applyActionBatch
+      summary: Apply a batch of actions atomically or best-effort
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyBatchRequest"
+      responses:
+        "200":
+          description: Batch result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyBatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/ontologies:
+    post:
+      operationId: createOntology
+      summary: Create an ontology
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOntologyRequest"
+      responses:
+        "200":
+          description: Created ontology.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ontology"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/ontologies/{ontologyRid}:
+    put:
+      operationId: updateOntology
+      summary: Update an ontology
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOntologyRequest"
+      responses:
+        "200":
+          description: Updated ontology.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ontology"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/objectTypes:
+    post:
+      operationId: createObjectType
+      summary: Create an object type in an ontology
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateObjectTypeRequest"
+      responses:
+        "200":
+          description: Created object type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/objectTypes/{objectTypeRid}:
+    put:
+      operationId: updateObjectType
+      summary: Update an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateObjectTypeRequest"
+      responses:
+        "200":
+          description: Updated object type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteObjectType
+      summary: Delete an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/objectTypes/{objectTypeRid}/properties:
+    post:
+      operationId: createProperty
+      summary: Create a property on an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePropertyRequest"
+      responses:
+        "200":
+          description: Created property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/properties/{propertyRid}:
+    put:
+      operationId: updateProperty
+      summary: Update a property
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/PropertyRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertyRequest"
+      responses:
+        "200":
+          description: Updated property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteProperty
+      summary: Delete a property
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/PropertyRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/linkTypes:
+    post:
+      operationId: createLinkType
+      summary: Create a link type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLinkTypeRequest"
+      responses:
+        "200":
+          description: Created link type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listAllLinkTypes
+      summary: List all link types in an ontology
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Link type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/linkTypes/{linkTypeRid}:
+    put:
+      operationId: updateLinkType
+      summary: Update a link type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/LinkTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLinkTypeRequest"
+      responses:
+        "200":
+          description: Updated link type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteLinkType
+      summary: Delete a link type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/LinkTypeRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/actionTypes:
+    post:
+      operationId: createActionType
+      summary: Create an action type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateActionTypeRequest"
+      responses:
+        "200":
+          description: Created action type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/actionTypes/{actionTypeRid}:
+    put:
+      operationId: updateActionType
+      summary: Update an action type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ActionTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateActionTypeRequest"
+      responses:
+        "200":
+          description: Updated action type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteActionType
+      summary: Delete an action type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ActionTypeRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/actionTypes/{actionTypeRid}/logs:
+    get:
+      operationId: listActionLogs
+      summary: List action execution logs
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ActionTypeRid"
+      responses:
+        "200":
+          description: Action log list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionLogListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/interfaces:
+    post:
+      operationId: createInterface
+      summary: Create an interface
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInterfaceRequest"
+      responses:
+        "200":
+          description: Created interface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Interface"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listInterfaces
+      summary: List interfaces in an ontology
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Interface list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterfaceListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/interfaces/{interfaceRid}:
+    get:
+      operationId: getInterface
+      summary: Get a single interface
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/InterfaceRid"
+      responses:
+        "200":
+          description: Interface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Interface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateInterface
+      summary: Update an interface
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/InterfaceRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInterfaceRequest"
+      responses:
+        "200":
+          description: Updated interface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Interface"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteInterface
+      summary: Delete an interface
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/InterfaceRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/objectTypes/{objectTypeRid}/interfaces:
+    post:
+      operationId: attachInterface
+      summary: Attach an interface to an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachInterfaceRequest"
+      responses:
+        "200":
+          description: Attached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectTypeInterface"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listObjectTypeInterfaces
+      summary: List interfaces attached to an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      responses:
+        "200":
+          description: Attached interfaces.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterfaceListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/objectTypes/{objectTypeRid}/interfaces/{interfaceRid}:
+    delete:
+      operationId: detachInterface
+      summary: Detach an interface from an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+        - $ref: "#/components/parameters/InterfaceRid"
+      responses:
+        "204":
+          description: Detached.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/shared-properties:
+    post:
+      operationId: createSharedProperty
+      summary: Create a shared property
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSharedPropertyRequest"
+      responses:
+        "200":
+          description: Created shared property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedProperty"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listSharedProperties
+      summary: List shared properties
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Shared property list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedPropertyListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/shared-properties/{sharedPropertyRid}:
+    get:
+      operationId: getSharedProperty
+      summary: Get a single shared property
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/SharedPropertyRid"
+      responses:
+        "200":
+          description: Shared property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedProperty"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateSharedProperty
+      summary: Update a shared property
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/SharedPropertyRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSharedPropertyRequest"
+      responses:
+        "200":
+          description: Updated shared property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedProperty"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteSharedProperty
+      summary: Delete a shared property
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/SharedPropertyRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/type-groups:
+    post:
+      operationId: createTypeGroup
+      summary: Create a type group
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTypeGroupRequest"
+      responses:
+        "200":
+          description: Created type group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroup"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listTypeGroups
+      summary: List type groups
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Type group list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroupListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/type-groups/{typeGroupRid}:
+    get:
+      operationId: getTypeGroup
+      summary: Get a single type group
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/TypeGroupRid"
+      responses:
+        "200":
+          description: Type group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroup"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateTypeGroup
+      summary: Update a type group
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/TypeGroupRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTypeGroupRequest"
+      responses:
+        "200":
+          description: Updated type group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroup"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteTypeGroup
+      summary: Delete a type group
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/TypeGroupRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/objectTypes/{objectTypeRid}/groups/{typeGroupRid}:
+    post:
+      operationId: assignTypeGroup
+      summary: Assign an object type to a type group
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+        - $ref: "#/components/parameters/TypeGroupRid"
+      responses:
+        "204":
+          description: Assigned.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    delete:
+      operationId: removeTypeGroup
+      summary: Remove an object type from a type group
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+        - $ref: "#/components/parameters/TypeGroupRid"
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/objectTypes/{objectTypeRid}/groups:
+    get:
+      operationId: listTypeGroupsForObjectType
+      summary: List type groups assigned to an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      responses:
+        "200":
+          description: Type group list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroupListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/value-types:
+    post:
+      operationId: createValueType
+      summary: Create a value type
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateValueTypeRequest"
+      responses:
+        "200":
+          description: Created value type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listValueTypes
+      summary: List value types
+      tags: [Admin]
+      responses:
+        "200":
+          description: Value type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/value-types/{valueTypeRid}:
+    get:
+      operationId: getValueType
+      summary: Get a single value type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ValueTypeRid"
+      responses:
+        "200":
+          description: Value type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateValueType
+      summary: Update a value type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ValueTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateValueTypeRequest"
+      responses:
+        "200":
+          description: Updated value type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteValueType
+      summary: Delete a value type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ValueTypeRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/objectTypes/{objectTypeRid}/datasourceBindings:
+    post:
+      operationId: createDatasourceBinding
+      summary: Create a datasource binding for an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDatasourceBindingRequest"
+      responses:
+        "200":
+          description: Created datasource binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBinding"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listDatasourceBindings
+      summary: List datasource bindings for an object type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      responses:
+        "200":
+          description: Datasource binding list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBindingListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/datasourceBindings/{datasourceBindingRid}:
+    get:
+      operationId: getDatasourceBinding
+      summary: Get a single datasource binding
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/DatasourceBindingRid"
+      responses:
+        "200":
+          description: Datasource binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBinding"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateDatasourceBinding
+      summary: Update a datasource binding
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/DatasourceBindingRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDatasourceBindingRequest"
+      responses:
+        "200":
+          description: Updated datasource binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBinding"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteDatasourceBinding
+      summary: Delete a datasource binding
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/DatasourceBindingRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/objectTypes/{objectTypeRid}/securityPolicies:
+    post:
+      operationId: createSecurityPolicy
+      summary: Create a security policy
+      description: Requires the `securityPolicy.manage` permission.
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSecurityPolicyRequest"
+      responses:
+        "200":
+          description: Created security policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listSecurityPolicies
+      summary: List security policies for an object type
+      description: Requires the `securityPolicy.manage` permission.
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/ObjectTypeRid"
+      responses:
+        "200":
+          description: Security policy list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPolicyListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/securityPolicies/{securityPolicyRid}:
+    get:
+      operationId: getSecurityPolicy
+      summary: Get a single security policy
+      description: Requires the `securityPolicy.manage` permission.
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/SecurityPolicyRid"
+      responses:
+        "200":
+          description: Security policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPolicy"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateSecurityPolicy
+      summary: Update a security policy
+      description: Requires the `securityPolicy.manage` permission.
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/SecurityPolicyRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSecurityPolicyRequest"
+      responses:
+        "200":
+          description: Updated security policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteSecurityPolicy
+      summary: Delete a security policy
+      description: Requires the `securityPolicy.manage` permission.
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/SecurityPolicyRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/queryTypes:
+    post:
+      operationId: createQueryType
+      summary: Create a query type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateQueryTypeRequest"
+      responses:
+        "200":
+          description: Created query type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listQueryTypes
+      summary: List query types in an ontology
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Query type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/queryTypes/{queryTypeRid}:
+    get:
+      operationId: getQueryType
+      summary: Get a single query type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/QueryTypeRid"
+      responses:
+        "200":
+          description: Query type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateQueryType
+      summary: Update a query type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/QueryTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateQueryTypeRequest"
+      responses:
+        "200":
+          description: Updated query type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteQueryType
+      summary: Delete a query type
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/QueryTypeRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/{ontologyApiName}/search:
+    get:
+      operationId: searchOntologyResources
+      summary: Search across ontology resources
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: q
+          schema:
+            type: string
+        - in: query
+          name: type
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search hits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/ontologies/{ontologyApiName}/export:
+    get:
+      operationId: exportOntology
+      summary: Export an ontology as JSON
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Ontology export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyExport"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/admin/ontologies/import:
+    post:
+      operationId: importOntology
+      summary: Import an ontology from a JSON export
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportOntologyRequest"
+      responses:
+        "200":
+          description: Imported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportOntologyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /api/admin/ontologies/{ontologyApiName}/snapshots:
+    post:
+      operationId: createSnapshot
+      summary: Create a snapshot of an ontology's current state
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSnapshotRequest"
+      responses:
+        "200":
+          description: Created snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologySnapshot"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+    get:
+      operationId: listSnapshots
+      summary: List snapshots for an ontology
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Snapshot list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/admin/ontologies/{ontologyApiName}/snapshots/{version}:
+    get:
+      operationId: getSnapshot
+      summary: Get a single snapshot by version
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: version
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologySnapshot"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"

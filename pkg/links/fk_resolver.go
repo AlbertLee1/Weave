@@ -51,34 +51,41 @@ func (r *Resolver) resolveFK(ctx context.Context, lt *oms.LinkType, sourcePKs []
 	return targetPKs, nil
 }
 
-// getFKValues retrieves the foreign key property values from source objects by their primary keys.
+// getFKValues retrieves the foreign key property values from source objects by
+// their primary keys. The lookup is issued as a single batch DocIDQuery so the
+// number of Bleve Search calls is constant (1) regardless of the number of
+// source PKs — fixing the prior O(N) loop. The pkField parameter is retained
+// for callers but is no longer needed for the lookup itself, since each source
+// document is indexed under its primary key as the Bleve doc ID.
 func (r *Resolver) getFKValues(objectType string, pks []string, pkField, fkField string) ([]string, error) {
-	var values []string
-	seen := make(map[string]bool)
-
-	for _, pk := range pks {
-		q := bleve.NewTermQuery(pk)
-		q.SetField(pkField)
-		req := bleve.NewSearchRequest(q)
-		req.Fields = []string{fkField}
-		req.Size = 1
-
-		result, err := r.indexMgr.Search(objectType, req)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, hit := range result.Hits {
-			if val, ok := hit.Fields[fkField]; ok {
-				strVal := fmt.Sprintf("%v", val)
-				if !seen[strVal] {
-					values = append(values, strVal)
-					seen[strVal] = true
-				}
-			}
-		}
+	_ = pkField // pkField is unused now that we look up by doc ID directly
+	if len(pks) == 0 {
+		return nil, nil
 	}
 
+	q := bleve.NewDocIDQuery(pks)
+	req := bleve.NewSearchRequest(q)
+	req.Fields = []string{fkField}
+	req.Size = len(pks)
+
+	result, err := r.indexMgr.Search(objectType, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var values []string
+	seen := make(map[string]bool)
+	for _, hit := range result.Hits {
+		val, ok := hit.Fields[fkField]
+		if !ok {
+			continue
+		}
+		strVal := fmt.Sprintf("%v", val)
+		if !seen[strVal] {
+			values = append(values, strVal)
+			seen[strVal] = true
+		}
+	}
 	return values, nil
 }
 

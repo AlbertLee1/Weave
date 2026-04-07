@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfig_Defaults(t *testing.T) {
@@ -148,5 +150,130 @@ func TestLoadConfig_InvalidJWTAccessTTL(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Error("expected error for invalid duration")
+	}
+}
+
+// --- Validate() tests (Tier 1.3) ---
+
+// validDevConfig returns a Config that satisfies Validate() in dev mode.
+// Tests build on top of this and mutate the field they want to break.
+func validDevConfig() *Config {
+	return &Config{
+		Port:     8080,
+		LogLevel: "info",
+		DataDir:  "./data",
+		AuthMode: "dev",
+		JWT: JWTConfig{
+			Issuer:          "weave",
+			Audience:        "weave-api",
+			AccessTokenTTL:  15 * time.Minute,
+			RefreshTokenTTL: 168 * time.Hour,
+			BcryptCost:      12,
+		},
+	}
+}
+
+func TestConfig_Validate_ValidDevMode(t *testing.T) {
+	cfg := validDevConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected dev mode minimal config to validate, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_JWTModeWithoutKey(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuthMode = "jwt"
+	// No PrivateKeyPath / PrivateKeyPEM provided.
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error when AUTH_MODE=jwt but no key material set")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "jwt") || !strings.Contains(msg, "key") {
+		t.Errorf("expected error to mention jwt and key material, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_JWTModeWithKeyPath(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuthMode = "jwt"
+	cfg.JWT.PrivateKeyPath = "/etc/weave/priv.pem"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected jwt mode with PrivateKeyPath to validate, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_JWTModeWithKeyPEM(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuthMode = "jwt"
+	cfg.JWT.PrivateKeyPEM = "-----BEGIN PRIVATE KEY-----\n..."
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected jwt mode with PrivateKeyPEM to validate, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_InvalidPort(t *testing.T) {
+	tests := []int{-1, 0, 65536, 100000}
+	for _, p := range tests {
+		cfg := validDevConfig()
+		cfg.Port = p
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected validation error for port %d", p)
+		}
+	}
+}
+
+func TestConfig_Validate_EmptyDataDir(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.DataDir = ""
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for empty DataDir")
+	}
+	if !strings.Contains(err.Error(), "DataDir") && !strings.Contains(err.Error(), "data") {
+		t.Errorf("expected error to mention DataDir, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_EmptyPGDSN_OK(t *testing.T) {
+	// PG is optional (degraded mode).
+	cfg := validDevConfig()
+	cfg.PGDSN = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected empty PGDSN to be allowed (degraded mode), got: %v", err)
+	}
+}
+
+func TestConfig_Validate_EmptyNATSURL_OK(t *testing.T) {
+	// NATS is optional (degraded mode).
+	cfg := validDevConfig()
+	cfg.NATSURL = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected empty NATSURL to be allowed (degraded mode), got: %v", err)
+	}
+}
+
+func TestConfig_Validate_MultipleErrors(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.Port = -5
+	cfg.DataDir = ""
+	cfg.AuthMode = "jwt"
+	// No JWT keys → error 3.
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation errors")
+	}
+	msg := err.Error()
+
+	// Verify all three problems surface, not just the first.
+	if !strings.Contains(msg, "port") && !strings.Contains(msg, "Port") {
+		t.Errorf("expected error to mention port, got: %v", err)
+	}
+	if !strings.Contains(msg, "DataDir") && !strings.Contains(msg, "data") {
+		t.Errorf("expected error to mention DataDir, got: %v", err)
+	}
+	if !strings.Contains(msg, "jwt") {
+		t.Errorf("expected error to mention jwt, got: %v", err)
 	}
 }

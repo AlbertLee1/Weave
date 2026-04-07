@@ -10,6 +10,14 @@ bin/
 web/node_modules/
 web/dist/
 cmd/server/web/dist/
+web/coverage/
+web/playwright-report/
+web/test-results/
+
+# Coverage
+coverage.out
+coverage.html
+coverage.txt
 
 # IDE
 .idea/

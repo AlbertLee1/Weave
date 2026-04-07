@@ -5,9 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
 )
+
+// searcher is the minimal contract the resolver requires from an index source.
+// It is satisfied by *index.Manager. Tests use a counting decorator to assert
+// that a single batch query is issued instead of an N+1 loop.
+type searcher interface {
+	Search(objectType string, req *bleve.SearchRequest) (*bleve.SearchResult, error)
+}
 
 // Direction is the traversal direction for a link type.
 // Forward: source -> target (existing behavior).
@@ -67,9 +75,13 @@ type FKConfig struct {
 // Resolver implements LinkResolver using OMS repository and Bleve indexes.
 // For M2M links, it also reads from the link_edges PostgreSQL table via the
 // optional EdgeRepository.
+//
+// indexMgr is held as the local searcher interface so that the perf-counting
+// test wrapper can be substituted in unit tests without dragging in the
+// concrete *index.Manager.
 type Resolver struct {
 	repo     oms.Repository
-	indexMgr *index.Manager
+	indexMgr searcher
 	edgeRepo EdgeRepository
 }
 
@@ -90,6 +102,17 @@ func NewResolverWithEdges(repo oms.Repository, indexMgr *index.Manager, edgeRepo
 		repo:     repo,
 		indexMgr: indexMgr,
 		edgeRepo: edgeRepo,
+	}
+}
+
+// newResolverWithSearcher is the internal constructor used by perf tests to
+// inject a counting searcher decorator. It is unexported because production
+// code should always go through NewResolver / NewResolverWithEdges with a
+// real *index.Manager.
+func newResolverWithSearcher(repo oms.Repository, s searcher) *Resolver {
+	return &Resolver{
+		repo:     repo,
+		indexMgr: s,
 	}
 }
 

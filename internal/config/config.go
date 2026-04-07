@@ -1,9 +1,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -125,4 +127,32 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Validate checks the loaded Config for required fields and consistency
+// across modes. It collects ALL problems before returning so operators see
+// every misconfiguration in one boot attempt rather than fixing them one
+// at a time. Returns nil when the config is acceptable. PGDSN and NATSURL
+// are deliberately allowed to be empty so the server can boot in degraded
+// mode (in-memory OMS, no funnel) for local dev and disaster recovery.
+func (c *Config) Validate() error {
+	var problems []string
+
+	if c.Port <= 0 || c.Port >= 65536 {
+		problems = append(problems, fmt.Sprintf("invalid Port %d: must be in range 1..65535", c.Port))
+	}
+
+	if strings.TrimSpace(c.DataDir) == "" {
+		problems = append(problems, "DataDir must be non-empty (set WEAVE_DATA_DIR)")
+	}
+
+	if c.AuthMode == "jwt" && c.JWT.PrivateKeyPath == "" && c.JWT.PrivateKeyPEM == "" {
+		problems = append(problems,
+			"AUTH_MODE=jwt requires JWT key material: set WEAVE_JWT_PRIVATE_KEY_PATH or WEAVE_JWT_PRIVATE_KEY_PEM")
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New("config validation failed: " + strings.Join(problems, "; "))
 }

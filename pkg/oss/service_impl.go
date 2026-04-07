@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
@@ -308,28 +309,46 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 	}
 	paginatedPKs := targetPKs[start:end]
 
-	// Build a disjunction query to find all target objects
 	page := &ObjectPage{
 		Data: make([]*WireObject, 0, len(paginatedPKs)),
 	}
 	page.TotalCount = strconv.Itoa(totalCount)
 
+	if len(paginatedPKs) == 0 {
+		return page, nil
+	}
+
+	// Batch-hydrate: single DocIDQuery instead of N per-PK TermQueries.
+	// This was a documented N+1 performance bug (PERF_1). The DocIDQuery
+	// matches all paginated PKs in one Bleve Search call.
+	batchQ := bleve.NewDocIDQuery(paginatedPKs)
+	batchReq := bleve.NewSearchRequest(batchQ)
+	batchReq.Fields = []string{"*"}
+	batchReq.Size = len(paginatedPKs)
+
+	batchResult, err := s.indexMgr.Search(targetOTAPIName, batchReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Map hits by primary key so we can emit them in the original paginated
+	// order (preserving link-resolver ordering).
+	hitByPK := make(map[string]*search.DocumentMatch, len(batchResult.Hits))
+	for _, h := range batchResult.Hits {
+		pk := h.ID
+		if v, ok := h.Fields[targetOT.PrimaryKey]; ok {
+			pk = fmt.Sprintf("%v", v)
+		}
+		hitByPK[pk] = h
+	}
+
 	for _, pk := range paginatedPKs {
-		q := bleve.NewTermQuery(pk)
-		q.SetField(targetOT.PrimaryKey)
-		searchReq := bleve.NewSearchRequest(q)
-		searchReq.Fields = []string{"*"}
-		searchReq.Size = 1
-
-		result, err := s.indexMgr.Search(targetOTAPIName, searchReq)
-		if err != nil {
-			return nil, err
+		hit, ok := hitByPK[pk]
+		if !ok {
+			// Target PK not found in the index — skip (missing doc, not an error).
+			continue
 		}
-
-		if len(result.Hits) > 0 {
-			hit := result.Hits[0]
-			page.Data = append(page.Data, FormatObject(targetOTAPIName, pk, hit.Fields))
-		}
+		page.Data = append(page.Data, FormatObject(targetOTAPIName, pk, hit.Fields))
 	}
 
 	// Set next page token if there are more results

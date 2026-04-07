@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
@@ -26,6 +28,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/nats-io/nats.go"
 )
 
 // ServerDeps holds all server dependencies.
@@ -43,6 +46,43 @@ type ServerDeps struct {
 	ObjSetStore    *objectset.Store
 	ObjSetExecutor *objectset.Executor
 	FunnelConsumer *funnel.Consumer
+
+	// Raw handles stashed for health probes. May be nil in degraded mode.
+	PGPool   *pgxpool.Pool
+	NATSConn *nats.Conn
+}
+
+// ProbePG satisfies HealthProbes. Returns ErrProbeUnconfigured when no PG
+// pool is wired (degraded mode), nil when the pool pings successfully, or
+// the underlying ping error.
+func (d *ServerDeps) ProbePG(ctx context.Context) error {
+	if d == nil || d.PGPool == nil {
+		return ErrProbeUnconfigured
+	}
+	return d.PGPool.Ping(ctx)
+}
+
+// ProbeNATS satisfies HealthProbes. Returns ErrProbeUnconfigured when no
+// NATS connection is wired, nil when the connection is CONNECTED, or an
+// error describing the current status.
+func (d *ServerDeps) ProbeNATS() error {
+	if d == nil || d.NATSConn == nil {
+		return ErrProbeUnconfigured
+	}
+	if d.NATSConn.Status() != nats.CONNECTED {
+		return fmt.Errorf("nats not connected: status=%s", d.NATSConn.Status())
+	}
+	return nil
+}
+
+// ProbeBleve satisfies HealthProbes. Returns ErrProbeUnconfigured when no
+// index manager is wired, nil otherwise. (NumIndexes is cheap and doesn't
+// error on a healthy Manager, so reaching it means the component is up.)
+func (d *ServerDeps) ProbeBleve() error {
+	if d == nil || d.IndexMgr == nil {
+		return ErrProbeUnconfigured
+	}
+	return nil
 }
 
 func NewRouter() *chi.Mux {
@@ -65,11 +105,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 
-	// Health endpoint (public, no auth required)
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	// Health endpoints (public, no auth required)
+	// /health is the k8s liveness probe: always returns 200 {"status":"alive"}
+	// /health/ready is the k8s readiness probe: checks PG/NATS/Bleve, 503 if
+	// any configured dependency is unhealthy.
+	r.Method(http.MethodGet, "/health", LivenessHandler())
+	r.Method(http.MethodGet, "/health/ready", ReadinessHandler(deps))
+
+	// OpenAPI & Swagger UI (public)
+	r.Method(http.MethodGet, "/api/openapi.yaml", openapiSpecHandler())
+	r.Method(http.MethodGet, "/swagger/", swaggerUIHandler())
+	r.Method(http.MethodGet, "/swagger", http.RedirectHandler("/swagger/", http.StatusMovedPermanently))
 
 	// Public auth endpoints — login/refresh/logout are NOT behind the
 	// auth middleware because they are how clients obtain or rotate tokens.
@@ -214,6 +260,16 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("config validation failed: %v", err)
+	}
+
+	// Initialize structured logging. All subsequent log.Printf calls in this
+	// function continue to work (slog runs in parallel via slog.SetDefault).
+	logger := InitLogger(cfg, os.Stderr)
+	slog.SetDefault(logger)
+	slog.Info("starting Weave", "port", cfg.Port, "auth_mode", cfg.AuthMode)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -226,6 +282,7 @@ func main() {
 			log.Fatalf("database connect: %v", err)
 		}
 		defer pool.Close()
+		deps.PGPool = pool
 
 		if err := database.RunMigrationsUp(cfg.PGDSN, "migrations"); err != nil {
 			log.Printf("warning: migration failed: %v", err)
@@ -301,6 +358,19 @@ func main() {
 	deps.IndexMgr = index.NewManager(cfg.DataDir)
 	defer deps.IndexMgr.Close()
 
+	// 2a. Rehydrate Bleve indexes from PG metadata.
+	// Creates empty index shells (with correct mappings) for every ObjectType
+	// defined in PG so queries don't fail with "index not found" when WEAVE_DATA_DIR
+	// is wiped or a new ObjectType was added but never received writes.
+	// Historical object data is NOT restored (NATS JetStream uses WorkQueuePolicy).
+	if deps.OmsRepo != nil {
+		if err := index.EnsureAllIndexes(ctx, deps.IndexMgr, deps.OmsRepo); err != nil {
+			slog.Warn("rehydrate failed", "error", err)
+		} else {
+			slog.Info("rehydrate complete")
+		}
+	}
+
 	// 3. Link Resolver
 	if deps.OmsRepo != nil {
 		deps.LinkResolver = links.NewResolver(deps.OmsRepo, deps.IndexMgr)
@@ -328,6 +398,7 @@ func main() {
 			log.Fatalf("nats connect: %v", err)
 		}
 		defer nc.Close()
+		deps.NATSConn = nc
 
 		js, err := nc.JetStream()
 		if err != nil {

@@ -1,0 +1,157 @@
+# golangci-lint v2 configuration.
+# Schema reference: https://golangci-lint.run/usage/configuration/
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  # NOTE: we deliberately do not set `build-tags: [integration]` here.
+  # Integration-tagged tests (e.g. pkg/oms/*_test.go that use `//go:build integration`)
+  # depend on repo methods that may not yet exist on the default build, and
+  # mixing them in causes typecheck errors that are unrelated to lint findings.
+  # The CI integration job runs them separately via `go test -tags integration`.
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  # NOTE: in v2, `gosimple` was merged into `staticcheck`. The original task
+  # list asked for both; enabling `staticcheck` here covers all gosimple checks.
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - exhaustive
+    - revive
+    - noctx
+    - sqlclosecheck
+    - gocritic
+    - misspell
+    - unconvert
+    - unparam
+    - gocyclo
+
+  settings:
+    gocyclo:
+      min-complexity: 15
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+      exclude-functions:
+        - (io.Closer).Close
+        - (net/http.ResponseWriter).Write
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    exhaustive:
+      default-signifies-exhaustive: true
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+          disabled: true
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+          disabled: true
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+        - paramTypeCombine
+        - unnamedResult
+        - whyNoLint
+    misspell:
+      locale: US
+    unparam:
+      check-exported: false
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - vendor
+      - bin
+      - testdata
+      - migrations
+      - web
+      - docs
+      - scripts
+    rules:
+      # Tests can be more relaxed about errcheck/cyclomatic complexity, etc.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocyclo
+          - gocritic
+          - unparam
+          - noctx
+          - bodyclose
+      - path: ^test/
+        linters:
+          - errcheck
+          - gocyclo
+          - gocritic
+          - unparam
+          - noctx
+          - bodyclose
+          - revive
+      - path: ^internal/testutil/
+        linters:
+          - errcheck
+          - gocritic
+          - revive
+      # main.go often has a long init function.
+      - path: cmd/server/main\.go
+        linters:
+          - gocyclo
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - vendor
+      - bin
+      - testdata
+      - migrations
+      - web

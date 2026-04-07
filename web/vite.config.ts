@@ -17,5 +17,37 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.ts',
     css: true,
+    // Vitest picks up *.spec.ts by default; we must exclude Playwright
+    // e2e specs (web/e2e/**) so they don't get loaded by Vitest.
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/playwright-report/**',
+      '**/test-results/**',
+      '**/e2e/**',
+      '**/*.e2e.{test,spec}.{ts,tsx}',
+    ],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov', 'html'],
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/e2e/**',
+        '**/playwright-report/**',
+        '**/test-results/**',
+        '**/*.config.{ts,js,mjs,cjs}',
+        '**/__tests__/**',
+        '**/test/**',
+        '**/*.test.{ts,tsx}',
+        '**/*.spec.{ts,tsx}',
+      ],
+      thresholds: {
+        lines: 60,
+        branches: 50,
+        functions: 60,
+        statements: 60,
+      },
+    },
   },
 })

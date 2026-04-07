@@ -1,0 +1,43 @@
+# lefthook.yml
+# Pre-commit hooks for Weave. Install with: lefthook install
+# Run on all staged files manually: lefthook run pre-commit
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: |
+        unformatted=$(gofmt -l {staged_files})
+        if [ -n "$unformatted" ]; then
+          echo "The following Go files are not gofmt'd:"
+          echo "$unformatted"
+          echo
+          echo "Run: gofmt -w <file>"
+          exit 1
+        fi
+      stage_fixed: true
+
+    govet:
+      glob: "*.go"
+      # Vet the packages whose files were touched. We extract the directories
+      # of staged Go files and pass them to `go vet`.
+      run: |
+        dirs=$(printf '%s\n' {staged_files} | xargs -n1 dirname | sort -u | sed 's|^|./|')
+        if [ -n "$dirs" ]; then
+          # shellcheck disable=SC2086
+          go vet $dirs
+        fi
+
+    web-typecheck:
+      glob: "web/**/*.{ts,tsx}"
+      run: cd web && npx tsc --noEmit
+
+# commit-msg hook is intentionally disabled for now (conventional-commit-style
+# enforcement is opt-in and would slow down early development).
+# commit-msg:
+#   commands:
+#     conventional:
+#       run: |
+#         head -1 "$1" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .+' \
+#           || { echo "Commit message must follow Conventional Commits"; exit 1; }

@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration build run docker-up docker-down lint web-install web-dev web-build web-test web-e2e build-with-ui dev
+.PHONY: test test-unit test-integration test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev
 
 test: test-unit
 
@@ -7,6 +7,25 @@ test-unit:
 
 test-integration:
 	go test -tags integration ./...
+
+test-cover:
+	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	@echo "----- coverage summary -----"
+	@go tool cover -func=coverage.out | grep -E '^total:'
+
+test-cover-html: test-cover
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "open coverage.html"
+
+vulncheck:
+	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
+lint-fix:
+	golangci-lint run --fix ./...
+
+web-test-cover:
+	cd web && npx vitest run --coverage
 
 build:
 	go build -o bin/weave ./cmd/server
