@@ -187,6 +187,10 @@ func (m *mockOmsRepo) GetActionType(_ context.Context, _ string) (*oms.ActionTyp
 	return nil, oms.ErrNotFound
 }
 
+func (m *mockOmsRepo) GetActionTypeByAPIName(_ context.Context, _, _ string) (*oms.ActionType, error) {
+	return nil, oms.ErrNotFound
+}
+
 func (m *mockOmsRepo) ListActionTypes(_ context.Context, _ string) ([]oms.ActionType, error) {
 	return nil, nil
 }

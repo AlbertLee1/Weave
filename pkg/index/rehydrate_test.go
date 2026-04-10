@@ -94,6 +94,9 @@ func (s *stubRehydrateRepo) CreateActionType(context.Context, *oms.ActionType) e
 func (s *stubRehydrateRepo) GetActionType(context.Context, string) (*oms.ActionType, error) {
 	return nil, nil
 }
+func (s *stubRehydrateRepo) GetActionTypeByAPIName(context.Context, string, string) (*oms.ActionType, error) {
+	return nil, nil
+}
 func (s *stubRehydrateRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
 	return nil, nil
 }

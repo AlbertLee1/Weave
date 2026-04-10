@@ -90,6 +90,9 @@ func (m *mockRepo) CreateActionType(context.Context, *oms.ActionType) error     
 func (m *mockRepo) GetActionType(context.Context, string) (*oms.ActionType, error) {
 	return nil, nil
 }
+func (m *mockRepo) GetActionTypeByAPIName(context.Context, string, string) (*oms.ActionType, error) {
+	return nil, nil
+}
 func (m *mockRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
 	return nil, nil
 }

@@ -353,6 +353,18 @@ func (r *inMemoryOmsRepo) GetActionType(_ context.Context, rid string) (*oms.Act
 	return &cp, nil
 }
 
+func (r *inMemoryOmsRepo) GetActionTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, at := range r.actionTypes {
+		if (at.OntologyRID == ontologyRID) && (at.RID == apiNameOrRID || at.APIName == apiNameOrRID) {
+			cp := *at
+			return &cp, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 func (r *inMemoryOmsRepo) ListActionTypes(_ context.Context, ontologyRID string) ([]oms.ActionType, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -665,8 +677,8 @@ func setupEnv(t *testing.T) *northwindEnv {
 		ossHandler.RegisterRoutes(r)
 
 		actionHandler := actions.NewHandler(actionExecutor)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 
 		r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
 			objectType := chi.URLParam(r, "objectType")

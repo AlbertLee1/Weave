@@ -139,7 +139,7 @@ func (r *PGRepository) GetObjectTypeByAPIName(ctx context.Context, ontologyRID, 
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid FROM object_types
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND api_name = $2`,
+		 AND (rid = $2 OR api_name = $2)`,
 		ontologyRID, apiName).Scan(&rid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -500,6 +500,22 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 	return at, nil
 }
 
+func (r *PGRepository) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*ActionType, error) {
+	var rid string
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid FROM action_types
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND (rid = $2 OR api_name = $2)`,
+		ontologyRID, apiNameOrRID).Scan(&rid)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return r.GetActionType(ctx, rid)
+}
+
 func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) ([]ActionType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
@@ -599,7 +615,7 @@ func (r *PGRepository) GetInterfaceByAPIName(ctx context.Context, ontologyRID, a
 		 COALESCE(shared_properties, '[]'), created_at
 		 FROM interfaces
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND api_name = $2`, ontologyRID, apiName).
+		 AND (rid = $2 OR api_name = $2)`, ontologyRID, apiName).
 		Scan(&i.RID, &i.OntologyRID, &i.APIName, &i.DisplayName,
 			&i.ExtendsRID, &i.SharedProperties, &i.CreatedAt)
 	if err != nil {
@@ -1308,7 +1324,7 @@ func (r *PGRepository) GetQueryTypeByAPIName(ctx context.Context, ontologyRID, a
 		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
 		 FROM query_types
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND api_name = $2`, ontologyRID, apiName).
+		 AND (rid = $2 OR api_name = $2)`, ontologyRID, apiName).
 		Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
 			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt)
 	if err != nil {

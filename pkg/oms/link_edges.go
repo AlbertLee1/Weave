@@ -144,7 +144,7 @@ func (r *PGRepository) GetLinkTypeByAPIName(ctx context.Context, ontologyRID, ap
 		 source_object_type, target_object_type, cardinality,
 		 foreign_key_config, join_table_config, is_required, created_at
 		 FROM link_types
-		 WHERE api_name = $2
+		 WHERE (rid = $2 OR api_name = $2)
 		   AND (ontology_rid = $1
 		        OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))`,
 		ontologyRID, apiName).

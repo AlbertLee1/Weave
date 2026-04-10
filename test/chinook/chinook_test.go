@@ -353,6 +353,18 @@ func (r *inMemoryOmsRepo) GetActionType(_ context.Context, rid string) (*oms.Act
 	return &cp, nil
 }
 
+func (r *inMemoryOmsRepo) GetActionTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, at := range r.actionTypes {
+		if (at.OntologyRID == ontologyRID) && (at.RID == apiNameOrRID || at.APIName == apiNameOrRID) {
+			cp := *at
+			return &cp, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 func (r *inMemoryOmsRepo) ListActionTypes(_ context.Context, ontologyRID string) ([]oms.ActionType, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

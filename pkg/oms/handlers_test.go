@@ -79,16 +79,27 @@ func (m *mockRepo) GetObjectType(_ context.Context, rid string) (*oms.ObjectType
 	return nil, oms.ErrNotFound
 }
 
-func (m *mockRepo) GetObjectTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.ObjectType, error) {
+func (m *mockRepo) GetObjectTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ObjectType, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	for i := range m.objectTypes {
-		if m.objectTypes[i].OntologyRID == ontologyRID && m.objectTypes[i].APIName == apiName {
+		ontologyMatch := m.objectTypes[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.objectTypes[i].OntologyRID)
+		entityMatch := m.objectTypes[i].APIName == apiNameOrRID || m.objectTypes[i].RID == apiNameOrRID
+		if ontologyMatch && entityMatch {
 			return &m.objectTypes[i], nil
 		}
 	}
 	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) matchOntologyByApiName(identifier, ontologyRID string) bool {
+	for _, o := range m.ontologies {
+		if o.APIName == identifier && o.RID == ontologyRID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *mockRepo) ListObjectTypes(_ context.Context, ontologyRID string) ([]oms.ObjectType, error) {
@@ -224,6 +235,20 @@ func (m *mockRepo) GetActionType(_ context.Context, rid string) (*oms.ActionType
 	}
 	for i := range m.actionTypes {
 		if m.actionTypes[i].RID == rid {
+			return &m.actionTypes[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) GetActionTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.actionTypes {
+		ontologyMatch := m.actionTypes[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.actionTypes[i].OntologyRID)
+		entityMatch := m.actionTypes[i].APIName == apiNameOrRID || m.actionTypes[i].RID == apiNameOrRID
+		if ontologyMatch && entityMatch {
 			return &m.actionTypes[i], nil
 		}
 	}
