@@ -861,6 +861,23 @@ components:
         totalCountAccuracy:
           type: string
           enum: [EXACT, APPROXIMATE]
+    LoadLinksRequest:
+      type: object
+      required: [objectSet, linkTypeApiName]
+      properties:
+        objectSet:
+          $ref: "#/components/schemas/ObjectSetDefinition"
+        linkTypeApiName:
+          type: string
+          description: The API name of the link type to traverse
+        select:
+          type: array
+          items:
+            type: string
+        pageSize:
+          type: integer
+        pageToken:
+          type: string
     AggregationSpec:
       type: object
       required: [type]
@@ -2304,6 +2321,54 @@ paths:
                 $ref: "#/components/schemas/CreateTemporaryResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks:
+    post:
+      operationId: loadObjectSetLinks
+      summary: Load linked objects from an ObjectSet via a link type
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadLinksRequest"
+      responses:
+        "200":
+          description: Linked objects response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadObjectSetResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}:
+    get:
+      operationId: getObjectSet
+      summary: Get an ObjectSet definition by its RID
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectSetRid
+          required: true
+          schema:
+            type: string
+          description: The RID of the ObjectSet to retrieve
+      responses:
+        "200":
+          description: ObjectSet definition.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectSetDefinition"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/queryTypes:

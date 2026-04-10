@@ -68,6 +68,9 @@
 - ObjectType has two serialization methods: ToWireJSON() for basic list format, ToFullMetadataJSON() for everything (properties with full detail, icon, color, etc.)
 - Foundry batch-by-RID pattern: silently skip missing RIDs, return only found entries; reuse getByRidBatchRequest type across ActionType/ObjectType
 - ObjectType fullMetadata handler loads properties via ListProperties(ctx, ot.RID) before serialization — properties are not auto-loaded on GetObjectTypeByAPIName
+- For optional-presence JSON request fields, use *json.RawMessage — nil if key absent, non-nil (even empty `{}`) if present
+- ObjectSet handler endpoints live in pkg/oss/objectset/handler*.go — new endpoints for objectSets go here, not in pkg/oss/handlers.go
+- LoadLinks reuses searchAround executor internally — to add link-based ObjectSet endpoints, compose a searchAround Definition and pass to executor.Execute()
 
 ---
 
@@ -364,5 +367,50 @@
   - editsHistory uses ListActionLogs scoped by ObjectType RID — in Foundry this returns action-level edit entries
   - No new Repository methods needed — existing GetObjectType, GetObjectTypeByAPIName, ListProperties, ListActionLogs suffice
   - No mock repo updates needed in other packages — only the handlers_test.go mockRepo needed actionLogs field
+  - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean
+---
+
+## 2026-04-11 - US-014: Add Ontology.load_metadata POST endpoint
+- Added POST /api/v2/ontologies/{ontologyApiName}/metadata endpoint for selective metadata loading
+- Request body uses presence-based selection: each key (objectTypes, linkTypes, actionTypes, interfaceTypes, queryTypes) present in the body selects that subset
+- Response always includes ontology, plus only the requested subsets
+- Used *json.RawMessage for request fields — nil means not requested, non-nil (even `{}`) means requested
+- Files changed:
+  - pkg/oms/handlers_v2_load_metadata.go — NEW: LoadMetadataV2 handler + loadMetadataRequest type
+  - pkg/oms/handlers_v2_load_metadata_test.go — NEW: 7 TDD tests (all subsets, selective, empty body, not found, invalid body, by RID, multiple subsets)
+  - cmd/server/routes.go — registered POST .../metadata route
+  - api/openapi.yaml — added path + LoadMetadataRequest + OntologyFullMetadata schemas
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-014 passes: true
+- **Learnings for future iterations:**
+  - loadMetadataRequest uses *json.RawMessage (pointer) for optional presence detection — nil if key absent, non-nil if present (even as empty `{}`)
+  - Response uses interfaceTypes (not interfaces) as the key name — matches Foundry convention, different from OntologyExport which uses interfaces
+  - Mock repo's List methods (ListObjectTypes, ListActionTypes, etc.) filter by exact OntologyRID match — tests must use the full RID in URLs, not apiName, for mock-based tests
+  - No new Repository methods needed — reuses existing List* methods for all 5 entity types
+  - No mock repo updates needed in other packages
+  - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean
+---
+
+## 2026-04-11 - US-015: ObjectSet get-by-RID and loadLinks endpoints
+- Added 2 new Foundry V2 endpoints for ObjectSets:
+  - GET /api/v2/ontologies/{o}/objectSets/{objectSetRid} — returns ObjectSet definition (not data)
+  - POST /api/v2/ontologies/{o}/objectSets/loadLinks — loads linked objects from an ObjectSet via a link type
+- GetObjectSet handler retrieves stored temporary ObjectSet definition by RID from the in-memory Store
+- LoadLinks handler builds a searchAround definition internally, executes it via the executor, then loads full linked objects from Bleve
+- LoadLinks supports select (field filtering), pagination (pageSize/pageToken), and totalCount/totalCountAccuracy
+- Files changed:
+  - pkg/oss/objectset/handler_objectset.go — NEW: GetObjectSet + LoadLinks handlers + LoadLinksRequest type
+  - pkg/oss/objectset/handler_objectset_test.go — NEW: 8 TDD tests (get found, not found, complex def, loadLinks success, missing objectSet, missing linkType, invalid body, pagination)
+  - cmd/server/main.go — registered 2 new routes (loadLinks as POST, getObjectSet as GET with {objectSetRid} wildcard)
+  - api/openapi.yaml — added 2 new paths + LoadLinksRequest schema
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-015 passes: true
+- **Learnings for future iterations:**
+  - LoadLinks reuses the searchAround executor path internally — no new link resolution logic needed, just wrap it in a handler
+  - The executor's searchAround already handles LinkTargetTypeResolver to determine the target object type — LoadLinks gets this for free
+  - GetObjectSet only works with temporary ObjectSets (in-memory Store); SavedObjectSet (PGSavedStore) is a separate persistence layer not wired here
+  - chi routing: GET {objectSetRid} wildcard must not conflict with POST static segments (loadObjects, loadLinks, aggregate, createTemporary) since they use different HTTP methods
+  - No new Repository methods needed — reuses existing ObjectSet executor and link resolution
+  - No mock repo updates needed in any package
   - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean
 ---
