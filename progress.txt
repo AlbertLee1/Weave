@@ -33,8 +33,14 @@
 - TimeSeries path params inconsistent: {property} vs {propertyName} — match Foundry exactly
 
 ## Codebase Patterns
+- When deleting frontend admin code: remove api/admin.ts, hooks/useAdminMutations.ts, components/admin/ directory, admin routes from App.tsx, Admin nav from Sidebar.tsx, and any admin imports in DashboardPage/hooks
+- DashboardPage is read-only after admin removal — ontology creation goes through SDK/CLI/API, not the frontend
+- useLinkTypes hook was the only non-admin consumer of api/admin.ts — was only used by AdminPage
+- ObjectSetPage.test.tsx mocks useObjectTypes module — update mock when exports change
 - When deleting a route: remove from RegisterRoutes, delete handler+service files, update Service interface, clean mock impls in all test files (including pkg/mcp/tools_test.go), remove OpenAPI paths from both yaml files
-- OSS Handler setter pattern: SetHistoryRepo, SetBroadcast, SetAggregation — always register the route in RegisterRoutes, return "XxxNotConfigured" error when deps are nil. Wire setters from NewFullRouter before RegisterRoutes call
+- OSS Handler setter pattern: SetAggregation — always register the route in RegisterRoutes, return "XxxNotConfigured" error when deps are nil. Wire setters from NewFullRouter before RegisterRoutes call. (SetHistoryRepo/SetBroadcast removed in US-006)
+- RegisterRoutes(r, omsHandler) signature — no aiProvider param after US-006. Only V2 read-only routes + query execute remain
+- After deleting routes: delete handler + test files, remove handler fields/setters, remove deps.Field from ServerDeps, remove OpenAPI paths + orphaned schemas, update contract test allowlists if needed
 - When moving an inline closure from main.go into a handler: update existing tests that relied on the old wiring (e.g. TestAggregationEndpoint_ErrorsAreJSON needed OssSvc after migration)
 - ApplyRequest.Options is *ApplyOptions (pointer, omitempty) — nil means use defaults
 - Handler resolves options with defaults before calling executor; executor is options-unaware
@@ -163,4 +169,64 @@
   - OSS Handler's RegisterRoutes always registers all routes; individual handlers check their deps and return "NotConfigured" errors — consistent with SetHistoryRepo pattern
   - Existing tests may wire only the deps that the old code needed; migrating a route to a new handler may require adding additional deps (OssSvc) to unrelated tests
   - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
+---
+
+## 2026-04-11 - US-006: Delete Weave extension routes from Foundry API surface (server side)
+- Removed all 54+ /api/admin/* routes from routes.go (ontology CRUD, objectType, property, linkType, actionType, interface, shared-properties, type-groups, value-types, datasource bindings, security policies, query types, search, export/import, snapshots, AI suggest)
+- Removed SSE /subscribe route and object history route from OSS handler RegisterRoutes
+- Removed API key management routes (/api/v2/admin/api-keys) from NewFullRouter
+- Deleted handler files: pkg/oss/handlers_history.go, pkg/oss/subscribe_handler.go
+- Deleted test files: pkg/oss/handlers_history_test.go, pkg/oss/subscribe_handler_test.go, cmd/server/routes_test.go, cmd/server/wire_pr01_test.go
+- Removed Broadcast field from ServerDeps and all broadcast wiring in main()
+- Removed historyRepo/broadcast fields and SetHistoryRepo/SetBroadcast methods from oss.Handler
+- Removed ai import from main.go, funnel import from handlers.go
+- Simplified RegisterRoutes signature to 2-arg (router + omsHandler)
+- Removed 37 admin/history/subscribe paths + ObjectHistory schemas from both OpenAPI specs
+- Created wire_us006_test.go with 6 TDD tests
+- Files changed:
+  - cmd/server/routes.go — stripped to V2 read-only + query execute only
+  - cmd/server/main.go — removed Broadcast, SetHistoryRepo/SetBroadcast wiring, API key routes, ai import
+  - cmd/server/main_test.go — updated stub type names
+  - cmd/server/wire_us005_test.go — updated stub type names
+  - cmd/server/wire_us006_test.go — NEW: TDD tests for route removal
+  - cmd/server/routes_test.go — DELETED
+  - cmd/server/wire_pr01_test.go — DELETED (was untracked)
+  - pkg/oss/handlers.go — removed history/subscribe routes, historyRepo/broadcast fields
+  - pkg/oss/handlers_history.go — DELETED
+  - pkg/oss/subscribe_handler.go — DELETED
+  - pkg/oss/handlers_history_test.go — DELETED
+  - pkg/oss/subscribe_handler_test.go — DELETED
+  - cmd/server/openapi_spec.yaml + api/openapi.yaml — removed 37 paths + ObjectHistory schemas
+- **Learnings for future iterations:**
+  - When deleting a test file that defines stub types used by other test files, move those types first
+  - yaml.dump (Python) reformats entire YAML — use line-based removal to preserve formatting for byte-identical contract test checks
+  - Contract test verifies route/spec sync — both sides must be updated atomically
+  - Broadcast in ServerDeps only existed for SSE subscribe; removing the route makes the entire chain dead code
+  - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
+---
+
+## 2026-04-11 - US-007: Update frontend for removed admin routes
+- Removed entire admin frontend: API layer, hooks, components, routes, navigation
+- DashboardPage now read-only — no create ontology modal/button (ontology management via SDK/CLI only)
+- Sidebar no longer shows Admin link
+- Files DELETED:
+  - web/src/api/admin.ts — all admin API calls (54+ functions)
+  - web/src/api/__tests__/admin.test.ts — admin API tests
+  - web/src/hooks/useAdminMutations.ts — admin mutation hooks (10 hooks)
+  - web/src/components/admin/ — entire directory (AdminPage, ObjectTypeDetailPage, ActionTypeDetailPage, 10+ list/form pages, AdminSidebar, CommandPalette, 4 test files)
+- Files MODIFIED:
+  - web/src/App.tsx — removed admin routes (4 routes) and admin component imports
+  - web/src/components/layout/Sidebar.tsx — removed Admin nav item
+  - web/src/components/dashboard/DashboardPage.tsx — removed createOntology import, mutation, modal, form state; kept read-only ontology display
+  - web/src/hooks/useObjectTypes.ts — removed useLinkTypes hook and admin API import
+  - web/src/components/objectsets/__tests__/ObjectSetPage.test.tsx — removed useLinkTypes from mock
+- Files CREATED:
+  - web/src/components/__tests__/admin-removed.test.tsx — 4 TDD tests verifying admin removal
+- **Learnings for future iterations:**
+  - useLinkTypes was the only non-admin consumer of api/admin.ts — only used by AdminPage
+  - DashboardPage previously had full create-ontology CRUD via admin API; now display-only
+  - EmptyState component's action prop is optional — safe to omit when removing CTA buttons
+  - Vite dynamic imports of deleted modules fail at build analysis, not runtime — can't use `import().rejects` pattern for testing module absence
+  - vi.mock intercepts all imports including dynamic ones — test module exports separately from mocked tests
+  - All 168 vitest tests pass, npx tsc --noEmit clean, go test ./... full regression green
 ---
