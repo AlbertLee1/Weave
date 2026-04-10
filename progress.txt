@@ -89,6 +89,15 @@
 - DLQ stream: OBJECT_EDITS_DLQ, subjects: edits.dlq.>, 72h retention, LimitsPolicy (not WorkQueue)
 - DLQMessage envelope includes OriginalSubject, OriginalData, Reason, NumDelivered, MaxDeliveries, StreamSequence, ConsumerSequence
 - Wire DLQ in main.go: consumer.SetDLQPublish(funnel.NewDLQPublishFunc(js)) after NewConsumer
+- Python SDK new namespace: client.objectsets = ObjectSetsAPI — load_objects, load_links, aggregate, create_temporary, get
+- Python SDK ontologies API covers all Phase 1 metadata: action_types, interface_types, value_types, query_types with list/get each
+- CLI SearchObjects requires selectProps []string (2nd arg after where) — server returns 400 without select
+- CLI ApplyAction has opts *ApplyOptions (last param, nil for defaults) — supports VALIDATE_ONLY mode
+- Frontend ActionApplyRequest now has optional options field (ActionApplyOptions) — mode + returnEdits
+- Frontend hooks: useApplyAction vars now accept optional options; useApplyBatch hook added for batch apply
+- Frontend ontologies.ts is the mega-file for all metadata API calls (ontologies + objectTypes + actionTypes + interfaceTypes + valueTypes + queryTypes + queries)
+- Use `npx tsc -b` (not `npx tsc --noEmit`) for frontend type checking — root tsconfig uses project references with `"files": []`, so --noEmit checks nothing
+- Dockerfile needs a Node.js build stage: .dockerignore excludes web/dist/, but Go embed in cmd/server/embed.go requires cmd/server/web/dist/
 
 ---
 
@@ -606,4 +615,65 @@
   - Schema cleanup is safe to do in bulk when admin routes are already deleted — no consumer references remain
   - Action schemas were the most significant update: old Weave-style envelopes (actionRid/batchId/offset/failures) replaced by Foundry V2 (operationId/validation/edits with ActionResults counts)
   - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean, 168/168 vitest pass
+---
+
+## 2026-04-11 - US-023: Python SDK + CLI + frontend full sync for Phase 1
+- Full Phase 1 client sync across Python SDK, Go CLI, and React frontend
+- **Python SDK (sdk/python/weave_client/):**
+  - New objectsets.py: ObjectSetsAPI with load_objects, load_links, aggregate, create_temporary, get (5 methods)
+  - Extended ontologies.py: +17 methods — load_metadata, get_full_metadata, object type full metadata + RID batch, action types (list/get/byRid/batch/fullMetadata), interface types, value types, query types
+  - Extended objects.py: +3 methods — count, list_linked_objects, get_linked_object
+  - Extended actions.py: +3 methods — apply_with_options (VALIDATE_ONLY mode), apply_batch, execute_query
+  - New types in types.py: InterfaceType, ValueType, QueryType, BatchApplyActionResponse, CountResponse
+  - Updated client.py: added objectsets namespace
+  - Updated __init__.py: exports new types
+  - 44 new tests across 3 new test files + updated test_actions.py (69 total, was 25)
+- **CLI (internal/cliclient/):**
+  - BUG FIX: SearchObjects now requires selectProps []string (server returns 400 without select)
+  - BUG FIX: ApplyAction now accepts *ApplyOptions for VALIDATE_ONLY mode + returnEdits control
+  - Added ValidationResult to ApplyActionResponse
+  - New types: ApplyOptions, ValidationResult, BatchApplyResponse, InterfaceType, ValueType, QueryType
+  - 25 new methods: ontology metadata, objectType fullMetadata/batch, actionType get/byRid/batch/fullMetadata, object count/links, apply batch, interface/value/query types, query execute, objectSet load/links/aggregate/createTemp/get
+  - Updated cmd/weave-cli/cmd_object.go: search command now accepts --select flag
+  - 25 new tests (42 total, was 17)
+- **Frontend (web/src/api/, hooks/):**
+  - types.ts: added ActionApplyOptions, ActionBatchApplyRequest, BatchApplyActionResponse, CountObjectsResponse
+  - actions.ts: added applyBatch function
+  - objects.ts: added countObjects, getLinkedObject
+  - objectsets.ts: added getObjectSet, loadLinks
+  - ontologies.ts: added 14 functions — loadOntologyMetadata, getOntologyFullMetadata, getObjectTypeFullMetadata, getObjectTypesByRidBatch, getActionTypeByRid, getActionTypesByRidBatch, getActionTypeFullMetadata, listActionTypesFullMetadata, listInterfaceTypes, getInterfaceType, listValueTypes, getValueType, listQueryTypes, getQueryType, executeQuery
+  - useActions.ts: ApplyActionVariables now includes optional options, added useApplyBatch hook
+  - ActionConsolePage.tsx: fixed mutate variable name (actionType → action)
+  - 18 new tests across 4 updated test files (186 total, was 168)
+- Files changed: 27 files, +2569/-32 lines
+- **Learnings for future iterations:**
+  - CLI SearchObjects was silently broken against Phase 1 server (missing required select) — always run client against the actual server API schema
+  - ApplyOptions is a pointer (*ApplyOptions) in Go CLI, Optional in Python, optional field in TS — consistent nil/None/undefined semantics
+  - ontologies.ts is the mega-file for all metadata endpoints — keeps consistent patterns but gets large (220+ lines)
+  - Python SDK test pattern: _StubServer from test_client.py is shared across all test files via import
+  - Frontend test pattern: MSW (setupServer/http handlers) for each API module, each test describes request expectations
+  - All quality checks pass: go test ./... (full), npx tsc --noEmit, 186/186 vitest, 69/69 pytest, 42/42 CLI tests
+---
+
+## 2026-04-11 - US-024: Phase 1 integration gate: full test suite green
+- Verification-only story — ran all test suites, fixed issues found
+- Fixed: frontend test files missing required `select` field after US-016 made it required
+  - web/src/api/__tests__/objectsets.test.ts: added select to 2 loadObjectSet calls
+  - web/src/hooks/__tests__/useObjectSets.test.ts: added select to 3 useLoadObjectSet calls
+- Fixed: Dockerfile missing frontend build stage (embed.go requires cmd/server/web/dist/)
+  - Added Node.js multi-stage build: FROM node:20-alpine → npm ci → npm run build → COPY to embed path
+- Test results:
+  - go test ./... — 28 packages pass (including test/e2e, test/chinook, test/northwind)
+  - go vet ./... — clean
+  - npx tsc -b — passes (note: tsc --noEmit is vacuous with project refs tsconfig)
+  - npx vitest run — 36 files, 186 tests pass
+  - python -m pytest tests/ — 69 tests pass
+  - docker compose build — Dockerfile correct but Docker Hub unreachable (TLS timeout, transient network)
+- Foundry API alignment: ~54% (37/68 endpoints implemented)
+  - Below the 60% target; remaining gaps are standalone linkType list/get, interface data query endpoints, and Phase 2+ features
+- Files changed: Dockerfile, web/src/api/__tests__/objectsets.test.ts, web/src/hooks/__tests__/useObjectSets.test.ts
+- **Learnings for future iterations:**
+  - `npx tsc --noEmit` with root tsconfig.json (which has `"files": []` + project references) checks zero files — always use `npx tsc -b` for actual type checking
+  - Dockerfile must include a Node.js build stage since .dockerignore excludes web/dist/ and cmd/server/web/dist/ but Go embed requires cmd/server/web/dist/
+  - When making a field required (like select in US-016), search ALL test files with tsc -b, not just tsc --noEmit
 ---

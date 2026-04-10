@@ -39,6 +39,7 @@ describe('objectsets API', () => {
 
     const result = await loadObjectSet('test', {
       objectSet: baseObjectSet,
+      select: ['__primaryKey'],
     });
     expect(result.data).toHaveLength(1);
     expect(result.totalCount).toBe('10');
@@ -59,6 +60,7 @@ describe('objectsets API', () => {
 
     await loadObjectSet('test', {
       objectSet: baseObjectSet,
+      select: ['__primaryKey'],
       pageSize: 25,
       pageToken: 'tok123',
     });

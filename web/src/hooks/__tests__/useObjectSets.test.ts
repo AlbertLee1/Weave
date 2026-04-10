@@ -33,6 +33,7 @@ describe('useLoadObjectSet', () => {
         useLoadObjectSet({
           ontologyApiName: 'test',
           objectSet: baseObjectSet,
+          select: ['__primaryKey'],
           enabled: true,
         }),
       { wrapper: makeWrapper() },
@@ -42,6 +43,7 @@ describe('useLoadObjectSet', () => {
     expect(result.current.data?.data).toHaveLength(1);
     expect(objectsetsApi.loadObjectSet).toHaveBeenCalledWith('test', {
       objectSet: baseObjectSet,
+      select: ['__primaryKey'],
     });
   });
 
@@ -56,6 +58,7 @@ describe('useLoadObjectSet', () => {
         useLoadObjectSet({
           ontologyApiName: 'test',
           objectSet: baseObjectSet,
+          select: ['__primaryKey'],
           enabled: false,
         }),
       { wrapper: makeWrapper() },
@@ -78,6 +81,7 @@ describe('useLoadObjectSet', () => {
         useLoadObjectSet({
           ontologyApiName: '',
           objectSet: baseObjectSet,
+          select: ['__primaryKey'],
           enabled: true,
         }),
       { wrapper: makeWrapper() },
