@@ -1512,6 +1512,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "unitPrice",
 				"value": 0.99,
 			},
+			"select":   []string{"trackId", "unitPrice"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1536,6 +1537,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "unitPrice",
 				"value": 0.99,
 			},
+			"select":   []string{"trackId", "unitPrice"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1564,6 +1566,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "country",
 				"value": "Brazil",
 			},
+			"select": []string{"customerId", "country"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/customer/search", env.ontologyRID), body)
@@ -1586,6 +1589,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "name",
 				"value": "B",
 			},
+			"select":   []string{"trackId", "name"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1623,6 +1627,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 					{"type": "gt", "field": "unitPrice", "value": 0.99},
 				},
 			},
+			"select":   []string{"trackId", "genreId", "unitPrice"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1647,6 +1652,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "company",
 				"value": true,
 			},
+			"select":   []string{"customerId", "company"},
 			"pageSize": 100,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1867,6 +1873,7 @@ func TestChinook_Phase7_ObjectSet(t *testing.T) {
 				"type":       "base",
 				"objectType": "track",
 			},
+			"select": []string{"trackId", "name"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)
@@ -1896,6 +1903,7 @@ func TestChinook_Phase7_ObjectSet(t *testing.T) {
 					"value": 0.99,
 				},
 			},
+			"select": []string{"trackId", "unitPrice"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)
@@ -1921,6 +1929,7 @@ func TestChinook_Phase7_ObjectSet(t *testing.T) {
 				"type":       "base",
 				"objectType": "track",
 			},
+			"select":   []string{"trackId", "name"},
 			"pageSize": 5,
 		}
 		rr := doRequest(t, env, http.MethodPost,

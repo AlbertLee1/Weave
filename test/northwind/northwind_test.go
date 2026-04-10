@@ -1650,6 +1650,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "discontinued",
 				"value": true,
 			},
+			"select": []string{"productId", "discontinued"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/product/search", env.ontologyRID), body)
@@ -1680,6 +1681,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "unitPrice",
 				"value": 100.0,
 			},
+			"select": []string{"productId", "unitPrice"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/product/search", env.ontologyRID), body)
@@ -1706,6 +1708,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "freight",
 				"value": 500.0,
 			},
+			"select": []string{"orderId", "freight"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/order/search", env.ontologyRID), body)
@@ -1731,6 +1734,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "country",
 				"value": "Germany",
 			},
+			"select": []string{"customerId", "country"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/customer/search", env.ontologyRID), body)
@@ -1754,6 +1758,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "unitsInStock",
 				"value": 0,
 			},
+			"select": []string{"productId", "unitsInStock"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/product/search", env.ontologyRID), body)
@@ -1914,6 +1919,7 @@ func TestNorthwind_Phase7_ObjectSet(t *testing.T) {
 				"type":       "base",
 				"objectType": "product",
 			},
+			"select": []string{"productId", "productName"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)
@@ -1943,6 +1949,7 @@ func TestNorthwind_Phase7_ObjectSet(t *testing.T) {
 					"value": true,
 				},
 			},
+			"select": []string{"productId", "discontinued"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)

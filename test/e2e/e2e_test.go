@@ -1086,6 +1086,7 @@ func TestE2E_SearchObjects_Eq(t *testing.T) {
 			"field": "department",
 			"value": "engineering",
 		},
+		"select": []string{"employeeId", "name", "department"},
 	})
 	defer resp.Body.Close()
 
@@ -1114,6 +1115,7 @@ func TestE2E_SearchObjects_And(t *testing.T) {
 				{"type": "gte", "field": "age", "value": 30},
 			},
 		},
+		"select": []string{"employeeId", "name", "age", "department"},
 	})
 	defer resp.Body.Close()
 
@@ -1270,6 +1272,7 @@ func TestE2E_ObjectSet_Base(t *testing.T) {
 			"type":       "base",
 			"objectType": "Employee",
 		},
+		"select": []string{"employeeId", "name", "age", "department"},
 	})
 	defer resp.Body.Close()
 
@@ -1306,6 +1309,7 @@ func TestE2E_ObjectSet_Filter(t *testing.T) {
 				"value": "engineering",
 			},
 		},
+		"select": []string{"employeeId", "name", "department"},
 	})
 	defer resp.Body.Close()
 
@@ -1356,6 +1360,7 @@ func TestE2E_ObjectSet_Union(t *testing.T) {
 				},
 			},
 		},
+		"select": []string{"employeeId", "name", "department"},
 	})
 	defer resp.Body.Close()
 
@@ -1407,6 +1412,7 @@ func TestE2E_ObjectSet_Intersect(t *testing.T) {
 				},
 			},
 		},
+		"select": []string{"employeeId", "name", "age", "department"},
 	})
 	defer resp.Body.Close()
 

@@ -33,7 +33,7 @@ export interface SearchObjectsParams {
   pageSize?: number;
   pageToken?: string;
   orderBy?: { field: string; direction?: 'asc' | 'desc' };
-  select?: string[];
+  select: string[];
 }
 
 export function searchObjects(params: SearchObjectsParams): Promise<ObjectPage> {

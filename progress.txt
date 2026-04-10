@@ -71,6 +71,13 @@
 - For optional-presence JSON request fields, use *json.RawMessage — nil if key absent, non-nil (even empty `{}`) if present
 - ObjectSet handler endpoints live in pkg/oss/objectset/handler*.go — new endpoints for objectSets go here, not in pkg/oss/handlers.go
 - LoadLinks reuses searchAround executor internally — to add link-based ObjectSet endpoints, compose a searchAround Definition and pass to executor.Execute()
+- Foundry V2: select is REQUIRED in SearchObjectsRequestV2 and LoadObjectSetRequestV2 — missing/empty returns 400 with SelectRequired error
+- Frontend callers (BrowserPage, ObjectSetResults) must derive select from objectType.properties before calling search/loadObjects
+- ObjectSetResults resolves the static root type name from the ObjectSet definition, fetches type metadata, then passes its property keys as select
+- fullMetadata endpoints (objectType, actionType, actionTypesFullMetadata, ontology) all require ?preview=true — use the existing requirePreview() helper in handlers_v2_metadata.go
+- ObjectType.status Foundry values: ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED — migration 000014 maps PROMOTED→ENDORSED, EXAMPLE→EXPERIMENTAL
+- When adding a REQUIRED field to a handler: update ALL test bodies in test/e2e/, test/northwind/, test/chinook/ that call that endpoint
+- Python SDK search() now requires `select` keyword arg — callers must provide property list
 
 ---
 
@@ -413,4 +420,49 @@
   - No new Repository methods needed — reuses existing ObjectSet executor and link resolution
   - No mock repo updates needed in any package
   - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean
+---
+
+## 2026-04-11 - US-016: Search / LoadObjectSet select required + ListOntologies remove pagination
+- Made SearchObjectsRequestV2.select REQUIRED — missing/empty returns 400 SelectRequired
+- Made LoadObjectSetRequestV2.select REQUIRED — missing/empty returns 400 SelectRequired
+- Verified ListOntologies already returns { data: [...] } with NO pagination (no change needed)
+- Added ENDORSED to ObjectType/ActionType status enum via migration 000014 (PROMOTED→ENDORSED, EXAMPLE→EXPERIMENTAL)
+- Added ?preview=true requirement to all fullMetadata endpoints (objectType, actionType, actionTypesFullMetadata, ontology)
+- Updated frontend BrowserPage to derive select from objectType.properties
+- Updated frontend ObjectSetResults to resolve static root type, fetch type metadata, then pass properties as select
+- Updated frontend types: ObjectType.status enum now ACTIVE|ENDORSED|EXPERIMENTAL|DEPRECATED, LoadObjectSetRequest.select now required
+- Updated Python SDK objects.search() to require select keyword argument
+- Files changed:
+  - pkg/oss/handlers.go — select validation in SearchObjects handler
+  - pkg/oss/objectset/handler.go — select validation in LoadObjects handler
+  - pkg/oms/handlers.go — added requirePreview to GetFullMetadata
+  - pkg/oms/handlers_v2_metadata.go — added requirePreview to GetActionTypeFullMetadataV2, ListActionTypesFullMetadataV2
+  - pkg/oms/handlers_v2_objecttype.go — added requirePreview to GetObjectTypeFullMetadataV2
+  - migrations/000014_foundry_status_endorsed.up.sql — NEW: status enum migration
+  - migrations/000014_foundry_status_endorsed.down.sql — NEW: rollback
+  - pkg/oss/handlers_us016_test.go — NEW: 3 TDD tests for search select required
+  - pkg/oss/objectset/handler_us016_test.go — NEW: 3 TDD tests for loadObjects select required
+  - pkg/oms/handlers_us016_test.go — NEW: 11 TDD tests (ListOntologies noPagination, status ENDORSED, fullMetadata preview)
+  - web/src/api/types.ts — ObjectType status enum updated, LoadObjectSetRequest.select required
+  - web/src/api/objects.ts — SearchObjectsParams.select required
+  - web/src/hooks/useObjectSets.ts — UseLoadObjectSetParams.select required
+  - web/src/components/browser/BrowserPage.tsx — passes select from objectType properties
+  - web/src/components/objectsets/ObjectSetResults.tsx — resolves static type, derives select from metadata
+  - sdk/python/weave_client/objects.py — search() now requires select keyword arg
+  - sdk/python/tests/test_objects.py — updated search test with select
+  - sdk/python/README.md — updated search example with select
+  - api/openapi.yaml — select required in schemas, preview on fullMetadata endpoints
+  - cmd/server/openapi_spec.yaml — byte-identical mirror
+  - pkg/oms/handlers_v2_actiontype_test.go — added ?preview=true to fullMetadata test URLs
+  - pkg/oms/handlers_v2_objecttype_test.go — added ?preview=true to fullMetadata test URLs
+  - test/e2e/e2e_test.go — added select to 6 search/loadObjects test bodies
+  - test/northwind/northwind_test.go — added select to 7 search/loadObjects test bodies
+  - test/chinook/chinook_test.go — added select to 9 search/loadObjects test bodies
+  - prd.json — US-016 passes: true
+- **Learnings for future iterations:**
+  - When making a field REQUIRED: update ALL callers (frontend, SDK, e2e, chinook, northwind tests)
+  - requirePreview() helper is reusable across all preview-gated endpoints
+  - Frontend ObjectSetResults needs the type metadata BEFORE calling loadObjects to derive select — use resolveRootType() for static resolution
+  - ObjectType status values change by migration only; Go model is a plain string with no Go-level enum
+  - All Go tests pass (full regression green), npx tsc --noEmit clean, 168/168 vitest pass, 25/25 Python SDK tests pass
 ---

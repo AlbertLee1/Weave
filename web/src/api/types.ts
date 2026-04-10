@@ -15,7 +15,7 @@ export interface ObjectType {
   description?: string;
   primaryKey: string;
   titleProperty?: string;
-  status: 'PROMOTED' | 'ACTIVE' | 'EXPERIMENTAL' | 'DEPRECATED' | 'EXAMPLE';
+  status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   icon?: string;
   color?: string;
@@ -329,7 +329,7 @@ export interface OrderBy {
 
 export interface LoadObjectSetRequest {
   objectSet: ObjectSetDefinition;
-  select?: string[];
+  select: string[];
   orderBy?: OrderBy;
   pageSize?: number;
   pageToken?: string;

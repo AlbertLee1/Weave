@@ -210,7 +210,7 @@ func TestGetActionTypeFullMetadata_Found(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata", handler.GetActionTypeFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypes/createEmployee/fullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypes/createEmployee/fullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -250,7 +250,7 @@ func TestGetActionTypeFullMetadata_NotFound(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata", handler.GetActionTypeFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypes/nonexistent/fullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypes/nonexistent/fullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -277,7 +277,7 @@ func TestGetActionTypeFullMetadata_ByRID(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata", handler.GetActionTypeFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypes/ri.ontology.main.action-type.at1/fullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypes/ri.ontology.main.action-type.at1/fullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -317,7 +317,7 @@ func TestListActionTypesFullMetadata_WithData(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypesFullMetadata", handler.ListActionTypesFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/ri.ontology.main.ontology.1/actionTypesFullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/ri.ontology.main.ontology.1/actionTypesFullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -355,7 +355,7 @@ func TestListActionTypesFullMetadata_Empty(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypesFullMetadata", handler.ListActionTypesFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypesFullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/actionTypesFullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

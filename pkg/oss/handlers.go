@@ -141,6 +141,14 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Foundry V2: select is REQUIRED
+	if len(body.Select) == 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("SelectRequired", map[string]string{
+			"reason": "SearchObjectsRequestV2.select is required and must be a non-empty array of property apiNames",
+		}))
+		return
+	}
+
 	// Read pageSize from body first, fall back to query params.
 	pageSize := body.PageSize
 	if pageSize == 0 {

@@ -154,6 +154,9 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 // GetFullMetadata handles GET /api/v2/ontologies/{ontologyApiName}/fullMetadata.
 // It returns the complete ontology metadata in a single response.
 func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
+	if !requirePreview(w, r) {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 
 	ontology, err := h.repo.GetOntology(r.Context(), ontologyRID)

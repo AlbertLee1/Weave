@@ -88,6 +88,14 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Foundry V2: select is REQUIRED
+	if len(req.Select) == 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("SelectRequired", map[string]string{
+			"reason": "LoadObjectSetRequestV2.select is required and must be a non-empty array of property apiNames",
+		}))
+		return
+	}
+
 	// Execute the ObjectSet to get PKs
 	result, err := h.executor.Execute(r.Context(), req.ObjectSet)
 	if err != nil {

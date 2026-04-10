@@ -15,6 +15,9 @@ import (
 // GetObjectTypeFullMetadataV2 handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata.
 // Returns the ObjectType with all metadata fields including full property detail.
 func (h *OMSHandler) GetObjectTypeFullMetadataV2(w http.ResponseWriter, r *http.Request) {
+	if !requirePreview(w, r) {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	otIdentifier := chi.URLParam(r, "objectTypeApiName")
 

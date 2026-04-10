@@ -36,7 +36,7 @@ func TestGetObjectTypeFullMetadata_Found(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata", handler.GetObjectTypeFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/objectTypes/Employee/fullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/objectTypes/Employee/fullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -78,7 +78,7 @@ func TestGetObjectTypeFullMetadata_NotFound(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata", handler.GetObjectTypeFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/objectTypes/Nonexistent/fullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/objectTypes/Nonexistent/fullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -105,7 +105,7 @@ func TestGetObjectTypeFullMetadata_ByRID(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata", handler.GetObjectTypeFullMetadataV2)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/objectTypes/ri.ontology.main.object-type.ot1/fullMetadata", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/objectTypes/ri.ontology.main.object-type.ot1/fullMetadata?preview=true", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

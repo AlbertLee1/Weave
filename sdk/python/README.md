@@ -52,7 +52,7 @@ hits = weave.objects.search("northwind", "Customer", {
     "type": "eq",
     "field": "country",
     "value": "Germany",
-})
+}, select=["customerId", "companyName", "country"])
 
 # 7. Apply an action.
 result = weave.actions.apply("northwind", "createCustomer", {

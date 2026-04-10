@@ -783,6 +783,7 @@ components:
           type: string
     SearchObjectsRequest:
       type: object
+      required: [select]
       properties:
         where:
           type: object
@@ -792,6 +793,7 @@ components:
           type: array
           items:
             type: string
+          description: Required list of property apiNames to return.
         pageSize:
           type: integer
         pageToken:
@@ -820,7 +822,7 @@ components:
           type: string
     LoadObjectSetRequest:
       type: object
-      required: [objectSet]
+      required: [objectSet, select]
       properties:
         objectSet:
           $ref: "#/components/schemas/ObjectSetDefinition"
@@ -828,6 +830,7 @@ components:
           type: array
           items:
             type: string
+          description: Required list of property apiNames to return.
         orderBy:
           type: object
           properties:
@@ -1779,11 +1782,12 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata:
     get:
       operationId: getObjectTypeFullMetadata
-      summary: Get a single object type with full metadata
+      summary: Get a single object type with full metadata (preview)
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ObjectTypeApiName"
+        - $ref: "#/components/parameters/PreviewRequired"
       responses:
         "200":
           description: Object type with full metadata (includes all properties with detail).
@@ -1931,11 +1935,12 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata:
     get:
       operationId: getActionTypeFullMetadata
-      summary: Get a single action type with full metadata
+      summary: Get a single action type with full metadata (preview)
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ActionTypeRid"
+        - $ref: "#/components/parameters/PreviewRequired"
       responses:
         "200":
           description: Action type with full metadata (includes rules, submissionCriteria, sideEffects).
@@ -1950,10 +1955,11 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/actionTypesFullMetadata:
     get:
       operationId: listActionTypesFullMetadata
-      summary: List all action types with full metadata
+      summary: List all action types with full metadata (preview)
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/PreviewRequired"
       responses:
         "200":
           description: All action types with full metadata.
@@ -2060,11 +2066,12 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/fullMetadata:
     get:
       operationId: getFullMetadata
-      summary: Get the full ontology metadata in one response
+      summary: Get the full ontology metadata in one response (preview)
       description: Returns the ontology, its object types (with properties), link types, action types, and interfaces in a single payload.
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/PreviewRequired"
       responses:
         "200":
           description: Full metadata payload.

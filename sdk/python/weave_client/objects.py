@@ -88,11 +88,16 @@ class ObjectsAPI:
         object_type: str,
         where: Dict[str, Any],
         *,
+        select: "list[str]",
         page_size: Optional[int] = None,
         page_token: Optional[str] = None,
     ) -> ObjectPage:
-        """POST a where-clause search request."""
-        body: Dict[str, Any] = {"where": where}
+        """POST a where-clause search request.
+
+        Args:
+            select: Required list of property apiNames to return.
+        """
+        body: Dict[str, Any] = {"where": where, "select": select}
         if page_size is not None:
             body["pageSize"] = page_size
         if page_token:

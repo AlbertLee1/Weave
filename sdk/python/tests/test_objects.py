@@ -44,11 +44,17 @@ class ObjectsAPITests(unittest.TestCase):
         body = '{"data":[{"__primaryKey":"ALFKI","customerId":"ALFKI"}],"totalCount":"1"}'
         with _StubServer({"POST /api/v2/ontologies/nw/objects/Customer/search": (200, body)}) as srv:
             c = Client(srv.url, access_token="t")
-            page = c.objects.search("nw", "Customer", {"type": "eq", "field": "customerId", "value": "ALFKI"})
+            page = c.objects.search(
+                "nw", "Customer",
+                {"type": "eq", "field": "customerId", "value": "ALFKI"},
+                select=["customerId", "companyName"],
+            )
             req_body = srv.requests[0]["body"]
         self.assertEqual(len(page.data), 1)
         self.assertIn('"where"', req_body)
         self.assertIn('"ALFKI"', req_body)
+        self.assertIn('"select"', req_body)
+        self.assertIn('"customerId"', req_body)
 
     def test_iterate_pages_until_no_token(self):
         first = '{"data":[{"__primaryKey":"A"}],"nextPageToken":"p2","totalCount":"3"}'
