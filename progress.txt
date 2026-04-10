@@ -107,6 +107,7 @@
 - When adding a new Definition field in pkg/oss/objectset/definition.go: always tag with omitempty and pick a sensible zero value (empty slice / "" / nil pointer) so existing JSON wire shapes round-trip unchanged.
 - Foundry apply variants (apply / applyWithOverrides / applyBatch) all share the same SyncApplyActionResponseV2 / BatchApplyActionResponseV2 envelope + countEdits helper — when adding another variant, construct an ApplyRequest and forward to executor.Apply, do not duplicate the Prepare/Apply/returnEdits control flow beyond what handlers.go already does.
 - Action handler tests use pub.batches (slice of all published EditBatch) — not a lastBatch field. funnel.Edit has Properties map, no After/Before.
+- pkg/attachment is the Foundry attachment blob layer: BlobStore interface + LocalStore filesystem backend (`<uuid>.blob` + `<uuid>.meta.json` sidecar). RID shape is `ri.attachments.main.attachment.{uuid}` (new "attachments" service, separate from "ontology"). validateRID() rejects path traversal before any FS access. Unlinked uploads expire via StartCleanupLoop(ctx, interval, maxAge) — wire with 1h maxAge in main.go for US-033.
 
 ---
 
@@ -867,4 +868,21 @@
   - Phase 2 gate = Phase 1 (25 ontology metadata) + Phase 2 (objects 7 + objectSets 7 + actions 3 + interfaces data 4 + me 1) = 47 个 V2 operation
   - web/ 下 `npx tsc --noEmit` 和 `npx tsc -b` 是两种不同的检查 — --noEmit 在 project references 项目里等于 no-op，必须用 -b；PRD 里写 --noEmit 时应视为 -b 的别名
   - US-031 类 verification-only story 不需要 TDD failing test first — 只需要运行已有测试并聚合证据
+---
+
+## 2026-04-11 - US-032: Attachment blob storage backend
+- Introduced `pkg/attachment/` with BlobStore interface and LocalStore filesystem backend; TDD red→green with 7 table-light subtests
+- `pkg/attachment/store.go`: BlobStore interface (Put, PutWithRID, Get, Stat, Delete, MarkLinked, CleanupUnlinked) + Attachment wire struct + ErrNotFound / ErrAlreadyExists / ErrInvalidRID sentinels
+- `pkg/attachment/local_store.go`: LocalStore rooted at a dir, `.blob` + `.meta.json` sidecar per UUID, RID shape locked to `ri.attachments.main.attachment.{uuid}`, path-traversal rejected, NewAttachmentRID() helper, `overrideCreatedAt` test hook so TTL tests don't sleep for hours, StartCleanupLoop(ctx, interval, maxAge) goroutine returns a done chan for graceful shutdown
+- Files changed: pkg/attachment/store.go (new), pkg/attachment/local_store.go (new), pkg/attachment/store_test.go (new), prd.json (US-032 passes:true), progress.txt
+- Tests: `go test ./pkg/attachment/...` 7/7 pass; `go test ./...` full module green (cached for 28 other packages, only pkg/attachment re-ran)
+- **Learnings for future iterations:**
+  - RID format for attachments: `ri.attachments.main.attachment.{uuid}` — new "attachments" service, separate from "ontology" service; not registered in pkg/rid/rid.go because LocalStore has its own NewAttachmentRID() helper (avoids extra dep in pkg/rid just for one constant)
+  - LocalStore sidecar pattern: `<uuid>.blob` + `<uuid>.meta.json` in a flat dir. Keep metadata alongside blob so Stat is a cheap file read; no sqlite or bleve needed
+  - RID→path derivation MUST strip the `ri.attachments.main.attachment.` prefix first and reject any residue containing `/`, `\` or `..`, otherwise an attacker-supplied RID can escape Root. validateRID() returns ErrInvalidRID
+  - Cleanup loop pattern for TTL: `StartCleanupLoop(ctx, interval, maxAge) <-chan struct{}` returns a done chan, the goroutine selects on ctx.Done() + ticker.C, and logs per-tick errors without killing the loop. This pattern should be reused in US-033/034 when wiring main.go
+  - TTL test trick: expose a `overrideCreatedAt(rid, time.Time)` helper on the concrete LocalStore (not on the interface) so tests can backdate an attachment to before the cutoff instead of sleeping. Package-private so external callers can't use it
+  - `MarkLinked` is idempotent and must survive repeated calls (action apply can re-link the same attachment on retry). Check the Linked flag before rewriting meta.json
+  - `CleanupUnlinked` must be tolerant of partially corrupt meta files (log + skip, don't abort the sweep) so a single bad file doesn't block TTL for all attachments
+  - For Phase 3 story US-033 (global attachment upload endpoints): wire `attachment.NewLocalStore(cfg.DataDir+"/attachments")` in main.go, call `StartCleanupLoop(ctx, 10*time.Minute, time.Hour)` after construction, and shut it down before HTTP server exit. Routes are global (`/api/v2/ontologies/attachments/...`) — no {ontology} param
 ---

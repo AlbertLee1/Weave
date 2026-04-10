@@ -520,8 +520,8 @@
         "go test ./pkg/attachment/... passes"
       ],
       "priority": 32,
-      "passes": false,
-      "notes": "Phase 3 starts here."
+      "passes": true,
+      "notes": "Phase 3 starts here. Delivered 2026-04-11: pkg/attachment/store.go defines BlobStore interface (Put, PutWithRID, Get, Stat, Delete, MarkLinked, CleanupUnlinked) plus ErrNotFound/ErrAlreadyExists/ErrInvalidRID sentinels and Attachment wire struct. pkg/attachment/local_store.go implements filesystem backend rooted at a dir, sidecar .meta.json + .blob files keyed by UUID suffix of ri.attachments.main.attachment.* RIDs (path traversal rejected), Linked=false by default. StartCleanupLoop(ctx, interval, maxAge) runs a tick-based goroutine that deletes unlinked attachments older than maxAge (1h in production wiring). go test ./pkg/attachment/... and go test ./... green."
     },
     {
       "id": "US-033",
