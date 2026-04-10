@@ -1685,6 +1685,54 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/getByRidBatch:
+    post:
+      operationId: getObjectTypesByRidBatch
+      summary: Batch lookup object types by RIDs
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of ObjectType RIDs to look up.
+      responses:
+        "200":
+          description: Batch object type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata:
+    get:
+      operationId: getObjectTypeFullMetadata
+      summary: Get a single object type with full metadata
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: Object type with full metadata (includes all properties with detail).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes:
     get:
       operationId: listOutgoingLinkTypes
@@ -1700,6 +1748,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/editsHistory:
+    post:
+      operationId: postObjectTypeEditsHistory
+      summary: Get edit history for an object type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+      responses:
+        "200":
+          description: Edit history list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ActionLog"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

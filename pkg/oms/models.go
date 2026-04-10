@@ -103,6 +103,55 @@ func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
+// ToFullMetadataJSON returns the V2 wire format JSON for ObjectType
+// with all metadata fields included (properties with full detail, etc.).
+func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
+	wire := map[string]interface{}{
+		"apiName":     ot.APIName,
+		"displayName": ot.DisplayName,
+		"status":      ot.Status,
+		"primaryKey":  ot.PrimaryKey,
+		"rid":         ot.RID,
+		"visibility":  ot.Visibility,
+	}
+
+	if ot.PluralDisplayName != "" {
+		wire["pluralDisplayName"] = ot.PluralDisplayName
+	}
+	if ot.Description != "" {
+		wire["description"] = ot.Description
+	}
+	if ot.TitleProperty != "" {
+		wire["titleProperty"] = ot.TitleProperty
+	}
+	if ot.IconName != "" {
+		wire["icon"] = ot.IconName
+	}
+	if ot.Color != "" {
+		wire["color"] = ot.Color
+	}
+
+	if len(ot.Properties) > 0 {
+		props := make(map[string]interface{})
+		for _, p := range ot.Properties {
+			entry := map[string]interface{}{
+				"dataType": p.DataTypeJSON(),
+				"rid":      p.RID,
+			}
+			if p.DisplayName != "" {
+				entry["displayName"] = p.DisplayName
+			}
+			if p.Description != "" {
+				entry["description"] = p.Description
+			}
+			props[p.APIName] = entry
+		}
+		wire["properties"] = props
+	}
+
+	return json.Marshal(wire)
+}
+
 // Property defines a property on an ObjectType.
 type Property struct {
 	RID              string          `json:"rid"`

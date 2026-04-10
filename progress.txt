@@ -59,9 +59,15 @@
 - All ByAPIName PG queries use disjunctive dual-accept: `AND (rid = $2 OR api_name = $2)` for the entity param, and `WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))` for the ontology param
 - When adding a new method to oms.Repository interface, update ALL mock repos: pkg/oms/handlers_test.go, pkg/actions/actions_test.go, pkg/index/rehydrate_test.go, pkg/links/resolver_test.go, pkg/oss/service_test.go, test/e2e/e2e_test.go, test/chinook/chinook_test.go, test/northwind/northwind_test.go (pkg/mcp/tools_test.go embeds oms.Repository so auto-inherits)
 - rid.IsRID(s) checks `strings.HasPrefix(s, "ri.")` — use to distinguish RID from apiName in handlers
-- Preview endpoints (interfaceTypes, valueTypes) require ?preview=true — use requirePreview() helper in handlers_v2_metadata.go
+- Preview endpoints (interfaceTypes, valueTypes) require ?preview=true — use requirePreview() helper in handlers_v2_metadata.go; queryTypes does NOT require preview
+- All V2 routes use `{ontologyApiName}` as the chi URL param name — keep this consistent when adding new routes
 - ValueType is global (no OntologyRID) — ListValueTypes() takes no ontology param; GetValueTypeByAPIName uses simple dual-accept (rid OR api_name)
 - When adding new V2 read endpoints: add route in routes.go, add path in api/openapi.yaml, copy to cmd/server/openapi_spec.yaml (byte-identical contract test)
+- chi routing: register static-segment routes (e.g. byRid, getByRidBatch) BEFORE wildcard routes ({actionTypeRid}) so the wildcard doesn't swallow them
+- ActionType has two serialization methods: ToWireJSON() for basic list format, ToFullMetadataJSON() for everything (rules, submissionCriteria, etc.)
+- ObjectType has two serialization methods: ToWireJSON() for basic list format, ToFullMetadataJSON() for everything (properties with full detail, icon, color, etc.)
+- Foundry batch-by-RID pattern: silently skip missing RIDs, return only found entries; reuse getByRidBatchRequest type across ActionType/ObjectType
+- ObjectType fullMetadata handler loads properties via ListProperties(ctx, ot.RID) before serialization — properties are not auto-loaded on GetObjectTypeByAPIName
 
 ---
 
@@ -282,4 +288,81 @@
   - Preview query param is a Foundry pattern for experimental/preview endpoints — simple boolean check
   - Contract test (TestContract_AllRoutesDocumented) enforces route-spec sync; must update both openapi.yaml files atomically
   - All Go tests pass including e2e, chinook, northwind (full regression green)
+---
+
+## 2026-04-11 - US-011: Add QueryType v2 read endpoints and fix query execute path param
+- Added 2 new Foundry V2 read-only endpoints: ListQueryTypesV2, GetQueryTypeV2
+- Fixed ExecuteQueryType handler and route to use `{ontologyApiName}` param (was `{ontology}`) for consistency with all other V2 routes
+- ListQueryTypesV2 returns `{ data: [QueryType] }` — no preview gating (matches Foundry; only interfaceTypes/valueTypes require preview)
+- GetQueryTypeV2 uses existing GetQueryTypeByAPIName (dual-accept RID/apiName)
+- Files changed:
+  - pkg/oms/handlers_v2_metadata.go — added ListQueryTypesV2 + GetQueryTypeV2 handlers
+  - pkg/oms/handlers_v2_metadata_test.go — 7 new TDD tests (list with data, empty, by apiName, get found, get by RID, not found, execute param fix)
+  - pkg/oms/handlers_test.go — added queryTypes field to mockRepo, updated ListQueryTypes/GetQueryTypeByAPIName/GetQueryType stubs to use data
+  - pkg/oms/admin_handlers.go — ExecuteQueryType reads `ontologyApiName` instead of `ontology`
+  - cmd/server/routes.go — added 2 new routes, fixed execute route from `{ontology}` to `{ontologyApiName}`
+  - api/openapi.yaml — added 2 new paths (listQueryTypes, getQueryType), fixed execute path param
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-011 passes: true
+- **Learnings for future iterations:**
+  - QueryType endpoints do NOT require ?preview=true — only interfaceTypes and valueTypes do
+  - The execute route was the only V2 route using `{ontology}` param name; all others use `{ontologyApiName}` — unified now
+  - QueryTypeListResponse schema already existed from prior admin CRUD; reused it for V2 list endpoint
+  - No new mock repos needed (no new Repository methods added) — just updated existing stub implementations to use data
+  - All Go tests pass (full regression green), npx tsc --noEmit clean, 168/168 vitest pass
+---
+
+## 2026-04-11 - US-012: Add ActionType extra endpoints (byRid, getByRidBatch, fullMetadata)
+- Added 4 new Foundry V2 endpoints for ActionType:
+  - GET /api/v2/ontologies/{o}/actionTypes/byRid/{actionTypeRid} — RID-based lookup
+  - POST /api/v2/ontologies/{o}/actionTypes/getByRidBatch — batch lookup by RIDs
+  - GET /api/v2/ontologies/{o}/actionTypes/{actionTypeRid}/fullMetadata — single ActionType full metadata
+  - GET /api/v2/ontologies/{o}/actionTypesFullMetadata — list all ActionTypes full metadata
+- Added ToFullMetadataJSON() to ActionType model: includes rules, submissionCriteria, sideEffects, functionRid, isFunctionBacked
+- byRid endpoint uses GetActionType(rid) directly (pure RID lookup, no dual-accept needed)
+- getByRidBatch silently skips missing RIDs — returns only found entries
+- fullMetadata handlers use GetActionTypeByAPIName (dual-accept RID/apiName for the actionType param)
+- Files changed:
+  - pkg/oms/models.go — added ToFullMetadataJSON()
+  - pkg/oms/handlers_v2_metadata.go — 4 new handlers + getByRidBatchRequest type
+  - pkg/oms/handlers_v2_actiontype_test.go — NEW: 10 TDD tests
+  - cmd/server/routes.go — registered 4 new routes (byRid and getByRidBatch BEFORE wildcard {actionTypeRid})
+  - api/openapi.yaml — added 4 new paths
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+- **Learnings for future iterations:**
+  - chi routes: static segments (byRid, getByRidBatch) must be registered BEFORE wildcard ({actionTypeRid}) to avoid wildcard capturing them
+  - byRid uses GetActionType(ctx, rid) — pure RID lookup; fullMetadata uses GetActionTypeByAPIName — dual-accept
+  - ToFullMetadataJSON() is the "everything included" serialization; ToWireJSON() is the basic listing format
+  - getByRidBatch skips missing RIDs silently — Foundry pattern for batch lookups
+  - No new Repository methods needed — existing GetActionType and GetActionTypeByAPIName suffice
+  - No mock repo updates needed — all existing mocks already have the required methods
+  - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean
+---
+
+## 2026-04-11 - US-013: Add ObjectType extra endpoints (fullMetadata, getByRidBatch, editsHistory)
+- Added 3 new Foundry V2 endpoints for ObjectType:
+  - GET /api/v2/ontologies/{o}/objectTypes/{objectType}/fullMetadata — single ObjectType with full property detail
+  - POST /api/v2/ontologies/{o}/objectTypes/getByRidBatch — batch lookup by RIDs (silently skip missing)
+  - POST /api/v2/ontologies/{o}/objectTypes/{objectType}/editsHistory — edit history (action logs) for an ObjectType
+- Added ToFullMetadataJSON() to ObjectType model: includes all fields plus properties with displayName/description/dataType
+- fullMetadata handler loads properties via ListProperties(ctx, ot.RID) before serialization
+- getByRidBatch reuses getByRidBatchRequest type from ActionType handlers
+- editsHistory validates ObjectType exists first (404 if not found), then fetches action logs scoped to ObjectType RID
+- Added actionLogs field to mockRepo and updated ListActionLogs stub to use it
+- Files changed:
+  - pkg/oms/models.go — added ToFullMetadataJSON() to ObjectType
+  - pkg/oms/handlers_v2_objecttype.go — NEW: 3 handlers (GetObjectTypeFullMetadataV2, GetObjectTypesByRidBatchV2, PostObjectTypeEditsHistoryV2)
+  - pkg/oms/handlers_v2_objecttype_test.go — NEW: 9 TDD tests
+  - pkg/oms/handlers_test.go — added actionLogs field to mockRepo, updated ListActionLogs stub
+  - cmd/server/routes.go — registered 3 new routes (getByRidBatch BEFORE wildcard {objectTypeApiName})
+  - api/openapi.yaml — added 3 new paths
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-013 passes: true
+- **Learnings for future iterations:**
+  - ObjectType fullMetadata needs explicit property loading — GetObjectTypeByAPIName doesn't auto-load properties
+  - getByRidBatchRequest type is shared between ActionType and ObjectType batch handlers — no need to define a new type
+  - editsHistory uses ListActionLogs scoped by ObjectType RID — in Foundry this returns action-level edit entries
+  - No new Repository methods needed — existing GetObjectType, GetObjectTypeByAPIName, ListProperties, ListActionLogs suffice
+  - No mock repo updates needed in other packages — only the handlers_test.go mockRepo needed actionLogs field
+  - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean
 ---

@@ -25,6 +25,7 @@ type mockRepo struct {
 	interfaces  []oms.Interface
 	valueTypes  []oms.ValueType
 	queryTypes  []oms.QueryType
+	actionLogs  []oms.ActionLog
 
 	// Error controls
 	createErr error
@@ -481,8 +482,19 @@ func (m *mockRepo) DeleteQueryType(_ context.Context, _ string) error         { 
 
 // ActionLog stubs
 func (m *mockRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
-func (m *mockRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
-	return nil, nil
+func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int) ([]oms.ActionLog, error) {
+	if m.actionLogs == nil {
+		return nil, nil
+	}
+	start := offset
+	if start > len(m.actionLogs) {
+		return nil, nil
+	}
+	end := start + limit
+	if end > len(m.actionLogs) || limit <= 0 {
+		end = len(m.actionLogs)
+	}
+	return m.actionLogs[start:end], nil
 }
 func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
 
