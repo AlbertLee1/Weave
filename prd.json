@@ -135,8 +135,8 @@
         "go test ./... passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": "Only applicable if any admin routes are retained internally. If US-006 deletes them all, mark this story as N/A."
+      "passes": true,
+      "notes": "N/A — US-006 deleted all admin routes. No retained internal routes need renaming."
     },
     {
       "id": "US-009",
