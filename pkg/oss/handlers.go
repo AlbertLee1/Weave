@@ -22,11 +22,20 @@ type Handler struct {
 	// construction. When nil, the route returns AggregationNotConfigured.
 	aggEngine *aggregation.Engine
 	indexMgr  *index.Manager
+	// omsRepo provides interface resolution for /interfaces/ data query endpoints.
+	// Wired via SetOmsRepo from main.go after construction.
+	omsRepo oms.Repository
 }
 
 // NewHandler creates a new OSS HTTP handler.
 func NewHandler(svc Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetOmsRepo wires the OMS repository for interface data query endpoints.
+// These endpoints need to resolve interfaces to their implementing ObjectTypes.
+func (h *Handler) SetOmsRepo(repo oms.Repository) {
+	h.omsRepo = repo
 }
 
 // RegisterRoutes registers the OSS routes on the given chi router.
@@ -40,6 +49,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count", h.CountObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}", h.GetLinkedObject)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
+
+	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/aggregate", h.InterfaceAggregateObjects)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/{objectType}/{primaryKey}/links/{interfaceLinkType}", h.InterfaceListLinkedObjects)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}", h.InterfaceListObjects)
 }
 
 // GetObject handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}.

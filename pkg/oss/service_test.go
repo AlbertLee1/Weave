@@ -32,6 +32,11 @@ type mockOmsRepo struct {
 	// securityPolicies maps objectTypeRID -> attached SecurityPolicies. Tests
 	// populate this directly to exercise the ABAC filter path.
 	securityPolicies map[string][]oms.SecurityPolicy
+
+	// interfaces maps ontologyRID+":"+apiName -> Interface for interface data query tests.
+	interfaces map[string]*oms.Interface
+	// interfaceObjectTypes maps interfaceRID -> implementing ObjectTypes.
+	interfaceObjectTypes map[string][]oms.ObjectType
 }
 
 func newMockOmsRepo() *mockOmsRepo {
@@ -210,8 +215,14 @@ func (m *mockOmsRepo) CreateInterface(_ context.Context, _ *oms.Interface) error
 func (m *mockOmsRepo) GetInterface(_ context.Context, _ string) (*oms.Interface, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) GetInterfaceByAPIName(_ context.Context, _, _ string) (*oms.Interface, error) {
-	return nil, nil
+func (m *mockOmsRepo) GetInterfaceByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.Interface, error) {
+	if m.interfaces != nil {
+		key := ontologyRID + ":" + apiName
+		if iface, ok := m.interfaces[key]; ok {
+			return iface, nil
+		}
+	}
+	return nil, oms.ErrNotFound
 }
 
 func (m *mockOmsRepo) ListInterfaces(_ context.Context, _ string) ([]oms.Interface, error) {
@@ -271,7 +282,12 @@ func (m *mockOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error)
 func (m *mockOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (m *mockOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
 
-func (m *mockOmsRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
+func (m *mockOmsRepo) ListInterfaceObjectTypes(_ context.Context, interfaceRID string) ([]oms.ObjectType, error) {
+	if m.interfaceObjectTypes != nil {
+		if ots, ok := m.interfaceObjectTypes[interfaceRID]; ok {
+			return ots, nil
+		}
+	}
 	return nil, nil
 }
 

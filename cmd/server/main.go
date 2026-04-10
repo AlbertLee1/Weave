@@ -184,6 +184,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.AggEngine != nil && deps.IndexMgr != nil {
 				ossHandler.SetAggregation(deps.AggEngine, deps.IndexMgr)
 			}
+			if deps.OmsRepo != nil {
+				ossHandler.SetOmsRepo(deps.OmsRepo)
+			}
 			ossHandler.RegisterRoutes(api)
 		}
 

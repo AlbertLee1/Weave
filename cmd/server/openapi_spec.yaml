@@ -1758,6 +1758,121 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}:
+    get:
+      operationId: interfaceListObjects
+      summary: List objects implementing an interface
+      description: Returns objects from all ObjectTypes that implement the specified interface.
+      tags: [InterfaceData]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+        - in: query
+          name: pageToken
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated list of objects.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectPage"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search:
+    post:
+      operationId: interfaceSearchObjects
+      summary: Search objects through an interface
+      description: Searches across all ObjectTypes that implement the specified interface.
+      tags: [InterfaceData]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchObjectsRequest"
+      responses:
+        "200":
+          description: Paginated search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectPage"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/aggregate:
+    post:
+      operationId: interfaceAggregateObjects
+      summary: Aggregate objects through an interface
+      description: Aggregates across all ObjectTypes that implement the specified interface.
+      tags: [InterfaceData]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AggregationRequest"
+      responses:
+        "200":
+          description: Aggregation results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/{objectType}/{primaryKey}/links/{interfaceLinkType}:
+    get:
+      operationId: interfaceListLinkedObjects
+      summary: List linked objects through an interface link type
+      description: Lists objects linked through an interface-declared link type for a specific object.
+      tags: [InterfaceData]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+        - $ref: "#/components/parameters/ObjectType"
+        - $ref: "#/components/parameters/PrimaryKey"
+        - $ref: "#/components/parameters/InterfaceLinkType"
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+        - in: query
+          name: pageToken
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated list of linked objects.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectPage"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}:
     get:
       operationId: listObjects

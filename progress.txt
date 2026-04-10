@@ -100,6 +100,8 @@
 - Frontend ontologies.ts is the mega-file for all metadata API calls (ontologies + objectTypes + actionTypes + interfaceTypes + valueTypes + queryTypes + queries)
 - Use `npx tsc -b` (not `npx tsc --noEmit`) for frontend type checking — root tsconfig uses project references with `"files": []`, so --noEmit checks nothing
 - Dockerfile needs a Node.js build stage: .dockerignore excludes web/dist/, but Go embed in cmd/server/embed.go requires cmd/server/web/dist/
+- Interface polymorphic queries (US-026): resolve interface via GetInterfaceByAPIName → ListInterfaceObjectTypes → loop per-type Bleve indexes and merge results. oss.Handler uses SetOmsRepo setter to accept the omsRepo dep without changing the constructor.
+- bleve.Query type lives in github.com/blevesearch/bleve/v2/search/query, NOT the root bleve package. Use bleve.NewMatchAllQuery() for construction but declare typed variables as query.Query.
 
 ---
 
@@ -708,4 +710,37 @@
   - chi route registration order matters for sub-resources: register /interfaceTypes/{t}/outgoingLinkTypes BEFORE /interfaceTypes/{t} or the wildcard captures it
   - No mock repo updates needed in other test files — OutgoingLinkTypes is just a field on the existing Interface struct
   - Contract tests (AllRoutesDocumented, NoOrphanedSpecPaths, EmbeddedSpecMatchesCanonical) provide great safety nets when adding routes
+---
+
+## 2026-04-11 - US-026: Interface data query endpoints (4 endpoints)
+- Added 4 new Foundry V2 data query endpoints under /interfaces/ (dual-prefix with metadata /interfaceTypes/):
+  - GET /api/v2/ontologies/{o}/interfaces/{interfaceType} — list objects across all implementing ObjectTypes
+  - POST /api/v2/ontologies/{o}/interfaces/{interfaceType}/search — search across all implementing ObjectTypes (select required)
+  - POST /api/v2/ontologies/{o}/interfaces/{interfaceType}/aggregate — aggregate across all implementing ObjectTypes
+  - GET /api/v2/ontologies/{o}/interfaces/{interfaceType}/{objectType}/{pk}/links/{interfaceLinkType} — linked objects through interface link
+- Added omsRepo field + SetOmsRepo setter on oss.Handler for interface resolution
+- Wired SetOmsRepo from main.go NewFullRouter after oss.NewHandler
+- Polymorphic query pattern: resolveInterfaceOrWriteError → ListInterfaceObjectTypes → loop Bleve indexes per type → merge results
+- listObjectsAcrossTypes / searchObjectsAcrossTypes: each implementing type searched with MaxPageSize, results concatenated, paginated by offset cursor
+- aggregateAcrossTypes: per-type engine.Aggregate, results merged by summing ExcludedItems and concatenating Data rows
+- InterfaceListLinkedObjects delegates to svc.ListLinkedObjects after verifying interface exists
+- Files changed:
+  - pkg/oss/handlers.go — added omsRepo field, SetOmsRepo setter, registered 4 new routes
+  - pkg/oss/handlers_interface.go — NEW: 4 handlers + resolveInterfaceOrWriteError + listObjectsAcrossTypes + searchObjectsAcrossTypes + aggregateAcrossTypes + mergeAggregationResponses helpers
+  - pkg/oss/handlers_interface_test.go — NEW: 8 TDD tests (list, list notfound, search, search select required, aggregate, aggregate notfound, linkedObjects route registered, linkedObjects interface notfound)
+  - pkg/oss/service_test.go — added interfaces + interfaceObjectTypes fields to mockOmsRepo; GetInterfaceByAPIName now returns ErrNotFound when absent; ListInterfaceObjectTypes returns seeded types
+  - cmd/server/main.go — wired ossHandler.SetOmsRepo(deps.OmsRepo)
+  - api/openapi.yaml — added 4 new paths under /interfaces/ (list, search, aggregate, linked) with operationIds and InterfaceData tag
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-026 passes: true
+- **Learnings for future iterations:**
+  - Interface data query = polymorphic search across all implementing ObjectTypes; each ObjectType has its own Bleve index so we loop and merge
+  - oss.Handler previously only had Service + aggEngine + indexMgr; adding omsRepo via a setter keeps the constructor unchanged and lets old tests continue without wiring
+  - chi route order: the specific /interfaces/{t}/{search,aggregate,{objectType}/...} routes must be registered BEFORE the wildcard /interfaces/{t} or chi swallows them; list registered last
+  - Interface link types live on the Interface as JSONB (from US-025); the linked-objects handler currently delegates to the regular link type resolution on the implementing ObjectType (treats interfaceLinkType apiName as a regular linkType apiName)
+  - mergeAggregationResponses is naive: sums ExcludedItems and concatenates Data. Multi-group aggregations across types may produce duplicate group rows — future work if a real use case hits this
+  - Polymorphic pagination uses total-in-memory offset: fetches MaxPageSize per type, concatenates, then slices by cursor offset. Fine for single-machine; a production multi-index paginator would need merge-sort by PK
+  - bleve.Query type lives in github.com/blevesearch/bleve/v2/search/query, not the root bleve package — easy to miss
+  - Reused existing InterfaceType parameter + ObjectPage/SearchObjectsRequest/AggregationRequest/AggregationResponse schemas in openapi.yaml — no new schemas needed
+  - All tests pass: 8/8 new interface tests, all 28 Go packages (including e2e/chinook/northwind), 186/186 vitest, 69/69 pytest, 3/3 contract tests
 ---
