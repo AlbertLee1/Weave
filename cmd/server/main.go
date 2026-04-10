@@ -415,6 +415,7 @@ func main() {
 
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
+		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
 
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)

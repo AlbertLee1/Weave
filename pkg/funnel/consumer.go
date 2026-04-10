@@ -40,6 +40,10 @@ type Consumer struct {
 	onChange      func(ChangeEvent) // optional callback
 	maxDeliveries uint64
 
+	// dlqPublish publishes terminated messages to the DLQ stream. Nil means
+	// DLQ is disabled and terminated messages are dropped with a log warning.
+	dlqPublish DLQPublishFunc
+
 	// historyRepo writes a row per applied edit when set. Tier 2.3 wires
 	// this to the OMS PG repo. Nil = history disabled.
 	historyRepo HistoryRecorder
@@ -69,6 +73,13 @@ func NewConsumer(js nats.JetStreamContext, indexMgr *index.Manager) *Consumer {
 // SetMaxDeliveries sets the maximum delivery attempts before a message is terminated.
 func (c *Consumer) SetMaxDeliveries(n uint64) {
 	c.maxDeliveries = n
+}
+
+// SetDLQPublish sets the function used to publish terminated messages to the
+// DLQ stream. Pass nil to disable (terminated messages will be logged and
+// dropped). Safe to call before Start().
+func (c *Consumer) SetDLQPublish(fn DLQPublishFunc) {
+	c.dlqPublish = fn
 }
 
 // SetHistoryRepo enables ObjectHistory recording for every applied edit.
@@ -152,6 +163,11 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 	if metaErr == nil && c.shouldTerminate(meta.NumDelivered) {
 		log.Printf("funnel: message exceeded max deliveries (%d/%d), terminating batch",
 			meta.NumDelivered, c.maxDeliveries)
+		// Publish to DLQ before terminating so the message is preserved for
+		// operator inspection and potential replay.
+		if err := c.publishToDLQ(msg.Subject, msg.Data, meta.NumDelivered, meta.Sequence.Stream, meta.Sequence.Consumer); err != nil {
+			log.Printf("funnel: DLQ publish error: %v", err)
+		}
 		if err := msg.Term(); err != nil {
 			log.Printf("funnel: term error: %v", err)
 		}
