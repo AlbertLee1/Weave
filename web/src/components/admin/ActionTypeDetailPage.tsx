@@ -123,15 +123,20 @@ export function ActionTypeDetailPage() {
   }
 
   // --- Parse parameters for card view ---
+  // Foundry OSv2: Record<ParameterId, ActionParameterV2>
   let parameterCards: { name: string; type: string; required: boolean }[] = [];
   try {
     const parsed = JSON.parse(parametersJson);
-    if (Array.isArray(parsed)) {
-      parameterCards = parsed.map((p: Record<string, unknown>) => ({
-        name: (p.name as string) ?? (p.apiName as string) ?? 'unknown',
-        type: (p.type as string) ?? (p.baseType as string) ?? 'unknown',
-        required: !!p.required,
-      }));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      parameterCards = Object.entries(parsed).map(([key, def]) => {
+        const d = def as Record<string, unknown>;
+        const dataType = d.dataType as Record<string, unknown> | undefined;
+        return {
+          name: key,
+          type: (dataType?.type as string) ?? 'unknown',
+          required: !!d.required,
+        };
+      });
     }
   } catch {
     // not valid JSON, skip card view

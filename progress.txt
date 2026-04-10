@@ -44,6 +44,9 @@
 - countEdits() helper computes ActionResults (addedObjectCount etc.) from []funnel.Edit
 - ApplyResult fields have `json:"-"` tags — internal only, not serialized to wire
 - Frontend ActionApplyResponse has edits as ActionResults (counts), not individual edit objects
+- ActionType.Parameters stored as array in DB: [{"id":"name","type":"string","required":true}] — ToWireJSON() transforms to Foundry V2 record: {"name":{"dataType":{"type":"string"},"required":true}}
+- Internal ParseParameterDefs() reads stored array format; wire transformation is in models.go only
+- Frontend ParameterForm reads Record<string, ActionParameterV2> with dataType.type for type resolution
 
 ---
 
@@ -90,4 +93,25 @@
   - All 88 action tests pass, all 192 frontend tests pass, all 25 Python SDK tests pass, full Go suite green
   - E2E tests decode JSON into map[string]interface{} — ActionResults is map, not array, so assertions use float64 comparison
   - ActionResult.test.tsx is a separate test file from actions.test.ts — both need updating for type changes
+---
+
+## 2026-04-11 - US-003: ActionType.parameters strong typing
+- Rewrote ActionType.parameters wire format from array to Foundry OSv2 Record<ParameterId, ActionParameterV2>
+- Added parametersToV2() helper in pkg/oms/models.go: converts stored array format to V2 record with dataType nesting
+- Internal storage (DB) unchanged: still array format [{"id":"name","type":"string","required":true}]
+- ParseParameterDefs() in pkg/actions/validation.go unchanged — reads internal format, not wire format
+- Files changed:
+  - pkg/oms/models.go — new actionParamDef struct, parametersToV2() function, updated ToWireJSON()
+  - pkg/oms/models_test.go — updated TestActionType_ToWireJSON + 3 new tests (MultipleParams, EmptyParams, NullParams)
+  - web/src/api/types.ts — new ActionParameterV2 interface, ActionType.parameters strongly typed
+  - web/src/components/actions/ParameterForm.tsx — reads dataType.type instead of flat type, imports ActionParameterV2
+  - web/src/components/actions/__tests__/ParameterForm.test.tsx — mock data uses V2 format
+  - web/src/components/admin/ActionTypeDetailPage.tsx — parameter card parsing for record format
+  - cmd/server/openapi_spec.yaml — ActionParameterV2 schema, ActionType.parameters references it
+  - api/openapi.yaml — mirror of openapi_spec.yaml changes
+- **Learnings for future iterations:**
+  - ToWireJSON() is the transformation boundary between stored format and Foundry V2 wire format
+  - No DB migration needed — transformation is at the serialization layer only
+  - ParameterForm already expected record format before this change; only needed dataType nesting update
+  - All Go tests pass, all 192 frontend tests pass, npx tsc --noEmit clean
 ---

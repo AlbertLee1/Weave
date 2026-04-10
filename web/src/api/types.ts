@@ -53,13 +53,20 @@ export interface LinkType {
   required: boolean;
 }
 
+// ActionParameterV2 — Foundry OSv2 parameter definition with nested dataType.
+export interface ActionParameterV2 {
+  dataType: DataType;
+  required: boolean;
+  description?: string;
+}
+
 export interface ActionType {
   rid: string;
   apiName: string;
   displayName: string;
   description?: string;
   status: string;
-  parameters: unknown;
+  parameters: Record<string, ActionParameterV2>;
   rules?: unknown;
   submissionCriteria?: unknown;
   sideEffects?: unknown;

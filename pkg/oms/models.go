@@ -192,6 +192,42 @@ type ActionType struct {
 	CreatedAt          time.Time       `json:"-"`
 }
 
+// actionParamDef is the internal (stored) array-element format.
+type actionParamDef struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	Description string `json:"description,omitempty"`
+}
+
+// parametersToV2 converts the stored array-of-objects parameters format
+// into the Foundry OSv2 Record<ParameterId, ActionParameterV2> wire format.
+// Input:  [{"id":"name","type":"string","required":true,"description":"..."}]
+// Output: {"name":{"dataType":{"type":"string"},"required":true,"description":"..."}}
+func parametersToV2(raw json.RawMessage) map[string]interface{} {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
+		return map[string]interface{}{}
+	}
+
+	var defs []actionParamDef
+	if err := json.Unmarshal(raw, &defs); err != nil {
+		return map[string]interface{}{}
+	}
+
+	result := make(map[string]interface{}, len(defs))
+	for _, d := range defs {
+		entry := map[string]interface{}{
+			"dataType": map[string]interface{}{"type": d.Type},
+			"required": d.Required,
+		}
+		if d.Description != "" {
+			entry["description"] = d.Description
+		}
+		result[d.ID] = entry
+	}
+	return result
+}
+
 // ToWireJSON returns the V2 wire format JSON for ActionType.
 func (at *ActionType) ToWireJSON() ([]byte, error) {
 	wire := map[string]interface{}{
@@ -199,7 +235,7 @@ func (at *ActionType) ToWireJSON() ([]byte, error) {
 		"displayName": at.DisplayName,
 		"rid":         at.RID,
 		"status":      at.Status,
-		"parameters":  json.RawMessage(at.Parameters),
+		"parameters":  parametersToV2(at.Parameters),
 	}
 	if at.Description != "" {
 		wire["description"] = at.Description

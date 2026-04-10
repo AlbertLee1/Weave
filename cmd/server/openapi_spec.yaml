@@ -349,7 +349,9 @@ components:
           type: string
         parameters:
           type: object
-          additionalProperties: true
+          description: "Record<ParameterId, ActionParameterV2>"
+          additionalProperties:
+            $ref: '#/components/schemas/ActionParameterV2'
         rules:
           type: object
           additionalProperties: true
@@ -363,6 +365,21 @@ components:
           type: string
         isFunctionBacked:
           type: boolean
+    ActionParameterV2:
+      type: object
+      required: [dataType, required]
+      properties:
+        dataType:
+          type: object
+          description: "DataType object, e.g. {type: 'string'} or {type: 'array', subType: {type: 'string'}}"
+          properties:
+            type:
+              type: string
+          additionalProperties: true
+        required:
+          type: boolean
+        description:
+          type: string
     Interface:
       type: object
       required: [rid, apiName, displayName]
@@ -949,10 +966,10 @@ components:
           enum: [CREATE, MODIFY, DELETE]
     ApplyActionRequest:
       type: object
-      required: [actionType]
+      description: |
+        Foundry OSv2 action body — the action API name is in the URL path
+        segment {action}, not the body. Only parameters travel here.
       properties:
-        actionType:
-          type: string
         parameters:
           type: object
           additionalProperties: true
@@ -2171,13 +2188,19 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
-  /api/v2/ontologies/{ontologyApiName}/actions/apply:
+  /api/v2/ontologies/{ontologyApiName}/actions/{action}/apply:
     post:
       operationId: applyAction
-      summary: Apply a single action
+      summary: Apply a single action (Foundry OSv2 shape)
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: action
+          required: true
+          description: Action API name.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -2195,13 +2218,19 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
-  /api/v2/ontologies/{ontologyApiName}/actions/applyBatch:
+  /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch:
     post:
       operationId: applyActionBatch
-      summary: Apply a batch of actions atomically or best-effort
+      summary: Apply a batch of the same action (Foundry OSv2 shape)
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: action
+          required: true
+          description: Action API name. All batch items share this action.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
