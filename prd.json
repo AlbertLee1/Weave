@@ -473,8 +473,8 @@
         "go test ./... passes"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "All 3 endpoints already delivered in US-012 (actionTypes getByRidBatch) and US-013 (objectTypes getByRidBatch + editsHistory) with full TDD test coverage. Verified green: routes registered in cmd/server/routes.go, 9 handler tests pass in pkg/oms/handlers_v2_{objecttype,actiontype}_test.go, full regression clean."
     },
     {
       "id": "US-030",

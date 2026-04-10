@@ -803,3 +803,21 @@
   - contract 测试 (AllRoutesDocumented/NoOrphanedSpecPaths/EmbeddedSpecMatchesCanonical) 只管路径是否被文档化，不校验 schema 内部结构 — schema 更新只需保证两份 yaml 一致
   - 24 个新测试 + 完整 pkg/oss/objectset 套件 16s、全量 go test ./... 绿（含 e2e/chinook/northwind），npx tsc -b 0 error, vitest 186/186, pytest 69/69
 ---
+
+## 2026-04-11 - US-029: ObjectType editsHistory + batch endpoints (verification-only)
+- 三个 endpoint 在前序 story 已完成，本次仅做验证并标记 passes
+- POST /api/v2/ontologies/{o}/objectTypes/getByRidBatch — US-013 交付 (handlers_v2_objecttype.go:GetObjectTypesByRidBatchV2)
+- POST /api/v2/ontologies/{o}/objectTypes/{objectType}/editsHistory — US-013 交付 (handlers_v2_objecttype.go:PostObjectTypeEditsHistoryV2)
+- POST /api/v2/ontologies/{o}/actionTypes/getByRidBatch — US-012 交付 (handlers_v2_actiontype.go:GetActionTypesByRidBatchV2)
+- 三条路由在 cmd/server/routes.go 已注册（第 16、20、23 行），TDD 测试覆盖完整：
+  - TestGetObjectTypesByRidBatch_{MultipleFound,EmptyRids,SomeMissing}
+  - TestPostObjectTypeEditsHistory_{Found,ObjectTypeNotFound,WithData}
+  - TestGetActionTypesByRidBatch_{MultipleFound,EmptyRids,SomeMissing}
+- 运行 9 个目标测试全部 PASS，全量 go test ./... 绿（含 e2e/chinook/northwind）
+- Files changed: prd.json (passes:true + notes), progress.txt (this entry)
+- **Learnings for future iterations:**
+  - PRD 中可能出现 acceptance criteria 已被更高优先级 story 提前覆盖的情况 — 动手实现前先 grep 路由 + 测试，避免重复开发
+  - getByRidBatch 系列共享 getByRidBatchRequest 类型（pkg/oms/handlers_v2_actiontype.go 定义），ObjectType/ActionType handler 都引用它
+  - editsHistory 通过 ListActionLogs 按 ObjectType RID 过滤 action logs，无需新 Repository 方法
+  - 验证型 story 的"TDD failing test first"不适用 — 实现已存在，只需确认测试覆盖和全量通过
+---
