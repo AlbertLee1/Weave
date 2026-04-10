@@ -15,10 +15,22 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 )
 
+// ApplyOptions controls single-action apply behavior (Foundry OSv2).
+type ApplyOptions struct {
+	Mode        string `json:"mode"`        // VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
+	ReturnEdits string `json:"returnEdits"` // ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
+}
+
+// BatchApplyOptions controls batch apply behavior (Foundry OSv2).
+type BatchApplyOptions struct {
+	ReturnEdits string `json:"returnEdits"` // ALL | NONE (default ALL)
+}
+
 // ApplyRequest is the request to apply an action.
 type ApplyRequest struct {
 	ActionType string                 `json:"actionType"` // API name
 	Parameters map[string]interface{} `json:"parameters"`
+	Options    *ApplyOptions          `json:"options,omitempty"`
 }
 
 // ApplyResult is the result of applying an action.
@@ -27,6 +39,17 @@ type ApplyResult struct {
 	Edits     []funnel.Edit `json:"edits"`
 	BatchID   string        `json:"batchId"`
 	Offset    uint64        `json:"offset"`
+}
+
+// ValidationResult is the response for VALIDATE_ONLY mode.
+type ValidationResult struct {
+	Result string `json:"result"` // VALID | INVALID
+	// SubmissionCriteria may carry per-criterion results in the future.
+}
+
+// ValidateOnlyResponse is the response envelope for VALIDATE_ONLY apply.
+type ValidateOnlyResponse struct {
+	Validation *ValidationResult `json:"validation"`
 }
 
 // Publisher is the minimal contract the Executor needs from the funnel

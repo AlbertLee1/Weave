@@ -476,14 +476,15 @@ func TestHandler_ApplyBatch_DefaultAtomic_SingleCommit(t *testing.T) {
 	handler := NewHandler(exec)
 	router := setupRouter(handler)
 
+	// Batch items only need parameters; action is in the path.
 	body := mustJSON(map[string]interface{}{
-		"actions": []ApplyRequest{
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{"name": "Alice"}},
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{"name": "Bob"}},
+		"actions": []map[string]interface{}{
+			{"parameters": map[string]interface{}{"name": "Alice"}},
+			{"parameters": map[string]interface{}{"name": "Bob"}},
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/applyBatch", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -528,12 +529,12 @@ func TestHandler_ApplyBatch_AtomicValidationFailure_400(t *testing.T) {
 	router := setupRouter(handler)
 
 	body := mustJSON(map[string]interface{}{
-		"actions": []ApplyRequest{
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{"name": "Alice"}},
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{}},
+		"actions": []map[string]interface{}{
+			{"parameters": map[string]interface{}{"name": "Alice"}},
+			{"parameters": map[string]interface{}{}}, // missing required "name"
 		},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/applyBatch", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -546,7 +547,10 @@ func TestHandler_ApplyBatch_AtomicValidationFailure_400(t *testing.T) {
 	}
 }
 
-func TestHandler_ApplyBatch_BestEffortMode(t *testing.T) {
+// TestHandler_ApplyBatch_BestEffortMode_Rejected verifies that the old
+// mode=bestEffort field is rejected with 400 after the Foundry OSv2
+// options schema rewrite (US-001 / PR-03).
+func TestHandler_ApplyBatch_BestEffortMode_Rejected(t *testing.T) {
 	repo := &mockOmsRepo{
 		actionTypes: []oms.ActionType{
 			newTestActionType("createEmployee", []ParameterDef{
@@ -566,35 +570,20 @@ func TestHandler_ApplyBatch_BestEffortMode(t *testing.T) {
 
 	body := mustJSON(map[string]interface{}{
 		"mode": "bestEffort",
-		"actions": []ApplyRequest{
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{"name": "Alice"}},
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{}}, // invalid
+		"actions": []map[string]interface{}{
+			{"parameters": map[string]interface{}{"name": "Alice"}},
 		},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/applyBatch", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("old mode=bestEffort must return 400, got %d: %s", w.Code, w.Body.String())
 	}
-	if pub.calls != 1 {
-		t.Fatalf("expected 1 publish for bestEffort mode, got %d", pub.calls)
-	}
-
-	var br BatchResult
-	if err := json.Unmarshal(w.Body.Bytes(), &br); err != nil {
-		t.Fatalf("unmarshal BatchResult: %v", err)
-	}
-	if br.Mode != "bestEffort" {
-		t.Fatalf("expected mode=bestEffort, got %q", br.Mode)
-	}
-	if len(br.Failures) != 1 {
-		t.Fatalf("expected 1 failure, got %d", len(br.Failures))
-	}
-	if br.Failures[0].Index != 1 {
-		t.Fatalf("expected failure at index 1, got %d", br.Failures[0].Index)
+	if pub.calls != 0 {
+		t.Fatalf("must not publish on rejected old mode, got %d calls", pub.calls)
 	}
 }
 

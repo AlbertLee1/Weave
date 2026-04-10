@@ -21,74 +21,154 @@ func NewHandler(executor *Executor) *Handler {
 	return &Handler{executor: executor}
 }
 
-// Apply handles POST /api/v2/ontologies/{ontologyApiName}/actions/apply
+// Apply handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/apply.
+//
+// The action API name lives in the URL (Foundry OSv2 shape). Any
+// actionType field in the body is ignored — the path is the single
+// source of truth. An empty {action} path segment is rejected with
+// MissingActionType so malformed URLs surface a clean 400.
+//
+// Foundry OSv2 options:
+//   - options.mode: VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
+//   - options.returnEdits: ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
 func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	action := chi.URLParam(r, "action")
+
+	if action == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionType", nil))
+		return
+	}
 
 	var req ApplyRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{"error": err.Error()}))
 		return
 	}
+	req.ActionType = action
 
-	if req.ActionType == "" {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionType", nil))
+	// Resolve options with defaults.
+	mode := "VALIDATE_AND_EXECUTE"
+	returnEdits := "ALL"
+	if req.Options != nil {
+		if req.Options.Mode != "" {
+			mode = strings.ToUpper(req.Options.Mode)
+		}
+		if req.Options.ReturnEdits != "" {
+			returnEdits = strings.ToUpper(req.Options.ReturnEdits)
+		}
+	}
+
+	// Validate mode enum.
+	if mode != "VALIDATE_ONLY" && mode != "VALIDATE_AND_EXECUTE" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMode",
+			map[string]string{"mode": mode, "allowed": "VALIDATE_ONLY, VALIDATE_AND_EXECUTE"}))
 		return
 	}
 
+	// VALIDATE_ONLY: run Prepare only, return validation result.
+	if mode == "VALIDATE_ONLY" {
+		_, err := h.executor.Prepare(r.Context(), ontologyRID, &req)
+		if err != nil {
+			httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
+				Validation: &ValidationResult{Result: "INVALID"},
+			})
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
+			Validation: &ValidationResult{Result: "VALID"},
+		})
+		return
+	}
+
+	// VALIDATE_AND_EXECUTE: normal execution.
 	result, err := h.executor.Apply(r.Context(), ontologyRID, &req)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
+	// Strip edits from response if returnEdits=NONE.
+	if returnEdits == "NONE" {
+		result.Edits = nil
+	}
+
 	httputil.WriteJSON(w, http.StatusOK, result)
 }
 
-// ApplyBatch handles POST /api/v2/ontologies/{ontologyApiName}/actions/applyBatch.
+// ApplyBatch handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch.
 //
-// Semantics:
-//   - Request body: { "actions": [...], "mode": "atomic"|"bestEffort" }.
-//     "mode" is optional and defaults to "atomic".
-//   - Atomic mode: Prepare every action, fail fast on the first error, and
-//     (only on full success) publish exactly one combined EditBatch.
-//     On failure the response body carries phase + failedActionIndex + actionType.
-//   - Best-effort mode: Prepare every action, skip prepare failures, and
-//     publish one combined EditBatch for the survivors. Failures are surfaced
-//     alongside the committed results.
+// In Foundry OSv2 a batch is one-action-many-parameter-sets: the action
+// API name sits in the path and every body item is only a parameter
+// payload for that same action. Weave enforces this by stamping the
+// path's action onto every request in the body, ignoring any actionType
+// a client may still be sending.
 //
-// The backwards-compatible response shape (a top-level "results" array) is
-// preserved on success for callers that do not yet read the new fields.
+// Foundry OSv2 semantics (PR-03):
+//   - Request body: { "actions": [...], "options": { "returnEdits": "ALL"|"NONE" } }
+//   - Batch is always atomic (all-or-nothing).
+//   - The old Weave "mode" field (atomic/bestEffort) is rejected with 400.
+//   - options.returnEdits controls whether edits appear in the response (default ALL).
 func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	action := chi.URLParam(r, "action")
+
+	if action == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionType", nil))
+		return
+	}
 
 	var reqs struct {
-		Actions []ApplyRequest `json:"actions"`
-		Mode    string         `json:"mode"`
+		Actions []ApplyRequest    `json:"actions"`
+		Options *BatchApplyOptions `json:"options,omitempty"`
+		Mode    string            `json:"mode"` // old field — rejected if present
 	}
 	if err := httputil.ReadJSON(r, &reqs); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{"error": err.Error()}))
 		return
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(reqs.Mode))
-	var (
-		result *BatchResult
-		err    error
-	)
-	switch mode {
-	case "", "atomic":
-		result, err = h.executor.ApplyBatchAtomic(r.Context(), ontologyRID, reqs.Actions)
-	case "besteffort":
-		result, err = h.executor.ApplyBatchBestEffort(r.Context(), ontologyRID, reqs.Actions)
-	default:
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMode", map[string]string{"mode": reqs.Mode}))
+	// Reject the old Weave mode field.
+	if reqs.Mode != "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("DeprecatedField",
+			map[string]string{
+				"field":   "mode",
+				"message": "The 'mode' field has been removed. Use 'options.returnEdits' instead.",
+			}))
 		return
 	}
 
+	// Resolve returnEdits option with default.
+	returnEdits := "ALL"
+	if reqs.Options != nil && reqs.Options.ReturnEdits != "" {
+		returnEdits = strings.ToUpper(reqs.Options.ReturnEdits)
+	}
+	if returnEdits != "ALL" && returnEdits != "NONE" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidReturnEdits",
+			map[string]string{"returnEdits": returnEdits, "allowed": "ALL, NONE"}))
+		return
+	}
+
+	// Foundry batch is same-action-many-parameter-sets. Stamp the path's
+	// action onto every item so the executor resolves one action type
+	// per batch regardless of what the client put in the body.
+	for i := range reqs.Actions {
+		reqs.Actions[i].ActionType = action
+	}
+
+	// Always atomic.
+	result, err := h.executor.ApplyBatchAtomic(r.Context(), ontologyRID, reqs.Actions)
 	if err != nil {
 		apierror.WriteJSON(w, asBatchError(err))
 		return
+	}
+
+	// Strip edits from response if returnEdits=NONE.
+	if returnEdits == "NONE" {
+		result.AppliedEdits = nil
+		for _, r := range result.Results {
+			r.Edits = nil
+		}
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, result)
