@@ -458,8 +458,8 @@
         "go test ./... passes"
       ],
       "priority": 28,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "All 6 variants added. static/asType/asBaseObjectTypes implemented directly in executor; interfaceBase uses optional InterfaceResolver (SetInterfaceResolver setter); interfaceLinkSearchAround delegates to LinkResolver by API name; methodInput is a validated no-op with execute-time error (bound at function invocation time). OpenAPI spec updated with explicit type enum + discriminator fields. Frontend ObjectSetDefinition union extended; UI composer throws on new variants since ObjectSetNode does not yet model them (out of scope for Phase 2 UI)."
     },
     {
       "id": "US-029",

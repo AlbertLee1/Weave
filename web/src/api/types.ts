@@ -276,6 +276,7 @@ export interface QueryType {
 
 export type ObjectSetDefinition =
   | BaseObjectSet
+  | StaticObjectSet
   | FilterObjectSet
   | UnionObjectSet
   | IntersectObjectSet
@@ -283,7 +284,12 @@ export type ObjectSetDefinition =
   | SearchAroundObjectSet
   | ReferenceObjectSet
   | WithPropertiesObjectSet
-  | NearestNeighborsObjectSet;
+  | NearestNeighborsObjectSet
+  | AsTypeObjectSet
+  | AsBaseObjectTypesObjectSet
+  | InterfaceBaseObjectSet
+  | InterfaceLinkSearchAroundObjectSet
+  | MethodInputObjectSet;
 
 export interface BaseObjectSet {
   type: 'base';
@@ -339,6 +345,39 @@ export interface NearestNeighborsObjectSet {
     vector?: { value: number[] };
     text?: { value: string };
   };
+}
+
+export interface StaticObjectSet {
+  type: 'static';
+  objectType: string;
+  primaryKeys: string[];
+}
+
+export interface AsTypeObjectSet {
+  type: 'asType';
+  objectType: string;
+  objectSet: ObjectSetDefinition;
+}
+
+export interface AsBaseObjectTypesObjectSet {
+  type: 'asBaseObjectTypes';
+  objectSet: ObjectSetDefinition;
+}
+
+export interface InterfaceBaseObjectSet {
+  type: 'interfaceBase';
+  interfaceType: string;
+}
+
+export interface InterfaceLinkSearchAroundObjectSet {
+  type: 'interfaceLinkSearchAround';
+  objectSet: ObjectSetDefinition;
+  interfaceLink: string;
+}
+
+export interface MethodInputObjectSet {
+  type: 'methodInput';
+  input: string;
 }
 
 export interface OrderByField {

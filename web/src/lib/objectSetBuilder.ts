@@ -205,6 +205,15 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
         similarityThreshold: def.similarityThreshold,
         query: def.query,
       };
+    case 'static':
+    case 'asType':
+    case 'asBaseObjectTypes':
+    case 'interfaceBase':
+    case 'interfaceLinkSearchAround':
+    case 'methodInput':
+      throw new Error(
+        `objectSet type "${def.type}" is not yet supported in the composer UI`,
+      );
   }
 }
 

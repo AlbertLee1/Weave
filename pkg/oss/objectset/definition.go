@@ -9,8 +9,8 @@ import (
 // ObjectSets are composable and lazy-evaluated.
 type Definition struct {
 	Type       string          `json:"type"`
-	ObjectType string          `json:"objectType,omitempty"`  // for "base"
-	ObjectSet  *Definition     `json:"objectSet,omitempty"`   // for "filter", "searchAround", "nearestNeighbors", "withProperties"
+	ObjectType string          `json:"objectType,omitempty"`  // for "base", "static", "asType"
+	ObjectSet  *Definition     `json:"objectSet,omitempty"`   // for "filter", "searchAround", "nearestNeighbors", "withProperties", "asType", "asBaseObjectTypes", "interfaceLinkSearchAround"
 	ObjectSets []*Definition   `json:"objectSets,omitempty"`  // for "union", "intersect", "subtract"
 	Where      json.RawMessage `json:"where,omitempty"`       // for "filter" — raw JSON of WhereClause
 	Link       string          `json:"link,omitempty"`        // for "searchAround" — link type API name
@@ -27,6 +27,21 @@ type Definition struct {
 
 	// For "withProperties"
 	Properties []string `json:"properties,omitempty"`
+
+	// For "static" — explicit list of primary keys of ObjectType.
+	PrimaryKeys []string `json:"primaryKeys,omitempty"`
+
+	// For "interfaceBase" — the interface API name whose implementing object
+	// types define the base set.
+	InterfaceType string `json:"interfaceType,omitempty"`
+
+	// For "interfaceLinkSearchAround" — the interface link type API name to
+	// walk from the inner objectSet.
+	InterfaceLink string `json:"interfaceLink,omitempty"`
+
+	// For "methodInput" — name of the function method input parameter whose
+	// bound ObjectSet should be used at execution time.
+	Input string `json:"input,omitempty"`
 }
 
 // PropertyIdentifier identifies a property for nearestNeighbors.
@@ -91,6 +106,36 @@ func (d *Definition) Validate() error {
 	case "withProperties":
 		if d.ObjectSet == nil {
 			return fmt.Errorf("withProperties requires objectSet")
+		}
+	case "static":
+		if d.ObjectType == "" {
+			return fmt.Errorf("static objectSet requires objectType")
+		}
+	case "asType":
+		if d.ObjectType == "" {
+			return fmt.Errorf("asType objectSet requires objectType")
+		}
+		if d.ObjectSet == nil {
+			return fmt.Errorf("asType objectSet requires objectSet")
+		}
+	case "asBaseObjectTypes":
+		if d.ObjectSet == nil {
+			return fmt.Errorf("asBaseObjectTypes objectSet requires objectSet")
+		}
+	case "interfaceBase":
+		if d.InterfaceType == "" {
+			return fmt.Errorf("interfaceBase objectSet requires interfaceType")
+		}
+	case "interfaceLinkSearchAround":
+		if d.ObjectSet == nil {
+			return fmt.Errorf("interfaceLinkSearchAround objectSet requires objectSet")
+		}
+		if d.InterfaceLink == "" {
+			return fmt.Errorf("interfaceLinkSearchAround objectSet requires interfaceLink")
+		}
+	case "methodInput":
+		if d.Input == "" {
+			return fmt.Errorf("methodInput objectSet requires input")
 		}
 	default:
 		return fmt.Errorf("unknown objectSet type: %q", d.Type)

@@ -592,12 +592,56 @@ components:
     ObjectSetDefinition:
       type: object
       description: |
-        Composable ObjectSet definition. Supported types include base, filter,
-        union, intersect, subtract, and searchAround. See pkg/oss/objectset.
+        Composable ObjectSet definition. Supported types: base, static, filter,
+        union, intersect, subtract, searchAround, reference, nearestNeighbors,
+        withProperties, asType, asBaseObjectTypes, interfaceBase,
+        interfaceLinkSearchAround, methodInput. See pkg/oss/objectset.
       additionalProperties: true
+      required: [type]
       properties:
         type:
           type: string
+          enum:
+            - base
+            - static
+            - filter
+            - union
+            - intersect
+            - subtract
+            - searchAround
+            - reference
+            - nearestNeighbors
+            - withProperties
+            - asType
+            - asBaseObjectTypes
+            - interfaceBase
+            - interfaceLinkSearchAround
+            - methodInput
+        objectType:
+          type: string
+          description: Used by base, static, and asType.
+        objectSet:
+          description: Inner objectSet used by filter, searchAround, withProperties, asType, asBaseObjectTypes, interfaceLinkSearchAround.
+          $ref: "#/components/schemas/ObjectSetDefinition"
+        objectSets:
+          type: array
+          description: Used by union, intersect, subtract.
+          items:
+            $ref: "#/components/schemas/ObjectSetDefinition"
+        primaryKeys:
+          type: array
+          description: Used by static — explicit list of primary keys of objectType.
+          items:
+            type: string
+        interfaceType:
+          type: string
+          description: Used by interfaceBase — interface API name whose implementing object types form the base set.
+        interfaceLink:
+          type: string
+          description: Used by interfaceLinkSearchAround — interface link API name to traverse.
+        input:
+          type: string
+          description: Used by methodInput — name of the function method input parameter bound at invocation time.
     LoadObjectSetRequest:
       type: object
       required: [objectSet, select]

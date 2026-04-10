@@ -43,10 +43,14 @@ type Tab = 'browse' | 'aggregate';
 function resolveRootType(def: ObjectSetDefinition): string {
   switch (def.type) {
     case 'base':
+    case 'static':
+      return def.objectType;
+    case 'asType':
       return def.objectType;
     case 'filter':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'asBaseObjectTypes':
       return resolveRootType(def.objectSet);
     case 'union':
     case 'intersect':
@@ -55,8 +59,11 @@ function resolveRootType(def: ObjectSetDefinition): string {
         ? resolveRootType(def.objectSets[0])
         : '';
     case 'searchAround':
+    case 'interfaceLinkSearchAround':
       return ''; // backend resolves
     case 'reference':
+    case 'interfaceBase':
+    case 'methodInput':
       return '';
   }
 }

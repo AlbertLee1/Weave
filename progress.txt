@@ -102,6 +102,9 @@
 - Dockerfile needs a Node.js build stage: .dockerignore excludes web/dist/, but Go embed in cmd/server/embed.go requires cmd/server/web/dist/
 - Interface polymorphic queries (US-026): resolve interface via GetInterfaceByAPIName → ListInterfaceObjectTypes → loop per-type Bleve indexes and merge results. oss.Handler uses SetOmsRepo setter to accept the omsRepo dep without changing the constructor.
 - bleve.Query type lives in github.com/blevesearch/bleve/v2/search/query, NOT the root bleve package. Use bleve.NewMatchAllQuery() for construction but declare typed variables as query.Query.
+- ObjectSet Executor optional deps go through Setters (SetInterfaceResolver, SetOmsRepo etc.) — keeps NewExecutor signature stable and old tests working. Nil dep → execute-time error with a clear "not configured" message.
+- Frontend ObjectSetNode (UI builder) ≠ wire-format ObjectSetDefinition. nodeToDefinition is total over all ObjectSetNode variants; definitionToNode is partial — new wire variants that the UI composer doesn't model should throw in definitionToNode with an "unsupported in composer" message rather than add stub Node types.
+- When adding a new Definition field in pkg/oss/objectset/definition.go: always tag with omitempty and pick a sensible zero value (empty slice / "" / nil pointer) so existing JSON wire shapes round-trip unchanged.
 
 ---
 
@@ -766,4 +769,37 @@
   - Contract test (AllRoutesDocumented + NoOrphanedSpecPaths + EmbeddedSpecMatchesCanonical) caught spec drift immediately; always copy openapi_spec.yaml → api/openapi.yaml after editing
   - chi only orders among same-method routes; GET {objectSetRid} does not conflict with new POST loadObjectsX endpoints, but keeping the static posts before the GET wildcard stays consistent with the US-025/US-026 pattern
   - Full regression: 28/28 Go packages green including test/e2e, test/chinook (213s), test/northwind (139s); new tests 7/7 pass
+---
+
+## 2026-04-11 - US-028: ObjectSet add 6 definition variants
+- Added 6 new ObjectSet definition types to reach 15 total (Foundry parity):
+  - static: {type, objectType, primaryKeys} — verbatim PK list, no index query
+  - asType: {type, objectType, objectSet} — relabels inner result under target objectType (for interface implementations)
+  - asBaseObjectTypes: {type, objectSet} — pass-through in single-type model
+  - interfaceBase: {type, interfaceType} — via InterfaceResolver, unions all implementing types' Bleve indexes; returns empty ObjectType=interfaceAPIName
+  - interfaceLinkSearchAround: {type, objectSet, interfaceLink} — delegates to LinkResolver.ResolveLinkedObjectsByAPIName (interface links treated as named traversals)
+  - methodInput: {type, input} — validated but execute-time errors (bound at function invocation time)
+- Added InterfaceResolver interface + Executor.SetInterfaceResolver setter (keeps NewExecutor signature stable)
+- TDD: wrote 24 failing tests first in definition_us028_test.go covering validation, parse round-trip, and execution paths including a TestExecute_InterfaceBase_WithResolver integration test that seeds two implementing types and verifies deduped union
+- Files changed:
+  - pkg/oss/objectset/definition.go — added PrimaryKeys, InterfaceType, InterfaceLink, Input fields + 6 new Validate() cases
+  - pkg/oss/objectset/executor.go — InterfaceResolver interface, SetInterfaceResolver setter, 5 new execute* methods (methodInput errors inline)
+  - pkg/oss/objectset/definition_us028_test.go — NEW: 24 TDD tests
+  - cmd/server/openapi_spec.yaml — ObjectSetDefinition explicit type enum, discriminator fields (objectType, objectSet, objectSets, primaryKeys, interfaceType, interfaceLink, input)
+  - api/openapi.yaml — byte-identical mirror
+  - web/src/api/types.ts — added StaticObjectSet / AsTypeObjectSet / AsBaseObjectTypesObjectSet / InterfaceBaseObjectSet / InterfaceLinkSearchAroundObjectSet / MethodInputObjectSet + extended union
+  - web/src/components/objectsets/ObjectSetResults.tsx — resolveRootType handles new variants (asType/static return objectType, asBase/interface fallback to inner or '')
+  - web/src/components/objectsets/ObjectSetComposer.tsx — resolveType extended with new cases
+  - web/src/lib/objectSetBuilder.ts — definitionToNode throws for new variants (UI composer does not yet model them; wire round-trip works)
+  - prd.json — US-028 passes: true
+- **Learnings for future iterations:**
+  - 新 Definition 字段使用 omitempty tag 和指针/切片避免污染已有序列化形式 — JSON 输出保持向后兼容
+  - 通过可选的 setter (SetInterfaceResolver) 扩展 Executor 依赖，保持 NewExecutor 签名稳定，与 US-026 的 SetOmsRepo 一致
+  - ObjectType 字段在 static / base / asType 三种类型下语义不同但字段名复用 — definition.go 注释必须明确标注
+  - interfaceBase 的 Result.ObjectType 填充 interfaceAPIName 而不是具体类型，下游需要检测这一 "polymorphic" 标记；US-026 的 handlers_interface.go 跨类型查询走的是不同路径（直接调用 OMS repo），executor 层的 interfaceBase 仅做索引联合
+  - Foundry 的 methodInput 是函数调用时延迟绑定的占位符 — executor 不应试图执行它，返回明确错误更安全
+  - 前端 ObjectSetNode 是 UI builder 专属类型，与 wire-format ObjectSetDefinition 是双向映射关系；definitionToNode 在新 variants 处 throw 是刻意选择，表示 UI composer 暂不支持这些类型但 wire 层完全工作
+  - OpenAPI ObjectSetDefinition 之前用 additionalProperties: true 完全留空；现在加了 type enum 和所有 discriminator 字段的顶层描述 — SDK 生成器可以正确识别 tagged union
+  - contract 测试 (AllRoutesDocumented/NoOrphanedSpecPaths/EmbeddedSpecMatchesCanonical) 只管路径是否被文档化，不校验 schema 内部结构 — schema 更新只需保证两份 yaml 一致
+  - 24 个新测试 + 完整 pkg/oss/objectset 套件 16s、全量 go test ./... 绿（含 e2e/chinook/northwind），npx tsc -b 0 error, vitest 186/186, pytest 69/69
 ---
