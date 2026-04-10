@@ -438,8 +438,8 @@
         "go test ./... passes"
       ],
       "priority": 27,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Two preview POST handlers share the same underlying load implementation (pkg/oss/objectset/handler_preview.go). Both require ?preview=true, both require select, both emit items with $rid/$primaryKey/$apiName prefix. loadObjectsOrInterfaces has identical data-plane behaviour today because ObjectSet interfaceBase is a US-028 concern."
     },
     {
       "id": "US-028",

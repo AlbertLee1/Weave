@@ -642,6 +642,26 @@ components:
         totalCountAccuracy:
           type: string
           enum: [EXACT, APPROXIMATE]
+    LoadObjectSetV2MultipleObjectTypesResponse:
+      type: object
+      description: |
+        Preview response envelope used by loadObjectsMultipleObjectTypes and
+        loadObjectsOrInterfaces. Each data item is a flat object whose keys
+        include the requested properties plus $rid, $primaryKey and $apiName.
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            description: Flat object with $rid/$primaryKey/$apiName plus selected properties.
+        nextPageToken:
+          type: string
+        totalCount:
+          type: string
+        totalCountAccuracy:
+          type: string
+          enum: [EXACT, APPROXIMATE]
     LoadLinksRequest:
       type: object
       required: [objectSet, linkTypeApiName]
@@ -2164,6 +2184,75 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateTemporaryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsMultipleObjectTypes:
+    post:
+      operationId: loadObjectSetV2MultipleObjectTypes
+      summary: Materialize an ObjectSet into a page of objects keyed by apiName (preview)
+      description: |
+        Preview endpoint. Requires ?preview=true.
+        Each data item uses the $rid / $primaryKey / $apiName prefix so that
+        multi-type result rows can be disambiguated by the caller.
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadObjectSetRequest"
+      responses:
+        "200":
+          description: Multi-type ObjectSet load response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadObjectSetV2MultipleObjectTypesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsOrInterfaces:
+    post:
+      operationId: loadObjectSetV2ObjectsOrInterfaces
+      summary: Materialize an ObjectSet whose root may be an interface base set (preview)
+      description: |
+        Preview endpoint. Requires ?preview=true.
+        Like loadObjectsMultipleObjectTypes but semantically allows the root
+        ObjectSet to be an interface base set. Each data item uses the
+        $rid / $primaryKey / $apiName prefix.
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadObjectSetRequest"
+      responses:
+        "200":
+          description: Object-or-interface ObjectSet load response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadObjectSetV2MultipleObjectTypesResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":

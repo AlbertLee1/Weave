@@ -744,3 +744,26 @@
   - Reused existing InterfaceType parameter + ObjectPage/SearchObjectsRequest/AggregationRequest/AggregationResponse schemas in openapi.yaml — no new schemas needed
   - All tests pass: 8/8 new interface tests, all 28 Go packages (including e2e/chinook/northwind), 186/186 vitest, 69/69 pytest, 3/3 contract tests
 ---
+
+## 2026-04-11 - US-027: ObjectSet multi-type loading (2 preview endpoints)
+- Added two Foundry preview POST endpoints under /objectSets/:
+  - POST /api/v2/ontologies/{o}/objectSets/loadObjectsMultipleObjectTypes
+  - POST /api/v2/ontologies/{o}/objectSets/loadObjectsOrInterfaces
+- Both require ?preview=true and select (SelectRequired 400 on missing)
+- Preview wire format: items are flat maps with $rid/$primaryKey/$apiName (not the __ prefix used by WireObject); response envelope is LoadObjectSetV2MultipleObjectTypesResponse (data/nextPageToken/totalCount/totalCountAccuracy)
+- Both handlers share h.loadPreview() — the only difference today is the route name and the semantic contract that loadObjectsOrInterfaces will accept interface base sets once US-028 lands
+- No OMS repo dependency: the handler runs the existing executor, formats results, and returns. Multi-type response shape is in place so US-028's interfaceBase/asType/etc. can later use the same envelope
+- Files changed:
+  - pkg/oss/objectset/handler_preview.go — NEW: LoadObjectsMultipleObjectTypes + LoadObjectsOrInterfaces handlers, shared loadPreview(), local requirePreviewObjectSet helper, LoadObjectSetV2MultipleObjectTypesResponse type
+  - pkg/oss/objectset/handler_preview_test.go — NEW: 7 TDD tests (success for both, preview required, select required, missing objectSet)
+  - cmd/server/main.go — registered 2 new routes before the /{objectSetRid} wildcard
+  - cmd/server/openapi_spec.yaml — added 2 paths + LoadObjectSetV2MultipleObjectTypesResponse schema
+  - api/openapi.yaml — byte-identical copy
+  - prd.json — US-027 passes: true
+- **Learnings for future iterations:**
+  - Local requirePreviewObjectSet helper avoids importing pkg/oms from the objectset package (pkg/oss/objectset has no existing pkg/oms dependency and shouldn't acquire one just for a 5-line helper)
+  - Preview wire format uses $ prefix; the existing WireObject.MarshalJSON writes __ prefix — do not reuse it for preview endpoints, emit a raw map[string]interface{} instead
+  - Contract test (AllRoutesDocumented + NoOrphanedSpecPaths + EmbeddedSpecMatchesCanonical) caught spec drift immediately; always copy openapi_spec.yaml → api/openapi.yaml after editing
+  - chi only orders among same-method routes; GET {objectSetRid} does not conflict with new POST loadObjectsX endpoints, but keeping the static posts before the GET wildcard stays consistent with the US-025/US-026 pattern
+  - Full regression: 28/28 Go packages green including test/e2e, test/chinook (213s), test/northwind (139s); new tests 7/7 pass
+---
