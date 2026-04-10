@@ -33,6 +33,7 @@
 - TimeSeries path params inconsistent: {property} vs {propertyName} — match Foundry exactly
 
 ## Codebase Patterns
+- When deleting a route: remove from RegisterRoutes, delete handler+service files, update Service interface, clean mock impls in all test files (including pkg/mcp/tools_test.go), remove OpenAPI paths from both yaml files
 - ApplyRequest.Options is *ApplyOptions (pointer, omitempty) — nil means use defaults
 - Handler resolves options with defaults before calling executor; executor is options-unaware
 - VALIDATE_ONLY uses Prepare() only — no CommitBatch, no Publish
@@ -114,4 +115,29 @@
   - No DB migration needed — transformation is at the serialization layer only
   - ParameterForm already expected record format before this change; only needed dataType nesting update
   - All Go tests pass, all 192 frontend tests pass, npx tsc --noEmit clean
+---
+
+## 2026-04-11 - US-004: Delete link write REST endpoints
+- Removed POST/DELETE /api/v2/ontologies/{o}/links/{linkTypeApiName} routes from RegisterRoutes
+- Deleted pkg/oss/handlers_link_crud.go (CreateLink/DeleteLink handlers, writeLinkError, request body types)
+- Deleted pkg/oss/service_link_crud.go (CreateLink/DeleteLink service methods, resolveM2MLinkType, error vars)
+- Removed CreateLink/DeleteLink from oss.Service interface and CreateLinkRequest/DeleteLinkRequest types
+- Cleaned up mock implementations in service_test.go and mcp/tools_test.go
+- Removed link CRUD OpenAPI spec paths from cmd/server/openapi_spec.yaml and api/openapi.yaml
+- Files changed:
+  - pkg/oss/handlers.go — removed route registrations
+  - pkg/oss/handlers_link_crud.go — DELETED
+  - pkg/oss/service_link_crud.go — DELETED
+  - pkg/oss/service.go — removed CreateLink/DeleteLink from Service interface and request types
+  - pkg/oss/service_test.go — simplified mock (removed edge tracking fields)
+  - pkg/oss/link_crud_removed_test.go — NEW: TDD test verifying routes return 404
+  - pkg/mcp/tools_test.go — removed CreateLink/DeleteLink stubs from fakeOssService
+  - cmd/server/openapi_spec.yaml — removed link CRUD paths
+  - api/openapi.yaml — removed link CRUD paths (mirror)
+  - prd.json — US-004 passes: true
+- **Learnings for future iterations:**
+  - oms.Repository still has UpsertLinkEdge/DeleteLinkEdge — these are used by actions, not by the removed link CRUD service
+  - When deleting a handler+service pair, check all Service interface implementations (mcp/tools_test.go had a fakeOssService)
+  - Mock structs may have tracking fields only used by tests for the deleted code — clean those too
+  - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
 ---

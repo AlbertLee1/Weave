@@ -45,10 +45,6 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	// when the underlying history repo has not been wired.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/history", h.GetObjectHistory)
 
-	// Link CRUD (M2M edges only) — write-side counterpart to ListLinkedObjects.
-	r.Post("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.CreateLink)
-	r.Delete("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeApiName}", h.DeleteLink)
-
 	// Tier 3.5 SSE subscribe endpoint. Always registered; returns 503 when
 	// the broadcast hub has not been wired (degraded mode).
 	r.Get("/api/v2/ontologies/{ontologyApiName}/subscribe", h.SubscribeChanges)

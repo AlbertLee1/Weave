@@ -26,25 +26,12 @@ type mockOmsRepo struct {
 	byRID       map[string]*oms.ObjectType // key: RID
 	linkTypes   map[string][]oms.LinkType  // key: objectTypeRID
 
-	// LinkType lookup by (ontologyRID, apiName) for CRUD CreateLink/DeleteLink.
+	// LinkType lookup by (ontologyRID, apiName) for route-removal tests.
 	linkTypesByAPIName map[string]*oms.LinkType // key: ontologyRID+":"+apiName
-
-	// Edge tracking for CreateLink/DeleteLink assertions.
-	upsertedEdges []oms.LinkEdge // copies of edges passed to UpsertLinkEdge
-	deletedEdges  []deletedEdgeKey
-	upsertErr     error
-	deleteErr     error
 
 	// securityPolicies maps objectTypeRID -> attached SecurityPolicies. Tests
 	// populate this directly to exercise the ABAC filter path.
 	securityPolicies map[string][]oms.SecurityPolicy
-}
-
-// deletedEdgeKey records a single DeleteLinkEdge invocation for assertions.
-type deletedEdgeKey struct {
-	LinkTypeRID string
-	SourcePK    string
-	TargetPK    string
 }
 
 func newMockOmsRepo() *mockOmsRepo {
@@ -176,34 +163,15 @@ func (m *mockOmsRepo) DeleteLinkType(_ context.Context, _ string) error {
 	return nil
 }
 
-// LinkEdge stubs / trackers. The service layer's CreateLink/DeleteLink
-// path uses these to record what was written so tests can assert on shape.
-func (m *mockOmsRepo) UpsertLinkEdge(_ context.Context, edge *oms.LinkEdge) error {
-	if m.upsertErr != nil {
-		return m.upsertErr
-	}
-	if edge != nil {
-		m.upsertedEdges = append(m.upsertedEdges, *edge)
-	}
-	return nil
-}
-func (m *mockOmsRepo) DeleteLinkEdge(_ context.Context, ltRID, src, tgt string) error {
-	if m.deleteErr != nil {
-		return m.deleteErr
-	}
-	m.deletedEdges = append(m.deletedEdges, deletedEdgeKey{
-		LinkTypeRID: ltRID,
-		SourcePK:    src,
-		TargetPK:    tgt,
-	})
-	return nil
-}
+// LinkEdge stubs — required by oms.Repository interface (used by actions).
+func (m *mockOmsRepo) UpsertLinkEdge(_ context.Context, _ *oms.LinkEdge) error { return nil }
+func (m *mockOmsRepo) DeleteLinkEdge(_ context.Context, _, _, _ string) error  { return nil }
 func (m *mockOmsRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ string) error {
 	return nil
 }
 
-// GetLinkTypeByAPIName resolves a LinkType by ontology + API name for the
-// CreateLink/DeleteLink service path. Returns ErrNotFound when missing.
+// GetLinkTypeByAPIName resolves a LinkType by ontology + API name.
+// Required by oms.Repository interface.
 func (m *mockOmsRepo) GetLinkTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.LinkType, error) {
 	if lt, ok := m.linkTypesByAPIName[ontologyRID+":"+apiName]; ok {
 		return lt, nil

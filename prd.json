@@ -69,7 +69,7 @@
         "go test ./... passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Already confirmed zero consumers (frontend/SDK/CLI)."
     },
     {

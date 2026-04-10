@@ -85,8 +85,7 @@ func (f *fakeOssService) ListLinkedObjects(ctx context.Context, req oss.LinkedOb
 	return &oss.ObjectPage{}, nil
 }
 
-func (f *fakeOssService) CreateLink(ctx context.Context, req oss.CreateLinkRequest) error { return nil }
-func (f *fakeOssService) DeleteLink(ctx context.Context, req oss.DeleteLinkRequest) error { return nil }
+
 
 // stubPublisher is a no-op funnel publisher for the action executor.
 type stubPublisher struct{}
