@@ -24,6 +24,7 @@ type mockRepo struct {
 	properties  []oms.Property
 	interfaces  []oms.Interface
 	valueTypes  []oms.ValueType
+	queryTypes  []oms.QueryType
 
 	// Error controls
 	createErr error
@@ -448,14 +449,32 @@ func (m *mockRepo) DeleteDatasourceBinding(_ context.Context, _ string) error { 
 
 // QueryType stubs
 func (m *mockRepo) CreateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
-func (m *mockRepo) GetQueryType(_ context.Context, _ string) (*oms.QueryType, error) {
+func (m *mockRepo) GetQueryType(_ context.Context, rid string) (*oms.QueryType, error) {
+	for i := range m.queryTypes {
+		if m.queryTypes[i].RID == rid {
+			return &m.queryTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) GetQueryTypeByAPIName(_ context.Context, _, _ string) (*oms.QueryType, error) {
+func (m *mockRepo) GetQueryTypeByAPIName(_ context.Context, ontologyIdentifier, apiNameOrRID string) (*oms.QueryType, error) {
+	for i := range m.queryTypes {
+		ontologyMatch := m.queryTypes[i].OntologyRID == ontologyIdentifier || m.matchOntologyByApiName(ontologyIdentifier, m.queryTypes[i].OntologyRID)
+		if ontologyMatch && (m.queryTypes[i].APIName == apiNameOrRID || m.queryTypes[i].RID == apiNameOrRID) {
+			return &m.queryTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListQueryTypes(_ context.Context, _ string) ([]oms.QueryType, error) {
-	return nil, nil
+func (m *mockRepo) ListQueryTypes(_ context.Context, ontologyIdentifier string) ([]oms.QueryType, error) {
+	var out []oms.QueryType
+	for _, qt := range m.queryTypes {
+		ontologyMatch := qt.OntologyRID == ontologyIdentifier || m.matchOntologyByApiName(ontologyIdentifier, qt.OntologyRID)
+		if ontologyMatch {
+			out = append(out, qt)
+		}
+	}
+	return out, nil
 }
 func (m *mockRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
 func (m *mockRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }

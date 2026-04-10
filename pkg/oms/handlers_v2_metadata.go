@@ -100,3 +100,39 @@ func (h *OMSHandler) GetValueTypeV2(w http.ResponseWriter, r *http.Request) {
 
 	httputil.WriteJSON(w, http.StatusOK, vt)
 }
+
+// ListQueryTypesV2 handles GET /api/v2/ontologies/{ontologyApiName}/queryTypes.
+func (h *OMSHandler) ListQueryTypesV2(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	list, err := h.repo.ListQueryTypes(r.Context(), ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListQueryTypesFailed", nil))
+		return
+	}
+
+	if list == nil {
+		list = []QueryType{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
+}
+
+// GetQueryTypeV2 handles GET /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}.
+func (h *OMSHandler) GetQueryTypeV2(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	queryIdentifier := chi.URLParam(r, "queryApiName")
+
+	qt, err := h.repo.GetQueryTypeByAPIName(r.Context(), ontologyRID, queryIdentifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
+				"queryApiName": queryIdentifier,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetQueryTypeFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, qt)
+}

@@ -2725,7 +2725,7 @@ func (h *OMSHandler) DeleteQueryType(w http.ResponseWriter, r *http.Request) {
 
 // ExecuteQueryType handles POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute.
 func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
-	ontologyRID := chi.URLParam(r, "ontology")
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	queryAPIName := chi.URLParam(r, "queryApiName")
 
 	qt, err := h.repo.GetQueryTypeByAPIName(r.Context(), ontologyRID, queryAPIName)

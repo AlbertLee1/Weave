@@ -2072,14 +2072,61 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
-  /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute:
+  /api/v2/ontologies/{ontologyApiName}/queryTypes:
+    get:
+      operationId: listQueryTypes
+      summary: List all QueryTypes in an ontology
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: ontologyApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of query types.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}:
+    get:
+      operationId: getQueryType
+      summary: Get a QueryType by apiName or RID
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: ontologyApiName
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: queryApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: QueryType details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute:
     post:
       operationId: executeQueryType
       summary: Execute a stored QueryType
       tags: [Metadata]
       parameters:
         - in: path
-          name: ontology
+          name: ontologyApiName
           required: true
           schema:
             type: string

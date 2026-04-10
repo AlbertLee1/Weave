@@ -21,8 +21,10 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}", omsHandler.GetInterfaceTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes", omsHandler.ListValueTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes/{valueType}", omsHandler.GetValueTypeV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes", omsHandler.ListQueryTypesV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}", omsHandler.GetQueryTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/fullMetadata", omsHandler.GetFullMetadata)
 
 	// QueryType execute route
-	r.Post("/api/v2/ontologies/{ontology}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
 }

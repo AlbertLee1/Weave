@@ -184,7 +184,7 @@
         "go test ./... passes"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "QueryType admin CRUD already exists. These are read-only v2 wrappers."
     },
     {
