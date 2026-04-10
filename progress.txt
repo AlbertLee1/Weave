@@ -84,6 +84,11 @@
 - DB pool defaults: MaxConns=25, MaxConnLifetime=1h, HealthCheckPeriod=30s — in database.DefaultPoolConfig()
 - database.Connect() now calls ConnectWithConfig() with DefaultPoolConfig() — backwards compatible
 - When adding a new method to oss.Service interface, update fakeOssService in pkg/mcp/tools_test.go
+- DLQ publish uses DLQPublishFunc (func(subject, data) error) — decoupled from nats.JetStreamContext for testability
+- Consumer.dlqPublish is nil by default — publishToDLQ gracefully degrades with log warning
+- DLQ stream: OBJECT_EDITS_DLQ, subjects: edits.dlq.>, 72h retention, LimitsPolicy (not WorkQueue)
+- DLQMessage envelope includes OriginalSubject, OriginalData, Reason, NumDelivered, MaxDeliveries, StreamSequence, ConsumerSequence
+- Wire DLQ in main.go: consumer.SetDLQPublish(funnel.NewDLQPublishFunc(js)) after NewConsumer
 
 ---
 
@@ -552,4 +557,53 @@
   - database.Connect() signature unchanged — ConnectWithConfig is the new extended variant (same pattern as auth.Middleware vs MiddlewareWithAPIKeys)
   - pgxpool.ParseConfig then pgxpool.NewWithConfig is the proper way to set pool params; direct pgxpool.New doesn't expose pool tuning
   - All Go tests pass (full regression green including e2e, chinook, northwind), npx tsc --noEmit clean, 168/168 vitest pass
+---
+
+## 2026-04-11 - US-021: Production hardening: NATS DLQ stream
+- Implemented NATS JetStream Dead Letter Queue (DLQ) stream for terminated messages
+- Added DLQ stream (OBJECT_EDITS_DLQ) with 72h retention, LimitsPolicy, edits.dlq.> subjects
+- Created DLQMessage envelope type with full metadata: OriginalSubject, OriginalData, Reason, delivery counts, sequence numbers
+- Consumer publishes to DLQ before calling msg.Term() — terminated messages preserved for operator inspection
+- DLQPublishFunc decoupled from nats.JetStreamContext for testability
+- Graceful degradation: nil dlqPublish logs warning instead of erroring
+- SetupJetStream now creates both OBJECT_EDITS and OBJECT_EDITS_DLQ streams
+- Files changed:
+  - pkg/funnel/dlq.go — NEW: DLQ constants, DLQMessage type, DLQStreamConfig(), SetupDLQStream(), NewDLQPublishFunc(), Consumer.publishToDLQ()
+  - pkg/funnel/dlq_test.go — NEW: 8 TDD tests (constants, JSON round-trip, config, publish, subject extraction, nil func)
+  - pkg/funnel/consumer.go — added dlqPublish field, SetDLQPublish() setter, updated handleMessage to publish to DLQ before Term()
+  - pkg/funnel/nats_setup.go — SetupJetStream now also creates DLQ stream
+  - cmd/server/main.go — wired consumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
+  - prd.json — US-021 passes: true
+- **Learnings for future iterations:**
+  - NATS has no built-in DLQ — you manually republish to a separate stream before msg.Term()
+  - Use DLQPublishFunc (func signature) instead of nats.JetStreamContext interface to avoid massive stub in tests
+  - DLQ uses LimitsPolicy (not WorkQueue) so messages can be read multiple times for replay
+  - 72h DLQ retention gives operators time to investigate; main stream is 24h WorkQueue
+  - All 31 funnel tests pass, go test ./... full suite green including e2e, chinook, northwind
+---
+
+## 2026-04-11 - US-022: OpenAPI spec full rewrite for Phase 1
+- Full rewrite of cmd/server/openapi_spec.yaml and api/openapi.yaml to reflect all Phase 1 changes
+- Removed 30+ stale admin-only schemas: CreateOntologyRequest, UpdateOntologyRequest, CreateObjectTypeRequest, UpdateObjectTypeRequest, CreatePropertyRequest, UpdatePropertyRequest, CreateLinkTypeRequest, UpdateLinkTypeRequest, CreateActionTypeRequest, UpdateActionTypeRequest, CreateInterfaceRequest, UpdateInterfaceRequest, AttachInterfaceRequest, CreateSharedPropertyRequest, UpdateSharedPropertyRequest, CreateTypeGroupRequest, UpdateTypeGroupRequest, CreateValueTypeRequest, UpdateValueTypeRequest, CreateDatasourceBindingRequest, UpdateDatasourceBindingRequest, CreateSecurityPolicyRequest, UpdateSecurityPolicyRequest, CreateQueryTypeRequest, UpdateQueryTypeRequest, ImportOntologyRequest, ImportOntologyResponse, CreateSnapshotRequest, OntologySnapshot, SnapshotListResponse, OntologyExport, SearchResult, SearchResponse, SharedProperty, SharedPropertyListResponse, TypeGroup, TypeGroupListResponse, DatasourceBinding, DatasourceBindingListResponse, SecurityPolicy, SecurityPolicyListResponse, ObjectTypeInterface, BatchFailure, Edit
+- Removed 11 stale admin-only path parameters: OntologyRid, ObjectTypeRid, PropertyRid, LinkTypeRid, InterfaceRid, SharedPropertyRid, TypeGroupRid, ValueTypeRid, DatasourceBindingRid, SecurityPolicyRid, QueryTypeRid
+- Updated action schemas to Foundry OSv2 wire format:
+  - ApplyActionRequest now includes options ($ref ApplyOptions)
+  - ApplyActionResponse replaced with SyncApplyActionResponseV2 (operationId, validation, edits)
+  - ApplyBatchRequest updated: removed old mode field, added options ($ref BatchApplyOptions), actions items simplified
+  - ApplyBatchResponse replaced with BatchApplyActionResponseV2 (edits only)
+  - Added new schemas: ApplyOptions, BatchApplyOptions, ActionResults, ValidationResult, SyncApplyActionResponseV2, BatchApplyActionResponseV2
+- Updated ObjectType.status enum to include ENDORSED: [ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED]
+- Fixed fullMetadata response ref from OntologyExport to OntologyFullMetadata
+- Updated server URL from localhost:8080 to localhost:9117
+- Updated description to say "aligned with" instead of "inspired by"
+- Net reduction: ~1000 lines removed (2580 → ~1580 lines)
+- Files changed:
+  - cmd/server/openapi_spec.yaml — full rewrite
+  - api/openapi.yaml — byte-identical copy
+  - prd.json — US-022 passes: true
+- **Learnings for future iterations:**
+  - The contract test (TestContract_AllRoutesDocumented / NoOrphanedSpecPaths / EmbeddedSpecMatchesCanonical) guards against spec drift — always run it after spec changes
+  - Schema cleanup is safe to do in bulk when admin routes are already deleted — no consumer references remain
+  - Action schemas were the most significant update: old Weave-style envelopes (actionRid/batchId/offset/failures) replaced by Foundry V2 (operationId/validation/edits with ActionResults counts)
+  - All Go tests pass (full regression green including e2e, chinook, northwind), contract tests pass, npx tsc --noEmit clean, 168/168 vitest pass
 ---

@@ -3,14 +3,14 @@ info:
   title: Weave Ontology API
   version: 1.0.0
   description: |
-    Weave is a single-machine Ontology Layer engine inspired by Palantir Foundry OSv2.
+    Weave is a single-machine Ontology Layer engine aligned with Palantir Foundry OSv2.
     This document describes its REST API: ontology metadata, object retrieval and
     search, ObjectSet composition, aggregation, link traversal, action execution,
     and authentication.
   license:
     name: Proprietary
 servers:
-  - url: http://localhost:8080
+  - url: http://localhost:9117
     description: Local development (port configurable via WEAVE_PORT).
 tags:
   - name: Health
@@ -85,25 +85,11 @@ components:
       description: API name (or RID) of the ontology.
       schema:
         type: string
-    OntologyRid:
-      in: path
-      name: ontologyRid
-      required: true
-      description: Resource identifier of the ontology.
-      schema:
-        type: string
     ObjectTypeApiName:
       in: path
       name: objectTypeApiName
       required: true
       description: API name of the object type.
-      schema:
-        type: string
-    ObjectTypeRid:
-      in: path
-      name: objectTypeRid
-      required: true
-      description: Resource identifier of the object type.
       schema:
         type: string
     ObjectType:
@@ -120,53 +106,11 @@ components:
       description: Primary key of the object.
       schema:
         type: string
-    PropertyRid:
-      in: path
-      name: propertyRid
-      required: true
-      description: Resource identifier of the property.
-      schema:
-        type: string
-    LinkTypeRid:
-      in: path
-      name: linkTypeRid
-      required: true
-      description: Resource identifier of the link type.
-      schema:
-        type: string
     ActionTypeRid:
       in: path
       name: actionTypeRid
       required: true
-      description: Resource identifier of the action type.
-      schema:
-        type: string
-    InterfaceRid:
-      in: path
-      name: interfaceRid
-      required: true
-      description: Resource identifier of the interface.
-      schema:
-        type: string
-    SharedPropertyRid:
-      in: path
-      name: sharedPropertyRid
-      required: true
-      description: Resource identifier of the shared property.
-      schema:
-        type: string
-    TypeGroupRid:
-      in: path
-      name: typeGroupRid
-      required: true
-      description: Resource identifier of the type group.
-      schema:
-        type: string
-    ValueTypeRid:
-      in: path
-      name: valueTypeRid
-      required: true
-      description: Resource identifier of the value type.
+      description: Resource identifier (or API name) of the action type.
       schema:
         type: string
     InterfaceType:
@@ -191,27 +135,6 @@ components:
       schema:
         type: string
         enum: ["true"]
-    DatasourceBindingRid:
-      in: path
-      name: datasourceBindingRid
-      required: true
-      description: Resource identifier of the datasource binding.
-      schema:
-        type: string
-    SecurityPolicyRid:
-      in: path
-      name: securityPolicyRid
-      required: true
-      description: Resource identifier of the security policy.
-      schema:
-        type: string
-    QueryTypeRid:
-      in: path
-      name: queryTypeRid
-      required: true
-      description: Resource identifier of the query type.
-      schema:
-        type: string
   schemas:
     ErrorResponse:
       type: object
@@ -273,6 +196,7 @@ components:
           type: string
         status:
           type: string
+          enum: [ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED]
         visibility:
           type: string
         icon:
@@ -415,79 +339,6 @@ components:
         sharedProperties:
           type: object
           additionalProperties: true
-    ObjectTypeInterface:
-      type: object
-      required: [objectTypeRid, interfaceRid]
-      properties:
-        objectTypeRid:
-          type: string
-        interfaceRid:
-          type: string
-        propertyMapping:
-          type: object
-          additionalProperties: true
-    SharedProperty:
-      type: object
-      required: [rid, apiName, baseType]
-      properties:
-        rid:
-          type: string
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        baseType:
-          type: string
-        typeConfig:
-          type: object
-          additionalProperties: true
-        isArray:
-          type: boolean
-    TypeGroup:
-      type: object
-      required: [rid, apiName, displayName]
-      properties:
-        rid:
-          type: string
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        color:
-          type: string
-    DatasourceBinding:
-      type: object
-      required: [rid, datasetRid, branch, isPrimary]
-      properties:
-        rid:
-          type: string
-        datasetRid:
-          type: string
-        branch:
-          type: string
-        columnMapping:
-          type: object
-          additionalProperties: true
-        isPrimary:
-          type: boolean
-    SecurityPolicy:
-      type: object
-      required: [rid, objectTypeRid, policyType]
-      properties:
-        rid:
-          type: string
-        objectTypeRid:
-          type: string
-        policyType:
-          type: string
-          enum: [OBJECT, PROPERTY]
-        rules:
-          type: object
-          additionalProperties: true
     QueryType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -554,51 +405,6 @@ components:
         createdAt:
           type: string
           format: date-time
-    OntologySnapshot:
-      type: object
-      required: [id, ontologyRid, version, createdBy, createdAt]
-      properties:
-        id:
-          type: integer
-          format: int64
-        ontologyRid:
-          type: string
-        version:
-          type: integer
-        label:
-          type: string
-        description:
-          type: string
-        snapshot:
-          type: object
-          additionalProperties: true
-        createdBy:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-    OntologyExport:
-      type: object
-      required: [ontology, objectTypes, linkTypes, actionTypes, interfaces]
-      properties:
-        ontology:
-          $ref: "#/components/schemas/Ontology"
-        objectTypes:
-          type: array
-          items:
-            $ref: "#/components/schemas/ObjectType"
-        linkTypes:
-          type: array
-          items:
-            $ref: "#/components/schemas/LinkType"
-        actionTypes:
-          type: array
-          items:
-            $ref: "#/components/schemas/ActionType"
-        interfaces:
-          type: array
-          items:
-            $ref: "#/components/schemas/Interface"
     LoadMetadataRequest:
       type: object
       description: Request body for selectively loading ontology metadata subsets. Each key present (even as empty {}) selects that subset.
@@ -644,22 +450,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryType"
-    SearchResult:
-      type: object
-      required: [rid, resourceType, apiName, displayName]
-      properties:
-        rid:
-          type: string
-        resourceType:
-          type: string
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
     OntologyListResponse:
       type: object
       properties:
@@ -695,20 +485,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Interface"
-    SharedPropertyListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/SharedProperty"
-    TypeGroupListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/TypeGroup"
     ValueTypeListResponse:
       type: object
       properties:
@@ -716,20 +492,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ValueType"
-    DatasourceBindingListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/DatasourceBinding"
-    SecurityPolicyListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/SecurityPolicy"
     QueryTypeListResponse:
       type: object
       properties:
@@ -744,20 +506,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ActionLog"
-    SnapshotListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/OntologySnapshot"
-    SearchResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/SearchResult"
     WireObject:
       type: object
       description: |
@@ -995,82 +743,99 @@ components:
       properties:
         objectSetRid:
           type: string
-    Edit:
+    ApplyOptions:
       type: object
-      description: A single edit produced by action execution.
-      additionalProperties: true
+      description: Options for single action apply (Foundry OSv2).
+      properties:
+        mode:
+          type: string
+          enum: [VALIDATE_ONLY, VALIDATE_AND_EXECUTE]
+          default: VALIDATE_AND_EXECUTE
+          description: VALIDATE_ONLY runs validation without executing; VALIDATE_AND_EXECUTE (default) runs both.
+        returnEdits:
+          type: string
+          enum: [ALL, ALL_V2_WITH_DELETIONS, NONE]
+          default: ALL
+          description: Controls whether edit summaries are returned in the response.
+    BatchApplyOptions:
+      type: object
+      description: Options for batch action apply (Foundry OSv2).
+      properties:
+        returnEdits:
+          type: string
+          enum: [ALL, NONE]
+          default: ALL
+          description: Controls whether edit summaries are returned in the response.
+    ActionResults:
+      type: object
+      description: Foundry OSv2 edit summary returned in action response envelopes.
+      required: [type]
       properties:
         type:
           type: string
-          enum: [CREATE, MODIFY, DELETE]
+          enum: [edits]
+        addedObjectCount:
+          type: integer
+        modifiedObjectCount:
+          type: integer
+        deletedObjectCount:
+          type: integer
+        addedLinksCount:
+          type: integer
+        deletedLinksCount:
+          type: integer
+    ValidationResult:
+      type: object
+      description: Validation result returned for VALIDATE_ONLY mode.
+      required: [result]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
     ApplyActionRequest:
       type: object
       description: |
         Foundry OSv2 action body — the action API name is in the URL path
-        segment {action}, not the body. Only parameters travel here.
+        segment {action}, not the body. Only parameters and options travel here.
       properties:
         parameters:
           type: object
           additionalProperties: true
-    ApplyActionResponse:
+        options:
+          $ref: "#/components/schemas/ApplyOptions"
+    SyncApplyActionResponseV2:
       type: object
+      description: Foundry OSv2 response envelope for single action apply.
       properties:
-        actionRid:
+        operationId:
           type: string
+        validation:
+          $ref: "#/components/schemas/ValidationResult"
         edits:
-          type: array
-          items:
-            $ref: "#/components/schemas/Edit"
-        batchId:
-          type: string
-        offset:
-          type: integer
-          format: int64
-    BatchFailure:
-      type: object
-      properties:
-        index:
-          type: integer
-        actionType:
-          type: string
-        phase:
-          type: string
-        message:
-          type: string
+          $ref: "#/components/schemas/ActionResults"
     ApplyBatchRequest:
       type: object
+      description: |
+        Foundry OSv2 batch apply body — the action API name is in the URL path
+        segment {action}. All batch items share the same action type.
       required: [actions]
       properties:
         actions:
           type: array
           items:
-            $ref: "#/components/schemas/ApplyActionRequest"
-        mode:
-          type: string
-          enum: [atomic, bestEffort]
-          default: atomic
-    ApplyBatchResponse:
+            type: object
+            properties:
+              parameters:
+                type: object
+                additionalProperties: true
+        options:
+          $ref: "#/components/schemas/BatchApplyOptions"
+    BatchApplyActionResponseV2:
       type: object
+      description: Foundry OSv2 response envelope for batch action apply.
       properties:
-        mode:
-          type: string
-        batchId:
-          type: string
-        offset:
-          type: integer
-          format: int64
-        results:
-          type: array
-          items:
-            $ref: "#/components/schemas/ApplyActionResponse"
-        appliedEdits:
-          type: array
-          items:
-            $ref: "#/components/schemas/Edit"
-        failures:
-          type: array
-          items:
-            $ref: "#/components/schemas/BatchFailure"
+        edits:
+          $ref: "#/components/schemas/ActionResults"
     LoginRequest:
       type: object
       required: [email, password]
@@ -1143,265 +908,6 @@ components:
           type: array
           items:
             type: string
-    CreateOntologyRequest:
-      type: object
-      required: [apiName, displayName]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-    UpdateOntologyRequest:
-      type: object
-      properties:
-        displayName:
-          type: string
-        description:
-          type: string
-    CreateObjectTypeRequest:
-      type: object
-      required: [apiName, displayName, primaryKey]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        pluralDisplayName:
-          type: string
-        description:
-          type: string
-        primaryKey:
-          type: string
-        titleProperty:
-          type: string
-        status:
-          type: string
-        visibility:
-          type: string
-        icon:
-          type: string
-        color:
-          type: string
-    UpdateObjectTypeRequest:
-      type: object
-      additionalProperties: true
-    CreatePropertyRequest:
-      type: object
-      required: [apiName, baseType]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        baseType:
-          type: string
-        typeConfig:
-          type: object
-          additionalProperties: true
-        isArray:
-          type: boolean
-        isNullable:
-          type: boolean
-        isSearchable:
-          type: boolean
-        isSortable:
-          type: boolean
-    UpdatePropertyRequest:
-      type: object
-      additionalProperties: true
-    CreateLinkTypeRequest:
-      type: object
-      required: [apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        objectTypeApiName:
-          type: string
-        linkedObjectTypeApiName:
-          type: string
-        cardinality:
-          type: string
-        foreignKeyConfig:
-          type: object
-          additionalProperties: true
-        joinTableConfig:
-          type: object
-          additionalProperties: true
-        required:
-          type: boolean
-    UpdateLinkTypeRequest:
-      type: object
-      additionalProperties: true
-    CreateActionTypeRequest:
-      type: object
-      required: [apiName, displayName]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
-        parameters:
-          type: object
-          additionalProperties: true
-        rules:
-          type: object
-          additionalProperties: true
-        submissionCriteria:
-          type: object
-          additionalProperties: true
-        sideEffects:
-          type: object
-          additionalProperties: true
-        functionRid:
-          type: string
-        isFunctionBacked:
-          type: boolean
-    UpdateActionTypeRequest:
-      type: object
-      additionalProperties: true
-    CreateInterfaceRequest:
-      type: object
-      required: [apiName, displayName]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        extendsRid:
-          type: string
-        sharedProperties:
-          type: object
-          additionalProperties: true
-    UpdateInterfaceRequest:
-      type: object
-      additionalProperties: true
-    AttachInterfaceRequest:
-      type: object
-      required: [interfaceRid]
-      properties:
-        interfaceRid:
-          type: string
-        propertyMapping:
-          type: object
-          additionalProperties: true
-    CreateSharedPropertyRequest:
-      type: object
-      required: [apiName, baseType]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        baseType:
-          type: string
-        typeConfig:
-          type: object
-          additionalProperties: true
-        isArray:
-          type: boolean
-    UpdateSharedPropertyRequest:
-      type: object
-      additionalProperties: true
-    CreateTypeGroupRequest:
-      type: object
-      required: [apiName, displayName]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        color:
-          type: string
-    UpdateTypeGroupRequest:
-      type: object
-      additionalProperties: true
-    CreateValueTypeRequest:
-      type: object
-      required: [apiName, displayName, baseType]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        baseType:
-          type: string
-        constraints:
-          type: object
-          additionalProperties: true
-        version:
-          type: integer
-    UpdateValueTypeRequest:
-      type: object
-      additionalProperties: true
-    CreateDatasourceBindingRequest:
-      type: object
-      required: [datasetRid, branch]
-      properties:
-        datasetRid:
-          type: string
-        branch:
-          type: string
-        columnMapping:
-          type: object
-          additionalProperties: true
-        isPrimary:
-          type: boolean
-    UpdateDatasourceBindingRequest:
-      type: object
-      additionalProperties: true
-    CreateSecurityPolicyRequest:
-      type: object
-      required: [policyType, rules]
-      properties:
-        policyType:
-          type: string
-          enum: [OBJECT, PROPERTY]
-        rules:
-          type: object
-          additionalProperties: true
-    UpdateSecurityPolicyRequest:
-      type: object
-      additionalProperties: true
-    CreateQueryTypeRequest:
-      type: object
-      required: [apiName, displayName]
-      properties:
-        apiName:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        parameters:
-          type: object
-          additionalProperties: true
-        output:
-          type: object
-          additionalProperties: true
-        query:
-          type: object
-          additionalProperties: true
-        status:
-          type: string
-    UpdateQueryTypeRequest:
-      type: object
-      additionalProperties: true
     ExecuteQueryRequest:
       type: object
       properties:
@@ -1411,24 +917,6 @@ components:
     ExecuteQueryResponse:
       type: object
       additionalProperties: true
-    ImportOntologyRequest:
-      $ref: "#/components/schemas/OntologyExport"
-    ImportOntologyResponse:
-      type: object
-      properties:
-        ontologyRid:
-          type: string
-        imported:
-          type: object
-          additionalProperties:
-            type: integer
-    CreateSnapshotRequest:
-      type: object
-      properties:
-        label:
-          type: string
-        description:
-          type: string
 security:
   - bearerAuth: []
 paths:
@@ -1694,6 +1182,7 @@ paths:
     get:
       operationId: listOntologies
       summary: List ontologies
+      description: Returns all ontologies. No pagination (Foundry OSv2 convention).
       tags: [Metadata]
       responses:
         "200":
@@ -1802,6 +1291,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ObjectType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
@@ -1955,6 +1446,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActionType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
@@ -1974,6 +1467,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActionTypeListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/interfaceTypes:
@@ -2070,6 +1565,45 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes:
+    get:
+      operationId: listQueryTypes
+      summary: List all QueryTypes in an ontology
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: List of query types.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}:
+    get:
+      operationId: getQueryType
+      summary: Get a QueryType by apiName or RID
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: queryApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: QueryType details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/fullMetadata:
     get:
       operationId: getFullMetadata
@@ -2085,7 +1619,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OntologyExport"
+                $ref: "#/components/schemas/OntologyFullMetadata"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
@@ -2111,6 +1647,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OntologyFullMetadata"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute:
+    post:
+      operationId: executeQueryType
+      summary: Execute a stored QueryType
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: queryApiName
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteQueryRequest"
+      responses:
+        "200":
+          description: Query result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteQueryResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
@@ -2198,6 +1765,52 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate:
+    post:
+      operationId: aggregateObjects
+      summary: Aggregate objects via Bleve facets
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AggregationRequest"
+      responses:
+        "200":
+          description: Aggregation result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count:
+    post:
+      operationId: countObjects
+      summary: Count the number of objects of a given type
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+      responses:
+        "200":
+          description: Object count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CountObjectsResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}:
     get:
       operationId: listLinkedObjects
@@ -2270,52 +1883,6 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
-  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate:
-    post:
-      operationId: aggregateObjects
-      summary: Aggregate objects via Bleve facets
-      tags: [Objects]
-      parameters:
-        - $ref: "#/components/parameters/OntologyApiName"
-        - $ref: "#/components/parameters/ObjectType"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AggregationRequest"
-      responses:
-        "200":
-          description: Aggregation result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AggregationResponse"
-        "400":
-          $ref: "#/components/responses/BadRequestError"
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
-        "404":
-          $ref: "#/components/responses/NotFoundError"
-  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count:
-    post:
-      operationId: countObjects
-      summary: Count the number of objects of a given type
-      tags: [Objects]
-      parameters:
-        - $ref: "#/components/parameters/OntologyApiName"
-        - $ref: "#/components/parameters/ObjectType"
-      responses:
-        "200":
-          description: Object count.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CountObjectsResponse"
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
-        "404":
-          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects:
     post:
       operationId: loadObjectSet
@@ -2332,6 +1899,30 @@ paths:
       responses:
         "200":
           description: ObjectSet load response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadObjectSetResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks:
+    post:
+      operationId: loadObjectSetLinks
+      summary: Load linked objects from an ObjectSet via a link type
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadLinksRequest"
+      responses:
+        "200":
+          description: Linked objects response.
           content:
             application/json:
               schema:
@@ -2388,30 +1979,6 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
-  /api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks:
-    post:
-      operationId: loadObjectSetLinks
-      summary: Load linked objects from an ObjectSet via a link type
-      tags: [ObjectSets]
-      parameters:
-        - $ref: "#/components/parameters/OntologyApiName"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoadLinksRequest"
-      responses:
-        "200":
-          description: Linked objects response.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LoadObjectSetResponse"
-        "400":
-          $ref: "#/components/responses/BadRequestError"
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}:
     get:
       operationId: getObjectSet
@@ -2436,92 +2003,14 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
-  /api/v2/ontologies/{ontologyApiName}/queryTypes:
-    get:
-      operationId: listQueryTypes
-      summary: List all QueryTypes in an ontology
-      tags: [Metadata]
-      parameters:
-        - in: path
-          name: ontologyApiName
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: List of query types.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/QueryTypeListResponse"
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
-  /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}:
-    get:
-      operationId: getQueryType
-      summary: Get a QueryType by apiName or RID
-      tags: [Metadata]
-      parameters:
-        - in: path
-          name: ontologyApiName
-          required: true
-          schema:
-            type: string
-        - in: path
-          name: queryApiName
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: QueryType details.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/QueryType"
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
-        "404":
-          $ref: "#/components/responses/NotFoundError"
-  /api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute:
-    post:
-      operationId: executeQueryType
-      summary: Execute a stored QueryType
-      tags: [Metadata]
-      parameters:
-        - in: path
-          name: ontologyApiName
-          required: true
-          schema:
-            type: string
-        - in: path
-          name: queryApiName
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ExecuteQueryRequest"
-      responses:
-        "200":
-          description: Query result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExecuteQueryResponse"
-        "400":
-          $ref: "#/components/responses/BadRequestError"
-        "401":
-          $ref: "#/components/responses/UnauthorizedError"
-        "404":
-          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/actions/{action}/apply:
     post:
       operationId: applyAction
-      summary: Apply a single action (Foundry OSv2 shape)
+      summary: Apply a single action (Foundry OSv2)
+      description: |
+        Executes a single action. The action API name is in the URL path {action}.
+        Supports options.mode (VALIDATE_ONLY | VALIDATE_AND_EXECUTE) and
+        options.returnEdits (ALL | ALL_V2_WITH_DELETIONS | NONE).
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -2539,11 +2028,11 @@ paths:
               $ref: "#/components/schemas/ApplyActionRequest"
       responses:
         "200":
-          description: Action result.
+          description: Action result (SyncApplyActionResponseV2).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApplyActionResponse"
+                $ref: "#/components/schemas/SyncApplyActionResponseV2"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
@@ -2551,7 +2040,11 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch:
     post:
       operationId: applyActionBatch
-      summary: Apply a batch of the same action (Foundry OSv2 shape)
+      summary: Apply a batch of the same action (Foundry OSv2)
+      description: |
+        Executes a batch of the same action type. The action API name is in
+        the URL path {action}. Batch is always atomic (all-or-nothing).
+        Supports options.returnEdits (ALL | NONE).
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -2569,11 +2062,11 @@ paths:
               $ref: "#/components/schemas/ApplyBatchRequest"
       responses:
         "200":
-          description: Batch result.
+          description: Batch result (BatchApplyActionResponseV2).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApplyBatchResponse"
+                $ref: "#/components/schemas/BatchApplyActionResponseV2"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
