@@ -1022,6 +1022,23 @@ func (r *PGRepository) GetValueType(ctx context.Context, rid string) (*ValueType
 	return vt, nil
 }
 
+func (r *PGRepository) GetValueTypeByAPIName(ctx context.Context, ridOrApiName string) (*ValueType, error) {
+	vt := &ValueType{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, api_name, display_name, base_type, COALESCE(constraints, '{}'),
+		 COALESCE(version, 1), created_at
+		 FROM value_types WHERE (rid = $1 OR api_name = $1)`, ridOrApiName).
+		Scan(&vt.RID, &vt.APIName, &vt.DisplayName, &vt.BaseType,
+			&vt.Constraints, &vt.Version, &vt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return vt, nil
+}
+
 func (r *PGRepository) ListValueTypes(ctx context.Context) ([]ValueType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, api_name, display_name, base_type, COALESCE(constraints, '{}'),

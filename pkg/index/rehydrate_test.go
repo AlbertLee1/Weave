@@ -167,6 +167,9 @@ func (s *stubRehydrateRepo) CreateValueType(context.Context, *oms.ValueType) err
 func (s *stubRehydrateRepo) GetValueType(context.Context, string) (*oms.ValueType, error) {
 	return nil, nil
 }
+func (s *stubRehydrateRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueType, error) {
+	return nil, nil
+}
 func (s *stubRehydrateRepo) ListValueTypes(context.Context) ([]oms.ValueType, error) {
 	return nil, nil
 }

@@ -534,6 +534,9 @@ func (r *inMemoryOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) e
 func (r *inMemoryOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
 	return nil, oms.ErrNotFound
 }
+func (r *inMemoryOmsRepo) GetValueTypeByAPIName(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, oms.ErrNotFound
+}
 func (r *inMemoryOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
 	return nil, nil
 }

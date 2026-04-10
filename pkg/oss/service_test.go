@@ -264,6 +264,9 @@ func (m *mockOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error
 func (m *mockOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
 	return nil, nil
 }
+func (m *mockOmsRepo) GetValueTypeByAPIName(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, nil
+}
 func (m *mockOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
 func (m *mockOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (m *mockOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }

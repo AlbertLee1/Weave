@@ -23,6 +23,7 @@ type mockRepo struct {
 	actionTypes []oms.ActionType
 	properties  []oms.Property
 	interfaces  []oms.Interface
+	valueTypes  []oms.ValueType
 
 	// Error controls
 	createErr error
@@ -314,12 +315,14 @@ func (m *mockRepo) GetInterface(_ context.Context, rid string) (*oms.Interface, 
 	return nil, oms.ErrNotFound
 }
 
-func (m *mockRepo) GetInterfaceByAPIName(_ context.Context, _, apiName string) (*oms.Interface, error) {
+func (m *mockRepo) GetInterfaceByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.Interface, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	for i := range m.interfaces {
-		if m.interfaces[i].APIName == apiName {
+		ontologyMatch := m.interfaces[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.interfaces[i].OntologyRID)
+		entityMatch := m.interfaces[i].APIName == apiNameOrRID || m.interfaces[i].RID == apiNameOrRID
+		if ontologyMatch && entityMatch {
 			return &m.interfaces[i], nil
 		}
 	}
@@ -395,12 +398,36 @@ func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]o
 	return nil, nil
 }
 
-// ValueType stubs
+// ValueType methods
 func (m *mockRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
-func (m *mockRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+func (m *mockRepo) GetValueType(_ context.Context, rid string) (*oms.ValueType, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.valueTypes {
+		if m.valueTypes[i].RID == rid {
+			return &m.valueTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
+func (m *mockRepo) GetValueTypeByAPIName(_ context.Context, ridOrApiName string) (*oms.ValueType, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.valueTypes {
+		if m.valueTypes[i].RID == ridOrApiName || m.valueTypes[i].APIName == ridOrApiName {
+			return &m.valueTypes[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.valueTypes, nil
+}
 func (m *mockRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (m *mockRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
 

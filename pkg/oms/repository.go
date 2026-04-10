@@ -80,6 +80,7 @@ type Repository interface {
 	// ValueType
 	CreateValueType(ctx context.Context, vt *ValueType) error
 	GetValueType(ctx context.Context, rid string) (*ValueType, error)
+	GetValueTypeByAPIName(ctx context.Context, ridOrApiName string) (*ValueType, error)
 	ListValueTypes(ctx context.Context) ([]ValueType, error)
 	UpdateValueType(ctx context.Context, vt *ValueType) error
 	DeleteValueType(ctx context.Context, rid string) error

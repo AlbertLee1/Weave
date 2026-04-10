@@ -169,6 +169,28 @@ components:
       description: Resource identifier of the value type.
       schema:
         type: string
+    InterfaceType:
+      in: path
+      name: interfaceType
+      required: true
+      description: API name or RID of the interface type.
+      schema:
+        type: string
+    ValueType:
+      in: path
+      name: valueType
+      required: true
+      description: API name or RID of the value type.
+      schema:
+        type: string
+    PreviewRequired:
+      in: query
+      name: preview
+      required: true
+      description: Must be set to "true" for preview endpoints.
+      schema:
+        type: string
+        enum: ["true"]
     DatasourceBindingRid:
       in: path
       name: datasourceBindingRid
@@ -1713,6 +1735,100 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActionType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaceTypes:
+    get:
+      operationId: listInterfaceTypes
+      summary: List interface types in an ontology (preview)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/PreviewRequired"
+      responses:
+        "200":
+          description: Interface type list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Interface"
+        "400":
+          description: Missing preview=true query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}:
+    get:
+      operationId: getInterfaceType
+      summary: Get a single interface type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+      responses:
+        "200":
+          description: Interface type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Interface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypes:
+    get:
+      operationId: listValueTypes
+      summary: List value types (preview)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/PreviewRequired"
+      responses:
+        "200":
+          description: Value type list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ValueType"
+        "400":
+          description: Missing preview=true query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypes/{valueType}:
+    get:
+      operationId: getValueType
+      summary: Get a single value type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ValueType"
+      responses:
+        "200":
+          description: Value type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueType"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

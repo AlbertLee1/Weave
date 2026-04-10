@@ -56,6 +56,12 @@
 - ActionType.Parameters stored as array in DB: [{"id":"name","type":"string","required":true}] — ToWireJSON() transforms to Foundry V2 record: {"name":{"dataType":{"type":"string"},"required":true}}
 - Internal ParseParameterDefs() reads stored array format; wire transformation is in models.go only
 - Frontend ParameterForm reads Record<string, ActionParameterV2> with dataType.type for type resolution
+- All ByAPIName PG queries use disjunctive dual-accept: `AND (rid = $2 OR api_name = $2)` for the entity param, and `WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))` for the ontology param
+- When adding a new method to oms.Repository interface, update ALL mock repos: pkg/oms/handlers_test.go, pkg/actions/actions_test.go, pkg/index/rehydrate_test.go, pkg/links/resolver_test.go, pkg/oss/service_test.go, test/e2e/e2e_test.go, test/chinook/chinook_test.go, test/northwind/northwind_test.go (pkg/mcp/tools_test.go embeds oms.Repository so auto-inherits)
+- rid.IsRID(s) checks `strings.HasPrefix(s, "ri.")` — use to distinguish RID from apiName in handlers
+- Preview endpoints (interfaceTypes, valueTypes) require ?preview=true — use requirePreview() helper in handlers_v2_metadata.go
+- ValueType is global (no OntologyRID) — ListValueTypes() takes no ontology param; GetValueTypeByAPIName uses simple dual-accept (rid OR api_name)
+- When adding new V2 read endpoints: add route in routes.go, add path in api/openapi.yaml, copy to cmd/server/openapi_spec.yaml (byte-identical contract test)
 
 ---
 
@@ -229,4 +235,51 @@
   - Vite dynamic imports of deleted modules fail at build analysis, not runtime — can't use `import().rejects` pattern for testing module absence
   - vi.mock intercepts all imports including dynamic ones — test module exports separately from mocked tests
   - All 168 vitest tests pass, npx tsc --noEmit clean, go test ./... full regression green
+---
+
+## 2026-04-11 - US-009: RID / apiName dual accept for path parameters
+- All {ontology}, {objectType}, {actionType}, {queryApiName} path parameters now accept either apiName or full RID format
+- Added rid.IsRID(s) helper to pkg/rid/rid.go
+- Added GetActionTypeByAPIName(ctx, ontologyRID, apiNameOrRID) to oms.Repository interface and PGRepository
+- Updated GetObjectTypeByAPIName, GetQueryTypeByAPIName, GetInterfaceByAPIName, GetLinkTypeByAPIName SQL to dual-accept entity param: `AND (rid = $2 OR api_name = $2)`
+- Updated GetActionType handler to use ontology-scoped GetActionTypeByAPIName instead of RID-only GetActionType
+- Files changed:
+  - pkg/rid/rid.go — new IsRID() helper
+  - pkg/oms/repository.go — added GetActionTypeByAPIName to Repository interface
+  - pkg/oms/pg_repository.go — new GetActionTypeByAPIName impl + dual-accept SQL for GetObjectTypeByAPIName
+  - pkg/oms/handlers.go — GetActionType handler now reads ontologyApiName and uses GetActionTypeByAPIName
+  - pkg/oms/link_edges.go — GetLinkTypeByAPIName SQL dual-accept
+  - pkg/oms/rid_dual_accept_test.go — NEW: 6 TDD tests (ontology by apiName/RID, objectType by RID, objectType by ontology apiName, actionType by apiName, actionType by RID)
+  - pkg/oms/handlers_test.go — mockRepo dual-accept for GetObjectTypeByAPIName + new GetActionTypeByAPIName + matchOntologyByApiName helper
+  - 7 mock repos updated with GetActionTypeByAPIName stubs
+- **Learnings for future iterations:**
+  - GetOntology already used `WHERE rid = $1 OR api_name = $1` — ontology dual-accept was already done
+  - Handler reads URL param and passes it through to repository — the SQL does the actual dual-accept, handler doesn't need to check IsRID
+  - Mock repos for unit tests need manual dual-accept logic (matchOntologyByApiName helper) since they don't have SQL
+  - Adding one method to oms.Repository requires updating 8 mock implementations across 8 packages
+  - All Go tests pass including e2e, chinook, northwind (full regression green)
+---
+
+## 2026-04-11 - US-010: Add InterfaceType and ValueType v2 read endpoints
+- Added 4 new Foundry V2 read-only endpoints: ListInterfaceTypes, GetInterfaceType, ListValueTypes, GetValueType
+- ListInterfaceTypes and ListValueTypes require ?preview=true query param (400 if missing)
+- GetInterfaceType uses existing GetInterfaceByAPIName (dual-accept RID/apiName)
+- GetValueType uses new GetValueTypeByAPIName method (dual-accept RID/apiName)
+- Added requirePreview() helper for preview endpoint validation
+- Files changed:
+  - pkg/oms/handlers_v2_metadata.go — NEW: 4 V2 handlers + requirePreview helper
+  - pkg/oms/handlers_v2_metadata_test.go — NEW: 12 TDD tests (list+get for both types, preview validation, RID lookups, empty/notfound)
+  - pkg/oms/repository.go — added GetValueTypeByAPIName to Repository interface
+  - pkg/oms/pg_repository.go — new GetValueTypeByAPIName impl with `WHERE (rid = $1 OR api_name = $1)`
+  - pkg/oms/handlers_test.go — added valueTypes field to mockRepo, working GetValueType/GetValueTypeByAPIName/ListValueTypes, updated GetInterfaceByAPIName for dual-accept
+  - cmd/server/routes.go — registered 4 new routes
+  - api/openapi.yaml — added 4 new paths, InterfaceType/ValueType/PreviewRequired parameters
+  - cmd/server/openapi_spec.yaml — byte-identical copy of api/openapi.yaml
+  - 7 mock repos updated with GetValueTypeByAPIName stubs (actions, index, links, oss, e2e, chinook, northwind)
+- **Learnings for future iterations:**
+  - Existing admin handlers (ListInterfaces, GetInterface, ListValueTypes, GetValueType) had identical logic but were registered on admin routes; V2 handlers add preview gating and different URL structure
+  - ValueType is global (no ontologyRID field); the {ontology} in the path is just Foundry URL convention, not used for filtering
+  - Preview query param is a Foundry pattern for experimental/preview endpoints — simple boolean check
+  - Contract test (TestContract_AllRoutesDocumented) enforces route-spec sync; must update both openapi.yaml files atomically
+  - All Go tests pass including e2e, chinook, northwind (full regression green)
 ---

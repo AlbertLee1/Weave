@@ -169,7 +169,7 @@
         "go test ./... passes"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Data already exists in PG from admin CRUD; these are read-only wrappers."
     },
     {
