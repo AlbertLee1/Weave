@@ -21,7 +21,6 @@ import (
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/ai"
-	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/index"
@@ -39,6 +38,7 @@ import (
 type ServerDeps struct {
 	OmsRepo        oms.Repository
 	UserRepo       auth.UserRepository
+	APIKeyRepo     auth.APIKeyRepository
 	RoleResolver   *auth.RoleResolver
 	JWTSigner      *auth.JWTSigner
 	RefreshService *auth.RefreshService
@@ -50,6 +50,10 @@ type ServerDeps struct {
 	ObjSetStore    *objectset.Store
 	ObjSetExecutor *objectset.Executor
 	FunnelConsumer *funnel.Consumer
+	// Broadcast is the in-process SSE fan-out hub. The funnel consumer
+	// publishes one BroadcastEvent per applied edit; oss.Handler.SubscribeChanges
+	// reads from it. Wired in main(); nil in tests that do not exercise SSE.
+	Broadcast *funnel.Broadcast
 
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -154,7 +158,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 
 	// Auth-protected API routes
 	r.Group(func(api chi.Router) {
-		api.Use(auth.Middleware(deps.JWTSigner))
+		// MiddlewareWithAPIKeys unifies JWT and wvk_ api-key bearer auth.
+		// When any of the api-key dependencies is nil (dev / minimal test
+		// harness) it degrades gracefully to JWT-only — byte-identical to
+		// the old auth.Middleware(signer) behaviour because Middleware is
+		// a thin wrapper over MiddlewareWithAPIKeys(signer, nil, nil, nil).
+		api.Use(auth.MiddlewareWithAPIKeys(
+			deps.JWTSigner,
+			deps.APIKeyRepo,
+			deps.UserRepo,
+			deps.RoleResolver,
+		))
 
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
@@ -168,48 +182,43 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// OSS routes
 		if deps.OssSvc != nil {
 			ossHandler := oss.NewHandler(deps.OssSvc)
+			// Wire the object-history endpoint when an OMS repository is
+			// available. Without this call GetObjectHistory returns the
+			// "HistoryNotConfigured" apierror at request time.
+			if deps.OmsRepo != nil {
+				ossHandler.SetHistoryRepo(deps.OmsRepo)
+			}
+			// Wire the SSE subscribe endpoint when a broadcast hub is
+			// available. Without this call SubscribeChanges returns 503
+			// "broadcast not configured" at request time.
+			if deps.Broadcast != nil {
+				ossHandler.SetBroadcast(deps.Broadcast)
+			}
+			if deps.AggEngine != nil && deps.IndexMgr != nil {
+				ossHandler.SetAggregation(deps.AggEngine, deps.IndexMgr)
+			}
 			ossHandler.RegisterRoutes(api)
 		}
 
-		// Action routes
-		if deps.ActionExecutor != nil {
-			actionHandler := actions.NewHandler(deps.ActionExecutor)
-			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+		// Admin api-key endpoints (Weave extension namespace). Mounted
+		// only when an APIKeyRepository is wired so test harnesses without
+		// PG do not see ghost routes.
+		if deps.APIKeyRepo != nil {
+			apiKeyHandler := auth.NewAPIKeyHandler(deps.APIKeyRepo)
+			api.Post("/api/v2/admin/api-keys", apiKeyHandler.Create)
+			api.Get("/api/v2/admin/api-keys", apiKeyHandler.List)
+			api.Delete("/api/v2/admin/api-keys/{id}", apiKeyHandler.Delete)
 		}
 
-		// Aggregation endpoint
-		if deps.AggEngine != nil && deps.IndexMgr != nil {
-			api.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
-				objectType := chi.URLParam(r, "objectType")
-				var req aggregation.AggregationRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAggregationRequest", map[string]string{
-						"reason": err.Error(),
-					}))
-					return
-				}
-				req.ObjectType = objectType
-
-				idx := deps.IndexMgr.GetIndex(objectType)
-				if idx == nil {
-					apierror.WriteJSON(w, apierror.NewNotFound("IndexNotFound", map[string]string{
-						"objectType": objectType,
-					}))
-					return
-				}
-
-				result, err := deps.AggEngine.Aggregate(idx, &req)
-				if err != nil {
-					apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{
-						"reason": err.Error(),
-					}))
-					return
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(result)
-			})
+		// Action routes — Foundry OSv2 shape: the action API name is
+		// carried in the URL, not in the request body.
+		//   POST /api/v2/ontologies/{ontology}/actions/{action}/apply
+		//   POST /api/v2/ontologies/{ontology}/actions/{action}/applyBatch
+		// cf. palantir/foundry-platform-python action.py L58/L148.
+		if deps.ActionExecutor != nil {
+			actionHandler := actions.NewHandler(deps.ActionExecutor)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 		}
 
 		// ObjectSet endpoints
@@ -303,6 +312,7 @@ func main() {
 
 		deps.OmsRepo = oms.NewPGRepository(pool)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
+		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),
@@ -424,6 +434,21 @@ func main() {
 
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
+
+		// 7a. Broadcast hub for SSE subscribers. The funnel consumer
+		// publishes one BroadcastEvent per applied edit so live SSE
+		// clients receive them in real time. Slow subscribers drop
+		// events rather than blocking the consumer (see broadcast.go).
+		deps.Broadcast = funnel.NewBroadcast()
+		deps.FunnelConsumer.SetOnChange(func(ev funnel.ChangeEvent) {
+			deps.Broadcast.Publish(funnel.BroadcastEvent{
+				Type:       string(ev.EditType),
+				ObjectType: ev.ObjectType,
+				PrimaryKey: ev.PrimaryKey,
+				EditedAt:   time.Now(),
+			})
+		})
+
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)
 		}

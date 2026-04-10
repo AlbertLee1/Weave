@@ -34,6 +34,8 @@
 
 ## Codebase Patterns
 - When deleting a route: remove from RegisterRoutes, delete handler+service files, update Service interface, clean mock impls in all test files (including pkg/mcp/tools_test.go), remove OpenAPI paths from both yaml files
+- OSS Handler setter pattern: SetHistoryRepo, SetBroadcast, SetAggregation — always register the route in RegisterRoutes, return "XxxNotConfigured" error when deps are nil. Wire setters from NewFullRouter before RegisterRoutes call
+- When moving an inline closure from main.go into a handler: update existing tests that relied on the old wiring (e.g. TestAggregationEndpoint_ErrorsAreJSON needed OssSvc after migration)
 - ApplyRequest.Options is *ApplyOptions (pointer, omitempty) — nil means use defaults
 - Handler resolves options with defaults before calling executor; executor is options-unaware
 - VALIDATE_ONLY uses Prepare() only — no CommitBatch, no Publish
@@ -139,5 +141,26 @@
   - oms.Repository still has UpsertLinkEdge/DeleteLinkEdge — these are used by actions, not by the removed link CRUD service
   - When deleting a handler+service pair, check all Service interface implementations (mcp/tools_test.go had a fakeOssService)
   - Mock structs may have tracking fields only used by tests for the deleted code — clean those too
+  - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
+---
+
+## 2026-04-11 - US-005: Delete inline aggregate closure in main.go
+- Deleted inline aggregate closure from cmd/server/main.go (was ~30 lines checking AggEngine+IndexMgr)
+- Created pkg/oss/handlers_aggregate.go with AggregateObjects handler + SetAggregation setter
+- Registered POST .../objects/{objectType}/aggregate route in OSS handler's RegisterRoutes
+- Wired SetAggregation from NewFullRouter (same pattern as SetHistoryRepo/SetBroadcast)
+- Handler returns AggregationNotConfigured when AggEngine/IndexMgr not wired (degraded mode)
+- Removed unused apierror import from main.go
+- Files changed:
+  - cmd/server/main.go — deleted inline closure, wired SetAggregation, removed unused import
+  - pkg/oss/handlers.go — added aggEngine/indexMgr fields to Handler struct, registered aggregate route
+  - pkg/oss/handlers_aggregate.go — NEW: SetAggregation setter + AggregateObjects handler
+  - cmd/server/wire_us005_test.go — NEW: 3 TDD tests (inline closure removed, route via OSS handler, degraded mode)
+  - cmd/server/main_test.go — updated TestAggregationEndpoint_ErrorsAreJSON to set OssSvc
+  - prd.json — US-005 passes: true
+- **Learnings for future iterations:**
+  - chi returns 405 Method Not Allowed when path matches but method doesn't (e.g. POST hits GET {primaryKey} pattern) — test assertions must distinguish handler JSON errors from chi's default text responses
+  - OSS Handler's RegisterRoutes always registers all routes; individual handlers check their deps and return "NotConfigured" errors — consistent with SetHistoryRepo pattern
+  - Existing tests may wire only the deps that the old code needed; migrating a route to a new handler may require adding additional deps (OssSvc) to unrelated tests
   - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
 ---

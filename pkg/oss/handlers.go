@@ -9,7 +9,9 @@ import (
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/httputil"
+	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/where"
 )
 
@@ -26,6 +28,11 @@ type Handler struct {
 	// route still registers but returns 503 so callers can detect feature
 	// absence.
 	broadcast *funnel.Broadcast
+	// aggEngine and indexMgr, when both non-nil, enable the per-object-type
+	// aggregation endpoint. Wired via SetAggregation from main.go after
+	// construction. When nil, the route returns AggregationNotConfigured.
+	aggEngine *aggregation.Engine
+	indexMgr  *index.Manager
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -38,6 +45,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}", h.ListObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}", h.GetObject)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search", h.SearchObjects)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", h.AggregateObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
 
 	// Object change history (Tier 2.3). The route is always registered so

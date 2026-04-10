@@ -43,21 +43,17 @@ func TestNewServer_Timeouts(t *testing.T) {
 }
 
 func TestAggregationEndpoint_ErrorsAreJSON(t *testing.T) {
-	deps := &ServerDeps{
-		AggEngine: nil, // will be set per-subtest
-		IndexMgr:  nil,
-	}
-
-	// Test with nil engine — the route won't even be registered, so we test
-	// with a minimal setup that exercises the error paths inside the handler.
-	// We need real AggEngine and IndexMgr to register the route.
-	// Use a real aggregation engine and index manager with a temp dir.
+	// The aggregate route is registered through the OSS handler (which
+	// requires OssSvc). AggEngine and IndexMgr are wired via SetAggregation.
 	tmpDir := t.TempDir()
 	idxMgr := newTestIndexManager(t, tmpDir)
 	defer idxMgr.Close()
 
-	deps.AggEngine = newTestAggEngine()
-	deps.IndexMgr = idxMgr
+	deps := &ServerDeps{
+		OssSvc:    pr01StubOSSService{},
+		AggEngine: newTestAggEngine(),
+		IndexMgr:  idxMgr,
+	}
 
 	router := NewFullRouter(deps)
 
