@@ -321,15 +321,27 @@ func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
+// InterfaceLinkType defines an outgoing link type declared on an interface.
+type InterfaceLinkType struct {
+	APIName                 string `json:"apiName"`
+	DisplayName             string `json:"displayName"`
+	LinkedEntityTypeAPIName string `json:"linkedEntityTypeApiName"`
+	LinkedEntityTypeRID     string `json:"linkedEntityTypeRid,omitempty"`
+	Cardinality             string `json:"cardinality"`
+	Required                bool   `json:"required"`
+	Description             string `json:"description,omitempty"`
+}
+
 // Interface defines a shared contract for ObjectTypes.
 type Interface struct {
-	RID              string          `json:"rid"`
-	OntologyRID      string          `json:"-"`
-	APIName          string          `json:"apiName"`
-	DisplayName      string          `json:"displayName"`
-	ExtendsRID       string          `json:"extendsRid,omitempty"`
-	SharedProperties json.RawMessage `json:"sharedProperties,omitempty"`
-	CreatedAt        time.Time       `json:"-"`
+	RID               string          `json:"rid"`
+	OntologyRID       string          `json:"-"`
+	APIName           string          `json:"apiName"`
+	DisplayName       string          `json:"displayName"`
+	ExtendsRID        string          `json:"extendsRid,omitempty"`
+	SharedProperties  json.RawMessage `json:"sharedProperties,omitempty"`
+	OutgoingLinkTypes json.RawMessage `json:"outgoingLinkTypes,omitempty"`
+	CreatedAt         time.Time       `json:"-"`
 }
 
 // ObjectTypeInterface represents an object type implementing an interface.

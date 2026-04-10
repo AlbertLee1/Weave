@@ -63,6 +63,77 @@ func (h *OMSHandler) GetInterfaceTypeV2(w http.ResponseWriter, r *http.Request) 
 	httputil.WriteJSON(w, http.StatusOK, iface)
 }
 
+// --- InterfaceType OutgoingLinkTypes V2 endpoints (US-025) ---
+
+// ListInterfaceOutgoingLinkTypesV2 handles GET /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes.
+func (h *OMSHandler) ListInterfaceOutgoingLinkTypesV2(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	interfaceIdentifier := chi.URLParam(r, "interfaceType")
+
+	iface, err := h.repo.GetInterfaceByAPIName(r.Context(), ontologyRID, interfaceIdentifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("InterfaceTypeNotFound", map[string]string{
+				"interfaceType": interfaceIdentifier,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetInterfaceTypeFailed", nil))
+		return
+	}
+
+	var linkTypes []InterfaceLinkType
+	if len(iface.OutgoingLinkTypes) > 0 {
+		if err := json.Unmarshal(iface.OutgoingLinkTypes, &linkTypes); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ParseOutgoingLinkTypesFailed", nil))
+			return
+		}
+	}
+	if linkTypes == nil {
+		linkTypes = []InterfaceLinkType{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": linkTypes})
+}
+
+// GetInterfaceOutgoingLinkTypeV2 handles GET /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType}.
+func (h *OMSHandler) GetInterfaceOutgoingLinkTypeV2(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	interfaceIdentifier := chi.URLParam(r, "interfaceType")
+	linkTypeIdentifier := chi.URLParam(r, "interfaceLinkType")
+
+	iface, err := h.repo.GetInterfaceByAPIName(r.Context(), ontologyRID, interfaceIdentifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("InterfaceTypeNotFound", map[string]string{
+				"interfaceType": interfaceIdentifier,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetInterfaceTypeFailed", nil))
+		return
+	}
+
+	var linkTypes []InterfaceLinkType
+	if len(iface.OutgoingLinkTypes) > 0 {
+		if err := json.Unmarshal(iface.OutgoingLinkTypes, &linkTypes); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ParseOutgoingLinkTypesFailed", nil))
+			return
+		}
+	}
+
+	for _, lt := range linkTypes {
+		if lt.APIName == linkTypeIdentifier {
+			httputil.WriteJSON(w, http.StatusOK, lt)
+			return
+		}
+	}
+
+	apierror.WriteJSON(w, apierror.NewNotFound("InterfaceLinkTypeNotFound", map[string]string{
+		"interfaceLinkType": linkTypeIdentifier,
+	}))
+}
+
 // ListValueTypesV2 handles GET /api/v2/ontologies/{ontologyApiName}/valueTypes.
 // Requires ?preview=true query parameter.
 func (h *OMSHandler) ListValueTypesV2(w http.ResponseWriter, r *http.Request) {

@@ -157,6 +157,171 @@ func TestGetInterfaceTypeV2_ByRID(t *testing.T) {
 	}
 }
 
+// --- InterfaceType OutgoingLinkTypes V2 Endpoint Tests (US-025) ---
+
+func TestListInterfaceOutgoingLinkTypesV2_WithData(t *testing.T) {
+	repo := &mockRepo{
+		interfaces: []oms.Interface{
+			{
+				RID: "ri.ontology.main.interface.1", OntologyRID: "ri.ontology.main.ontology.1",
+				APIName: "Addressable", DisplayName: "Addressable",
+				OutgoingLinkTypes: json.RawMessage(`[
+					{"apiName":"locatedAt","displayName":"Located At","linkedEntityTypeApiName":"Location","cardinality":"MANY","required":false},
+					{"apiName":"ownedBy","displayName":"Owned By","linkedEntityTypeApiName":"Owner","cardinality":"ONE","required":true}
+				]`),
+			},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes", handler.ListInterfaceOutgoingLinkTypesV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/ri.ontology.main.ontology.1/interfaceTypes/Addressable/outgoingLinkTypes", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	body := parseJSON(t, w.Body.Bytes())
+	data, ok := body["data"].([]interface{})
+	if !ok {
+		t.Fatal("expected data to be an array")
+	}
+	if len(data) != 2 {
+		t.Errorf("expected 2 outgoing link types, got %d", len(data))
+	}
+
+	first := data[0].(map[string]interface{})
+	if first["apiName"] != "locatedAt" {
+		t.Errorf("expected first apiName 'locatedAt', got %v", first["apiName"])
+	}
+}
+
+func TestListInterfaceOutgoingLinkTypesV2_Empty(t *testing.T) {
+	repo := &mockRepo{
+		interfaces: []oms.Interface{
+			{
+				RID: "ri.ontology.main.interface.1", OntologyRID: "ri.ontology.main.ontology.1",
+				APIName: "Addressable", DisplayName: "Addressable",
+			},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes", handler.ListInterfaceOutgoingLinkTypesV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/ri.ontology.main.ontology.1/interfaceTypes/Addressable/outgoingLinkTypes", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	body := parseJSON(t, w.Body.Bytes())
+	data, ok := body["data"].([]interface{})
+	if !ok {
+		t.Fatal("expected data to be an array")
+	}
+	if len(data) != 0 {
+		t.Errorf("expected empty array, got %d items", len(data))
+	}
+}
+
+func TestListInterfaceOutgoingLinkTypesV2_InterfaceNotFound(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes", handler.ListInterfaceOutgoingLinkTypesV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/interfaceTypes/nonexistent/outgoingLinkTypes", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetInterfaceOutgoingLinkTypeV2_Found(t *testing.T) {
+	repo := &mockRepo{
+		interfaces: []oms.Interface{
+			{
+				RID: "ri.ontology.main.interface.1", OntologyRID: "ri.ontology.main.ontology.1",
+				APIName: "Addressable", DisplayName: "Addressable",
+				OutgoingLinkTypes: json.RawMessage(`[
+					{"apiName":"locatedAt","displayName":"Located At","linkedEntityTypeApiName":"Location","cardinality":"MANY","required":false}
+				]`),
+			},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType}", handler.GetInterfaceOutgoingLinkTypeV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/ri.ontology.main.ontology.1/interfaceTypes/Addressable/outgoingLinkTypes/locatedAt", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	body := parseJSON(t, w.Body.Bytes())
+	if body["apiName"] != "locatedAt" {
+		t.Errorf("expected apiName 'locatedAt', got %v", body["apiName"])
+	}
+	if body["linkedEntityTypeApiName"] != "Location" {
+		t.Errorf("expected linkedEntityTypeApiName 'Location', got %v", body["linkedEntityTypeApiName"])
+	}
+}
+
+func TestGetInterfaceOutgoingLinkTypeV2_LinkNotFound(t *testing.T) {
+	repo := &mockRepo{
+		interfaces: []oms.Interface{
+			{
+				RID: "ri.ontology.main.interface.1", OntologyRID: "ri.ontology.main.ontology.1",
+				APIName: "Addressable", DisplayName: "Addressable",
+				OutgoingLinkTypes: json.RawMessage(`[]`),
+			},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType}", handler.GetInterfaceOutgoingLinkTypeV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/ri.ontology.main.ontology.1/interfaceTypes/Addressable/outgoingLinkTypes/nonexistent", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetInterfaceOutgoingLinkTypeV2_InterfaceNotFound(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType}", handler.GetInterfaceOutgoingLinkTypeV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/northwind/interfaceTypes/nonexistent/outgoingLinkTypes/locatedAt", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // --- ValueType V2 Endpoint Tests ---
 
 func TestListValueTypesV2_WithPreview(t *testing.T) {

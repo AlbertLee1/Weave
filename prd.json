@@ -405,8 +405,8 @@
         "go test ./... passes"
       ],
       "priority": 25,
-      "passes": false,
-      "notes": "Phase 2 starts here."
+      "passes": true,
+      "notes": "Phase 2 starts here. List/Get interfaceTypes from US-010. OutgoingLinkTypes stored as JSONB on interfaces table (migration 000015)."
     },
     {
       "id": "US-026",

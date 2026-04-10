@@ -120,6 +120,13 @@ components:
       description: API name or RID of the interface type.
       schema:
         type: string
+    InterfaceLinkType:
+      in: path
+      name: interfaceLinkType
+      required: true
+      description: API name of the interface link type.
+      schema:
+        type: string
     ValueType:
       in: path
       name: valueType
@@ -339,6 +346,29 @@ components:
         sharedProperties:
           type: object
           additionalProperties: true
+        outgoingLinkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceLinkType"
+    InterfaceLinkType:
+      type: object
+      required: [apiName, displayName, linkedEntityTypeApiName, cardinality, required]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        linkedEntityTypeApiName:
+          type: string
+        linkedEntityTypeRid:
+          type: string
+        cardinality:
+          type: string
+          enum: [ONE, MANY]
+        required:
+          type: boolean
+        description:
+          type: string
     QueryType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -1514,6 +1544,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Interface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes:
+    get:
+      operationId: listInterfaceOutgoingLinkTypes
+      summary: List outgoing link types for an interface type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+      responses:
+        "200":
+          description: Outgoing link type list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InterfaceLinkType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType}:
+    get:
+      operationId: getInterfaceOutgoingLinkType
+      summary: Get a single outgoing link type for an interface type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/InterfaceType"
+        - $ref: "#/components/parameters/InterfaceLinkType"
+      responses:
+        "200":
+          description: Interface link type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterfaceLinkType"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

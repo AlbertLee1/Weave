@@ -33,6 +33,8 @@
 - TimeSeries path params inconsistent: {property} vs {propertyName} — match Foundry exactly
 
 ## Codebase Patterns
+- Interface outgoingLinkTypes stored as JSONB on interfaces table (same pattern as shared_properties) — no separate table, no new Repository methods needed; handlers parse the JSON from the loaded Interface
+- When adding sub-resource endpoints under interfaceTypes (e.g. outgoingLinkTypes): register specific routes BEFORE the wildcard {interfaceType} route in routes.go so chi doesn't swallow them
 - When deleting frontend admin code: remove api/admin.ts, hooks/useAdminMutations.ts, components/admin/ directory, admin routes from App.tsx, Admin nav from Sidebar.tsx, and any admin imports in DashboardPage/hooks
 - DashboardPage is read-only after admin removal — ontology creation goes through SDK/CLI/API, not the frontend
 - useLinkTypes hook was the only non-admin consumer of api/admin.ts — was only used by AdminPage
@@ -676,4 +678,34 @@
   - `npx tsc --noEmit` with root tsconfig.json (which has `"files": []` + project references) checks zero files — always use `npx tsc -b` for actual type checking
   - Dockerfile must include a Node.js build stage since .dockerignore excludes web/dist/ and cmd/server/web/dist/ but Go embed requires cmd/server/web/dist/
   - When making a field required (like select in US-016), search ALL test files with tsc -b, not just tsc --noEmit
+---
+
+## 2026-04-11 - US-025: Interface metadata endpoints (4 endpoints)
+- Phase 2 starts here
+- Two endpoints already existed from US-010: List interfaceTypes (GET, requires ?preview=true) and Get interfaceType (GET)
+- Added two new outgoingLinkTypes sub-resource endpoints:
+  - GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType}/outgoingLinkTypes — list link types
+  - GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType} — get single link type
+- Design: stored outgoing link types as JSONB on the interfaces table (same pattern as shared_properties), no new Repository methods needed
+- Added InterfaceLinkType model struct with apiName, displayName, linkedEntityTypeApiName, cardinality, required, description
+- Added OutgoingLinkTypes json.RawMessage field to Interface struct
+- Migration 000015 adds outgoing_link_types JSONB DEFAULT '[]' column to interfaces table
+- Updated PG repository (GetInterface, GetInterfaceByAPIName, ListInterfaces, CreateInterface, UpdateInterface) to read/write new column
+- Registered routes with specific paths BEFORE wildcard {interfaceType} to avoid chi swallowing
+- Files changed:
+  - pkg/oms/models.go — added InterfaceLinkType struct, added OutgoingLinkTypes field to Interface
+  - pkg/oms/handlers_v2_metadata.go — added ListInterfaceOutgoingLinkTypesV2, GetInterfaceOutgoingLinkTypeV2 handlers
+  - pkg/oms/handlers_v2_metadata_test.go — added 6 TDD tests for outgoingLinkTypes endpoints
+  - pkg/oms/pg_repository.go — updated 5 methods to handle outgoing_link_types column
+  - cmd/server/routes.go — added 2 new routes
+  - migrations/000015_interface_outgoing_link_types.up.sql — NEW
+  - migrations/000015_interface_outgoing_link_types.down.sql — NEW
+  - api/openapi.yaml — added InterfaceLinkType schema, InterfaceLinkType parameter, 2 new paths, updated Interface schema
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-025 passes: true
+- **Learnings for future iterations:**
+  - JSONB column pattern (like shared_properties) works well for sub-resources that don't need independent queries — avoids new tables/migrations/repo methods
+  - chi route registration order matters for sub-resources: register /interfaceTypes/{t}/outgoingLinkTypes BEFORE /interfaceTypes/{t} or the wildcard captures it
+  - No mock repo updates needed in other test files — OutgoingLinkTypes is just a field on the existing Interface struct
+  - Contract tests (AllRoutesDocumented, NoOrphanedSpecPaths, EmbeddedSpecMatchesCanonical) provide great safety nets when adding routes
 ---
