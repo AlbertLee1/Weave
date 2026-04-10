@@ -106,6 +106,44 @@ class ApplyActionResponse(_CamelModel):
     edits: Optional[ActionResults] = None
 
 
+class BatchApplyActionResponse(_CamelModel):
+    """Response envelope for applyBatch."""
+    edits: Optional[ActionResults] = None
+
+
+class CountResponse(_CamelModel):
+    """Response for object count requests."""
+    count: int = 0
+
+
+class InterfaceType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    extends_rid: Optional[str] = Field(default=None, alias="extendsRid")
+    shared_properties: Optional[Dict[str, Any]] = Field(default=None, alias="sharedProperties")
+
+
+class ValueType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    base_type: str = Field(alias="baseType")
+    constraints: Optional[Dict[str, Any]] = None
+    version: int = 0
+
+
+class QueryType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    description: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    output: Optional[Dict[str, Any]] = None
+    query: Optional[Dict[str, Any]] = None
+    status: str = ""
+
+
 class LoginUser(_CamelModel):
     id: str
     email: str

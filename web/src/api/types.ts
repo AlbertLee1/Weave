@@ -139,12 +139,35 @@ export interface WhereClause {
   value: unknown;
 }
 
+// Foundry OSv2 action apply options (mode + returnEdits).
+export interface ActionApplyOptions {
+  mode?: 'VALIDATE_ONLY' | 'VALIDATE_AND_EXECUTE';
+  returnEdits?: 'ALL' | 'ALL_V2_WITH_DELETIONS' | 'NONE';
+}
+
 // ActionApplyRequest is the Foundry OSv2 body shape for
 // POST /api/v2/ontologies/{ontology}/actions/{action}/apply — the action
 // API name lives in the URL, not the body, so this interface carries
 // only the parameter payload.
 export interface ActionApplyRequest {
   parameters: Record<string, unknown>;
+  options?: ActionApplyOptions;
+}
+
+// ActionBatchApplyRequest is the body shape for applyBatch.
+export interface ActionBatchApplyRequest {
+  requests: Array<{ parameters: Record<string, unknown> }>;
+  options?: { returnEdits?: 'ALL' | 'NONE' };
+}
+
+// BatchApplyActionResponse — Foundry OSv2 response envelope for batch apply.
+export interface BatchApplyActionResponse {
+  edits?: ActionResults;
+}
+
+// CountObjectsResponse — response for object count endpoint.
+export interface CountObjectsResponse {
+  count: number;
 }
 
 // SyncApplyActionResponseV2 — Foundry OSv2 response envelope for single apply.

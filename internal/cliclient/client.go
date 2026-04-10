@@ -150,10 +150,55 @@ type ActionResultsCLI struct {
 	DeletedLinksCount   int    `json:"deletedLinksCount"`
 }
 
+// ApplyOptions controls the behaviour of ApplyAction (validation mode, edit
+// return policy). A nil value means the server defaults are used.
+type ApplyOptions struct {
+	Mode        string `json:"mode,omitempty"`
+	ReturnEdits string `json:"returnEdits,omitempty"`
+}
+
+// ValidationResult mirrors the Foundry OSv2 ValidationResult envelope.
+type ValidationResult struct {
+	Result string `json:"result"`
+}
+
 // ApplyActionResponse mirrors the Foundry OSv2 SyncApplyActionResponseV2.
 type ApplyActionResponse struct {
 	OperationID string            `json:"operationId,omitempty"`
+	Validation  *ValidationResult `json:"validation,omitempty"`
 	Edits       *ActionResultsCLI `json:"edits,omitempty"`
+}
+
+// BatchApplyResponse mirrors the Foundry OSv2 BatchApplyActionResponseV2.
+type BatchApplyResponse struct {
+	Edits *ActionResultsCLI `json:"edits,omitempty"`
+}
+
+// InterfaceType mirrors the spec.
+type InterfaceType struct {
+	RID         string `json:"rid"`
+	APIName     string `json:"apiName"`
+	DisplayName string `json:"displayName"`
+}
+
+// ValueType mirrors the spec.
+type ValueType struct {
+	RID         string `json:"rid"`
+	APIName     string `json:"apiName"`
+	DisplayName string `json:"displayName"`
+	BaseType    string `json:"baseType"`
+	Version     int    `json:"version"`
+}
+
+// QueryType mirrors the spec.
+type QueryType struct {
+	RID         string         `json:"rid"`
+	APIName     string         `json:"apiName"`
+	DisplayName string         `json:"displayName"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	Output      map[string]any `json:"output,omitempty"`
 }
 
 // LoginResponse mirrors the login response payload.
@@ -314,9 +359,10 @@ func (c *Client) GetObject(ctx context.Context, ontology, objectType, primaryKey
 	return obj, nil
 }
 
-// SearchObjects POSTs a where-clause search request.
-func (c *Client) SearchObjects(ctx context.Context, ontology, objectType string, where map[string]any) (*ObjectPage, error) {
-	body := map[string]any{"where": where}
+// SearchObjects POSTs a where-clause search request. The selectProps argument
+// lists the property apiNames to return (required by the server per US-016).
+func (c *Client) SearchObjects(ctx context.Context, ontology, objectType string, where map[string]any, selectProps []string) (*ObjectPage, error) {
+	body := map[string]any{"where": where, "select": selectProps}
 	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
 		"/objects/" + url.PathEscape(objectType) + "/search"
 	var page ObjectPage
@@ -330,10 +376,13 @@ func (c *Client) SearchObjects(ctx context.Context, ontology, objectType string,
 
 // ApplyAction submits a single action and returns the resulting edits.
 // The action API name is carried in the URL (Foundry OSv2 shape); only
-// the parameters travel in the request body.
-func (c *Client) ApplyAction(ctx context.Context, ontology, actionType string, parameters map[string]any) (*ApplyActionResponse, error) {
+// the parameters (and optional options) travel in the request body.
+func (c *Client) ApplyAction(ctx context.Context, ontology, actionType string, parameters map[string]any, opts *ApplyOptions) (*ApplyActionResponse, error) {
 	body := map[string]any{
 		"parameters": parameters,
+	}
+	if opts != nil {
+		body["options"] = opts
 	}
 	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
 		"/actions/" + url.PathEscape(actionType) + "/apply"
@@ -342,6 +391,339 @@ func (c *Client) ApplyAction(ctx context.Context, ontology, actionType string, p
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// ----- Ontology metadata endpoints ----------------------------------------
+
+// LoadOntologyMetadata loads a subset of ontology metadata (e.g. objectTypes,
+// actionTypes) by POSTing the desired subset keys.
+func (c *Client) LoadOntologyMetadata(ctx context.Context, ontology string, subsets map[string]bool) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/metadata"
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodPost, path, subsets, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// GetOntologyFullMetadata returns the full metadata for an ontology (preview).
+func (c *Client) GetOntologyFullMetadata(ctx context.Context, ontology string) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/fullMetadata?preview=true"
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// ----- ObjectType extended endpoints --------------------------------------
+
+// GetObjectTypeFullMetadata returns the full metadata for an object type (preview).
+func (c *Client) GetObjectTypeFullMetadata(ctx context.Context, ontology, objectType string) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/objectTypes/" + url.PathEscape(objectType) + "/fullMetadata?preview=true"
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// GetObjectTypesByRidBatch fetches multiple object types by RID in a single request.
+func (c *Client) GetObjectTypesByRidBatch(ctx context.Context, ontology string, rids []string) ([]map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectTypes/getByRidBatch"
+	body := map[string]any{"rids": rids}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodPost, path, body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// ----- ActionType extended endpoints --------------------------------------
+
+// GetActionType fetches a single action type by API name.
+func (c *Client) GetActionType(ctx context.Context, ontology, actionType string) (*ActionType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/actionTypes/" + url.PathEscape(actionType)
+	var at ActionType
+	if err := c.do(ctx, http.MethodGet, path, nil, &at); err != nil {
+		return nil, err
+	}
+	return &at, nil
+}
+
+// GetActionTypeByRid fetches a single action type by its RID.
+func (c *Client) GetActionTypeByRid(ctx context.Context, ontology, rid string) (*ActionType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/actionTypes/byRid/" + url.PathEscape(rid)
+	var at ActionType
+	if err := c.do(ctx, http.MethodGet, path, nil, &at); err != nil {
+		return nil, err
+	}
+	return &at, nil
+}
+
+// GetActionTypesByRidBatch fetches multiple action types by RID in a single request.
+func (c *Client) GetActionTypesByRidBatch(ctx context.Context, ontology string, rids []string) ([]map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/actionTypes/getByRidBatch"
+	body := map[string]any{"rids": rids}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodPost, path, body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// GetActionTypeFullMetadata returns the full metadata for an action type (preview).
+func (c *Client) GetActionTypeFullMetadata(ctx context.Context, ontology, actionType string) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/actionTypes/" + url.PathEscape(actionType) + "/fullMetadata?preview=true"
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// ListActionTypesFullMetadata lists all action types with full metadata (preview).
+func (c *Client) ListActionTypesFullMetadata(ctx context.Context, ontology string) ([]map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/actionTypesFullMetadata?preview=true"
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// ----- Object extended endpoints ------------------------------------------
+
+// CountObjects returns the number of objects of a given type.
+func (c *Client) CountObjects(ctx context.Context, ontology, objectType string) (int, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/objects/" + url.PathEscape(objectType) + "/count"
+	var resp struct {
+		Count int `json:"count"`
+	}
+	if err := c.do(ctx, http.MethodPost, path, map[string]any{}, &resp); err != nil {
+		return 0, err
+	}
+	return resp.Count, nil
+}
+
+// ListLinkedObjects returns one page of objects linked through the given link type.
+func (c *Client) ListLinkedObjects(ctx context.Context, ontology, objectType, primaryKey, linkType string, opts ListObjectsOptions) (*ObjectPage, error) {
+	q := url.Values{}
+	if opts.PageSize > 0 {
+		q.Set("pageSize", strconv.Itoa(opts.PageSize))
+	}
+	if opts.PageToken != "" {
+		q.Set("pageToken", opts.PageToken)
+	}
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/objects/" + url.PathEscape(objectType) +
+		"/" + url.PathEscape(primaryKey) +
+		"/links/" + url.PathEscape(linkType)
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var page ObjectPage
+	if err := c.do(ctx, http.MethodGet, path, nil, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// GetLinkedObject fetches a specific linked object by its primary key.
+func (c *Client) GetLinkedObject(ctx context.Context, ontology, objectType, primaryKey, linkType, linkedPK string) (WireObject, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/objects/" + url.PathEscape(objectType) +
+		"/" + url.PathEscape(primaryKey) +
+		"/links/" + url.PathEscape(linkType) +
+		"/" + url.PathEscape(linkedPK)
+	var obj WireObject
+	if err := c.do(ctx, http.MethodGet, path, nil, &obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// ----- Batch action endpoints ---------------------------------------------
+
+// ApplyBatch submits a batch of action requests and optionally returns edit results.
+func (c *Client) ApplyBatch(ctx context.Context, ontology, actionType string, requests []map[string]any, returnEdits string) (*BatchApplyResponse, error) {
+	body := map[string]any{
+		"requests": requests,
+		"options":  map[string]any{"returnEdits": returnEdits},
+	}
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/actions/" + url.PathEscape(actionType) + "/applyBatch"
+	var resp BatchApplyResponse
+	if err := c.do(ctx, http.MethodPost, path, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ----- Interface, ValueType, QueryType endpoints --------------------------
+
+// ListInterfaceTypes returns all interface types in an ontology (preview).
+func (c *Client) ListInterfaceTypes(ctx context.Context, ontology string) ([]InterfaceType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/interfaceTypes?preview=true"
+	var resp struct {
+		Data []InterfaceType `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// GetInterfaceType fetches a single interface type by API name.
+func (c *Client) GetInterfaceType(ctx context.Context, ontology, interfaceType string) (*InterfaceType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/interfaceTypes/" + url.PathEscape(interfaceType)
+	var it InterfaceType
+	if err := c.do(ctx, http.MethodGet, path, nil, &it); err != nil {
+		return nil, err
+	}
+	return &it, nil
+}
+
+// ListValueTypes returns all value types in an ontology (preview).
+func (c *Client) ListValueTypes(ctx context.Context, ontology string) ([]ValueType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/valueTypes?preview=true"
+	var resp struct {
+		Data []ValueType `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// GetValueType fetches a single value type by API name.
+func (c *Client) GetValueType(ctx context.Context, ontology, valueType string) (*ValueType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/valueTypes/" + url.PathEscape(valueType)
+	var vt ValueType
+	if err := c.do(ctx, http.MethodGet, path, nil, &vt); err != nil {
+		return nil, err
+	}
+	return &vt, nil
+}
+
+// ListQueryTypes returns all query types in an ontology.
+func (c *Client) ListQueryTypes(ctx context.Context, ontology string) ([]QueryType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/queryTypes"
+	var resp struct {
+		Data []QueryType `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// GetQueryType fetches a single query type by API name.
+func (c *Client) GetQueryType(ctx context.Context, ontology, queryType string) (*QueryType, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/queryTypes/" + url.PathEscape(queryType)
+	var qt QueryType
+	if err := c.do(ctx, http.MethodGet, path, nil, &qt); err != nil {
+		return nil, err
+	}
+	return &qt, nil
+}
+
+// ExecuteQuery runs a query with the given parameters and returns the raw result.
+func (c *Client) ExecuteQuery(ctx context.Context, ontology, queryAPIName string, parameters map[string]any) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/queries/" + url.PathEscape(queryAPIName) + "/execute"
+	body := map[string]any{"parameters": parameters}
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodPost, path, body, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// ----- ObjectSet endpoints ------------------------------------------------
+
+// LoadObjectSetObjects loads objects from an object set definition with optional
+// pagination and property selection.
+func (c *Client) LoadObjectSetObjects(ctx context.Context, ontology string, objectSet map[string]any, selectProps []string, pageSize int, pageToken string) (*ObjectPage, error) {
+	body := map[string]any{"objectSet": objectSet, "select": selectProps}
+	if pageSize > 0 {
+		body["pageSize"] = pageSize
+	}
+	if pageToken != "" {
+		body["pageToken"] = pageToken
+	}
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectSets/loadObjects"
+	var page ObjectPage
+	if err := c.do(ctx, http.MethodPost, path, body, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// LoadObjectSetLinks loads linked objects from an object set by link type.
+func (c *Client) LoadObjectSetLinks(ctx context.Context, ontology string, objectSet map[string]any, linkType string, selectProps []string) (*ObjectPage, error) {
+	body := map[string]any{
+		"objectSet": objectSet,
+		"linkType":  linkType,
+		"select":    selectProps,
+	}
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectSets/loadLinks"
+	var page ObjectPage
+	if err := c.do(ctx, http.MethodPost, path, body, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// AggregateObjectSet runs an aggregation over an object set.
+func (c *Client) AggregateObjectSet(ctx context.Context, ontology string, objectSet, aggregation map[string]any) (map[string]any, error) {
+	body := map[string]any{
+		"objectSet":   objectSet,
+		"aggregation": aggregation,
+	}
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectSets/aggregate"
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodPost, path, body, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// CreateTemporaryObjectSet creates a temporary object set and returns its RID.
+func (c *Client) CreateTemporaryObjectSet(ctx context.Context, ontology string, objectSet map[string]any) (string, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectSets/createTemporary"
+	var resp struct {
+		ObjectSetRid string `json:"objectSetRid"`
+	}
+	if err := c.do(ctx, http.MethodPost, path, objectSet, &resp); err != nil {
+		return "", err
+	}
+	return resp.ObjectSetRid, nil
+}
+
+// GetObjectSet retrieves a previously-created object set by its RID.
+func (c *Client) GetObjectSet(ctx context.Context, ontology, objectSetRid string) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/objectSets/" + url.PathEscape(objectSetRid)
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // ----- Auth endpoints ------------------------------------------------------

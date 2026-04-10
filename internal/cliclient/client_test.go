@@ -249,7 +249,7 @@ func TestSearchObjectsPostsBody(t *testing.T) {
 		"type":  "eq",
 		"field": "customerId",
 		"value": "ALFKI",
-	})
+	}, []string{"customerId", "companyName"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -259,6 +259,9 @@ func TestSearchObjectsPostsBody(t *testing.T) {
 	body := (*rec)[0].body
 	if !strings.Contains(body, `"where"`) || !strings.Contains(body, `"ALFKI"`) {
 		t.Fatalf("body = %q", body)
+	}
+	if !strings.Contains(body, `"select"`) || !strings.Contains(body, `"customerId"`) {
+		t.Fatalf("body missing select: %q", body)
 	}
 }
 
@@ -272,7 +275,7 @@ func TestApplyActionPostsParameters(t *testing.T) {
 		},
 	})
 	c := NewClient(srv.URL, "tok")
-	res, err := c.ApplyAction(context.Background(), "nw", "createCustomer", map[string]any{"name": "X"})
+	res, err := c.ApplyAction(context.Background(), "nw", "createCustomer", map[string]any{"name": "X"}, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -286,6 +289,30 @@ func TestApplyActionPostsParameters(t *testing.T) {
 	// Ensure the stale `actionType` field is no longer sent in the body.
 	if strings.Contains(body, `"actionType"`) {
 		t.Fatalf("body still carries actionType field: %q", body)
+	}
+	// Ensure no options key when opts is nil.
+	if strings.Contains(body, `"options"`) {
+		t.Fatalf("body should not carry options when nil: %q", body)
+	}
+}
+
+func TestApplyActionWithOptions(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/actions/createCustomer/apply": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"validation":{"result":"VALID"}}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	res, err := c.ApplyAction(context.Background(), "nw", "createCustomer", map[string]any{"name": "X"}, &ApplyOptions{Mode: "VALIDATE_ONLY"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.Validation == nil || res.Validation.Result != "VALID" {
+		t.Fatalf("expected validation result VALID, got %+v", res)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"options"`) || !strings.Contains(body, `"VALIDATE_ONLY"`) {
+		t.Fatalf("body missing options: %q", body)
 	}
 }
 
@@ -389,5 +416,475 @@ func TestOntologyJSONRoundtrip(t *testing.T) {
 	}
 	if got != o {
 		t.Fatalf("roundtrip: %+v vs %+v", got, o)
+	}
+}
+
+// ----- New endpoint tests -------------------------------------------------
+
+func TestLoadOntologyMetadata(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/metadata": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"objectTypes":["Customer"]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.LoadOntologyMetadata(context.Background(), "nw", map[string]bool{"objectTypes": true})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["objectTypes"] == nil {
+		t.Fatalf("expected objectTypes key, got %+v", resp)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"objectTypes"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestGetOntologyFullMetadata(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/fullMetadata": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"ontology":{"apiName":"nw"}}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.GetOntologyFullMetadata(context.Background(), "nw")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["ontology"] == nil {
+		t.Fatalf("expected ontology key, got %+v", resp)
+	}
+	if !strings.Contains((*rec)[0].path, "preview=true") {
+		t.Fatalf("missing preview param: %q", (*rec)[0].path)
+	}
+}
+
+func TestGetObjectTypeFullMetadata(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/objectTypes/Customer/fullMetadata": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"objectType":{"apiName":"Customer"}}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.GetObjectTypeFullMetadata(context.Background(), "nw", "Customer")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["objectType"] == nil {
+		t.Fatalf("expected objectType key, got %+v", resp)
+	}
+	if !strings.Contains((*rec)[0].path, "preview=true") {
+		t.Fatalf("missing preview param: %q", (*rec)[0].path)
+	}
+}
+
+func TestGetObjectTypesByRidBatch(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/objectTypes/getByRidBatch": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"rid":"rid1","apiName":"Customer"},{"rid":"rid2","apiName":"Order"}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	data, err := c.GetObjectTypesByRidBatch(context.Background(), "nw", []string{"rid1", "rid2"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(data) != 2 {
+		t.Fatalf("expected 2, got %d", len(data))
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"rids"`) || !strings.Contains(body, `"rid1"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestGetActionType(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/actionTypes/createCustomer": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"rid":"rid-at1","apiName":"createCustomer","displayName":"Create Customer","status":"ACTIVE"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	at, err := c.GetActionType(context.Background(), "nw", "createCustomer")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if at.APIName != "createCustomer" || at.Status != "ACTIVE" {
+		t.Fatalf("unexpected: %+v", at)
+	}
+}
+
+func TestGetActionTypeByRid(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/actionTypes/byRid/ri.action.1": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"rid":"ri.action.1","apiName":"createOrder","displayName":"Create Order","status":"ACTIVE"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	at, err := c.GetActionTypeByRid(context.Background(), "nw", "ri.action.1")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if at.RID != "ri.action.1" || at.APIName != "createOrder" {
+		t.Fatalf("unexpected: %+v", at)
+	}
+	if !strings.Contains((*rec)[0].path, "byRid/ri.action.1") {
+		t.Fatalf("path = %q", (*rec)[0].path)
+	}
+}
+
+func TestGetActionTypesByRidBatch(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/actionTypes/getByRidBatch": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"rid":"rid-a1","apiName":"createOrder"}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	data, err := c.GetActionTypesByRidBatch(context.Background(), "nw", []string{"rid-a1"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(data) != 1 {
+		t.Fatalf("expected 1, got %d", len(data))
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"rids"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestGetActionTypeFullMetadata(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/actionTypes/createCustomer/fullMetadata": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"actionType":{"apiName":"createCustomer"}}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.GetActionTypeFullMetadata(context.Background(), "nw", "createCustomer")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["actionType"] == nil {
+		t.Fatalf("expected actionType key, got %+v", resp)
+	}
+	if !strings.Contains((*rec)[0].path, "preview=true") {
+		t.Fatalf("missing preview param: %q", (*rec)[0].path)
+	}
+}
+
+func TestListActionTypesFullMetadata(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/actionTypesFullMetadata": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"apiName":"createCustomer"},{"apiName":"deleteCustomer"}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	data, err := c.ListActionTypesFullMetadata(context.Background(), "nw")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(data) != 2 {
+		t.Fatalf("expected 2, got %d", len(data))
+	}
+	if !strings.Contains((*rec)[0].path, "preview=true") {
+		t.Fatalf("missing preview param: %q", (*rec)[0].path)
+	}
+}
+
+func TestCountObjects(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/objects/Customer/count": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"count":42}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	count, err := c.CountObjects(context.Background(), "nw", "Customer")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if count != 42 {
+		t.Fatalf("expected 42, got %d", count)
+	}
+	if (*rec)[0].method != "POST" {
+		t.Fatalf("expected POST, got %s", (*rec)[0].method)
+	}
+}
+
+func TestListLinkedObjects(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/objects/Customer/ALFKI/links/orders": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"__primaryKey":"10643","orderId":"10643"}],"nextPageToken":"p2","totalCount":"5"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	page, err := c.ListLinkedObjects(context.Background(), "nw", "Customer", "ALFKI", "orders", ListObjectsOptions{PageSize: 10})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(page.Data) != 1 || page.NextPageToken != "p2" {
+		t.Fatalf("page = %+v", page)
+	}
+	if !strings.Contains((*rec)[0].path, "pageSize=10") {
+		t.Fatalf("path missing pageSize: %q", (*rec)[0].path)
+	}
+}
+
+func TestGetLinkedObject(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/objects/Customer/ALFKI/links/orders/10643": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"__primaryKey":"10643","orderId":"10643","customerId":"ALFKI"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	obj, err := c.GetLinkedObject(context.Background(), "nw", "Customer", "ALFKI", "orders", "10643")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if obj["orderId"] != "10643" {
+		t.Fatalf("unexpected obj: %+v", obj)
+	}
+}
+
+func TestApplyBatch(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/actions/createCustomer/applyBatch": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"edits":{"type":"edits","addedObjectCount":3,"modifiedObjectCount":0,"deletedObjectCount":0,"addedLinksCount":0,"deletedLinksCount":0}}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	reqs := []map[string]any{
+		{"parameters": map[string]any{"name": "A"}},
+		{"parameters": map[string]any{"name": "B"}},
+		{"parameters": map[string]any{"name": "C"}},
+	}
+	resp, err := c.ApplyBatch(context.Background(), "nw", "createCustomer", reqs, "ALL")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp.Edits == nil || resp.Edits.AddedObjectCount != 3 {
+		t.Fatalf("response = %+v", resp)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"requests"`) || !strings.Contains(body, `"returnEdits"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestListInterfaceTypes(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/interfaceTypes": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"rid":"rid-if1","apiName":"Trackable","displayName":"Trackable"}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	list, err := c.ListInterfaceTypes(context.Background(), "nw")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(list) != 1 || list[0].APIName != "Trackable" {
+		t.Fatalf("unexpected: %+v", list)
+	}
+	if !strings.Contains((*rec)[0].path, "preview=true") {
+		t.Fatalf("missing preview param: %q", (*rec)[0].path)
+	}
+}
+
+func TestGetInterfaceType(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/interfaceTypes/Trackable": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"rid":"rid-if1","apiName":"Trackable","displayName":"Trackable"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	it, err := c.GetInterfaceType(context.Background(), "nw", "Trackable")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if it.APIName != "Trackable" {
+		t.Fatalf("unexpected: %+v", it)
+	}
+}
+
+func TestListValueTypes(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/valueTypes": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"rid":"rid-vt1","apiName":"Currency","displayName":"Currency","baseType":"string","version":1}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	list, err := c.ListValueTypes(context.Background(), "nw")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(list) != 1 || list[0].APIName != "Currency" || list[0].Version != 1 {
+		t.Fatalf("unexpected: %+v", list)
+	}
+	if !strings.Contains((*rec)[0].path, "preview=true") {
+		t.Fatalf("missing preview param: %q", (*rec)[0].path)
+	}
+}
+
+func TestGetValueType(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/valueTypes/Currency": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"rid":"rid-vt1","apiName":"Currency","displayName":"Currency","baseType":"string","version":1}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	vt, err := c.GetValueType(context.Background(), "nw", "Currency")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if vt.APIName != "Currency" || vt.BaseType != "string" {
+		t.Fatalf("unexpected: %+v", vt)
+	}
+}
+
+func TestListQueryTypes(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/queryTypes": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"rid":"rid-qt1","apiName":"topCustomers","displayName":"Top Customers","status":"ACTIVE"}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	list, err := c.ListQueryTypes(context.Background(), "nw")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(list) != 1 || list[0].APIName != "topCustomers" {
+		t.Fatalf("unexpected: %+v", list)
+	}
+}
+
+func TestGetQueryType(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/queryTypes/topCustomers": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"rid":"rid-qt1","apiName":"topCustomers","displayName":"Top Customers","status":"ACTIVE"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	qt, err := c.GetQueryType(context.Background(), "nw", "topCustomers")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if qt.APIName != "topCustomers" || qt.Status != "ACTIVE" {
+		t.Fatalf("unexpected: %+v", qt)
+	}
+}
+
+func TestExecuteQuery(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/queries/topCustomers/execute": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"value":["ALFKI","ANATR"]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.ExecuteQuery(context.Background(), "nw", "topCustomers", map[string]any{"limit": 2})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["value"] == nil {
+		t.Fatalf("expected value key, got %+v", resp)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"parameters"`) || !strings.Contains(body, `"limit"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestLoadObjectSetObjects(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/objectSets/loadObjects": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"__primaryKey":"ALFKI","customerId":"ALFKI"}],"nextPageToken":"p2","totalCount":"10"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	os := map[string]any{"type": "base", "objectType": "Customer"}
+	page, err := c.LoadObjectSetObjects(context.Background(), "nw", os, []string{"customerId"}, 5, "")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(page.Data) != 1 || page.NextPageToken != "p2" {
+		t.Fatalf("page = %+v", page)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"objectSet"`) || !strings.Contains(body, `"select"`) || !strings.Contains(body, `"pageSize"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestLoadObjectSetLinks(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/objectSets/loadLinks": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"__primaryKey":"10643"}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	os := map[string]any{"type": "base", "objectType": "Customer"}
+	page, err := c.LoadObjectSetLinks(context.Background(), "nw", os, "orders", []string{"orderId"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(page.Data) != 1 {
+		t.Fatalf("page = %+v", page)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"linkType"`) || !strings.Contains(body, `"orders"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestAggregateObjectSet(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/objectSets/aggregate": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"group":{},"metrics":[{"name":"count","value":42}]}]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	os := map[string]any{"type": "base", "objectType": "Customer"}
+	agg := map[string]any{"aggregation": []any{map[string]any{"type": "count", "name": "count"}}}
+	resp, err := c.AggregateObjectSet(context.Background(), "nw", os, agg)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["data"] == nil {
+		t.Fatalf("expected data key, got %+v", resp)
+	}
+	body := (*rec)[0].body
+	if !strings.Contains(body, `"objectSet"`) || !strings.Contains(body, `"aggregation"`) {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestCreateTemporaryObjectSet(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/ontologies/nw/objectSets/createTemporary": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"objectSetRid":"ri.objectset.main.tmp.abc123"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	rid, err := c.CreateTemporaryObjectSet(context.Background(), "nw", map[string]any{"type": "base", "objectType": "Customer"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if rid != "ri.objectset.main.tmp.abc123" {
+		t.Fatalf("rid = %q", rid)
+	}
+}
+
+func TestGetObjectSet(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/ontologies/nw/objectSets/ri.objectset.main.tmp.abc123": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"type":"base","objectType":"Customer"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.GetObjectSet(context.Background(), "nw", "ri.objectset.main.tmp.abc123")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if resp["type"] != "base" || resp["objectType"] != "Customer" {
+		t.Fatalf("unexpected resp: %+v", resp)
 	}
 }

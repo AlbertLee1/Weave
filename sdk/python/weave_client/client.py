@@ -2,9 +2,10 @@
 
 The Client owns one Transport and exposes API namespaces:
 
-- ``client.ontologies`` -> :class:`weave_client.ontologies.OntologiesAPI`
-- ``client.objects``    -> :class:`weave_client.objects.ObjectsAPI`
-- ``client.actions``    -> :class:`weave_client.actions.ActionsAPI`
+- ``client.ontologies``  -> :class:`weave_client.ontologies.OntologiesAPI`
+- ``client.objects``     -> :class:`weave_client.objects.ObjectsAPI`
+- ``client.actions``     -> :class:`weave_client.actions.ActionsAPI`
+- ``client.objectsets``  -> :class:`weave_client.objectsets.ObjectSetsAPI`
 
 Authentication is configured at construction time. Either supply a JWT
 ``access_token`` (typically obtained from ``POST /api/auth/login``) or an API
@@ -39,11 +40,13 @@ class Client:
         # Lazy import to avoid circular references at module-import time.
         from .actions import ActionsAPI
         from .objects import ObjectsAPI
+        from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
 
         self.ontologies = OntologiesAPI(self)
         self.objects = ObjectsAPI(self)
         self.actions = ActionsAPI(self)
+        self.objectsets = ObjectSetsAPI(self)
 
     @property
     def token(self) -> str:

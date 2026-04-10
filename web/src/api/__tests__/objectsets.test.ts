@@ -5,6 +5,8 @@ import {
   loadObjectSet,
   aggregateObjectSet,
   createTemporaryObjectSet,
+  getObjectSet,
+  loadLinks,
 } from '../objectsets';
 import type { ObjectSetDefinition } from '../types';
 
@@ -142,5 +144,41 @@ describe('objectsets API', () => {
 
     const result = await createTemporaryObjectSet('test', baseObjectSet);
     expect(result.objectSetRid).toBe('ri.objectset.main.1234');
+  });
+
+  it('getObjectSet() GETs objectSet by RID', async () => {
+    const def = { type: 'base', objectType: 'Employee' };
+    server.use(
+      http.get(
+        '/api/v2/ontologies/test/objectSets/ri.objectset.main.1234',
+        () => HttpResponse.json(def),
+      ),
+    );
+
+    const result = await getObjectSet('test', 'ri.objectset.main.1234');
+    expect(result).toEqual(def);
+  });
+
+  it('loadLinks() POSTs with objectSet, linkType, and select', async () => {
+    const data = {
+      data: [{ __rid: 'ri.2', __primaryKey: '2', __apiName: 'Department' }],
+      totalCount: '1',
+    };
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/objectSets/loadLinks',
+        async ({ request: req }) => {
+          const body = (await req.json()) as Record<string, unknown>;
+          expect(body.objectSet).toEqual(baseObjectSet);
+          expect(body.linkType).toBe('department');
+          expect(body.select).toEqual(['name', 'deptId']);
+          return HttpResponse.json(data);
+        },
+      ),
+    );
+
+    const result = await loadLinks('test', baseObjectSet, 'department', ['name', 'deptId']);
+    expect(result.data).toHaveLength(1);
+    expect(result.totalCount).toBe('1');
   });
 });

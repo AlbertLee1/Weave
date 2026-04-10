@@ -190,8 +190,8 @@ POST   /api/v2/ontologies/{ontology}/objects/{objectType}/aggregate
 POST   /api/v2/ontologies/{ontology}/objectSets/loadObjects
 POST   /api/v2/ontologies/{ontology}/objectSets/aggregate
 POST   /api/v2/ontologies/{ontology}/objectSets/createTemporary
-POST   /api/v2/ontologies/{ontology}/actions/apply
-POST   /api/v2/ontologies/{ontology}/actions/applyBatch
+POST   /api/v2/ontologies/{ontology}/actions/{action}/apply
+POST   /api/v2/ontologies/{ontology}/actions/{action}/applyBatch
 ```
 
 ### Health Check

@@ -108,7 +108,7 @@ Client(
 
 | Method | Endpoint | Returns |
 |---|---|---|
-| `apply(ontology, action_type, parameters)` | `POST .../actions/apply` | `ApplyActionResponse` |
+| `apply(ontology, action_type, parameters)` | `POST .../actions/{action}/apply` | `ApplyActionResponse` |
 
 ### Errors
 

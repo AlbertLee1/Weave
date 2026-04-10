@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { applyAction } from '../actions';
+import { applyAction, applyBatch } from '../actions';
 
 const server = setupServer();
 beforeAll(() => server.listen());
@@ -63,5 +63,60 @@ describe('actions API', () => {
     const result = await applyAction('test', 'weird action', { parameters: {} });
     expect(result.edits).toBeDefined();
     expect(result.edits!.type).toBe('edits');
+  });
+
+  it('applyAction() sends options when provided', async () => {
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/actions/validateMe/apply',
+        async ({ request: req }) => {
+          const body = (await req.json()) as Record<string, unknown>;
+          const opts = body.options as Record<string, string>;
+          expect(opts.mode).toBe('VALIDATE_ONLY');
+          return HttpResponse.json({
+            validation: { result: 'VALID' },
+          });
+        },
+      ),
+    );
+
+    const result = await applyAction('test', 'validateMe', {
+      parameters: { name: 'Test' },
+      options: { mode: 'VALIDATE_ONLY' },
+    });
+    expect(result.validation).toBeDefined();
+    expect(result.validation!.result).toBe('VALID');
+    expect(result.edits).toBeUndefined();
+  });
+
+  it('applyBatch() POSTs batch request to correct URL', async () => {
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/actions/createEmployee/applyBatch',
+        async ({ request: req }) => {
+          const body = (await req.json()) as Record<string, unknown>;
+          expect(body.requests).toHaveLength(2);
+          return HttpResponse.json({
+            edits: {
+              type: 'edits',
+              addedObjectCount: 2,
+              modifiedObjectCount: 0,
+              deletedObjectCount: 0,
+              addedLinksCount: 0,
+              deletedLinksCount: 0,
+            },
+          });
+        },
+      ),
+    );
+
+    const result = await applyBatch('test', 'createEmployee', {
+      requests: [
+        { parameters: { name: 'Alice' } },
+        { parameters: { name: 'Bob' } },
+      ],
+    });
+    expect(result.edits).toBeDefined();
+    expect(result.edits!.addedObjectCount).toBe(2);
   });
 });

@@ -98,5 +98,117 @@ class ActionsAPITests(unittest.TestCase):
         # the space the request would 404 and raise.
 
 
+class ApplyWithOptionsTests(unittest.TestCase):
+    def test_apply_with_options_sends_options_block(self):
+        body = json.dumps({
+            "operationId": "op-opts",
+            "edits": {
+                "type": "edits",
+                "addedObjectCount": 2,
+                "modifiedObjectCount": 0,
+                "deletedObjectCount": 0,
+                "addedLinksCount": 0,
+                "deletedLinksCount": 0,
+            },
+        })
+        routes = {"POST /api/v2/ontologies/nw/actions/createCustomer/apply": (200, body)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.actions.apply_with_options(
+                "nw", "createCustomer", {"name": "X"},
+                mode="VALIDATE_ONLY",
+                return_edits="NONE",
+            )
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent["parameters"], {"name": "X"})
+        self.assertEqual(sent["options"]["mode"], "VALIDATE_ONLY")
+        self.assertEqual(sent["options"]["returnEdits"], "NONE")
+        self.assertEqual(result.operation_id, "op-opts")
+        self.assertEqual(result.edits.added_object_count, 2)
+
+    def test_apply_with_options_default_values(self):
+        body = json.dumps({"operationId": "op-def"})
+        routes = {"POST /api/v2/ontologies/nw/actions/doIt/apply": (200, body)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            c.actions.apply_with_options("nw", "doIt", {})
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent["options"]["mode"], "VALIDATE_AND_EXECUTE")
+        self.assertEqual(sent["options"]["returnEdits"], "ALL")
+
+
+class ApplyBatchTests(unittest.TestCase):
+    def test_apply_batch_posts_requests_list(self):
+        body = json.dumps({
+            "edits": {
+                "type": "edits",
+                "addedObjectCount": 3,
+                "modifiedObjectCount": 0,
+                "deletedObjectCount": 0,
+                "addedLinksCount": 0,
+                "deletedLinksCount": 0,
+            },
+        })
+        routes = {"POST /api/v2/ontologies/nw/actions/createCustomer/applyBatch": (200, body)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            reqs = [
+                {"parameters": {"name": "A"}},
+                {"parameters": {"name": "B"}},
+                {"parameters": {"name": "C"}},
+            ]
+            result = c.actions.apply_batch("nw", "createCustomer", reqs)
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(len(sent["requests"]), 3)
+        self.assertNotIn("options", sent)  # default return_edits="ALL" omits options
+        self.assertIsNotNone(result.edits)
+        self.assertEqual(result.edits.added_object_count, 3)
+
+    def test_apply_batch_with_return_edits_option(self):
+        body = json.dumps({})
+        routes = {"POST /api/v2/ontologies/nw/actions/doIt/applyBatch": (200, body)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            c.actions.apply_batch("nw", "doIt", [{"parameters": {}}], return_edits="NONE")
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent["options"]["returnEdits"], "NONE")
+
+    def test_apply_batch_empty_response(self):
+        routes = {"POST /api/v2/ontologies/nw/actions/doIt/applyBatch": (200, "{}")}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.actions.apply_batch("nw", "doIt", [])
+        self.assertIsNone(result.edits)
+
+
+class ExecuteQueryTests(unittest.TestCase):
+    def test_execute_query_posts_parameters(self):
+        resp = json.dumps({"value": [{"customerId": "ALFKI"}]})
+        routes = {"POST /api/v2/ontologies/nw/queries/topCustomers/execute": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.actions.execute_query("nw", "topCustomers", {"limit": 10})
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent["parameters"], {"limit": 10})
+        self.assertEqual(result["value"][0]["customerId"], "ALFKI")
+
+    def test_execute_query_with_no_parameters(self):
+        resp = json.dumps({"value": 42})
+        routes = {"POST /api/v2/ontologies/nw/queries/countAll/execute": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.actions.execute_query("nw", "countAll")
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent["parameters"], {})
+        self.assertEqual(result["value"], 42)
+
+    def test_execute_query_returns_empty_dict_on_null(self):
+        routes = {"POST /api/v2/ontologies/nw/queries/noResult/execute": (200, "")}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.actions.execute_query("nw", "noResult")
+        self.assertEqual(result, {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,7 +25,7 @@ export function ActionConsolePage() {
   function handleExecute() {
     if (!selectedAction) return;
     applyMutation.mutate(
-      { actionType: selectedAction.apiName, parameters: paramValues },
+      { action: selectedAction.apiName, parameters: paramValues },
       {
         onSuccess: (data) => setResult(data),
       },
