@@ -1,0 +1,93 @@
+# Progress - Foundry OSv2 API Alignment
+
+## 2026-04-10 — Initial Setup
+
+### Completed (before Ralph)
+- PR-01: Wire unwired handlers (api-keys, history, broadcast) — DONE, tests green
+- PR-02: Action path rename /actions/apply -> /actions/{action}/apply — DONE, full repo tests green
+
+### Research Completed
+- 6 parallel scientist agents analyzed project capabilities
+- 2 document-specialist agents reverse-engineered Foundry API from palantir/foundry-platform-python SDK (67 endpoints) + Palantir public docs
+- Foundry truth source: 68 endpoints across 20 SDK resource classes
+- Current alignment: 29% (20/68)
+
+### Key Foundry Facts (do not re-research)
+- Wire format: __rid/__primaryKey/__apiName (double underscore) for standard endpoints; $rid for preview multi-type endpoints
+- Action path param: {action} (not {actionType}) for execution endpoints; {actionType} for metadata
+- Apply options: mode = VALIDATE_ONLY | VALIDATE_AND_EXECUTE; returnEdits = ALL | ALL_V2_WITH_DELETIONS | NONE
+- Batch options: returnEdits = ALL | NONE only (2 values, no mode field)
+- No separate validateAction endpoint — use apply with VALIDATE_ONLY
+- No applyAsync / executeAsync — all sync
+- No link write REST — must go through Action rules
+- Search/LoadObjectSet select field is REQUIRED
+- ListOntologies has NO pagination
+- ObjectSet has 15 definition variants (Weave has 9)
+- Interface uses dual path: /interfaceTypes/ for metadata, /interfaces/ for data queries
+- Attachment is global: /api/v2/ontologies/attachments/... (no {ontology})
+
+### Gotchas
+- pkg/oss/handlers_link_crud.go has zero consumers (frontend/SDK/CLI) — safe to delete
+- main.go inline aggregate closure duplicates objectset handler — delete it
+- Auth middleware must be MiddlewareWithAPIKeys for api-key bearer to work
+- TimeSeries path params inconsistent: {property} vs {propertyName} — match Foundry exactly
+
+## Codebase Patterns
+- ApplyRequest.Options is *ApplyOptions (pointer, omitempty) — nil means use defaults
+- Handler resolves options with defaults before calling executor; executor is options-unaware
+- VALIDATE_ONLY uses Prepare() only — no CommitBatch, no Publish
+- returnEdits=NONE omits edits from response envelope (edits still generated and published internally)
+- Old deprecated fields are rejected with 400 + DeprecatedField error code
+- Test helpers: setupRouter(), newTestActionType(), mustJSON(), fakePublisher{} in actions_test.go / batch_test.go
+- Executor-level tests (batch_test.go) test ApplyBatchAtomic/BestEffort directly; handler-level tests go through HTTP
+- Handler layer transforms internal ApplyResult/BatchResult into Foundry OSv2 response envelopes (SyncApplyActionResponseV2 / BatchApplyActionResponseV2)
+- countEdits() helper computes ActionResults (addedObjectCount etc.) from []funnel.Edit
+- ApplyResult fields have `json:"-"` tags — internal only, not serialized to wire
+- Frontend ActionApplyResponse has edits as ActionResults (counts), not individual edit objects
+
+---
+
+## 2026-04-11 - US-001: Action options schema rewrite (VALIDATE_ONLY / returnEdits)
+- Implemented Foundry OSv2 options schema for apply and applyBatch
+- Added ApplyOptions, BatchApplyOptions, ValidationResult, ValidateOnlyResponse types to executor.go
+- Rewrote Apply handler: options.mode (VALIDATE_ONLY | VALIDATE_AND_EXECUTE), options.returnEdits (ALL | ALL_V2_WITH_DELETIONS | NONE)
+- Rewrote ApplyBatch handler: always atomic, options.returnEdits (ALL | NONE), old mode field rejected with 400
+- Files changed: pkg/actions/executor.go, pkg/actions/handlers.go, pkg/actions/batch_test.go, pkg/actions/options_test.go (new)
+- **Learnings for future iterations:**
+  - ApplyRequest already has Options field deserialized from JSON — handlers just read it
+  - Prepare() is the pure validation path — use it for VALIDATE_ONLY, no side effects
+  - CommitBatch sets Mode="atomic" on BatchResult; this is now internal-only (not exposed to user in batch request)
+  - The old bestEffort mode handler test needed updating to verify 400 rejection
+  - All 78 action tests pass, go test ./... full suite green
+---
+
+## 2026-04-11 - US-002: Action response envelope rewrite (SyncApplyActionResponseV2)
+- Rewrote single apply response to Foundry OSv2 SyncApplyActionResponseV2: { operationId?, validation?, edits?: ActionResults }
+- Rewrote batch apply response to BatchApplyActionResponseV2: { edits?: ActionResults }
+- ActionResults: { type: "edits", addedObjectCount, modifiedObjectCount, deletedObjectCount, addedLinksCount, deletedLinksCount }
+- Deleted old response fields: actionRid, batchId, offset (single); mode, batchId, offset, results, appliedEdits, failures (batch)
+- ApplyResult fields tagged `json:"-"` — internal only, handler transforms to new envelope
+- Added countEdits() helper to compute ActionResults from []funnel.Edit
+- Files changed:
+  - pkg/actions/executor.go — new types: ActionResults, SyncApplyActionResponseV2, BatchApplyActionResponseV2, countEdits()
+  - pkg/actions/handlers.go — handler builds new response envelopes
+  - pkg/actions/response_test.go — NEW: 10 TDD tests for new envelope
+  - pkg/actions/actions_test.go — updated assertions for new response shape
+  - pkg/actions/batch_test.go — updated assertions
+  - pkg/actions/options_test.go — updated assertions
+  - web/src/api/types.ts — ActionApplyResponse + ActionResults types
+  - web/src/components/actions/ActionResult.tsx — displays counts instead of individual edits
+  - web/src/components/actions/__tests__/ActionResult.test.tsx — updated tests
+  - web/src/api/__tests__/actions.test.ts — updated tests
+  - internal/cliclient/client.go — ActionResultsCLI + updated ApplyActionResponse
+  - internal/cliclient/client_test.go — updated test
+  - sdk/python/weave_client/types.py — ActionResults + updated ApplyActionResponse
+  - sdk/python/tests/test_actions.py — updated tests
+  - test/chinook/chinook_test.go — updated assertions
+  - test/e2e/e2e_test.go — updated 4 action tests
+- **Learnings for future iterations:**
+  - Handler is the transformation boundary: internal executor types stay stable, handler maps to wire format
+  - All 88 action tests pass, all 192 frontend tests pass, all 25 Python SDK tests pass, full Go suite green
+  - E2E tests decode JSON into map[string]interface{} — ActionResults is map, not array, so assertions use float64 comparison
+  - ActionResult.test.tsx is a separate test file from actions.test.ts — both need updating for type changes
+---

@@ -703,8 +703,8 @@ func setupEnv(t *testing.T) *chinookEnv {
 
 		// Actions
 		actionHandler := actions.NewHandler(actionExecutor)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 
 		// Aggregation (inline handler)
 		r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
@@ -2010,35 +2010,33 @@ func TestChinook_Phase8_Actions(t *testing.T) {
 
 	t.Run("ApplyCreateArtist_Success", func(t *testing.T) {
 		body := map[string]interface{}{
-			"actionType": "createArtist",
 			"parameters": map[string]interface{}{
 				"name": "Test Band",
 			},
 		}
 		rr := doRequest(t, env, http.MethodPost,
-			fmt.Sprintf("/api/v2/ontologies/%s/actions/apply", env.ontologyRID), body)
+			fmt.Sprintf("/api/v2/ontologies/%s/actions/createArtist/apply", env.ontologyRID), body)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 		}
 
-		var result actions.ApplyResult
+		var result actions.SyncApplyActionResponseV2
 		parseJSON(t, rr, &result)
 
-		if result.ActionRID == "" {
-			t.Error("expected non-empty actionRid in result")
+		if result.Edits == nil {
+			t.Error("expected edits in SyncApplyActionResponseV2")
 		}
-		if len(result.Edits) == 0 {
-			t.Error("expected at least 1 edit in result")
+		if result.Edits != nil && result.Edits.AddedObjectCount == 0 {
+			t.Error("expected addedObjectCount > 0 for createArtist")
 		}
 	})
 
 	t.Run("ApplyCreateArtist_MissingRequiredParam", func(t *testing.T) {
 		body := map[string]interface{}{
-			"actionType": "createArtist",
 			"parameters": map[string]interface{}{},
 		}
 		rr := doRequest(t, env, http.MethodPost,
-			fmt.Sprintf("/api/v2/ontologies/%s/actions/apply", env.ontologyRID), body)
+			fmt.Sprintf("/api/v2/ontologies/%s/actions/createArtist/apply", env.ontologyRID), body)
 		// Should fail validation
 		if rr.Code == http.StatusOK {
 			t.Error("expected error for missing required parameter, but got 200")
@@ -2047,11 +2045,10 @@ func TestChinook_Phase8_Actions(t *testing.T) {
 
 	t.Run("ApplyNonExistentAction", func(t *testing.T) {
 		body := map[string]interface{}{
-			"actionType": "nonExistentAction",
 			"parameters": map[string]interface{}{},
 		}
 		rr := doRequest(t, env, http.MethodPost,
-			fmt.Sprintf("/api/v2/ontologies/%s/actions/apply", env.ontologyRID), body)
+			fmt.Sprintf("/api/v2/ontologies/%s/actions/nonExistentAction/apply", env.ontologyRID), body)
 		// Should fail - action type not found
 		if rr.Code == http.StatusOK {
 			t.Error("expected error for non-existent action type, but got 200")

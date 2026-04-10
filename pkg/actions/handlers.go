@@ -88,12 +88,15 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip edits from response if returnEdits=NONE.
-	if returnEdits == "NONE" {
-		result.Edits = nil
+	// Build SyncApplyActionResponseV2 envelope.
+	resp := &SyncApplyActionResponseV2{
+		OperationID: result.BatchID,
+	}
+	if returnEdits != "NONE" {
+		resp.Edits = countEdits(result.Edits)
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, result)
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // ApplyBatch handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch.
@@ -163,15 +166,13 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip edits from response if returnEdits=NONE.
-	if returnEdits == "NONE" {
-		result.AppliedEdits = nil
-		for _, r := range result.Results {
-			r.Edits = nil
-		}
+	// Build BatchApplyActionResponseV2 envelope.
+	resp := &BatchApplyActionResponseV2{}
+	if returnEdits != "NONE" {
+		resp.Edits = countEdits(result.AppliedEdits)
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, result)
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // asBatchError converts an error returned by ApplyBatchAtomic / CommitBatch

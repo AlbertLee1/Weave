@@ -1,0 +1,756 @@
+{
+  "project": "Weave",
+  "branchName": "ralph/foundry-osv2-api-alignment",
+  "description": "Fully align Weave REST API with Palantir Foundry OSv2 (68 endpoints, 20 resource classes). Rip-and-replace, strict TDD, integration gates per phase.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Action options schema rewrite (VALIDATE_ONLY / returnEdits)",
+      "description": "As a Foundry SDK consumer, I want apply/applyBatch to use Foundry's options schema so SDK calls are wire-compatible.",
+      "acceptanceCriteria": [
+        "Single apply accepts options.mode: VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default VALIDATE_AND_EXECUTE)",
+        "Single apply accepts options.returnEdits: ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)",
+        "Batch apply accepts options.returnEdits: ALL | NONE (default ALL)",
+        "Delete Weave's mode: atomic | bestEffort enum — old values return 400",
+        "VALIDATE_ONLY mode returns validation field, no edits",
+        "TDD: write failing test FIRST, then implement",
+        "go test ./pkg/actions/... passes",
+        "go test ./... passes (regression)"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "PR-01 (wire handlers) and PR-02 (action path {action}) already done. This is PR-03."
+    },
+    {
+      "id": "US-002",
+      "title": "Action response envelope rewrite (SyncApplyActionResponseV2)",
+      "description": "As a Foundry SDK consumer, I want the apply response to match SyncApplyActionResponseV2.",
+      "acceptanceCriteria": [
+        "Single apply response: { operationId?, validation?, edits?: ActionResults }",
+        "ActionResults: { type: edits, addedObjectCount, modifiedObjectCount, deletedObjectCount, addedLinksCount, deletedLinksCount }",
+        "Batch apply response: { edits?: BatchActionResults }",
+        "Delete old response fields: actionRid, batchId, offset, results, failures",
+        "TDD: write failing test FIRST",
+        "Frontend web/src/api/types.ts ActionApplyResponse updated",
+        "go test ./... passes",
+        "npx tsc --noEmit passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "ActionType.parameters strong typing",
+      "description": "As a Foundry SDK consumer, I want ActionType parameters to be Record<name, ActionParameterV2> with dataType/description/required fields.",
+      "acceptanceCriteria": [
+        "ActionTypeV2.parameters is Record<ParameterId, ActionParameterV2>",
+        "ActionParameterV2 has dataType, description?, required fields",
+        "OMS GetActionType handler returns new structure",
+        "OpenAPI spec ActionType schema updated",
+        "TDD: write failing test FIRST",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Delete link write REST endpoints",
+      "description": "As a Foundry-compatible server, I must remove link write REST endpoints. Foundry requires all link mutations through Actions.",
+      "acceptanceCriteria": [
+        "Delete POST /api/v2/ontologies/{o}/links/{linkType} route",
+        "Delete DELETE /api/v2/ontologies/{o}/links/{linkType} route",
+        "Delete pkg/oss/handlers_link_crud.go and pkg/oss/service_link_crud.go",
+        "OpenAPI spec paths removed",
+        "TDD: write test verifying old routes return 404",
+        "go test ./... passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Already confirmed zero consumers (frontend/SDK/CLI)."
+    },
+    {
+      "id": "US-005",
+      "title": "Delete inline aggregate closure in main.go",
+      "description": "As a maintainer, I want to remove the duplicated inline aggregate handler so all aggregation goes through the handler package.",
+      "acceptanceCriteria": [
+        "Delete cmd/server/main.go inline closure for objects/{objectType}/aggregate",
+        "Route POST /api/v2/.../objects/{objectType}/aggregate points to pkg/oss handler",
+        "TDD: write failing test FIRST",
+        "go test ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Delete Weave extension routes from Foundry API surface (server side)",
+      "description": "As a Foundry-compatible server, I must remove all non-Foundry endpoints from the /api/v2/ and /api/admin/ surface.",
+      "acceptanceCriteria": [
+        "All 54 /api/admin/* routes removed from routes.go",
+        "SSE /subscribe route removed from oss handler RegisterRoutes",
+        "Object history route removed from oss handler RegisterRoutes",
+        "Export/import/snapshot admin routes removed",
+        "AI suggest route removed",
+        "MCP stays at /mcp (not in Foundry namespace)",
+        "Health/metrics/swagger stay unchanged",
+        "TDD: write tests verifying removed routes return 404",
+        "go test ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Weave extension routes are deleted entirely per user decision (not moved to a separate namespace). MCP and ops endpoints preserved."
+    },
+    {
+      "id": "US-007",
+      "title": "Update frontend for removed admin routes",
+      "description": "As a frontend developer, I need the admin pages to work after the admin routes are removed.",
+      "acceptanceCriteria": [
+        "All web/src/api/admin.ts API calls removed or disabled",
+        "Admin pages show appropriate 'not available' state or are removed from routes",
+        "All remaining pages (Dashboard, Explorer, Browser, ActionConsole, Aggregation) work with Foundry-aligned endpoints",
+        "npx tsc --noEmit passes",
+        "npx vitest run passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Admin functionality is removed per user decision. Frontend pages that only called admin endpoints are removed."
+    },
+    {
+      "id": "US-008",
+      "title": "Admin path camelCase unification (if any routes retained)",
+      "description": "As a maintainer, I want consistent camelCase naming for any retained internal routes.",
+      "acceptanceCriteria": [
+        "shared-properties renamed to sharedProperties",
+        "type-groups renamed to typeGroups",
+        "value-types renamed to valueTypes",
+        "All references updated (frontend, tests)",
+        "TDD: write test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Only applicable if any admin routes are retained internally. If US-006 deletes them all, mark this story as N/A."
+    },
+    {
+      "id": "US-009",
+      "title": "RID / apiName dual accept for path parameters",
+      "description": "As a Foundry SDK consumer, I want to pass either apiName or RID as path parameters.",
+      "acceptanceCriteria": [
+        "Add LookupByApiNameOrRID(ctx, identifier) to pkg/oms/pg_repository.go",
+        "All {ontology}, {objectType}, {actionType}, {queryApiName} handlers use this method",
+        "ri.ontology.main.ontology.xxx format RID resolves correctly",
+        "northwind format apiName resolves correctly",
+        "TDD: write failing tests for both RID and apiName paths",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add InterfaceType and ValueType v2 read endpoints",
+      "description": "As a Foundry SDK consumer, I want interfaceTypes and valueTypes metadata endpoints.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/interfaceTypes — list (requires ?preview=true)",
+        "GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType} — get",
+        "GET /api/v2/ontologies/{o}/valueTypes — list (requires ?preview=true)",
+        "GET /api/v2/ontologies/{o}/valueTypes/{valueType} — get",
+        "Missing ?preview=true returns 400",
+        "TDD: write failing test FIRST for each endpoint",
+        "go test ./... passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Data already exists in PG from admin CRUD; these are read-only wrappers."
+    },
+    {
+      "id": "US-011",
+      "title": "Add QueryType v2 read endpoints and fix query execute path param",
+      "description": "As a Foundry SDK consumer, I want queryTypes metadata endpoints with consistent path parameters.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{ontology}/queryTypes — list",
+        "GET /api/v2/ontologies/{ontology}/queryTypes/{queryApiName} — get",
+        "POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute — path param unified to {ontology}",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "QueryType admin CRUD already exists. These are read-only v2 wrappers."
+    },
+    {
+      "id": "US-012",
+      "title": "Add ActionType extra endpoints (byRid, getByRidBatch, fullMetadata)",
+      "description": "As a Foundry SDK consumer, I want ActionType RID-based lookup and full metadata endpoints.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/actionTypes/byRid/{actionTypeRid}",
+        "POST /api/v2/ontologies/{o}/actionTypes/getByRidBatch",
+        "GET /api/v2/ontologies/{o}/actionTypes/{actionType}/fullMetadata",
+        "GET /api/v2/ontologies/{o}/actionTypesFullMetadata",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add ObjectType extra endpoints (fullMetadata, getByRidBatch, editsHistory)",
+      "description": "As a Foundry SDK consumer, I want ObjectType per-type fullMetadata, batch lookup, and edit history.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/objectTypes/{objectType}/fullMetadata",
+        "POST /api/v2/ontologies/{o}/objectTypes/getByRidBatch",
+        "POST /api/v2/ontologies/{o}/objectTypes/{objectType}/editsHistory",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Add Ontology.load_metadata POST endpoint",
+      "description": "As a Foundry SDK consumer, I want to selectively load ontology metadata subsets.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{ontology}/metadata",
+        "Request body selects subsets: actionTypes, interfaceTypes, linkTypes, objectTypes, queryTypes",
+        "Response is OntologyFullMetadata filtered to requested subsets",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "ObjectSet get-by-RID and loadLinks endpoints",
+      "description": "As a Foundry SDK consumer, I want to retrieve ObjectSet definitions by RID and load links.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/objectSets/{objectSetRid} — returns ObjectSet definition (not data)",
+        "POST /api/v2/ontologies/{o}/objectSets/loadLinks — loads links from an ObjectSet",
+        "TDD: write failing test FIRST",
+        "go test ./pkg/oss/objectset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Search / LoadObjectSet select required + ListOntologies remove pagination",
+      "description": "As a Foundry-compatible server, I want wire protocol field requirements to match Foundry exactly.",
+      "acceptanceCriteria": [
+        "SearchObjectsRequestV2.select is REQUIRED — missing returns 400",
+        "LoadObjectSetRequestV2.select is REQUIRED — missing returns 400",
+        "GET /api/v2/ontologies returns { data: [Ontology] } with NO pageSize/pageToken",
+        "ObjectType.status enum includes ENDORSED (total: ACTIVE | ENDORSED | EXPERIMENTAL | DEPRECATED)",
+        "fullMetadata endpoints require ?preview=true",
+        "TDD: write failing test FIRST",
+        "Frontend search calls updated to always include select",
+        "Python SDK search/loadObjects calls updated to always include select",
+        "go test ./... passes",
+        "npx tsc --noEmit passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Object.count endpoint",
+      "description": "As a Foundry SDK consumer, I want a count endpoint for objects.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{o}/objects/{objectType}/count",
+        "Response: { count: number }",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "LinkedObject get-by-target-PK endpoint",
+      "description": "As a Foundry SDK consumer, I want to get a specific linked object by its primary key.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/links/{link}/{linkedObjectPrimaryKey}",
+        "Returns single OntologyObjectV2",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Production hardening: Dockerfile + docker-compose weave service",
+      "description": "As an operator, I need to containerize the Weave server.",
+      "acceptanceCriteria": [
+        "Multi-stage Dockerfile: FROM golang:1.26 AS builder, FROM alpine for runtime",
+        "docker-compose.yml adds weave service with health check",
+        "docker compose up --build starts PG + NATS + Weave successfully",
+        "Health endpoint reachable at localhost:9117/health",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Production hardening: CORS + security headers + DB pool config",
+      "description": "As an operator, I need basic security hardening for non-dev deployment.",
+      "acceptanceCriteria": [
+        "CORS middleware added (configurable allowed origins)",
+        "Security headers: CSP, HSTS, X-Frame-Options, X-Content-Type-Options",
+        "DB connection pool: MaxConns=25, MaxConnLifetime=1h, HealthCheckPeriod=30s",
+        "AUTH_MODE=token deleted or forced to require PSK hash",
+        "TDD: write test for CORS preflight returning correct headers",
+        "go test ./... passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Production hardening: NATS DLQ stream",
+      "description": "As an operator, I need failed messages to go to a dead-letter stream instead of being silently dropped.",
+      "acceptanceCriteria": [
+        "NATS DLQ stream configured for terminated messages",
+        "Terminated messages (msg.Term()) flow to DLQ instead of disappearing",
+        "TDD: write failing test FIRST",
+        "go test ./pkg/funnel/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "OpenAPI spec full rewrite for Phase 1",
+      "description": "As a developer, I want the OpenAPI spec to reflect all Phase 1 changes.",
+      "acceptanceCriteria": [
+        "cmd/server/openapi_spec.yaml reflects all new/changed/deleted paths",
+        "api/openapi.yaml is byte-identical mirror",
+        "All schema definitions match Foundry wire format",
+        "go test ./... passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Python SDK + CLI + frontend full sync for Phase 1",
+      "description": "As a developer, I want all clients to work with the Phase 1 API changes.",
+      "acceptanceCriteria": [
+        "Python SDK sdk/python/weave_client/ all call paths updated",
+        "CLI internal/cliclient/client.go all call paths updated",
+        "Frontend web/src/api/* all call paths updated",
+        "cd sdk/python && python -m pytest tests/ passes",
+        "go test ./internal/cliclient/... passes",
+        "npx tsc --noEmit passes",
+        "npx vitest run passes",
+        "go test ./... passes (full regression)"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Phase 1 integration gate: full test suite green",
+      "description": "As a project maintainer, I need all tests green before proceeding to Phase 2.",
+      "acceptanceCriteria": [
+        "go test ./... passes (including test/e2e, test/chinook, test/northwind)",
+        "go vet ./... clean",
+        "npx tsc --noEmit passes",
+        "npx vitest run passes",
+        "cd sdk/python && python -m pytest tests/ passes",
+        "docker compose up --build starts successfully",
+        "Foundry API alignment >= 60%"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": "This is a verification-only story. No code changes — just run all tests and confirm green."
+    },
+    {
+      "id": "US-025",
+      "title": "Interface metadata endpoints (4 endpoints)",
+      "description": "As a Foundry SDK consumer, I want InterfaceType metadata endpoints with outgoing link types.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/interfaceTypes (list, requires ?preview=true)",
+        "GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType} (get)",
+        "GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType}/outgoingLinkTypes (list link types)",
+        "GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType} (get link type)",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": "Phase 2 starts here."
+    },
+    {
+      "id": "US-026",
+      "title": "Interface data query endpoints (4 endpoints)",
+      "description": "As a Foundry SDK consumer, I want to query objects through interface types.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/interfaces/{interfaceType} (list objects)",
+        "GET /api/v2/ontologies/{o}/interfaces/{interfaceType}/{objectType}/{pk}/links/{interfaceLinkType} (linked objects)",
+        "POST /api/v2/ontologies/{o}/interfaces/{interfaceType}/search",
+        "POST /api/v2/ontologies/{o}/interfaces/{interfaceType}/aggregate",
+        "Note: metadata path is interfaceTypes/, data query path is interfaces/ (dual prefix)",
+        "OSS executor handles interface polymorphic queries",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "ObjectSet multi-type loading (2 preview endpoints)",
+      "description": "As a Foundry SDK consumer, I want multi-type and interface-scoped ObjectSet loading.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{o}/objectSets/loadObjectsMultipleObjectTypes (preview)",
+        "POST /api/v2/ontologies/{o}/objectSets/loadObjectsOrInterfaces (preview)",
+        "Preview endpoints use $rid/$primaryKey/$apiName prefix (not __rid)",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "ObjectSet add 6 definition variants",
+      "description": "As a Foundry SDK consumer, I want all 15 ObjectSet definition types supported.",
+      "acceptanceCriteria": [
+        "Add static type (static PK list)",
+        "Add asType type (type conversion)",
+        "Add asBaseObjectTypes type (downgrade to base types)",
+        "Add interfaceBase type (interface base set)",
+        "Add interfaceLinkSearchAround type (interface link traversal)",
+        "Add methodInput type (function method input)",
+        "pkg/oss/objectset/definition.go + executor.go extended",
+        "TDD: write failing test FIRST for each type",
+        "go test ./pkg/oss/objectset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "ObjectType editsHistory + batch endpoints",
+      "description": "As a Foundry SDK consumer, I want edit history and batch-by-RID lookup for ObjectTypes and ActionTypes.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{o}/objectTypes/{objectType}/editsHistory",
+        "POST /api/v2/ontologies/{o}/objectTypes/getByRidBatch",
+        "POST /api/v2/ontologies/{o}/actionTypes/getByRidBatch",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "Action.applyWithOverrides endpoint",
+      "description": "As a Foundry SDK consumer, I want to override auto-generated parameters when applying actions.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{o}/actions/{action}/applyWithOverrides",
+        "Request: { request: ApplyActionRequestV2, overrides: ApplyActionOverrides }",
+        "Response: SyncApplyActionResponseV2",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "Phase 2 integration gate",
+      "description": "As a maintainer, I need all tests green and alignment >= 80% before Phase 3.",
+      "acceptanceCriteria": [
+        "go test ./... passes (full regression including e2e/chinook/northwind)",
+        "npx tsc --noEmit passes",
+        "npx vitest run passes",
+        "Python SDK tests pass",
+        "Interface 8 endpoints all callable",
+        "ObjectSet 15 definition variants serialize/deserialize",
+        "Foundry API alignment >= 80%"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": "Verification-only story."
+    },
+    {
+      "id": "US-032",
+      "title": "Attachment blob storage backend",
+      "description": "As a developer, I need a blob storage abstraction to support Attachment upload/download.",
+      "acceptanceCriteria": [
+        "pkg/attachment/store.go defines BlobStore interface (Put/Get/Delete/Stat)",
+        "pkg/attachment/local_store.go implements local filesystem backend",
+        "Unlinked attachments cleaned up after 1 hour (TTL goroutine)",
+        "TDD: write failing test FIRST",
+        "go test ./pkg/attachment/... passes"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": "Phase 3 starts here."
+    },
+    {
+      "id": "US-033",
+      "title": "Attachment 4 global endpoints",
+      "description": "As a Foundry SDK consumer, I want to upload and retrieve attachments.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/attachments/upload?filename=X (Content-Type: application/octet-stream)",
+        "POST /api/v2/ontologies/attachments/upload/{attachmentRid} (pre-generated RID)",
+        "GET /api/v2/ontologies/attachments/{attachmentRid} (metadata JSON)",
+        "GET /api/v2/ontologies/attachments/{attachmentRid}/content (binary)",
+        "Response: AttachmentV2 { rid, filename, sizeBytes, mediaType }",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": "Attachment paths are global — no {ontology} in URL."
+    },
+    {
+      "id": "US-034",
+      "title": "AttachmentProperty 4 endpoints (read via object path)",
+      "description": "As a Foundry SDK consumer, I want to read attachments through the object path.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}",
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}/content",
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}/{attachmentRid}",
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}/{attachmentRid}/content",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "MediaReferenceProperty 3 endpoints",
+      "description": "As a Foundry SDK consumer, I want to read and upload media references.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/media/{property}/content",
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/media/{property}/metadata",
+        "POST /api/v2/ontologies/{o}/objectTypes/{objectType}/media/{property}/upload",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-036",
+      "title": "Phase 3 integration gate",
+      "description": "As a maintainer, I need all tests green and alignment >= 90% before Phase 4.",
+      "acceptanceCriteria": [
+        "Full regression suite green",
+        "Attachment upload -> get -> read content end-to-end works",
+        "docker compose up --build works with attachment data persisted",
+        "Foundry API alignment >= 90%"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": "Verification-only story."
+    },
+    {
+      "id": "US-037",
+      "title": "TimeSeries storage backend + 3 endpoints",
+      "description": "As a Foundry SDK consumer, I want to read time series data from object properties.",
+      "acceptanceCriteria": [
+        "pkg/timeseries/store.go defines storage interface",
+        "PostgreSQL backend implementation",
+        "GET .../timeseries/{property}/firstPoint",
+        "GET .../timeseries/{property}/lastPoint",
+        "POST .../timeseries/{property}/streamPoints (supports JSON/ARROW format query param)",
+        "Response: TimeSeriesPoint { time: ISO8601, value: any }",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": "Phase 4 starts here."
+    },
+    {
+      "id": "US-038",
+      "title": "TimeSeriesValueBankProperty 2 endpoints",
+      "description": "As a Foundry SDK consumer, I want latest value and streaming values for value bank properties.",
+      "acceptanceCriteria": [
+        "GET .../timeseries/{propertyName}/latestValue (note: {propertyName} not {property})",
+        "POST .../timeseries/{property}/streamValues",
+        "Path param inconsistency matches Foundry exactly",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "GeotemporalSeriesProperty 2 endpoints",
+      "description": "As a Foundry SDK consumer, I want geotemporal series data endpoints.",
+      "acceptanceCriteria": [
+        "GET .../geotemporalSeries/{propertyName}/latestValue",
+        "POST .../geotemporalSeries/{propertyName}/streamHistoricValues",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "CipherTextProperty decrypt endpoint",
+      "description": "As a Foundry SDK consumer, I want to decrypt cipher text properties.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{o}/objects/{type}/{pk}/ciphertexts/{property}/decrypt",
+        "Returns DecryptionResult structure",
+        "Supports envelope encryption or configurable KMS interface",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "title": "OntologyTransaction experimental endpoint",
+      "description": "As a Foundry SDK consumer, I want experimental transaction edit support.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{o}/transactions/{transactionId}/edits",
+        "Marked as experimental in OpenAPI spec",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-042",
+      "title": "SQL Queries execute endpoint",
+      "description": "As a Foundry SDK consumer, I want to execute SQL queries against the ontology.",
+      "acceptanceCriteria": [
+        "POST /api/v2/sqlQueries/execute (separate resource group, not under /ontologies/)",
+        "Request: { query: string (SELECT only), fallbackBranchIds?: [string] }",
+        "Response: QueryStatus union (running | canceled | failed | succeeded)",
+        "DuckDB or PostgreSQL query wrapper as execution engine",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-043",
+      "title": "Phase 4 integration gate: 100% API alignment",
+      "description": "As a maintainer, I need 68/68 Foundry endpoints operational.",
+      "acceptanceCriteria": [
+        "Full regression suite green (Go + TS + Python + e2e)",
+        "All 68 Foundry endpoints callable",
+        "Foundry API alignment = 100%"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": "Verification-only story."
+    },
+    {
+      "id": "US-044",
+      "title": "Multi-ontology true isolation",
+      "description": "As a platform operator, I want ontologies fully isolated so different teams cannot access each other's data.",
+      "acceptanceCriteria": [
+        "Migration 000014: add ontology_rid to object_history/object_embeddings/saved_object_sets/markings/link_edges",
+        "Bleve index key changed from {objectType} to {ontologyApiName}__{objectType}",
+        "NATS subject changed from edits.{objectType} to edits.{ontology}.{objectType}",
+        "auth.EnforceOntologyScope middleware on all ontology routes",
+        "TDD: integration test proving two ontologies' same-name ObjectType data are invisible to each other",
+        "go test ./... passes"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": "Phase 5 starts here."
+    },
+    {
+      "id": "US-045",
+      "title": "OMS and LinkResolver cache decorators",
+      "description": "As a performance-sensitive consumer, I want metadata queries cached to avoid hitting PG on every request.",
+      "acceptanceCriteria": [
+        "pkg/oms/cached_repository.go decorator with TTL 60s",
+        "Admin writes publish NATS invalidation events",
+        "pkg/links/cached_resolver.go for LinkType definitions",
+        "TDD: test cache hit/miss/invalidate semantics",
+        "Benchmark: >= 5x QPS improvement on cached paths",
+        "go test ./... passes"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-046",
+      "title": "AI/AIP deepening: nearestNeighbors + MCP AI tools",
+      "description": "As an AI developer, I want semantic search and agentic ObjectSet composition via MCP.",
+      "acceptanceCriteria": [
+        "nearestNeighbors ObjectSet type end-to-end usable (pgvector HNSW)",
+        "Funnel consumer generates embeddings on CREATE/MODIFY (with rate limiting)",
+        "MCP adds 4 tools: semantic_search, ask_objectset, explain_object, draft_action",
+        "TDD: write failing test FIRST",
+        "go test ./... passes"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-047",
+      "title": "Phase 5 integration gate: architecture evolution complete",
+      "description": "As a maintainer, I need all tests green after architecture changes.",
+      "acceptanceCriteria": [
+        "Full regression suite green",
+        "Two ontologies data fully isolated (integration test)",
+        "Cache decorator does not break any existing behavior",
+        "MCP new tools callable via POST /mcp",
+        "go test ./... + full client suite green"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": "Final verification story."
+    }
+  ]
+}

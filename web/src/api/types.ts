@@ -132,20 +132,29 @@ export interface WhereClause {
   value: unknown;
 }
 
+// ActionApplyRequest is the Foundry OSv2 body shape for
+// POST /api/v2/ontologies/{ontology}/actions/{action}/apply — the action
+// API name lives in the URL, not the body, so this interface carries
+// only the parameter payload.
 export interface ActionApplyRequest {
-  actionType: string;
   parameters: Record<string, unknown>;
 }
 
+// SyncApplyActionResponseV2 — Foundry OSv2 response envelope for single apply.
 export interface ActionApplyResponse {
-  edits?: ActionEdit[];
+  operationId?: string;
+  validation?: { result: string };
+  edits?: ActionResults;
 }
 
-export interface ActionEdit {
-  type: 'addObject' | 'modifyObject' | 'deleteObject';
-  objectType: string;
-  primaryKey: string | number;
-  properties?: Record<string, unknown>;
+// ActionResults — Foundry OSv2 edit summary (counts, not individual edits).
+export interface ActionResults {
+  type: 'edits';
+  addedObjectCount: number;
+  modifiedObjectCount: number;
+  deletedObjectCount: number;
+  addedLinksCount: number;
+  deletedLinksCount: number;
 }
 
 export interface ApiError {

@@ -8,36 +8,29 @@ describe('ActionResult', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('displays edit entries', () => {
+  it('displays edit counts', () => {
     render(
       <ActionResult
         result={{
-          edits: [
-            {
-              type: 'addObject',
-              objectType: 'Employee',
-              primaryKey: '1',
-              properties: { name: 'Alice' },
-            },
-            {
-              type: 'modifyObject',
-              objectType: 'Employee',
-              primaryKey: '2',
-              properties: { name: 'Bob' },
-            },
-          ],
+          edits: {
+            type: 'edits',
+            addedObjectCount: 1,
+            modifiedObjectCount: 1,
+            deletedObjectCount: 0,
+            addedLinksCount: 0,
+            deletedLinksCount: 0,
+          },
         }}
       />,
     );
 
     expect(screen.getByText('addObject')).toBeInTheDocument();
     expect(screen.getByText('modifyObject')).toBeInTheDocument();
-    expect(screen.getAllByText('Employee')).toHaveLength(2);
     expect(screen.getByText('2 edits applied')).toBeInTheDocument();
   });
 
   it('displays empty message when no edits', () => {
-    render(<ActionResult result={{ edits: [] }} />);
+    render(<ActionResult result={{}} />);
     expect(screen.getByText(/no edits/i)).toBeInTheDocument();
   });
 });

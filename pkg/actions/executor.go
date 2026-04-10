@@ -33,12 +33,52 @@ type ApplyRequest struct {
 	Options    *ApplyOptions          `json:"options,omitempty"`
 }
 
-// ApplyResult is the result of applying an action.
+// ApplyResult is the internal result of applying an action.
+// Not returned directly to clients — handlers transform this into
+// SyncApplyActionResponseV2 before serializing.
 type ApplyResult struct {
-	ActionRID string        `json:"actionRid"`
-	Edits     []funnel.Edit `json:"edits"`
-	BatchID   string        `json:"batchId"`
-	Offset    uint64        `json:"offset"`
+	ActionRID string        `json:"-"`
+	Edits     []funnel.Edit `json:"-"`
+	BatchID   string        `json:"-"`
+	Offset    uint64        `json:"-"`
+}
+
+// ActionResults is the Foundry OSv2 edit summary returned in response envelopes.
+type ActionResults struct {
+	Type                string `json:"type"`                // always "edits"
+	AddedObjectCount    int    `json:"addedObjectCount"`
+	ModifiedObjectCount int    `json:"modifiedObjectCount"`
+	DeletedObjectCount  int    `json:"deletedObjectCount"`
+	AddedLinksCount     int    `json:"addedLinksCount"`
+	DeletedLinksCount   int    `json:"deletedLinksCount"`
+}
+
+// SyncApplyActionResponseV2 is the Foundry OSv2 response envelope for single apply.
+type SyncApplyActionResponseV2 struct {
+	OperationID string            `json:"operationId,omitempty"`
+	Validation  *ValidationResult `json:"validation,omitempty"`
+	Edits       *ActionResults    `json:"edits,omitempty"`
+}
+
+// BatchApplyActionResponseV2 is the Foundry OSv2 response envelope for batch apply.
+type BatchApplyActionResponseV2 struct {
+	Edits *ActionResults `json:"edits,omitempty"`
+}
+
+// countEdits computes an ActionResults summary from a list of edits.
+func countEdits(edits []funnel.Edit) *ActionResults {
+	r := &ActionResults{Type: "edits"}
+	for _, e := range edits {
+		switch e.Type {
+		case funnel.EditTypeCreate:
+			r.AddedObjectCount++
+		case funnel.EditTypeModify:
+			r.ModifiedObjectCount++
+		case funnel.EditTypeDelete:
+			r.DeletedObjectCount++
+		}
+	}
+	return r
 }
 
 // ValidationResult is the response for VALIDATE_ONLY mode.

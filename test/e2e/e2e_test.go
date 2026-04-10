@@ -652,8 +652,8 @@ func setupTestServer(t *testing.T) *testEnv {
 
 	// Actions
 	actionHandler := actions.NewHandler(actionExecutor)
-	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 
 	// Aggregation
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
@@ -1428,8 +1428,7 @@ func TestE2E_Action_Apply_CreateObject(t *testing.T) {
 		t.Fatalf("create action type: %v", err)
 	}
 
-	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/apply", map[string]interface{}{
-		"actionType": "createEmployee",
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/createEmployee/apply", map[string]interface{}{
 		"parameters": map[string]interface{}{
 			"name": "frank",
 		},
@@ -1441,16 +1440,15 @@ func TestE2E_Action_Apply_CreateObject(t *testing.T) {
 	}
 	var body map[string]interface{}
 	decodeJSON(t, resp, &body)
-	edits, ok := body["edits"].([]interface{})
+	edits, ok := body["edits"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected edits array, got %T", body["edits"])
+		t.Fatalf("expected edits object (ActionResults), got %T", body["edits"])
 	}
-	if len(edits) != 1 {
-		t.Errorf("expected 1 edit, got %d", len(edits))
+	if edits["type"] != "edits" {
+		t.Errorf("expected edits.type=\"edits\", got %v", edits["type"])
 	}
-	edit := edits[0].(map[string]interface{})
-	if edit["type"] != "CREATE" {
-		t.Errorf("expected edit type=CREATE, got %v", edit["type"])
+	if edits["addedObjectCount"] != float64(1) {
+		t.Errorf("expected addedObjectCount=1, got %v", edits["addedObjectCount"])
 	}
 }
 
@@ -1474,8 +1472,7 @@ func TestE2E_Action_Apply_ModifyObject(t *testing.T) {
 		t.Fatalf("create action type: %v", err)
 	}
 
-	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/apply", map[string]interface{}{
-		"actionType": "modifyEmployee",
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/modifyEmployee/apply", map[string]interface{}{
 		"parameters": map[string]interface{}{
 			"primaryKey": "emp1",
 			"name":       "alice-updated",
@@ -1488,16 +1485,15 @@ func TestE2E_Action_Apply_ModifyObject(t *testing.T) {
 	}
 	var body map[string]interface{}
 	decodeJSON(t, resp, &body)
-	edits := body["edits"].([]interface{})
-	if len(edits) != 1 {
-		t.Errorf("expected 1 edit, got %d", len(edits))
+	edits, ok := body["edits"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected edits object (ActionResults), got %T", body["edits"])
 	}
-	edit := edits[0].(map[string]interface{})
-	if edit["type"] != "MODIFY" {
-		t.Errorf("expected edit type=MODIFY, got %v", edit["type"])
+	if edits["type"] != "edits" {
+		t.Errorf("expected edits.type=\"edits\", got %v", edits["type"])
 	}
-	if edit["primaryKey"] != "emp1" {
-		t.Errorf("expected primaryKey=emp1, got %v", edit["primaryKey"])
+	if edits["modifiedObjectCount"] != float64(1) {
+		t.Errorf("expected modifiedObjectCount=1, got %v", edits["modifiedObjectCount"])
 	}
 }
 
@@ -1521,8 +1517,7 @@ func TestE2E_Action_Apply_DeleteObject(t *testing.T) {
 		t.Fatalf("create action type: %v", err)
 	}
 
-	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/apply", map[string]interface{}{
-		"actionType": "deleteEmployee",
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/deleteEmployee/apply", map[string]interface{}{
 		"parameters": map[string]interface{}{
 			"primaryKey": "emp1",
 		},
@@ -1534,13 +1529,15 @@ func TestE2E_Action_Apply_DeleteObject(t *testing.T) {
 	}
 	var body map[string]interface{}
 	decodeJSON(t, resp, &body)
-	edits := body["edits"].([]interface{})
-	if len(edits) != 1 {
-		t.Errorf("expected 1 edit, got %d", len(edits))
+	edits, ok := body["edits"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected edits object (ActionResults), got %T", body["edits"])
 	}
-	edit := edits[0].(map[string]interface{})
-	if edit["type"] != "DELETE" {
-		t.Errorf("expected edit type=DELETE, got %v", edit["type"])
+	if edits["type"] != "edits" {
+		t.Errorf("expected edits.type=\"edits\", got %v", edits["type"])
+	}
+	if edits["deletedObjectCount"] != float64(1) {
+		t.Errorf("expected deletedObjectCount=1, got %v", edits["deletedObjectCount"])
 	}
 }
 
@@ -1564,10 +1561,10 @@ func TestE2E_Action_ApplyBatch(t *testing.T) {
 		t.Fatalf("create action type: %v", err)
 	}
 
-	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/applyBatch", map[string]interface{}{
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/actions/createEmployee/applyBatch", map[string]interface{}{
 		"actions": []map[string]interface{}{
-			{"actionType": "createEmployee", "parameters": map[string]interface{}{"name": "frank"}},
-			{"actionType": "createEmployee", "parameters": map[string]interface{}{"name": "grace"}},
+			{"parameters": map[string]interface{}{"name": "frank"}},
+			{"parameters": map[string]interface{}{"name": "grace"}},
 		},
 	})
 	defer resp.Body.Close()
@@ -1577,9 +1574,12 @@ func TestE2E_Action_ApplyBatch(t *testing.T) {
 	}
 	var body map[string]interface{}
 	decodeJSON(t, resp, &body)
-	results := body["results"].([]interface{})
-	if len(results) != 2 {
-		t.Errorf("expected 2 results, got %d", len(results))
+	edits, ok := body["edits"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected edits object (ActionResults), got %T", body["edits"])
+	}
+	if edits["addedObjectCount"] != float64(2) {
+		t.Errorf("expected addedObjectCount=2, got %v", edits["addedObjectCount"])
 	}
 }
 

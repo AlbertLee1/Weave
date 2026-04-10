@@ -7,119 +7,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
 )
 
 // ---------------------------------------------------------------------------
-// US-001: Single Apply — options.mode tests
+// US-002: Single Apply — SyncApplyActionResponseV2 envelope
 // ---------------------------------------------------------------------------
 
-func TestHandler_Apply_VALIDATE_ONLY_ValidParams_ReturnsValid(t *testing.T) {
-	repo := &mockOmsRepo{
-		actionTypes: []oms.ActionType{
-			newTestActionType("createEmployee", []ParameterDef{
-				{ID: "name", Type: "string", Required: true},
-			}, []Rule{
-				{Type: "createObject", ObjectType: "Employee",
-					PropertyBindings: map[string]PropertyBinding{
-						"name": {Type: "parameter", Value: "name"},
-					}},
-			}),
-		},
-	}
-	pub := &fakePublisher{}
-	exec := NewExecutor(repo, pub)
-	handler := NewHandler(exec)
-	router := setupRouter(handler)
-
-	body := mustJSON(map[string]interface{}{
-		"parameters": map[string]interface{}{"name": "Alice"},
-		"options": map[string]interface{}{
-			"mode": "VALIDATE_ONLY",
-		},
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// Must NOT have published anything.
-	if pub.calls != 0 {
-		t.Fatalf("VALIDATE_ONLY must not publish, got %d calls", pub.calls)
-	}
-
-	// Response must have validation.result = "VALID", no edits.
-	var resp ValidateOnlyResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Validation == nil {
-		t.Fatal("expected validation field in response")
-	}
-	if resp.Validation.Result != "VALID" {
-		t.Fatalf("expected VALID, got %q", resp.Validation.Result)
-	}
-}
-
-func TestHandler_Apply_VALIDATE_ONLY_InvalidParams_ReturnsInvalid(t *testing.T) {
-	repo := &mockOmsRepo{
-		actionTypes: []oms.ActionType{
-			newTestActionType("createEmployee", []ParameterDef{
-				{ID: "name", Type: "string", Required: true},
-			}, []Rule{
-				{Type: "createObject", ObjectType: "Employee",
-					PropertyBindings: map[string]PropertyBinding{
-						"name": {Type: "parameter", Value: "name"},
-					}},
-			}),
-		},
-	}
-	pub := &fakePublisher{}
-	exec := NewExecutor(repo, pub)
-	handler := NewHandler(exec)
-	router := setupRouter(handler)
-
-	// Missing required "name" parameter.
-	body := mustJSON(map[string]interface{}{
-		"parameters": map[string]interface{}{},
-		"options": map[string]interface{}{
-			"mode": "VALIDATE_ONLY",
-		},
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("VALIDATE_ONLY with invalid params should still return 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	if pub.calls != 0 {
-		t.Fatalf("VALIDATE_ONLY must not publish, got %d calls", pub.calls)
-	}
-
-	var resp ValidateOnlyResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Validation == nil {
-		t.Fatal("expected validation field in response")
-	}
-	if resp.Validation.Result != "INVALID" {
-		t.Fatalf("expected INVALID, got %q", resp.Validation.Result)
-	}
-}
-
-func TestHandler_Apply_VALIDATE_AND_EXECUTE_ExplicitOption(t *testing.T) {
+func TestHandler_Apply_ResponseEnvelope_HasEditsWithCounts(t *testing.T) {
 	repo := &mockOmsRepo{
 		actionTypes: []oms.ActionType{
 			newTestActionType("createEmployee", []ParameterDef{
@@ -139,9 +35,6 @@ func TestHandler_Apply_VALIDATE_AND_EXECUTE_ExplicitOption(t *testing.T) {
 
 	body := mustJSON(map[string]interface{}{
 		"parameters": map[string]interface{}{"name": "Alice"},
-		"options": map[string]interface{}{
-			"mode": "VALIDATE_AND_EXECUTE",
-		},
 	})
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
@@ -153,16 +46,31 @@ func TestHandler_Apply_VALIDATE_AND_EXECUTE_ExplicitOption(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if pub.calls != 1 {
-		t.Fatalf("VALIDATE_AND_EXECUTE must publish, got %d calls", pub.calls)
+
+	var resp SyncApplyActionResponseV2
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal SyncApplyActionResponseV2: %v", err)
+	}
+
+	// Must have edits with counts.
+	if resp.Edits == nil {
+		t.Fatal("expected edits field in response")
+	}
+	if resp.Edits.Type != "edits" {
+		t.Fatalf("expected edits.type = \"edits\", got %q", resp.Edits.Type)
+	}
+	if resp.Edits.AddedObjectCount != 1 {
+		t.Fatalf("expected addedObjectCount=1 for createObject, got %d", resp.Edits.AddedObjectCount)
+	}
+	if resp.Edits.ModifiedObjectCount != 0 {
+		t.Fatalf("expected modifiedObjectCount=0, got %d", resp.Edits.ModifiedObjectCount)
+	}
+	if resp.Edits.DeletedObjectCount != 0 {
+		t.Fatalf("expected deletedObjectCount=0, got %d", resp.Edits.DeletedObjectCount)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// US-001: Single Apply — options.returnEdits tests
-// ---------------------------------------------------------------------------
-
-func TestHandler_Apply_ReturnEdits_NONE(t *testing.T) {
+func TestHandler_Apply_ResponseEnvelope_HasOperationId(t *testing.T) {
 	repo := &mockOmsRepo{
 		actionTypes: []oms.ActionType{
 			newTestActionType("createEmployee", []ParameterDef{
@@ -182,9 +90,6 @@ func TestHandler_Apply_ReturnEdits_NONE(t *testing.T) {
 
 	body := mustJSON(map[string]interface{}{
 		"parameters": map[string]interface{}{"name": "Alice"},
-		"options": map[string]interface{}{
-			"returnEdits": "NONE",
-		},
 	})
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
@@ -196,12 +101,93 @@ func TestHandler_Apply_ReturnEdits_NONE(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	// Action MUST still be executed (published).
-	if pub.calls != 1 {
-		t.Fatalf("returnEdits=NONE still executes, expected 1 publish, got %d", pub.calls)
+
+	var resp SyncApplyActionResponseV2
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.OperationID == "" {
+		t.Fatal("expected non-empty operationId in response")
+	}
+}
+
+func TestHandler_Apply_ResponseEnvelope_NoOldFields(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{Type: "createObject", ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					}},
+			}),
+		},
+	}
+	pub := &fakePublisher{offset: 1}
+	exec := NewExecutor(repo, pub)
+	handler := NewHandler(exec)
+	router := setupRouter(handler)
+
+	body := mustJSON(map[string]interface{}{
+		"parameters": map[string]interface{}{"name": "Alice"},
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Response edits must be nil (omitted).
+	// Old fields must NOT appear in the response JSON.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	for _, oldField := range []string{"actionRid", "batchId", "offset"} {
+		if _, ok := raw[oldField]; ok {
+			t.Errorf("old field %q must NOT appear in SyncApplyActionResponseV2", oldField)
+		}
+	}
+}
+
+func TestHandler_Apply_ResponseEnvelope_ReturnEditsNONE_OmitsEdits(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{Type: "createObject", ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					}},
+			}),
+		},
+	}
+	pub := &fakePublisher{offset: 1}
+	exec := NewExecutor(repo, pub)
+	handler := NewHandler(exec)
+	router := setupRouter(handler)
+
+	body := mustJSON(map[string]interface{}{
+		"parameters": map[string]interface{}{"name": "Alice"},
+		"options":    map[string]interface{}{"returnEdits": "NONE"},
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
 	var resp SyncApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -211,15 +197,16 @@ func TestHandler_Apply_ReturnEdits_NONE(t *testing.T) {
 	}
 }
 
-func TestHandler_Apply_ReturnEdits_ALL_Default(t *testing.T) {
+func TestHandler_Apply_ResponseEnvelope_ModifyObject_Counts(t *testing.T) {
 	repo := &mockOmsRepo{
 		actionTypes: []oms.ActionType{
-			newTestActionType("createEmployee", []ParameterDef{
-				{ID: "name", Type: "string", Required: true},
+			newTestActionType("setSalary", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "salary", Type: "double", Required: true},
 			}, []Rule{
-				{Type: "createObject", ObjectType: "Employee",
+				{Type: "modifyObject", ObjectType: "Employee",
 					PropertyBindings: map[string]PropertyBinding{
-						"name": {Type: "parameter", Value: "name"},
+						"salary": {Type: "parameter", Value: "salary"},
 					}},
 			}),
 		},
@@ -229,12 +216,11 @@ func TestHandler_Apply_ReturnEdits_ALL_Default(t *testing.T) {
 	handler := NewHandler(exec)
 	router := setupRouter(handler)
 
-	// No options at all — default is returnEdits=ALL.
 	body := mustJSON(map[string]interface{}{
-		"parameters": map[string]interface{}{"name": "Alice"},
+		"parameters": map[string]interface{}{"primaryKey": "emp-1", "salary": float64(100)},
 	})
 	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
+		"/api/v2/ontologies/ont-1/actions/setSalary/apply",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -249,15 +235,21 @@ func TestHandler_Apply_ReturnEdits_ALL_Default(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if resp.Edits == nil {
-		t.Fatal("default (ALL) must include edits")
+		t.Fatal("expected edits in response")
+	}
+	if resp.Edits.ModifiedObjectCount != 1 {
+		t.Fatalf("expected modifiedObjectCount=1, got %d", resp.Edits.ModifiedObjectCount)
+	}
+	if resp.Edits.AddedObjectCount != 0 {
+		t.Fatalf("expected addedObjectCount=0, got %d", resp.Edits.AddedObjectCount)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// US-001: Batch Apply — options.returnEdits tests
+// US-002: Batch Apply — BatchApplyActionResponseV2 envelope
 // ---------------------------------------------------------------------------
 
-func TestHandler_ApplyBatch_Options_ReturnEdits_ALL(t *testing.T) {
+func TestHandler_ApplyBatch_ResponseEnvelope_HasEditsWithCounts(t *testing.T) {
 	repo := &mockOmsRepo{
 		actionTypes: []oms.ActionType{
 			newTestActionType("createEmployee", []ParameterDef{
@@ -280,9 +272,6 @@ func TestHandler_ApplyBatch_Options_ReturnEdits_ALL(t *testing.T) {
 			{"parameters": map[string]interface{}{"name": "Alice"}},
 			{"parameters": map[string]interface{}{"name": "Bob"}},
 		},
-		"options": map[string]interface{}{
-			"returnEdits": "ALL",
-		},
 	})
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch",
@@ -294,20 +283,23 @@ func TestHandler_ApplyBatch_Options_ReturnEdits_ALL(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if pub.calls != 1 {
-		t.Fatalf("expected 1 publish, got %d", pub.calls)
-	}
 
-	var br BatchApplyActionResponseV2
-	if err := json.Unmarshal(w.Body.Bytes(), &br); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	var resp BatchApplyActionResponseV2
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal BatchApplyActionResponseV2: %v", err)
 	}
-	if br.Edits == nil {
-		t.Fatal("returnEdits=ALL must include edits in BatchApplyActionResponseV2")
+	if resp.Edits == nil {
+		t.Fatal("expected edits field in batch response")
+	}
+	if resp.Edits.Type != "edits" {
+		t.Fatalf("expected edits.type = \"edits\", got %q", resp.Edits.Type)
+	}
+	if resp.Edits.AddedObjectCount != 2 {
+		t.Fatalf("expected addedObjectCount=2 for 2 createObject actions, got %d", resp.Edits.AddedObjectCount)
 	}
 }
 
-func TestHandler_ApplyBatch_Options_ReturnEdits_NONE(t *testing.T) {
+func TestHandler_ApplyBatch_ResponseEnvelope_NoOldFields(t *testing.T) {
 	repo := &mockOmsRepo{
 		actionTypes: []oms.ActionType{
 			newTestActionType("createEmployee", []ParameterDef{
@@ -329,9 +321,6 @@ func TestHandler_ApplyBatch_Options_ReturnEdits_NONE(t *testing.T) {
 		"actions": []map[string]interface{}{
 			{"parameters": map[string]interface{}{"name": "Alice"}},
 		},
-		"options": map[string]interface{}{
-			"returnEdits": "NONE",
-		},
 	})
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch",
@@ -343,145 +332,100 @@ func TestHandler_ApplyBatch_Options_ReturnEdits_NONE(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	// Still executes.
-	if pub.calls != 1 {
-		t.Fatalf("returnEdits=NONE still executes, expected 1 publish, got %d", pub.calls)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	for _, oldField := range []string{"mode", "batchId", "offset", "results", "appliedEdits", "failures"} {
+		if _, ok := raw[oldField]; ok {
+			t.Errorf("old field %q must NOT appear in BatchApplyActionResponseV2", oldField)
+		}
+	}
+}
+
+func TestHandler_ApplyBatch_ResponseEnvelope_ReturnEditsNONE_OmitsEdits(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{Type: "createObject", ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					}},
+			}),
+		},
+	}
+	pub := &fakePublisher{offset: 5}
+	exec := NewExecutor(repo, pub)
+	handler := NewHandler(exec)
+	router := setupRouter(handler)
+
+	body := mustJSON(map[string]interface{}{
+		"actions": []map[string]interface{}{
+			{"parameters": map[string]interface{}{"name": "Alice"}},
+		},
+		"options": map[string]interface{}{"returnEdits": "NONE"},
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var br BatchApplyActionResponseV2
-	if err := json.Unmarshal(w.Body.Bytes(), &br); err != nil {
+	var resp BatchApplyActionResponseV2
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if br.Edits != nil {
+	if resp.Edits != nil {
 		t.Fatal("returnEdits=NONE must omit edits from BatchApplyActionResponseV2")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// US-001: Batch Apply — old mode values return 400
+// US-002: ActionResults helper — countEdits
 // ---------------------------------------------------------------------------
 
-func TestHandler_ApplyBatch_OldModeAtomic_Returns400(t *testing.T) {
-	repo := &mockOmsRepo{
-		actionTypes: []oms.ActionType{
-			newTestActionType("createEmployee", []ParameterDef{
-				{ID: "name", Type: "string", Required: true},
-			}, []Rule{
-				{Type: "createObject", ObjectType: "Employee",
-					PropertyBindings: map[string]PropertyBinding{
-						"name": {Type: "parameter", Value: "name"},
-					}},
-			}),
-		},
+func TestCountEdits_MixedTypes(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee"},
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee"},
+		{Type: funnel.EditTypeModify, ObjectType: "Department"},
+		{Type: funnel.EditTypeDelete, ObjectType: "Employee"},
 	}
-	pub := &fakePublisher{}
-	exec := NewExecutor(repo, pub)
-	handler := NewHandler(exec)
-	router := setupRouter(handler)
-
-	body := mustJSON(map[string]interface{}{
-		"actions": []map[string]interface{}{
-			{"parameters": map[string]interface{}{"name": "Alice"}},
-		},
-		"mode": "atomic", // OLD field — must be rejected
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("old mode=atomic must return 400, got %d: %s", w.Code, w.Body.String())
+	result := countEdits(edits)
+	if result.Type != "edits" {
+		t.Fatalf("expected type=\"edits\", got %q", result.Type)
 	}
-	if pub.calls != 0 {
-		t.Fatalf("must not publish on rejected old mode, got %d calls", pub.calls)
+	if result.AddedObjectCount != 2 {
+		t.Fatalf("expected addedObjectCount=2, got %d", result.AddedObjectCount)
+	}
+	if result.ModifiedObjectCount != 1 {
+		t.Fatalf("expected modifiedObjectCount=1, got %d", result.ModifiedObjectCount)
+	}
+	if result.DeletedObjectCount != 1 {
+		t.Fatalf("expected deletedObjectCount=1, got %d", result.DeletedObjectCount)
+	}
+	if result.AddedLinksCount != 0 {
+		t.Fatalf("expected addedLinksCount=0, got %d", result.AddedLinksCount)
+	}
+	if result.DeletedLinksCount != 0 {
+		t.Fatalf("expected deletedLinksCount=0, got %d", result.DeletedLinksCount)
 	}
 }
 
-func TestHandler_ApplyBatch_OldModeBestEffort_Returns400(t *testing.T) {
-	repo := &mockOmsRepo{
-		actionTypes: []oms.ActionType{
-			newTestActionType("createEmployee", []ParameterDef{
-				{ID: "name", Type: "string", Required: true},
-			}, []Rule{
-				{Type: "createObject", ObjectType: "Employee",
-					PropertyBindings: map[string]PropertyBinding{
-						"name": {Type: "parameter", Value: "name"},
-					}},
-			}),
-		},
+func TestCountEdits_Empty(t *testing.T) {
+	result := countEdits(nil)
+	if result.Type != "edits" {
+		t.Fatalf("expected type=\"edits\", got %q", result.Type)
 	}
-	pub := &fakePublisher{}
-	exec := NewExecutor(repo, pub)
-	handler := NewHandler(exec)
-	router := setupRouter(handler)
-
-	body := mustJSON(map[string]interface{}{
-		"actions": []map[string]interface{}{
-			{"parameters": map[string]interface{}{"name": "Alice"}},
-		},
-		"mode": "bestEffort", // OLD field — must be rejected
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("old mode=bestEffort must return 400, got %d: %s", w.Code, w.Body.String())
-	}
-	if pub.calls != 0 {
-		t.Fatalf("must not publish on rejected old mode, got %d calls", pub.calls)
-	}
-}
-
-func TestHandler_ApplyBatch_DefaultOptions_AtomicWithEdits(t *testing.T) {
-	repo := &mockOmsRepo{
-		actionTypes: []oms.ActionType{
-			newTestActionType("createEmployee", []ParameterDef{
-				{ID: "name", Type: "string", Required: true},
-			}, []Rule{
-				{Type: "createObject", ObjectType: "Employee",
-					PropertyBindings: map[string]PropertyBinding{
-						"name": {Type: "parameter", Value: "name"},
-					}},
-			}),
-		},
-	}
-	pub := &fakePublisher{offset: 5}
-	exec := NewExecutor(repo, pub)
-	handler := NewHandler(exec)
-	router := setupRouter(handler)
-
-	// No mode, no options — default is atomic + returnEdits=ALL.
-	body := mustJSON(map[string]interface{}{
-		"actions": []map[string]interface{}{
-			{"parameters": map[string]interface{}{"name": "Alice"}},
-		},
-	})
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if pub.calls != 1 {
-		t.Fatalf("expected 1 publish, got %d", pub.calls)
-	}
-
-	var br BatchApplyActionResponseV2
-	if err := json.Unmarshal(w.Body.Bytes(), &br); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if br.Edits == nil {
-		t.Fatal("default options must include edits in BatchApplyActionResponseV2")
+	if result.AddedObjectCount != 0 || result.ModifiedObjectCount != 0 || result.DeletedObjectCount != 0 {
+		t.Fatal("expected all counts to be 0 for empty edits")
 	}
 }

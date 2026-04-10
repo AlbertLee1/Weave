@@ -263,9 +263,12 @@ func TestSearchObjectsPostsBody(t *testing.T) {
 }
 
 func TestApplyActionPostsParameters(t *testing.T) {
+	// Foundry shape: action API name lives in the URL, body carries only
+	// parameters. A stale `actionType` field in the body would be silently
+	// overridden server-side, so the client simply stops sending it.
 	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
-		"POST /api/v2/ontologies/nw/actions/apply": func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"actionRid":"ri.act.123","edits":[{"type":"CREATE","objectType":"Customer"}],"batchId":"b1","offset":7}`))
+		"POST /api/v2/ontologies/nw/actions/createCustomer/apply": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"operationId":"op-123","edits":{"type":"edits","addedObjectCount":1,"modifiedObjectCount":0,"deletedObjectCount":0,"addedLinksCount":0,"deletedLinksCount":0}}`))
 		},
 	})
 	c := NewClient(srv.URL, "tok")
@@ -273,12 +276,16 @@ func TestApplyActionPostsParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res.ActionRID != "ri.act.123" || res.BatchID != "b1" || res.Offset != 7 || len(res.Edits) != 1 {
+	if res.OperationID != "op-123" || res.Edits == nil || res.Edits.AddedObjectCount != 1 {
 		t.Fatalf("response = %+v", res)
 	}
 	body := (*rec)[0].body
-	if !strings.Contains(body, `"actionType":"createCustomer"`) || !strings.Contains(body, `"name":"X"`) {
+	if !strings.Contains(body, `"name":"X"`) {
 		t.Fatalf("body = %q", body)
+	}
+	// Ensure the stale `actionType` field is no longer sent in the body.
+	if strings.Contains(body, `"actionType"`) {
+		t.Fatalf("body still carries actionType field: %q", body)
 	}
 }
 

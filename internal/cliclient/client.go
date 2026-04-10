@@ -140,12 +140,20 @@ type ListObjectsOptions struct {
 	OrderBy   string
 }
 
-// ApplyActionResponse mirrors the apply endpoint.
+// ActionResultsCLI mirrors the Foundry OSv2 ActionResults (edit summary).
+type ActionResultsCLI struct {
+	Type                string `json:"type"`
+	AddedObjectCount    int    `json:"addedObjectCount"`
+	ModifiedObjectCount int    `json:"modifiedObjectCount"`
+	DeletedObjectCount  int    `json:"deletedObjectCount"`
+	AddedLinksCount     int    `json:"addedLinksCount"`
+	DeletedLinksCount   int    `json:"deletedLinksCount"`
+}
+
+// ApplyActionResponse mirrors the Foundry OSv2 SyncApplyActionResponseV2.
 type ApplyActionResponse struct {
-	ActionRID string           `json:"actionRid"`
-	Edits     []map[string]any `json:"edits"`
-	BatchID   string           `json:"batchId,omitempty"`
-	Offset    int64            `json:"offset,omitempty"`
+	OperationID string            `json:"operationId,omitempty"`
+	Edits       *ActionResultsCLI `json:"edits,omitempty"`
 }
 
 // LoginResponse mirrors the login response payload.
@@ -321,12 +329,14 @@ func (c *Client) SearchObjects(ctx context.Context, ontology, objectType string,
 // ----- Action endpoints ----------------------------------------------------
 
 // ApplyAction submits a single action and returns the resulting edits.
+// The action API name is carried in the URL (Foundry OSv2 shape); only
+// the parameters travel in the request body.
 func (c *Client) ApplyAction(ctx context.Context, ontology, actionType string, parameters map[string]any) (*ApplyActionResponse, error) {
 	body := map[string]any{
-		"actionType": actionType,
 		"parameters": parameters,
 	}
-	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/actions/apply"
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/actions/" + url.PathEscape(actionType) + "/apply"
 	var resp ApplyActionResponse
 	if err := c.do(ctx, http.MethodPost, path, body, &resp); err != nil {
 		return nil, err

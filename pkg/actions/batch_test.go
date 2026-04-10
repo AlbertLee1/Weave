@@ -496,17 +496,16 @@ func TestHandler_ApplyBatch_DefaultAtomic_SingleCommit(t *testing.T) {
 		t.Fatalf("expected exactly 1 publish for atomic batch, got %d", pub.calls)
 	}
 
-	var resp map[string]json.RawMessage
+	var resp BatchApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	// Backwards-compat: "results" array still present.
-	var results []ApplyResult
-	if err := json.Unmarshal(resp["results"], &results); err != nil {
-		t.Fatalf("unmarshal results: %v", err)
+	// Foundry OSv2: edits is an ActionResults summary, not an array of per-action results.
+	if resp.Edits == nil {
+		t.Fatal("expected edits in BatchApplyActionResponseV2")
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+	if resp.Edits.AddedObjectCount != 2 {
+		t.Fatalf("expected addedObjectCount=2, got %d", resp.Edits.AddedObjectCount)
 	}
 }
 
