@@ -20,7 +20,6 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
-	"github.com/liyang/weave/pkg/ai"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/index"
@@ -50,11 +49,6 @@ type ServerDeps struct {
 	ObjSetStore    *objectset.Store
 	ObjSetExecutor *objectset.Executor
 	FunnelConsumer *funnel.Consumer
-	// Broadcast is the in-process SSE fan-out hub. The funnel consumer
-	// publishes one BroadcastEvent per applied edit; oss.Handler.SubscribeChanges
-	// reads from it. Wired in main(); nil in tests that do not exercise SSE.
-	Broadcast *funnel.Broadcast
-
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -176,38 +170,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// OMS routes
 		if deps.OmsRepo != nil {
 			omsHandler := oms.NewOMSHandler(deps.OmsRepo)
-			RegisterRoutes(api, omsHandler, ai.NewProviderFromEnv())
+			RegisterRoutes(api, omsHandler)
 		}
 
 		// OSS routes
 		if deps.OssSvc != nil {
 			ossHandler := oss.NewHandler(deps.OssSvc)
-			// Wire the object-history endpoint when an OMS repository is
-			// available. Without this call GetObjectHistory returns the
-			// "HistoryNotConfigured" apierror at request time.
-			if deps.OmsRepo != nil {
-				ossHandler.SetHistoryRepo(deps.OmsRepo)
-			}
-			// Wire the SSE subscribe endpoint when a broadcast hub is
-			// available. Without this call SubscribeChanges returns 503
-			// "broadcast not configured" at request time.
-			if deps.Broadcast != nil {
-				ossHandler.SetBroadcast(deps.Broadcast)
-			}
 			if deps.AggEngine != nil && deps.IndexMgr != nil {
 				ossHandler.SetAggregation(deps.AggEngine, deps.IndexMgr)
 			}
 			ossHandler.RegisterRoutes(api)
-		}
-
-		// Admin api-key endpoints (Weave extension namespace). Mounted
-		// only when an APIKeyRepository is wired so test harnesses without
-		// PG do not see ghost routes.
-		if deps.APIKeyRepo != nil {
-			apiKeyHandler := auth.NewAPIKeyHandler(deps.APIKeyRepo)
-			api.Post("/api/v2/admin/api-keys", apiKeyHandler.Create)
-			api.Get("/api/v2/admin/api-keys", apiKeyHandler.List)
-			api.Delete("/api/v2/admin/api-keys/{id}", apiKeyHandler.Delete)
 		}
 
 		// Action routes — Foundry OSv2 shape: the action API name is
@@ -434,20 +406,6 @@ func main() {
 
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
-
-		// 7a. Broadcast hub for SSE subscribers. The funnel consumer
-		// publishes one BroadcastEvent per applied edit so live SSE
-		// clients receive them in real time. Slow subscribers drop
-		// events rather than blocking the consumer (see broadcast.go).
-		deps.Broadcast = funnel.NewBroadcast()
-		deps.FunnelConsumer.SetOnChange(func(ev funnel.ChangeEvent) {
-			deps.Broadcast.Publish(funnel.BroadcastEvent{
-				Type:       string(ev.EditType),
-				ObjectType: ev.ObjectType,
-				PrimaryKey: ev.PrimaryKey,
-				EditedAt:   time.Now(),
-			})
-		})
 
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)

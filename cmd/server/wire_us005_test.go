@@ -6,8 +6,7 @@ package main
 //   POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate
 // must be registered through the OSS handler's RegisterRoutes, not via an
 // inline closure in NewFullRouter. The OSS handler receives the aggregation
-// engine and index manager through a setter (SetAggregation), matching the
-// existing SetHistoryRepo / SetBroadcast pattern.
+// engine and index manager through a setter (SetAggregation).
 
 import (
 	"net/http"
@@ -57,7 +56,7 @@ func TestUS005_InlineClosureRemoved(t *testing.T) {
 // available and returns a proper JSON response from the OSS handler.
 func TestUS005_AggregateRouteThroughOSSHandler(t *testing.T) {
 	deps := &ServerDeps{
-		OssSvc:    pr01StubOSSService{},
+		OssSvc:    us006StubOSSService{},
 		AggEngine: aggregation.NewEngine(),
 		IndexMgr:  index.NewManager(t.TempDir()),
 	}
@@ -86,7 +85,7 @@ func TestUS005_AggregateRouteThroughOSSHandler(t *testing.T) {
 // proper AggregationNotConfigured JSON error (not a panic or 500).
 func TestUS005_AggregateNotConfiguredWithoutDeps(t *testing.T) {
 	deps := &ServerDeps{
-		OssSvc: pr01StubOSSService{},
+		OssSvc: us006StubOSSService{},
 		// AggEngine and IndexMgr intentionally nil
 	}
 	router := NewFullRouter(deps)

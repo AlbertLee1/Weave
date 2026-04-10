@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
-	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
@@ -18,16 +17,6 @@ import (
 // Handler handles OSS HTTP requests.
 type Handler struct {
 	svc Service
-	// historyRepo, when non-nil, enables the
-	// /objects/{objectType}/{primaryKey}/history endpoint. Wired via
-	// SetHistoryRepo from main.go after construction so existing callers
-	// of NewHandler keep their two-argument signature.
-	historyRepo oms.Repository
-	// broadcast, when non-nil, enables the SSE /subscribe endpoint. Wired
-	// via SetBroadcast from main.go after construction. When nil, the
-	// route still registers but returns 503 so callers can detect feature
-	// absence.
-	broadcast *funnel.Broadcast
 	// aggEngine and indexMgr, when both non-nil, enable the per-object-type
 	// aggregation endpoint. Wired via SetAggregation from main.go after
 	// construction. When nil, the route returns AggregationNotConfigured.
@@ -41,21 +30,14 @@ func NewHandler(svc Service) *Handler {
 }
 
 // RegisterRoutes registers the OSS routes on the given chi router.
+// Only Foundry-aligned endpoints remain; history and SSE subscribe
+// were removed in US-006.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}", h.ListObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}", h.GetObject)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search", h.SearchObjects)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", h.AggregateObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
-
-	// Object change history (Tier 2.3). The route is always registered so
-	// the OpenAPI contract test stays in sync; the handler returns a 5xx
-	// when the underlying history repo has not been wired.
-	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/history", h.GetObjectHistory)
-
-	// Tier 3.5 SSE subscribe endpoint. Always registered; returns 503 when
-	// the broadcast hub has not been wired (degraded mode).
-	r.Get("/api/v2/ontologies/{ontologyApiName}/subscribe", h.SubscribeChanges)
 }
 
 // GetObject handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}.

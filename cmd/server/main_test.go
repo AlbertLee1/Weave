@@ -50,7 +50,7 @@ func TestAggregationEndpoint_ErrorsAreJSON(t *testing.T) {
 	defer idxMgr.Close()
 
 	deps := &ServerDeps{
-		OssSvc:    pr01StubOSSService{},
+		OssSvc:    us006StubOSSService{},
 		AggEngine: newTestAggEngine(),
 		IndexMgr:  idxMgr,
 	}
