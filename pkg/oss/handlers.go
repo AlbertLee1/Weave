@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}", h.GetObject)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search", h.SearchObjects)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", h.AggregateObjects)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count", h.CountObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
 }
 
@@ -188,6 +189,31 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
+}
+
+// CountObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count.
+func (h *Handler) CountObjects(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	objectType := chi.URLParam(r, "objectType")
+
+	resp, err := h.svc.CountObjects(r.Context(), CountObjectsRequest{
+		OntologyRID: ontologyRID,
+		ObjectType:  objectType,
+	})
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"objectType": objectType,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("CountObjectsFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // ListLinkedObjects handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}.

@@ -85,6 +85,10 @@ func (f *fakeOssService) ListLinkedObjects(ctx context.Context, req oss.LinkedOb
 	return &oss.ObjectPage{}, nil
 }
 
+func (f *fakeOssService) CountObjects(ctx context.Context, req oss.CountObjectsRequest) (*oss.CountObjectsResponse, error) {
+	return &oss.CountObjectsResponse{Count: 0}, nil
+}
+
 
 
 // stubPublisher is a no-op funnel publisher for the action executor.

@@ -237,6 +237,21 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	return page, nil
 }
 
+// CountObjects returns the number of objects of a given type.
+func (s *ServiceImpl) CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error) {
+	if _, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType); err != nil {
+		return nil, err
+	}
+
+	count, err := s.indexMgr.DocCount(req.ObjectType)
+	if err != nil {
+		// Index not found for this object type — valid type but no data yet.
+		return &CountObjectsResponse{Count: 0}, nil
+	}
+
+	return &CountObjectsResponse{Count: int(count)}, nil
+}
+
 // parseOrderBy converts an orderBy string like "field:asc" or "field:desc" into
 // a Bleve sort order slice. Bleve uses "-field" for descending, "field" for ascending.
 // Multiple fields can be comma-separated: "field1:asc,field2:desc".

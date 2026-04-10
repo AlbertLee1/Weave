@@ -951,6 +951,13 @@ components:
         metrics:
           type: object
           additionalProperties: true
+    CountObjectsResponse:
+      type: object
+      required: [count]
+      properties:
+        count:
+          type: integer
+          description: The number of objects of the given type.
     AggregationResponse:
       type: object
       properties:
@@ -2254,6 +2261,25 @@ paths:
                 $ref: "#/components/schemas/AggregationResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count:
+    post:
+      operationId: countObjects
+      summary: Count the number of objects of a given type
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+      responses:
+        "200":
+          description: Object count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CountObjectsResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

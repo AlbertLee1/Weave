@@ -46,10 +46,22 @@ type LinkedObjectsRequest struct {
 	PageToken string
 }
 
+// CountObjectsRequest is the request for counting objects of a given type.
+type CountObjectsRequest struct {
+	OntologyRID string
+	ObjectType  string
+}
+
+// CountObjectsResponse is the Foundry V2 response for the count endpoint.
+type CountObjectsResponse struct {
+	Count int `json:"count"`
+}
+
 // Service defines the Object Set Service interface.
 type Service interface {
 	GetObject(ctx context.Context, req GetObjectRequest) (*WireObject, error)
 	ListObjects(ctx context.Context, req ListObjectsRequest) (*ObjectPage, error)
 	SearchObjects(ctx context.Context, req SearchObjectsRequest) (*ObjectPage, error)
 	ListLinkedObjects(ctx context.Context, req LinkedObjectsRequest) (*ObjectPage, error)
+	CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error)
 }
