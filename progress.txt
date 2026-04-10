@@ -500,3 +500,27 @@
   - Only mock that needed updating was fakeOssService in pkg/mcp/tools_test.go — the service_test.go tests use the real ServiceImpl, not a mock
   - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
 ---
+
+## 2026-04-11 - US-019: Production hardening: Dockerfile + docker-compose weave service
+- Created multi-stage Dockerfile: golang:1.26-alpine builder → alpine:3.21 runtime
+- Builder stage: caches go mod download, builds with CGO_ENABLED=0 and -trimpath -ldflags="-s -w"
+- Runtime stage: copies binary + migrations, installs ca-certificates + curl for health checks
+- Updated docker-compose.yml: added weave service with build context, port 9117, PG_DSN/NATS_URL env vars
+- Weave service depends_on postgres/nats with condition: service_healthy
+- Added health checks to all 3 services: pg_isready for postgres, nats-server for nats, curl /health for weave
+- Created .dockerignore to exclude .git, .idea, node_modules, data, bin, IDE files
+- Added weavedata volume for persistent Bleve index data
+- Files changed:
+  - Dockerfile — NEW: multi-stage build (golang:1.26-alpine → alpine:3.21)
+  - .dockerignore — NEW: excludes dev/build artifacts from Docker context
+  - docker-compose.yml — added weave service, health checks for postgres/nats, weavedata volume
+  - cmd/server/docker_test.go — NEW: 2 TDD tests validating Dockerfile structure and compose config
+  - prd.json — US-019 passes: true
+- **Learnings for future iterations:**
+  - Health checks on postgres/nats use condition: service_healthy in depends_on — weave won't start until deps are ready
+  - CGO_ENABLED=0 required for static binary on alpine (no glibc)
+  - -trimpath strips build paths from binary for reproducible builds; -ldflags="-s -w" strips debug symbols for smaller image
+  - PG_DSN inside compose uses service name (postgres) not localhost — Docker networking resolves service names
+  - start_period in weave healthcheck gives the server time to boot before health checks start counting failures
+  - All Go tests pass (full regression green), npx tsc --noEmit clean, 168/168 vitest pass
+---

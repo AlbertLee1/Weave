@@ -9,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weave"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   nats:
     image: nats:2.10-alpine
@@ -18,7 +23,38 @@ services:
       - "8222:8222"
     volumes:
       - natsdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nats-server --help > /dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  weave:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9117:9117"
+    environment:
+      PG_DSN: "postgres://weave:weave@postgres:5432/weave?sslmode=disable"
+      NATS_URL: "nats://nats:4222"
+      WEAVE_DATA_DIR: "/app/data"
+      AUTH_MODE: "dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9117/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - weavedata:/app/data
 
 volumes:
   pgdata:
   natsdata:
+  weavedata:
