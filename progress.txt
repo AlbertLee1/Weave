@@ -105,6 +105,8 @@
 - ObjectSet Executor optional deps go through Setters (SetInterfaceResolver, SetOmsRepo etc.) — keeps NewExecutor signature stable and old tests working. Nil dep → execute-time error with a clear "not configured" message.
 - Frontend ObjectSetNode (UI builder) ≠ wire-format ObjectSetDefinition. nodeToDefinition is total over all ObjectSetNode variants; definitionToNode is partial — new wire variants that the UI composer doesn't model should throw in definitionToNode with an "unsupported in composer" message rather than add stub Node types.
 - When adding a new Definition field in pkg/oss/objectset/definition.go: always tag with omitempty and pick a sensible zero value (empty slice / "" / nil pointer) so existing JSON wire shapes round-trip unchanged.
+- Foundry apply variants (apply / applyWithOverrides / applyBatch) all share the same SyncApplyActionResponseV2 / BatchApplyActionResponseV2 envelope + countEdits helper — when adding another variant, construct an ApplyRequest and forward to executor.Apply, do not duplicate the Prepare/Apply/returnEdits control flow beyond what handlers.go already does.
+- Action handler tests use pub.batches (slice of all published EditBatch) — not a lastBatch field. funnel.Edit has Properties map, no After/Before.
 
 ---
 
@@ -820,4 +822,25 @@
   - getByRidBatch 系列共享 getByRidBatchRequest 类型（pkg/oms/handlers_v2_actiontype.go 定义），ObjectType/ActionType handler 都引用它
   - editsHistory 通过 ListActionLogs 按 ObjectType RID 过滤 action logs，无需新 Repository 方法
   - 验证型 story 的"TDD failing test first"不适用 — 实现已存在，只需确认测试覆盖和全量通过
+---
+
+## 2026-04-11 - US-030: Action.applyWithOverrides endpoint
+- 新增 POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides
+- 请求体 envelope: { request: ApplyActionRequestV2, overrides: ApplyActionOverrides }
+- overrides.parameters 合并到 request.parameters（overrides 优先），然后通过与 Apply 相同的代码路径走
+- options.mode (VALIDATE_ONLY | VALIDATE_AND_EXECUTE) 和 options.returnEdits (ALL | NONE) 行为与 /apply 一致
+- 响应与 SyncApplyActionResponseV2 完全相同
+- Files changed:
+  - pkg/actions/handlers.go — 新增 ApplyWithOverrides handler + ApplyActionOverrides 类型
+  - pkg/actions/apply_with_overrides_test.go — 5 个 TDD 测试（新文件）
+  - cmd/server/main.go — 挂载新路由
+  - cmd/server/openapi_spec.yaml — 新增 path + ApplyActionOverrides + ApplyActionWithOverridesRequest schema
+  - api/openapi.yaml — 字节级镜像
+  - prd.json — passes: true + notes
+  - progress.txt — this entry
+- **Learnings for future iterations:**
+  - Foundry 的 ApplyActionOverrides 通常承载 uniqueIdentifier / currentTime 等自动参数覆写开关 — Weave 当前没有自动生成参数机制，所以只实现 parameters map 覆写，其他字段通过 JSON 被 additionalProperties 透传忽略
+  - fakePublisher.batches 保存所有已发布批次，没有 lastBatch 字段 — 通过 pub.batches[0].Edits[0].Properties 直接断言参数是否被 override 替换
+  - funnel.Edit 只有 Properties map，没有 After 字段 — CREATE 的目标属性在 Properties 里
+  - 新增一个 apply 变体只需复用 countEdits / SyncApplyActionResponseV2 / ValidateOnlyResponse — 不要再定义新的响应类型
 ---

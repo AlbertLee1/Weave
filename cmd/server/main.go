@@ -199,6 +199,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			actionHandler := actions.NewHandler(deps.ActionExecutor)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
 		}
 
 		// ObjectSet endpoints

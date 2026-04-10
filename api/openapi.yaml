@@ -930,6 +930,29 @@ components:
       properties:
         edits:
           $ref: "#/components/schemas/ActionResults"
+    ApplyActionOverrides:
+      type: object
+      description: |
+        Foundry OSv2 override envelope. Foundry uses this to override
+        auto-generated parameters (uniqueIdentifier, currentTime). Weave
+        currently only honors an explicit `parameters` override map, which is
+        merged into the wrapped request's parameters (overrides win).
+      properties:
+        parameters:
+          type: object
+          additionalProperties: true
+    ApplyActionWithOverridesRequest:
+      type: object
+      description: |
+        Foundry OSv2 request body for applyWithOverrides — wraps an
+        ApplyActionRequestV2 in `request` and an ApplyActionOverrides in
+        `overrides`.
+      required: [request]
+      properties:
+        request:
+          $ref: "#/components/schemas/ApplyActionRequest"
+        overrides:
+          $ref: "#/components/schemas/ApplyActionOverrides"
     LoginRequest:
       type: object
       required: [email, password]
@@ -2348,6 +2371,42 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ApplyActionRequest"
+      responses:
+        "200":
+          description: Action result (SyncApplyActionResponseV2).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncApplyActionResponseV2"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides:
+    post:
+      operationId: applyActionWithOverrides
+      summary: Apply a single action with parameter overrides (Foundry OSv2)
+      description: |
+        Wraps an ApplyActionRequestV2 in an envelope carrying an
+        ApplyActionOverrides object. Overrides.parameters are merged into
+        request.parameters (overrides win on key collisions) before the
+        request is routed through the normal apply code path. The response
+        matches SyncApplyActionResponseV2 exactly.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: action
+          required: true
+          description: Action API name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyActionWithOverridesRequest"
       responses:
         "200":
           description: Action result (SyncApplyActionResponseV2).

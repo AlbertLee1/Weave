@@ -488,8 +488,8 @@
         "go test ./... passes"
       ],
       "priority": 30,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Handler wraps ApplyActionRequestV2 in {request, overrides}; overrides.parameters merge into request.parameters (overrides win) then flow through the normal Apply path so options.mode and options.returnEdits behave identically. Route wired in cmd/server/main.go. OpenAPI spec + api/openapi.yaml mirror updated with ApplyActionWithOverridesRequest + ApplyActionOverrides schemas. 5 handler tests in pkg/actions/apply_with_overrides_test.go cover success/overrides-win/missing-request/returnEdits=NONE/VALIDATE_ONLY. Full regression green (go test ./...)."
     },
     {
       "id": "US-031",

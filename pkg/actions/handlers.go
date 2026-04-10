@@ -99,6 +99,109 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
+// ApplyActionOverrides is the Foundry OSv2 override envelope. In Foundry this
+// carries uniqueIdentifier and currentTime knobs used to make auto-generated
+// parameters deterministic. Weave does not currently auto-generate parameters,
+// so the only meaningful override today is an explicit parameter override map
+// which is merged into the wrapped request's parameters (overrides win).
+type ApplyActionOverrides struct {
+	Parameters map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// applyWithOverridesEnvelope is the Foundry OSv2 request body for
+// POST .../actions/{action}/applyWithOverrides.
+type applyWithOverridesEnvelope struct {
+	Request   *ApplyRequest         `json:"request"`
+	Overrides *ApplyActionOverrides `json:"overrides,omitempty"`
+}
+
+// ApplyWithOverrides handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides.
+//
+// The request body wraps an ApplyActionRequestV2 in a `request` field and an
+// ApplyActionOverrides in an `overrides` field. Overrides.parameters are
+// merged into request.parameters (overrides win), then the resulting request
+// is routed through the same Apply code path so options.mode and
+// options.returnEdits behave identically to the plain apply endpoint.
+func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	action := chi.URLParam(r, "action")
+
+	if action == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionType", nil))
+		return
+	}
+
+	var env applyWithOverridesEnvelope
+	if err := httputil.ReadJSON(r, &env); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{"error": err.Error()}))
+		return
+	}
+	if env.Request == nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingRequest",
+			map[string]string{"field": "request", "message": "request field is required"}))
+		return
+	}
+
+	req := *env.Request
+	req.ActionType = action
+
+	// Merge overrides into parameters. Overrides win on key collision.
+	if env.Overrides != nil && len(env.Overrides.Parameters) > 0 {
+		if req.Parameters == nil {
+			req.Parameters = make(map[string]interface{}, len(env.Overrides.Parameters))
+		}
+		for k, v := range env.Overrides.Parameters {
+			req.Parameters[k] = v
+		}
+	}
+
+	// Resolve options with defaults (same semantics as Apply).
+	mode := "VALIDATE_AND_EXECUTE"
+	returnEdits := "ALL"
+	if req.Options != nil {
+		if req.Options.Mode != "" {
+			mode = strings.ToUpper(req.Options.Mode)
+		}
+		if req.Options.ReturnEdits != "" {
+			returnEdits = strings.ToUpper(req.Options.ReturnEdits)
+		}
+	}
+
+	if mode != "VALIDATE_ONLY" && mode != "VALIDATE_AND_EXECUTE" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMode",
+			map[string]string{"mode": mode, "allowed": "VALIDATE_ONLY, VALIDATE_AND_EXECUTE"}))
+		return
+	}
+
+	if mode == "VALIDATE_ONLY" {
+		if _, err := h.executor.Prepare(r.Context(), ontologyRID, &req); err != nil {
+			httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
+				Validation: &ValidationResult{Result: "INVALID"},
+			})
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
+			Validation: &ValidationResult{Result: "VALID"},
+		})
+		return
+	}
+
+	result, err := h.executor.Apply(r.Context(), ontologyRID, &req)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+
+	resp := &SyncApplyActionResponseV2{
+		OperationID: result.BatchID,
+	}
+	if returnEdits != "NONE" {
+		resp.Edits = countEdits(result.Edits)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
 // ApplyBatch handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch.
 //
 // In Foundry OSv2 a batch is one-action-many-parameter-sets: the action
