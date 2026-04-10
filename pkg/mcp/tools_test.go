@@ -85,6 +85,10 @@ func (f *fakeOssService) ListLinkedObjects(ctx context.Context, req oss.LinkedOb
 	return &oss.ObjectPage{}, nil
 }
 
+func (f *fakeOssService) GetLinkedObject(ctx context.Context, req oss.GetLinkedObjectRequest) (*oss.WireObject, error) {
+	return nil, oms.ErrNotFound
+}
+
 func (f *fakeOssService) CountObjects(ctx context.Context, req oss.CountObjectsRequest) (*oss.CountObjectsResponse, error) {
 	return &oss.CountObjectsResponse{Count: 0}, nil
 }

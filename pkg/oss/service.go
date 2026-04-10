@@ -46,6 +46,16 @@ type LinkedObjectsRequest struct {
 	PageToken string
 }
 
+// GetLinkedObjectRequest is the request for getting a single linked object by its primary key.
+type GetLinkedObjectRequest struct {
+	OntologyRID            string
+	ObjectType             string // source object type API name
+	PrimaryKey             string // source object primary key
+	LinkType               string // link type API name
+	LinkedObjectPrimaryKey string // target linked object primary key
+	Direction              string // traversal direction (optional, default "forward")
+}
+
 // CountObjectsRequest is the request for counting objects of a given type.
 type CountObjectsRequest struct {
 	OntologyRID string
@@ -63,5 +73,6 @@ type Service interface {
 	ListObjects(ctx context.Context, req ListObjectsRequest) (*ObjectPage, error)
 	SearchObjects(ctx context.Context, req SearchObjectsRequest) (*ObjectPage, error)
 	ListLinkedObjects(ctx context.Context, req LinkedObjectsRequest) (*ObjectPage, error)
+	GetLinkedObject(ctx context.Context, req GetLinkedObjectRequest) (*WireObject, error)
 	CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error)
 }

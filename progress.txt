@@ -78,6 +78,7 @@
 - ObjectType.status Foundry values: ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED — migration 000014 maps PROMOTED→ENDORSED, EXAMPLE→EXPERIMENTAL
 - When adding a REQUIRED field to a handler: update ALL test bodies in test/e2e/, test/northwind/, test/chinook/ that call that endpoint
 - Python SDK search() now requires `select` keyword arg — callers must provide property list
+- When adding a new method to oss.Service interface, update fakeOssService in pkg/mcp/tools_test.go
 
 ---
 
@@ -465,4 +466,37 @@
   - Frontend ObjectSetResults needs the type metadata BEFORE calling loadObjects to derive select — use resolveRootType() for static resolution
   - ObjectType status values change by migration only; Go model is a plain string with no Go-level enum
   - All Go tests pass (full regression green), npx tsc --noEmit clean, 168/168 vitest pass, 25/25 Python SDK tests pass
+---
+
+## 2026-04-11 - US-017: Object.count endpoint
+- Added POST /api/v2/ontologies/{o}/objects/{objectType}/count endpoint
+- Response: { count: number } using Bleve index DocCount
+- Added CountObjects to Service interface + ServiceImpl
+- Handler validates ObjectType exists (404 if not found), returns count=0 for valid types with no index
+- Files changed:
+  - pkg/oss/service.go — added CountObjectsRequest, CountObjectsResponse, CountObjects to Service interface
+  - pkg/oss/service_impl.go — CountObjects implementation using indexMgr.DocCount
+  - pkg/oss/handlers.go — CountObjects handler + route registration (POST before GET {primaryKey} wildcard)
+  - pkg/oss/handlers_count_test.go — NEW: 3 TDD tests (returns count, object type not found, empty index)
+  - pkg/mcp/tools_test.go — added CountObjects stub to fakeOssService
+  - api/openapi.yaml — added count path + CountObjectsResponse schema
+  - cmd/server/openapi_spec.yaml — byte-identical copy
+  - prd.json — US-017 passes: true
+- **Learnings for future iterations:**
+  - indexMgr.DocCount returns error for missing index (type never had data) — handle as count=0, not error
+  - POST count route must be registered BEFORE GET {primaryKey} wildcard to avoid chi routing conflict
+  - No e2e/chinook/northwind test updates needed — count endpoint is new, not modifying existing behavior
+  - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
+---
+
+## 2026-04-11 - US-018: LinkedObject get-by-target-PK endpoint
+- Implemented GET /api/v2/ontologies/{o}/objects/{type}/{pk}/links/{link}/{linkedObjectPrimaryKey}
+- Returns single OntologyObjectV2 (WireObject) for a specific linked object identified by its PK
+- Verifies the target PK is actually linked via the specified link type before returning (404 if not linked)
+- Files changed: pkg/oss/service.go (GetLinkedObjectRequest type + Service interface), pkg/oss/service_impl.go (GetLinkedObject method), pkg/oss/handlers.go (handler + route), pkg/oss/service_test.go (5 new tests), pkg/mcp/tools_test.go (mock update), api/openapi.yaml, cmd/server/openapi_spec.yaml
+- **Learnings for future iterations:**
+  - GetLinkedObject reuses the same link resolution logic as ListLinkedObjects: direction-aware LinkType lookup → ResolveLinked → verify PK in results → hydrate from Bleve
+  - Route must be registered BEFORE the ListLinkedObjects wildcard route ({linkType}) — chi matches static segments before wildcards only if registered first
+  - Only mock that needed updating was fakeOssService in pkg/mcp/tools_test.go — the service_test.go tests use the real ServiceImpl, not a mock
+  - Full regression (go test ./...) passes: all packages green including e2e, chinook, northwind
 ---

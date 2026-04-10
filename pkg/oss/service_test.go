@@ -1252,6 +1252,250 @@ func TestListLinkedObjects_LinkTypeError(t *testing.T) {
 	}
 }
 
+// --- GetLinkedObject Tests (US-018) ---
+
+func TestGetLinkedObject_Found(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Set up department index and data
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d1", map[string]interface{}{
+		"deptId":   "d1",
+		"deptName": "engineering",
+	}); err != nil {
+		t.Fatalf("IndexDocument d1: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d2", map[string]interface{}{
+		"deptId":   "d2",
+		"deptName": "marketing",
+	}); err != nil {
+		t.Fatalf("IndexDocument d2: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		DisplayName: "Department",
+		PrimaryKey:  "deptId",
+		Status:      "ACTIVE",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "ONE_TO_MANY",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1", "d2"}
+
+	obj, err := svc.GetLinkedObject(ctx, oss.GetLinkedObjectRequest{
+		OntologyRID:            testOntologyRID,
+		ObjectType:             "employee",
+		PrimaryKey:             "emp1",
+		LinkType:               "employeeDept",
+		LinkedObjectPrimaryKey: "d1",
+	})
+	if err != nil {
+		t.Fatalf("GetLinkedObject: %v", err)
+	}
+	if obj.APIName != "department" {
+		t.Errorf("expected APIName 'department', got %q", obj.APIName)
+	}
+	if obj.PrimaryKey != "d1" {
+		t.Errorf("expected PrimaryKey 'd1', got %v", obj.PrimaryKey)
+	}
+	if obj.Properties["deptName"] != "engineering" {
+		t.Errorf("expected deptName 'engineering', got %v", obj.Properties["deptName"])
+	}
+}
+
+func TestGetLinkedObject_NotLinked(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	// Only d1 is linked — d99 is not
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	_, err = svc.GetLinkedObject(ctx, oss.GetLinkedObjectRequest{
+		OntologyRID:            testOntologyRID,
+		ObjectType:             "employee",
+		PrimaryKey:             "emp1",
+		LinkType:               "employeeDept",
+		LinkedObjectPrimaryKey: "d99",
+	})
+	if err == nil {
+		t.Fatal("expected error for unlinked PK, got nil")
+	}
+}
+
+func TestGetLinkedObject_NoLinks(t *testing.T) {
+	svc, _, repo, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	// No links resolved (empty result)
+	_, err := svc.GetLinkedObject(ctx, oss.GetLinkedObjectRequest{
+		OntologyRID:            testOntologyRID,
+		ObjectType:             "employee",
+		PrimaryKey:             "emp1",
+		LinkType:               "employeeDept",
+		LinkedObjectPrimaryKey: "d1",
+	})
+	if err == nil {
+		t.Fatal("expected error for no links, got nil")
+	}
+}
+
+func TestHandler_GetLinkedObject_200(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d1", map[string]interface{}{
+		"deptId":   "d1",
+		"deptName": "engineering",
+	}); err != nil {
+		t.Fatalf("IndexDocument d1: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		DisplayName: "Department",
+		PrimaryKey:  "deptId",
+		Status:      "ACTIVE",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee/emp1/links/employeeDept/d1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if body["__apiName"] != "department" {
+		t.Errorf("expected __apiName 'department', got %v", body["__apiName"])
+	}
+	if body["__primaryKey"] != "d1" {
+		t.Errorf("expected __primaryKey 'd1', got %v", body["__primaryKey"])
+	}
+}
+
+func TestHandler_GetLinkedObject_404(t *testing.T) {
+	svc, _, repo, linkResolver := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee/emp1/links/employeeDept/d99", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
 // --- HTTP Handler Tests (3 tests) ---
 
 func TestHandler_GetObject_200(t *testing.T) {

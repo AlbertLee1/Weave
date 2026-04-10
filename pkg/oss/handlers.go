@@ -38,6 +38,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search", h.SearchObjects)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", h.AggregateObjects)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count", h.CountObjects)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}", h.GetLinkedObject)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
 }
 
@@ -214,6 +215,40 @@ func (h *Handler) CountObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// GetLinkedObject handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}.
+func (h *Handler) GetLinkedObject(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	objectType := chi.URLParam(r, "objectType")
+	primaryKey := chi.URLParam(r, "primaryKey")
+	linkType := chi.URLParam(r, "linkType")
+	linkedObjectPK := chi.URLParam(r, "linkedObjectPrimaryKey")
+
+	obj, err := h.svc.GetLinkedObject(r.Context(), GetLinkedObjectRequest{
+		OntologyRID:            ontologyRID,
+		ObjectType:             objectType,
+		PrimaryKey:             primaryKey,
+		LinkType:               linkType,
+		LinkedObjectPrimaryKey: linkedObjectPK,
+	})
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("LinkedObjectNotFound", map[string]string{
+				"objectType":             objectType,
+				"primaryKey":             primaryKey,
+				"linkType":               linkType,
+				"linkedObjectPrimaryKey": linkedObjectPK,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetLinkedObjectFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, obj)
 }
 
 // ListLinkedObjects handles GET /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}.

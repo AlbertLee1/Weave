@@ -437,3 +437,89 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 
 	return page, nil
 }
+
+// GetLinkedObject returns a single linked object identified by its primary key.
+// It verifies the target PK is actually linked via the specified link type before
+// returning it, returning ErrNotFound if the target is not linked.
+func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRequest) (*WireObject, error) {
+	dir, err := links.ParseDirection(req.Direction)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the caller's object type.
+	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
+	if err != nil {
+		return nil, err
+	}
+
+	// Locate the LinkType definition.
+	var candidates []oms.LinkType
+	if dir == links.DirectionReverse {
+		candidates, err = s.omsRepo.ListIncomingLinkTypes(ctx, ot.RID)
+	} else {
+		candidates, err = s.omsRepo.ListOutgoingLinkTypes(ctx, ot.RID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var matchedLT *oms.LinkType
+	for i := range candidates {
+		if candidates[i].APIName == req.LinkType {
+			matchedLT = &candidates[i]
+			break
+		}
+	}
+	if matchedLT == nil {
+		return nil, fmt.Errorf("link type %q not found for object type %q (direction=%s)", req.LinkType, req.ObjectType, dir)
+	}
+
+	// Resolve linked primary keys.
+	targetPKs, err := s.linkResolver.ResolveLinked(ctx, matchedLT.RID, []string{req.PrimaryKey}, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify the requested linked PK is actually among the resolved targets.
+	found := false
+	for _, pk := range targetPKs {
+		if pk == req.LinkedObjectPrimaryKey {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, oms.ErrNotFound
+	}
+
+	// Determine the target object type.
+	otherRID := matchedLT.TargetObjectType
+	if dir == links.DirectionReverse {
+		otherRID = matchedLT.SourceObjectType
+	}
+	otherOT, err := s.omsRepo.GetObjectType(ctx, otherRID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Hydrate the single object from Bleve.
+	batchQ := bleve.NewDocIDQuery([]string{req.LinkedObjectPrimaryKey})
+	batchReq := bleve.NewSearchRequest(batchQ)
+	batchReq.Fields = []string{"*"}
+	batchReq.Size = 1
+
+	batchResult, err := s.indexMgr.Search(otherOT.APIName, batchReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(batchResult.Hits) == 0 {
+		return nil, oms.ErrNotFound
+	}
+
+	hit := batchResult.Hits[0]
+	obj := FormatObject(otherOT.APIName, req.LinkedObjectPrimaryKey, hit.Fields)
+
+	return obj, nil
+}

@@ -2238,6 +2238,38 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}:
+    get:
+      operationId: getLinkedObject
+      summary: Get a specific linked object by its primary key
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+        - $ref: "#/components/parameters/PrimaryKey"
+        - in: path
+          name: linkType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: linkedObjectPrimaryKey
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The linked object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WireObject"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate:
     post:
       operationId: aggregateObjects
