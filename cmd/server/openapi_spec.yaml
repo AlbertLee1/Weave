@@ -599,6 +599,51 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Interface"
+    LoadMetadataRequest:
+      type: object
+      description: Request body for selectively loading ontology metadata subsets. Each key present (even as empty {}) selects that subset.
+      properties:
+        objectTypes:
+          type: object
+          description: Include object types in response
+        linkTypes:
+          type: object
+          description: Include link types in response
+        actionTypes:
+          type: object
+          description: Include action types in response
+        interfaceTypes:
+          type: object
+          description: Include interface types in response
+        queryTypes:
+          type: object
+          description: Include query types in response
+    OntologyFullMetadata:
+      type: object
+      required: [ontology]
+      properties:
+        ontology:
+          $ref: "#/components/schemas/Ontology"
+        objectTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectType"
+        linkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkType"
+        actionTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionType"
+        interfaceTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interface"
+        queryTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryType"
     SearchResult:
       type: object
       required: [rid, resourceType, apiName, displayName]
@@ -2010,6 +2055,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OntologyExport"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/metadata:
+    post:
+      operationId: loadOntologyMetadata
+      summary: Selectively load ontology metadata subsets
+      description: Returns ontology metadata filtered to only the requested subsets (objectTypes, linkTypes, actionTypes, interfaceTypes, queryTypes).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadMetadataRequest"
+      responses:
+        "200":
+          description: Filtered ontology metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyFullMetadata"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
