@@ -49,6 +49,7 @@ type ServerDeps struct {
 	ObjSetStore    *objectset.Store
 	ObjSetExecutor *objectset.Executor
 	FunnelConsumer *funnel.Consumer
+	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -106,6 +107,10 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(SecurityHeadersMiddleware())
+	if deps.CORSOrigins != nil && len(deps.CORSOrigins) > 0 {
+		r.Use(CORSMiddleware(deps.CORSOrigins))
+	}
 
 	// Health endpoints (public, no auth required)
 	// /health is the k8s liveness probe: always returns 200 {"status":"alive"}
@@ -269,7 +274,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	deps := &ServerDeps{}
+	deps := &ServerDeps{
+		CORSOrigins: cfg.CORSOrigins,
+	}
 
 	// 1. PostgreSQL
 	if cfg.PGDSN != "" {

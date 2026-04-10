@@ -70,8 +70,9 @@ type Config struct {
 	PGDSN    string
 	NATSURL  string
 
-	AuthMode string
-	JWT      JWTConfig
+	AuthMode    string
+	CORSOrigins []string // Parsed from WEAVE_CORS_ORIGINS (comma-separated)
+	JWT         JWTConfig
 
 	Metrics   MetricsConfig
 	Tracing   TracingConfig
@@ -133,6 +134,15 @@ func Load() (*Config, error) {
 
 	if v := os.Getenv("AUTH_MODE"); v != "" {
 		cfg.AuthMode = v
+	}
+
+	if v := os.Getenv("WEAVE_CORS_ORIGINS"); v != "" {
+		for _, origin := range strings.Split(v, ",") {
+			origin = strings.TrimSpace(origin)
+			if origin != "" {
+				cfg.CORSOrigins = append(cfg.CORSOrigins, origin)
+			}
+		}
 	}
 
 	if v := os.Getenv("WEAVE_JWT_ISSUER"); v != "" {
@@ -239,6 +249,11 @@ func (c *Config) Validate() error {
 
 	if strings.TrimSpace(c.DataDir) == "" {
 		problems = append(problems, "DataDir must be non-empty (set WEAVE_DATA_DIR)")
+	}
+
+	if c.AuthMode == "token" {
+		problems = append(problems,
+			"AUTH_MODE=token is removed: use AUTH_MODE=jwt with proper key material for production")
 	}
 
 	if c.AuthMode == "jwt" && c.JWT.PrivateKeyPath == "" && c.JWT.PrivateKeyPEM == "" {

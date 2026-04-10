@@ -78,6 +78,11 @@
 - ObjectType.status Foundry values: ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED — migration 000014 maps PROMOTED→ENDORSED, EXAMPLE→EXPERIMENTAL
 - When adding a REQUIRED field to a handler: update ALL test bodies in test/e2e/, test/northwind/, test/chinook/ that call that endpoint
 - Python SDK search() now requires `select` keyword arg — callers must provide property list
+- CORS middleware is in cmd/server/security_middleware.go — CORSMiddleware(origins []string) and SecurityHeadersMiddleware()
+- CORS enabled by setting WEAVE_CORS_ORIGINS env var (comma-separated); empty = disabled
+- AUTH_MODE=token is rejected at config.Validate() boot time — use AUTH_MODE=jwt for production
+- DB pool defaults: MaxConns=25, MaxConnLifetime=1h, HealthCheckPeriod=30s — in database.DefaultPoolConfig()
+- database.Connect() now calls ConnectWithConfig() with DefaultPoolConfig() — backwards compatible
 - When adding a new method to oss.Service interface, update fakeOssService in pkg/mcp/tools_test.go
 
 ---
@@ -523,4 +528,28 @@
   - PG_DSN inside compose uses service name (postgres) not localhost — Docker networking resolves service names
   - start_period in weave healthcheck gives the server time to boot before health checks start counting failures
   - All Go tests pass (full regression green), npx tsc --noEmit clean, 168/168 vitest pass
+---
+
+## 2026-04-11 - US-020: Production hardening: CORS + security headers + DB pool config
+- Added CORS middleware with configurable allowed origins (WEAVE_CORS_ORIGINS env var, comma-separated)
+- Added security headers middleware: CSP, HSTS, X-Frame-Options (DENY), X-Content-Type-Options (nosniff)
+- Added DB connection pool config: MaxConns=25, MaxConnLifetime=1h, HealthCheckPeriod=30s
+- AUTH_MODE=token rejected at config.Validate() boot time (deprecated — use jwt for production)
+- CORSOrigins added to Config struct and ServerDeps, wired in NewFullRouter
+- database.Connect() refactored to use ConnectWithConfig() with DefaultPoolConfig() — backwards compatible
+- Files changed:
+  - cmd/server/security_middleware.go — NEW: CORSMiddleware, SecurityHeadersMiddleware, ParseCORSOrigins
+  - cmd/server/security_middleware_test.go — NEW: 6 TDD tests (preflight, reject, simple, wildcard, no-origin, security headers)
+  - cmd/server/auth_hardening_test.go — NEW: 4 TDD tests (token rejected, CORS config loaded, default empty, security headers on router)
+  - cmd/server/main.go — added CORSOrigins to ServerDeps, wired SecurityHeaders + CORS middleware in NewFullRouter
+  - internal/config/config.go — added CORSOrigins field, WEAVE_CORS_ORIGINS loading, AUTH_MODE=token rejection in Validate()
+  - internal/database/database.go — added PoolConfig, DefaultPoolConfig(), ParsePoolConfig(), ConnectWithConfig()
+  - internal/database/pool_config_test.go — NEW: 2 TDD tests (defaults, parse applies settings)
+  - prd.json — US-020 passes: true
+- **Learnings for future iterations:**
+  - SecurityHeadersMiddleware applies to ALL routes (global); CORSMiddleware only when WEAVE_CORS_ORIGINS is set
+  - Config Validate() is the boot-time gatekeeper; middleware still handles token mode at runtime for safety
+  - database.Connect() signature unchanged — ConnectWithConfig is the new extended variant (same pattern as auth.Middleware vs MiddlewareWithAPIKeys)
+  - pgxpool.ParseConfig then pgxpool.NewWithConfig is the proper way to set pool params; direct pgxpool.New doesn't expose pool tuning
+  - All Go tests pass (full regression green including e2e, chinook, northwind), npx tsc --noEmit clean, 168/168 vitest pass
 ---
