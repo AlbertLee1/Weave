@@ -1720,6 +1720,54 @@ paths:
                 $ref: "#/components/schemas/ActionTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypes/byRid/{actionTypeRid}:
+    get:
+      operationId: getActionTypeByRid
+      summary: Look up an action type by its RID
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ActionTypeRid"
+      responses:
+        "200":
+          description: Action type wire format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypes/getByRidBatch:
+    post:
+      operationId: getActionTypesByRidBatch
+      summary: Batch lookup action types by RIDs
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of ActionType RIDs to look up.
+      responses:
+        "200":
+          description: Batch action type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType
@@ -1739,6 +1787,41 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata:
+    get:
+      operationId: getActionTypeFullMetadata
+      summary: Get a single action type with full metadata
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ActionTypeRid"
+      responses:
+        "200":
+          description: Action type with full metadata (includes rules, submissionCriteria, sideEffects).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypesFullMetadata:
+    get:
+      operationId: listActionTypesFullMetadata
+      summary: List all action types with full metadata
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: All action types with full metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/interfaceTypes:
     get:
       operationId: listInterfaceTypes

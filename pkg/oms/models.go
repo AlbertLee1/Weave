@@ -243,6 +243,35 @@ func (at *ActionType) ToWireJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
+// ToFullMetadataJSON returns the V2 wire format JSON for ActionType
+// with all metadata fields included (rules, submissionCriteria, sideEffects, etc.).
+func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
+	wire := map[string]interface{}{
+		"apiName":     at.APIName,
+		"displayName": at.DisplayName,
+		"rid":         at.RID,
+		"status":      at.Status,
+		"parameters":  parametersToV2(at.Parameters),
+	}
+	if at.Description != "" {
+		wire["description"] = at.Description
+	}
+	if len(at.Rules) > 0 && string(at.Rules) != "null" {
+		wire["rules"] = json.RawMessage(at.Rules)
+	}
+	if len(at.SubmissionCriteria) > 0 && string(at.SubmissionCriteria) != "null" {
+		wire["submissionCriteria"] = json.RawMessage(at.SubmissionCriteria)
+	}
+	if len(at.SideEffects) > 0 && string(at.SideEffects) != "null" {
+		wire["sideEffects"] = json.RawMessage(at.SideEffects)
+	}
+	if at.FunctionRID != "" {
+		wire["functionRid"] = at.FunctionRID
+	}
+	wire["isFunctionBacked"] = at.IsFunctionBacked
+	return json.Marshal(wire)
+}
+
 // Interface defines a shared contract for ObjectTypes.
 type Interface struct {
 	RID              string          `json:"rid"`
