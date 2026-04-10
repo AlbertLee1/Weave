@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
@@ -163,18 +164,19 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 	actionExecutor := actions.NewExecutor(omsRepo, nil)
 
 	deps := &ServerDeps{
-		OmsRepo:        omsRepo,
-		UserRepo:       repo,
-		RoleResolver:   auth.NewRoleResolver(repo, time.Minute),
-		JWTSigner:      signer,
-		RefreshService: rs,
-		IndexMgr:       indexMgr,
-		LinkResolver:   linkResolver,
-		OssSvc:         ossSvc,
-		AggEngine:      aggEngine,
-		ActionExecutor: actionExecutor,
-		ObjSetStore:    objSetStore,
-		ObjSetExecutor: objSetExecutor,
+		OmsRepo:         omsRepo,
+		UserRepo:        repo,
+		RoleResolver:    auth.NewRoleResolver(repo, time.Minute),
+		JWTSigner:       signer,
+		RefreshService:  rs,
+		IndexMgr:        indexMgr,
+		LinkResolver:    linkResolver,
+		OssSvc:          ossSvc,
+		AggEngine:       aggEngine,
+		ActionExecutor:  actionExecutor,
+		ObjSetStore:     objSetStore,
+		ObjSetExecutor:  objSetExecutor,
+		AttachmentStore: attachment.NewLocalStore(t.TempDir()),
 	}
 	return NewFullRouter(deps)
 }

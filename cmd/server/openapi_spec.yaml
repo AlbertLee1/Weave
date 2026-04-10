@@ -1034,6 +1034,29 @@ components:
     ExecuteQueryResponse:
       type: object
       additionalProperties: true
+    AttachmentV2:
+      type: object
+      description: |
+        Foundry OSv2 attachment blob metadata record. Attachments are a
+        global resource — not scoped to an ontology — and are referenced
+        by ri.attachments.main.attachment.<uuid> identifiers.
+      required: [rid, filename, sizeBytes, mediaType]
+      properties:
+        rid:
+          type: string
+          description: Attachment resource identifier.
+          example: ri.attachments.main.attachment.01234567-89ab-cdef-0123-456789abcdef
+        filename:
+          type: string
+          description: Original filename supplied by the uploader.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Blob size in bytes.
+        mediaType:
+          type: string
+          description: IANA media type of the blob.
+          example: image/png
 security:
   - bearerAuth: []
 paths:
@@ -2452,3 +2475,139 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/attachments/upload:
+    post:
+      operationId: uploadAttachment
+      summary: Upload an attachment with a server-generated RID
+      description: |
+        Creates a new attachment blob. The server allocates a fresh
+        ri.attachments.main.attachment.* RID. The request body is the raw
+        blob bytes; the Content-Type header becomes the stored mediaType.
+        Attachment paths are global — they do NOT include {ontology}.
+      tags: [Attachments]
+      parameters:
+        - in: query
+          name: filename
+          required: true
+          description: Original filename to associate with the blob.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Attachment metadata for the freshly uploaded blob.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentV2"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/attachments/upload/{attachmentRid}:
+    post:
+      operationId: uploadAttachmentWithRid
+      summary: Upload an attachment with a caller-supplied RID
+      description: |
+        Creates a new attachment blob under a caller-supplied RID. Useful
+        for clients that need to reference the attachment before upload
+        (e.g. constructing an Action payload). Returns 409 if the RID is
+        already taken.
+      tags: [Attachments]
+      parameters:
+        - in: path
+          name: attachmentRid
+          required: true
+          description: Attachment RID (must match ri.attachments.main.attachment.*).
+          schema:
+            type: string
+        - in: query
+          name: filename
+          required: true
+          description: Original filename to associate with the blob.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Attachment metadata for the freshly uploaded blob.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentV2"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          description: The RID is already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v2/ontologies/attachments/{attachmentRid}:
+    get:
+      operationId: getAttachmentMetadata
+      summary: Get attachment metadata by RID
+      description: |
+        Returns the AttachmentV2 metadata record (rid, filename, sizeBytes,
+        mediaType) for the given attachment RID. The blob body is retrieved
+        via the companion /content endpoint.
+      tags: [Attachments]
+      parameters:
+        - in: path
+          name: attachmentRid
+          required: true
+          description: Attachment RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Attachment metadata record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentV2"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/attachments/{attachmentRid}/content:
+    get:
+      operationId: getAttachmentContent
+      summary: Download attachment blob bytes
+      description: |
+        Streams the raw blob bytes for the given attachment RID. The
+        response Content-Type is the stored mediaType.
+      tags: [Attachments]
+      parameters:
+        - in: path
+          name: attachmentRid
+          required: true
+          description: Attachment RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Raw blob bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"

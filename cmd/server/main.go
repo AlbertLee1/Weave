@@ -20,6 +20,7 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/index"
@@ -49,6 +50,7 @@ type ServerDeps struct {
 	ObjSetStore    *objectset.Store
 	ObjSetExecutor *objectset.Executor
 	FunnelConsumer *funnel.Consumer
+	AttachmentStore attachment.BlobStore
 	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -200,6 +202,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
+		}
+
+		// Attachment endpoints (global — no {ontology} segment).
+		if deps.AttachmentStore != nil {
+			attachmentHandler := attachment.NewHandler(deps.AttachmentStore)
+			attachmentHandler.RegisterRoutes(api)
 		}
 
 		// ObjectSet endpoints
@@ -370,6 +378,12 @@ func main() {
 	// 2. Index Manager
 	deps.IndexMgr = index.NewManager(cfg.DataDir)
 	defer deps.IndexMgr.Close()
+
+	// 2b. Attachment blob store (filesystem backend under WEAVE_DATA_DIR/attachments).
+	// Unlinked uploads older than 1h are swept by a background cleanup loop.
+	attachmentStore := attachment.NewLocalStore(cfg.DataDir + "/attachments")
+	deps.AttachmentStore = attachmentStore
+	attachmentStore.StartCleanupLoop(ctx, 10*time.Minute, 1*time.Hour)
 
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType

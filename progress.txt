@@ -107,7 +107,9 @@
 - When adding a new Definition field in pkg/oss/objectset/definition.go: always tag with omitempty and pick a sensible zero value (empty slice / "" / nil pointer) so existing JSON wire shapes round-trip unchanged.
 - Foundry apply variants (apply / applyWithOverrides / applyBatch) all share the same SyncApplyActionResponseV2 / BatchApplyActionResponseV2 envelope + countEdits helper — when adding another variant, construct an ApplyRequest and forward to executor.Apply, do not duplicate the Prepare/Apply/returnEdits control flow beyond what handlers.go already does.
 - Action handler tests use pub.batches (slice of all published EditBatch) — not a lastBatch field. funnel.Edit has Properties map, no After/Before.
-- pkg/attachment is the Foundry attachment blob layer: BlobStore interface + LocalStore filesystem backend (`<uuid>.blob` + `<uuid>.meta.json` sidecar). RID shape is `ri.attachments.main.attachment.{uuid}` (new "attachments" service, separate from "ontology"). validateRID() rejects path traversal before any FS access. Unlinked uploads expire via StartCleanupLoop(ctx, interval, maxAge) — wire with 1h maxAge in main.go for US-033.
+- pkg/attachment is the Foundry attachment blob layer: BlobStore interface + LocalStore filesystem backend (`<uuid>.blob` + `<uuid>.meta.json` sidecar). RID shape is `ri.attachments.main.attachment.{uuid}` (new "attachments" service, separate from "ontology"). validateRID() rejects path traversal before any FS access. Unlinked uploads expire via StartCleanupLoop(ctx, interval, maxAge) — wired with 10m/1h in main.go as of US-033.
+- Attachment HTTP handlers live at pkg/attachment/handlers.go, not pkg/oss — keeps the blob layer self-contained. Routes are global (no {ontology}). ServerDeps.AttachmentStore (attachment.BlobStore) carries the dep; handler is mounted inside the auth group in NewFullRouter. When adding new attachment-related routes (US-034, US-035), extend the existing Handler type instead of creating a new package.
+- When adding new routes to NewFullRouter, you MUST also wire the corresponding deps on newContractTestRouter in cmd/server/contract_test.go — otherwise TestContract_NoOrphanedSpecPaths fails because the new OpenAPI path entries have no matching chi route in the contract router.
 
 ---
 
@@ -885,4 +887,35 @@
   - `MarkLinked` is idempotent and must survive repeated calls (action apply can re-link the same attachment on retry). Check the Linked flag before rewriting meta.json
   - `CleanupUnlinked` must be tolerant of partially corrupt meta files (log + skip, don't abort the sweep) so a single bad file doesn't block TTL for all attachments
   - For Phase 3 story US-033 (global attachment upload endpoints): wire `attachment.NewLocalStore(cfg.DataDir+"/attachments")` in main.go, call `StartCleanupLoop(ctx, 10*time.Minute, time.Hour)` after construction, and shut it down before HTTP server exit. Routes are global (`/api/v2/ontologies/attachments/...`) — no {ontology} param
+---
+
+## 2026-04-11 - US-033: Attachment 4 global endpoints
+- Added pkg/attachment/handlers.go + pkg/attachment/handlers_test.go: HTTP handlers for the 4 Foundry global attachment endpoints, TDD red→green (9 subtests)
+- Endpoints (no {ontology} segment — attachments are a cross-ontology resource):
+  - POST /api/v2/ontologies/attachments/upload?filename=X → server-generated RID
+  - POST /api/v2/ontologies/attachments/upload/{attachmentRid}?filename=X → caller-supplied RID (409 on conflict)
+  - GET  /api/v2/ontologies/attachments/{attachmentRid} → AttachmentV2 metadata JSON
+  - GET  /api/v2/ontologies/attachments/{attachmentRid}/content → raw blob body with stored mediaType
+- Wired ServerDeps.AttachmentStore (attachment.BlobStore) field, main.go constructs attachment.NewLocalStore(cfg.DataDir + "/attachments") and calls StartCleanupLoop(ctx, 10m, 1h)
+- cmd/server/wire_us033_test.go: 3 TDD tests (routes registered when store wired, round-trip upload→get metadata→get content, degraded 404 when store nil)
+- contract_test.go: newContractTestRouter now wires AttachmentStore so the 4 spec paths resolve to chi routes (otherwise TestContract_NoOrphanedSpecPaths would fail)
+- Updated OpenAPI specs (cmd/server/openapi_spec.yaml + api/openapi.yaml byte-identical): new AttachmentV2 schema + 4 path entries, all tagged [Attachments]
+- Files changed:
+  - pkg/attachment/handlers.go — NEW
+  - pkg/attachment/handlers_test.go — NEW (9 TDD tests)
+  - cmd/server/main.go — AttachmentStore field on ServerDeps, LocalStore boot + cleanup loop wiring, handler registration inside auth group
+  - cmd/server/wire_us033_test.go — NEW
+  - cmd/server/contract_test.go — AttachmentStore wired on contract router
+  - cmd/server/openapi_spec.yaml — AttachmentV2 schema + 4 paths
+  - api/openapi.yaml — mirror of openapi_spec.yaml
+  - prd.json — US-033 passes:true
+- Tests: go test ./pkg/attachment/... all green; go test ./... full module green
+- **Learnings for future iterations:**
+  - Handler uses r.Body directly for upload body — no multipart/form-data, Content-Type is the resolved mediaType. Foundry uses application/octet-stream but any Content-Type is accepted.
+  - ?filename is REQUIRED on both upload variants — missing filename returns 400 MissingFilename
+  - GetContent path must come AFTER GetMetadata in RegisterRoutes so chi's longest-match routing doesn't swallow /{rid}/content as part of the wildcard {rid}. Both Gets use separate r.Get() calls — chi handles this fine because /{rid}/content is a longer prefix
+  - When adding new routes, ALWAYS update newContractTestRouter in contract_test.go to wire the dep — otherwise TestContract_NoOrphanedSpecPaths fails because the new spec entries have no matching chi route (contract router builds NewFullRouter with the deps you pass; nil deps → routes skipped)
+  - Error mapping in handlers: ErrNotFound→404, ErrAlreadyExists→409, ErrInvalidRID→400, everything else→500 — all via apierror.WriteJSON
+  - main.go wires the LocalStore BEFORE NATS and ActionExecutor because the store has no upstream deps — keeps boot fast even when NATS is unreachable
+  - AttachmentV2 JSON wire fields (rid, filename, sizeBytes, mediaType) are already on the Attachment struct — no separate wire type needed; the CreatedAt + Linked internal fields use json:"-"
 ---

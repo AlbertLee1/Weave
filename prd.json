@@ -537,8 +537,8 @@
         "go test ./... passes"
       ],
       "priority": 33,
-      "passes": false,
-      "notes": "Attachment paths are global — no {ontology} in URL."
+      "passes": true,
+      "notes": "Attachment paths are global — no {ontology} in URL. Delivered 2026-04-11: pkg/attachment/handlers.go + handlers_test.go add the 4 Foundry global endpoints (upload, uploadWithRID, getMetadata, getContent). ServerDeps grew an AttachmentStore field; main.go wires a LocalStore under WEAVE_DATA_DIR/attachments with a 10m/1h cleanup loop. OpenAPI specs updated with AttachmentV2 schema + 4 path entries (byte-identical in both files). Contract test router now wires a LocalStore so the orphan check passes."
     },
     {
       "id": "US-034",
