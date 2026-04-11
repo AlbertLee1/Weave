@@ -1,0 +1,69 @@
+{
+  "story": "US-022",
+  "title": "Edit conflict integration test (concurrent user + ingest)",
+  "description": "Proves user-edit-wins under concurrency by racing 100 user edits against 100 ingest edits across 20 shared employees for 10 iterations with distinct seeds. Every iteration pre-seeds each PK with a user CREATE so LatestUserEditAt always returns a user row newer than any ingest batch timestamp, forcing the funnel consumer's resolveConflicts path to skip every ingest MODIFY. The assertion compares the final Bleve document for each PK against the last user edit in the per-iteration user sequence — a field-level equality check that fails on any ingest leakage because user and ingest values live in disjoint literal / numeric ranges (ingest name/title strings are prefixed with 'INGEST-WRONG-', ingest age sits in [900, 999), ingest salary sits in [99000, 99999)).",
+  "fixture": {
+    "ontology": "edit_conflict",
+    "objectType": "employee",
+    "primaryKey": "id",
+    "properties": [
+      { "apiName": "id", "baseType": "string", "isSearchable": true },
+      { "apiName": "name", "baseType": "string", "isSearchable": true },
+      { "apiName": "age", "baseType": "integer", "isSearchable": true },
+      { "apiName": "title", "baseType": "string", "isSearchable": true },
+      { "apiName": "salary", "baseType": "double", "isSearchable": true }
+    ],
+    "seed": {
+      "pkCount": 20,
+      "editsPerActor": 100,
+      "iterations": 10,
+      "pkFormat": "emp-NNN (zero-padded 3-digit index)",
+      "seedTimestamp": "iterStart = 2026-01-01T00:00:00Z + iter*24h",
+      "userTimestampWindow": "iterStart + 1h .. iterStart + 1h + 99ms (strictly newer than seed)",
+      "ingestTimestampWindow": "iterStart - 1h .. iterStart - 1h - 99ms (strictly older than seed)",
+      "userRandSeed": "iter*2 + 1",
+      "ingestRandSeed": "iter*2 + 2"
+    }
+  },
+  "request": {
+    "sequence": [
+      "For every iteration: apply one user CREATE batch per PK (seed)",
+      "Spawn 2 goroutines:",
+      "  goroutine A: apply 100 user MODIFY batches sequentially (full property upsert)",
+      "  goroutine B: apply 100 ingest MODIFY batches sequentially (stale timestamps)",
+      "Wait for both goroutines to finish",
+      "Assert final Bleve doc per PK equals the expected replay of user edits only"
+    ],
+    "entryPoint": "funnel.Consumer.ApplyBatch(ctx, EditBatch)",
+    "historyRecorder": "oms.PGRepository (testcontainers-backed real PG)",
+    "alwaysApplyField": "nil — no ingest field is exempt from the user-edit-wins guard"
+  },
+  "expected": {
+    "conflictResolverOutcome": "Every ingest batch hits the skip path because LatestUserEditAt > batch.Timestamp for all ingest timestamps",
+    "bleveFinalState": "Per PK: the last user MODIFY in the per-iteration sequence (or the seed when no user MODIFY touched the PK)",
+    "leakGuard": "No PK's name field may start with 'INGEST-WRONG-'; no age in [900,999); no salary in [99000,99999)",
+    "historyRowCount": "pkCount + userEditsPerActor + ingestEditsPerActor rows per iteration (ingest rows are still written for audit even though the index write is skipped — the conflict resolver runs BEFORE applyBatchEdits but the subsequent history loop iterates the FILTERED edit slice, so ingest rows are NOT persisted when the resolver drops them; this is the documented behaviour of applyBatchWithHistory)"
+  },
+  "responseShape": {
+    "bleveDoc": {
+      "id": "string (PK)",
+      "name": "string (user literal, never prefixed with INGEST-WRONG-)",
+      "age": "float64 (bleve normalizes all numerics)",
+      "title": "string",
+      "salary": "float64"
+    }
+  },
+  "coveredBy": [
+    "test/integration/edit_conflict_test.go::TestEditConflict_UserEditWinsUnderConcurrency",
+    "pkg/funnel/conflict_test.go::TestUserEditWinsProtection",
+    "pkg/funnel/conflict_test.go::TestConflict_DeleteSkippedWhenUserNewer",
+    "pkg/funnel/conflict_test.go::TestConflict_AlwaysApplyStub"
+  ],
+  "notes": [
+    "Run the integration test with `go test -tags integration ./test/integration/... -run EditConflict`. It requires Docker for testcontainers.",
+    "The 'concurrent' race is per-goroutine serial apply with a shared consumer — goroutines may freely interleave but each goroutine sees its own batches in order. That is enough to exercise the conflict resolver because the guarantee is about TIMESTAMP order, not wall-clock order of the apply calls.",
+    "alwaysApplyField is intentionally left unset so the full conflict guard fires. US-026 will wire it against the is_edit_only schema column, and a future story should add a second test variant where a designated 'ingest-only' field survives on the Bleve doc.",
+    "The ingest leakage guard (startsWith INGEST-WRONG-) is a belt-and-braces check on top of the per-field equality — even if the expected-map replay accidentally converged on an ingest literal (extremely unlikely given the disjoint ranges), the prefix check would still catch it.",
+    "Funnel Consumer.ApplyBatch is a thin exported wrapper over applyBatchWithHistory added in US-022 so integration tests can drive the conflict + history path without standing up a NATS JetStream server. Production main.go still routes through handleMessage / NATS; only tests and future in-process ingest shims call ApplyBatch directly."
+  ]
+}

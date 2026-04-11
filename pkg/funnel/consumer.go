@@ -410,6 +410,17 @@ func (c *Consumer) resolveConflicts(ctx context.Context, batch EditBatch) []Edit
 	return out
 }
 
+// ApplyBatch is the exported entry point for in-process callers that need
+// to apply an EditBatch without routing through NATS — integration tests
+// and future ingest shims use it to drive the full applyBatchWithHistory
+// path (conflict resolution + history recording) synchronously. Returns
+// the same errors as the NATS message path: an unmarshal-equivalent error
+// aborts the whole batch and the caller is expected to retry or surface
+// it upstream.
+func (c *Consumer) ApplyBatch(ctx context.Context, batch EditBatch) error {
+	return c.applyBatchWithHistory(ctx, batch)
+}
+
 // applyBatchWithHistory captures the prior bleve state for each MODIFY/DELETE
 // edit, applies the batch via applyBatchEdits, and then writes one
 // ObjectHistory row per edit when a HistoryRecorder is configured. History

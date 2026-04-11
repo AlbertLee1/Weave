@@ -1213,3 +1213,58 @@ new features — only run verification suites and commit the gate.
     through, not dropped). Rationale: a PG hiccup should not silently
     swallow ingest data; DLQ and retry paths handle the durability side.
 ---
+
+## 2026-04-11 - US-022
+- Added test/integration/edit_conflict_test.go exercising the US-021
+  user-edit-wins path under concurrency. Real testcontainers PG backs the
+  HistoryRecorder via oms.NewPGRepository; a bleve index.Manager in
+  t.TempDir() holds employee docs. 10 iterations × (20 seed creates + 100
+  user MODIFY + 100 ingest MODIFY) with two goroutines racing on a shared
+  Consumer. Expected state is the replay of user edits only; every ingest
+  batch carries stale timestamps so resolveConflicts skips it. Final
+  Bleve doc per PK is fetched via DocIDQuery + Fields=[*] and asserted
+  field-by-field against expectedState, plus an INGEST-WRONG-prefix leak
+  guard on the name field.
+- Exposed funnel.Consumer.ApplyBatch(ctx, EditBatch) as a thin exported
+  wrapper over applyBatchWithHistory so integration tests can drive the
+  full conflict + history + apply path without standing up NATS. Production
+  main.go still routes through handleMessage.
+- Added test/foundry_parity/us022_edit_conflict.json documenting the
+  sequence, timestamp windows, rand seeds, leak guard, and the list of
+  covered test functions.
+- Files changed:
+  - pkg/funnel/consumer.go (ApplyBatch exported wrapper)
+  - test/integration/edit_conflict_test.go (new, 1 test)
+  - test/foundry_parity/us022_edit_conflict.json (new)
+- Quality: `go test -tags integration ./test/integration/... -run EditConflict -v`
+  green in ~32s on a fresh PG container. `go test ./...` green. `go vet ./...`
+  clean. `gofmt -l` clean on edited files.
+- **Learnings for future iterations:**
+  - Concurrent user + ingest tests can stay deterministic by pinning the
+    per-actor timestamp windows to iterStart±1h. The user goroutine applies
+    monotonically increasing timestamps strictly newer than the seed; the
+    ingest goroutine applies strictly older timestamps. That removes the
+    race from the assertion without removing the race from the apply path —
+    goroutines still interleave, but the user-edit-wins guard is a function
+    of history recorded_at vs. batch.Timestamp, not wall-clock ordering.
+  - funnel.Consumer did not expose an in-process apply entrypoint prior
+    to US-022; integration tests were stuck with either NATS or duplicating
+    applyBatchWithHistory. The new exported `ApplyBatch` is the right place
+    for future ingest shims (US-062 streaming ingest, US-086 Goja runtime
+    dispatch) so they do not need to reinvent the conflict + history loop.
+  - bleve's Index() is a full replace on the doc id, so test fixtures
+    should send the complete property map on every MODIFY and compute the
+    expected final state as "the last full upsert per PK" — not as an
+    accumulated field-wise merge. Mixing partial MODIFYs with conflict
+    resolution would need separate assertions (left for a future test).
+  - ingest history rows are NOT persisted when the conflict resolver drops
+    the edit: resolveConflicts runs BEFORE applyBatchEdits AND before the
+    history loop, and the history loop iterates the FILTERED slice. This
+    is the right semantics (no audit noise for rejected writes) but it
+    means the test cannot assert on object_history row counts without
+    accounting for skipped rows.
+  - testutil.StartPGContainer is ~3-4s per t.Run on an M3 Max; the US-022
+    test runs 10 iterations against ONE container to stay under 40s total.
+    Future phase6 integration stories should adopt the same "seed once,
+    iterate many seeds" pattern instead of spinning per-seed containers.
+---
