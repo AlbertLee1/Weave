@@ -122,6 +122,32 @@ func northwindSchemas() []schema {
 	}
 }
 
+// interfaceDef describes a Foundry-style Interface that spans multiple
+// ObjectTypes. The Playwright interface-multitype-paging spec (US-041)
+// drives loadObjectsOrInterfaces against the resulting object_type_interfaces
+// rows, so the implementers list must match the schema() ObjectTypes
+// above and carry enough total seed rows for a multi-page cursor walk.
+type interfaceDef struct {
+	APIName      string
+	DisplayName  string
+	Implementers []string // object type apiNames
+}
+
+// northwindInterfaces returns the baseline interface catalogue the Phase 6
+// gate depends on. Only HasOwner is seeded today; extend this list if a
+// future story needs a second polymorphic contract. Implementers must
+// appear in northwindSchemas() above so the seed loop can resolve each
+// ObjectType RID without reading back from PG.
+func northwindInterfaces() []interfaceDef {
+	return []interfaceDef{
+		{
+			APIName:      "HasOwner",
+			DisplayName:  "Has Owner",
+			Implementers: []string{"customer", "order", "product"},
+		},
+	}
+}
+
 func northwindLinkTypes() []linkDef {
 	return []linkDef{
 		{

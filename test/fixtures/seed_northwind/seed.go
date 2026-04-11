@@ -191,6 +191,38 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 		}
 	}
 
+	// 4b. Interfaces ----------------------------------------------------
+	// HasOwner-style polymorphic interfaces let the interfaceBase
+	// ObjectSet code path resolve to multiple implementing ObjectTypes at
+	// query time. US-041 exercises this end-to-end from Playwright by
+	// paging through loadObjectsOrInterfaces. Implementer apiNames were
+	// validated against northwindSchemas() earlier in the function, so
+	// otRIDByName lookups are guaranteed here.
+	for _, iface := range northwindInterfaces() {
+		ifaceRec := &oms.Interface{
+			RID:         stableRID("interface", opts.OntologyAPIName+"-"+iface.APIName),
+			OntologyRID: ontRID,
+			APIName:     iface.APIName,
+			DisplayName: iface.DisplayName,
+		}
+		if err := repo.CreateInterface(ctx, ifaceRec); err != nil {
+			return nil, fmt.Errorf("seed: create interface %q: %w", iface.APIName, err)
+		}
+		for _, implName := range iface.Implementers {
+			otRID, ok := otRIDByName[implName]
+			if !ok {
+				return nil, fmt.Errorf("seed: interface %q references unknown object type %q", iface.APIName, implName)
+			}
+			if err := repo.AttachInterface(ctx, &oms.ObjectTypeInterface{
+				ObjectTypeRID: otRID,
+				InterfaceRID:  ifaceRec.RID,
+			}); err != nil {
+				return nil, fmt.Errorf("seed: attach %q to %q: %w", implName, iface.APIName, err)
+			}
+		}
+		logf("[seed] created interface %s with %d implementers", iface.APIName, len(iface.Implementers))
+	}
+
 	// 5. Action types ---------------------------------------------------
 	// Each E2E-visible action lives under the northwind ontology so the
 	// Action Console page (and the Playwright specs driving it) can
@@ -328,6 +360,16 @@ func wipe(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 		if _, err := pool.Exec(ctx,
 			`DELETE FROM action_types WHERE ontology_rid = $1`, ontRID); err != nil {
 			return fmt.Errorf("delete action_types: %w", err)
+		}
+		// Interfaces (ontology scoped). object_type_interfaces rows
+		// cascade automatically via ON DELETE CASCADE on interface_rid,
+		// so a blanket delete of interfaces for the ontology leaves no
+		// dangling join rows. Must happen before object_types because
+		// there is no interfaces -> object_types FK chain to cascade
+		// through.
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM interfaces WHERE ontology_rid = $1`, ontRID); err != nil {
+			return fmt.Errorf("delete interfaces: %w", err)
 		}
 		// Object types — properties cascade via ON DELETE CASCADE (see
 		// migration 000001_initial_schema.up.sql L33).

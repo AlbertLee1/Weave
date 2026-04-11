@@ -246,6 +246,28 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   on the GroupByBuilder. Prefer these over role-based locators —
   the Add buttons on MetricSelector + GroupByBuilder both match
   `role=button, name=/add/i` and will trip strict mode.
+- Production main.go now owns a PG-backed InterfaceResolver shim at
+  cmd/server/interface_resolver.go. It is wired in
+  `deps.ObjSetExecutor.SetInterfaceResolver(...)` immediately after
+  `objectset.NewExecutor(...)` when deps.OmsRepo is non-nil. The shim
+  uses a local narrow `interfaceResolverRepo` interface (GetOntology +
+  GetInterfaceByAPIName + ListInterfaceObjectTypes) so we don't bloat
+  the global oms.Repository contract — match the rebuild.go /
+  rehydrate.go pattern when adding similar consumers.
+- interface-facing Playwright specs go through Playwright's
+  APIRequestContext (`test.beforeAll({request})` / `({request})` in
+  the test body) and POST directly to
+  /api/v2/ontologies/{ont}/objectSets/loadObjectsOrInterfaces?preview=true
+  — the React v2 BrowserPage does not yet expose an interface
+  selector. Template: web/e2e/phase6/interface-multitype-paging.spec.ts.
+- Northwind e2e seed now creates an ontology-scoped HasOwner
+  interface attached to customer + order + product via
+  test/fixtures/seed_northwind/schemas.go:northwindInterfaces() and
+  the 4b. Interfaces block in seed.go. wipe() must run
+  `DELETE FROM interfaces WHERE ontology_rid = $1` BEFORE deleting
+  object_types, because interfaces has a plain FK to ontologies (no
+  cascade). Order: history → link_types → action_logs/action_types →
+  interfaces → object_types → ontologies.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -2570,4 +2592,68 @@ new features — only run verification suites and commit the gate.
     `getByTestId('object-version')`); verified via `git stash` before
     claiming regression. Do NOT attribute that failure to changes in
     this story.
+---
+
+## 2026-04-12 - US-041
+- Phase 6 gate Playwright spec: interface-multitype-paging.spec.ts.
+  Paging walk through the seeded HasOwner interface (customer + order +
+  product → 15 rows) via loadObjectsOrInterfaces?preview=true at
+  pageSize=3. Asserts no duplicate PKs across pages, totalCount stable
+  at "15", every row carries non-empty $apiName drawn from the
+  implementer set, and pagination terminates in exactly 5 pages.
+- Production main.go now wires a PG-backed InterfaceResolver — the
+  Phase 6 gate follow-up documented in progress.txt ("fold the shim
+  into main.go") is finally in place. Previously the live server
+  short-circuited interfaceBase requests because no resolver was set.
+- Extended the Northwind e2e seed library with an interface layer:
+  HasOwner interface attached to customer + order + product, wiped on
+  every seed run via a new DELETE pass on `interfaces` (the
+  object_type_interfaces join rows cascade on interface_rid, so the
+  wipe stays a single statement).
+- Files changed:
+  - cmd/server/interface_resolver.go (new) — narrow-interface shim
+    resolving interface API name → ontology scope → implementer apiNames
+  - cmd/server/interface_resolver_test.go (new) — 3 TDD unit tests
+    (happy path, missing scope, interface lookup error)
+  - cmd/server/main.go — SetInterfaceResolver wiring after ObjSetExecutor construction
+  - test/fixtures/seed_northwind/schemas.go — interfaceDef +
+    northwindInterfaces()
+  - test/fixtures/seed_northwind/seed.go — CreateInterface +
+    AttachInterface loop; wipe() DELETE FROM interfaces
+  - web/e2e/phase6/interface-multitype-paging.spec.ts (new) —
+    Playwright spec driven through the Playwright `request` fixture
+- Quality: go build ./..., go vet ./..., gofmt on edited files, go
+  test ./... (all packages green, cmd/server 3 new tests pass),
+  web `npx tsc --noEmit` clean, web `npm run test` 38 files /
+  195 tests all green. Playwright `test:e2e` not run locally (needs
+  scripts/e2e-setup.sh stack bring-up); spec passes TypeScript checks
+  and its preflight covers the seed requirement.
+- **Learnings for future iterations:**
+  - Production main.go now owns an InterfaceResolver wired directly
+    from deps.OmsRepo (post-CachedRepository wrap). ListInterfaceObjectTypes
+    is NOT overridden by CachedRepository, so the embedded Repository
+    passthrough already serves us — no cache entry needed. If a future
+    story wants to cache interface resolution, match the existing
+    interfaceByRID / interfaceAPI / interfaceList maps on CachedRepository.
+  - The Playwright BrowserPage UI does not expose an interface
+    selector yet; phase6 interface-facing specs must drive the API
+    through Playwright's `request` fixture (APIRequestContext) rather
+    than the React router. The fixture runs in Node, talks directly to
+    :9117, and preflight assertions still live inside test.beforeAll —
+    see interface-multitype-paging.spec.ts for the template.
+  - interfaceBase preview rows carry `$primaryKey` / `$apiName` / `$rid`
+    (dollar-prefix), NOT `__primaryKey` / `__apiName` / `__rid` — the
+    existing Codebase Patterns entry already documents this asymmetry,
+    and the new Playwright spec encodes it as a first-class assertion.
+  - The e2e wipe step needs an explicit `DELETE FROM interfaces WHERE
+    ontology_rid = $1` before the object_types delete, even though
+    object_type_interfaces cascades. Reason: interfaces has a plain FK
+    to ontologies (no cascade), so deleting the ontology row first
+    would fail. Order: history → link_types → action_logs/action_types
+    → interfaces → object_types → ontologies.
+  - When adding a new interface to the Northwind seed fixtures, extend
+    both northwindInterfaces() in schemas.go AND verify that every
+    implementer is declared in northwindSchemas() first — the seed
+    loop resolves implementer apiNames through otRIDByName and fails
+    loudly when the two lists drift.
 ---

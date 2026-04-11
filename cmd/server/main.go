@@ -532,6 +532,14 @@ func main() {
 	deps.ObjSetStore = objectset.NewStore(1 * time.Hour)
 	if deps.LinkResolver != nil {
 		deps.ObjSetExecutor = objectset.NewExecutor(deps.IndexMgr, deps.LinkResolver, deps.ObjSetStore)
+		// US-041: wire the PG-backed InterfaceResolver so interfaceBase
+		// ObjectSets resolve to their implementing ObjectType apiNames via
+		// the object_type_interfaces table. Without this, live
+		// loadObjectsOrInterfaces requests for a polymorphic HasOwner-style
+		// interface short-circuit with "interface resolver not configured".
+		if deps.OmsRepo != nil {
+			deps.ObjSetExecutor.SetInterfaceResolver(newPGInterfaceResolver(deps.OmsRepo))
+		}
 		// US-046: nearestNeighbors backend. The vector store wraps the OMS
 		// repo (which exposes pgvector via FindNearestNeighbors) and the
 		// optional embedding provider resolves text-only NN queries.
