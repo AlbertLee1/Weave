@@ -171,8 +171,12 @@ type Property struct {
 	// Derived marks a property as computed at query time (e.g. withProperties
 	// aggregations). Derived properties cannot be primary keys, cannot be
 	// text-searched, and cannot be written through Action edits (US-004).
-	Derived   bool      `json:"derived,omitempty"`
-	CreatedAt time.Time `json:"-"`
+	Derived bool `json:"derived,omitempty"`
+	// IsEditOnly marks a property as "edit-only" — once a user edit writes a
+	// value to it, concurrent ingest edits must not overwrite that value
+	// regardless of the active conflict-resolution strategy (US-025 / US-055).
+	IsEditOnly bool      `json:"editOnly,omitempty"`
+	CreatedAt  time.Time `json:"-"`
 }
 
 // DataTypeJSON returns the Palantir V2 dataType JSON representation.

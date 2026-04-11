@@ -1375,3 +1375,50 @@ new features — only run verification suites and commit the gate.
     parameter type; US-027 or later should consider wiring this directly
     to a FunctionArg typed as "objectReference" for auto-population.
 ---
+
+## 2026-04-11 - US-025
+- Added Property.IsEditOnly bool field (JSON tag "editOnly,omitempty")
+  to pkg/oms/models.go so OMS schema can flag a property as always-win
+  against concurrent ingest edits.
+- New migration 000019_property_edit_only adds
+  properties.is_edit_only BOOLEAN NOT NULL DEFAULT FALSE (up) and drops
+  the column (down). Legacy rows read back as false with no behaviour
+  change.
+- pg_repository CreateProperty now inserts is_edit_only; ListProperties
+  and GetProperty SELECT it into Property.IsEditOnly; UpdateProperty
+  writes it on every update so the admin CRUD round-trip is symmetric.
+- Red-first: test/integration/property_editonly_test.go
+  (TestProperty_IsEditOnlyRoundTrip, //go:build integration) compile-
+  fails on missing Property.IsEditOnly, then passes end-to-end against
+  a testcontainers PG booted with the full migration chain. Asserts
+  Create (both true + unset), List, Get, Update(true→false→true).
+- Files changed:
+  - pkg/oms/models.go
+  - pkg/oms/pg_repository.go
+  - migrations/000019_property_edit_only.up.sql (new)
+  - migrations/000019_property_edit_only.down.sql (new)
+  - test/integration/property_editonly_test.go (new)
+  - scripts/ralph/prd.json (US-025 passes=true)
+- Quality: go vet ./... clean; gofmt clean on all 3 edited Go files;
+  go test ./... green (~7min incl. Northwind/Chinook suites);
+  go test -tags integration ./test/integration/ -run
+  TestProperty_IsEditOnlyRoundTrip green in ~1s.
+- **Learnings for future iterations:**
+  - Adding a new column to properties requires 4 coordinated changes in
+    pg_repository.go: INSERT column + $N, ListProperties SELECT +
+    Scan list, GetProperty SELECT + Scan list, UpdateProperty SET. The
+    table has NO generic `SELECT *` path so you must update every
+    query site — miss one and the Scan arg count blows up at runtime,
+    not build time.
+  - pkg/oms.Property.Derived (US-004) was a pure in-memory flag — NOT
+    persisted. US-025 is the first property flag that actually needs a
+    column, so follow the is_edit_only pattern (INSERT + Scan in
+    List/Get + SET in Update) rather than the Derived precedent if
+    your new flag must survive restarts.
+  - OpenAPI Property schema + CachedRepository passthrough are still
+    pending for US-026. The current US-025 scope deliberately stops at
+    pkg/oms.PGRepository; admin handlers and cached_repository.go will
+    need follow-up patches so the flag flows through the HTTP layer.
+  - gofmt -l will complain about .sql files if you pass them through
+    — keep shell gofmt invocations to *.go only.
+---
