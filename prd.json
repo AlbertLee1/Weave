@@ -719,8 +719,8 @@
         "go test ./... passes"
       ],
       "priority": 45,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "CachedRepository (60s TTL) wraps PGRepository in main.go; LinkTypeCache wired into Resolver via SetLinkTypeCache. Writes through decorator trigger InvalidateAll. NotFound errors are not negatively cached. Benchmark: 670x (OMS) / 969x (links) vs 50us-simulated PG round-trip, well above 5x bar."
     },
     {
       "id": "US-046",

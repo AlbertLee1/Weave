@@ -83,6 +83,14 @@ type Resolver struct {
 	repo     oms.Repository
 	indexMgr searcher
 	edgeRepo EdgeRepository
+	ltCache  *LinkTypeCache
+}
+
+// SetLinkTypeCache installs a LinkTypeCache that the resolver will consult
+// for link-type metadata lookups (GetLinkType / ListOutgoingLinkTypes) before
+// delegating to the repository. Pass nil to disable caching.
+func (r *Resolver) SetLinkTypeCache(c *LinkTypeCache) {
+	r.ltCache = c
 }
 
 // NewResolver creates a new link resolver with FK-based resolution only.
@@ -125,7 +133,7 @@ func (r *Resolver) ResolveLinkedObjects(ctx context.Context, linkTypeRID string,
 // ResolveLinkedObjectsByAPIName resolves links using the link type's API name and source object type RID.
 // Legacy forward-only method.
 func (r *Resolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceObjectTypeRID, linkTypeAPIName string, sourcePKs []string) ([]string, error) {
-	linkTypes, err := r.repo.ListOutgoingLinkTypes(ctx, sourceObjectTypeRID)
+	linkTypes, err := r.listOutgoingLinkTypes(ctx, sourceObjectTypeRID)
 	if err != nil {
 		return nil, fmt.Errorf("list link types: %w", err)
 	}
@@ -143,11 +151,29 @@ func (r *Resolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceObje
 // On DirectionReverse the caller's pks are treated as keys of the link's TARGET
 // object type (or SOURCE for reverse of a forward traversal — see design doc).
 func (r *Resolver) ResolveLinked(ctx context.Context, linkTypeRID string, pks []string, dir Direction) ([]string, error) {
-	lt, err := r.repo.GetLinkType(ctx, linkTypeRID)
+	lt, err := r.getLinkType(ctx, linkTypeRID)
 	if err != nil {
 		return nil, fmt.Errorf("get link type: %w", err)
 	}
 	return r.dispatch(ctx, lt, pks, dir)
+}
+
+// getLinkType consults the optional LinkTypeCache before delegating to the
+// repository. When no cache is configured this is a direct pass-through.
+func (r *Resolver) getLinkType(ctx context.Context, rid string) (*oms.LinkType, error) {
+	if r.ltCache != nil {
+		return r.ltCache.GetLinkType(ctx, r.repo, rid)
+	}
+	return r.repo.GetLinkType(ctx, rid)
+}
+
+// listOutgoingLinkTypes consults the optional LinkTypeCache before delegating
+// to the repository.
+func (r *Resolver) listOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	if r.ltCache != nil {
+		return r.ltCache.ListOutgoingLinkTypes(ctx, r.repo, objectTypeRID)
+	}
+	return r.repo.ListOutgoingLinkTypes(ctx, objectTypeRID)
 }
 
 // dispatch routes to the appropriate resolution strategy based on link cardinality and direction.

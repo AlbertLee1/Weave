@@ -353,7 +353,12 @@ func main() {
 			log.Printf("warning: migration failed: %v", err)
 		}
 
-		deps.OmsRepo = oms.NewPGRepository(pool)
+		// Wrap the raw PG repository with a 60s TTL cache decorator so that
+		// hot metadata reads (GetOntology / GetObjectTypeByAPIName /
+		// GetLinkType / ListOutgoingLinkTypes / ...) don't hit PostgreSQL
+		// on every request. Writes through the decorator invalidate all
+		// caches; external invalidation is available via InvalidateAll.
+		deps.OmsRepo = oms.NewCachedRepository(oms.NewPGRepository(pool), 60*time.Second)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
 		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
@@ -484,7 +489,12 @@ func main() {
 
 	// 3. Link Resolver
 	if deps.OmsRepo != nil {
-		deps.LinkResolver = links.NewResolver(deps.OmsRepo, deps.IndexMgr)
+		resolver := links.NewResolver(deps.OmsRepo, deps.IndexMgr)
+		// Cache link-type metadata lookups (GetLinkType / ListOutgoingLinkTypes)
+		// with a 60s TTL so repeated traversals across the same links don't
+		// re-read the same rows from PostgreSQL.
+		resolver.SetLinkTypeCache(links.NewLinkTypeCache(60 * time.Second))
+		deps.LinkResolver = resolver
 	}
 
 	// 4. OSS Service
