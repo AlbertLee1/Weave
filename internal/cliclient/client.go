@@ -726,6 +726,32 @@ func (c *Client) GetObjectSet(ctx context.Context, ontology, objectSetRid string
 	return resp, nil
 }
 
+// ----- Admin endpoints -----------------------------------------------------
+
+// RebuildIndexResponse is the reply shape of
+// POST /api/admin/indexes/rebuild.
+type RebuildIndexResponse struct {
+	ScopedKey    string `json:"scopedKey"`
+	IndexedCount int    `json:"indexedCount"`
+}
+
+// RebuildIndex asks the server to delete, recreate, and reindex the Bleve
+// index for (ontology, objectType) from the authoritative object_history
+// tail. The caller must hold an admin-level token; the server returns 403
+// otherwise. Returns the resulting scoped key and count of indexed
+// documents on success.
+func (c *Client) RebuildIndex(ctx context.Context, ontology, objectType string) (*RebuildIndexResponse, error) {
+	body := map[string]string{
+		"ontology":   ontology,
+		"objectType": objectType,
+	}
+	var resp RebuildIndexResponse
+	if err := c.do(ctx, http.MethodPost, "/api/admin/indexes/rebuild", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ----- Auth endpoints ------------------------------------------------------
 
 // Login exchanges email + password for an access/refresh token pair. The

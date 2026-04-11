@@ -38,6 +38,11 @@ tags:
       resource (NOT scoped under an ontology). Only single-statement
       SELECT queries are accepted; non-SELECT statements are rejected
       before reaching the engine.
+  - name: Admin
+    description: |
+      Operator-only administrative endpoints, gated to admin-level roles.
+      Covers disruptive actions like rebuilding per-ObjectType Bleve
+      indexes from the authoritative object_history tail.
 components:
   securitySchemes:
     bearerAuth:
@@ -1251,6 +1256,35 @@ components:
             Present when type is "failed". Known values:
             "ExecutionError" (engine returned an error),
             "NonSelectQuery" (query was rejected at execution time).
+    AdminIndexRebuildRequest:
+      type: object
+      description: |
+        Request body for POST /api/admin/indexes/rebuild. Identifies a
+        single ObjectType whose Bleve index should be dropped, recreated,
+        and reindexed from the authoritative object_history tail.
+      required: [ontology, objectType]
+      properties:
+        ontology:
+          type: string
+          description: Ontology apiName.
+        objectType:
+          type: string
+          description: ObjectType apiName (scoped to the ontology).
+    AdminIndexRebuildResponse:
+      type: object
+      description: |
+        Successful rebuild reply carrying the fully-scoped Bleve key that
+        was rebuilt and the number of documents replayed from
+        object_history into the new index.
+      required: [scopedKey, indexedCount]
+      properties:
+        scopedKey:
+          type: string
+          description: "Fully qualified Bleve index key, formatted as `{ontologyApiName}__{objectTypeApiName}`."
+        indexedCount:
+          type: integer
+          format: int32
+          description: Number of documents indexed from the source.
 security:
   - bearerAuth: []
 paths:
@@ -3519,5 +3553,41 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/indexes/rebuild:
+    post:
+      operationId: adminIndexRebuild
+      summary: Rebuild a Bleve index for a single ObjectType
+      description: |
+        Drops the per-ObjectType Bleve index, recreates it with a fresh
+        mapping derived from the current property schema (typeclasses
+        included), then reindexes every primary key from the authoritative
+        object_history tail. Idempotent and safe to run repeatedly. Gated to
+        admin-level roles via `user.manage`; the endpoint is intended for
+        operators applying a schema / analyzer change without a full server
+        restart.
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminIndexRebuildRequest"
+      responses:
+        "200":
+          description: Rebuild completed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminIndexRebuildResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"

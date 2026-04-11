@@ -61,7 +61,8 @@ type ServerDeps struct {
 	CipherDecryptor  cipher.Decryptor
 	TransactionStore transactions.Store
 	SqlQueryEngine   sqlqueries.Engine
-	CORSOrigins      []string // Allowed CORS origins (empty = disabled)
+	IndexDocSource   index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
+	CORSOrigins      []string                   // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -276,6 +277,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsOrInterfaces", objSetHandler.LoadObjectsOrInterfaces)
 			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}", objSetHandler.GetObjectSet)
 		}
+
+		// Admin: index rebuild (US-011). Gated to admin-level roles via
+		// PermUserManage — it reindexes Bleve from the authoritative
+		// object_history tail and is a disruptive, operator-only action.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/indexes/rebuild", NewAdminIndexRebuildHandler(AdminIndexRebuildDeps{
+				IndexMgr:  deps.IndexMgr,
+				Repo:      deps.OmsRepo,
+				DocSource: deps.IndexDocSource,
+			}))
 	})
 
 	return r
@@ -365,7 +376,12 @@ func main() {
 		// GetLinkType / ListOutgoingLinkTypes / ...) don't hit PostgreSQL
 		// on every request. Writes through the decorator invalidate all
 		// caches; external invalidation is available via InvalidateAll.
-		deps.OmsRepo = oms.NewCachedRepository(oms.NewPGRepository(pool), 60*time.Second)
+		pgRepo := oms.NewPGRepository(pool)
+		deps.OmsRepo = oms.NewCachedRepository(pgRepo, 60*time.Second)
+		// US-011: the index rebuild admin command re-ingests from
+		// object_history. Keep the uncached *PGRepository reference so the
+		// rebuild path always observes the authoritative tail.
+		deps.IndexDocSource = newPGIndexDocSource(pgRepo)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
 		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)

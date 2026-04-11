@@ -1550,6 +1550,46 @@ func (r *PGRepository) GetObjectVersionCount(ctx context.Context, objectTypeRID,
 	return count, nil
 }
 
+// LoadLatestObjectStates returns the newest non-tombstoned new_state for
+// every primary key that has any history row for the given ObjectType RID.
+// Rows whose latest version is a DELETE are skipped: a rebuilt index must
+// not resurrect deleted objects.
+//
+// The SELECT DISTINCT ON pattern matches one row per primary_key sorted by
+// version DESC, so concurrent writers that produced multiple versions for
+// the same key leave the index consistent with the authoritative tail.
+func (r *PGRepository) LoadLatestObjectStates(ctx context.Context, objectTypeRID string) ([]LatestObjectState, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT ON (primary_key) primary_key, new_state, edit_type
+		 FROM object_history
+		 WHERE object_type_rid = $1
+		 ORDER BY primary_key, version DESC`,
+		objectTypeRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []LatestObjectState
+	for rows.Next() {
+		var pk, editType string
+		var newState []byte
+		if err := rows.Scan(&pk, &newState, &editType); err != nil {
+			return nil, err
+		}
+		if editType == "DELETE" || len(newState) == 0 {
+			continue
+		}
+		buf := make([]byte, len(newState))
+		copy(buf, newState)
+		result = append(result, LatestObjectState{
+			PrimaryKey: pk,
+			NewState:   buf,
+		})
+	}
+	return result, rows.Err()
+}
+
 // nilIfNoBytes returns nil for an empty/nil byte slice so jsonb columns
 // receive SQL NULL rather than the literal "" / "null" payload.
 func nilIfNoBytes(b []byte) interface{} {

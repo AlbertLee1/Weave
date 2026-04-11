@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+// LatestObjectState is the post-edit snapshot of a single primary key, used
+// when rebuilding a Bleve index from object_history. DELETE tombstones are
+// filtered out upstream; consumers only see rows where NewState is non-nil.
+type LatestObjectState struct {
+	PrimaryKey string
+	NewState   json.RawMessage
+}
+
 // ObjectHistory records a single revision of an object's state. One row is
 // inserted by the funnel consumer for each CREATE / MODIFY / DELETE applied
 // to a (objectTypeRID, primaryKey) tuple. Version is a monotonically

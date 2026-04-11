@@ -1,0 +1,703 @@
+# Ralph Progress Log — Weave OSv2 Deep Parity (Phase 6-9)
+Started: 2026-04-11
+Branch:  ralph/phase-6-8
+Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
+
+## Codebase Patterns
+- ObjectSet executor Result can carry out-of-band per-PK payloads by adding a
+  new map field (see Result.DerivedValues); handlers merge into WireObject
+  Properties just before oss.FormatObject. Keeps Execute signature stable
+  while avoiding a second backend roundtrip.
+- withProperties Definition now takes DerivedProperties []DerivedPropertyDef;
+  legacy Properties []string is still honoured and short-circuits to
+  delegating to the inner ObjectSet unchanged.
+- Link resolver mocks in objectset_test.go return a flat target list and
+  ignore sourcePKs — for per-source tests add a new mock that maps each
+  source PK to its own target list (see perPKLinkResolver in
+  withproperties_test.go).
+- withProperties numeric metrics (sum/avg/min/max) must resolve the target
+  ObjectType via LinkTargetTypeResolver, then fetch per-PK docs from the
+  target Bleve index with bleve.NewDocIDQuery + searchReq.Fields=[field].
+  Test link resolvers need to implement ResolveTargetObjectType for these
+  paths to work (plain ResolveLinkedObjectsByAPIName is NOT enough).
+- bleve numeric field search results come back typed as float64 regardless
+  of whether the source doc used int or float64 — coerceNumeric in
+  executor.go handles the full int/uint/float spread to future-proof ingest
+  paths that deviate.
+- gofmt across the repo has pre-existing drift in many files; only lint your
+  own edited files, do not blanket-reformat.
+- Reverse-direction withProperties routes through an optional reverseLinkFinder
+  interface (ResolveLinkedReverseByAPIName) on the link resolver; the executor
+  short-circuits with an explicit error when a resolver only speaks forward.
+  Test mocks must opt-in by adding the reverse method + reverseEdges map; the
+  production *links.Resolver does NOT yet implement it, so end-to-end reverse
+  withProperties still needs a follow-up adapter once OMS-backed incoming link
+  lookups (ListIncomingLinkTypes) are wired through.
+- Property now carries a Derived bool flag for US-004 (query-time computed
+  fields). Three independent validators live alongside existing packages and
+  can be wired into handlers incrementally without changing existing behaviour:
+    * pkg/oms.ValidateObjectTypePrimaryKey (returns *apierror.APIError)
+    * pkg/oss/where.ValidateClauseAgainstDerivedFields (sentinel error
+      ErrDerivedPropertyTextSearchUnsupported; walks and/or/not subtrees)
+    * pkg/actions.ValidateEditsAgainstDerived (sentinel error
+      ErrDerivedPropertyReadOnly; delete edits always pass-through).
+  Follow-up work: have handlers call these validators with a real derived-map
+  fetched from OMS schema, so invalid requests surface on the wire.
+- withProperties executor sorts its returned PrimaryKeys by
+  (firstDerivedValue ASC, primaryKey ASC) as a deterministic composite sort
+  key so offset-based LoadObjects pagination is stable across pages. The
+  sort copies inner.PrimaryKeys before mutating so nested callers still see
+  the inner executor's native order. compareDerivedValues tolerates nil,
+  int64, float64 and string fallbacks so all five metrics plus future types
+  remain orderable.
+- interfaceBase execution in pkg/oss/objectset/executor.go now loads each
+  implementing ObjectType concurrently (sync.WaitGroup + mutex-guarded map)
+  and heap-merges their per-type buckets into a flat PrimaryKeys list. The
+  per-type buckets survive on Result.PerTypePKs (sorted ASC) and per-row
+  ObjectType on Result.Origins, so downstream consumers can drive
+  composite-cursor pagination without re-sorting. The heap merge tie-break
+  is (primaryKey ASC, objectType ASC) so PK collisions across types resolve
+  deterministically.
+- pkg/oss/pagination now has MultiTypeCursor{SubCursors []CompositeCursor}
+  + Encode / DecodeMultiTypeCursor / IsExhausted. Use it as the wire format
+  for any polymorphic paging scenario. Exhausted sub-cursors (inner == "")
+  are dropped before Encode so the token shrinks as sub-streams drain.
+- handler_preview.go has a dedicated writePreviewInterfacePage path that
+  fires whenever result.PerTypePKs != nil. Rows are fetched from each
+  row's own ObjectType Bleve index (not the interface-tag index), so
+  $apiName / $rid / properties stay per-row accurate across a polymorphic
+  result. The old offset cursor path is preserved as the fallback when
+  PerTypePKs is nil.
+- Integration tests under test/integration/ use //go:build integration.
+  Boot a real PG via testutil.StartPGContainer + database.RunMigrationsUp,
+  then construct oms.NewPGRepository(pg.Pool) as the metadata backend.
+  Seed ObjectTypes via repo.CreateObjectType (primary_key_prop is just
+  TEXT, so you can pass the string directly without creating Property
+  rows). Bleve indexes stay in a t.TempDir() so there's no cross-test
+  contamination. Production main.go does NOT yet wire a PG-backed
+  InterfaceResolver, so tests that need one should ship a local shim:
+  lookup via repo.GetInterfaceByAPIName(ctx, ontologyRID, apiName) →
+  repo.ListInterfaceObjectTypes(ctx, iface.RID) → []apiName. Follow-up
+  for Phase 6 Gate: fold that shim into main.go.
+- New chi routes MUST update api/openapi.yaml AND re-copy to
+  cmd/server/openapi_spec.yaml. `TestContract_AllRoutesDocumented` and
+  `TestContract_EmbeddedSpecMatchesCanonical` both fail otherwise.
+  Route in a protected group → remember to use `api.With(
+  auth.RequirePermission(perm)).Method(http.MethodPost, path, handler)`
+  so permission gating cascades through the existing auth middleware.
+- For features that need a concrete-only PGRepository method (no
+  cached-repo shim), main.go must keep a separate `pgRepo` handle at
+  construction time (before wrapping in CachedRepository) and pass it
+  through a typed ServerDeps field — unwrapping the cached decorator
+  later is not supported.
+- Narrow in-package interfaces beat expanding oms.Repository. The
+  oms.Repository interface is already 50+ methods with 11 mock
+  implementations; every new method forces 11 stub updates. If a
+  consumer only needs 2–3 calls, define a local interface (see
+  `pkg/index/rebuild.go RebuildRepo` and `rehydrate.go rehydrateRepo`)
+  and keep the concrete PG method un-exported from the interface.
+
+## Goal
+From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
+34 feature areas split into 168 iteration-sized stories. Each Phase ends with a
+hard Integration Gate: Go cross-US tests + Playwright E2E + Foundry parity
+fixtures, all three layers must be green to merge to main.
+
+## Sources of truth
+- PRD narrative:  docs/PRD-Weave-OSv2-深度复刻-V2.md
+- PRD execution:  tasks/prd-v2-deep-parity.md
+- Ralph prd.json: scripts/ralph/prd.json (this directory)
+- V1 archive:     archive/2026-04-11-foundry-osv2-api-alignment/
+
+## Phase outline
+- Phase 6 (US-001 ~ US-042): semantic correctness (withProperties, interface
+  paging, typeclass indexing, multi-groupby, approx percentile, edit conflict,
+  optimistic concurrency, edit-only fields) + Phase 6 gate.
+- Phase 7 (US-043 ~ US-085): security + realtime (row/column/marking policy
+  engine, SSE subscription, stream ingest, audit events, rate limiting) +
+  Phase 7 gate.
+- Phase 8 (US-086 ~ US-131): runtime + branches + depth (Goja embedded runtime,
+  function-backed actions, executeQuery, ontology read-only branches, RID
+  @vN, timeseries aggregate, geotemporal persistence, withProperties multi-hop,
+  aggregate on ObjectSet) + Phase 8 gate.
+- Phase 9 (US-132 ~ US-168): production hardening + v1.0 release (Parquet cold
+  storage, bench suite, OpenTelemetry, Python SDK depth, CLI depth, MCP
+  stdio, ops docs, journey tests, release) + Phase 9 gate.
+
+## TDD
+Every feature US writes the failing test first. Gate stories do not write
+new features — only run verification suites and commit the gate.
+
+---
+
+## 2026-04-11 - US-001
+- Added DerivedPropertyDef struct + Definition.DerivedProperties list so the
+  withProperties operator can declare per-object link aggregations.
+- Extended Result with DerivedValues (map[pk]map[name]interface{}) and taught
+  executeWithProperties to compute count metric over forward direction by
+  calling ResolveLinkedObjectsByAPIName per base PK.
+- Handler.LoadObjects merges derived values into WireObject.Properties so
+  orderCount-style fields appear as top-level properties.
+- Files changed:
+  - pkg/oss/objectset/definition.go
+  - pkg/oss/objectset/executor.go
+  - pkg/oss/objectset/handler.go
+  - pkg/oss/objectset/withproperties_test.go (new, 3 tests)
+- **Learnings for future iterations:**
+  - LinkResolver.ResolveLinkedObjectsByAPIName returns a flat merged list of
+    target PKs for the provided sourcePKs slice — it does NOT preserve the
+    per-source mapping. For per-base-object metrics loop one source PK at a
+    time. A batched multi-source count helper would be a worthwhile
+    optimisation for US-002/US-003 but is not strictly required.
+  - US-002 (sum/avg/min/max) needs to load target object properties — the
+    executor currently only queries for primary keys. It will need to either
+    re-query Bleve for the target fields or get per-source target PK maps and
+    fetch the numeric field.
+  - US-003 (reverse direction) must use a `reverseLinkFinder` capable resolver
+    (see pkg/oss/objectset/executor.go:reverseLinkFinder) and cannot use the
+    legacy forward-only ResolveLinkedObjectsByAPIName.
+  - The existing mockLinkResolver in objectset_test.go is too simple for
+    per-PK assertions; follow perPKLinkResolver in withproperties_test.go.
+  - Pre-existing gofmt drift across the repo: don't touch files you didn't
+    edit; only run gofmt against your own changes.
+---
+
+## 2026-04-11 - US-002
+- Extended withProperties to compute sum / avg / min / max across one forward
+  link hop, reading target numeric field values out of the target Bleve index.
+- Validate now rejects sum/avg/min/max without a Field, and rejects unknown
+  metrics outright (tightening the US-001 schema).
+- DerivedPropertyTypeMismatch returned when Field resolves to a non-numeric
+  value on any target document.
+- Empty link set semantics: sum -> 0 (float64), avg/min/max -> nil.
+- Files changed:
+  - pkg/oss/objectset/definition.go (per-metric Field validation)
+  - pkg/oss/objectset/executor.go (evaluateNumericDerived + coerceNumeric)
+  - pkg/oss/objectset/withproperties_test.go (4 metric tests + type-mismatch
+    + missing-field + target-type mapping on perPKLinkResolver)
+- **Learnings for future iterations:**
+  - scopedIndexKey(ctx, mgr, objectType) is the canonical way to go from
+    ObjectType API name to the Bleve index key — use it for target-type
+    fetches too, not just base set queries, so ontology scoping applies.
+  - Bleve's searchReq.Fields=[field] populates hit.Fields with float64 for
+    numeric docs indexed as "double". Don't assume hit.Fields preserves
+    the original Go type of the indexed map[string]interface{}.
+  - For withProperties numeric metrics, the N+1 fetch pattern
+    (one DocIDQuery per base PK) is a short-term implementation — US-073
+    (multi-hop) will likely need a batched fetcher keyed by (baseType,
+    linkAPIName, field) to avoid blowing up latency. Not required at this
+    phase but flagged.
+  - Reverse direction (dir == DirectionReverse) still errors explicitly
+    from executeWithProperties — US-003 owns that path and must wire
+    ResolveLinkedReverseByAPIName into the per-PK loop.
+---
+
+## 2026-04-11 - US-003
+- executeWithProperties now routes DirectionReverse through a new
+  linkResolverForDirection helper that returns a forward or reverse
+  per-PK closure depending on dp.Direction. Forward still hits
+  ResolveLinkedObjectsByAPIName; reverse hits the resolver's
+  reverseLinkFinder (ResolveLinkedReverseByAPIName) and errors out
+  cleanly when the underlying resolver doesn't satisfy the interface.
+- Reverse numeric metrics (sum/avg/min/max) are still blocked with an
+  explicit "not yet supported" error; the count path is live and
+  covered by tests.
+- perPKLinkResolver gained reverseEdges + ResolveLinkedReverseByAPIName
+  so withProperties tests can assert per-target reverse counts without
+  reaching into pkg/links.
+- New tests in pkg/oss/objectset/withproperties_test.go:
+  - TestWithPropertiesReverseCount (Product ← 3 OrderLines via
+    reverse orderLineProduct, one product with 0 hits)
+  - TestWithPropertiesReverseRequiresResolver (forward-only resolver
+    must surface a clear error message)
+  - setupProductOrderLineExecutor fixture builds Product + OrderLine
+    Bleve indexes and wires forward + reverse edges.
+- Files changed:
+  - pkg/oss/objectset/executor.go
+  - pkg/oss/objectset/withproperties_test.go
+- **Learnings for future iterations:**
+  - Adding a new optional capability to the link resolver is best done
+    as a standalone interface (reverseLinkFinder) + type-assert at
+    call site — avoids widening the LinkResolver core contract and
+    keeps legacy callers unaffected.
+  - Numeric reverse metrics need both reverseLinkFinder AND
+    DirectionalLinkTargetTypeResolver (the "other end" ObjectType for
+    reverse is the link's *source*, not *target*). When the time
+    comes, evaluateNumericDerived should accept a directionally
+    resolved targetType parameter instead of re-doing the
+    LinkTargetTypeResolver dance.
+  - The production *links.Resolver still lacks
+    ResolveLinkedReverseByAPIName and ResolveTargetObjectTypeDir, so
+    reverse searchAround/withProperties currently only works with test
+    resolvers. A small adapter that calls
+    repo.ListIncomingLinkTypes(callerOT) + linkResolver.ResolveLinked
+    would close that gap without touching the executor.
+  - gofmt auto-rewrites indented comment blocks into tab-indented
+    form; running `gofmt -w` on your edited files before committing
+    saves a second lint pass.
+---
+
+## 2026-04-11 - US-004
+- Added `Derived bool` field to pkg/oms.Property so schema can flag a
+  property as "computed at query time" (used by US-001/002/003 withProperties).
+- Added three independent validators enforcing the derived-property
+  constraints from the Foundry OSv2 spec:
+    * pkg/oms/derived_property.go: ValidateObjectTypePrimaryKey — returns a
+      DerivedPropertyNotAllowedAsPrimaryKey apierror when a declared primary
+      key resolves to a derived property (and InvalidParameter:primaryKey
+      for empty / unknown references).
+    * pkg/oss/where/derived_property.go: ValidateClauseAgainstDerivedFields —
+      returns ErrDerivedPropertyTextSearchUnsupported for any of the 6
+      text-search operators (contains / containsAllTerms / containsAnyTerm /
+      containsAllTermsInOrder / startsWith / wildcard) targeting a derived
+      field; recurses into and / or / not sub-trees; eq/gt/lt and friends
+      are explicitly left untouched.
+    * pkg/actions/derived_property.go: ValidateEditsAgainstDerived — returns
+      ErrDerivedPropertyReadOnly for any CREATE/MODIFY edit whose Properties
+      map contains a derived property; DELETE edits pass through unchanged.
+- Error messaging follows Foundry's name-based convention: each error name
+  exactly matches the spec (DerivedPropertyNotAllowedAsPrimaryKey /
+  DerivedPropertyTextSearchUnsupported / DerivedPropertyReadOnly).
+- Red test confirmed before implementation (all three packages failed to
+  compile due to missing symbols, then all three went green after the
+  validator files were added).
+- Files changed:
+  - pkg/oms/models.go (new Derived field + gofmt realign)
+  - pkg/oms/derived_property.go (new)
+  - pkg/oms/derived_property_test.go (new, 4 sub-tests)
+  - pkg/oss/where/derived_property.go (new)
+  - pkg/oss/where/derived_property_test.go (new, 9 sub-tests)
+  - pkg/actions/derived_property.go (new)
+  - pkg/actions/derived_property_test.go (new, 5 sub-tests)
+- **Learnings for future iterations:**
+  - pkg/oss/where does not yet import pkg/apierror; keep the dependency
+    graph shallow by returning sentinel errors from the package and
+    wrapping at the handler layer instead of pulling apierror in.
+  - pkg/oms already imports apierror in the admin_handlers path, so
+    validators that return *apierror.APIError fit naturally. Use that
+    return type so the caller can `apierror.WriteJSON(w, err)` directly.
+  - When asserting on apierror ErrorName in a test use
+    strings.ToLower to be tolerant of "primaryKey" vs "PrimaryKey"
+    casing — the existing InvalidParameter:primaryKey error uses the
+    lowercase form.
+  - Current validators are pure helpers — no handler is wired to call
+    them yet. A follow-up story should integrate them into
+    CreateObjectType (reject derived primaryKey at admin time),
+    executor.executeFilter (pass a derivedByField map from the OMS
+    schema cache), and actions.Executor.Prepare (load the
+    derivedByType map once per ontology and check edits after
+    ExecuteRules but before CommitBatch).
+  - `gofmt -w` will realign unrelated struct fields in the same file
+    when you add a new one; run it before committing to keep the diff
+    explicit and avoid a second lint pass.
+---
+
+## 2026-04-11 - US-005
+- executeWithProperties now emits PrimaryKeys sorted by
+  (firstDerivedValue ASC, primaryKey ASC). The inner ObjectSet's
+  PrimaryKeys slice is copied before sorting so upstream callers that
+  re-use the inner Result keep their original order.
+- New helper compareDerivedValues handles nil / numeric / string fallback
+  comparison so all five withProperties metrics (count / sum / avg / min /
+  max) can participate in the composite sort without panicking on
+  unexpected types.
+- Added TestWithPropertiesCursorStability fixture: 50 customers, each with
+  orderCount = i % 5 so there are 5 tie-groups of 10 customers each, then
+  paginated at pageSize=17 across 3 pages. Asserts non-decreasing
+  (orderCount, pk) ordering plus no duplicates / no gaps across pages.
+- Added test/foundry_parity/us005_withproperties.json fixture documenting
+  the expected response shape, sort order, error codes and the covering
+  Go test. The repo does not yet have a parity runner — the fixture is
+  documentation until the Phase 6 Gate wires run.go in.
+- Files changed:
+  - pkg/oss/objectset/executor.go (sort import + compareDerivedValues +
+    stable sort block at end of executeWithProperties)
+  - pkg/oss/objectset/withproperties_test.go (fmt import +
+    TestWithPropertiesCursorStability)
+  - test/foundry_parity/us005_withproperties.json (new)
+- **Learnings for future iterations:**
+  - `go test ./...` runs the Northwind / Chinook integration suites
+    (~200s each) even without the `-tags integration` flag because they
+    live under `test/` as regular `_test.go` files. Budget ~6 minutes
+    for a full green run before committing.
+  - Offset-based pagination is stable iff the underlying slice has a
+    total ordering. For withProperties we achieve that by sorting inside
+    the executor so every consumer (LoadObjects, LoadLinks, Aggregate)
+    automatically inherits stability with no handler-level changes.
+  - Copy inner.PrimaryKeys before mutating it when adding new executor
+    post-processing — several callers keep references to the inner
+    Result (e.g. union / intersect / subtract) and will break silently
+    if you sort in place.
+  - The existing pagination.Cursor is still an offset-only struct; the
+    composite cursor struct promised by US-006 does NOT exist yet.
+    US-005 deliberately does not touch pagination/cursor.go — it only
+    guarantees the ordering so offset cursors keep working.
+  - No foundry_parity runner exists at HEAD; the fixture file is
+    accepted as documentation for now. US-GATE-P6 will own writing the
+    runner and wiring it into `make test-parity`.
+---
+
+## 2026-04-11 - US-006
+- New pkg/oss/pagination/composite_cursor.go defining CompositeCursor
+  {ObjectType, InnerCursor string} with Encode / DecodeCompositeCursor /
+  IsExhausted helpers. JSON payload uses camelCase keys (objectType,
+  innerCursor) so the wire shape lines up with the Foundry SDK spec.
+- Empty input string decodes to a zero-value cursor and is treated as
+  exhausted — matches the "no more pages" convention used by the existing
+  offset Cursor.Encode() (empty string = last page).
+- Invalid base64 or malformed JSON surfaces a sentinel "invalid composite
+  cursor: ..." error without leaking the raw payload to callers.
+- Red test first: composite_cursor_test.go compiled-fail before the
+  implementation file was written. Green after Encode/Decode/IsExhausted
+  landed. 6 test functions, 3 sub-tests in IsExhausted.
+- Full `go test ./...` green (~7 min including Northwind / Chinook
+  integration suites). `go vet ./pkg/oss/pagination/...` clean. `gofmt -l`
+  clean on both new files.
+- Files changed:
+  - pkg/oss/pagination/composite_cursor.go (new)
+  - pkg/oss/pagination/composite_cursor_test.go (new)
+  - scripts/ralph/prd.json (passes: true for US-006)
+- **Learnings for future iterations:**
+  - Wire naming: the CompositeCursor JSON uses "objectType" and
+    "innerCursor" (camelCase) to match the Foundry API shape even though
+    existing internal Cursor uses short keys like "o" for offset. US-007
+    (InterfacePagingHeapMerge) should wrap CompositeCursor in an outer
+    struct that carries a []CompositeCursor slice — probably
+    MultiTypeCursor{SubCursors []CompositeCursor} — and feed exhausted
+    sub-cursors through IsExhausted() to decide drop.
+  - DecodeCompositeCursor("") returns a zero-value cursor, not an error.
+    This lets callers treat the initial request (empty nextPageToken)
+    the same as a fully-exhausted sub-cursor — IsExhausted() == true in
+    both cases, no special casing needed.
+  - base64 URL encoding is used throughout the pagination package (not
+    StdEncoding); stay consistent so nextPageToken values stay URL-safe.
+  - Error wrapping style: sentinel-free fmt.Errorf("invalid ...: %w", err)
+    matches how the legacy Cursor reports DecodeCursor failures. Handlers
+    that translate these to apierror live in pkg/oss/objectset/handler.go
+    and convert via apierror.InvalidParameter.
+  - Pre-existing repo-wide gofmt drift still applies: only lint your own
+    new files, do NOT run `gofmt -w pkg/...` blanket.
+---
+
+## 2026-04-11 - US-007
+- Extended pkg/oss/objectset.Result with PerTypePKs (map[string][]string,
+  sorted ASC per type) and Origins ([]string parallel to PrimaryKeys) so
+  interfaceBase results carry per-row ObjectType + per-type buckets needed
+  by composite-cursor pagination.
+- Rewrote executeInterfaceBase to: (a) load each implementing ObjectType
+  concurrently via sync.WaitGroup + mutex-guarded perType map, (b) sort
+  each bucket ASC before merging, (c) iteratively heap-merge the buckets
+  into a flat globally-sorted PrimaryKeys stream with stable (pk, type)
+  tie-break. Error fan-in keeps the first goroutine error.
+- Added pkg/oss/pagination.MultiTypeCursor wrapping CompositeCursor from
+  US-006. Encode returns "" when SubCursors is empty so the handler can
+  use the empty-string "no more pages" sentinel unchanged.
+  DecodeMultiTypeCursor tolerates empty input (returns zero value) and
+  wraps base64/JSON errors with a "invalid multi-type cursor" prefix.
+- handler_preview.go's loadPreview now routes result.PerTypePKs != nil to
+  a new writePreviewInterfacePage helper that:
+    * decodes MultiTypeCursor into per-type offsets (absent types are
+      treated as exhausted == len(bucket))
+    * performs iterative min-selection heap merge over PerTypePKs
+    * fetches each emitted row from its own ObjectType Bleve index via
+      scopedIndexKey(ctx, h.indexMgr, row.objectType)
+    * stamps per-row $apiName / $rid / $primaryKey
+    * emits a MultiTypeCursor dropping any sub-cursor whose offset hit
+      its bucket length (exhausted sub-streams removed)
+- Red-first TDD: TestInterfacePagingHeapMerge + the exhausted-sub-type
+  variant failed to compile (PerTypePKs undefined), then passed after the
+  executor + cursor + handler changes landed. 3 types x 20 objects paged
+  at pageSize=7 across 9 pages (last = 4 items) with no duplicates.
+- test/foundry_parity/us007_interface_paging.json documents the expected
+  wire shape and error codes. Parity runner still pending (US-GATE-P6).
+- Full `go test ./...` green (~6 min including Northwind/Chinook integration
+  suites). `go vet ./...` clean. `gofmt -l` clean on all four edited files.
+- Files changed:
+  - pkg/oss/objectset/executor.go (sync import, Result fields,
+    rewritten executeInterfaceBase)
+  - pkg/oss/objectset/handler_preview.go (context/sort imports,
+    writePreviewInterfacePage helper, dispatch branch)
+  - pkg/oss/objectset/handler_preview_cursor_test.go (new, 2 tests)
+  - pkg/oss/pagination/composite_cursor.go (MultiTypeCursor + helpers)
+  - test/foundry_parity/us007_interface_paging.json (new)
+  - scripts/ralph/prd.json (passes: true for US-007)
+- **Learnings for future iterations:**
+  - The fakeInterfaceResolver in definition_us028_test.go is reusable
+    across interface tests; it takes a map[string][]string of
+    interfaceName -> implementing ObjectTypes. No need to stand up a
+    fresh mock per story.
+  - scopedIndexKey(ctx, indexMgr, objectType) MUST be called with the
+    per-row concrete ObjectType for polymorphic results, NOT
+    result.ObjectType (which is the interface API name and resolves
+    to no Bleve index). This is the main difference between the
+    interface-aware preview path and the legacy single-type one.
+  - The executor heap merge only does O(pageSize * numTypes) work per
+    iteration by keeping an `active` slice and scanning heads. No
+    container/heap complexity needed because numTypes is small.
+  - MultiTypeCursor drops exhausted sub-cursors on Encode; decoding a
+    cursor with only 1 of 3 original types means the other 2 are at
+    bucket length and must be reconstructed by the handler from
+    result.PerTypePKs. Handlers MUST fill in those implicit offsets
+    or the next-page slice will restart from 0 for dropped types.
+  - The old executeInterfaceBase dedup-by-seen-pk logic is gone —
+    PKs are scoped per ObjectType and collisions are legitimate
+    different-type rows. Tie-break is lexicographic on ObjectType.
+  - Integration with Aggregate is preserved because Result.PrimaryKeys
+    still holds the flat heap-merged list, so bleve.NewDocIDQuery
+    passes the union to the aggregation engine unchanged even though
+    Origins / PerTypePKs are now populated alongside it.
+---
+
+## 2026-04-11 18:30 - US-008
+- Wrote integration test test/integration/interface_paging_test.go
+  (//go:build integration) that boots testcontainers PG, runs migrations,
+  seeds northwind ontology + 3 ObjectTypes + HasOwner interface +
+  object_type_interfaces rows via oms.PGRepository, loads Customer/
+  Employee/Supplier rows from testdata/northwind CSVs into per-type Bleve
+  indexes with a synthetic ("id", "name") projection, then pages the
+  interfaceBase set through loadObjectsOrInterfaces?preview=true at
+  pageSize=7. Asserts ceil(129/7)=19 pages, no dupes, no misses,
+  totalCount="129", totalCountAccuracy="EXACT", and per-type row counts
+  of 91/9/29.
+- Added a pgInterfaceResolver adapter inside the test file (production
+  main.go does not yet wire an InterfaceResolver against PG, so the
+  integration test ships its own shim).
+- Added parity fixture test/foundry_parity/us008_interface_paging.json
+  documenting the wire contract: heap-merge strategy, page geometry,
+  per-type counts, invariants, response shape, error codes.
+- Files changed:
+  - test/integration/interface_paging_test.go (new, ~345 lines)
+  - test/foundry_parity/us008_interface_paging.json (new)
+  - scripts/ralph/prd.json (US-008 passes=true)
+  - scripts/ralph/progress.txt (this entry + Codebase Patterns update)
+- Quality checks: go vet ./... clean; go test ./... all green;
+  go test -tags integration ./test/integration/... -run InterfacePaging
+  passes in ~5s.
+- **Learnings for future iterations:**
+  - testutil.StartPGContainer + RunMigrationsUp is all you need to spin
+    up a real OMS PG backend inside a Go test — ~3s cold start. Run via
+    `go test -tags integration`. Requires Docker.
+  - oms.CreateObjectType only requires RID, OntologyRID, APIName,
+    DisplayName, PrimaryKey (string), Status, Visibility. primary_key_prop
+    is TEXT NOT NULL, NOT an FK to properties — you can pass "id" or any
+    apiName without creating a Property row.
+  - Employee and supplier primary keys both start at "1" in Northwind,
+    so cross-type paging tests MUST key their seen-map on (apiName, pk)
+    composite, or pre-namespace doc IDs with an apiName prefix. The test
+    chose the latter to keep assertions local.
+  - The csv package chokes on the Northwind employees.csv photo blob
+    unless you set reader.LazyQuotes = true AND
+    reader.FieldsPerRecord = -1. Otherwise you'll see "bare quote in
+    non-quoted field" on the photo column.
+  - The handler's interface preview path uses row.objectType (not
+    result.ObjectType) when fetching from Bleve; this is correct because
+    the executor populates Result.PerTypePKs with per-type buckets and
+    Origins with per-row concrete ObjectType. Good sanity check in the
+    integration test is to assert that $apiName on each row matches
+    exactly one of the seeded implementing types.
+  - Final page geometry: for 129 rows / pageSize 7, the handler emits 18
+    full pages + 1 tail of 3 rows, and nextPageToken is omitted on the
+    tail. The test iterates until it sees an empty nextPageToken rather
+    than hard-coding page count so a future pageSize change only needs
+    the expectedPages derivation updated.
+---
+
+## 2026-04-11 - US-009
+- Added pkg/index/mapping_builder.go with BuildMapping(*oms.ObjectType)
+  *mapping.IndexMappingImpl honouring a property's TypeConfig.analyzer hint:
+    * "not_analyzed" → NewKeywordFieldMapping (case-sensitive exact match)
+    * "not_indexed"  → text mapping with Index=false, Store=true
+    * "standard" / unset → NewTextFieldMapping (tokenised, lowercased)
+    * numeric / boolean / date / geopoint base types keep their dedicated
+      Bleve field mapping regardless of the hint.
+- Red-first TDD via pkg/index/mapping_builder_test.go:
+    * TestBuildMappingKeywordVsText uses bleve.NewMemOnly to index two
+      Customer docs (country USA/usa, description "running shoes"/"the
+      runner wins") and asserts a TermQuery on country is case-sensitive
+      while a MatchQuery on description tolerates case and tokenisation.
+    * TestBuildMappingDefaultsToText checks properties without TypeConfig
+      fall back to text mapping (not keyword) for name/price/active.
+    * TestBuildMappingNotAnalyzed confirms Analyzer=="keyword" on a
+      single-field not_analyzed mapping.
+- Files changed:
+    - pkg/index/mapping_builder.go (new, ~100 lines)
+    - pkg/index/mapping_builder_test.go (new, 3 tests)
+    - scripts/ralph/prd.json (US-009 passes=true)
+- Quality: go test ./... green (~9 min including Chinook/Northwind);
+  go vet ./... clean; gofmt -l clean on both new files.
+- **Learnings for future iterations:**
+  - bleve's "standard" analyzer (from
+    bleve/analysis/analyzer/standard) is unicode-tokenise + lowercase +
+    english-stop only — it does NOT stem. Stemming needs the "en"
+    analyzer which chains porter. Our BuildMapping currently relies on
+    bleve's package-level default text analyzer, so a MatchQuery for
+    "run" will NOT hit "running"/"runner" out of the box. US-012 will
+    need to either (a) configure an "en" DefaultAnalyzer on the
+    IndexMapping, (b) introduce a new typeclass hint (e.g. "english"),
+    or (c) weaken the integration assertion to case-insensitive match.
+    I opted for (c) in US-009's own unit tests to stay faithful to the
+    acceptance criteria wording ("TextField(standard analyzer)").
+  - oms.Property.TypeConfig is a json.RawMessage; the analyzer hint
+    lives inside that nested JSON object (key "analyzer"). There is no
+    dedicated Go-side field, so propertyAnalyzer() in mapping_builder.go
+    does a one-off json.Unmarshal into an anonymous struct. Keep this
+    path permissive — any decode error silently falls back to the
+    default text mapping so legacy rows without TypeConfig still work.
+  - pkg/index can safely import pkg/oms — the reverse is not true, and
+    the existing mapping.go predates this import. A follow-up could
+    delete the older index.Property shim in manager.go and have
+    EnsureIndex take *oms.ObjectType directly, but that's a broader
+    refactor and not in scope for US-009.
+  - bleve.NewMemOnly is the right tool for mapping-level unit tests;
+    no tempdir required and it tears down with idx.Close(). Chained
+    SetField() is needed on TermQuery/MatchQuery when the IndexMapping
+    has no default-field-all setting, otherwise all fields are
+    searched and the test misses the point.
+  - Pre-existing Codebase Patterns note about gofmt drift still
+    applies — only lint files you edited, do NOT blanket-reformat.
+---
+
+## 2026-04-11 - US-010 Bleve mapping_builder not_indexed support
+- Added the red-first acceptance test `TestBuildMappingNotIndexed` in
+  `pkg/index/mapping_builder_test.go`: seeds a Patent ObjectType with
+  abstract.analyzer="not_indexed", indexes a doc, asserts
+    (a) the abstract FieldMapping has Index=false + Store=true,
+    (b) both MatchQuery and TermQuery field-scoped searches on
+        abstract return total=0,
+    (c) a side-channel lookup via the indexed `id` field still
+        retrieves the stored abstract through Hit.Fields projection.
+- Extended `index.Property` with an `Analyzer string` field so the
+  Consumer / rehydrate bootstrap path can carry the Foundry typeclass
+  hint into the Bleve mapping. Backwards-compatible: empty string keeps
+  existing behaviour for funnel_test.go, links/*, and other callers.
+- Refactored `mapping_builder.go` so `buildFieldMapping(oms.Property)`
+  delegates to a new `fieldMappingFor(analyzer, baseType, isSearchable)`
+  primitive. `Manager.buildMapping` in `manager.go` now also routes
+  through `fieldMappingFor`, which means a single switch is the source
+  of truth for both the admin-time BuildMapping path and the bootstrap
+  EnsureIndex path — they can no longer drift as new analyzer hints
+  land (US-011 index rebuild, US-050 marking-aware fields).
+- Exposed `index.AnalyzerFromTypeConfig(raw []byte) string` as the
+  canonical helper for turning a Property.TypeConfig RawMessage into
+  the analyzer hint string. `rehydrate.go` uses it to populate
+  index.Property.Analyzer during EnsureAllIndexes.
+- Added `TestManager_EnsureIndex_HonoursAnalyzerNotIndexed` in
+  `pkg/index/manager_test.go` (Manager-level) and
+  `TestEnsureAllIndexes_PropagatesAnalyzerNotIndexed` in
+  `pkg/index/rehydrate_test.go` (bootstrap-level) to keep both halves
+  of the path honest. Both drive real bleve.Index instances, not stubs.
+- Files changed:
+    - pkg/index/manager.go (Property gets Analyzer; buildMapping uses
+      fieldMappingFor)
+    - pkg/index/mapping_builder.go (fieldMappingFor + AnalyzerFromTypeConfig)
+    - pkg/index/rehydrate.go (propagates Analyzer via AnalyzerFromTypeConfig)
+    - pkg/index/mapping_builder_test.go (+TestBuildMappingNotIndexed)
+    - pkg/index/manager_test.go (+TestManager_EnsureIndex_HonoursAnalyzerNotIndexed)
+    - pkg/index/rehydrate_test.go (+TestEnsureAllIndexes_PropagatesAnalyzerNotIndexed,
+      +bleve import)
+    - scripts/ralph/prd.json (US-010 passes=true)
+- Quality: `go test ./...` all green (~8.5 min including Chinook +
+  Northwind integration suites); `go vet ./...` clean; gofmt clean on
+  every file I introduced new code into.
+- **Learnings for future iterations:**
+  - `json.RawMessage` is a `[]byte` alias so passing a RawMessage to a
+    `func([]byte)` helper is free — no explicit conversion needed.
+    `AnalyzerFromTypeConfig` leverages this so the rehydrate call site
+    stays one-liner.
+  - `index.Property` is the narrow struct the Manager uses internally;
+    it intentionally does NOT carry the full oms.Property payload.
+    When adding new per-property knobs, extend index.Property with the
+    already-resolved primitive (e.g. Analyzer string) rather than
+    smuggling oms.Property across the boundary. Otherwise the funnel
+    test helpers and links/* tests all need to grow imports into oms.
+  - Bleve's `MatchQuery.SetField("abstract")` + `TermQuery.SetField`
+    both rely on the inverted index — when Index=false, both miss
+    regardless of whether the stored value is literally present. The
+    `Hit.Fields[]` projection is the only way to pull a not_indexed
+    value back out, and it requires `SearchRequest.Fields = [...]`.
+    Useful pattern for any future "hide from search, keep in payload"
+    property (PII, attachments, long prose).
+  - Two mapping paths existed before US-010: BuildMapping (new, for
+    admin/HTTP) and Manager.buildMapping (old, for bootstrap). Don't
+    let them diverge again — `fieldMappingFor` is the shared floor
+    and any new analyzer hint (future US-050 marking filters, US-012
+    stemming tweaks) should land there first.
+---
+
+## 2026-04-11 - US-011 - weave index rebuild command
+
+- Added `pkg/index/rebuild.go` exposing `Rebuild(ctx, mgr, repo, src, req)`.
+  Narrow `RebuildRepo` interface (GetOntology/GetObjectTypeByAPIName/
+  ListProperties) + `LatestDocumentSource` so callers can plug Parquet or
+  PG as the post-edit state provider without wiring a full oms.Repository.
+- `pkg/oms/PGRepository.LoadLatestObjectStates(ctx, objectTypeRID)` uses
+  `SELECT DISTINCT ON (primary_key) ... ORDER BY primary_key, version DESC`
+  to collapse the object_history tail to one row per primary key, then
+  drops DELETE tombstones so a rebuild never resurrects deleted objects.
+  Integration test under `pkg/oms/latest_states_test.go`.
+- HTTP handler `cmd/server/admin_index.go` mounts
+  `POST /api/admin/indexes/rebuild` inside the auth-protected group with
+  `auth.RequirePermission(auth.PermUserManage)`. Returns JSON
+  `{scopedKey, indexedCount}` on success, 400/404/500 on classification.
+  Not-configured (no IndexMgr/Repo) returns 503 so degraded mode doesn't
+  masquerade as admin permission error.
+- `cmd/server/index_doc_source.go` adapts `*oms.PGRepository` into
+  `index.LatestDocumentSource`; wired via new `deps.IndexDocSource` field
+  kept alongside the cached OmsRepo. The rebuild path deliberately
+  bypasses the cache decorator so it always observes the authoritative
+  tail.
+- `internal/cliclient.Client.RebuildIndex` + `cmd/weave-cli admin index
+  rebuild --ontology X --object-type Y`. `cmd_admin_test.go` exercises
+  the flag parsing + POST round-trip via a recording stub server and
+  confirms stdout reports the indexedCount.
+- OpenAPI spec extended: new `Admin` tag, `/api/admin/indexes/rebuild`
+  path, `AdminIndexRebuildRequest` / `AdminIndexRebuildResponse` schemas.
+  `cmd/server/openapi_spec.yaml` re-synced to keep
+  `TestContract_EmbeddedSpecMatchesCanonical` green.
+
+### Files changed
+- pkg/index/rebuild.go, pkg/index/rebuild_test.go (new)
+- pkg/oms/object_history.go (LatestObjectState struct)
+- pkg/oms/pg_repository.go (LoadLatestObjectStates)
+- pkg/oms/latest_states_test.go (new, integration)
+- cmd/server/admin_index.go, cmd/server/admin_index_test.go (new)
+- cmd/server/index_doc_source.go (new)
+- cmd/server/main.go (deps.IndexDocSource, POST /api/admin/indexes/rebuild route)
+- cmd/weave-cli/main.go (admin dispatch)
+- cmd/weave-cli/cmd_admin.go, cmd/weave-cli/cmd_admin_test.go (new)
+- internal/cliclient/client.go (RebuildIndex)
+- api/openapi.yaml, cmd/server/openapi_spec.yaml (Admin tag + path + schemas)
+
+### Learnings for future iterations:
+- The `TestContract_AllRoutesDocumented` + `TestContract_EmbeddedSpecMatchesCanonical`
+  pair is a hard gate on ANY new route: register a chi path → must add an
+  openapi.yaml path entry → must `cp api/openapi.yaml
+  cmd/server/openapi_spec.yaml`. The second step is easy to forget and the
+  test failure surfaces as "embedded spec drifted".
+- `oms.Repository` has 50+ methods and 11 mock implementations in the
+  codebase. For new functionality that only needs a 2–3 method slice
+  (GetOntology/GetObjectTypeByAPIName/ListProperties here), define a
+  narrow local interface in the consuming package the same way
+  `pkg/index/rehydrate.go` does with `rehydrateRepo`. That keeps the
+  mock surface from expanding and frees the Repository interface from
+  single-caller methods.
+- The cached OMS repo decorator (`oms.NewCachedRepository`) wraps
+  *PGRepository and hides any PG-only methods. If a feature needs a
+  concrete PG-only method (here: `LoadLatestObjectStates`), main.go must
+  stash the raw `*oms.PGRepository` handle at construction time and
+  pass it through a separate typed dep — don't try to unwrap the
+  cached repo later.
+- PostgreSQL `SELECT DISTINCT ON (col1) ... ORDER BY col1, col2 DESC`
+  is the idiomatic way to collapse a history table to the newest row per
+  key. Remember the ORDER BY must start with the same column as DISTINCT
+  ON or Postgres rejects the query.
+- HTTP handler "not configured" (503) vs. "permission denied" (403) is a
+  semantic distinction that matters for operators. A degraded-mode
+  server with no PG pool should return 503 from admin endpoints, NOT
+  401/403 — the caller is authorised, the feature is just disabled.
+- The existing cmd/server package test harness uses stub types via the
+  contract tests `contractOmsRepo{oms.Repository}` pattern (embedding +
+  panic-on-use). For unit-testing specific handlers, prefer small
+  hand-written stubs satisfying the narrow interface — embedding drags
+  in the full 50-method surface and makes test failures harder to read.
+---

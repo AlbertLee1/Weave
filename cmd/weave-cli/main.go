@@ -36,6 +36,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runAuth(rest, stdout, stderr)
 	case "config":
 		return runConfig(rest, stdout, stderr)
+	case "admin":
+		return runAdmin(rest, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "weave: unknown command %q\n\n", cmd)
 		printRootUsage(stderr)
@@ -54,6 +56,7 @@ Commands:
   object     Retrieve objects (list, get, search)
   auth       Authenticate against the server (login, logout, status)
   config     Read and write the local config file (~/.config/weave/config.toml)
+  admin      Server administration (index rebuild, ...)
 
 Run "weave <command> --help" for command-specific help.`)
 }
