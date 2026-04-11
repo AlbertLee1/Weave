@@ -9,10 +9,19 @@ import (
 )
 
 // computeMetrics computes aggregation metrics from search results.
-// It scans all matching documents to compute min, max, sum, avg, count,
-// standardDeviation, variance, and approximatePercentile.
-func computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationSpec) ([]MetricValue, error) {
+// It scans matching documents to compute min, max, sum, avg, count,
+// standardDeviation, variance, and approximatePercentile. The second
+// return value is true when any numeric scan was truncated because the
+// match total exceeded the engine's MaxDocScanSize — the caller uses it
+// to mark the top-level response as APPROXIMATE.
+func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationSpec) ([]MetricValue, bool, error) {
 	metrics := make([]MetricValue, 0, len(specs))
+	truncated := false
+
+	scanSize := e.MaxDocScanSize
+	if scanSize <= 0 {
+		scanSize = 10000
+	}
 
 	for _, spec := range specs {
 		name := spec.Name
@@ -29,35 +38,44 @@ func computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationS
 			searchReq.Size = 0
 			result, err := idx.Search(searchReq)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: result.Total})
 
 		case "min", "max", "sum", "avg":
-			val, err := computeNumericAgg(idx, baseQuery, spec.Field, spec.Type)
+			val, t, err := computeNumericAgg(idx, baseQuery, spec.Field, spec.Type, scanSize)
 			if err != nil {
-				return nil, err
+				return nil, false, err
+			}
+			if t {
+				truncated = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "approximateDistinct":
 			val, err := computeDistinct(idx, baseQuery, spec.Field)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "standardDeviation":
-			val, err := computeStdDevOrVariance(idx, baseQuery, spec.Field, true)
+			val, t, err := computeStdDevOrVariance(idx, baseQuery, spec.Field, true, scanSize)
 			if err != nil {
-				return nil, err
+				return nil, false, err
+			}
+			if t {
+				truncated = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "variance":
-			val, err := computeStdDevOrVariance(idx, baseQuery, spec.Field, false)
+			val, t, err := computeStdDevOrVariance(idx, baseQuery, spec.Field, false, scanSize)
 			if err != nil {
-				return nil, err
+				return nil, false, err
+			}
+			if t {
+				truncated = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
@@ -66,31 +84,37 @@ func computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationS
 			if spec.Percentile != nil {
 				percentile = *spec.Percentile
 			}
-			val, err := computePercentile(idx, baseQuery, spec.Field, percentile)
+			val, t, err := computePercentile(idx, baseQuery, spec.Field, percentile, scanSize)
 			if err != nil {
-				return nil, err
+				return nil, false, err
+			}
+			if t {
+				truncated = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 		}
 	}
 
-	return metrics, nil
+	return metrics, truncated, nil
 }
 
-// computeNumericAgg iterates all matching documents and computes a numeric aggregate.
-func computeNumericAgg(idx bleve.Index, query query.Query, field string, aggType string) (interface{}, error) {
-	// Search for all documents, requesting the field value.
+// computeNumericAgg iterates matching documents and computes a numeric aggregate.
+// It returns (value, truncated, error) where truncated is true when the match
+// total exceeds scanSize.
+func computeNumericAgg(idx bleve.Index, query query.Query, field string, aggType string, scanSize int) (interface{}, bool, error) {
 	searchReq := bleve.NewSearchRequest(query)
-	searchReq.Size = 10000 // reasonable limit
+	searchReq.Size = scanSize
 	searchReq.Fields = []string{field}
 
 	result, err := idx.Search(searchReq)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	truncated := result.Total > uint64(len(result.Hits))
+
 	if len(result.Hits) == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
 
 	var minVal, maxVal, sum float64
@@ -118,20 +142,20 @@ func computeNumericAgg(idx bleve.Index, query query.Query, field string, aggType
 	}
 
 	if count == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
 
 	switch aggType {
 	case "min":
-		return minVal, nil
+		return minVal, truncated, nil
 	case "max":
-		return maxVal, nil
+		return maxVal, truncated, nil
 	case "sum":
-		return sum, nil
+		return sum, truncated, nil
 	case "avg":
-		return sum / float64(count), nil
+		return sum / float64(count), truncated, nil
 	}
-	return nil, nil
+	return nil, truncated, nil
 }
 
 // computeDistinct counts approximate distinct values for a field.
@@ -159,21 +183,23 @@ func computeDistinct(idx bleve.Index, query query.Query, field string) (int, err
 
 // computeStdDevOrVariance computes the standard deviation or variance of a numeric field.
 // If isSqrt is true, returns the standard deviation; otherwise returns the variance.
-func computeStdDevOrVariance(idx bleve.Index, q query.Query, field string, isSqrt bool) (interface{}, error) {
+// Returns (value, truncated, error).
+func computeStdDevOrVariance(idx bleve.Index, q query.Query, field string, isSqrt bool, scanSize int) (interface{}, bool, error) {
 	searchReq := bleve.NewSearchRequest(q)
-	searchReq.Size = 10000
+	searchReq.Size = scanSize
 	searchReq.Fields = []string{field}
 
 	result, err := idx.Search(searchReq)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+
+	truncated := result.Total > uint64(len(result.Hits))
 
 	if len(result.Hits) == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
 
-	// Collect all numeric values and compute mean.
 	var values []float64
 	for _, hit := range result.Hits {
 		val, ok := hit.Fields[field]
@@ -188,17 +214,15 @@ func computeStdDevOrVariance(idx bleve.Index, q query.Query, field string, isSqr
 	}
 
 	if len(values) == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
 
-	// Compute mean.
 	sum := 0.0
 	for _, v := range values {
 		sum += v
 	}
 	mean := sum / float64(len(values))
 
-	// Compute variance (population variance).
 	sumSqDiff := 0.0
 	for _, v := range values {
 		diff := v - mean
@@ -207,25 +231,27 @@ func computeStdDevOrVariance(idx bleve.Index, q query.Query, field string, isSqr
 	variance := sumSqDiff / float64(len(values))
 
 	if isSqrt {
-		return math.Sqrt(variance), nil
+		return math.Sqrt(variance), truncated, nil
 	}
-	return variance, nil
+	return variance, truncated, nil
 }
 
 // computePercentile computes the approximate percentile of a numeric field.
-// percentile is in the range [0, 100].
-func computePercentile(idx bleve.Index, q query.Query, field string, percentile float64) (interface{}, error) {
+// percentile is in the range [0, 100]. Returns (value, truncated, error).
+func computePercentile(idx bleve.Index, q query.Query, field string, percentile float64, scanSize int) (interface{}, bool, error) {
 	searchReq := bleve.NewSearchRequest(q)
-	searchReq.Size = 10000
+	searchReq.Size = scanSize
 	searchReq.Fields = []string{field}
 
 	result, err := idx.Search(searchReq)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	truncated := result.Total > uint64(len(result.Hits))
+
 	if len(result.Hits) == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
 
 	var values []float64
@@ -242,12 +268,11 @@ func computePercentile(idx bleve.Index, q query.Query, field string, percentile 
 	}
 
 	if len(values) == 0 {
-		return nil, nil
+		return nil, truncated, nil
 	}
 
 	sort.Float64s(values)
 
-	// Compute index using nearest-rank method.
 	rank := percentile / 100.0 * float64(len(values))
 	idx2 := int(math.Ceil(rank)) - 1
 	if idx2 < 0 {
@@ -257,5 +282,5 @@ func computePercentile(idx bleve.Index, q query.Query, field string, percentile 
 		idx2 = len(values) - 1
 	}
 
-	return values[idx2], nil
+	return values[idx2], truncated, nil
 }

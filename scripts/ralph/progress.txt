@@ -824,3 +824,48 @@ new features — only run verification suites and commit the gate.
     that matches their numeric order because they share the same
     width prefix formatting.
 ---
+
+## 2026-04-11 - US-014
+- Aggregation engine now propagates a truncation flag through all numeric scan
+  paths (min/max/sum/avg/standardDeviation/variance/approximatePercentile) so
+  the top-level AggregationResponse.accuracy marker flips to "APPROXIMATE"
+  whenever a single-shot Bleve search returned fewer hits than the total
+  match count.
+- computeMetrics was promoted to a method on *Engine (e.computeMetrics) so it
+  can read e.MaxDocScanSize instead of the hard-coded 10000. Each numeric
+  helper (computeNumericAgg / computeStdDevOrVariance / computePercentile)
+  now takes scanSize explicitly and returns (value, truncated, error).
+- aggregateSimple (no-groupBy path) and recursiveGroupBy leaf level both
+  accumulate the truncation flag into the response. Dead groupByXxx paths
+  preserve the old semantics by explicitly discarding the new truncated
+  return with `_`.
+- count aggregation still uses searchReq.Size = 0 + result.Total, so a
+  count-only query does not trip the scan ceiling — matches Palantir
+  behaviour where counts are exact regardless of scan limits.
+- Files changed:
+  - pkg/oss/aggregation/bleve_agg.go (computeMetrics -> method on *Engine,
+    numeric helpers return truncated flag, use scanSize from engine)
+  - pkg/oss/aggregation/engine.go (aggregateSimple + recursiveGroupBy leaf
+    propagate truncated; 5 dead groupByXxx sites updated to new signature)
+  - pkg/oss/aggregation/accuracy_test.go (new, 6 sub-tests covering
+    simple avg / stdev / percentile / groupBy leaf / count-only ACCURATE)
+- **Learnings for future iterations:**
+  - Bleve's searchReq.Size caps the number of hits returned; result.Total
+    is the unbounded match count. `result.Total > uint64(len(result.Hits))`
+    is the canonical truncation test and is already used by findMinMax /
+    duration groupBy — reuse it anywhere you scan docs with a bounded Size.
+  - When making a package-level helper a method on a struct that carries
+    config (e.g. MaxDocScanSize), promoting to a method is the lowest-churn
+    refactor — all call sites just need the `e.` receiver and any new
+    return values surface naturally in the caller.
+  - The `aggregation_test.go` file still contains TestAggregate_FixedWidth_
+    Accuracy_Approximate_WhenTruncated and the two Duration_Accuracy tests
+    that already covered parts of APPROXIMATE behaviour through the
+    findMinMax / duration-search code paths. The new TestAggregationAccuracy
+    Marker closes the gap on the simple path and the leaf-level metric
+    scans that were previously hard-coded to 10000.
+  - count metric is deliberately exempt from scan-size accuracy logic —
+    Palantir's semantics treat count as exact because it comes from the
+    facet/total counter, not a hit scan. Do not conflate the two when
+    extending this code later (e.g. adding distinct with sampling).
+---

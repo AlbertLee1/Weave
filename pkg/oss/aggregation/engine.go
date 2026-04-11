@@ -117,16 +117,20 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 
 // aggregateSimple performs aggregation without groupBy.
 func (e *Engine) aggregateSimple(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
-	metrics, err := computeMetrics(idx, baseQuery, req.Aggregations)
+	metrics, truncated, err := e.computeMetrics(idx, baseQuery, req.Aggregations)
 	if err != nil {
 		return nil, fmt.Errorf("compute metrics: %w", err)
 	}
 
-	return &AggregationResponse{
+	resp := &AggregationResponse{
 		Data: []AggregationRow{
 			{Metrics: metrics},
 		},
-	}, nil
+	}
+	if truncated {
+		resp.Accuracy = "APPROXIMATE"
+	}
+	return resp, nil
 }
 
 // groupEntry pairs a group key value with its scoped Bleve query.
@@ -210,9 +214,12 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 			}
 		} else {
 			// Leaf level — compute metrics
-			metrics, err := computeMetrics(idx, entry.scopeQuery, specs)
+			metrics, leafTrunc, err := e.computeMetrics(idx, entry.scopeQuery, specs)
 			if err != nil {
 				return nil, false, fmt.Errorf("compute metrics for group %v: %w", entry.value, err)
+			}
+			if leafTrunc {
+				truncated = true
 			}
 			rows = append(rows, AggregationRow{
 				Group:   map[string]interface{}{gb.Field: entry.value},
@@ -549,7 +556,7 @@ func (e *Engine) groupByExact(idx bleve.Index, baseQuery query.Query, gb GroupBy
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
 
-		metrics, err := computeMetrics(idx, scopedQuery, specs)
+		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for group %q: %w", term.Term, err)
 		}
@@ -619,7 +626,7 @@ func (e *Engine) groupByFixedWidth(idx bleve.Index, baseQuery query.Query, gb Gr
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, rangeQuery)
 
-		metrics, err := computeMetrics(idx, scopedQuery, specs)
+		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for range %s: %w", nr.Name, err)
 		}
@@ -689,7 +696,7 @@ func (e *Engine) groupByRanges(idx bleve.Index, baseQuery query.Query, gb GroupB
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, rangeQuery)
 
-		metrics, err := computeMetrics(idx, scopedQuery, specs)
+		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for range %s: %w", nr.Name, err)
 		}
@@ -814,7 +821,7 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		docIDQ := bleve.NewDocIDQuery(docIDs)
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, docIDQ)
 
-		metrics, err := computeMetrics(idx, scopedQuery, specs)
+		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for duration bucket: %w", err)
 		}
@@ -870,7 +877,7 @@ func (e *Engine) groupByTopValues(idx bleve.Index, baseQuery query.Query, gb Gro
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
 
-		metrics, err := computeMetrics(idx, scopedQuery, specs)
+		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for topValues group %q: %w", term.Term, err)
 		}
