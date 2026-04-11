@@ -482,7 +482,7 @@
         "Runs in under 30s on local box"
       ],
       "priority": 30,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

@@ -127,6 +127,26 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   a null bucket when len(terms) == 0 — that would wrap every doc in
   a single null bucket when grouping by a non-existent field and
   break TestAggregate_GroupByExact_NoResults.
+- Local dev postgres must be `pgvector/pgvector:pg16` (not
+  `postgres:16-alpine`) — migration 000011 runs
+  `CREATE EXTENSION vector` and silently dirties schema_migrations on
+  the alpine image. Testcontainers already uses the pgvector image;
+  docker-compose.yml was fixed in US-030 to match. Any future
+  migration that needs an extension must be verified against BOTH
+  paths.
+- `scripts/e2e-setup.sh` nohups `bin/weave` in a bare env, so
+  `PG_DSN / NATS_URL / AUTH_MODE` need to be explicitly exported near
+  the top of the script (not just in the parent shell). Missing
+  exports silently bring weave up in degraded mode (no PG pool, which
+  makes the admin rebuild endpoint return
+  `IndexRebuildNotConfigured`).
+- Playwright E2E seed lives at `test/fixtures/seed_northwind/` as a Go
+  library + thin CLI wrapper. Since the Admin CRUD API was removed in
+  v1 US-006, new seed/demo scripts must write directly through
+  `oms.PGRepository` (+ `auth.PGUserRepository` for users) and then
+  call `POST /api/admin/indexes/rebuild` to hydrate Bleve.
+  `link_types.cardinality` only allows `ONE_TO_ONE / ONE_TO_MANY /
+  MANY_TO_MANY` — `MANY_TO_ONE` breaks the CHECK constraint.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -1649,4 +1669,130 @@ new features — only run verification suites and commit the gate.
   - Acceptance criterion "shellcheck passes" was tested by careful
     review only on this box (no shellcheck binary). Future CI should
     wire shellcheck into lint — flagging this for the CI gate story.
+---
+
+## 2026-04-12 - US-030
+- Added `test/fixtures/seed_northwind/` Go package: reusable `Seed()`
+  library that wipe-and-reseeds the Northwind ontology directly via
+  `oms.PGRepository` + `auth.PGUserRepository` (the Admin HTTP CRUD was
+  removed in v1 US-006, so direct PG is the only shape available).
+  Deterministic stable RIDs make reruns idempotent. Creates 3 object
+  types (customer/order/product) with 4 properties each, 2 link types,
+  ~15 seed rows and the three baseline users admin@test / manager@test /
+  peer@test (password `test1234`) with admin / editor / viewer roles.
+- Added `test/fixtures/seed_northwind/cmd/main.go` CLI wrapper: opens PG
+  via `PG_DSN`, delegates to `seed_northwind.Seed()`, then fans out
+  `POST /api/admin/indexes/rebuild` calls against `WEAVE_URL` so Bleve
+  picks up the freshly-written object_history rows. Dev-mode auth means
+  no token is needed; jwt-mode callers can export `WEAVE_ADMIN_TOKEN` to
+  carry a Bearer header.
+- Added `test/fixtures/e2e_seed.sh` shell wrapper that builds + runs the
+  CLI, plus `make e2e-seed` target, and wired it into
+  `scripts/e2e-setup.sh` so `make e2e-up` leaves the stack on a known
+  Playwright baseline automatically.
+- Fixed `docker-compose.yml` to use `pgvector/pgvector:pg16` instead of
+  `postgres:16-alpine` so migration 000011_object_embeddings (which runs
+  `CREATE EXTENSION vector`) can apply cleanly — this was silently
+  leaving the dev DB dirty at migration 11 for weeks because the server
+  downgrades migration errors to `log.Printf("warning: ...")` on
+  startup. The testcontainers harness already uses this image, so this
+  brings local dev in lockstep with `go test -tags integration`.
+- Fixed `scripts/e2e-setup.sh` to `export PG_DSN / NATS_URL / AUTH_MODE`
+  before launching `bin/weave`. Previously the server was coming up in
+  degraded mode (no PG pool) because the nohup'd binary inherited an
+  empty environment and `deps.PGPool` stayed nil — which is what
+  initially made the admin rebuild endpoint respond
+  `IndexRebuildNotConfigured` when the seed CLI hit it.
+- Integration test `test/fixtures/seed_northwind/seed_test.go` (build
+  tag `integration`) spins up a fresh PG via testcontainers, runs
+  `Seed()` twice, and asserts:
+    * ontology apiName is "northwind" with a non-empty stable RID,
+    * every returned object type carries ≥1 history row after the first
+      pass,
+    * all three users exist with password hashes + global role grants,
+    * the second pass converges to the same object_type row count AND
+      the same per-type history counts (true wipe-and-reseed, not
+      append),
+    * `oms.PGRepository.GetObjectTypeByAPIName` returns non-empty
+      `Properties` slices after the second pass (the exact call chain
+      the index rebuild endpoint uses).
+- Documented the full seeder surface in `web/e2e/README.md` (baseline
+  rows, test user credentials, `make e2e-seed` entry point, env var
+  overrides).
+- Smoke test on a live local stack:
+    1. `./scripts/e2e-teardown.sh` + `docker volume rm weave_pgdata`
+       (clean slate — old volume was dirty at migration 11).
+    2. `./scripts/e2e-setup.sh` — cold start → weave healthy → vite
+       healthy → seed writes 15 history rows → rebuild 3 indexes
+       (5/6/4 docs, ~900ms total).
+    3. `curl /api/v2/ontologies/northwind/objectSets/loadObjects` with
+       `{objectType:"customer", select:[companyName,country]}` returned
+       all 5 seeded customers — end-to-end Bleve → wire path is green.
+    4. `./scripts/e2e-setup.sh` warm rerun — stack reused, seed
+       wipe-and-reseeded cleanly (same counts, same object type row
+       count).
+- Quality: `go test ./...` green; `go vet ./...` clean;
+  `gofmt -l test/fixtures/seed_northwind/ scripts/` clean;
+  `go test -tags integration -run TestSeed_IdempotentAndComplete
+  ./test/fixtures/seed_northwind/...` green in ~3s including container
+  start.
+- Files changed:
+  - test/fixtures/seed_northwind/seed.go (new)
+  - test/fixtures/seed_northwind/schemas.go (new)
+  - test/fixtures/seed_northwind/seed_test.go (new, //go:build integration)
+  - test/fixtures/seed_northwind/cmd/main.go (new)
+  - test/fixtures/e2e_seed.sh (new, executable)
+  - scripts/e2e-setup.sh (export PG env vars + call e2e_seed.sh)
+  - Makefile (add e2e-seed target + .PHONY)
+  - docker-compose.yml (use pgvector/pgvector:pg16)
+  - web/e2e/README.md (document seed baseline + credentials)
+- **Learnings for future iterations:**
+  - `log.Printf("warning: migration failed: %v", err)` in
+    `cmd/server/main.go` is a silent trap — it lets the server come up
+    with schema_migrations dirty or behind, and downstream features
+    like `is_edit_only` (migration 000019) then fail at insert time
+    with cryptic 42703 errors. Any migration that adds a required
+    extension (pgvector, postgis, …) should either hard-fail startup
+    or at minimum log to `slog.Error` so it shows up in the JSON log
+    stream — the bare `log.Printf` path is easy to miss.
+  - Local dev docker-compose MUST stay in lockstep with
+    `internal/testutil/pgcontainer.go`. Testcontainers uses
+    `pgvector/pgvector:pg16` and `pg_isready` wait strategy; dev
+    compose was still on `postgres:16-alpine` which has no pgvector.
+    This is the second time this has bitten me (first was the server
+    just not running migration 11 at all). Anyone touching
+    postgres-scoped migrations should grep both paths.
+  - `scripts/e2e-setup.sh` uses `nohup ./bin/weave &` which runs the
+    binary in a bare env — exports in the parent shell are NOT
+    inherited unless they are explicitly re-exported inside the
+    script. The fix is a small `export PG_DSN=...` block near the
+    top. Flagging this because any future "why does weave come up in
+    degraded mode under e2e-up but not under `make run`" question
+    lands here.
+  - Admin CRUD for ontologies / object types was removed in v1
+    US-006. The ONLY way to add seed ontologies outside of the Go
+    code path is `oms.PGRepository` direct writes (or restoring the
+    admin routes, which is out of scope). Future seed/demo scripts
+    should follow the `seed_northwind` pattern: a Go library + thin
+    CLI that talks to PG directly, then calls
+    `/api/admin/indexes/rebuild` to hydrate Bleve.
+  - `link_types.cardinality` CHECK constraint only allows
+    `ONE_TO_ONE / ONE_TO_MANY / MANY_TO_MANY` — `MANY_TO_ONE` is NOT
+    valid and silently violates the constraint with a 23514
+    error at insert time. The integration test was essential for
+    catching this because unit tests against the in-memory repo
+    don't enforce the CHECK.
+  - `pkg/index/rebuild.Rebuild` pulls documents via the
+    `LatestDocumentSource`, which in production is
+    `pgIndexDocSource` reading from object_history. Any seed script
+    that writes directly to PG MUST insert object_history rows with
+    `edit_type='CREATE'` and a non-nil `new_state` — the
+    `LoadLatestObjectStates` helper filters out DELETE tombstones
+    upstream.
+  - `oms.PGRepository.InsertObjectHistory` needs explicit
+    `Version` + `EditType` + `Source` to satisfy the NOT NULL +
+    CHECK columns. Setting `Source = oms.EditSourceUser` matches
+    what the production action executor writes, so queries that
+    resolve conflicts via the US-021 user-edit-wins rule see the
+    seed rows as authoritative user state.
 ---

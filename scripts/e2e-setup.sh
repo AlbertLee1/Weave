@@ -30,6 +30,13 @@ VITE_LOG="$LOG_DIR/vite.log"
 WEAVE_HEALTH_URL="http://localhost:9117/health"
 VITE_URL="http://localhost:5173"
 
+# Environment defaults — weave reads PG_DSN / NATS_URL at startup, so the
+# server we nohup below inherits these from the current shell. Dev auth
+# mode means every request is already admin; no bootstrap token needed.
+export PG_DSN="${PG_DSN:-postgres://weave:weave@localhost:5432/weave?sslmode=disable}"
+export NATS_URL="${NATS_URL:-nats://localhost:4222}"
+export AUTH_MODE="${AUTH_MODE:-dev}"
+
 log()  { printf '[e2e-setup] %s\n' "$*"; }
 warn() { printf '[e2e-setup] WARN: %s\n' "$*" >&2; }
 fail() { printf '[e2e-setup] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -122,11 +129,21 @@ else
   log "Vite dev server ready (pid=$(read_pid "$VITE_PID_FILE"))"
 fi
 
+# ── 5. Playwright seed data (US-030) ────────────────────────────────
+# Runs AFTER the API server is healthy — the seeder wipes + recreates
+# the Northwind ontology in Postgres and then calls the live server's
+# /api/admin/indexes/rebuild endpoint so Bleve reflects the fresh rows.
+# Any non-zero exit aborts the setup.
+log "Seeding Playwright baseline data (Northwind + test users)..."
+WEAVE_URL="http://localhost:9117" PG_DSN="${PG_DSN:-postgres://weave:weave@localhost:5432/weave?sslmode=disable}" \
+  "$ROOT/test/fixtures/e2e_seed.sh"
+
 cat <<EOF
 [e2e-setup] Stack is up.
     API    http://localhost:9117
     Web    http://localhost:5173
     Logs   $LOG_DIR/{weave,vite}.log
 Run tests:   (cd web && npm run test:e2e)
+Reseed:      make e2e-seed
 Stop stack:  scripts/e2e-teardown.sh   (or: make e2e-down)
 EOF

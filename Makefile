@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down
+.PHONY: test test-unit test-integration test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed
 
 test: test-unit
 
@@ -65,6 +65,9 @@ e2e-up: ## Bring up the full stack for Playwright E2E (idempotent)
 
 e2e-down: ## Stop the Playwright E2E stack (idempotent)
 	@./scripts/e2e-teardown.sh
+
+e2e-seed: ## Wipe + reseed Northwind + test users for Playwright
+	@./test/fixtures/e2e_seed.sh
 
 build-with-ui: web-build build
 

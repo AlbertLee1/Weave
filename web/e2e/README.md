@@ -53,11 +53,41 @@ Both directories are gitignored.
 
 ## Test data
 
-Specs under US-028 create their own ontology + ObjectType fixtures via the
-admin API in `beforeAll` and only exercise front-end rendering contracts
-(no indexed documents required). US-030 will add
-`test/fixtures/e2e_seed.sh` to reset the stack to a known Northwind +
-Chinook + test-user baseline before each gate run.
+`scripts/e2e-setup.sh` automatically runs `test/fixtures/e2e_seed.sh`
+after the API server is healthy, so a fresh `make e2e-up` always leaves
+the stack on the same deterministic baseline:
+
+- **Ontology**: `northwind` (3 ObjectTypes — `customer`, `order`,
+  `product` — with 2 link types and ~15 seed rows driven into Bleve via
+  `/api/admin/indexes/rebuild`).
+- **Users**: `admin@test` / `manager@test` / `peer@test`, password
+  `test1234`, with global `admin` / `editor` / `viewer` roles
+  respectively. Use these for JWT-mode login specs once Phase 7 wires
+  the full auth flow.
+
+The seeder is wipe-and-reseed (idempotent) and runs in under a few
+seconds on a local box. Reseed mid-session with:
+
+```bash
+make e2e-seed
+```
+
+To point the seeder at a non-default backend override `PG_DSN` and
+`WEAVE_URL`:
+
+```bash
+PG_DSN=postgres://... WEAVE_URL=http://host:9117 make e2e-seed
+```
+
+The seeder library + CLI live under `test/fixtures/seed_northwind/`
+(`seed.go`, `schemas.go`, `cmd/main.go`). The library function
+`seed_northwind.Seed(ctx, pool, opts)` is reusable from Go tests; see
+`test/fixtures/seed_northwind/seed_test.go` for the integration-tagged
+end-to-end coverage.
+
+Individual specs that need extra fixtures on top of the baseline may
+still create ad-hoc ontology / ObjectType rows via helpers in
+`helpers.ts`.
 
 ## Writing new specs
 
