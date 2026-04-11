@@ -115,6 +115,9 @@
 - Phase 4 storage packages (timeseries) pattern: ship both MemoryStore (default single-machine backend + test harness) and PGStore (migration-backed, wired when deps.PGPool != nil). main.go selects based on PGPool presence. Tests use MemoryStore to keep `go test ./...` offline.
 - Foundry TimeSeriesProperty streamPoints endpoint accepts optional ?format=JSON|ARROW. Our single-machine scope only emits JSON — ARROW returns 400 UnsupportedFormat (the endpoint is still callable so Foundry clients that default to JSON work unchanged).
 - pkg/cipher.Decryptor is the swap point for CipherTextProperty decryption. Default AESGCMDecryptor uses envelope encryption with wire format "v1:<base64url(nonce||sealed)>". Swapping in a KMS-backed implementation only requires providing another Decryptor via SetCipherDecryptor — no handler changes. WEAVE_CIPHER_KEY env var (32+ bytes) enables the default at boot; unset = degraded mode with CipherDecryptorNotConfigured 500.
+- Optional backend pattern for new Foundry endpoints: when the backend can legitimately be absent (no PG in dev/test), mount the handler UNCONDITIONALLY in NewFullRouter with a possibly-nil engine and return "XxxNotConfigured" 500 from the handler itself. Keeps the route in the OpenAPI contract tests without needing the contract test router to know about every optional dep. See pkg/sqlqueries.NewHandler(nil) vs pkg/transactions which always has a memory store.
+- OpenAPI schema names live in a flat namespace. Before adding a new request/response schema, grep the full openapi_spec.yaml — e.g. "ExecuteQueryRequest" was already used by stored QueryType execute. Prefix new schemas with their resource group (SqlQueryExecuteRequest, TransactionEditRequest) to avoid silent "mapping key already defined" yaml parse failures that only surface when the Contract tests try to load the spec.
+- For read-only SQL execution via pgx: wrap in `BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})`, use `tx.Query` (NOT `tx.Exec` which rejects row-returning statements), drain with `for rows.Next() {}`, then check `rows.Err()`. Defense in depth on top of handler-level SELECT validation.
 
 ---
 
@@ -1166,4 +1169,40 @@
   - New handler packages under pkg/ that need ServerDeps wiring follow the same 4-point checklist every time: (1) ServerDeps field + import, (2) boot init (Phase 2x), (3) NewFullRouter conditional setup, (4) contract_test.go newContractTestRouter injection. Missing (4) fails TestContract_AllRoutesDocumented with "route registered but no spec path" OR TestContract_NoOrphanedSpecPaths with "spec path has no route".
   - Transactions Store Key is `{Ontology, TransactionID}` so the same transactionId in different ontologies is isolated — mirrors how the OSS endpoints scope everything by ontologyApiName. A flat `map[string][]Edit` keyed only by transactionId would silently leak across ontologies in multi-tenant setups; the struct key makes the isolation explicit and test-visible.
   - strconv.Itoa is fine for error payloads; resist the temptation to hand-roll an int→string helper just to avoid one extra import (I started to, then removed it — YAGNI).
+---
+
+## 2026-04-11 - US-042: SqlQueries execute endpoint
+- Shipped pkg/sqlqueries implementing Foundry OSv2 POST /api/v2/sqlQueries/execute — a global, top-level resource (NOT scoped under /ontologies/). Accepts a single-statement SELECT (or WITH ... SELECT) and returns a Foundry QueryStatus union ({type, queryId, errorMessage?, failureReason?}). Weave always resolves to the terminal "succeeded" / "failed" variants because queries run synchronously on the request goroutine; "running" / "canceled" are documented in the OpenAPI spec for SDK compatibility but never emitted.
+- pkg/sqlqueries package:
+  - engine.go — Engine interface (Execute(ctx, query) error), PGEngine (pgxpool-backed, wraps the query in a ReadOnly pgx.TxOptions transaction and drains rows), IsSelectQuery validator + hasKeywordPrefix helper that enforces the SELECT/WITH prefix with a trailing word-boundary check so identifiers like "SELECTOR" cannot slip past.
+  - handlers.go — Handler, RegisterRoutes, Execute; body is {query, fallbackBranchIds?} (fallbackBranchIds parsed for SDK parity but ignored — single-machine build has no branch concept). Validation order: InvalidRequestBody → MissingQuery → NonSelectQuery → SqlQueryEngineNotConfigured → engine.Execute error path. queryId is a 16-byte crypto/rand hex for uniqueness within the process lifetime.
+  - engine_test.go — 15 table-driven cases covering SELECT, lowercase/whitespace, CTE, trailing semicolon ok, empty/whitespace, insert/update/delete/drop/truncate rejected, stacked-statement rejected ("SELECT 1; DROP TABLE users"), and the "SELECTOR" boundary case.
+  - handlers_test.go — 7 HTTP tests using a fakeEngine: succeeded, failed-from-engine-error (ExecutionError failureReason), NonSelect rejected (DROP TABLE users never reaches engine), stacked-statement rejected, missing query, nil-engine degraded mode (SqlQueryEngineNotConfigured 500), fallbackBranchIds-accepted.
+- TDD red→green: wrote tests first, ran `go test ./pkg/sqlqueries/...` which compiled against the new package skeleton; the handler-layer "SELECTOR" boundary case in the original IsSelectQuery draft would have passed `strings.HasPrefix(upper, "SELECT")` incorrectly, so I added hasKeywordPrefix and re-ran until all 22 assertions (15 engine + 7 handler) went green.
+- Wiring:
+  - cmd/server/main.go — new import, new ServerDeps.SqlQueryEngine field, Phase 2g boot init assigns sqlqueries.NewPGEngine(deps.PGPool) when PGPool != nil, NewFullRouter unconditionally mounts sqlqueries.NewHandler(deps.SqlQueryEngine).RegisterRoutes(api) — so the route is always documented and discoverable even in degraded dev/test runs. When the engine is nil the handler returns SqlQueryEngineNotConfigured (500), consistent with the CipherDecryptor degraded pattern.
+  - cmd/server/contract_test.go — no change needed because the handler now mounts unconditionally; the test router inherits nil SqlQueryEngine and the contract-level `TestContract_AllRoutesDocumented` / `TestContract_NoOrphanedSpecPaths` pair passes because the chi route and the spec path line up.
+- OpenAPI: 
+  - Added SqlQueries tag to cmd/server/openapi_spec.yaml.
+  - Added SqlQueryExecuteRequest (renamed from ExecuteQueryRequest to avoid the existing stored-QueryType ExecuteQueryRequest schema collision — mixing them broke the yaml parse: "mapping key ExecuteQueryRequest already defined"). Added QueryStatus schema (union enum covers succeeded|failed|running|canceled for SDK shape even though running/canceled are never emitted).
+  - Added /api/v2/sqlQueries/execute path entry under SqlQueries tag.
+  - cp'd the full spec to api/openapi.yaml for the byte-identical contract check.
+- Files changed:
+  - pkg/sqlqueries/engine.go — NEW
+  - pkg/sqlqueries/engine_test.go — NEW
+  - pkg/sqlqueries/handlers.go — NEW
+  - pkg/sqlqueries/handlers_test.go — NEW
+  - cmd/server/main.go — import + SqlQueryEngine field + Phase 2g boot init + NewFullRouter mount
+  - cmd/server/openapi_spec.yaml — SqlQueries tag + SqlQueryExecuteRequest + QueryStatus schemas + 1 path entry
+  - api/openapi.yaml — byte-identical mirror
+  - prd.json — US-042 passes:true + notes
+  - progress.txt — this entry
+- Tests: `go test ./pkg/sqlqueries/...` 22/22 green; `go test ./cmd/server/... -run Contract` 3/3 green; `go test ./...` full suite green (34 packages).
+- **Learnings for future iterations:**
+  - When adding a new top-level Foundry resource (not nested under {ontologyApiName}), DO NOT clone the transactions wiring conditional — transactions is conditional on a non-nil store because in-memory store is always created in main.go, whereas for sqlqueries the engine genuinely can be nil (no PG). Mounting the handler unconditionally with a nil engine and returning a specific "EngineNotConfigured" error code is the cleaner pattern: it keeps the route documented in the OpenAPI contract test, it makes degraded mode testable in handlers_test.go with `NewHandler(nil)`, and it avoids the contract_test.go test-router having to know about every new optional dependency.
+  - The OpenAPI schema namespace is FLAT — there's already a stored-QueryType ExecuteQueryRequest schema used by /api/v2/ontologies/{o}/queries/{q}/execute. When naming the new sqlQueries request body, I collided on "ExecuteQueryRequest" and the yaml parser blew up with "mapping key already defined" (caught by the Contract tests). Renamed to SqlQueryExecuteRequest; future top-level resources should prefix their schema names with the resource group so we don't keep tripping on collisions with ontology-scoped endpoints.
+  - SELECT keyword validation needs a word-boundary check — plain strings.HasPrefix(upper, "SELECT") matches "SELECTOR 1" which is a plausible SQL injection vector if the engine ever runs it. hasKeywordPrefix(s, kw) checks the byte after the keyword is whitespace or '(' and treats len==len(kw) as the terminal case. Same helper gates the WITH (CTE) prefix.
+  - Stacked-statement rejection is cheap and catches the "SELECT 1; DROP TABLE users" trick before the engine ever sees it: `strings.Index(q, ";")` followed by `TrimSpace(tail) != ""`. A trailing ";" (with only whitespace after) is still allowed because many SQL clients append it unconditionally.
+  - pgx.TxOptions{AccessMode: pgx.ReadOnly} is the correct way to wrap an Execute call in a read-only transaction — enforces read-only at the PG level even though the handler already validates SELECT-only. Defense in depth for single-machine Foundry parity is cheap here.
+  - For "no rows needed" query execution, `tx.Query(...)` + `defer rows.Close()` + drain loop + `rows.Err()` is the minimum correct path; `tx.Exec(...)` does NOT work for SELECT because pgx's Exec rejects statements that would return rows.
 ---

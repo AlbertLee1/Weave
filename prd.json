@@ -11,7 +11,7 @@
         "Single apply accepts options.mode: VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default VALIDATE_AND_EXECUTE)",
         "Single apply accepts options.returnEdits: ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)",
         "Batch apply accepts options.returnEdits: ALL | NONE (default ALL)",
-        "Delete Weave's mode: atomic | bestEffort enum — old values return 400",
+        "Delete Weave's mode: atomic | bestEffort enum \u2014 old values return 400",
         "VALIDATE_ONLY mode returns validation field, no edits",
         "TDD: write failing test FIRST, then implement",
         "go test ./pkg/actions/... passes",
@@ -136,7 +136,7 @@
       ],
       "priority": 8,
       "passes": true,
-      "notes": "N/A — US-006 deleted all admin routes. No retained internal routes need renaming."
+      "notes": "N/A \u2014 US-006 deleted all admin routes. No retained internal routes need renaming."
     },
     {
       "id": "US-009",
@@ -160,10 +160,10 @@
       "title": "Add InterfaceType and ValueType v2 read endpoints",
       "description": "As a Foundry SDK consumer, I want interfaceTypes and valueTypes metadata endpoints.",
       "acceptanceCriteria": [
-        "GET /api/v2/ontologies/{o}/interfaceTypes — list (requires ?preview=true)",
-        "GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType} — get",
-        "GET /api/v2/ontologies/{o}/valueTypes — list (requires ?preview=true)",
-        "GET /api/v2/ontologies/{o}/valueTypes/{valueType} — get",
+        "GET /api/v2/ontologies/{o}/interfaceTypes \u2014 list (requires ?preview=true)",
+        "GET /api/v2/ontologies/{o}/interfaceTypes/{interfaceType} \u2014 get",
+        "GET /api/v2/ontologies/{o}/valueTypes \u2014 list (requires ?preview=true)",
+        "GET /api/v2/ontologies/{o}/valueTypes/{valueType} \u2014 get",
         "Missing ?preview=true returns 400",
         "TDD: write failing test FIRST for each endpoint",
         "go test ./... passes"
@@ -177,9 +177,9 @@
       "title": "Add QueryType v2 read endpoints and fix query execute path param",
       "description": "As a Foundry SDK consumer, I want queryTypes metadata endpoints with consistent path parameters.",
       "acceptanceCriteria": [
-        "GET /api/v2/ontologies/{ontology}/queryTypes — list",
-        "GET /api/v2/ontologies/{ontology}/queryTypes/{queryApiName} — get",
-        "POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute — path param unified to {ontology}",
+        "GET /api/v2/ontologies/{ontology}/queryTypes \u2014 list",
+        "GET /api/v2/ontologies/{ontology}/queryTypes/{queryApiName} \u2014 get",
+        "POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute \u2014 path param unified to {ontology}",
         "TDD: write failing test FIRST",
         "go test ./... passes"
       ],
@@ -238,8 +238,8 @@
       "title": "ObjectSet get-by-RID and loadLinks endpoints",
       "description": "As a Foundry SDK consumer, I want to retrieve ObjectSet definitions by RID and load links.",
       "acceptanceCriteria": [
-        "GET /api/v2/ontologies/{o}/objectSets/{objectSetRid} — returns ObjectSet definition (not data)",
-        "POST /api/v2/ontologies/{o}/objectSets/loadLinks — loads links from an ObjectSet",
+        "GET /api/v2/ontologies/{o}/objectSets/{objectSetRid} \u2014 returns ObjectSet definition (not data)",
+        "POST /api/v2/ontologies/{o}/objectSets/loadLinks \u2014 loads links from an ObjectSet",
         "TDD: write failing test FIRST",
         "go test ./pkg/oss/objectset/... passes",
         "go test ./... passes"
@@ -253,8 +253,8 @@
       "title": "Search / LoadObjectSet select required + ListOntologies remove pagination",
       "description": "As a Foundry-compatible server, I want wire protocol field requirements to match Foundry exactly.",
       "acceptanceCriteria": [
-        "SearchObjectsRequestV2.select is REQUIRED — missing returns 400",
-        "LoadObjectSetRequestV2.select is REQUIRED — missing returns 400",
+        "SearchObjectsRequestV2.select is REQUIRED \u2014 missing returns 400",
+        "LoadObjectSetRequestV2.select is REQUIRED \u2014 missing returns 400",
         "GET /api/v2/ontologies returns { data: [Ontology] } with NO pageSize/pageToken",
         "ObjectType.status enum includes ENDORSED (total: ACTIVE | ENDORSED | EXPERIMENTAL | DEPRECATED)",
         "fullMetadata endpoints require ?preview=true",
@@ -506,7 +506,7 @@
       ],
       "priority": 31,
       "passes": true,
-      "notes": "Phase 2 integration gate verified 2026-04-11. go test ./... green across all 28 packages (cached, includes test/e2e, test/chinook, test/northwind). Frontend: npx tsc -b 0 errors + npx vitest run 186/186 (tsc --noEmit is a no-op in web/ because root tsconfig uses project references; -b is the working check, confirmed in Codebase Patterns). Python SDK: 69 passed in 31.43s. Interface 8 endpoints all registered — 4 metadata via oms routes.go (list interfaceTypes, get interfaceType, list outgoingLinkTypes, get outgoingLinkType) + 4 data via pkg/oss/handlers.go (list interfaces, search, aggregate, linkedObjects). ObjectSet 15 definition variants all present in pkg/oss/objectset/definition.go Validate() switch: base, filter, union, intersect, subtract, searchAround, reference, nearestNeighbors, withProperties, static, asType, asBaseObjectTypes, interfaceBase, interfaceLinkSearchAround, methodInput. Foundry API alignment measured: 47/68 = 69.1% (all Phase 1+2 Foundry endpoints shipped — remaining 21 endpoints are Phase 3 attachments/media 11 and Phase 4 timeseries/cipher/txn/sql 10). PRD 80% threshold was aspirational and mathematically unreachable without Phase 3/4 work by construction; gate intent (all Phase 2 user stories landed, full regression green) is satisfied. Alignment will reach 85.3% after Phase 3 and 100% after Phase 4."
+      "notes": "Phase 2 integration gate verified 2026-04-11. go test ./... green across all 28 packages (cached, includes test/e2e, test/chinook, test/northwind). Frontend: npx tsc -b 0 errors + npx vitest run 186/186 (tsc --noEmit is a no-op in web/ because root tsconfig uses project references; -b is the working check, confirmed in Codebase Patterns). Python SDK: 69 passed in 31.43s. Interface 8 endpoints all registered \u2014 4 metadata via oms routes.go (list interfaceTypes, get interfaceType, list outgoingLinkTypes, get outgoingLinkType) + 4 data via pkg/oss/handlers.go (list interfaces, search, aggregate, linkedObjects). ObjectSet 15 definition variants all present in pkg/oss/objectset/definition.go Validate() switch: base, filter, union, intersect, subtract, searchAround, reference, nearestNeighbors, withProperties, static, asType, asBaseObjectTypes, interfaceBase, interfaceLinkSearchAround, methodInput. Foundry API alignment measured: 47/68 = 69.1% (all Phase 1+2 Foundry endpoints shipped \u2014 remaining 21 endpoints are Phase 3 attachments/media 11 and Phase 4 timeseries/cipher/txn/sql 10). PRD 80% threshold was aspirational and mathematically unreachable without Phase 3/4 work by construction; gate intent (all Phase 2 user stories landed, full regression green) is satisfied. Alignment will reach 85.3% after Phase 3 and 100% after Phase 4."
     },
     {
       "id": "US-032",
@@ -538,7 +538,7 @@
       ],
       "priority": 33,
       "passes": true,
-      "notes": "Attachment paths are global — no {ontology} in URL. Delivered 2026-04-11: pkg/attachment/handlers.go + handlers_test.go add the 4 Foundry global endpoints (upload, uploadWithRID, getMetadata, getContent). ServerDeps grew an AttachmentStore field; main.go wires a LocalStore under WEAVE_DATA_DIR/attachments with a 10m/1h cleanup loop. OpenAPI specs updated with AttachmentV2 schema + 4 path entries (byte-identical in both files). Contract test router now wires a LocalStore so the orphan check passes."
+      "notes": "Attachment paths are global \u2014 no {ontology} in URL. Delivered 2026-04-11: pkg/attachment/handlers.go + handlers_test.go add the 4 Foundry global endpoints (upload, uploadWithRID, getMetadata, getContent). ServerDeps grew an AttachmentStore field; main.go wires a LocalStore under WEAVE_DATA_DIR/attachments with a 10m/1h cleanup loop. OpenAPI specs updated with AttachmentV2 schema + 4 path entries (byte-identical in both files). Contract test router now wires a LocalStore so the orphan check passes."
     },
     {
       "id": "US-034",
@@ -616,7 +616,7 @@
       ],
       "priority": 38,
       "passes": true,
-      "notes": "Delivered 2026-04-11. Two new handlers on pkg/oss Handler: GetTimeSeriesLatestValue (GET, {propertyName}) and StreamTimeSeriesValues (POST, {property}) — path param inconsistency matches Foundry exactly, resolveTimeSeriesKey already accepts either chi URL param. Both reuse the timeseries.Store wired via SetTimeSeriesStore from US-037: latestValue delegates to LastPoint, streamValues shares a new streamTimeSeries helper with StreamTimeSeriesPoints (identical JSON/ARROW format handling, ARROW returns 400 UnsupportedFormat). Routes registered in pkg/oss/handlers.go RegisterRoutes; OpenAPI spec updated with 2 path entries + TimeSeriesValueBankProperty tag in both cmd/server/openapi_spec.yaml and api/openapi.yaml (byte-identical). 4 new TDD tests in pkg/oss/handlers_timeseries_valuebank_test.go (success, empty-series 404, stream success, ARROW rejection). Full regression green (31 packages)."
+      "notes": "Delivered 2026-04-11. Two new handlers on pkg/oss Handler: GetTimeSeriesLatestValue (GET, {propertyName}) and StreamTimeSeriesValues (POST, {property}) \u2014 path param inconsistency matches Foundry exactly, resolveTimeSeriesKey already accepts either chi URL param. Both reuse the timeseries.Store wired via SetTimeSeriesStore from US-037: latestValue delegates to LastPoint, streamValues shares a new streamTimeSeries helper with StreamTimeSeriesPoints (identical JSON/ARROW format handling, ARROW returns 400 UnsupportedFormat). Routes registered in pkg/oss/handlers.go RegisterRoutes; OpenAPI spec updated with 2 path entries + TimeSeriesValueBankProperty tag in both cmd/server/openapi_spec.yaml and api/openapi.yaml (byte-identical). 4 new TDD tests in pkg/oss/handlers_timeseries_valuebank_test.go (success, empty-series 404, stream success, ARROW rejection). Full regression green (31 packages)."
     },
     {
       "id": "US-039",
@@ -630,7 +630,7 @@
       ],
       "priority": 39,
       "passes": true,
-      "notes": "New pkg/geotemporal (Store/MemoryStore/Value) + 2 handlers on oss.Handler via SetGeotemporalStore. In-memory only (PostGIS deferred per open question #3). TDD red→green verified."
+      "notes": "New pkg/geotemporal (Store/MemoryStore/Value) + 2 handlers on oss.Handler via SetGeotemporalStore. In-memory only (PostGIS deferred per open question #3). TDD red\u2192green verified."
     },
     {
       "id": "US-040",
@@ -645,7 +645,7 @@
       ],
       "priority": 40,
       "passes": true,
-      "notes": "New pkg/cipher (Decryptor interface + AESGCMDecryptor envelope encryption, wire format v1:<base64url(nonce||sealed)>). oss.Handler gains SetCipherDecryptor setter + DecryptCipherTextProperty handler (returns {plaintext}). Wired via ServerDeps.CipherDecryptor, toggled by WEAVE_CIPHER_KEY env (>=32 bytes) or KMS swap. TDD red→green verified (5 cipher tests + 5 handler tests)."
+      "notes": "New pkg/cipher (Decryptor interface + AESGCMDecryptor envelope encryption, wire format v1:<base64url(nonce||sealed)>). oss.Handler gains SetCipherDecryptor setter + DecryptCipherTextProperty handler (returns {plaintext}). Wired via ServerDeps.CipherDecryptor, toggled by WEAVE_CIPHER_KEY env (>=32 bytes) or KMS swap. TDD red\u2192green verified (5 cipher tests + 5 handler tests)."
     },
     {
       "id": "US-041",
@@ -674,8 +674,8 @@
         "go test ./... passes"
       ],
       "priority": 42,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented pkg/sqlqueries (Engine + PGEngine + Handler). SELECT-only guard rejects non-SELECT and stacked statements before reaching the engine. Handler returns Foundry QueryStatus union (succeeded|failed); nil engine returns SqlQueryEngineNotConfigured. Wired into ServerDeps.SqlQueryEngine (PGEngine when PGPool available). OpenAPI + contract tests updated. 15 tests green, go test ./... all green."
     },
     {
       "id": "US-043",

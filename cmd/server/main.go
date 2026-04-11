@@ -32,6 +32,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/transactions"
 	"github.com/nats-io/nats.go"
@@ -59,6 +60,7 @@ type ServerDeps struct {
 	GeotemporalStore geotemporal.Store
 	CipherDecryptor  cipher.Decryptor
 	TransactionStore transactions.Store
+	SqlQueryEngine   sqlqueries.Engine
 	CORSOrigins      []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -236,6 +238,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			txnHandler := transactions.NewHandler(deps.TransactionStore)
 			txnHandler.RegisterRoutes(api)
 		}
+
+		// SqlQueries.execute (US-042). Foundry top-level resource — NOT
+		// nested under /ontologies/. Engine may be nil in degraded mode;
+		// the handler reports SqlQueryEngineNotConfigured in that case so
+		// the route is always documented and discoverable.
+		sqlQueryHandler := sqlqueries.NewHandler(deps.SqlQueryEngine)
+		sqlQueryHandler.RegisterRoutes(api)
 
 		// ObjectSet endpoints
 		if deps.ObjSetExecutor != nil && deps.IndexMgr != nil && deps.ObjSetStore != nil {
@@ -443,6 +452,13 @@ func main() {
 	// transactions are ephemeral per-process and do NOT survive restarts.
 	// The endpoint is gated behind ?preview=true so this is intentional.
 	deps.TransactionStore = transactions.NewMemoryStore()
+
+	// 2g. SqlQueries.execute engine (US-042). Wired only when a PG pool is
+	// available; in degraded mode the handler reports
+	// SqlQueryEngineNotConfigured so the endpoint stays mounted.
+	if deps.PGPool != nil {
+		deps.SqlQueryEngine = sqlqueries.NewPGEngine(deps.PGPool)
+	}
 
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType

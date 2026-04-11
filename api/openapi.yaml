@@ -32,6 +32,12 @@ tags:
       Model Context Protocol (JSON-RPC 2.0) endpoint for AI agents.
       See https://modelcontextprotocol.io/specification for the protocol
       contract; Weave's tool catalogue is documented in docs/mcp.md.
+  - name: SqlQueries
+    description: |
+      Foundry-aligned read-only SQL query execution. Single top-level
+      resource (NOT scoped under an ontology). Only single-statement
+      SELECT queries are accepted; non-SELECT statements are rejected
+      before reaching the engine.
 components:
   securitySchemes:
     bearerAuth:
@@ -1202,6 +1208,49 @@ components:
         totalEdits:
           type: integer
           format: int32
+    SqlQueryExecuteRequest:
+      type: object
+      description: |
+        Request body for POST /api/v2/sqlQueries/execute. The query must
+        be a single-statement SELECT (or WITH ... SELECT); non-SELECT
+        statements and stacked statements are rejected with a 400
+        NonSelectQuery error.
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: A single read-only SELECT statement.
+        fallbackBranchIds:
+          type: array
+          items:
+            type: string
+          description: |
+            Accepted for Foundry SDK parity but ignored — the
+            single-machine build has no branch concept.
+    QueryStatus:
+      type: object
+      description: |
+        Foundry QueryStatus union for the execute endpoint. Weave only
+        ever produces the terminal "succeeded" / "failed" variants
+        because queries run synchronously on the request goroutine; the
+        "running" / "canceled" Foundry variants are documented for SDK
+        compatibility but never returned by this implementation.
+      required: [type, queryId]
+      properties:
+        type:
+          type: string
+          enum: [succeeded, failed, running, canceled]
+        queryId:
+          type: string
+        errorMessage:
+          type: string
+          description: Present when type is "failed".
+        failureReason:
+          type: string
+          description: |
+            Present when type is "failed". Known values:
+            "ExecutionError" (engine returned an error),
+            "NonSelectQuery" (query was rejected at execution time).
 security:
   - bearerAuth: []
 paths:
@@ -3437,3 +3486,38 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/sqlQueries/execute:
+    post:
+      operationId: executeSqlQuery
+      summary: Execute a read-only SQL query
+      description: |
+        Executes a single-statement SELECT query against the ontology
+        store and returns a Foundry QueryStatus union. Weave runs all
+        queries synchronously on the request goroutine so the response
+        always resolves to the terminal "succeeded" or "failed" variant;
+        the "running" / "canceled" variants are documented for SDK
+        compatibility but never emitted by this implementation.
+      tags: [SqlQueries]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SqlQueryExecuteRequest"
+      responses:
+        "200":
+          description: |
+            Query completed in a terminal state. Inspect `type` to
+            disambiguate success from failure; successful responses
+            carry only `queryId`, failed responses add `errorMessage`
+            and `failureReason`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryStatus"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
