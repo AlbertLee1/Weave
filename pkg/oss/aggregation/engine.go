@@ -3,6 +3,7 @@ package aggregation
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -134,6 +135,29 @@ type groupEntry struct {
 	scopeQuery query.Query
 }
 
+// sortGroupEntries orders buckets within a single groupBy layer so response
+// rows are deterministic: non-null values sort ascending by stringified key
+// (alphabetical for exact/topValues, lexicographic for fixedWidth bucket
+// names like "[0,100)", and RFC3339 — which is chronological — for duration
+// buckets). Nil values (null-group) are placed last.
+func sortGroupEntries(entries []groupEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		vi, vj := entries[i].value, entries[j].value
+		iNil := vi == nil
+		jNil := vj == nil
+		if iNil && jNil {
+			return false
+		}
+		if iNil {
+			return false
+		}
+		if jNil {
+			return true
+		}
+		return fmt.Sprint(vi) < fmt.Sprint(vj)
+	})
+}
+
 // aggregateWithGroupBy performs aggregation with groupBy using Bleve facets.
 // Supports multiple groupBy specs by recursive nesting.
 func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
@@ -162,6 +186,8 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 	if err != nil {
 		return nil, false, err
 	}
+
+	sortGroupEntries(entries)
 
 	var rows []AggregationRow
 	for _, entry := range entries {
@@ -217,6 +243,9 @@ func (e *Engine) getGroupEntries(idx bleve.Index, baseQuery query.Query, gb Grou
 }
 
 // getExactEntries returns group entries for exact term grouping.
+// When the facet reports a non-zero Missing count, a null-group entry is
+// appended with value=nil and a scope query that excludes every observed
+// term so nested recursion still resolves correct per-bucket metrics.
 func (e *Engine) getExactEntries(idx bleve.Index, baseQuery query.Query, gb GroupBySpec) ([]groupEntry, bool, error) {
 	maxGroups := 100
 	if gb.MaxGroups != nil {
@@ -239,15 +268,33 @@ func (e *Engine) getExactEntries(idx bleve.Index, baseQuery query.Query, gb Grou
 	}
 
 	terms := facetResult.Terms.Terms()
-	entries := make([]groupEntry, 0, len(terms))
+	entries := make([]groupEntry, 0, len(terms)+1)
+	termQueries := make([]query.Query, 0, len(terms))
 	for _, term := range terms {
 		termQ := bleve.NewTermQuery(term.Term)
 		termQ.SetField(gb.Field)
+		termQueries = append(termQueries, termQ)
 		entries = append(entries, groupEntry{
 			value:      term.Term,
 			scopeQuery: bleve.NewConjunctionQuery(baseQuery, termQ),
 		})
 	}
+
+	// Only surface a null bucket when at least one real term was observed.
+	// Grouping by a non-existent field (all docs "missing") returns no
+	// groups — matches pre-existing Palantir behaviour.
+	if facetResult.Missing > 0 && len(termQueries) > 0 {
+		nullScope := bleve.NewBooleanQuery()
+		nullScope.AddMust(baseQuery)
+		for _, tq := range termQueries {
+			nullScope.AddMustNot(tq)
+		}
+		entries = append(entries, groupEntry{
+			value:      nil,
+			scopeQuery: nullScope,
+		})
+	}
+
 	return entries, false, nil
 }
 

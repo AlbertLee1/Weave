@@ -111,6 +111,22 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   and assign ot.Properties = props before handing the ObjectType to
   `index.BuildMapping`, otherwise the generated mapping will be
   empty and every search will silently return zero hits.
+- pkg/oss/aggregation/engine.go has two parallel groupBy code paths:
+  the LIVE recursiveGroupBy + getXxxEntries (exact/fixedWidth/ranges/
+  duration/topValues) that returns []groupEntry, and the DEAD
+  groupByExact / groupByFixedWidth / groupByDuration / groupByTopValues
+  that are no longer reachable. Always patch the getXxxEntries side.
+  Bucket order across ALL group types is stabilised by sortGroupEntries
+  (ASC by fmt.Sprint(value), nils last) called inside recursiveGroupBy,
+  so new groupBy types only need to return unsorted entries.
+- Null-group handling for exact groupBy: when facetResult.Missing > 0
+  AND len(terms) > 0, getExactEntries appends a value=nil entry with
+  scopeQuery = BooleanQuery{Must: baseQuery, MustNot: allTermQueries}.
+  Bleve has no "field exists" query, so this negation trick is the
+  canonical way to narrow to docs that lack the field. Do NOT emit
+  a null bucket when len(terms) == 0 — that would wrap every doc in
+  a single null bucket when grouping by a non-existent field and
+  break TestAggregate_GroupByExact_NoResults.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -766,4 +782,45 @@ new features — only run verification suites and commit the gate.
     it's a separate ListProperties call keyed by the ObjectType RID.
     Manual hydration is required before BuildMapping can inspect the
     properties slice.
+---
+
+## 2026-04-11 - US-013 Multi-layer groupBy executor (3 layers nested)
+- Added pkg/oss/aggregation/multi_groupby_test.go with three tests:
+  TestMultiGroupBy_ThreeLayerNested (exact × fixedWidth × duration),
+  TestMultiGroupBy_StableBucketOrder (outer-to-inner ASC by key),
+  TestMultiGroupBy_NullGroupKey (missing field → Group[field] == nil).
+- pkg/oss/aggregation/engine.go:
+  - Added sortGroupEntries(); recursiveGroupBy now sorts entries before
+    recursing so the response row order is deterministic regardless of
+    Bleve facet count-desc ordering.
+  - getExactEntries now emits a null-group entry (value=nil) when the
+    facet reports facet.Missing > 0 AND at least one real term exists.
+    Scope query is a BooleanQuery{Must: baseQuery, MustNot: allTerms},
+    so nested recursion still narrows correctly into that bucket.
+- Files changed: pkg/oss/aggregation/engine.go,
+  pkg/oss/aggregation/multi_groupby_test.go
+- **Learnings for future iterations:**
+  - Bleve term facets return entries sorted by count DESC, not by term
+    ASC. Any test asserting alphabetical order must sort post-facet,
+    which sortGroupEntries now does uniformly for exact/fixedWidth/
+    duration/ranges/topValues paths.
+  - Bleve reports facetResult.Missing when docs lack the facet field,
+    but it is NOT surfaced as a terms entry. To get a scope query for
+    the null bucket, build NewBooleanQuery{Must: baseQuery, MustNot:
+    termQueries...} — Bleve has no direct "field exists" query.
+  - Guard null-group emission on `len(termQueries) > 0`; otherwise a
+    groupBy on a non-existent field wraps every doc in a single null
+    bucket, which breaks the pre-existing TestAggregate_GroupByExact_
+    NoResults expectation (empty groups for unknown fields).
+  - `groupByExact` / `groupByFixedWidth` / `groupByDuration` /
+    `groupByTopValues` in engine.go are DEAD CODE left over from an
+    earlier refactor — all live paths now go through recursiveGroupBy
+    + getGroupEntries. Do NOT add fixes to the dead ones; touch the
+    "getXxxEntries" functions instead. Future cleanup opportunity.
+  - sort.SliceStable with fmt.Sprint comparator is enough because
+    every entry.value produced by the existing getXxxEntries paths
+    is either a string (term / bucket name / RFC3339 epoch) or nil;
+    numeric bucket names like "[0,100)" still sort lexically in a way
+    that matches their numeric order because they share the same
+    width prefix formatting.
 ---
