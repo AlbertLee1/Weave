@@ -34,6 +34,7 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
         <button
           type="button"
           onClick={addGroupBy}
+          data-testid="groupby-add"
           className="bg-bg-tertiary border border-border text-text-primary px-4 py-2 rounded text-sm hover:bg-bg-elevated"
         >
           + Add Group By
@@ -45,10 +46,15 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
       )}
 
       {groupBy.map((clause, index) => (
-        <div key={index} className="flex items-center gap-2">
+        <div
+          key={index}
+          data-testid={`groupby-row-${index}`}
+          className="flex items-center gap-2"
+        >
           <select
             value={clause.field}
             onChange={(e) => updateGroupBy(index, { field: e.target.value })}
+            data-testid={`groupby-${index}-field`}
             className={`${inputClass} flex-1`}
           >
             <option value="">Select field...</option>
@@ -62,6 +68,7 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
           <select
             value={clause.type}
             onChange={(e) => updateGroupBy(index, { type: e.target.value as GroupByClause['type'] })}
+            data-testid={`groupby-${index}-type`}
             className={`${inputClass} flex-shrink-0`}
           >
             {groupByTypes.map((t) => (
@@ -74,6 +81,7 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
           <button
             type="button"
             onClick={() => removeGroupBy(index)}
+            data-testid={`groupby-${index}-remove`}
             className="bg-accent-error/15 text-accent-error border border-accent-error/30 px-4 py-2 rounded text-sm hover:bg-accent-error/25"
           >
             Remove

@@ -203,6 +203,23 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   "run". Phase 6 US-035 pins this asymmetry; any future rewrite that
   switches contains to MatchQuery will surface loudly through those
   assertions.
+- `web/src/api/aggregation.ts` now normalises the backend wire shape
+  (`metrics: MetricValue[]`) into a UI-facing `Record<string, number>`
+  AND exposes top-level `accuracy` / `excludedItems`. The existing
+  msw unit tests mock the record shape directly — do NOT delete the
+  passthrough branch when touching this module. Any new UI spec or
+  component that reads aggregation results must go through this
+  normaliser, otherwise real backend calls surface column headers
+  like `"0","1"` (array indices) instead of metric names.
+- Aggregation UI exposes stable testids for Playwright specs:
+  `aggregation-execute` on the Execute button,
+  `aggregation-accuracy-badge` on the accuracy chip,
+  `aggregation-bucket-tree` on the ResultTable wrapper (carries
+  `data-groupby-depth=${n}`), and `groupby-add` /
+  `groupby-${i}-field` / `groupby-${i}-type` / `groupby-${i}-remove`
+  on the GroupByBuilder. Prefer these over role-based locators —
+  the Add buttons on MetricSelector + GroupByBuilder both match
+  `role=button, name=/add/i` and will trip strict mode.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -2361,4 +2378,104 @@ new features — only run verification suites and commit the gate.
     object_history forward well under that window in dev mode. If
     flakes appear, raise the wait before breaking the underlying
     flow.
+---
+
+## 2026-04-12 - US-039
+- New Playwright spec `web/e2e/phase6/aggregation-multi-groupby.spec.ts`
+  drives the AggregationPage on `/aggregation/northwind/order` through a
+  3-layer exact groupBy (shipCountry × customerID × orderID), clicks
+  Execute, and asserts:
+    * `data-testid=aggregation-bucket-tree` is visible with
+      `data-groupby-depth="3"`,
+    * thead renders each groupBy field as a column,
+    * tbody has at least one result row,
+    * `data-testid=aggregation-accuracy-badge` is visible and shows
+      one of ACCURATE / APPROXIMATE.
+- Narrative PRD AC called out a conceptual country × priceBucket ×
+  quarter split; the minimal Playwright Northwind seed
+  (`test/fixtures/seed_northwind/schemas.go`) does not ship a timestamp
+  or any numeric bucketable column beyond `freight`, so the spec
+  substitutes three distinct exact groupBys over fields that DO exist
+  on the seeded `order` type. Recursive groupBy in the backend
+  (`pkg/oss/aggregation/engine.go recursiveGroupBy`) is exercised the
+  same way regardless of the leaf groupBy type.
+- Frontend adjustments alongside the spec:
+    * `web/src/api/aggregation.ts` — response normalizer converts the
+      backend wire `metrics: MetricValue[]` shape to the UI-facing
+      `Record<string, number>` shape, and surfaces top-level
+      `accuracy` / `excludedItems` from `AggregationResponse`. Legacy
+      record-shaped responses (used by the existing msw unit tests)
+      are passed through unchanged for backwards compat.
+    * `web/src/components/aggregation/AggregationPage.tsx` — renders a
+      new accuracy badge chip when `aggResult.accuracy` is populated;
+      badge shows `excludedItems` suffix when > 0. Execute button now
+      carries `data-testid=aggregation-execute` so the spec can target
+      it without mistaking the MetricSelector/GroupByBuilder Add
+      buttons.
+    * `web/src/components/aggregation/GroupByBuilder.tsx` — added
+      `data-testid=groupby-add` on the add button plus per-row testids
+      `groupby-${i}-field`, `groupby-${i}-type`, `groupby-${i}-remove`
+      so `selectGroupByField(page, i, field)` can stably target nested
+      rows without relying on nth-select shenanigans.
+    * `web/src/components/aggregation/ResultTable.tsx` — outer wrapper
+      now carries `data-testid=aggregation-bucket-tree` and
+      `data-groupby-depth=${groupCols.length}` so the spec can assert
+      depth without re-counting columns.
+- New vitest cases in `web/src/api/__tests__/aggregation.test.ts`:
+    * backend wire shape with metrics array + accuracy + excludedItems
+      is normalized into the UI record shape,
+    * pre-existing record-shaped msw mocks still pass through unchanged.
+- Files changed:
+  - web/e2e/phase6/aggregation-multi-groupby.spec.ts (new)
+  - web/src/api/aggregation.ts
+  - web/src/api/__tests__/aggregation.test.ts
+  - web/src/components/aggregation/AggregationPage.tsx
+  - web/src/components/aggregation/GroupByBuilder.tsx
+  - web/src/components/aggregation/ResultTable.tsx
+- Verification:
+  - `go test ./...` passes (no Go changes; cached)
+  - `go vet ./...` clean
+  - `cd web && npx tsc --noEmit` clean
+  - `cd web && npm run test` 194/194 pass (38 files)
+  - `cd web && npx playwright test --list phase6/aggregation-multi-groupby.spec.ts`
+    lists 1 test.
+  - Full Playwright run requires `scripts/e2e-setup.sh` + live stack;
+    not executed in this iteration. Browser-level verification deferred
+    to Phase 6 gate (US-042), same pattern as US-037/US-038.
+- **Learnings for future iterations:**
+  - AggregationResponse wire format mismatch: backend ships
+    `metrics: []MetricValue` (array) but `web/src/api/aggregation.ts`
+    historically typed it as `Record<string, number>` and the existing
+    msw unit tests mocked the record shape. The live frontend was
+    silently broken for real backend responses — ResultTable would
+    iterate `Object.keys(metricsArray)` and get indices `"0","1"` as
+    column labels. Any future aggregation-UI spec that talks to the
+    real stack MUST go through the normalizer in aggregation.ts or
+    drop a copy of `normalizeMetrics` locally. Do NOT remove the
+    passthrough branch: existing msw tests still rely on it.
+  - `pkg/oss/aggregation/response.go AggregationResponse` carries
+    `accuracy` (ACCURATE | APPROXIMATE) and `excludedItems` top-level
+    fields that the frontend now surfaces. `accuracy` flips to
+    APPROXIMATE when `computeMetrics` truncates (the threshold lives
+    in `pkg/oss/aggregation/engine.go` — search for `truncated`).
+    Small Northwind seeds (< 20 rows) should always return ACCURATE;
+    the spec accepts either token to keep the assertion stable if
+    seed sizes grow.
+  - Northwind Playwright seed has NO date/timestamp column on
+    `order`; the narrative PRD's duration groupBy (quarter) cannot
+    be exercised against the current seed. When a future Phase 6 or
+    Phase 8 story wants duration groupBy in the browser, also extend
+    `test/fixtures/seed_northwind/schemas.go` to add an `orderDate`
+    timestamp column + seed values, and teach the seeder to write
+    the new column through `oms.PGRepository.CreateProperty`.
+  - `GroupByBuilder` renders `<select>` rows without any label
+    association; use `data-testid=groupby-${i}-field` +
+    `page.getByTestId(...).selectOption('value')` to drive the form
+    from Playwright. Trying to target via `getByLabel` silently
+    falls through to nothing.
+  - The `AggregationPage` Execute button collides by-role with the
+    MetricSelector/GroupByBuilder Add buttons when you scope a
+    locator by `role=button, name='Execute'`; prefer the dedicated
+    `data-testid=aggregation-execute` when writing Playwright specs
+    to avoid strict-mode violations.
 ---

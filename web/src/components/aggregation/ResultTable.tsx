@@ -30,7 +30,11 @@ export function ResultTable({ data }: ResultTableProps) {
   const metricCols = Array.from(metricKeys);
 
   return (
-    <div className="overflow-x-auto border border-border rounded">
+    <div
+      className="overflow-x-auto border border-border rounded"
+      data-testid="aggregation-bucket-tree"
+      data-groupby-depth={groupCols.length}
+    >
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-bg-tertiary border-b border-border">

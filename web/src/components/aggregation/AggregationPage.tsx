@@ -82,6 +82,7 @@ export function AggregationPage() {
           <button
             onClick={handleExecute}
             disabled={metrics.length === 0}
+            data-testid="aggregation-execute"
             className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
           >
             Execute
@@ -119,6 +120,21 @@ export function AggregationPage() {
           />
         ) : (
           <div className="flex flex-col gap-6">
+            {aggResult.accuracy && (
+              <div
+                data-testid="aggregation-accuracy-badge"
+                data-accuracy={aggResult.accuracy}
+                className="inline-flex self-start items-center gap-2 rounded border border-border bg-bg-tertiary px-2 py-1 text-xs font-mono text-text-secondary"
+              >
+                <span className="text-text-secondary">accuracy</span>
+                <span className="text-accent-cyan">{aggResult.accuracy}</span>
+                {typeof aggResult.excludedItems === 'number' && aggResult.excludedItems > 0 && (
+                  <span className="text-text-secondary">
+                    · excluded {aggResult.excludedItems}
+                  </span>
+                )}
+              </div>
+            )}
             <ResultTable data={aggResult.data} />
             {aggResult.data.length > 0 && chartMetricKey && groupBy.length > 0 && (
               <div className="border border-border rounded p-4 bg-bg-tertiary">
