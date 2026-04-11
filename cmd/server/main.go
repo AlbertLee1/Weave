@@ -189,6 +189,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.OmsRepo != nil {
 				ossHandler.SetOmsRepo(deps.OmsRepo)
 			}
+			if deps.AttachmentStore != nil {
+				ossHandler.SetAttachmentStore(deps.AttachmentStore)
+			}
 			ossHandler.RegisterRoutes(api)
 		}
 

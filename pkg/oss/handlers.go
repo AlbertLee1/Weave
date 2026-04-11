@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
@@ -25,6 +26,11 @@ type Handler struct {
 	// omsRepo provides interface resolution for /interfaces/ data query endpoints.
 	// Wired via SetOmsRepo from main.go after construction.
 	omsRepo oms.Repository
+	// attachmentStore backs the object-path attachment read endpoints
+	// (/objects/{type}/{pk}/attachments/{property}...). When nil, those
+	// routes return AttachmentStoreNotConfigured. Wired via
+	// SetAttachmentStore from main.go after construction.
+	attachmentStore attachment.BlobStore
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -49,6 +55,16 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count", h.CountObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}", h.GetLinkedObject)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
+
+	// AttachmentProperty read endpoints (Foundry OSv2). The static /content
+	// segment must come before the wildcard {attachmentRid} so chi resolves
+	// /attachments/{property}/content correctly; and the longest path
+	// (/{attachmentRid}/content) must come before /{attachmentRid} for the
+	// same reason.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/content", h.GetAttachmentPropertyContent)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/{attachmentRid}/content", h.GetAttachmentPropertyContentByRID)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/{attachmentRid}", h.GetAttachmentPropertyMetadataByRID)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}", h.GetAttachmentPropertyMetadata)
 
 	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)

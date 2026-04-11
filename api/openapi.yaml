@@ -2611,3 +2611,170 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}:
+    get:
+      operationId: getAttachmentPropertyMetadata
+      summary: Get attachment metadata via object property
+      description: |
+        Returns the AttachmentV2 metadata for the attachment stored in the
+        given object's attachment property. For single-valued attachment
+        properties the only stored RID is resolved automatically; for
+        multi-valued attachmentArray properties the caller must use the
+        companion /{attachmentRid} variant.
+      tags: [AttachmentProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          description: ObjectType API name.
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          description: Primary key of the object.
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          description: Attachment property API name on the object type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Attachment metadata record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentV2"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/content:
+    get:
+      operationId: getAttachmentPropertyContent
+      summary: Download attachment blob via object property
+      description: |
+        Streams the raw blob bytes for the attachment stored in the given
+        object's attachment property. The response Content-Type is the
+        stored mediaType.
+      tags: [AttachmentProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Raw blob bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/{attachmentRid}:
+    get:
+      operationId: getAttachmentPropertyMetadataByRid
+      summary: Get specific attachment metadata via object property
+      description: |
+        Returns AttachmentV2 metadata for a specific attachment RID stored
+        in the given object's attachment (array) property. Returns 404 if
+        the supplied attachmentRid is not among the values currently held
+        by the property.
+      tags: [AttachmentProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: attachmentRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Attachment metadata record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentV2"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/{attachmentRid}/content:
+    get:
+      operationId: getAttachmentPropertyContentByRid
+      summary: Download specific attachment blob via object property
+      description: |
+        Streams the raw blob bytes for a specific attachment RID stored in
+        the given object's attachment (array) property. Returns 404 if the
+        supplied attachmentRid is not among the values currently held by
+        the property.
+      tags: [AttachmentProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: attachmentRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Raw blob bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"

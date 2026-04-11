@@ -108,7 +108,9 @@
 - Foundry apply variants (apply / applyWithOverrides / applyBatch) all share the same SyncApplyActionResponseV2 / BatchApplyActionResponseV2 envelope + countEdits helper — when adding another variant, construct an ApplyRequest and forward to executor.Apply, do not duplicate the Prepare/Apply/returnEdits control flow beyond what handlers.go already does.
 - Action handler tests use pub.batches (slice of all published EditBatch) — not a lastBatch field. funnel.Edit has Properties map, no After/Before.
 - pkg/attachment is the Foundry attachment blob layer: BlobStore interface + LocalStore filesystem backend (`<uuid>.blob` + `<uuid>.meta.json` sidecar). RID shape is `ri.attachments.main.attachment.{uuid}` (new "attachments" service, separate from "ontology"). validateRID() rejects path traversal before any FS access. Unlinked uploads expire via StartCleanupLoop(ctx, interval, maxAge) — wired with 10m/1h in main.go as of US-033.
-- Attachment HTTP handlers live at pkg/attachment/handlers.go, not pkg/oss — keeps the blob layer self-contained. Routes are global (no {ontology}). ServerDeps.AttachmentStore (attachment.BlobStore) carries the dep; handler is mounted inside the auth group in NewFullRouter. When adding new attachment-related routes (US-034, US-035), extend the existing Handler type instead of creating a new package.
+- Global attachment HTTP handlers (no {ontology}) live at pkg/attachment/handlers.go — keeps the blob layer self-contained. ServerDeps.AttachmentStore (attachment.BlobStore) carries the dep; handler is mounted inside the auth group in NewFullRouter.
+- Object-path attachment read endpoints (/objects/{type}/{pk}/attachments/{property}...) live in pkg/oss/handlers_attachment_property.go instead of pkg/attachment, because they need svc.GetObject to load the object first. oss.Handler gets the BlobStore via a new SetAttachmentStore setter (same pattern as SetAggregation / SetOmsRepo). extractAttachmentRID handles both single-string and []interface{} property values (Bleve returns arrays as []interface{}, never []string).
+- AttachmentProperty chi route ordering: /{property}/content must come BEFORE /{property}/{attachmentRid}, and /{property}/{attachmentRid}/content must come BEFORE /{property}/{attachmentRid} — longest-static-segment-first, otherwise chi's trie matches "content" as a wildcard value.
 - When adding new routes to NewFullRouter, you MUST also wire the corresponding deps on newContractTestRouter in cmd/server/contract_test.go — otherwise TestContract_NoOrphanedSpecPaths fails because the new OpenAPI path entries have no matching chi route in the contract router.
 
 ---
@@ -918,4 +920,32 @@
   - Error mapping in handlers: ErrNotFound→404, ErrAlreadyExists→409, ErrInvalidRID→400, everything else→500 — all via apierror.WriteJSON
   - main.go wires the LocalStore BEFORE NATS and ActionExecutor because the store has no upstream deps — keeps boot fast even when NATS is unreachable
   - AttachmentV2 JSON wire fields (rid, filename, sizeBytes, mediaType) are already on the Attachment struct — no separate wire type needed; the CreatedAt + Linked internal fields use json:"-"
+---
+
+## 2026-04-11 - US-034: AttachmentProperty 4 endpoints (read via object path)
+- 新增 4 个 Foundry OSv2 object-path 附件读取 endpoint，全部挂在 pkg/oss.Handler 上（复用 svc.GetObject + attachment.BlobStore），通过新的 SetAttachmentStore setter 接入可选依赖
+- Endpoints:
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property} — 单值属性返回 AttachmentV2 元数据
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}/content — 流式返回 blob 内容
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}/{attachmentRid} — 数组属性按 RID 取单条
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/attachments/{property}/{attachmentRid}/content — 数组属性按 RID 取 blob
+- 属性值解析支持两种 wire 格式：单字符串（单值 attachment property）和字符串数组（attachmentArray property）；数组 + 无 {attachmentRid} 但长度 > 1 返回 400 InvalidAttachmentProperty
+- chi 路由顺序：content 路径必须先于 {attachmentRid}，{attachmentRid}/content 必须先于 {attachmentRid}，避免 wildcard 吞掉静态段
+- Files changed:
+  - pkg/oss/handlers_attachment_property.go — NEW: 4 handlers + resolveAttachmentPropertyRID helper + extractAttachmentRID
+  - pkg/oss/handlers_attachment_property_test.go — NEW: 8 TDD tests (metadata/content w/ 和 w/o RID, wrong RID 404, property not found, object not found, not configured)
+  - pkg/oss/handlers.go — attachmentStore field on Handler, 4 routes in RegisterRoutes
+  - cmd/server/main.go — SetAttachmentStore 调用（AttachmentStore != nil 时）
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — 4 个新 path entry (AttachmentProperty tag)
+  - prd.json — US-034 passes:true + notes
+  - progress.txt — this entry
+- Tests: go test ./pkg/oss -run TestGetAttachmentProperty — 8/8 pass; go test ./... 全量绿（含 chinook/northwind/e2e）
+- **Learnings for future iterations:**
+  - Object-path attachment endpoints 通过 svc.GetObject 加载对象，然后从 WireObject.Properties[propertyName] 取 RID 字符串（或 []interface{}）— 不需要新 OMS Repository 方法，attachment property 的存储形态就是 string/stringArray
+  - 属性值可能是 string 或 []interface{}（Bleve 返回的数组类型），不会直接是 []string — extractAttachmentRID 必须处理 []interface{} 断言
+  - 在 chi 同一个路由组内混用 /{prop}、/{prop}/content、/{prop}/{rid}、/{prop}/{rid}/content 时，注册顺序必须按"最长静态段优先"排列：content 段优先于 wildcard {attachmentRid}，{rid}/content 优先于 {rid} — 否则 chi 的 trie 会把静态路径 match 成 wildcard
+  - 可选依赖通过 setter 接入 oss.Handler 的既有模式 (SetAggregation, SetOmsRepo, 新的 SetAttachmentStore) — 保持 NewHandler(svc) 签名稳定，nil 依赖在 handler 内返回 XxxNotConfigured
+  - 测试里 setupOSSTest 已经建好了 employee 索引，attachment property 测试只需 addObjectType("invoice") + EnsureIndex("invoice", ...) + IndexDocument，然后对同一个 svc 发请求即可 — 不必复制整个 setup
+  - contract_test 里的 newContractTestRouter 已经 wire 了 AttachmentStore（US-033 交付）— 本次不需要再改，OSS handler 的 SetAttachmentStore 调用会自动在 newContractTestRouter 构造的 NewFullRouter 中生效
+  - attachment.BlobStore.Stat() 是正确的 metadata-only 路径 — 避免 Get() 打开 reader 只为了关闭
 ---

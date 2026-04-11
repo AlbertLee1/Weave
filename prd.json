@@ -553,8 +553,8 @@
         "go test ./... passes"
       ],
       "priority": 34,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented in pkg/oss/handlers_attachment_property.go with SetAttachmentStore setter; reuses svc.GetObject + attachment.BlobStore. 8 TDD tests, full go test ./... green."
     },
     {
       "id": "US-035",
