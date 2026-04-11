@@ -230,6 +230,7 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		if err != nil {
 			return nil, fmt.Errorf("function dispatch: %w", err)
 		}
+		tagEditsAsUserSource(fnEdits)
 		return &PreparedAction{
 			ActionType: actionType,
 			UserID:     userID,
@@ -249,6 +250,7 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	if err != nil {
 		return nil, fmt.Errorf("execute rules: %w", err)
 	}
+	tagEditsAsUserSource(edits)
 
 	return &PreparedAction{
 		ActionType: actionType,
@@ -256,6 +258,16 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		Request:    req,
 		Edits:      edits,
 	}, nil
+}
+
+// tagEditsAsUserSource stamps Edit.Source = "user" on every edit in place so
+// the funnel consumer's user-edit-wins conflict logic (US-021) can protect
+// action-executor writes from subsequent ingest rewrites. Called from both
+// the rules path and the function-backed path in Prepare.
+func tagEditsAsUserSource(edits []funnel.Edit) {
+	for i := range edits {
+		edits[i].Source = funnel.EditSourceUser
+	}
 }
 
 // CommitBatch publishes one EditBatch for the combined edits of the given

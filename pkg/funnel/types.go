@@ -11,12 +11,30 @@ const (
 	EditTypeDelete EditType = "DELETE"
 )
 
+// Edit source discriminators used by the user-edit-wins conflict resolver in
+// the funnel consumer. Action-executor writes carry SourceUser so subsequent
+// ingest rewrites cannot silently overwrite them; streaming ingest paths must
+// set SourceIngest explicitly so the consumer can compare timestamps against
+// the most recent user edit. An empty string is treated as SourceUser by
+// downstream code so legacy callers and replayed batches from before US-020
+// keep their existing semantics.
+const (
+	EditSourceUser   = "user"
+	EditSourceIngest = "ingest"
+)
+
 // Edit represents a single object edit.
+//
+// Source is the US-020 discriminator used by the funnel consumer's user-edit
+// -wins conflict logic (US-021). Action-executor edits are stamped "user"; a
+// future streaming ingest path will stamp "ingest". It is omitempty so the
+// on-the-wire shape stays backwards compatible with pre-US-020 consumers.
 type Edit struct {
 	Type       EditType               `json:"type"`
 	ObjectType string                 `json:"objectType"`
 	PrimaryKey string                 `json:"primaryKey"`
 	Properties map[string]interface{} `json:"properties,omitempty"` // for CREATE/MODIFY
+	Source     string                 `json:"source,omitempty"`
 }
 
 // EditBatch represents a batch of edits to be applied atomically.

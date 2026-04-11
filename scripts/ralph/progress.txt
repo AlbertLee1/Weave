@@ -1072,3 +1072,87 @@ new features — only run verification suites and commit the gate.
     (bench test Gaussian gen + bleve teardown) — if future stories add
     more Gaussian fixtures consider sharing a package-level dataset.
 ---
+
+## 2026-04-11 - US-019
+- Added migration 000018_object_history_source.{up,down}.sql that adds a
+  `source TEXT NOT NULL DEFAULT 'user'` column on object_history plus a
+  supporting (object_type_rid, primary_key, source, version DESC) index so
+  US-021 can look up the latest user edit in one index scan.
+- Added `Source` field + `EditSourceUser`/`EditSourceIngest` constants to
+  `pkg/oms/object_history.go`; updated `InsertObjectHistory` to default an
+  empty Source to 'user' and write it, and updated `ListObjectHistory` to
+  select it back with COALESCE for defensive reads.
+- TDD: new unit test `TestObjectHistory_SourceField_JSON` in
+  `pkg/oms/models_test.go` verifies JSON round-trip; confirmed it fails
+  (unknown field Source) before implementing.
+- Files changed:
+  - migrations/000018_object_history_source.up.sql (new)
+  - migrations/000018_object_history_source.down.sql (new)
+  - pkg/oms/object_history.go
+  - pkg/oms/pg_repository.go
+  - pkg/oms/models_test.go
+- Quality checks: `go build ./...` ok, `go vet ./...` ok,
+  `go test ./...` all green (incl. integration/e2e via build tags compiled
+  together). Pre-existing gofmt drift on other pkg/oms files is unrelated
+  and predates this commit.
+- **Learnings for future iterations:**
+  - Phase-6 user-vs-ingest conflict logic (US-020/021/022/023) all reads
+    this Source column; US-019 is a schema-only prerequisite and touching
+    the funnel consumer belongs in US-020.
+  - `PGRepository.InsertObjectHistory` and `ListObjectHistory` are the
+    only two history write/read paths — cached_repository.go does not
+    shadow these, so future history-column additions only need one edit
+    per method.
+  - The integration test file `pkg/oms/object_history_test.go` sits under
+    `//go:build integration` so the fast unit-test path needed the new
+    round-trip assertion in `pkg/oms/models_test.go` to satisfy strict
+    TDD Red-Green without spinning up testcontainers.
+  - Pre-existing gofmt drift on ~9 pkg/oms files predates the phase-6-8
+    branch; don't auto-format them inside a Ralph story unless the story
+    explicitly calls for cleanup — it would balloon unrelated diffs.
+---
+
+## 2026-04-11 - US-020
+- Added `Source string` field to `funnel.Edit` (`json:"source,omitempty"`)
+  plus `EditSourceUser`/`EditSourceIngest` constants colocated with the
+  struct. omitempty keeps wire compat with pre-US-020 consumers and lets
+  the test assert that empty-source edits do not leak a stray key.
+- `pkg/actions/executor.go` Prepare stamps Source="user" on every edit
+  before returning, both in the rules-path (post-ExecuteRules) and the
+  function-backed branch (post-Dispatch). Factored into
+  `tagEditsAsUserSource(edits)` so there is exactly one spot to audit.
+  Apply flows through Prepare → CommitBatch so the tag survives
+  CollapseEdits (collapse preserves struct fields it doesn't rewrite).
+- TDD: `pkg/actions/edit_source_test.go` with red test
+  `TestActionEditSourceUser` covering CREATE/MODIFY/DELETE via rules,
+  Apply-result path, and the function-backed path; plus
+  `TestFunnelEditSourceJSON` asserting the "source" JSON tag round-trips
+  and omitempty behaves. Verified red (build failure on
+  `e.Source undefined`) before implementing.
+- Files changed:
+  - pkg/funnel/types.go
+  - pkg/actions/executor.go
+  - pkg/actions/edit_source_test.go (new)
+- Quality checks: `go test ./...` all green (incl. northwind/chinook/e2e),
+  `go vet ./...` clean. Edited files are gofmt-clean; the pre-existing
+  drift on pkg/actions/executor.go L48 (ActionResults.Type tag column
+  alignment) is unrelated and untouched.
+- **Learnings for future iterations:**
+  - `tagEditsAsUserSource` is the single chokepoint the action executor
+    uses to stamp Edit.Source. US-021 (funnel consumer conflict logic)
+    should read `batch.Edits[i].Source` directly instead of reaching for
+    an out-of-band signal — action-executor batches will always have it
+    set at this point, and streaming ingest paths must set "ingest"
+    before publishing.
+  - `CollapseEdits` keeps the winning edit's full struct value (not a
+    field-by-field merge), so Source just rides along with whichever
+    edit survives. New Edit fields added in the future don't need any
+    collapse-aware copying.
+  - `FunctionDispatcher.Dispatch` returns raw funnel.Edits, so function
+    authors cannot forge a Source value — Prepare overwrites whatever
+    the dispatcher set. If we ever want function-backed actions to emit
+    source="ingest" for specific use cases, this is the line to revisit.
+  - JSON omitempty on Source means old NATS batches in flight during a
+    rolling upgrade will unmarshal with Source="", which US-021 must
+    interpret as "user" (preserving conservative legacy behaviour).
+---
