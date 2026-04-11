@@ -13,6 +13,11 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 )
 
+// testOntology is the default ontology API name used by funnel tests after
+// US-044. The Bleve index manager keys per (ontology, objectType) so the test
+// fixtures must agree on a fixed scope name.
+const testOntology = "test-ont"
+
 // fakeHistoryRepo is a minimal HistoryRecorder used by Tier 2.3 funnel tests
 // to verify that the consumer writes one ObjectHistory row per applied edit.
 type fakeHistoryRepo struct {
@@ -51,7 +56,7 @@ func setupTestConsumer(t *testing.T) (*Consumer, *index.Manager) {
 		{APIName: "name", BaseType: "string", IsSearchable: true},
 		{APIName: "age", BaseType: "integer", IsSearchable: true},
 	}
-	if _, err := mgr.EnsureIndex("employee", props); err != nil {
+	if _, err := mgr.EnsureIndex(index.ScopedKey(testOntology, "employee"), props); err != nil {
 		t.Fatalf("EnsureIndex: %v", err)
 	}
 
@@ -79,9 +84,10 @@ func TestEditType_Constants(t *testing.T) {
 
 func TestEditBatch_JSON(t *testing.T) {
 	batch := EditBatch{
-		ID:     "batch-1",
-		UserID: "user-1",
-		Timestamp: time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
+		ID:              "batch-1",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
+		Timestamp:       time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
 		Edits: []Edit{
 			{
 				Type:       EditTypeCreate,
@@ -175,11 +181,11 @@ func TestApplyEdit_Create(t *testing.T) {
 		},
 	}
 
-	if err := consumer.applyEdit(edit); err != nil {
+	if err := consumer.applyEdit(testOntology, edit); err != nil {
 		t.Fatalf("applyEdit: %v", err)
 	}
 
-	count, err := mgr.DocCount("employee")
+	count, err := mgr.DocCount(index.ScopedKey(testOntology, "employee"))
 	if err != nil {
 		t.Fatalf("DocCount: %v", err)
 	}
@@ -201,7 +207,7 @@ func TestApplyEdit_Modify(t *testing.T) {
 			"age":  float64(30),
 		},
 	}
-	if err := consumer.applyEdit(create); err != nil {
+	if err := consumer.applyEdit(testOntology, create); err != nil {
 		t.Fatalf("applyEdit create: %v", err)
 	}
 
@@ -215,12 +221,12 @@ func TestApplyEdit_Modify(t *testing.T) {
 			"age":  float64(31),
 		},
 	}
-	if err := consumer.applyEdit(modify); err != nil {
+	if err := consumer.applyEdit(testOntology, modify); err != nil {
 		t.Fatalf("applyEdit modify: %v", err)
 	}
 
 	// Document count should still be 1 (same primary key)
-	count, err := mgr.DocCount("employee")
+	count, err := mgr.DocCount(index.ScopedKey(testOntology, "employee"))
 	if err != nil {
 		t.Fatalf("DocCount: %v", err)
 	}
@@ -241,7 +247,7 @@ func TestApplyEdit_Delete(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	if err := consumer.applyEdit(create); err != nil {
+	if err := consumer.applyEdit(testOntology, create); err != nil {
 		t.Fatalf("applyEdit create: %v", err)
 	}
 
@@ -251,11 +257,11 @@ func TestApplyEdit_Delete(t *testing.T) {
 		ObjectType: "employee",
 		PrimaryKey: "emp-1",
 	}
-	if err := consumer.applyEdit(del); err != nil {
+	if err := consumer.applyEdit(testOntology, del); err != nil {
 		t.Fatalf("applyEdit delete: %v", err)
 	}
 
-	count, err := mgr.DocCount("employee")
+	count, err := mgr.DocCount(index.ScopedKey(testOntology, "employee"))
 	if err != nil {
 		t.Fatalf("DocCount: %v", err)
 	}
@@ -273,7 +279,7 @@ func TestApplyEdit_UnknownType(t *testing.T) {
 		PrimaryKey: "emp-1",
 	}
 
-	err := consumer.applyEdit(edit)
+	err := consumer.applyEdit(testOntology, edit)
 	if err == nil {
 		t.Fatal("expected error for unknown edit type")
 	}
@@ -293,12 +299,12 @@ func TestApplyEdit_WithProperties(t *testing.T) {
 		},
 	}
 
-	if err := consumer.applyEdit(edit); err != nil {
+	if err := consumer.applyEdit(testOntology, edit); err != nil {
 		t.Fatalf("applyEdit: %v", err)
 	}
 
 	// Verify document was indexed with correct properties by searching
-	count, err := mgr.DocCount("employee")
+	count, err := mgr.DocCount(index.ScopedKey(testOntology, "employee"))
 	if err != nil {
 		t.Fatalf("DocCount: %v", err)
 	}
@@ -307,7 +313,7 @@ func TestApplyEdit_WithProperties(t *testing.T) {
 	}
 
 	// Search for the document by name field
-	idx := mgr.GetIndex("employee")
+	idx := mgr.GetIndex(index.ScopedKey(testOntology, "employee"))
 	if idx == nil {
 		t.Fatal("expected non-nil index")
 	}
@@ -327,8 +333,9 @@ func TestHandleMessage_ValidBatch(t *testing.T) {
 	consumer, mgr := setupTestConsumer(t)
 
 	batch := EditBatch{
-		ID:     "batch-1",
-		UserID: "user-1",
+		ID:              "batch-1",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
 		Edits: []Edit{
 			{
 				Type:       EditTypeCreate,
@@ -363,12 +370,12 @@ func TestHandleMessage_ValidBatch(t *testing.T) {
 	}
 
 	for _, edit := range decoded.Edits {
-		if err := consumer.applyEdit(edit); err != nil {
+		if err := consumer.applyEdit(testOntology, edit); err != nil {
 			t.Fatalf("applyEdit: %v", err)
 		}
 	}
 
-	count, err := mgr.DocCount("employee")
+	count, err := mgr.DocCount(index.ScopedKey(testOntology, "employee"))
 	if err != nil {
 		t.Fatalf("DocCount: %v", err)
 	}
@@ -392,9 +399,10 @@ func TestHandleMessage_EmptyBatch(t *testing.T) {
 	consumer, _ := setupTestConsumer(t)
 
 	batch := EditBatch{
-		ID:     "batch-empty",
-		UserID: "user-1",
-		Edits:  []Edit{},
+		ID:              "batch-empty",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
+		Edits:           []Edit{},
 	}
 
 	data, err := json.Marshal(batch)
@@ -409,7 +417,7 @@ func TestHandleMessage_EmptyBatch(t *testing.T) {
 
 	// Processing an empty edits slice should work without error
 	for _, edit := range decoded.Edits {
-		if err := consumer.applyEdit(edit); err != nil {
+		if err := consumer.applyEdit(testOntology, edit); err != nil {
 			t.Fatalf("applyEdit: %v", err)
 		}
 	}
@@ -456,7 +464,7 @@ func TestConsumer_BatchAtomicity_PerIndex(t *testing.T) {
 	props := []index.Property{
 		{APIName: "title", BaseType: "string", IsSearchable: true},
 	}
-	if _, err := mgr.EnsureIndex("project", props); err != nil {
+	if _, err := mgr.EnsureIndex(index.ScopedKey(testOntology, "project"), props); err != nil {
 		t.Fatalf("EnsureIndex project: %v", err)
 	}
 
@@ -466,11 +474,11 @@ func TestConsumer_BatchAtomicity_PerIndex(t *testing.T) {
 		{Type: EditTypeCreate, ObjectType: "employee", PrimaryKey: "emp-2", Properties: map[string]interface{}{"name": "Bob", "age": float64(28)}},
 	}
 
-	if err := consumer.applyBatchEdits(edits); err != nil {
+	if err := consumer.applyBatchEdits(testOntology, edits); err != nil {
 		t.Fatalf("applyBatchEdits: %v", err)
 	}
 
-	empCount, err := mgr.DocCount("employee")
+	empCount, err := mgr.DocCount(index.ScopedKey(testOntology, "employee"))
 	if err != nil {
 		t.Fatalf("DocCount employee: %v", err)
 	}
@@ -478,7 +486,7 @@ func TestConsumer_BatchAtomicity_PerIndex(t *testing.T) {
 		t.Fatalf("expected 2 employees, got %d", empCount)
 	}
 
-	projCount, err := mgr.DocCount("project")
+	projCount, err := mgr.DocCount(index.ScopedKey(testOntology, "project"))
 	if err != nil {
 		t.Fatalf("DocCount project: %v", err)
 	}
@@ -498,14 +506,14 @@ func TestConsumer_BatchAtomicity_UnknownType(t *testing.T) {
 		{Type: EditTypeCreate, ObjectType: "nonexistent", PrimaryKey: "x-1", Properties: map[string]interface{}{"foo": "bar"}},
 	}
 
-	if err := consumer.applyBatchEdits(edits); err == nil {
+	if err := consumer.applyBatchEdits(testOntology, edits); err == nil {
 		t.Fatal("expected error for unknown object type in batch")
 	}
 }
 
 func TestConsumer_BatchAtomicity_Empty(t *testing.T) {
 	consumer, _ := setupTestConsumer(t)
-	if err := consumer.applyBatchEdits(nil); err != nil {
+	if err := consumer.applyBatchEdits(testOntology, nil); err != nil {
 		t.Fatalf("empty batch should be no-op: %v", err)
 	}
 }
@@ -513,14 +521,14 @@ func TestConsumer_BatchAtomicity_Empty(t *testing.T) {
 // --- Publisher tests (2) ---
 
 func TestPublisher_SubjectFormat(t *testing.T) {
-	subject := BuildSubject("employee")
-	expected := "edits.employee"
+	subject := BuildSubject("northwind", "employee")
+	expected := "edits.northwind.employee"
 	if subject != expected {
 		t.Fatalf("expected subject %q, got %q", expected, subject)
 	}
 
-	subject = BuildSubject("project")
-	expected = "edits.project"
+	subject = BuildSubject("northwind", "project")
+	expected = "edits.northwind.project"
 	if subject != expected {
 		t.Fatalf("expected subject %q, got %q", expected, subject)
 	}
@@ -679,8 +687,9 @@ func TestConsumer_RecordHistory_Create(t *testing.T) {
 	})
 
 	batch := EditBatch{
-		ID:     "batch-create",
-		UserID: "user-1",
+		ID:              "batch-create",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
 		Edits: []Edit{
 			{
 				Type:       EditTypeCreate,
@@ -741,8 +750,9 @@ func TestConsumer_RecordHistory_Modify(t *testing.T) {
 	})
 
 	createBatch := EditBatch{
-		ID:     "batch-1",
-		UserID: "user-1",
+		ID:              "batch-1",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
 		Edits: []Edit{
 			{
 				Type:       EditTypeCreate,
@@ -757,8 +767,9 @@ func TestConsumer_RecordHistory_Modify(t *testing.T) {
 	}
 
 	modBatch := EditBatch{
-		ID:     "batch-2",
-		UserID: "user-2",
+		ID:              "batch-2",
+		OntologyAPIName: testOntology,
+		UserID:          "user-2",
 		Edits: []Edit{
 			{
 				Type:       EditTypeModify,
@@ -809,7 +820,8 @@ func TestConsumer_RecordHistory_Delete(t *testing.T) {
 	})
 
 	createBatch := EditBatch{
-		ID: "batch-1",
+		ID:              "batch-1",
+		OntologyAPIName: testOntology,
 		Edits: []Edit{
 			{
 				Type:       EditTypeCreate,
@@ -824,8 +836,9 @@ func TestConsumer_RecordHistory_Delete(t *testing.T) {
 	}
 
 	delBatch := EditBatch{
-		ID:     "batch-2",
-		UserID: "user-d",
+		ID:              "batch-2",
+		OntologyAPIName: testOntology,
+		UserID:          "user-d",
 		Edits: []Edit{
 			{
 				Type:       EditTypeDelete,
@@ -864,7 +877,8 @@ func TestConsumer_RecordHistory_NilRepo(t *testing.T) {
 	// no SetHistoryRepo call
 
 	batch := EditBatch{
-		ID: "batch-noop",
+		ID:              "batch-noop",
+		OntologyAPIName: testOntology,
 		Edits: []Edit{
 			{
 				Type:       EditTypeCreate,
@@ -891,7 +905,8 @@ func TestConsumer_RecordHistory_VersionsPerPK(t *testing.T) {
 
 	for _, pk := range []string{"emp-A", "emp-B"} {
 		b := EditBatch{
-			ID: "create-" + pk,
+			ID:              "create-" + pk,
+			OntologyAPIName: testOntology,
 			Edits: []Edit{
 				{Type: EditTypeCreate, ObjectType: "employee", PrimaryKey: pk,
 					Properties: map[string]interface{}{"name": pk}},
@@ -904,7 +919,8 @@ func TestConsumer_RecordHistory_VersionsPerPK(t *testing.T) {
 	// Modify A twice, B once.
 	for _, pk := range []string{"emp-A", "emp-A", "emp-B"} {
 		b := EditBatch{
-			ID: "mod-" + pk,
+			ID:              "mod-" + pk,
+			OntologyAPIName: testOntology,
 			Edits: []Edit{
 				{Type: EditTypeModify, ObjectType: "employee", PrimaryKey: pk,
 					Properties: map[string]interface{}{"name": pk + "+"}},

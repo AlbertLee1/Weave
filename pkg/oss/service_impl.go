@@ -74,7 +74,7 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 	searchReq.Fields = []string{"*"}
 	searchReq.Size = 1
 
-	result, err := s.indexMgr.Search(req.ObjectType, searchReq)
+	result, err := s.indexMgr.Search(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		searchReq.SortBy(parseOrderBy(req.OrderBy))
 	}
 
-	result, err := s.indexMgr.Search(req.ObjectType, searchReq)
+	result, err := s.indexMgr.Search(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		searchReq.SortBy(parseOrderBy(req.OrderBy))
 	}
 
-	result, err := s.indexMgr.Search(req.ObjectType, searchReq)
+	result, err := s.indexMgr.Search(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +243,7 @@ func (s *ServiceImpl) CountObjects(ctx context.Context, req CountObjectsRequest)
 		return nil, err
 	}
 
-	count, err := s.indexMgr.DocCount(req.ObjectType)
+	count, err := s.indexMgr.DocCount(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
 	if err != nil {
 		// Index not found for this object type — valid type but no data yet.
 		return &CountObjectsResponse{Count: 0}, nil
@@ -318,8 +318,12 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 		return nil, fmt.Errorf("link type %q not found for object type %q (direction=%s)", req.LinkType, req.ObjectType, dir)
 	}
 
+	// US-044: stamp the ontology scope on the context so the link resolver
+	// (which routes through Bleve) hits the per-ontology index.
+	scopedCtx := index.WithOntologyScope(ctx, req.OntologyRID)
+
 	// Resolve linked primary keys via the direction-aware resolver.
-	targetPKs, err := s.linkResolver.ResolveLinked(ctx, matchedLT.RID, []string{req.PrimaryKey}, dir)
+	targetPKs, err := s.linkResolver.ResolveLinked(scopedCtx, matchedLT.RID, []string{req.PrimaryKey}, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +399,7 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 	batchReq.Fields = []string{"*"}
 	batchReq.Size = len(paginatedPKs)
 
-	batchResult, err := s.indexMgr.Search(targetOTAPIName, batchReq)
+	batchResult, err := s.indexMgr.Search(scopedBleveKey(s.indexMgr, req.OntologyRID, targetOTAPIName), batchReq)
 	if err != nil {
 		return nil, err
 	}
@@ -475,8 +479,12 @@ func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRe
 		return nil, fmt.Errorf("link type %q not found for object type %q (direction=%s)", req.LinkType, req.ObjectType, dir)
 	}
 
+	// US-044: stamp the ontology scope on the context so the link resolver
+	// hits the per-ontology Bleve index.
+	scopedCtx := index.WithOntologyScope(ctx, req.OntologyRID)
+
 	// Resolve linked primary keys.
-	targetPKs, err := s.linkResolver.ResolveLinked(ctx, matchedLT.RID, []string{req.PrimaryKey}, dir)
+	targetPKs, err := s.linkResolver.ResolveLinked(scopedCtx, matchedLT.RID, []string{req.PrimaryKey}, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +517,7 @@ func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRe
 	batchReq.Fields = []string{"*"}
 	batchReq.Size = 1
 
-	batchResult, err := s.indexMgr.Search(otherOT.APIName, batchReq)
+	batchResult, err := s.indexMgr.Search(scopedBleveKey(s.indexMgr, req.OntologyRID, otherOT.APIName), batchReq)
 	if err != nil {
 		return nil, err
 	}

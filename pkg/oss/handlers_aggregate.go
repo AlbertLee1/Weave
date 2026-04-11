@@ -26,6 +26,7 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")
 
 	var req aggregation.AggregationRequest
@@ -37,10 +38,11 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ObjectType = objectType
 
-	idx := h.indexMgr.GetIndex(objectType)
+	idx := h.indexMgr.GetIndex(scopedBleveKey(h.indexMgr, ontologyAPIName, objectType))
 	if idx == nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("IndexNotFound", map[string]string{
-			"objectType": objectType,
+			"ontologyApiName": ontologyAPIName,
+			"objectType":      objectType,
 		}))
 		return
 	}

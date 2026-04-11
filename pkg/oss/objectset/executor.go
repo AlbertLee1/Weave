@@ -230,7 +230,7 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 	searchReq.Size = BaseExecutionCap
 	searchReq.Fields = []string{"*"}
 
-	result, err := e.indexMgr.Search(def.ObjectType, searchReq)
+	result, err := e.indexMgr.Search(scopedIndexKey(ctx, e.indexMgr, def.ObjectType), searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search base objectSet %q: %w", def.ObjectType, err)
 	}
@@ -273,7 +273,7 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 
 	searchReq := bleve.NewSearchRequest(conjQ)
 	searchReq.Size = BaseExecutionCap
-	result, err := e.indexMgr.Search(baseResult.ObjectType, searchReq)
+	result, err := e.indexMgr.Search(scopedIndexKey(ctx, e.indexMgr, baseResult.ObjectType), searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search filter objectSet: %w", err)
 	}

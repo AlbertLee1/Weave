@@ -35,10 +35,13 @@ type DLQMessage struct {
 // Decoupled from nats.JetStreamContext so unit tests can supply a fake.
 type DLQPublishFunc func(subject string, data []byte) error
 
-// BuildDLQSubject returns the DLQ subject for a given original subject.
-// It replaces the "edits." prefix with "edits.dlq.".
-func BuildDLQSubject(objectType string) string {
-	return fmt.Sprintf("%s.%s", DLQSubjectPrefix, objectType)
+// BuildDLQSubject returns the DLQ subject for a given suffix. The suffix is
+// the portion of the original subject after "edits." and may itself be a
+// scoped "{ontology}.{objectType}" pair. The DLQ subject preserves whatever
+// suffix it's given so DLQ consumers can replay back to the original scoped
+// stream subject.
+func BuildDLQSubject(suffix string) string {
+	return fmt.Sprintf("%s.%s", DLQSubjectPrefix, suffix)
 }
 
 // DLQStreamConfig returns the NATS stream configuration for the DLQ stream.

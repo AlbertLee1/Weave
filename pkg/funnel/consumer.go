@@ -213,16 +213,17 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 	}
 }
 
-func (c *Consumer) applyEdit(edit Edit) error {
+func (c *Consumer) applyEdit(ontologyAPIName string, edit Edit) error {
+	scopedKey := index.ScopedKey(ontologyAPIName, edit.ObjectType)
 	switch edit.Type {
 	case EditTypeCreate, EditTypeModify:
 		doc := make(map[string]interface{})
 		for k, v := range edit.Properties {
 			doc[k] = v
 		}
-		return c.indexMgr.IndexDocument(edit.ObjectType, edit.PrimaryKey, doc)
+		return c.indexMgr.IndexDocument(scopedKey, edit.PrimaryKey, doc)
 	case EditTypeDelete:
-		return c.indexMgr.DeleteDocument(edit.ObjectType, edit.PrimaryKey)
+		return c.indexMgr.DeleteDocument(scopedKey, edit.PrimaryKey)
 	default:
 		return fmt.Errorf("unknown edit type: %q", edit.Type)
 	}
@@ -239,15 +240,19 @@ func (c *Consumer) applyEdit(edit Edit) error {
 // group. CREATE/MODIFY replay is idempotent via bleve upsert; DELETE+CREATE
 // across types during redelivery is at-least-once and documented in the
 // design report.
-func (c *Consumer) applyBatchEdits(edits []Edit) error {
+func (c *Consumer) applyBatchEdits(ontologyAPIName string, edits []Edit) error {
 	if len(edits) == 0 {
 		return nil
+	}
+	if ontologyAPIName == "" {
+		return fmt.Errorf("apply batch: ontologyApiName is empty")
 	}
 
 	// Preserve insertion order of object types so single-type batches keep
 	// their historical per-type ordering for downstream consumers.
 	type group struct {
 		objectType string
+		scopedKey  string
 		ops        []index.BatchOp
 	}
 	groupIdx := make(map[string]int)
@@ -263,12 +268,16 @@ func (c *Consumer) applyBatchEdits(edits []Edit) error {
 			continue
 		}
 		groupIdx[edit.ObjectType] = len(groups)
-		groups = append(groups, group{objectType: edit.ObjectType, ops: []index.BatchOp{op}})
+		groups = append(groups, group{
+			objectType: edit.ObjectType,
+			scopedKey:  index.ScopedKey(ontologyAPIName, edit.ObjectType),
+			ops:        []index.BatchOp{op},
+		})
 	}
 
 	for _, g := range groups {
-		if err := c.indexMgr.ApplyBatch(g.objectType, g.ops); err != nil {
-			return fmt.Errorf("apply batch for %q: %w", g.objectType, err)
+		if err := c.indexMgr.ApplyBatch(g.scopedKey, g.ops); err != nil {
+			return fmt.Errorf("apply batch for %q: %w", g.scopedKey, err)
 		}
 	}
 	return nil
@@ -309,6 +318,9 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	if len(batch.Edits) == 0 {
 		return nil
 	}
+	if batch.OntologyAPIName == "" {
+		return fmt.Errorf("apply batch: ontologyApiName is empty")
+	}
 
 	// Capture prev_state for each edit BEFORE the batch is applied. CREATE
 	// edits get a nil prev_state by definition; MODIFY/DELETE pull the
@@ -319,7 +331,7 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 			if e.Type == EditTypeCreate {
 				continue
 			}
-			doc := c.fetchDocument(e.ObjectType, e.PrimaryKey)
+			doc := c.fetchDocument(batch.OntologyAPIName, e.ObjectType, e.PrimaryKey)
 			if doc != nil {
 				if data, err := json.Marshal(doc); err == nil {
 					prevStates[i] = data
@@ -328,7 +340,7 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 		}
 	}
 
-	if err := c.applyBatchEdits(batch.Edits); err != nil {
+	if err := c.applyBatchEdits(batch.OntologyAPIName, batch.Edits); err != nil {
 		return err
 	}
 
@@ -372,15 +384,15 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	return nil
 }
 
-// fetchDocument loads the current bleve document for (objectType, pk) as a
-// flat map[string]interface{}. Returns nil when the index does not exist or
-// the document is missing — both are non-fatal for history capture.
-func (c *Consumer) fetchDocument(objectType, primaryKey string) map[string]interface{} {
+// fetchDocument loads the current bleve document for (ontology, objectType, pk)
+// as a flat map[string]interface{}. Returns nil when the index does not exist
+// or the document is missing — both are non-fatal for history capture.
+func (c *Consumer) fetchDocument(ontologyAPIName, objectType, primaryKey string) map[string]interface{} {
 	q := bleve.NewDocIDQuery([]string{primaryKey})
 	req := bleve.NewSearchRequest(q)
 	req.Fields = []string{"*"}
 	req.Size = 1
-	res, err := c.indexMgr.Search(objectType, req)
+	res, err := c.indexMgr.Search(index.ScopedKey(ontologyAPIName, objectType), req)
 	if err != nil || res == nil || res.Total == 0 {
 		return nil
 	}

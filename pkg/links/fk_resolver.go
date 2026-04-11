@@ -6,8 +6,19 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
+	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
 )
+
+// scopedFKKey returns the per-ontology Bleve key for an objectType using the
+// scope stamped on ctx. When no scope is set the bare objectType is returned,
+// matching the fallback semantics used in pkg/oss for legacy callers.
+func scopedFKKey(ctx context.Context, objectType string) string {
+	if scope := index.OntologyScopeFromContext(ctx); scope != "" {
+		return index.ScopedKey(scope, objectType)
+	}
+	return objectType
+}
 
 // resolveFK resolves a foreign-key based link type in the forward direction
 // (source -> target).
@@ -33,7 +44,7 @@ func (r *Resolver) resolveFK(ctx context.Context, lt *oms.LinkType, sourcePKs []
 	}
 
 	// Step 1: Get the FK values from source objects.
-	fkValues, err := r.getFKValues(sourceOT.APIName, sourcePKs, sourceOT.PrimaryKey, fkConfig.SourceProperty)
+	fkValues, err := r.getFKValues(scopedFKKey(ctx, sourceOT.APIName), sourcePKs, sourceOT.PrimaryKey, fkConfig.SourceProperty)
 	if err != nil {
 		return nil, fmt.Errorf("get FK values: %w", err)
 	}
@@ -43,7 +54,7 @@ func (r *Resolver) resolveFK(ctx context.Context, lt *oms.LinkType, sourcePKs []
 	}
 
 	// Step 2: Find target objects where targetProperty matches any FK value.
-	targetPKs, err := r.findTargetsByFK(targetOT.APIName, targetOT.PrimaryKey, fkConfig.TargetProperty, fkValues)
+	targetPKs, err := r.findTargetsByFK(scopedFKKey(ctx, targetOT.APIName), targetOT.PrimaryKey, fkConfig.TargetProperty, fkValues)
 	if err != nil {
 		return nil, fmt.Errorf("find targets: %w", err)
 	}
@@ -129,7 +140,7 @@ func (r *Resolver) resolveFKReverse(ctx context.Context, lt *oms.LinkType, targe
 	if fkConfig.TargetProperty == targetOT.PrimaryKey {
 		fkValues = targetPKs
 	} else {
-		fkValues, err = r.getFKValues(targetOT.APIName, targetPKs, targetOT.PrimaryKey, fkConfig.TargetProperty)
+		fkValues, err = r.getFKValues(scopedFKKey(ctx, targetOT.APIName), targetPKs, targetOT.PrimaryKey, fkConfig.TargetProperty)
 		if err != nil {
 			return nil, fmt.Errorf("get reverse FK values: %w", err)
 		}
@@ -140,7 +151,7 @@ func (r *Resolver) resolveFKReverse(ctx context.Context, lt *oms.LinkType, targe
 	}
 
 	// Step 2: Find source objects whose sourceProperty matches any of the target values.
-	sourcePKs, err := r.findTargetsByFK(sourceOT.APIName, sourceOT.PrimaryKey, fkConfig.SourceProperty, fkValues)
+	sourcePKs, err := r.findTargetsByFK(scopedFKKey(ctx, sourceOT.APIName), sourceOT.PrimaryKey, fkConfig.SourceProperty, fkValues)
 	if err != nil {
 		return nil, fmt.Errorf("find reverse sources: %w", err)
 	}

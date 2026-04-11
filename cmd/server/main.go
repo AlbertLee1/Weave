@@ -181,6 +181,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			deps.RoleResolver,
 		))
 
+		// US-044: enforce per-ontology scope on every route that carries an
+		// {ontologyApiName} URL param. Dev mode injects an admin user so this
+		// middleware is a no-op for the existing dev surface; in jwt mode it
+		// rejects requests where the caller has no role for the target
+		// ontology. Routes without an {ontologyApiName} param (auth/me, sql
+		// queries, attachments) skip the check because there is nothing to
+		// scope to.
+		api.Use(auth.OntologyScopeMiddleware(auth.PermObjectRead))
+
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
 

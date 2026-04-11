@@ -47,7 +47,7 @@ func (h *Handler) InterfaceListObjects(w http.ResponseWriter, r *http.Request) {
 
 	pageToken := r.URL.Query().Get("pageToken")
 
-	page, err := h.listObjectsAcrossTypes(objectTypes, pageSize, pageToken)
+	page, err := h.listObjectsAcrossTypes(ontologyRID, objectTypes, pageSize, pageToken)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("InterfaceListObjectsFailed", map[string]string{
 			"reason": err.Error(),
@@ -90,7 +90,7 @@ func (h *Handler) InterfaceSearchObjects(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	page, err := h.searchObjectsAcrossTypes(objectTypes, body)
+	page, err := h.searchObjectsAcrossTypes(ontologyRID, objectTypes, body)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("InterfaceSearchFailed", map[string]string{
 			"reason": err.Error(),
@@ -125,7 +125,7 @@ func (h *Handler) InterfaceAggregateObjects(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result, err := h.aggregateAcrossTypes(objectTypes, &req)
+	result, err := h.aggregateAcrossTypes(ontologyRID, objectTypes, &req)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("InterfaceAggregationFailed", map[string]string{
 			"reason": err.Error(),
@@ -224,7 +224,7 @@ func (h *Handler) resolveInterfaceOrWriteError(w http.ResponseWriter, r *http.Re
 
 // listObjectsAcrossTypes queries Bleve indexes for all implementing
 // ObjectTypes and returns a merged, paginated ObjectPage.
-func (h *Handler) listObjectsAcrossTypes(objectTypes []oms.ObjectType, pageSize int, pageToken string) (*ObjectPage, error) {
+func (h *Handler) listObjectsAcrossTypes(ontologyAPIName string, objectTypes []oms.ObjectType, pageSize int, pageToken string) (*ObjectPage, error) {
 	if h.indexMgr == nil {
 		return nil, fmt.Errorf("index manager not configured")
 	}
@@ -248,7 +248,7 @@ func (h *Handler) listObjectsAcrossTypes(objectTypes []oms.ObjectType, pageSize 
 		searchReq.Fields = []string{"*"}
 		searchReq.Size = pagination.MaxPageSize
 
-		result, err := h.indexMgr.Search(ot.APIName, searchReq)
+		result, err := h.indexMgr.Search(scopedBleveKey(h.indexMgr, ontologyAPIName, ot.APIName), searchReq)
 		if err != nil {
 			continue // skip types with no index
 		}
@@ -290,7 +290,7 @@ func (h *Handler) listObjectsAcrossTypes(objectTypes []oms.ObjectType, pageSize 
 
 // searchObjectsAcrossTypes searches Bleve indexes for all implementing
 // ObjectTypes with a where clause and returns merged results.
-func (h *Handler) searchObjectsAcrossTypes(objectTypes []oms.ObjectType, body searchRequestBody) (*ObjectPage, error) {
+func (h *Handler) searchObjectsAcrossTypes(ontologyAPIName string, objectTypes []oms.ObjectType, body searchRequestBody) (*ObjectPage, error) {
 	if h.indexMgr == nil {
 		return nil, fmt.Errorf("index manager not configured")
 	}
@@ -326,7 +326,7 @@ func (h *Handler) searchObjectsAcrossTypes(objectTypes []oms.ObjectType, body se
 		searchReq.Fields = []string{"*"}
 		searchReq.Size = pagination.MaxPageSize
 
-		result, err := h.indexMgr.Search(ot.APIName, searchReq)
+		result, err := h.indexMgr.Search(scopedBleveKey(h.indexMgr, ontologyAPIName, ot.APIName), searchReq)
 		if err != nil {
 			continue // skip types with no index or no matches
 		}
@@ -368,11 +368,11 @@ func (h *Handler) searchObjectsAcrossTypes(objectTypes []oms.ObjectType, body se
 
 // aggregateAcrossTypes aggregates across all implementing ObjectTypes.
 // For each type with a Bleve index, runs the aggregation and merges results.
-func (h *Handler) aggregateAcrossTypes(objectTypes []oms.ObjectType, req *aggregation.AggregationRequest) (*aggregation.AggregationResponse, error) {
+func (h *Handler) aggregateAcrossTypes(ontologyAPIName string, objectTypes []oms.ObjectType, req *aggregation.AggregationRequest) (*aggregation.AggregationResponse, error) {
 	var merged *aggregation.AggregationResponse
 
 	for _, ot := range objectTypes {
-		idx := h.indexMgr.GetIndex(ot.APIName)
+		idx := h.indexMgr.GetIndex(scopedBleveKey(h.indexMgr, ontologyAPIName, ot.APIName))
 		if idx == nil {
 			continue
 		}

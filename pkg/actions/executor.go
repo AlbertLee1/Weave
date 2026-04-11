@@ -265,7 +265,11 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 // CommitBatch preserves request order when flattening edits from prepared
 // actions so cross-action MODIFY chains collapse in the caller's intended
 // order (later actions win).
-func (e *Executor) CommitBatch(ctx context.Context, prepared []*PreparedAction) (*BatchResult, error) {
+//
+// US-044: ontologyAPIName is propagated onto the EditBatch so the funnel
+// publisher can route the message onto a per-ontology NATS subject and the
+// consumer can apply edits to the per-ontology Bleve index.
+func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prepared []*PreparedAction) (*BatchResult, error) {
 	result := &BatchResult{
 		Mode:    "atomic",
 		Results: make([]*ApplyResult, 0, len(prepared)),
@@ -296,10 +300,11 @@ func (e *Executor) CommitBatch(ctx context.Context, prepared []*PreparedAction) 
 	}
 
 	batch := &funnel.EditBatch{
-		ID:        uuid.New().String(),
-		Edits:     collapsed,
-		UserID:    prepared[0].UserID,
-		Timestamp: time.Now(),
+		ID:              uuid.New().String(),
+		OntologyAPIName: ontologyAPIName,
+		Edits:           collapsed,
+		UserID:          prepared[0].UserID,
+		Timestamp:       time.Now(),
 	}
 
 	var offset uint64
@@ -369,7 +374,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		}, nil
 	}
 
-	br, err := e.CommitBatch(ctx, []*PreparedAction{prep})
+	br, err := e.CommitBatch(ctx, ontologyRID, []*PreparedAction{prep})
 	if err != nil {
 		// Unwrap a *BatchError so the legacy Apply caller sees a plain
 		// string-shaped error (preserves wire compatibility with callers
@@ -404,7 +409,7 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 		}
 		prepared = append(prepared, p)
 	}
-	return e.CommitBatch(ctx, prepared)
+	return e.CommitBatch(ctx, ontologyRID, prepared)
 }
 
 // ApplyBatchBestEffort prepares every request and commits the ones that
@@ -428,7 +433,7 @@ func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string,
 		prepared = append(prepared, p)
 	}
 
-	result, err := e.CommitBatch(ctx, prepared)
+	result, err := e.CommitBatch(ctx, ontologyRID, prepared)
 	if err != nil {
 		return nil, err
 	}

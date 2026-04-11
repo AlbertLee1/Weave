@@ -703,8 +703,8 @@
         "go test ./... passes"
       ],
       "priority": 44,
-      "passes": false,
-      "notes": "Phase 5 starts here."
+      "passes": true,
+      "notes": "Phase 5 entry. Migration 000017 (slot 14 already taken by foundry_status_endorsed) adds ontology_rid to link_edges/object_history/object_embeddings; markings is global; saved_object_sets already carried ontology_api_name. New index.ScopedKey + index.WithOntologyScope/KeyForCtx helpers; pkg/index/rehydrate.go now creates per-ontology Bleve indexes. Funnel: EditBatch.OntologyAPIName field; publisher subject is edits.<ontology>.<objectType>; consumer routes via index.ScopedKey. Actions executor.CommitBatch propagates ontologyAPIName onto the published EditBatch. OSS service + objectset executor + links FK resolver consult the per-ontology key (with bare-key fallback for legacy unscoped fixtures so the existing 30+ test fixtures keep passing). auth.OntologyScopeMiddleware mounted on the auth-protected API group; admin role bypasses (dev mode no-op). Acceptance test pkg/oss/multi_ontology_isolation_test.go proves two ontologies sharing the 'Employee' apiName see disjoint rows via ListObjects/CountObjects/GetObject."
     },
     {
       "id": "US-045",

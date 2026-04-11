@@ -63,7 +63,9 @@ func (h *Handler) LoadLinks(w http.ResponseWriter, r *http.Request) {
 		Link:      req.LinkTypeAPIName,
 	}
 
-	result, err := h.executor.Execute(r.Context(), searchAroundDef)
+	ctx := WithOntologyScope(r.Context(), chi.URLParam(r, "ontologyApiName"))
+
+	result, err := h.executor.Execute(ctx, searchAroundDef)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("LoadLinksFailed", map[string]string{"error": err.Error()}))
 		return
@@ -111,7 +113,7 @@ func (h *Handler) LoadLinks(w http.ResponseWriter, r *http.Request) {
 		searchReq.Fields = fields
 		searchReq.Size = 1
 
-		res, err := h.indexMgr.Search(result.ObjectType, searchReq)
+		res, err := h.indexMgr.Search(scopedIndexKey(ctx, h.indexMgr, result.ObjectType), searchReq)
 		if err != nil || len(res.Hits) == 0 {
 			continue
 		}

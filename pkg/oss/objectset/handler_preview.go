@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oss/pagination"
@@ -71,7 +72,9 @@ func (h *Handler) loadPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.executor.Execute(r.Context(), req.ObjectSet)
+	ctx := WithOntologyScope(r.Context(), chi.URLParam(r, "ontologyApiName"))
+
+	result, err := h.executor.Execute(ctx, req.ObjectSet)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()}))
 		return
@@ -109,7 +112,7 @@ func (h *Handler) loadPreview(w http.ResponseWriter, r *http.Request) {
 		searchReq.Fields = req.Select
 		searchReq.Size = 1
 
-		res, err := h.indexMgr.Search(result.ObjectType, searchReq)
+		res, err := h.indexMgr.Search(scopedIndexKey(ctx, h.indexMgr, result.ObjectType), searchReq)
 		if err != nil || len(res.Hits) == 0 {
 			continue
 		}

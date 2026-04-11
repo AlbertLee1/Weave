@@ -64,8 +64,9 @@ func EnsureAllIndexes(ctx context.Context, mgr *Manager, repo rehydrateRepo) err
 				})
 			}
 
-			if _, err := mgr.EnsureIndex(ot.APIName, indexProps); err != nil {
-				return fmt.Errorf("rehydrate: ensure index for %q: %w", ot.APIName, err)
+			scopedKey := ScopedKey(ont.APIName, ot.APIName)
+			if _, err := mgr.EnsureIndex(scopedKey, indexProps); err != nil {
+				return fmt.Errorf("rehydrate: ensure index for %q: %w", scopedKey, err)
 			}
 		}
 	}
