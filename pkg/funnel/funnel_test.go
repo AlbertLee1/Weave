@@ -20,6 +20,8 @@ const testOntology = "test-ont"
 
 // fakeHistoryRepo is a minimal HistoryRecorder used by Tier 2.3 funnel tests
 // to verify that the consumer writes one ObjectHistory row per applied edit.
+// US-021 extends it with LatestUserEditAt so conflict-resolution tests can
+// drive the user-edit-wins path without standing up a real PG backend.
 type fakeHistoryRepo struct {
 	mu        sync.Mutex
 	rows      []oms.ObjectHistory
@@ -32,9 +34,41 @@ func (f *fakeHistoryRepo) InsertObjectHistory(_ context.Context, h *oms.ObjectHi
 	if f.insertErr != nil {
 		return f.insertErr
 	}
+	// The PG repo back-fills recorded_at on INSERT; the fake mimics that so
+	// downstream LatestUserEditAt queries return a meaningful timestamp.
+	if h.RecordedAt.IsZero() {
+		h.RecordedAt = time.Now()
+	}
 	// Copy by value so callers can mutate the input freely.
 	f.rows = append(f.rows, *h)
 	return nil
+}
+
+// LatestUserEditAt returns the recorded_at of the most recent history row
+// whose source == EditSourceUser for (objectTypeRID, primaryKey). The second
+// return value indicates whether any user edit exists at all.
+func (f *fakeHistoryRepo) LatestUserEditAt(_ context.Context, objectTypeRID, primaryKey string) (time.Time, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var latest time.Time
+	found := false
+	for _, r := range f.rows {
+		if r.ObjectTypeRID != objectTypeRID || r.PrimaryKey != primaryKey {
+			continue
+		}
+		src := r.Source
+		if src == "" {
+			src = oms.EditSourceUser
+		}
+		if src != oms.EditSourceUser {
+			continue
+		}
+		if !found || r.RecordedAt.After(latest) {
+			latest = r.RecordedAt
+			found = true
+		}
+	}
+	return latest, found, nil
 }
 
 func (f *fakeHistoryRepo) snapshot() []oms.ObjectHistory {

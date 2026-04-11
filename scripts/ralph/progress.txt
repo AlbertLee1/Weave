@@ -1156,3 +1156,60 @@ new features — only run verification suites and commit the gate.
     rolling upgrade will unmarshal with Source="", which US-021 must
     interpret as "user" (preserving conservative legacy behaviour).
 ---
+
+## 2026-04-11 - US-021
+- Added user-edit-wins conflict resolution in the funnel consumer. Ingest
+  edits whose (objectType, primaryKey) has a newer user edit in
+  object_history now either skip (DELETE + MODIFY with no always-apply
+  fields) or merge only always-apply fields on top of the current bleve
+  document (CREATE/MODIFY). Non-ingest edits and edits with no prior user
+  history pass through unchanged, keeping Tier 2.3 behaviour intact.
+- Extended the HistoryRecorder interface with LatestUserEditAt so the
+  consumer never depends on pkg/oms for the query. PG repo grows a matching
+  method and InsertObjectHistory now honours caller-supplied RecordedAt so
+  batch.Timestamp flows through to the conflict comparator.
+- Introduced SetAlwaysApplyField(fn) hook on Consumer as the US-026 stub.
+  US-026 will wire it against the is_edit_only schema column; for now the
+  hook defaults to nil (no fields are always-apply) and tests exercise the
+  custom-hook path.
+- Consumer now stamps object_history rows with edit.Source (fallback
+  "user") so future conflict queries can distinguish user vs. ingest writes.
+- Files changed:
+  - pkg/funnel/consumer.go        (HistoryRecorder extension, resolveConflicts,
+                                    SetAlwaysApplyField, Source stamping)
+  - pkg/funnel/conflict_test.go   (new, 5 tests)
+  - pkg/funnel/funnel_test.go     (fakeHistoryRepo.LatestUserEditAt + RecordedAt
+                                    honour on insert)
+  - pkg/oms/pg_repository.go      (LatestUserEditAt, conditional recorded_at
+                                    in InsertObjectHistory, time import)
+- **Learnings for future iterations:**
+  - Conflict resolution MUST rewrite the filtered edit's Properties to
+    merge(currentBleveDoc, filteredFields) before applying. Bleve's
+    IndexDocument is replace-semantics, not field-level merge, so a naive
+    filtered MODIFY would wipe the protected fields. fetchDocument returns
+    bleve fields as a flat map[string]interface{} with numeric fields
+    already as float64, so the merge is stable across types.
+  - PG's object_history.recorded_at column has DEFAULT NOW(), so the INSERT
+    now branches: when caller passes a non-zero h.RecordedAt (US-021 conflict
+    path), include the column and bind the value; otherwise omit the column
+    so legacy callers keep the default. Don't unconditionally stamp NOW()
+    client-side, that breaks time-based audits for producers that replay
+    historical data.
+  - batch.Timestamp is the only edit-time signal we have until US-062 adds
+    a richer per-event envelope. The consumer stamps it onto h.RecordedAt
+    before insert, and the conflict check uses recorded_at < batch.Timestamp
+    as "user is older". Tests that need deterministic conflict outcomes
+    MUST set batch.Timestamp explicitly on both sides — relying on time.Now()
+    at apply time is racy because the fake inserts at ~nanosecond resolution.
+  - fakeHistoryRepo now respects h.RecordedAt if set (fallback to time.Now()),
+    mirroring the PG path. Any future test in pkg/funnel that seeds history
+    rows and later queries LatestUserEditAt should set RecordedAt explicitly
+    rather than assuming wall-clock.
+  - HistoryRecorder is deliberately narrow (Insert + Latest lookup). Do NOT
+    promote it into pkg/oms.Repository — that forces updates across 11 mock
+    implementations per the Codebase Patterns note. Keep new conflict-only
+    capabilities on this in-package interface.
+  - resolveConflicts fails open on lookup errors (the edit is passed
+    through, not dropped). Rationale: a PG hiccup should not silently
+    swallow ingest data; DLQ and retry paths handle the durability side.
+---

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1477,26 +1478,69 @@ func (r *PGRepository) InsertActionLog(ctx context.Context, al *ActionLog) error
 // InsertObjectHistory writes a new history row and back-fills the generated
 // id and recorded_at timestamps onto h. nil PrevState/NewState are stored as
 // SQL NULL so DELETE rows do not carry stale state.
+//
+// When h.RecordedAt is non-zero the caller-provided value is written to the
+// column so US-021 conflict resolution can compare ingest batch timestamps
+// against the user edit time that the producer stamped. A zero value falls
+// through to the DEFAULT NOW() behaviour preserved from Tier 2.3.
 func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory) error {
 	source := h.Source
 	if source == "" {
 		source = EditSourceUser
 	}
-	err := r.pool.QueryRow(ctx,
-		`INSERT INTO object_history
-		   (object_type_rid, primary_key, version, prev_state, new_state,
-		    edit_type, source, action_log_rid, user_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 RETURNING id, recorded_at`,
-		h.ObjectTypeRID, h.PrimaryKey, h.Version,
-		nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
-		h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID)).
-		Scan(&h.ID, &h.RecordedAt)
+	var err error
+	if !h.RecordedAt.IsZero() {
+		err = r.pool.QueryRow(ctx,
+			`INSERT INTO object_history
+			   (object_type_rid, primary_key, version, prev_state, new_state,
+			    edit_type, source, action_log_rid, user_id, recorded_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			 RETURNING id, recorded_at`,
+			h.ObjectTypeRID, h.PrimaryKey, h.Version,
+			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
+			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID),
+			h.RecordedAt).
+			Scan(&h.ID, &h.RecordedAt)
+	} else {
+		err = r.pool.QueryRow(ctx,
+			`INSERT INTO object_history
+			   (object_type_rid, primary_key, version, prev_state, new_state,
+			    edit_type, source, action_log_rid, user_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			 RETURNING id, recorded_at`,
+			h.ObjectTypeRID, h.PrimaryKey, h.Version,
+			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
+			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID)).
+			Scan(&h.ID, &h.RecordedAt)
+	}
 	if err != nil {
 		return err
 	}
 	h.Source = source
 	return nil
+}
+
+// LatestUserEditAt returns the recorded_at of the most recent history row
+// whose source == 'user' for (objectTypeRID, primaryKey). Used by the funnel
+// consumer's US-021 user-edit-wins conflict resolver. The second return
+// value is false when no user edit exists, in which case the caller should
+// treat ingest edits as the authoritative source.
+func (r *PGRepository) LatestUserEditAt(ctx context.Context, objectTypeRID, primaryKey string) (time.Time, bool, error) {
+	var ts time.Time
+	err := r.pool.QueryRow(ctx,
+		`SELECT recorded_at FROM object_history
+		 WHERE object_type_rid = $1 AND primary_key = $2
+		   AND COALESCE(source, 'user') = 'user'
+		 ORDER BY recorded_at DESC
+		 LIMIT 1`,
+		objectTypeRID, primaryKey).Scan(&ts)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, err
+	}
+	return ts, true, nil
 }
 
 // ListObjectHistory returns the most recent `limit` history rows for a given

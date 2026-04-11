@@ -23,10 +23,18 @@ const (
 )
 
 // HistoryRecorder is the minimal subset of oms.Repository required by the
-// consumer to write ObjectHistory rows. Defined as an interface so the
-// consumer never imports the full PG repo (and tests can supply a fake).
+// consumer to write ObjectHistory rows and drive US-021 user-edit-wins
+// conflict resolution. Defined as an interface so the consumer never imports
+// the full PG repo (and tests can supply a fake).
+//
+// LatestUserEditAt returns the recorded_at of the most recent row whose
+// source == EditSourceUser for (objectTypeRID, primaryKey). The boolean is
+// false when no user edit exists, in which case ingest edits overwrite
+// normally. Implementations must return (zero, false, nil) — not an error —
+// for a missing row.
 type HistoryRecorder interface {
 	InsertObjectHistory(ctx context.Context, h *oms.ObjectHistory) error
+	LatestUserEditAt(ctx context.Context, objectTypeRID, primaryKey string) (time.Time, bool, error)
 }
 
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
@@ -45,8 +53,16 @@ type Consumer struct {
 	dlqPublish DLQPublishFunc
 
 	// historyRepo writes a row per applied edit when set. Tier 2.3 wires
-	// this to the OMS PG repo. Nil = history disabled.
+	// this to the OMS PG repo. Nil = history disabled (and the US-021
+	// user-edit-wins guard degrades to a no-op).
 	historyRepo HistoryRecorder
+
+	// alwaysApplyField is the US-021 stub for US-026's is_edit_only column.
+	// When non-nil and the function returns true for (objectType, field),
+	// the consumer applies that field from an ingest edit even if a newer
+	// user edit exists. Default (nil) means "no fields are always-apply"
+	// and every ingest write on a protected object is filtered out.
+	alwaysApplyField func(objectType, field string) bool
 	// objectTypeRIDs maps API name -> RID for resolving objectType -> RID
 	// when recording history. Updated by callers via SetObjectTypeRIDs.
 	objectTypeRIDs map[string]string
@@ -90,6 +106,15 @@ func (c *Consumer) SetDLQPublish(fn DLQPublishFunc) {
 // Pass nil to disable. Safe to call before Start().
 func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
 	c.historyRepo = repo
+}
+
+// SetAlwaysApplyField wires the US-021 always-apply hook. When set, ingest
+// edits are allowed to overwrite user state for any (objectType, field)
+// tuple the function returns true for, even if a newer user edit exists.
+// Pass nil to disable (default behaviour). Safe to call before Start().
+// US-026 wires the real implementation against the schema is_edit_only flag.
+func (c *Consumer) SetAlwaysApplyField(fn func(objectType, field string) bool) {
+	c.alwaysApplyField = fn
 }
 
 // SetObjectTypeRIDs supplies the API-name -> RID lookup table used when
@@ -311,6 +336,80 @@ func toBatchOp(edit Edit) (index.BatchOp, error) {
 	}
 }
 
+// resolveConflicts applies the US-021 user-edit-wins filter to ingest edits.
+// For every Source == EditSourceIngest edit whose target PK has a user edit
+// in object_history newer than batch.Timestamp, the filter either drops the
+// edit (DELETE, or CREATE/MODIFY with no always-apply fields) or rewrites
+// its Properties to the merge of the current bleve document with the subset
+// of ingest fields permitted by alwaysApplyField. Non-ingest edits and
+// edits whose target has no newer user state pass through unchanged.
+//
+// A nil historyRepo degrades this to a pass-through so legacy callers and
+// in-memory tests keep working. Lookup errors fail open (the edit is passed
+// through) so a transient PG hiccup never silently swallows ingest data.
+func (c *Consumer) resolveConflicts(ctx context.Context, batch EditBatch) []Edit {
+	if c.historyRepo == nil {
+		return batch.Edits
+	}
+	out := make([]Edit, 0, len(batch.Edits))
+	for _, e := range batch.Edits {
+		if e.Source != EditSourceIngest {
+			out = append(out, e)
+			continue
+		}
+		otRID := c.objectTypeRIDs[e.ObjectType]
+		if otRID == "" {
+			otRID = e.ObjectType
+		}
+		latest, hasUser, err := c.historyRepo.LatestUserEditAt(ctx, otRID, e.PrimaryKey)
+		if err != nil {
+			log.Printf("funnel: conflict lookup error for %s/%s: %v", e.ObjectType, e.PrimaryKey, err)
+			out = append(out, e)
+			continue
+		}
+		if !hasUser || !latest.After(batch.Timestamp) {
+			out = append(out, e)
+			continue
+		}
+
+		if e.Type == EditTypeDelete {
+			log.Printf("funnel: US-021 skip stale ingest DELETE for %s/%s", e.ObjectType, e.PrimaryKey)
+			continue
+		}
+
+		// Filter Properties down to the always-apply set.
+		filtered := make(map[string]interface{})
+		for k, v := range e.Properties {
+			if c.alwaysApplyField != nil && c.alwaysApplyField(e.ObjectType, k) {
+				filtered[k] = v
+			}
+		}
+		if len(filtered) == 0 {
+			log.Printf("funnel: US-021 skip stale ingest %s for %s/%s", e.Type, e.ObjectType, e.PrimaryKey)
+			continue
+		}
+
+		// Merge filtered fields on top of the current bleve document so the
+		// upsert preserves the user-protected fields. fetchDocument returns
+		// nil when the target is missing, in which case the merge is just
+		// the filtered props.
+		merged := map[string]interface{}{}
+		if current := c.fetchDocument(batch.OntologyAPIName, e.ObjectType, e.PrimaryKey); current != nil {
+			for k, v := range current {
+				merged[k] = v
+			}
+		}
+		for k, v := range filtered {
+			merged[k] = v
+		}
+
+		rewritten := e
+		rewritten.Properties = merged
+		out = append(out, rewritten)
+	}
+	return out
+}
+
 // applyBatchWithHistory captures the prior bleve state for each MODIFY/DELETE
 // edit, applies the batch via applyBatchEdits, and then writes one
 // ObjectHistory row per edit when a HistoryRecorder is configured. History
@@ -318,12 +417,22 @@ func toBatchOp(edit Edit) (index.BatchOp, error) {
 // the source of truth for read paths and history is best-effort audit data.
 //
 // The empty edits slice is a no-op (matches applyBatchEdits semantics).
+//
+// US-021: ingest edits (Source == EditSourceIngest) are filtered through
+// resolveConflicts before any index writes so that a stale ingest batch
+// cannot silently overwrite a newer user edit. Non-ingest edits pass through
+// unchanged.
 func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) error {
 	if len(batch.Edits) == 0 {
 		return nil
 	}
 	if batch.OntologyAPIName == "" {
 		return fmt.Errorf("apply batch: ontologyApiName is empty")
+	}
+
+	batch.Edits = c.resolveConflicts(ctx, batch)
+	if len(batch.Edits) == 0 {
+		return nil
 	}
 
 	// Capture prev_state for each edit BEFORE the batch is applied. CREATE
@@ -376,6 +485,12 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 			}
 		}
 
+		// US-021 requires history rows to carry the source discriminator so
+		// the LatestUserEditAt query can distinguish user vs. ingest writes.
+		source := edit.Source
+		if source == "" {
+			source = oms.EditSourceUser
+		}
 		row := &oms.ObjectHistory{
 			ObjectTypeRID: otRID,
 			PrimaryKey:    edit.PrimaryKey,
@@ -383,7 +498,9 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 			PrevState:     prevStates[i],
 			NewState:      newState,
 			EditType:      string(edit.Type),
+			Source:        source,
 			UserID:        batch.UserID,
+			RecordedAt:    batch.Timestamp,
 		}
 		if err := c.historyRepo.InsertObjectHistory(ctx, row); err != nil {
 			log.Printf("funnel: history insert error for %s/%s: %v",
