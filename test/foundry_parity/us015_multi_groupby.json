@@ -1,0 +1,104 @@
+{
+  "story": "US-015",
+  "title": "Multi-groupBy integration test + parity fixture",
+  "description": "End-to-end proof that a 3-layer nested aggregation (country ExactValue × freight FixedWidth(100) × orderDate Duration(P3M)) runs through the PG-backed OMS → pkg/index.BuildMapping → pkg/oss/aggregation.Engine pipeline and produces leaf rows whose count / sum / avg metrics match a hand-computed expected map. This fixture documents the exact wire-level response shape Foundry SDK consumers rely on for multi-layer groupBy queries and pins the deterministic seed used by test/integration/aggregation_multigroupby_test.go.",
+  "fixture": {
+    "ontology": "northwind_multigroupby",
+    "objectType": "Order",
+    "primaryKey": "orderID",
+    "properties": [
+      { "apiName": "orderID", "baseType": "string", "isSearchable": true },
+      {
+        "apiName": "shipCountry",
+        "baseType": "string",
+        "isSearchable": true,
+        "typeConfig": { "analyzer": "not_analyzed" }
+      },
+      { "apiName": "freight", "baseType": "double", "isSearchable": true },
+      { "apiName": "orderDate", "baseType": "timestamp", "isSearchable": true }
+    ],
+    "seed": {
+      "totalDocs": 105,
+      "countries": ["Germany", "France", "Spain", "UK", "USA"],
+      "quarterDates": [
+        "2024-01-15T12:00:00Z",
+        "2024-04-15T12:00:00Z",
+        "2024-07-15T12:00:00Z"
+      ],
+      "prices": [10, 50, 120, 180, 220, 280, 350],
+      "pattern": "5 countries × 3 quarters × 7 prices = 105 orders. Every (country, quarter) combo carries the same 7-row price grid so the inner fixedWidth bucket boundaries are independent of the outer country scope."
+    }
+  },
+  "request": {
+    "aggregation": [
+      { "type": "count" },
+      { "type": "sum", "field": "freight" },
+      { "type": "avg", "field": "freight" }
+    ],
+    "groupBy": [
+      { "type": "exact", "field": "shipCountry" },
+      { "type": "fixedWidth", "field": "freight", "fixedWidth": 100 },
+      {
+        "type": "duration",
+        "field": "orderDate",
+        "value": { "unit": "DAYS", "value": 90 }
+      }
+    ]
+  },
+  "expected": {
+    "accuracy": "ACCURATE",
+    "leafRowCount": 60,
+    "totalCountAcrossLeaves": 105,
+    "totalSumAcrossLeaves": 18150,
+    "priceBucketCountPerQuarterPerCountry": {
+      "[0,100)": 2,
+      "[100,200)": 2,
+      "[200,300)": 2,
+      "[300,400)": 1
+    },
+    "priceBucketSumPerQuarterPerCountry": {
+      "[0,100)": 60,
+      "[100,200)": 300,
+      "[200,300)": 500,
+      "[300,400)": 350
+    },
+    "outerCountryOrder": ["France", "Germany", "Spain", "UK", "USA"],
+    "groupKeyInvariants": {
+      "shipCountry": "string (case-preserved — KeywordField path, analyzer.not_analyzed)",
+      "freight": "string of the form '[lo,hi)' produced by fmt.Sprintf(\"[%.0f,%.0f)\", lo, lo+width)",
+      "orderDate": "RFC3339 bucket start computed as floor(epoch/(90*86400))*(90*86400) in UTC"
+    }
+  },
+  "responseShape": {
+    "excludedItems": "int",
+    "accuracy": "\"ACCURATE\" | \"APPROXIMATE\" — ACCURATE when no numeric scan exceeded engine.MaxDocScanSize",
+    "computeUsage": "float64",
+    "data": [
+      {
+        "group": {
+          "shipCountry": "France",
+          "freight": "[0,100)",
+          "orderDate": "2023-12-19T00:00:00Z"
+        },
+        "metrics": [
+          { "name": "count", "value": 2 },
+          { "name": "freight.sum", "value": 60 },
+          { "name": "freight.avg", "value": 30 }
+        ]
+      }
+    ]
+  },
+  "coveredBy": [
+    "test/integration/aggregation_multigroupby_test.go::TestMultiGroupBy_NorthwindOrders",
+    "pkg/oss/aggregation/multi_groupby_test.go::TestMultiGroupBy_ThreeLayerNested",
+    "pkg/oss/aggregation/multi_groupby_test.go::TestMultiGroupBy_StableBucketOrder",
+    "pkg/oss/aggregation/multi_groupby_test.go::TestMultiGroupBy_NullGroupKey"
+  ],
+  "notes": [
+    "Run the integration test with `go test -tags integration ./test/integration/... -run MultiGroupBy`. It requires Docker for testcontainers.",
+    "The duration bucket math floors from the Unix epoch, not calendar quarters. Three 2024 anchor dates — 2024-01-15, 2024-04-15, 2024-07-15 — are chosen because floor(epoch/(90*86400)) maps each to a DISTINCT multiple of 7 776 000 s. Calendar-quarter boundaries would NOT be sufficient by themselves; collisions must be asserted against the flooring contract.",
+    "fixedWidth bucket name formatting comes from fmt.Sprintf(\"[%.0f,%.0f)\", lo, lo+width) in getFixedWidthEntries. Any future switch to scientific or locale-sensitive formatting would silently break this fixture — treat the name as a contract, not an implementation detail.",
+    "shipCountry uses analyzer.not_analyzed so the facet keys are case-preserved. Switching the analyzer to standard would fold `\"UK\"` → `\"uk\"` at index time and `outerCountryOrder` would collapse — the assertion lives in the test to catch that regression.",
+    "The seed is deliberately dense (every (country, quarter) emits the same 7-price grid) so that every leaf count / sum / avg is closed-form. A sparser real-world Northwind cut would still work but would require materialising the expected map from the source CSV, not from the test."
+  ]
+}

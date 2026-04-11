@@ -869,3 +869,53 @@ new features — only run verification suites and commit the gate.
     facet/total counter, not a hit scan. Do not conflate the two when
     extending this code later (e.g. adding distinct with sampling).
 ---
+
+## 2026-04-11 - US-015 Multi-groupBy integration test + parity fixture
+- Added test/integration/aggregation_multigroupby_test.go. Boots a real PG
+  via testcontainers, creates an Order ObjectType with shipCountry
+  (analyzer.not_analyzed), freight (double), orderDate (timestamp), builds
+  a Bleve in-memory index through pkg/index.BuildMapping, seeds 105
+  deterministic orders (5 countries x 3 quarters x 7 prices), and runs a
+  3-layer groupBy [country exact, freight fixedWidth(100), orderDate
+  duration(90 DAYS)] with count/sum/avg metrics. Asserts every leaf row's
+  count and numeric metric against a hand-computed expected map plus the
+  outer country ASC ordering and the ACCURATE accuracy marker.
+- Added test/foundry_parity/us015_multi_groupby.json fixture documenting
+  the ontology + seed pattern + request + expected wire shape.
+- Files changed:
+  - test/integration/aggregation_multigroupby_test.go (new)
+  - test/foundry_parity/us015_multi_groupby.json (new)
+  - scripts/ralph/prd.json (passes: true)
+- **Learnings for future iterations:**
+  - The pg-backed integration pattern from typeclass_indexing_test.go ports
+    cleanly to any aggregation story that needs BuildMapping-authenticity:
+    create Ontology -> create ObjectType (primary_key_prop is just text,
+    no FK into Property) -> CreateProperty rows -> reload via
+    GetObjectTypeByAPIName + ListProperties so Properties slice is populated
+    -> bleve.NewMemOnly(index.BuildMapping(fresh)). Bleve lives in t.TempDir
+    via the function's internal call so there is no cross-test contamination.
+  - The duration groupBy path floors hit.Fields[field] from the UNIX EPOCH,
+    not from calendar boundaries. For a P3M-equivalent (90*86400 s) window,
+    dates 2024-01-15 / 2024-04-15 / 2024-07-15 land in three DISTINCT
+    floor(epoch/(90*86400))*(90*86400) buckets (2023-12-19, 2024-03-18,
+    2024-06-16 UTC). Any future story that wants "calendar quarters" would
+    need a new groupBy type — do NOT try to pick dates that coincide with
+    Q1/Q2/Q3 calendar boundaries and expect them to line up.
+  - Bleve numeric field facets return values typed as float64 irrespective
+    of whether the indexed doc stored int or float64. The existing
+    computeNumericAgg already casts val.(float64) so docs indexed with
+    literal Go float64 prices (10.0, 50.0, ...) round-trip cleanly.
+  - fixedWidth bucket names come from fmt.Sprintf("[%.0f,%.0f)", lo, lo+w)
+    in getFixedWidthEntries. Expected maps and parity fixtures can just
+    format their own keys the same way — no need to invoke bleve to
+    discover them. Treat the format string as a wire contract.
+  - engine.Aggregate returns MetricValue.Value as uint64 for "count" and
+    float64 for sum/avg/min/max. Test code must type-assert each
+    separately; a single interface{} comparison will silently fail when
+    the test accidentally compares uint64(2) to int(2) via reflect.
+  - Integration tests under test/integration/ all live in the SAME Go
+    package (integration_test) with the //go:build integration tag, so
+    helper names (like findMetric) collide across files. The US-015 test
+    therefore defines its helper inline as a closure inside the single
+    test function rather than a package-level helper.
+---

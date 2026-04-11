@@ -239,7 +239,7 @@
         "go test -tags integration ./test/integration/... -run MultiGroupBy passes"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
