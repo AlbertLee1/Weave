@@ -1,0 +1,880 @@
+# Weave v2 产品需求文档 (PRD)
+
+**副标题**：从"API 形状对齐"走向"语义深度对齐"——本地完整复刻 Palantir Foundry OSv2
+
+| 字段 | 值 |
+|---|---|
+| 文档版本 | v2.0 |
+| 生成日期 | 2026-04-11 |
+| 作者 | 项目组（综合多 agent 调研） |
+| 当前分支 | `ralph/foundry-osv2-api-alignment` |
+| 前序文档 | `prd.json`（US-001~047，v1）、`docs/单机复刻 Palantir OSv2 本体层 — 完整技术架构.md` |
+| 状态 | Draft — 等待评审 |
+| 目标读者 | Weave 研发团队、架构评审、潜在贡献者 |
+
+---
+
+## 0. 执行摘要
+
+**一句话结论**：Weave 已完成了 Foundry OSv2 的 **REST API 表面形状对齐**（68/68 路由，47 个 US 全量落地），但**语义深度仍有系统性差距**——多处存在"端点已开通、底层是内存/MVP、语义未完整"的情形。本 PRD 的核心任务是把项目从 "API 已就位" 推到 "可作为单机 OSv2 参考实现部署并产出正确结果"。
+
+**三个关键判断**：
+
+1. **API 表面真的是 100%** — 67 条路由、MCP/Python SDK/CLI、OpenAPI、前端页面基本齐全。这是过去 30+ 天 Ralph 模式下快速推进的成果，不应被低估。
+2. **语义深度约为 65~75%** — 真实能用的是 OMS/OSS/Actions/Funnel 主链路。行列级安全、Edit 冲突策略、Derived Property、Type Class、Interface 多态分页、Ontology 分支版本、GeoTemporal/TimeSeries 深度、客户端实时订阅等**都还缺"最后一公里"**，在公开 Foundry 行为参照下容易被发现差异。
+3. **最大的风险不是"还有什么没做"，而是"已经做了的能否经受住相同输入下与 Foundry 语义等价"** — 因此 v2 的核心不是堆新端点，而是**加深已开通端点的语义**，并补齐 MUST/SHOULD 层的遗漏。
+
+**关键数字**（真实 vs 声称）：
+
+| 维度 | 声称（prd.json / progress.txt） | 真实（代码审计） | 差值 |
+|---|---|---|---|
+| Foundry REST 端点 | 68/68 (100%) | ≈ 68/68 (路由就位) | 0 |
+| ObjectSet 定义变体 | 15/15 | 15/15 路由，但 `interfaceLinkSearchAround`/`asBaseObjectTypes` 深度未验证 | 语义差距 |
+| 聚合算子 | 全覆盖 | 12 种 metric + 5 种 groupBy | 精度/近似分位数待校对 |
+| 安全模型 | RBAC Phase 1 完成 | 仅 Ontology-scoped RBAC，**无行级 / 列级 / Marking 评估链路** | 语义缺 |
+| 实时订阅 | WebSocket 订阅列入路线 | **无客户端订阅端点**（仅 Funnel 内部广播） | 缺失 |
+| TimeSeries | 3 端点 + PG 存储 | PG 存储有，但无时间分桶 / 聚合查询 | 深度缺 |
+| GeoTemporal | 2 端点 + 存储 | **仅内存 store** | 深度缺 |
+| Function backed action | Tier 3.2 声称完成 | HTTP dispatcher 存在，**无内嵌运行时**（Goja/Wasm） | 深度缺 |
+| Type classes | 语法支持 | **不驱动 Bleve 索引映射**（analyzer.not_analyzed 等未生效） | 行为缺 |
+| Ontology 分支/版本 | Snapshot 存在 | **无分支 / 无语义版本链路 / RID 不含 version** | 结构缺 |
+| Edit 冲突解决 | — | **无策略**（隐式 last-write-wins） | 策略缺 |
+
+---
+
+## 1. 背景与定位
+
+### 1.1 项目定位
+
+Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目标读者有三类：
+
+- **学习者**：想在本地跑一个 "小号 Foundry" 来理解 Ontology、ObjectSet、Action、Funnel 这些概念。
+- **评估者**：想用 Foundry 同形状的 API 来做架构决策、前后端隔离实验，不希望被 SaaS 绑架。
+- **小规模生产**：在单机/单团队场景下，以 Weave 作为 Ontology 层运行真实业务。
+
+**非目标**：替代 Foundry 的多租户、大集群、AIP Logic 全套、Workshop/Slate/Vertex 等应用层。
+
+### 1.2 技术栈（已锁定）
+
+- **后端**：Go 1.22+ / chi router / pgx / JetStream / Bleve / DuckDB（按需）
+- **存储**：PostgreSQL 16 为元数据、pgvector 为向量、Parquet 为冷存档（规划中）
+- **前端**：React 19 / Vite / Tailwind / TanStack Query / Zustand
+- **SDK**：Python (httpx + pydantic)；CLI (Go)；MCP stdio/HTTP
+- **认证**：dev / token / JWT (RS256) + API Key (`wvk_*`)
+
+### 1.3 v1 成果快照（US-001 ~ US-047）
+
+过去迭代以 "Rip-and-Replace" 的强手段把项目的 API 表面从 **29% (20/68)** 拉到 **100% (68/68)**：
+
+| Phase | US 范围 | 核心产出 | 交付日 |
+|---|---|---|---|
+| Phase 1 | US-001 ~ US-024 | 54→37 端点就位 / Action options / 删除 54 个 admin 路由 / OpenAPI 重写 / 生产硬化 | 2026-04-11 |
+| Phase 2 | US-025 ~ US-031 | Interface metadata/data 端点 / ObjectSet 6 变体 / applyWithOverrides | 2026-04-11 |
+| Phase 3 | US-032 ~ US-036 | Attachment / MediaReference 全链路 | 2026-04-11 |
+| Phase 4 | US-037 ~ US-043 | TimeSeries / GeoTemporal / Cipher / Transaction / SQL Query → 68/68 | 2026-04-11 |
+| Phase 5 | US-044 ~ US-047 | 多本体隔离 / OMS 缓存 / nearestNeighbors / AI MCP tools | 2026-04-11 |
+
+**必须承认的事实**：以 US 为单位的节奏让"可演示的路由"先完成，这是正确的选择；但也意味着**每个 US 的验收标准更多是"这条路线能返回 200 且结构正确"，而不是"在 Foundry 同输入下语义等价"**。v2 PRD 需要补齐这一半。
+
+---
+
+## 2. 项目现状分析
+
+### 2.1 真实的模块完成度矩阵
+
+> 下表综合了代码 grep、测试 grep、文件列表、迁移表、三份 agent 报告。绿色=端到端可用；黄色=有骨架但语义不完整；红色=缺失。
+
+| 层 | 模块 | API 表面 | 存储/持久 | 语义深度 | 综合 | 备注 |
+|---|---|:---:|:---:|:---:|:---:|---|
+| OMS | 元数据 CRUD | 🟢 | 🟢 PG + 缓存 | 🟢 | **95%** | Ontology/ObjectType/LinkType/ActionType/Interface/ValueType/QueryType 全 CRUD |
+| OMS | Snapshot / 版本 | 🟢 | 🟢 | 🟡 | **70%** | 无分支、RID 不含 version、无 version diff |
+| OMS | SharedProperty / TypeGroup | 🟢 | 🟢 | 🟡 | **65%** | 表与 CRUD 在，未见对 Interface/Search 的联动用例 |
+| OSS | Where DSL | 🟢 | n/a | 🟢 | **90%** | 15+ 子句类型，Bleve query compile |
+| OSS | ObjectSet 15 变体 | 🟢 | n/a | 🟡 | **70%** | base/filter/union/intersect/subtract/searchAround/static/reference/nearestNeighbors/asType/asBaseObjectTypes/interfaceBase/withProperties/interfaceLinkSearchAround/methodInput 路由就位；**深度不一** |
+| OSS | Search / Load / Count | 🟢 | 🟢 Bleve | 🟢 | **90%** | select 强制、cursor 分页 |
+| OSS | Linked Objects (FK / M2M) | 🟢 | 🟢 | 🟡 | **80%** | FK forward+reverse 均 OK，M2M join_table OK。**M2M 在 ObjectSet 内部 searchAround 仍待验证** |
+| OSS | Aggregation | 🟢 | 🟢 Bleve facet | 🟡 | **75%** | count/sum/avg/min/max/stddev/variance/approxDistinct/approxPercentile + 5 种 groupBy；**多层嵌套与截断精度未系统性测试** |
+| OSS | withProperties (derived) | 🟢 | n/a | 🔴 | **30%** | executor 有分发分支但**未找到端到端测试验证跨 link 聚合**；分页稳定性未解决 |
+| OSS | nearestNeighbors (KNN) | 🟢 | 🟢 pgvector | 🟡 | **60%** | 单 PropertyIdentifier 字段、无混合搜索、无 reranking |
+| OSS | Interface 多态 Load | 🟢 | 🟢 | 🟡 | **55%** | Load 单类型 OK；**跨子类型的 merge+paginate+sort 稳定性未验证**，Foundry 自己也把 interface aggregation 标为 "in development" |
+| OSS | ObjectSet 持久化 | 🟢 | 🟢 PG `saved_object_sets` | 🟢 | **85%** | temporary TTL 通过 store；`createTemporary` 已接入 |
+| Actions | 参数 / 规则 / 编辑生成 | 🟢 | 🟢 | 🟡 | **80%** | 规则引擎能 run；**submission criteria 表达力浅**，无内嵌脚本 |
+| Actions | applyBatch / applyWithOverrides | 🟢 | 🟢 | 🟡 | **75%** | atomic/bestEffort 两种模式；**无 optimistic concurrency / edit 冲突策略** |
+| Actions | Function-backed | 🟢 HTTP dispatcher | — | 🔴 | **35%** | 可通过 HTTP 转发至外部 function server；**无内嵌 Goja/Wasm 运行时** |
+| Actions | Side effects | 🟢 | 🟢 | 🟡 | **60%** | 结构体存在；**webhook 通知未验证**，无重试 |
+| Funnel | Publisher / Consumer | 🟢 | 🟢 JetStream | 🟢 | **90%** | per-ontology subject、DLQ、offset、broadcast |
+| Funnel | 实时客户端订阅 | 🔴 | — | 🔴 | **0%** | **无 /stream / WebSocket / SSE 端点** — `pkg/funnel/broadcast.go` 的广播没有暴露出来 |
+| Indexing | per-ObjectType Bleve | 🟢 | 🟢 filesystem | 🟡 | **75%** | 增量更新 OK，**Type class (analyzer.not_analyzed / not_indexed) 不驱动 field mapping** |
+| Indexing | Funnel ↔ Index 一致性 | 🟢 | 🟢 | 🟡 | **75%** | Consumer 同步更新 Bleve；**rehydrate 路径存在但无 offset 回放测试矩阵** |
+| Indexing | Parquet 冷存 | 🔴 | — | 🔴 | **5%** | 技术架构文档计划有，当前未落地（没有 pkg/dataset/parquet_writer 真实链路） |
+| Auth | dev / token / JWT | 🟢 | 🟢 | 🟢 | **90%** | RS256、refresh token 轮换、bootstrap admin |
+| Auth | API Key | 🟢 | 🟢 | 🟢 | **90%** | `wvk_` 前缀、SHA-256 hash、revoke、last_used |
+| Auth | RBAC (4 role × 26 perm) | 🟢 | 🟢 | 🟡 | **70%** | 全局 + per-ontology 角色；**未参与行/列/Marking 级过滤** |
+| Security | Marking / 分级 | 🟢 表 | 🟢 表 | 🔴 | **25%** | 表存在，marking_filter.go 文件有；**未接入查询过滤主路径** |
+| Security | Object / Property Security Policy | 🟡 表 | 🟡 表 | 🔴 | **15%** | CRUD 有，**policy evaluation 不生效** |
+| Security | Edit conflict / concurrency | 🔴 | — | 🔴 | **0%** | **无策略，隐式 last-write-wins**；Foundry 有 user-edit-wins / most-recent-timestamp 两种 |
+| Types | 21 基础 + 强制转换 | 🟢 | n/a | 🟡 | **80%** | Vector / Struct / Attachment / MediaRef / Cipher / TimeSeries / GeoTemporal 都能声明；**Struct 嵌套深度与校验未完整** |
+| Types | TypeClass | 🟡 存储 | — | 🔴 | **30%** | 结构存在；**不生效于 Bleve / 前端 / Action 可用性** |
+| Special | Attachment Blob | 🟢 | 🟢 本地 | 🟢 | **85%** | 4 全局端点 + 4 property 端点；无 S3/minio 后端 |
+| Special | MediaReference | 🟢 | 🟢 | 🟢 | **80%** | 3 端点就位 |
+| Special | TimeSeries | 🟢 3 端点 | 🟢 PG `timeseries_points` | 🟡 | **55%** | Append/FirstPoint/LastPoint/StreamPoints；**无时间分桶聚合、无 downsample** |
+| Special | GeoTemporal | 🟢 2 端点 | 🔴 **内存** | 🔴 | **35%** | latestValue / streamHistoricValues；**不持久化**，进程重启丢失 |
+| Special | CipherText (AES-GCM) | 🟢 | 🟢 | 🟢 | **80%** | decrypt 端点 + 信封加密 |
+| Special | Transaction (preview) | 🟢 | 🟡 | 🟡 | **55%** | `/transactions/{id}/edits` 端点就位；**事务边界语义浅**，未与 Action 集成 |
+| Special | SQL Query | 🟢 | 🟢 | 🟡 | **60%** | execute 端点；**无查询沙箱、无资源限制、无 read-only guard** |
+| Observability | Prometheus metrics | 🟢 | 🟢 | 🟡 | **65%** | 基础 metric；**无业务指标 dashboard** |
+| Observability | OpenTelemetry | 🟡 | 🟡 | 🔴 | **30%** | 有导出口；无 trace 传播与 span 命名规范 |
+| Observability | Audit log | 🟢 action_logs | 🟢 | 🟡 | **60%** | 只记录 Action；**元数据变更/权限变更/登录失败 未记录** |
+| DevOps | Docker + compose | 🟢 | 🟢 | 🟢 | **90%** | 多阶段 Dockerfile、weave service、health probes |
+| DevOps | 迁移 / 回滚 | 🟢 | 🟢 | 🟡 | **70%** | 17 个迁移；**回滚脚本覆盖率未评估** |
+| 前端 | 页面（Dashboard/Explorer/Browser/ObjectSet/Action/Aggregation/Login） | 🟢 | n/a | 🟡 | **70%** | 主流程可用；**测试覆盖率偏低（22 test 对 40+ component）** |
+| 前端 | 实时 & 订阅 | 🔴 | — | 🔴 | **0%** | 无 subscribe UI；依赖后端 subscribe 端点缺失 |
+| 前端 | AIP 助手 | 🟡 | n/a | 🟡 | **40%** | semantic search + MCP 工具在后端；前端未暴露交互 |
+| SDK (Python) | 核心 CRUD + Action | 🟢 | n/a | 🟢 | **80%** | 核心齐全、iter_all 支持 |
+| SDK (Python) | ObjectSet 组合 DSL | 🟡 | n/a | 🔴 | **40%** | 仅 raw dict，无 Pythonic builder |
+| SDK (Python) | Aggregation | 🔴 | n/a | 🔴 | **10%** | 未暴露 |
+| CLI | auth / ontology / object | 🟢 | n/a | 🟢 | **80%** | 基础齐全、JSON/表格输出 |
+| CLI | action / aggregate / objectset | 🟡 | n/a | 🔴 | **30%** | 未暴露 |
+| MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **75%** | initialize/tools 齐全；prompts/resources 为 stub |
+| MCP stdio 独立二进制 | 🟡 | — | 🔴 | **35%** | `weave-mcp` 是存根，不引导 PG/NATS |
+
+**总评（加权）**：**Weave 整体完成度 ≈ 72%**。其中：
+
+- **已达到 Foundry 同形状** 的模块：**OMS / Auth / Funnel 后端 / Attachment / CipherText / 前端主页面**（85%+）
+- **语义未完全对齐** 的模块：**OSS 高级 ObjectSet / Aggregation / Interface 多态 / Security 应用 / Action 冲突策略 / TypeClass / TimeSeries/GeoTemporal 持久与聚合 / SQL Query 沙箱**（50~75%）
+- **缺失或存根** 的模块：**实时客户端订阅 / 分支与版本 / Parquet 冷存 / Function 运行时 / Derived property 真正计算 / 行列级安全应用**（0~35%）
+
+### 2.2 "声称 vs 真实"差异清单（需要在 v2 诚实面对）
+
+| 声称 | 真实 | 差距来源 |
+|---|---|---|
+| "Phase 4 gate: **100% Foundry 对齐** 68/68" | 路由 68/68 就位；**端点语义与 Foundry 不等价**的至少 10+ 个 | 上表黄红部分 |
+| "Phase 5: RBAC 完成" | Ontology 作用域 + role-permission 矩阵完成；**行/列/Marking 未纳入查询过滤** | `pkg/oss/policy_filter.go` / `marking_filter.go` 存在但未接主链路 |
+| "nearestNeighbors + MCP AI tools 交付" | 单字段 KNN + 4 MCP tool；**无混合检索 / 无 reranking / 无跨 ObjectType** | `pkg/oss/objectset/nn.go` 仅 PropertyIdentifier |
+| "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store；**GeoTemporal 仅 memory_store.go** | `pkg/geotemporal` 目录 3 文件，全是内存 |
+| "Function-backed Actions" | HTTP dispatcher 可用；**无内嵌运行时**，依赖外部 function server | `pkg/actions/function_dispatcher.go` + `http_dispatcher.go` |
+| "Edit → NATS → Bleve → Broadcast" | 后端管线通；**广播不暴露给客户端** | 无 SSE/WS 路由 |
+| "Interface 完整" | 元数据 CRUD + 多态查询端点；**跨子类型排序 + 分页稳定性未测试** | 无集成测试覆盖"多 ObjectType 实现同一 interface 的 load + sort"路径 |
+
+**这份差异不是给项目打分的，是告诉我们下一阶段的真正战线在哪里**。
+
+### 2.3 Palantir 基线对齐（MUST/SHOULD/MAY 映射）
+
+参见 Palantir baseline agent 的 §4 分层，映射到 Weave 现状：
+
+| 基线 | Palantir 条目 | Weave 现状 | 需要做什么 |
+|---|---|:---:|---|
+| MUST 1 | OMS CRUD + RID | 🟢 | — |
+| MUST 2 | ObjectSet 代数 + createTemporary | 🟢 | 加深 interfaceBase / asBaseObjectTypes 测试 |
+| MUST 3 | Load/Search/Get + cursor + orderBy + select + filter DSL | 🟢 | — |
+| MUST 4 | Aggregation 6 metric × 4 groupBy | 🟢 | 多层嵌套稳定性测试 + 近似精度基准 |
+| MUST 5 | Action pipeline: params→rules→Edit→NATS→Bleve | 🟢 | 加 conflict 策略 |
+| MUST 6 | applyAction + applyActionBatch + returnEdits + 冲突策略 | 🟡 | **加 user-edit-wins 策略** (新 US) |
+| MUST 7 | per-ObjectType 全文索引 | 🟡 | **TypeClass 驱动 field mapping** (新 US) |
+| MUST 8 | 声明式 FK 链接 | 🟢 | M2M-in-ObjectSet 集成测试 |
+| MUST 9 | 稳定 /api/v2/ontologies 形状 | 🟢 | — |
+| MUST 10 | dev+token auth + 策略挂接点 | 🟢 | **策略评估落地** (见 SHOULD 9) |
+| SHOULD 1 | Interface + shared property 映射 + 多态 Load | 🟡 | **多态稳定性** (新 US) |
+| SHOULD 2 | Derived property / withProperties (≥1 hop 聚合) | 🔴 | **真正实现 withProperties 计算** (新 US) |
+| SHOULD 3 | Semantic search nearestNeighbors | 🟡 | **多字段 / 混合检索** (新 US) |
+| SHOULD 4 | Change subscription (WebSocket/SSE) | 🔴 | **客户端订阅端点** (新 US) |
+| SHOULD 5 | TypeClass (analyzer / hubble / hierarchy) | 🔴 | **落地 type class 行为** (新 US) |
+| SHOULD 6 | Action log (持久审计) | 🟢 | 扩展到元数据/权限变更 |
+| SHOULD 7 | Query functions (executeQuery) | 🟡 | **Goja/Wasm runtime** (新 US) |
+| SHOULD 8 | Streaming ingest (NATS subject 上做 ingest) | 🟡 | **NATS ingest 端点 + subject 规范** (新 US) |
+| SHOULD 9 | 行/列/Marking 过滤 | 🔴 | **Granular policy 执行引擎** (新 US) |
+| SHOULD 10 | Ontology 只读分支 + semver | 🔴 | **branch + version 挂到 RID** (新 US) |
+| MAY 1-10 | 企业/多租户/AIP/Workshop/Slate/etc. | 🔴 | 明确排除或单独立项 |
+
+---
+
+## 3. 目标与非目标
+
+### 3.1 v2 核心目标
+
+1. **把语义深度从 ≈ 72% 推到 ≈ 90%**，其中 MUST 层 100%、SHOULD 层 ≥ 70%。
+2. **建立"Foundry 等价行为测试套件"**：选定一套代表性输入，对每个已对齐端点运行"Weave vs 期望输出"的对照测试（期望来自公开 SDK 示例、Palantir docs 例子）。
+3. **把安全模型做成可演示的端到端链路**：从 JWT → role → marking → policy → 查询过滤，至少一条路径可见、可测。
+4. **补齐实时订阅**：让前端能从一个 URL 订阅 ObjectSet 变更事件。
+5. **把 Function-backed action 做成"可本机嵌入 + 可 HTTP 外挂"**，不要只有 HTTP dispatch。
+
+### 3.2 明确的非目标
+
+1. ❌ 不做 Workshop / Slate / Quiver / Vertex 等应用层。
+2. ❌ 不做企业级多租户 / 组织层级 / Project / Restricted View。
+3. ❌ 不追求 AIP Logic 完整块图；AIP 能力保持"通过 MCP + nearestNeighbors 提供 AI 调用入口"即可。
+4. ❌ 不引入 Kubernetes 依赖；单机 / docker-compose 为一等公民。
+5. ❌ 不做 TypeScript/Java OSDK 代码生成器（Python SDK + CLI + MCP 够用）。
+6. ❌ 不追求 exactly-once 流处理，at-least-once 可接受。
+
+### 3.3 本阶段成功的标志
+
+- `make test && make test-integration && make web-test && pytest sdk/python` 全绿；
+- 新增 `make test-contract` 命令运行 "Foundry 行为等价矩阵" ≥ 100 个样例；
+- 新增 `pkg/security/policy_engine.go` 完整 policy evaluation 链，**至少 10 个端到端集成测试覆盖 row/column filter**；
+- 新增 `/api/v2/ontologies/{ontology}/objectSets/subscribe` SSE 端点，前端有对应 hook；
+- `pkg/geotemporal/pg_store.go` + `pkg/timeseries` 时间分桶聚合，`make bench` 基准存在；
+- `pkg/functions/` 新包内嵌 Goja，可执行 TS-like 函数；
+- `docs/CHANGES-v2.md` 记录 v2 所有改动与 breaking changes。
+
+---
+
+## 4. 差距分析（按层）
+
+### 4.1 查询层（OSS）
+
+**Gap-Q1 — Interface 多态稳定性**
+- 现状：`loadObjectsOrInterfaces` 端点返回正确 objects，但跨多个 ObjectType 的分页游标不稳定：如果一个子类型有 100 条、另一个有 10 条、cursor 在中途时，后续页可能漏或重复。
+- 影响：违背 MUST 9 的 "stable v2 API shape"。
+- 建议：引入一个 composite cursor = `{objectTypeApiName, innerCursor}`，并在执行器里对多个子集做有序 merge（按 sort key）。
+
+**Gap-Q2 — withProperties 真实计算**
+- 现状：executor 里有 `executeWithProperties` 分发，但代码只是把属性名传下去；**跨 link 的聚合（reportsCount / teamSize 之类）未实现**。
+- 影响：Foundry 的 derived property 是核心卖点之一，SDK 示例里随处可见。
+- 建议：实现单 hop 的 count/sum/avg；二 hop 以上 Phase 7 再做。
+
+**Gap-Q3 — Aggregation 多层嵌套 + 精度标记**
+- 现状：multi-groupBy 支持存在，但没有 end-to-end 测试覆盖 "groupBy ExactValue × FixedWidth × Duration" 组合；`accuracy=APPROXIMATE` 标记的触发条件未在测试里断言。
+- 影响：可能导致数字悄悄错误。
+- 建议：加一套基准数据（Northwind orders by {country, quarter, priceBucket}）作为回归。
+
+**Gap-Q4 — nearestNeighbors 仅单字段**
+- 现状：NN 只接受一个 `PropertyIdentifier`，无法在多个 vector column 间组合，也无 "filter + KNN" 的 hybrid。
+- 影响：Foundry 的 "find similar employees in marketing dept" 写法不支持。
+- 建议：先支持 "filter then KNN"（把 Where 子句用 Bleve pre-filter，再对候选集做 pgvector 查询）。
+
+**Gap-Q5 — ObjectSet 跨 ontology 不支持**
+- 现状：Definition 里没有 ontology 字段，单一执行上下文。
+- 影响：企业级 "一个 action 跨两个域" 写法不支持。
+- 建议：v2 不做跨域，v3 再议。文档明确。
+
+### 4.2 写入层（Actions）
+
+**Gap-A1 — Edit 冲突解决策略**
+- 现状：隐式 last-write-wins。
+- 影响：在 Funnel consumer 并发时，streaming ingest 可能"盖掉"用户的 edit，无回路补救。
+- 建议：实现 Foundry 的 **user-edit-wins** 策略 —— 在 Edit payload 里标记 `source: user | funnel`，Funnel ingest 先比对 object_history 最近一次 user edit 的 timestamp，若更新则放弃。另外加 `always_apply` 标志位覆盖"edit-only property"。
+
+**Gap-A2 — Optimistic concurrency**
+- 现状：无 `If-Match` / version header，无 stale-object detection。
+- 影响：两个用户同时编辑同一对象时互相覆盖。
+- 建议：`object_history.version` 字段已存在；apply 路径应该接受 `options.expectedVersion`，mismatch 时返回 409。
+
+**Gap-A3 — Submission criteria 表达力**
+- 现状：`criteria.go` 支持基础比较，无法表达"参数 A > 参数 B" 等跨字段约束。
+- 影响：Action 验证被迫在 rules 里写。
+- 建议：引入一个迷你表达式 DSL（CEL-lite），或直接嵌入 Goja。
+
+**Gap-A4 — Side effects 真实触发**
+- 现状：结构体存在，没有 webhook 发送代码（grep 不到 http post 到 URL 的路径）。
+- 建议：实现 webhook dispatcher + 重试 + DLQ + action_logs.side_effect_status。
+
+**Gap-A5 — Function-backed action 内嵌运行时**
+- 现状：只有 HTTP dispatcher。
+- 建议：新增 `pkg/functions/` 包，使用 **Goja**（嵌入式 ECMAScript 引擎），提供一个受限运行时（无 fs/net）+ ontology 客户端 shim。这是对 Foundry "Functions on Objects" 的最小可信复刻。
+
+### 4.3 安全与治理层
+
+**Gap-S1 — 行级安全（Row-Level Security）**
+- 现状：`security_policies` 表 + `policy_filter.go` 文件存在，但**没挂在 query pipeline 上**。
+- 建议：实现 `pkg/security/policy_engine.go`，提供 `Evaluate(ctx, user, objectType) -> BleveQuery` 接口，把返回的 query 与用户 where 子句做 `AND`。
+
+**Gap-S2 — 列级 / 属性级安全**
+- 现状：无。
+- 建议：policy rules 描述 allowed/denied property 列表；在序列化 WireObject 时按用户 context 过滤字段。
+
+**Gap-S3 — Marking 评估链路**
+- 现状：`marking_filter.go` 文件存在，不在主链路。
+- 建议：把 Marking 作为 OSP 的一个输入，合并到 Gap-S1 的 policy_engine。
+
+**Gap-S4 — 元数据/权限变更审计**
+- 现状：只有 action_logs。
+- 建议：新增 `audit_events` 表 + trigger 在 OMS 更新路径上记录 who/when/what diff。
+
+**Gap-S5 — SQL Query 沙箱与资源限制**
+- 现状：执行真实 SQL（通过 DuckDB 或 PG?）无超时/read-only guard。
+- 建议：强制 read-only transaction + statement_timeout + `EXPLAIN` 前置检查。
+
+### 4.4 实时与事件层
+
+**Gap-R1 — 客户端订阅端点**
+- 现状：Funnel 内部有 broadcaster，没有 HTTP 暴露。
+- 建议：新增 `GET /api/v2/ontologies/{ontology}/objectSets/subscribe?objectSet={rid}` SSE 端点（Foundry 用 WebSocket，SSE 更简单且够用），payload `{type: "ADDED_OR_UPDATED"|"DELETED", primaryKey, objectType, ...properties}`。
+- 前端：对应 `useObjectSetSubscription(rid)` hook + 在 Browser 页面演示。
+
+**Gap-R2 — 数据摄入 stream**
+- 现状：只能通过 Action 写入。
+- 建议：新增 `POST /api/v2/ontologies/{ontology}/streams/{objectType}/ingest` 端点，直接把 Edit batch 推到 NATS subject，绕过 Action rule（但依然通过 funnel 到 bleve）。适用于 ETL 导入场景。
+
+**Gap-R3 — rehydrate 路径测试矩阵**
+- 现状：`pkg/index/rehydrate_test.go` 存在。
+- 建议：加一个 "杀 Bleve 目录 → 重启 → 从 Parquet/PG 重建 → 查询结果与重建前等价" 的端到端测试。
+
+### 4.5 语义层（Types / Interfaces / Derived）
+
+**Gap-T1 — TypeClass 驱动索引**
+- 现状：`type_groups` / `typeclass` 存储完成；Bleve field mapping 固定忽略。
+- 建议：实现 `pkg/index/mapping_builder.go`，读取 property.typeclass 决定：
+  - `analyzer.not_analyzed` → keyword mapping
+  - `analyzer.not_indexed` → skip bleve field
+  - `hubble.icon` / `hubble.media_url` → 前端 hint（不改索引）
+  - `hierarchy.parent` → 驱动 Explorer 树形视图
+
+**Gap-T2 — Struct / Array 深度序列化**
+- 现状：可声明但无嵌套校验测试。
+- 建议：TDD 一组 struct-in-struct、array-of-struct 的校验用例。
+
+**Gap-T3 — ValueType 约束执行**
+- 现状：schema 存储。
+- 建议：在 property 写入路径上执行 constraint.apply(value)。
+
+**Gap-T4 — Ontology 分支与语义版本**
+- 现状：`ontology_snapshots` 存在；RID 不含 version，无 branch 概念。
+- 建议：
+  - 引入 `ontology_branches` 表 (`branch_name`, `ontology_rid`, `base_version`, `is_experimental`)
+  - RID 形状加一个可选后缀：`ri.ontology.main.ontology.xyz@v3` 用于读路径（写路径仍默认 HEAD）
+  - API 参数 `?branch=experimental` 或 header `X-Weave-Branch: dev`
+  - 避免真正的写分支 —— 只读分支足够满足 "experimental interface" 场景。
+
+### 4.6 可观测性与运维
+
+**Gap-O1 — 业务指标**
+- 现状：go runtime / chi request 指标已暴露。
+- 建议：加 `weave_objectset_execute_duration`、`weave_action_apply_duration`、`weave_bleve_query_latency`、`weave_funnel_lag_seconds` 等业务指标。
+
+**Gap-O2 — Trace propagation**
+- 现状：OTel 基础框架。
+- 建议：在 chi middleware 注入 trace context，在 Funnel consumer 恢复 span，实现 "HTTP → Funnel → Bleve → Broadcast" 全链路 trace。
+
+**Gap-O3 — Audit log 聚合**
+- 见 Gap-S4。
+
+**Gap-O4 — Health check 深度**
+- 现状：/health 返回 200；/health/ready 检查 PG/NATS/Bleve。
+- 建议：加 "Funnel consumer lag <= N" 阈值，超过即 degraded。
+
+### 4.7 开发体验
+
+**Gap-D1 — Python SDK ObjectSet builder**
+- 现状：raw dict。
+- 建议：一个 Pythonic builder `Employees.filter(Employee.age > 30).searchAround("team").aggregate(count())`。
+
+**Gap-D2 — Python SDK Aggregation / TimeSeries / Attachment**
+- 现状：未暴露。
+- 建议：按 US-046 类似模式补齐。
+
+**Gap-D3 — CLI action / aggregate 子命令**
+- 现状：未暴露。
+- 建议：`weave action apply`、`weave aggregate`、`weave objectset run`。
+
+**Gap-D4 — MCP prompts / resources / sampling**
+- 现状：stub。
+- 建议：至少实现 `resources/list` 返回可用的 ontology/objectType 列表。
+
+**Gap-D5 — weave-mcp stdio 真可用**
+- 现状：stub，不接 DB。
+- 建议：让它复用 main server 的依赖注入，成为 "本地模式" 的独立入口。
+
+---
+
+## 5. 产品路线图
+
+### 5.1 Phase 划分
+
+| Phase | 代号 | 时长 | 重点 | 退出标准 |
+|---|---|---|---|---|
+| Phase 6 | **Deep Parity I: 语义正确性** | 4 周 | withProperties / Interface 多态 / Aggregation 精度 / Edit 冲突 / TypeClass 索引 | Foundry 行为对照套件 ≥ 80 个样例全绿 |
+| Phase 7 | **Deep Parity II: 安全 + 实时** | 4 周 | Policy engine / Marking 应用 / SSE 订阅 / Audit log / Stream ingest | Row/Column/Marking 过滤端到端测试 ≥ 15 个；前端 subscribe demo |
+| Phase 8 | **Deep Parity III: 语义深度 + 运行时** | 4 周 | Function runtime (Goja) / Ontology 分支 + semver / TimeSeries 分桶 / GeoTemporal 持久化 / withProperties 二阶 | 在 Chinook+Northwind 上跑完一组 demo notebook，覆盖 function + derived + branch |
+| Phase 9 | **Production Hardening** | 持续 | Parquet 冷存 / 性能基准 / 文档 / 运维 | Bench 报告 / 运维手册 / v1.0 tag |
+
+### 5.2 Phase 6 详细：Deep Parity I — 语义正确性（4 周）
+
+**里程碑 M6-W1 — 基线**
+- 搭建 `test/foundry_parity/` 目录，**至少 20 个**"Weave HTTP 响应 vs Foundry 期望 JSON"对照。
+- 引入 `make test-parity`。
+
+**里程碑 M6-W2 — withProperties + Interface 多态**
+- US-048（withProperties 单 hop 聚合）
+- US-049（Interface 多态 composite cursor）
+- US-050（TypeClass 驱动 Bleve mapping）
+
+**里程碑 M6-W3 — Aggregation 精度 + 多层**
+- US-051（多层 groupBy 稳定性 + accuracy 标记）
+- US-052（approximatePercentile 精度基准）
+
+**里程碑 M6-W4 — Edit 冲突 + Optimistic concurrency**
+- US-053（user-edit-wins 策略）
+- US-054（Optimistic version check）
+- US-055（edit-only property 始终应用）
+- 退出评审：parity 套件 ≥ 80 样例全绿。
+
+### 5.3 Phase 7 详细：Deep Parity II — 安全 + 实时（4 周）
+
+**W1 — Policy engine 骨架**
+- US-056（`pkg/security/policy_engine.go` row-filter）
+- US-057（property-level 序列化过滤）
+
+**W2 — Marking 接入**
+- US-058（Marking evaluator + OSP 合并）
+- US-059（用户 context 注入 marking set）
+
+**W3 — 实时订阅**
+- US-060（SSE `/objectSets/subscribe` 端点）
+- US-061（前端 `useObjectSetSubscription` hook + Browser 演示）
+- US-062（Stream ingest 端点）
+
+**W4 — Audit log + 元数据审计**
+- US-063（audit_events 表 + OMS trigger）
+- US-064（Security header / rate limit 细化）
+- 退出评审：row+column+marking 集成测试 ≥ 15；前端 subscribe demo 可复现。
+
+### 5.4 Phase 8 详细：Deep Parity III — 语义深度 + 运行时（4 周）
+
+**W1 — Function runtime**
+- US-065（`pkg/functions/goja_runtime.go` 内嵌 JS 运行时）
+- US-066（Function-backed action 真实执行）
+- US-067（Query function executeQuery 真正调用 function）
+
+**W2 — Ontology 分支 + semver**
+- US-068（`ontology_branches` 表 + 读分支 API）
+- US-069（`?branch=` query param + header）
+- US-070（RID version suffix 解析）
+
+**W3 — TimeSeries / GeoTemporal**
+- US-071（TimeSeries 分桶聚合：downsample / aggregate by duration）
+- US-072（GeoTemporal PG 持久化 + PostGIS 可选）
+
+**W4 — withProperties 二阶 + Aggregation on ObjectSet**
+- US-073（withProperties 二阶跨 link）
+- US-074（Aggregation 作用于 ObjectSet definition，而不止 ObjectType）
+- 退出评审：demo notebook 跑通 function + derived + branch。
+
+### 5.5 Phase 9（持续）
+
+- US-075（Parquet 冷存 + 从 Parquet rehydrate）
+- US-076（性能基准套件 + criterion 报告）
+- US-077（OpenTelemetry 全链路 trace）
+- US-078（Python SDK ObjectSet builder + Aggregation）
+- US-079（CLI action/aggregate 子命令）
+- US-080（weave-mcp stdio 真可用）
+- US-081（Docs：运维手册 / 配置参考 / 故障排查）
+
+---
+
+## 6. User Story Backlog（US-048 ~ US-081）
+
+> 所有 US 遵循 TDD 红绿重构；每个 US 提交前必须跑完 `go test ./... && make web-test && pytest sdk/python`。
+
+### US-048 — withProperties 单 hop 聚合
+
+**As** 一个 SDK 使用者，**I want** `withProperties` 定义能跨单 hop link 计算 count/sum/avg/min/max，**so that** 我能像 Foundry 一样写 `employee.withProperty("reportsCount", pivotTo("reports").aggregate(count))`。
+
+**Acceptance Criteria**
+- `pkg/oss/objectset/executor.go` 的 `executeWithProperties` 实现单 hop 聚合逻辑（count/sum/avg/min/max）；
+- 返回对象 JSON 中包含 derived property 字段；
+- cursor 分页稳定：同一 derived value + base primaryKey 排序；
+- 不允许作为 primary key / 不允许 text-search 过滤 / 不允许 action 编辑 → 返回 `DerivedPropertyReadOnly`；
+- 测试：Northwind "customers with orderCount" ≥ 10 场景；
+- parity 套件对应 fixture 绿色。
+
+### US-049 — Interface 多态 composite cursor
+
+**As** Foundry SDK，**I want** `loadObjectsOrInterfaces` 跨多个实现类型的分页稳定，**so that** 翻页不漏不重。
+
+**Acceptance Criteria**
+- composite cursor = base64(`{objectTypeApiName, innerCursor}`)；
+- executor 对多个 ObjectType 并行拉取 + heap merge，按 sortKey 排序；
+- 给定 3 个 ObjectType × 每类 ≥ 20 条的样例数据，按默认排序翻到结尾结果集稳定；
+- 测试：定义一个 `HasOwner` interface by Customer + Employee + Supplier。
+
+### US-050 — TypeClass 驱动 Bleve mapping
+
+**Acceptance Criteria**
+- 新增 `pkg/index/mapping_builder.go` 从 property.typeClasses 构造 `bleve.IndexMapping`：
+  - `analyzer.not_analyzed` → `KeywordField`
+  - `analyzer.not_indexed` → 跳过（仍 store）
+  - `analyzer.standard`（默认）→ `TextField` with standard analyzer
+- 重建 indexes 命令 `weave index rebuild --ontology X` 应用新 mapping；
+- 测试：对 `country`（not_analyzed）过滤 `USA` 与 `usa` 区分大小写；对 `description`（standard）支持词干匹配。
+
+### US-051 — Aggregation 多层 groupBy 稳定性 + accuracy
+
+**Acceptance Criteria**
+- 测试覆盖 `groupBy=[ExactValue(country), FixedWidth(age, 10), Duration(orderDate, P1M)]` 至少 5 组数据集；
+- 当 `maxDocScanSize` 被触发时返回 `accuracy=APPROXIMATE`；
+- parity 样例对比 Foundry 文档里的 groupBy 响应结构（字段顺序、名称）。
+
+### US-052 — approximatePercentile 精度基准
+
+**Acceptance Criteria**
+- 基于 HdrHistogram/t-digest 或 Bleve facet 实现；
+- 与 exactPercentile 的误差 ≤ 5% on 10k 随机数据集；
+- bench 输出入库 `bench/aggregation_percentile.md`。
+
+### US-053 — Edit 冲突：user-edit-wins 策略
+
+**Acceptance Criteria**
+- `funnel.Edit` payload 增加 `source: user | ingest` 字段；
+- Consumer 在应用 ingest edit 前检查 `object_history.last_user_edit_ts`，若更新则跳过非 `always_apply` 字段；
+- 测试：并发 user + ingest 各 100 条随机 edit，user 的永不丢失；
+- options `returnEdits=ALL_V2_WITH_DELETIONS` 的 tombstone 语义验证。
+
+### US-054 — Optimistic concurrency check
+
+**Acceptance Criteria**
+- `ApplyOptions.expectedVersion` 新字段；
+- apply 路径加载目标对象后对比版本，mismatch 返回 409 + `StaleObject` 错误码；
+- 前端 Action Console 在 submit 时带上版本；
+- parity: 对同一对象并发两次 apply，第二次返回 409。
+
+### US-055 — Edit-only property always apply
+
+**Acceptance Criteria**
+- Property schema 加 `"editOnly": true`；
+- 无论冲突策略如何，该 property 的 user edit 永远覆盖 ingest；
+- 测试：用户给 `Order.notes` 写内容 + ingest 覆盖 → notes 保留。
+
+### US-056 — Row-level Policy Engine
+
+**Acceptance Criteria**
+- 新增 `pkg/security/policy_engine.go`，接口 `Evaluate(ctx, user, objectType) (BleveQuery, error)`；
+- 支持 policy rule DSL：`user.attribute == object.property`、`marking ⊆ user.markings`；
+- 绑定到 OSS Load/Search/Aggregate 的 query 生成链；
+- 测试：3 个用户 × 3 条 policy × 5 个对象的正确过滤矩阵。
+
+### US-057 — Property-level filtering on serialization
+
+**Acceptance Criteria**
+- 在 WireObject 序列化时按 user context 过滤 property；
+- 被过滤字段不出现在 JSON（而不是 null）；
+- 测试：manager 能看 `salary`，employee 不能看。
+
+### US-058 — Marking evaluator
+
+**Acceptance Criteria**
+- `pkg/auth/marking.go` 的 `EvaluateMarkings(userMarkings, objectMarkings) bool` 实现 AND 语义；
+- Policy engine 自动合并 marking gate；
+- 测试：ACME 用户看不到 ACME2 专属对象。
+
+### US-059 — User context markings injection
+
+**Acceptance Criteria**
+- JWT claim 新增 `markings: string[]`；
+- Middleware 注入到 context；
+- `/api/v2/me` 返回当前用户 markings。
+
+### US-060 — SSE ObjectSet subscription
+
+**Acceptance Criteria**
+- 新端点 `GET /api/v2/ontologies/{ontology}/objectSets/subscribe?objectSet={rid}`；
+- SSE 事件流，event data 为 `{eventType: ADDED_OR_UPDATED|DELETED, object: WireObject}`；
+- 从 Funnel broadcaster 订阅对应 objectType，在服务端做 Where 过滤；
+- 支持 `Last-Event-ID` 断点续传 via NATS sequence；
+- 测试：订阅 + 应用 5 个 action，客户端收到 5 个事件且顺序正确。
+
+### US-061 — Frontend `useObjectSetSubscription` hook
+
+**Acceptance Criteria**
+- `web/src/hooks/useObjectSetSubscription.ts` 基于 `EventSource`；
+- Browser 页面"实时模式"切换开关；
+- Vitest 测试 mock EventSource。
+
+### US-062 — Stream ingest endpoint
+
+**Acceptance Criteria**
+- `POST /api/v2/ontologies/{ontology}/streams/{objectType}/ingest` 接收 Edit[] 直接下到 NATS subject；
+- 绕过 Action rules，**但经过 policy_engine**；
+- 限速（默认 1000 rps/ontology）；
+- 测试：Northwind 批量灌入 1000 条，Bleve 索引正确更新。
+
+### US-063 — Audit events table + OMS triggers
+
+**Acceptance Criteria**
+- 新表 `audit_events(id, actor_id, action, resource_rid, diff, ts)`；
+- OMS create/update/delete 路径调用 `audit.Record(...)`；
+- 登录失败 + token refresh + api key 创建 均记录；
+- API `/api/v2/admin/auditEvents` 查看（仅 admin）。
+
+### US-064 — Security header / rate limit refinement
+
+**Acceptance Criteria**
+- CSP 细化到允许 `/api/` `/mcp` self；
+- 每端点速率限制配置表；
+- 登录端点 5 rps/ip 强制。
+
+### US-065 — Goja embedded function runtime
+
+**Acceptance Criteria**
+- 新包 `pkg/functions/goja_runtime.go`；
+- 提供 sandbox：禁用 `fs`/`net`/`process`；
+- 提供 ontology 客户端 shim：`ontology.load(rid)` / `ontology.search(...)`;
+- 函数存储于 `functions` 表（name, source, version）；
+- 测试：`hello world` function + `findOrdersOver($amount)` function。
+
+### US-066 — Function-backed action with goja
+
+**Acceptance Criteria**
+- ActionType.isFunctionBacked + functionRid 走 goja 执行；
+- 函数返回 Edit[]；
+- 回退到 HTTP dispatcher 如果 functionRid 是 URL；
+- 测试：`sendWelcomeEmail` function action。
+
+### US-067 — executeQuery via function
+
+**Acceptance Criteria**
+- `/api/v2/ontologies/{o}/queries/{query}/execute` 调用 QueryType.functionRid；
+- 支持输入参数 + 返回 ObjectSet reference；
+- 测试：`topCustomers(limit)` query function。
+
+### US-068 — Ontology branches table
+
+**Acceptance Criteria**
+- 新表 `ontology_branches(name, ontology_rid, base_version, is_experimental, created_at)`；
+- OMS API 增加 branch CRUD；
+- 只读分支：在 branch 上的元数据读取返回 branch 视图，写入仍回 HEAD。
+
+### US-069 — `?branch=` query param + header
+
+**Acceptance Criteria**
+- 所有 V2 读端点支持 `?branch=xxx` 或 `X-Weave-Branch`；
+- 未指定默认 HEAD；
+- 测试：experimental branch 上加一个新的 ObjectType 不影响 HEAD。
+
+### US-070 — RID version suffix
+
+**Acceptance Criteria**
+- RID parser 支持 `ri.service.realm.type.uuid@v3`；
+- Snapshot load 按 version 返回历史元数据；
+- 测试：v1 时 ObjectType 有 3 属性，v2 有 4 属性，分别按 version 取到正确 shape。
+
+### US-071 — TimeSeries downsample / bucket aggregation
+
+**Acceptance Criteria**
+- 新端点 `POST /api/v2/ontologies/{o}/objects/{ot}/{pk}/timeSeries/{prop}/aggregate`；
+- 支持 `bucketSize: P1H|P1D|P1W`；
+- Metric: avg/min/max/sum/count；
+- 测试：生成 10 万个点 + 按天聚合结果正确。
+
+### US-072 — GeoTemporal PG store + 可选 PostGIS
+
+**Acceptance Criteria**
+- `pkg/geotemporal/pg_store.go` 使用普通 PG 存储；
+- 可选开启 PostGIS extension 使用 `geography(Point, 4326)` 列；
+- `latestValue` 和 `streamHistoricValues` 走 PG 查询；
+- 测试：重启进程数据不丢失。
+
+### US-073 — withProperties 二阶
+
+**Acceptance Criteria**
+- 支持 `A.withProperty("deepCount", pivotTo("team").pivotTo("manager").aggregate(count))`；
+- 单次查询深度限制 ≤ 3；
+- 测试：覆盖 2/3 hop。
+
+### US-074 — Aggregation on ObjectSet definition
+
+**Acceptance Criteria**
+- `/api/v2/ontologies/{o}/objectSets/aggregate` 已有；校验能接受 filter/union/intersect/subtract/searchAround 定义并执行聚合；
+- parity: 与 Foundry 聚合结构一致（buckets, metrics, accuracy 字段）。
+
+### US-075 ~ US-081 — Production hardening（大纲）
+
+- **US-075**：Parquet 冷存 + rehydrate 路径（pkg/dataset/parquet_writer.go + `weave materialize`）；
+- **US-076**：`make bench` 性能基准（Northwind 1M 对象 baseline）；
+- **US-077**：OpenTelemetry 全链路 trace；
+- **US-078**：Python SDK ObjectSet builder + Aggregation + TimeSeries + Attachment；
+- **US-079**：CLI `action apply` / `aggregate` / `objectset run`；
+- **US-080**：`weave-mcp` 独立 stdio 模式（启动本地服务嵌入 PG + NATS in-memory）；
+- **US-081**：文档：operating-guide / upgrade-guide / troubleshooting。
+
+---
+
+## 7. 风险与陷阱
+
+### 7.1 技术风险（按优先级）
+
+| # | 风险 | 可能性 | 影响 | 缓解 |
+|---|---|---|---|---|
+| R1 | **Interface 多态 paging 复杂度高** | 高 | 高 | 先做 "same sort key + stable ordering" 简化实现；容忍跨子类型 skew |
+| R2 | **withProperties 破坏 cursor 稳定性** | 中 | 高 | derived column 用 materialize-into-temp-objectSet 换稳定性 |
+| R3 | **Goja 运行时沙箱逃逸** | 低 | 高 | 黑名单 + 超时 + 内存限制 + code review |
+| R4 | **Marking/Policy 查询性能** | 中 | 中 | 预编译 policy → bleve query 缓存；policy version 变更 invalidate |
+| R5 | **PostGIS 可选引入 migration 分叉** | 中 | 中 | 以 feature flag 开启；无 PostGIS 时降级为纯 lat/lon 列 |
+| R6 | **Edit 冲突策略 + Optimistic concurrency 并存可能过度复杂** | 中 | 中 | 先单独落地 user-edit-wins，ExpectedVersion 视需要 |
+| R7 | **SSE 长连接吃住 HTTP worker** | 中 | 中 | 单连接独立 goroutine + ping；max per-user 连接数 |
+| R8 | **Ontology 分支引入 RID 格式变更** | 低 | 高 | Version suffix 可选；默认不开启；CHANGES-v2 文档警告 |
+| R9 | **parity 套件的 expected JSON 获取成本** | 中 | 中 | 从 Palantir 公开 docs 的 example 里抓；也允许手工构造并 sign off |
+
+### 7.2 Palantir baseline 的 6 个陷阱（v2 中必须明确覆盖）
+
+1. **searchAround 循环 + 深度**：在 executor 里加 `visited set` 与 `maxDepth=3` plan-time 检查。新增 US 不需要，并入 US-049 或独立 Hotfix。
+2. **Interface 多态**：Gap-Q1 / US-049。
+3. **Edit conflict**：US-053 / US-054 / US-055。
+4. **Derived property 分页稳定性**：US-048 / US-073。
+5. **TypeClass 驱动索引**：US-050。
+6. **Ontology 分支与 semver**：US-068 / US-069 / US-070。
+
+**6 个陷阱全部被 v2 backlog 覆盖**，这是 v2 PRD 相对 v1 的核心价值。
+
+### 7.3 项目风险
+
+- **"US 炸弹" 复返**：Phase 6~8 容易再次走回"开 24 个 US 并行"的节奏。建议 Phase 6 内部一次不超过 3 个 in_progress US，确保每个 US 有对应 parity fixture。
+- **文档债**：v1 的 47 个 US 有 `notes` 字段但没有 "测试场景" 字段。v2 每个 US 强制带 parity fixture 编号。
+- **依赖漂移**：Goja 版本、Bleve 版本、pgx 版本升级策略写入 `CONTRIBUTING.md`。
+
+---
+
+## 8. 验收与度量
+
+### 8.1 每 Phase 退出标准
+
+| Phase | 硬性 | 软性 |
+|---|---|---|
+| 6 | `make test-parity` ≥ 80 样例绿 / 所有 US-048~055 测试绿 | withProperties demo notebook 可跑 |
+| 7 | 15 个 row+column+marking 集成测试绿 / SSE demo 可复现 | 前端 Browser 实时模式演示 |
+| 8 | Goja 执行 function + branch 读 + TimeSeries 分桶 三条路径 end-to-end | demo notebook 覆盖 v2 全部新能力 |
+| 9 | 性能基准报告 / v1.0 tag | Docs 站点发布 |
+
+### 8.2 关键指标（KPI）
+
+- **语义对齐度**：parity 套件通过率 ≥ 95%
+- **模块完成度加权平均**：≥ 88%
+- **测试覆盖率**：Go ≥ 70%，前端 ≥ 55%，Python SDK ≥ 80%
+- **p95 延迟**：Load 对象 ≤ 50ms / Aggregation 单层 ≤ 150ms / KNN(k=10) ≤ 100ms
+- **Funnel lag**：稳态 ≤ 200ms
+- **审计覆盖**：100% 的 Action / 100% 的 OMS 变更 / 100% 的登录
+
+### 8.3 度量如何采集
+
+- Parity 套件通过率：CI 报告 + `test/foundry_parity/report.json`
+- 模块完成度：每 Phase 退出重新跑本 PRD §2.1 的自评分 → 归档到 `docs/status/phase-N.md`
+- 测试覆盖率：`go test -cover`、`vitest --coverage`、`pytest --cov`
+- 性能：`make bench` 写入 `bench/history/`
+- Funnel lag：Prometheus metric `weave_funnel_lag_seconds`
+
+---
+
+## 9. 实施建议与变更管理
+
+### 9.1 分支策略
+
+- `main`：稳定 v1 / 可 tag `v1.0.0`
+- `ralph/foundry-osv2-api-alignment`：当前分支，**不再接受新 v1 US**；v2 PRD 批准后该分支 merge 回 main
+- `v2/phase-6`：Phase 6 开发分支，合并前触发 `make test-parity`
+- `v2/phase-7`、`v2/phase-8`：同上
+
+### 9.2 文档同步
+
+- 每个 Phase 退出更新：
+  - `README.md` 功能表
+  - `docs/单机复刻 Palantir OSv2 本体层 — 完整技术架构.md` 架构图
+  - `docs/api/` OpenAPI spec
+  - `docs/CHANGES-v2.md` 变更日志
+- 新增文档：
+  - `docs/security/policy-model.md`
+  - `docs/functions/goja-runtime.md`
+  - `docs/subscriptions/sse.md`
+  - `docs/branches/ontology-versioning.md`
+
+### 9.3 Breaking changes（v2 相对 v1）
+
+v2 允许有限的 breaking changes，需在 `CHANGES-v2.md` 显式标注：
+
+- ✅ 允许：RID 中引入可选 `@vN` 后缀（向后兼容，默认忽略）
+- ✅ 允许：Edit payload 新增 `source` 字段（默认 `user`）
+- ✅ 允许：Subscribe 端点属于新路径
+- ❌ 禁止：现有 v1 路由的 JSON shape 变化
+- ❌ 禁止：OMS 表主键 / RID 格式变更
+- ❌ 禁止：Python SDK / CLI / MCP 现有方法签名变化
+
+---
+
+## 10. 附录
+
+### 10.1 术语表（Weave ↔ Foundry）
+
+| Weave 术语 | Foundry 术语 | 备注 |
+|---|---|---|
+| Ontology | Ontology | — |
+| ObjectType | Object Type | — |
+| LinkType | Link Type | 支持 FK/M2M |
+| ActionType | Action Type | 参数+规则+edits |
+| Interface | Interface | 抽象多态 |
+| ValueType | Value Type | 约束 |
+| ObjectSet | Object Set | 15 定义变体 |
+| searchAround | searchAround | 链接遍历 |
+| withProperties | Derived Property | v2 深化 |
+| nearestNeighbors | Semantic Search / KNN | v2 多字段 |
+| Funnel | Object Data Funnel | NATS + Bleve |
+| Marking | Marking | v2 启用 |
+| Branch | Branch | v2 只读 |
+| RID | Resource Identifier | `ri.service.realm.type.uuid` |
+
+### 10.2 关键代码位置索引
+
+| 能力 | 文件 |
+|---|---|
+| OMS Repository interface | `pkg/oms/repository.go` |
+| OMS PG 实现 | `pkg/oms/pg_repository.go` |
+| ObjectSet executor | `pkg/oss/objectset/executor.go` |
+| Where DSL | `pkg/oss/where/types.go` |
+| Aggregation | `pkg/oss/aggregation/` |
+| Actions executor | `pkg/actions/executor.go` |
+| Funnel publisher/consumer | `pkg/funnel/publisher.go`, `consumer.go` |
+| Broadcast (后端) | `pkg/funnel/broadcast.go` |
+| Links resolver | `pkg/links/resolver.go`, `fk_resolver.go`, `join_table_resolver.go` |
+| Auth JWT / API Key | `pkg/auth/jwt_signer.go`, `api_key.go` |
+| Policy filter (未接入主链路) | `pkg/oss/policy_filter.go`, `marking_filter.go` |
+| TimeSeries | `pkg/timeseries/pg_store.go` |
+| GeoTemporal | `pkg/geotemporal/memory_store.go` |
+| Cipher | `pkg/cipher/` |
+| MCP | `pkg/mcp/`, `cmd/weave-mcp/` |
+| Routes 总表 | `cmd/server/routes.go` |
+| 迁移 | `migrations/` |
+
+### 10.3 参考资料（Palantir 公开文档）
+
+- Foundry Object Backend Overview — palantir.com/docs/foundry/object-backend/overview
+- Ontology Core Concepts — palantir.com/docs/foundry/ontology/core-concepts
+- Interfaces — palantir.com/docs/foundry/interfaces/interface-overview
+- Action Types / Rules / Side Effects / Action Log — palantir.com/docs/foundry/action-types/*
+- How User Edits Are Applied (OSv2 conflict resolution) — palantir.com/docs/foundry/object-edits/how-edits-applied
+- ObjectSets v2 API Reference — palantir.com/docs/foundry/api/ontologies-v2-resources/ontology-object-sets/*
+- Actions v2 API Reference — palantir.com/docs/foundry/api/ontologies-v2-resources/actions/*
+- Semantic Search (nearestNeighbors) — palantir.com/docs/foundry/ontology/overview-semantic-search
+- Markings / Granular Policies — palantir.com/docs/foundry/security/* / platform-security-management/manage-granular-policies
+- Derived Properties — palantir.com/docs/foundry/object-link-types/derived-properties
+- TypeScript Subscriptions — palantir.com/docs/foundry/ontology-sdk/typescript-subscriptions
+- Breaking Changes OSv1→OSv2 — palantir.com/docs/foundry/object-backend/object-storage-v2-breaking-changes
+
+### 10.4 前序项目文档
+
+- `docs/Palantir Foundry Ontology Layer 完整技术蓝图.md`（能力树）
+- `docs/单机复刻 Palantir OSv2 本体层 — 完整技术架构.md`（v1 架构决策）
+- `docs/Palantir ObjectSet & OntologyAggregation 完整语法参考.md`（DSL 语法）
+- `docs/palantir_aip_analyst_engine_analysis.md`（AIP 分析，v2 不追）
+- `prd.json`（v1 的 47 个 US）
+- `progress.txt`（v1 的施工日志 + codebase patterns）
+
+---
+
+## 11. 评审清单（给评审人）
+
+- [ ] §2.2 "声称 vs 真实"差异表是否准确？有无过度悲观或过度乐观的条目？
+- [ ] §4 各 Gap 是否抓住了最关键的语义差距？有遗漏吗？
+- [ ] §5 Phase 6~8 的 12 周节奏是否现实？给 Ralph 单人/双人团队是否合理？
+- [ ] §6 US-048 ~ US-074 的 acceptance criteria 是否可执行？有没有漏关键验证？
+- [ ] §7.2 6 个陷阱是否全部被 backlog 覆盖？
+- [ ] §8 的 KPI 是否足够但不过度？
+- [ ] §9 的 breaking changes 边界是否可接受？
+- [ ] 是否同意"v2 核心是**加深语义**而不是**再加端点**"？
+
+**评审通过后**：
+1. 把本 PRD 拆分为 `prd-v2.json`（结构化 US 列表，v1 格式兼容）；
+2. 创建 `v2/phase-6` 分支；
+3. 编写第一批 parity fixture（至少覆盖 US-048、049、050）；
+4. Ralph/team 模式开跑。
+
+---
+
+*文档结束。*
