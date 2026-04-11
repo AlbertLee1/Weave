@@ -112,6 +112,8 @@
 - Object-path attachment read endpoints (/objects/{type}/{pk}/attachments/{property}...) live in pkg/oss/handlers_attachment_property.go instead of pkg/attachment, because they need svc.GetObject to load the object first. oss.Handler gets the BlobStore via a new SetAttachmentStore setter (same pattern as SetAggregation / SetOmsRepo). extractAttachmentRID handles both single-string and []interface{} property values (Bleve returns arrays as []interface{}, never []string).
 - AttachmentProperty chi route ordering: /{property}/content must come BEFORE /{property}/{attachmentRid}, and /{property}/{attachmentRid}/content must come BEFORE /{property}/{attachmentRid} — longest-static-segment-first, otherwise chi's trie matches "content" as a wildcard value.
 - When adding new routes to NewFullRouter, you MUST also wire the corresponding deps on newContractTestRouter in cmd/server/contract_test.go — otherwise TestContract_NoOrphanedSpecPaths fails because the new OpenAPI path entries have no matching chi route in the contract router.
+- Phase 4 storage packages (timeseries) pattern: ship both MemoryStore (default single-machine backend + test harness) and PGStore (migration-backed, wired when deps.PGPool != nil). main.go selects based on PGPool presence. Tests use MemoryStore to keep `go test ./...` offline.
+- Foundry TimeSeriesProperty streamPoints endpoint accepts optional ?format=JSON|ARROW. Our single-machine scope only emits JSON — ARROW returns 400 UnsupportedFormat (the endpoint is still callable so Foundry clients that default to JSON work unchanged).
 
 ---
 
@@ -1005,3 +1007,44 @@
   - Alignment 阈值持续在 gate story 里偏高 —— Phase 4 gate (US-054 之类) 出现时预期真实值 100%，阈值应该≤100%；本质是 PRD 规划期统计方法不精确，不是实现问题
   - docker build 输出到后台任务 log 文件时，tail 比 cat 更稳妥（stdout 有 buildkit 彩色字符会被 truncate）
 ---
+
+## 2026-04-11 - US-037: TimeSeries storage backend + 3 endpoints (Phase 4 starts)
+- 新增 pkg/timeseries，实现 Foundry OSv2 TimeSeriesProperty 存储与 3 个 HTTP endpoint
+- Store 接口: FirstPoint / LastPoint / StreamPoints / AppendPoint, 键 = SeriesKey{Ontology, ObjectType, PrimaryKey, Property}, 点 = Point{Time time.Time, Value interface{}}
+- MemoryStore: 单机默认后端，map[SeriesKey][]Point + sync.RWMutex, sort.SliceStable 保持时间升序，FirstPoint/LastPoint O(1)
+- PGStore: PostgreSQL 后端，基于 migration 000016_timeseries 的 timeseries_points 表 (composite PK 包含 ts, value 是 JSONB, 额外 series+ts 索引), Insert 使用 ON CONFLICT DO UPDATE 支持重复时间戳
+- main.go 路由 store: deps.PGPool != nil → PGStore, 否则 MemoryStore, 保证 degraded 模式可用
+- Endpoints 都挂在 pkg/oss.Handler 上（复用 svc.GetObject 做对象存在性校验 + 新的 SetTimeSeriesStore setter）：
+  - GET  /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/firstPoint → TimeSeriesPoint
+  - GET  /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/lastPoint → TimeSeriesPoint
+  - POST /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/streamPoints → [TimeSeriesPoint]
+- streamPoints 支持 ?format= 查询参数：空 or JSON → 正常返回; ARROW → 400 UnsupportedFormat（单机版不提供 Arrow 编码）
+- Error mapping: ErrNoPoints → 404 TimeSeriesPointNotFound; store nil → 500 TimeSeriesStoreNotConfigured; object 不存在 → 404 ObjectNotFound
+- Wire: cmd/server/main.go ServerDeps.TimeSeriesStore + boot 构造; cmd/server/contract_test.go newContractTestRouter 注入 timeseries.NewMemoryStore()
+- OpenAPI: 新增 components/schemas/TimeSeriesPoint + 3 条 path entry (TimeSeriesProperty tag), api/openapi.yaml 与 cmd/server/openapi_spec.yaml byte-identical
+- Files changed:
+  - pkg/timeseries/store.go — NEW: Store interface + Point + SeriesKey + ErrNoPoints
+  - pkg/timeseries/memory_store.go — NEW: MemoryStore
+  - pkg/timeseries/memory_store_test.go — NEW: 3 TDD tests (empty/append-read/multi-series)
+  - pkg/timeseries/pg_store.go — NEW: PGStore with pgxpool
+  - migrations/000016_timeseries.up.sql / .down.sql — NEW
+  - pkg/oss/handlers_timeseries.go — NEW: 3 handlers + resolveTimeSeriesKey + writeTimeSeriesError
+  - pkg/oss/handlers_timeseries_test.go — NEW: 6 TDD tests (first/last/stream/arrow-reject/empty-series/not-configured)
+  - pkg/oss/handlers.go — timeseriesStore field + 3 route registrations
+  - cmd/server/main.go — ServerDeps.TimeSeriesStore + boot wiring + NewFullRouter setter call
+  - cmd/server/contract_test.go — newContractTestRouter wires MemoryStore
+  - cmd/server/openapi_spec.yaml — TimeSeriesPoint schema + 3 path entries
+  - api/openapi.yaml — byte-identical mirror
+  - prd.json — US-037 passes:true + notes
+- Tests: `go test ./pkg/timeseries/...` 绿; `go test ./pkg/oss -run TestGetTimeSeries` 6/6 绿; `go test ./...` 全量绿 (31 packages, oss 37s + chinook 212s + northwind 137s + e2e 10s)
+- **Learnings for future iterations:**
+  - Foundry TimeSeriesProperty 的 path parameter 命名不一致：US-037 用 {property}，US-038 (TimeSeriesValueBank) 用 {propertyName}，要严格匹配 Foundry
+  - 当 store interface 既要服务生产（PG）又要服务测试（memory）时，选择 store 的 boot 逻辑应保持 degraded 兼容：`if deps.PGPool != nil { PGStore } else { MemoryStore }`，否则 wire_*_test.go 没法用 nil pool 直接验证
+  - pkg/oss.Handler 的 setter 模式（SetAttachmentStore, SetOmsRepo, 新的 SetTimeSeriesStore）是加新可选依赖的黄金路径 —— NewHandler(svc) 签名稳定, nil dep 在 handler 内返回 XxxNotConfigured
+  - 测试对象存在性时，resolveTimeSeriesKey 也要调用 svc.GetObject —— 对象不存在应该返回 404 ObjectNotFound，而不是 ErrNoPoints；Foundry 的错误语义是"先解析对象，再查 series"
+  - JSONB 里存任意 Go 值时 PGStore 用 encoding/json.Marshal + []byte 传递，Unmarshal 回 interface{}，round-trip 后 22.5 会变成 float64 22.5（不会保持整数），测试里对比 Value 要用 float64
+  - streamPoints POST 的请求体（where/时间范围 filter）Foundry 接受一个可选的 body object，当前实现忽略 body 并返回全部点 —— 后续补 range filter 再改
+  - go test ./pkg/oss 本地 37 秒比较慢，主要是 Bleve indexing + IndexDocument 后的 200ms sleep 累积；如果后续加大量测试可以考虑共享 fixture
+  - `grep -n "objects/{objectType}/{primaryKey}/media" openapi_spec.yaml` 是给新 object-path endpoint 找 spec 模板最快的办法 —— 直接 copy 相邻路径的参数声明即可
+---
+

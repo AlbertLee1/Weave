@@ -13,6 +13,7 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/where"
+	"github.com/liyang/weave/pkg/timeseries"
 )
 
 // Handler handles OSS HTTP requests.
@@ -31,6 +32,11 @@ type Handler struct {
 	// routes return AttachmentStoreNotConfigured. Wired via
 	// SetAttachmentStore from main.go after construction.
 	attachmentStore attachment.BlobStore
+	// timeseriesStore backs the object-path TimeSeriesProperty endpoints
+	// (/objects/{type}/{pk}/timeseries/{property}/...). When nil, those
+	// routes return TimeSeriesStoreNotConfigured. Wired via
+	// SetTimeSeriesStore from main.go after construction.
+	timeseriesStore timeseries.Store
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -72,6 +78,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/metadata", h.GetMediaPropertyMetadata)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/content", h.GetMediaPropertyContent)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectType}/media/{property}/upload", h.UploadMediaProperty)
+
+	// TimeSeriesProperty endpoints (Foundry OSv2). Read endpoints resolve
+	// a SeriesKey from the object/primaryKey/property path segments.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/firstPoint", h.GetTimeSeriesFirstPoint)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/lastPoint", h.GetTimeSeriesLastPoint)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamPoints", h.StreamTimeSeriesPoints)
 
 	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)

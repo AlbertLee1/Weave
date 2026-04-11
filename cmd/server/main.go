@@ -31,6 +31,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/nats-io/nats.go"
 )
 
@@ -51,6 +52,7 @@ type ServerDeps struct {
 	ObjSetExecutor *objectset.Executor
 	FunnelConsumer *funnel.Consumer
 	AttachmentStore attachment.BlobStore
+	TimeSeriesStore timeseries.Store
 	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -191,6 +193,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			if deps.AttachmentStore != nil {
 				ossHandler.SetAttachmentStore(deps.AttachmentStore)
+			}
+			if deps.TimeSeriesStore != nil {
+				ossHandler.SetTimeSeriesStore(deps.TimeSeriesStore)
 			}
 			ossHandler.RegisterRoutes(api)
 		}
@@ -387,6 +392,15 @@ func main() {
 	attachmentStore := attachment.NewLocalStore(cfg.DataDir + "/attachments")
 	deps.AttachmentStore = attachmentStore
 	attachmentStore.StartCleanupLoop(ctx, 10*time.Minute, 1*time.Hour)
+
+	// 2c. TimeSeries store. Prefer the PG backend when a pool is wired;
+	// fall back to an in-memory store in degraded mode so unit/dev runs
+	// that skip PG still get live endpoints.
+	if deps.PGPool != nil {
+		deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+	} else {
+		deps.TimeSeriesStore = timeseries.NewMemoryStore()
+	}
 
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType

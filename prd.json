@@ -600,8 +600,8 @@
         "go test ./... passes"
       ],
       "priority": 37,
-      "passes": false,
-      "notes": "Phase 4 starts here."
+      "passes": true,
+      "notes": "Phase 4 started. New pkg/timeseries with Store interface, MemoryStore (default) and PGStore (wired when deps.PGPool != nil). Migration 000016_timeseries creates timeseries_points (ontology, objectType, primaryKey, property, ts, value JSONB). 3 endpoints live on pkg/oss Handler via new SetTimeSeriesStore setter: GET .../timeseries/{property}/firstPoint, GET .../lastPoint, POST .../streamPoints. streamPoints accepts ?format=JSON|ARROW; ARROW returns 400 UnsupportedFormat. Foundry wire shape TimeSeriesPoint {time, value}. Full regression green (31 packages)."
     },
     {
       "id": "US-038",

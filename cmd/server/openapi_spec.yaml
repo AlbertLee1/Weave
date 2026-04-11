@@ -1102,6 +1102,21 @@ components:
                   type: string
                 mediaItemRid:
                   type: string
+    TimeSeriesPoint:
+      type: object
+      description: |
+        Foundry OSv2 TimeSeriesPoint wire shape: a single (time, value)
+        reading on a time series. time is ISO 8601; value is whatever the
+        series stores (numeric, string, struct).
+      required: [time, value]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: Point timestamp (RFC3339 / ISO 8601).
+          example: "2026-04-01T00:00:00Z"
+        value:
+          description: Point value; type depends on the series.
 security:
   - bearerAuth: []
 paths:
@@ -2945,3 +2960,131 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/firstPoint:
+    get:
+      operationId: getTimeSeriesFirstPoint
+      summary: Get the first point of a time series property
+      description: |
+        Returns the earliest TimeSeriesPoint for the series stored in the
+        given object's time series property.
+      tags: [TimeSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          description: TimeSeriesProperty API name on the object type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Earliest point in the series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeSeriesPoint"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/lastPoint:
+    get:
+      operationId: getTimeSeriesLastPoint
+      summary: Get the last point of a time series property
+      description: |
+        Returns the latest TimeSeriesPoint for the series stored in the
+        given object's time series property.
+      tags: [TimeSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest point in the series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeSeriesPoint"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamPoints:
+    post:
+      operationId: streamTimeSeriesPoints
+      summary: Stream every point of a time series property
+      description: |
+        Returns every point in the series ordered by time ascending. The
+        optional `format` query parameter mirrors Foundry's JSON/ARROW
+        toggle; this server only emits JSON and rejects `format=ARROW`
+        with 400 UnsupportedFormat.
+      tags: [TimeSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: format
+          required: false
+          description: Response format. Only JSON is supported.
+          schema:
+            type: string
+            enum: [JSON, ARROW]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Points in the series, ordered ascending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeSeriesPoint"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
