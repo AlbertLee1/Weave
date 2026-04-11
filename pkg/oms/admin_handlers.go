@@ -64,6 +64,7 @@ type UpdatePropertyRequest struct {
 	IsNullable       *bool  `json:"isNullable,omitempty"`
 	Status           string `json:"status,omitempty"`
 	DeprecatedReason string `json:"deprecatedReason,omitempty"`
+	EditOnly         *bool  `json:"editOnly,omitempty"`
 }
 
 // UpdateLinkTypeRequest is the request body for updating a link type.
@@ -84,6 +85,7 @@ type CreatePropertyRequest struct {
 	IsNullable   bool            `json:"isNullable"`
 	IsSearchable bool            `json:"isSearchable"`
 	IsSortable   bool            `json:"isSortable"`
+	EditOnly     bool            `json:"editOnly,omitempty"`
 }
 
 // CreateLinkTypeRequest is the request body for creating a link type.
@@ -397,6 +399,7 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		IsNullable:    req.IsNullable,
 		IsSearchable:  req.IsSearchable,
 		IsSortable:    req.IsSortable,
+		IsEditOnly:    req.EditOnly,
 	}
 
 	if err := h.repo.CreateProperty(r.Context(), p); err != nil {
@@ -700,6 +703,9 @@ func (h *OMSHandler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DeprecatedReason != "" {
 		existing.DeprecatedReason = req.DeprecatedReason
+	}
+	if req.EditOnly != nil {
+		existing.IsEditOnly = *req.EditOnly
 	}
 
 	if err := h.repo.UpdateProperty(r.Context(), existing); err != nil {
@@ -1920,11 +1926,11 @@ func (h *OMSHandler) ImportOntology(w http.ResponseWriter, r *http.Request) {
 	// Create link types
 	for _, lt := range export.LinkTypes {
 		newLT := &LinkType{
-			RID:              rid.NewLinkTypeRID(),
-			OntologyRID:      ontology.RID,
-			APIName:          lt.APIName,
-			DisplayName:      lt.DisplayName,
-			Description:      lt.Description,
+			RID:         rid.NewLinkTypeRID(),
+			OntologyRID: ontology.RID,
+			APIName:     lt.APIName,
+			DisplayName: lt.DisplayName,
+			Description: lt.Description,
 			SourceObjectType: func() string {
 				if mapped, ok := otRIDMap[lt.SourceObjectType]; ok {
 					return mapped

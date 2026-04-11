@@ -1422,3 +1422,40 @@ new features — only run verification suites and commit the gate.
   - gofmt -l will complain about .sql files if you pass them through
     — keep shell gofmt invocations to *.go only.
 ---
+
+## 2026-04-11 - US-026
+- Wire is_edit_only through the admin Property CRUD handlers and the
+  embedded OpenAPI spec so SDK clients can create and toggle edit-only
+  properties end-to-end.
+- Files changed:
+  - pkg/oms/admin_handlers.go: CreatePropertyRequest.EditOnly (bool,
+    omitempty) + UpdatePropertyRequest.EditOnly (*bool, omitempty).
+    CreateProperty copies the flag into Property.IsEditOnly; UpdateProperty
+    only mutates the stored flag when the pointer is non-nil so omitted
+    fields remain idempotent.
+  - pkg/oms/handlers_test.go: TestCreateProperty_EditOnly,
+    TestCreateProperty_EditOnlyDefaultFalse and TestUpdateProperty_EditOnlyToggle
+    — TDD red-then-green coverage for Create/Update semantics.
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml: Property schema gains
+    an editOnly boolean with cross-reference to US-025/US-027. The two
+    files stay byte-identical; cmd/server embeds the latter via //go:embed.
+- **Learnings for future iterations:**
+  - Admin Property CRUD is split across admin_handlers.go ONLY — there is
+    no /api/admin/properties/{propertyRid} GET handler registered; use the
+    existing v2 read paths or inspect the mockRepo store directly in unit
+    tests instead of wiring a synthetic Get route.
+  - cmd/server/openapi_spec.yaml is embedded with //go:embed inside
+    cmd/server/openapi_handler.go. The canonical source is api/openapi.yaml
+    at repo root; after edits run `cp api/openapi.yaml cmd/server/openapi_spec.yaml`
+    to keep them byte-identical (the cmd/server contract_test.go compares
+    registered routes against the root copy).
+  - UpdatePropertyRequest uses *bool for optional booleans (IsSearchable,
+    IsSortable, IsNullable) so a missing field leaves the stored value
+    untouched — apply the same pattern for any new tri-state flag (nil ==
+    no-op, &true == enable, &false == disable). The one-line CreateProperty
+    request mirror can keep using plain bool since Create always writes
+    the full record.
+  - For property-related conflict-resolution flags, the PG column backs
+    the flag with NOT NULL DEFAULT FALSE so legacy rows still read back as
+    false after migration — no application-level null handling needed.
+---

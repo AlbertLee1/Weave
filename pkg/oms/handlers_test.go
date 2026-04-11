@@ -392,10 +392,10 @@ func (m *mockRepo) GetTypeGroup(_ context.Context, _ string) (*oms.TypeGroup, er
 func (m *mockRepo) ListTypeGroups(_ context.Context, _ string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
-func (m *mockRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error          { return nil }
-func (m *mockRepo) DeleteTypeGroup(_ context.Context, _ string) error                  { return nil }
-func (m *mockRepo) AssignTypeGroup(_ context.Context, _, _ string) error               { return nil }
-func (m *mockRepo) RemoveTypeGroup(_ context.Context, _, _ string) error               { return nil }
+func (m *mockRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
+func (m *mockRepo) DeleteTypeGroup(_ context.Context, _ string) error         { return nil }
+func (m *mockRepo) AssignTypeGroup(_ context.Context, _, _ string) error      { return nil }
+func (m *mockRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
 func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
@@ -877,7 +877,7 @@ func TestListOutgoingLinkTypes_WithData(t *testing.T) {
 				APIName: "employeeDept", DisplayName: "Employee Department",
 				SourceObjectType: "ri.ontology.main.object-type.src",
 				TargetObjectType: "ri.ontology.main.object-type.tgt",
-				Cardinality: "MANY_TO_ONE",
+				Cardinality:      "MANY_TO_ONE",
 			},
 		},
 	}
@@ -1221,6 +1221,123 @@ func TestCreateProperty_Success(t *testing.T) {
 	}
 }
 
+// TestCreateProperty_EditOnly (US-026) covers the admin CRUD path for the
+// is_edit_only column introduced in migration 000019: a POST body carrying
+// editOnly=true must land on the Property struct handed to the repository
+// *and* be echoed back on the Create response JSON.
+func TestCreateProperty_EditOnly(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/admin/objectTypes/{objectTypeRid}/properties", handler.CreateProperty)
+
+	body := `{"apiName":"notes","baseType":"string","editOnly":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/objectTypes/ri.ontology.main.object-type.1/properties", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	if got, _ := resp["editOnly"].(bool); !got {
+		t.Errorf("expected Create response editOnly=true, got %v", resp["editOnly"])
+	}
+	if len(repo.properties) != 1 {
+		t.Fatalf("expected 1 stored property, got %d", len(repo.properties))
+	}
+	if !repo.properties[0].IsEditOnly {
+		t.Errorf("expected stored IsEditOnly=true after POST editOnly:true")
+	}
+}
+
+// TestCreateProperty_EditOnlyDefaultFalse confirms that omitting editOnly in
+// the request body yields a property with IsEditOnly=false (zero value) and
+// that editOnly is omitted from the JSON response when false.
+func TestCreateProperty_EditOnlyDefaultFalse(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/admin/objectTypes/{objectTypeRid}/properties", handler.CreateProperty)
+
+	body := `{"apiName":"freight","baseType":"double"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/objectTypes/ri.ontology.main.object-type.1/properties", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", w.Code)
+	}
+	if len(repo.properties) != 1 {
+		t.Fatalf("expected one stored property, got %d", len(repo.properties))
+	}
+	if repo.properties[0].IsEditOnly {
+		t.Errorf("expected stored IsEditOnly=false, got true")
+	}
+}
+
+// TestUpdateProperty_EditOnlyToggle (US-026) covers toggling the editOnly
+// flag both on and off via PUT. Because the current schema stores the flag
+// as an optional pointer on UpdatePropertyRequest, omitting it must leave
+// the stored value untouched while passing false must clear it.
+func TestUpdateProperty_EditOnlyToggle(t *testing.T) {
+	repo := &mockRepo{
+		properties: []oms.Property{{
+			RID:           "ri.ontology.main.property.notes",
+			ObjectTypeRID: "ri.ontology.main.object-type.1",
+			APIName:       "notes",
+			BaseType:      "string",
+			IsEditOnly:    false,
+		}},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Put("/api/admin/properties/{propertyRid}", handler.UpdateProperty)
+
+	// Flip it on.
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/properties/ri.ontology.main.property.notes", strings.NewReader(`{"editOnly":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on update-on, got %d: %s", w.Code, w.Body.String())
+	}
+	if !repo.properties[0].IsEditOnly {
+		t.Errorf("expected stored IsEditOnly=true after PUT editOnly:true")
+	}
+
+	// Flip it back off.
+	req2 := httptest.NewRequest(http.MethodPut, "/api/admin/properties/ri.ontology.main.property.notes", strings.NewReader(`{"editOnly":false}`))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200 on update-off, got %d: %s", w2.Code, w2.Body.String())
+	}
+	if repo.properties[0].IsEditOnly {
+		t.Errorf("expected stored IsEditOnly=false after PUT editOnly:false")
+	}
+
+	// Omitting editOnly must not flip the flag (idempotent no-op).
+	repo.properties[0].IsEditOnly = true
+	req3 := httptest.NewRequest(http.MethodPut, "/api/admin/properties/ri.ontology.main.property.notes", strings.NewReader(`{"displayName":"Notes"}`))
+	req3.Header.Set("Content-Type", "application/json")
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("expected 200 on update-omit, got %d: %s", w3.Code, w3.Body.String())
+	}
+	if !repo.properties[0].IsEditOnly {
+		t.Errorf("expected stored IsEditOnly unchanged (true) when editOnly omitted from body")
+	}
+}
+
 func TestCreateLinkType_Success(t *testing.T) {
 	repo := &mockRepo{
 		ontologies: []oms.Ontology{
@@ -1292,7 +1409,11 @@ func TestCreateActionType_Success(t *testing.T) {
 }
 
 func (m *mockRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
-func (m *mockRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) {
+	return nil, nil
+}
 func (m *mockRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }
+func (m *mockRepo) DeleteSecurityPolicy(_ context.Context, _ string) error              { return nil }

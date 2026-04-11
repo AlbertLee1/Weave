@@ -269,6 +269,13 @@ components:
           type: string
         sharedPropertyRid:
           type: string
+        editOnly:
+          type: boolean
+          description: |
+            When true, user edits on this property always win over concurrent
+            ingest edits regardless of the active conflict-resolution strategy.
+            Added in US-025 / US-026 and consumed by the funnel consumer's
+            always-apply path (US-027).
     LinkType:
       type: object
       required: [rid, apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality, required]
