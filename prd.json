@@ -687,8 +687,8 @@
         "Foundry API alignment = 100%"
       ],
       "priority": 43,
-      "passes": false,
-      "notes": "Verification-only story."
+      "passes": true,
+      "notes": "Phase 4 gate: 68/68 Foundry endpoints callable, 100% alignment. Full regression green: go test ./... (34 pkgs) + go test -tags integration ./... (34 pkgs, testcontainers) + vitest 186/186 + pytest 69/69 + 3/3 contract tests. Fixed integration-tag rot: pgcontainer now uses pgvector/pgvector:pg16 image (migration 000011 requires vector extension); findMigrationsDir walks CWD upward; link_edges_test.go updated to pass *LinkEdge."
     },
     {
       "id": "US-044",

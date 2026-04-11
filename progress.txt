@@ -118,6 +118,9 @@
 - Optional backend pattern for new Foundry endpoints: when the backend can legitimately be absent (no PG in dev/test), mount the handler UNCONDITIONALLY in NewFullRouter with a possibly-nil engine and return "XxxNotConfigured" 500 from the handler itself. Keeps the route in the OpenAPI contract tests without needing the contract test router to know about every optional dep. See pkg/sqlqueries.NewHandler(nil) vs pkg/transactions which always has a memory store.
 - OpenAPI schema names live in a flat namespace. Before adding a new request/response schema, grep the full openapi_spec.yaml — e.g. "ExecuteQueryRequest" was already used by stored QueryType execute. Prefix new schemas with their resource group (SqlQueryExecuteRequest, TransactionEditRequest) to avoid silent "mapping key already defined" yaml parse failures that only surface when the Contract tests try to load the spec.
 - For read-only SQL execution via pgx: wrap in `BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})`, use `tx.Query` (NOT `tx.Exec` which rejects row-returning statements), drain with `for rows.Next() {}`, then check `rows.Err()`. Defense in depth on top of handler-level SELECT validation.
+- Integration-tag tests (`//go:build integration`) are invisible to `go test ./...` and can rot silently — run `go test -tags integration ./...` at every phase gate. The testcontainers base image is `pgvector/pgvector:pg16` (NOT `postgres:16-alpine`), because migration 000011 requires `CREATE EXTENSION vector`. Same constraint applies to any future migration that needs a Postgres extension.
+- `internal/testutil.findMigrationsDir()` walks the CWD upward looking for `migrations/` so test packages at any depth (pkg/X, pkg/X/Y, internal/Z) resolve correctly. Do not hardcode relative paths like "../../migrations" — those break the moment a test package moves or a new one is added deeper in the tree.
+- Foundry-alignment invariant: `cmd/server/openapi_spec.yaml` contains exactly 68 Foundry operations plus 7 Weave-side operations ({/health, /health/ready, /metrics, /mcp, /api/auth/login|logout|refresh}) = 75 total paths. The contract test pair TestContract_AllRoutesDocumented + TestContract_NoOrphanedSpecPaths enforces 1:1 chi↔spec alignment. Adding or removing a Foundry endpoint must update both yaml files AND the wire layer.
 
 ---
 
@@ -1205,4 +1208,40 @@
   - Stacked-statement rejection is cheap and catches the "SELECT 1; DROP TABLE users" trick before the engine ever sees it: `strings.Index(q, ";")` followed by `TrimSpace(tail) != ""`. A trailing ";" (with only whitespace after) is still allowed because many SQL clients append it unconditionally.
   - pgx.TxOptions{AccessMode: pgx.ReadOnly} is the correct way to wrap an Execute call in a read-only transaction — enforces read-only at the PG level even though the handler already validates SELECT-only. Defense in depth for single-machine Foundry parity is cheap here.
   - For "no rows needed" query execution, `tx.Query(...)` + `defer rows.Close()` + drain loop + `rows.Err()` is the minimum correct path; `tx.Exec(...)` does NOT work for SELECT because pgx's Exec rejects statements that would return rows.
+---
+
+## 2026-04-11 - US-043: Phase 4 integration gate — 100% API alignment
+- Verification-only story. Confirmed 68/68 Foundry endpoints callable and full regression suite green across all four test stacks.
+- Foundry endpoint inventory (from cmd/server/openapi_spec.yaml, excluding Weave-side /health, /health/ready, /metrics, /mcp, /api/auth/login|logout|refresh):
+  - Metadata: 25 (ontologies/objectTypes/actionTypes/interfaceTypes/valueTypes/queryTypes + fullMetadata variants + getByRidBatch + editsHistory)
+  - ObjectSets: 7 (loadObjects / loadLinks / aggregate / createTemporary / get / loadObjectsMultipleObjectTypes / loadObjectsOrInterfaces)
+  - Objects: 7 (list, get, search, aggregate, count, links read ×2)
+  - InterfaceData: 4 (search, aggregate, polymorphic object + link reads)
+  - Attachments: 4 (upload, upload sliced, get metadata, content) + AttachmentProperty: 4 (object-scoped read variants)
+  - Actions: 3 (apply / applyBatch / applyWithOverrides on /{action}/ path)
+  - MediaReferenceProperty: 3, TimeSeriesProperty: 3, TimeSeriesValueBankProperty: 2, GeotemporalSeriesProperty: 2
+  - CipherTextProperty: 1, OntologyTransaction: 1, SqlQueries: 1, Auth (/api/v2/me): 1
+  - Total: 68
+- Contract tests (TestContract_AllRoutesDocumented + TestContract_NoOrphanedSpecPaths + TestContract_EmbeddedSpecMatchesCanonical) are the programmatic 1:1 proof that every chi route has a spec path and vice versa — all three PASS, so "68 in spec" ↔ "68 in routes" is verified.
+- Fixed two pre-existing integration-tag rot issues uncovered while running `go test -tags integration ./...`:
+  1. `pkg/oms/link_edges_test.go` passed `edge` (value) to `repo.UpsertLinkEdge` after the interface signature was tightened to `*oms.LinkEdge`. Added `&` to all 7 call sites — no logic change. Build tag is `integration` so the normal suite had been skipping this.
+  2. `internal/testutil.findMigrationsDir()` had a dead for-loop that always returned `"../../migrations"` regardless of the candidate list. This broke `pkg/oss/objectset` integration tests that live 3 dirs deep from the repo root. Rewrote to walk the CWD upward looking for a directory named `migrations` (returns first hit, max 8 parents). Now resolves correctly from any test package depth.
+  3. Swapped testcontainers base image from `postgres:16-alpine` to `pgvector/pgvector:pg16` so migration 000011 (`CREATE EXTENSION vector`) succeeds. Without this, every integration test that loads the full migrations set (pkg/oms, pkg/oss/objectset, pkg/auth long tests, internal/database) failed with `ERROR: extension "vector" is not available`. The normal `make test` suite uses in-memory fakes and was not affected, which is why this bit-rot lasted since migration 000011 landed.
+- Files changed:
+  - internal/testutil/pgcontainer.go — postgres image swap + rewritten findMigrationsDir (uses os.Getwd + filepath.Walk-upward)
+  - pkg/oms/link_edges_test.go — 7 call sites now pass *LinkEdge
+  - prd.json — US-043 passes:true + notes
+  - progress.txt — this entry
+- Tests:
+  - `go test ./...` — 34 packages green (unit path)
+  - `go test -tags integration ./...` — 34 packages green (testcontainers-backed, pgvector image, ~9min wall time including container startup for pkg/oms 372s and pkg/auth 27s)
+  - `go test ./cmd/server/... -run Contract` — 3/3 contract tests green
+  - `cd web && npx tsc -b && npx vitest run` — tsc -b clean, vitest 186/186 green (36 files)
+  - `cd sdk/python && pytest tests/ -q` — 69/69 green
+- **Learnings for future iterations:**
+  - The integration-tag test suite and the normal unit-tag suite can drift apart silently because `go test ./...` never compiles files behind build tags. Run `go test -tags integration ./...` at least once per phase gate to catch refactor rot in integration-only tests. Suggested: wire it into CI as a Phase 4/5 periodic check even if it's not on every PR.
+  - When a migration introduces a Postgres extension requirement (pgvector, postgis, pg_trgm, etc.), the testcontainers base image must carry that extension. Keep `pgvector/pgvector:pg16` as the minimum image; if we ever need PostGIS too, the `postgis/postgis:16` image ships pgvector's dependencies too.
+  - `findMigrationsDir` anti-pattern (return on first loop iteration) was only harmless because all callers happened to live exactly 2 dirs deep. When adding a new integration test that lives at a different depth, verify the migration path resolves before blaming the migration itself — the error looks like the migration file is missing.
+  - Foundry 68-endpoint claim is programmatically verifiable via `yaml.safe_load(openapi_spec.yaml)['paths']` minus the 7 non-Foundry operations ({health, health/ready, metrics, mcp, auth/login|logout|refresh}) — future regressions that accidentally drop or add an endpoint will show up here immediately.
+  - Testcontainers wall-time for full-migration runs is ~2-5s container startup + migration time; pkg/oms integration takes 6 minutes because it runs the migration set per subtest under testcontainers — amortize by building a fixture helper if runtime becomes a problem. For now, green suite > fast suite.
 ---

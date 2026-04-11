@@ -45,7 +45,7 @@ func TestPGRepository_UpsertLinkEdge_Create(t *testing.T) {
 		TargetObjectPK: "proj-7",
 		EdgeProperties: json.RawMessage(`{"role":"lead"}`),
 	}
-	err := repo.UpsertLinkEdge(context.Background(), edge)
+	err := repo.UpsertLinkEdge(context.Background(), &edge)
 	if err != nil {
 		t.Fatalf("upsert (create) failed: %v", err)
 	}
@@ -71,14 +71,14 @@ func TestPGRepository_UpsertLinkEdge_Update(t *testing.T) {
 		TargetObjectPK: "proj-7",
 		EdgeProperties: json.RawMessage(`{"role":"lead"}`),
 	}
-	if err := repo.UpsertLinkEdge(context.Background(), edge1); err != nil {
+	if err := repo.UpsertLinkEdge(context.Background(), &edge1); err != nil {
 		t.Fatalf("first upsert failed: %v", err)
 	}
 
 	// Upsert with new edge properties.
 	edge2 := edge1
 	edge2.EdgeProperties = json.RawMessage(`{"role":"contributor"}`)
-	if err := repo.UpsertLinkEdge(context.Background(), edge2); err != nil {
+	if err := repo.UpsertLinkEdge(context.Background(), &edge2); err != nil {
 		t.Fatalf("second upsert failed: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestPGRepository_UpsertLinkEdge_NilProperties(t *testing.T) {
 		TargetObjectPK: "proj-3",
 		EdgeProperties: nil,
 	}
-	if err := repo.UpsertLinkEdge(context.Background(), edge); err != nil {
+	if err := repo.UpsertLinkEdge(context.Background(), &edge); err != nil {
 		t.Fatalf("upsert with nil properties failed: %v", err)
 	}
 
@@ -130,7 +130,7 @@ func TestPGRepository_DeleteLinkEdge_Existing(t *testing.T) {
 		SourceObjectPK: "emp-9",
 		TargetObjectPK: "proj-9",
 	}
-	if err := repo.UpsertLinkEdge(context.Background(), edge); err != nil {
+	if err := repo.UpsertLinkEdge(context.Background(), &edge); err != nil {
 		t.Fatalf("upsert failed: %v", err)
 	}
 
@@ -167,14 +167,14 @@ func TestPGRepository_DeleteAllLinkEdgesForSource(t *testing.T) {
 
 	for _, target := range []string{"proj-a", "proj-b", "proj-c"} {
 		edge := oms.LinkEdge{LinkTypeRID: lt.RID, SourceObjectPK: "emp-bulk", TargetObjectPK: target}
-		if err := repo.UpsertLinkEdge(context.Background(), edge); err != nil {
+		if err := repo.UpsertLinkEdge(context.Background(), &edge); err != nil {
 			t.Fatalf("seed upsert failed: %v", err)
 		}
 	}
 
 	// Edge belonging to a different source — must be left alone.
 	otherEdge := oms.LinkEdge{LinkTypeRID: lt.RID, SourceObjectPK: "emp-other", TargetObjectPK: "proj-z"}
-	if err := repo.UpsertLinkEdge(context.Background(), otherEdge); err != nil {
+	if err := repo.UpsertLinkEdge(context.Background(), &otherEdge); err != nil {
 		t.Fatalf("other-source upsert failed: %v", err)
 	}
 
