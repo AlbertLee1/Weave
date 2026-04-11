@@ -1,0 +1,81 @@
+{
+  "story": "US-027",
+  "title": "Consumer always-apply for edit-only fields",
+  "description": "Proves the funnel Consumer's US-027 editOnly preservation guard: any Property marked IsEditOnly=true must preserve its user value against ingest writes regardless of batch timestamps. Unlike US-021/US-022 which only protect user state when the latest user edit is strictly newer than the ingest batch, this guard runs unconditionally for every ingest CREATE/MODIFY. The fixture covers a single Order with a editOnly notes field, a user CREATE that seeds notes='VIP', and a strictly newer ingest MODIFY that attempts to set notes='SPAM' alongside an unrelated status change.",
+  "fixture": {
+    "ontology": "edit_only",
+    "objectType": "order",
+    "primaryKey": "orderID",
+    "properties": [
+      { "apiName": "orderID", "baseType": "string", "isSearchable": true, "isEditOnly": false },
+      { "apiName": "status",  "baseType": "string", "isSearchable": true, "isEditOnly": false },
+      { "apiName": "notes",   "baseType": "string", "isSearchable": true, "isEditOnly": true  }
+    ],
+    "seed": {
+      "userBatch": {
+        "id": "user-1",
+        "timestamp": "2026-04-11T10:00:00Z",
+        "source": "user",
+        "edits": [
+          {
+            "type": "CREATE",
+            "primaryKey": "ord-1",
+            "properties": { "orderID": "ord-1", "status": "pending", "notes": "VIP" }
+          }
+        ]
+      },
+      "ingestBatch": {
+        "id": "ingest-1",
+        "timestamp": "2026-04-11T11:00:00Z",
+        "source": "ingest",
+        "note": "Strictly NEWER than userBatch so the US-021 timestamp guard alone cannot protect notes — only the US-027 editOnly guard can.",
+        "edits": [
+          {
+            "type": "MODIFY",
+            "primaryKey": "ord-1",
+            "properties": { "orderID": "ord-1", "status": "shipped", "notes": "SPAM" }
+          }
+        ]
+      }
+    }
+  },
+  "request": {
+    "sequence": [
+      "repo.CreateOntology + CreateObjectType + CreateProperty(notes, isEditOnly=true)",
+      "index.Manager.EnsureIndex for (edit_only, order) with orderID/status/notes",
+      "funnel.Consumer.SetEditOnlyField(fn) where fn queries repo.ListProperties and returns Property.IsEditOnly",
+      "consumer.SetHistoryRepo(pgRepo) + SetObjectTypeRIDs({order: orderRID})",
+      "consumer.ApplyBatch(ctx, userBatch)",
+      "consumer.ApplyBatch(ctx, ingestBatch)"
+    ],
+    "entryPoint": "funnel.Consumer.ApplyBatch(ctx, EditBatch)",
+    "historyRecorder": "oms.PGRepository (testcontainers-backed real PG)",
+    "editOnlyResolver": "closure over repo.ListProperties(orderRID) -> Property.IsEditOnly"
+  },
+  "expected": {
+    "preserveEditOnlyFieldsOutcome": "ingestBatch.edits[0] has its Properties rewritten: notes stripped from the ingest map and re-merged from the current bleve doc (notes='VIP'); status='shipped' and orderID='ord-1' pass through unchanged.",
+    "bleveFinalState": {
+      "ord-1": { "orderID": "ord-1", "status": "shipped", "notes": "VIP" }
+    },
+    "leakGuard": "notes MUST remain 'VIP' — the string 'SPAM' must NOT appear in the final bleve doc; status MUST be updated to 'shipped' to prove non-editOnly fields are still mutable by ingest."
+  },
+  "responseShape": {
+    "bleveDoc": {
+      "orderID": "string (PK)",
+      "status": "string (non-editOnly, updated by ingest)",
+      "notes":  "string (editOnly, preserved from user write)"
+    }
+  },
+  "coveredBy": [
+    "test/integration/edit_only_test.go::TestEditOnly_IngestCannotOverwriteUserNotes",
+    "pkg/funnel/conflict_test.go::TestEditOnlyAlwaysWins",
+    "pkg/funnel/conflict_test.go::TestEditOnly_IngestOmitsField"
+  ],
+  "notes": [
+    "Run the integration test with `go test -tags integration ./test/integration/... -run EditOnly`. Requires Docker for testcontainers.",
+    "US-021's user-edit-wins guard is timestamp-based; it only filters ingest edits whose batch.Timestamp is older than LatestUserEditAt. US-027 is a strictly stronger guarantee for fields marked IsEditOnly=true — it runs unconditionally and never lets ingest touch those fields, even when the ingest batch is newer.",
+    "preserveEditOnlyFields runs BEFORE resolveConflicts in applyBatchWithHistory. The two passes compose: an ingest edit may be first stripped of editOnly fields, then dropped entirely by the stale-timestamp guard if the user has a newer edit on any remaining field. The edit-only guard skips DELETE edits (which are all-or-nothing and delegate to US-021).",
+    "The parity fixture intentionally uses a STRICTLY NEWER ingest timestamp so the test cannot accidentally pass via the US-021 path. Any future regression that removes the editOnly guard will surface here as notes='SPAM' in the final bleve doc.",
+    "Production main.go does NOT yet wire SetEditOnlyField against the live OMS schema — the integration test wires a local closure over repo.ListProperties. Follow-up work for the serving path should build a cached (objectType, field)->IsEditOnly lookup at startup or on ObjectType schema-change events and call SetEditOnlyField once."
+  ]
+}

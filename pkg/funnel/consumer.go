@@ -63,6 +63,13 @@ type Consumer struct {
 	// user edit exists. Default (nil) means "no fields are always-apply"
 	// and every ingest write on a protected object is filtered out.
 	alwaysApplyField func(objectType, field string) bool
+	// editOnlyField is the US-027 hook for property.IsEditOnly. When
+	// non-nil and the function returns true for (objectType, field), the
+	// consumer strips that field from every ingest CREATE/MODIFY and
+	// fetch-merges the current bleve value back so user-managed fields
+	// like tags and notes are never overwritten by ingest, regardless of
+	// batch timestamps. Default (nil) means no fields are protected.
+	editOnlyField func(objectType, field string) bool
 	// objectTypeRIDs maps API name -> RID for resolving objectType -> RID
 	// when recording history. Updated by callers via SetObjectTypeRIDs.
 	objectTypeRIDs map[string]string
@@ -115,6 +122,18 @@ func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
 // US-026 wires the real implementation against the schema is_edit_only flag.
 func (c *Consumer) SetAlwaysApplyField(fn func(objectType, field string) bool) {
 	c.alwaysApplyField = fn
+}
+
+// SetEditOnlyField wires the US-027 edit-only preservation hook. When set,
+// every ingest CREATE/MODIFY has its Properties stripped of any
+// (objectType, field) pair the function returns true for; the consumer
+// then fetches the current bleve doc and re-merges those editOnly fields
+// on top of the stripped ingest map so a subsequent upsert cannot lose
+// the user value. The guard runs BEFORE the US-021 timestamp guard so
+// ingest edits with newer timestamps still cannot touch editOnly fields.
+// Pass nil to disable (default behaviour). Safe to call before Start().
+func (c *Consumer) SetEditOnlyField(fn func(objectType, field string) bool) {
+	c.editOnlyField = fn
 }
 
 // SetObjectTypeRIDs supplies the API-name -> RID lookup table used when
@@ -410,6 +429,73 @@ func (c *Consumer) resolveConflicts(ctx context.Context, batch EditBatch) []Edit
 	return out
 }
 
+// preserveEditOnlyFields implements the US-027 always-preserve semantics.
+// For every ingest CREATE/MODIFY edit, any (objectType, field) flagged by
+// editOnlyField is stripped from the incoming Properties and the current
+// bleve doc's value for that field is merged back in. This guarantees a
+// downstream bleve upsert cannot overwrite the user-managed field even
+// when the ingest batch timestamp is newer than the latest user edit
+// (which would otherwise let the US-021 guard fall through).
+//
+// Empty edits — where stripping leaves no ingest-controlled Properties and
+// the current doc holds no editOnly values either — are dropped entirely
+// rather than committed as a clobbering empty upsert. DELETE edits bypass
+// the guard because DELETE is all-or-nothing and must be handled by the
+// higher-level US-021 timestamp protection.
+//
+// A nil editOnlyField hook degrades this to a pass-through. Non-ingest
+// edits and edits whose ObjectType has no editOnly fields are returned
+// unchanged.
+func (c *Consumer) preserveEditOnlyFields(batch EditBatch) []Edit {
+	if c.editOnlyField == nil {
+		return batch.Edits
+	}
+	out := make([]Edit, 0, len(batch.Edits))
+	for _, e := range batch.Edits {
+		if e.Source != EditSourceIngest || e.Type == EditTypeDelete {
+			out = append(out, e)
+			continue
+		}
+
+		hasEditOnlyKey := false
+		stripped := make(map[string]interface{}, len(e.Properties))
+		for k, v := range e.Properties {
+			if c.editOnlyField(e.ObjectType, k) {
+				hasEditOnlyKey = true
+				continue
+			}
+			stripped[k] = v
+		}
+
+		current := c.fetchDocument(batch.OntologyAPIName, e.ObjectType, e.PrimaryKey)
+		mergedEditOnlyCount := 0
+		if current != nil {
+			for k, v := range current {
+				if c.editOnlyField(e.ObjectType, k) {
+					stripped[k] = v
+					mergedEditOnlyCount++
+				}
+			}
+		}
+
+		if !hasEditOnlyKey && mergedEditOnlyCount == 0 {
+			out = append(out, e)
+			continue
+		}
+
+		if len(stripped) == 0 {
+			log.Printf("funnel: US-027 drop empty ingest %s for %s/%s after editOnly strip",
+				e.Type, e.ObjectType, e.PrimaryKey)
+			continue
+		}
+
+		rewritten := e
+		rewritten.Properties = stripped
+		out = append(out, rewritten)
+	}
+	return out
+}
+
 // ApplyBatch is the exported entry point for in-process callers that need
 // to apply an EditBatch without routing through NATS — integration tests
 // and future ingest shims use it to drive the full applyBatchWithHistory
@@ -441,6 +527,10 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 		return fmt.Errorf("apply batch: ontologyApiName is empty")
 	}
 
+	batch.Edits = c.preserveEditOnlyFields(batch)
+	if len(batch.Edits) == 0 {
+		return nil
+	}
 	batch.Edits = c.resolveConflicts(ctx, batch)
 	if len(batch.Edits) == 0 {
 		return nil

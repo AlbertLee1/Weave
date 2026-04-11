@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/liyang/weave/pkg/index"
 )
 
 // TestUserEditWinsProtection verifies the US-021 conflict resolution path:
@@ -212,6 +214,193 @@ func TestConflict_AlwaysApplyStub(t *testing.T) {
 	}
 	if f, _ := doc["age"].(float64); f != 99 {
 		t.Fatalf("expected always-apply ingest age 99, got %v", doc["age"])
+	}
+}
+
+// TestEditOnlyAlwaysWins is the US-027 acceptance scenario: fields marked
+// IsEditOnly=true must preserve the user value regardless of ingest, even
+// when the ingest batch is strictly newer than the user edit (which would
+// normally let ingest win because the US-021 user-edit-wins guard only
+// kicks in when LatestUserEditAt > batch.Timestamp). The editOnly guard
+// runs unconditionally for every ingest CREATE/MODIFY, so the Order.notes
+// field seeded by a user write survives every ingest attempt to overwrite
+// it while non-editOnly fields still get updated from ingest.
+func TestEditOnlyAlwaysWins(t *testing.T) {
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	props := []index.Property{
+		{APIName: "orderID", BaseType: "string", IsSearchable: true},
+		{APIName: "status", BaseType: "string", IsSearchable: true},
+		{APIName: "notes", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex(index.ScopedKey(testOntology, "order"), props); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	consumer := &Consumer{
+		indexMgr:      mgr,
+		maxDeliveries: DefaultMaxDeliveries,
+	}
+	consumer.SetEditOnlyField(func(objectType, field string) bool {
+		return objectType == "order" && field == "notes"
+	})
+	repo := &fakeHistoryRepo{}
+	consumer.SetHistoryRepo(repo)
+	consumer.SetObjectTypeRIDs(map[string]string{
+		"order": "ri.ontology.main.object-type.order",
+	})
+
+	ctx := context.Background()
+	// User is OLDER than ingest — US-021's timestamp guard does NOT
+	// protect the user value here; only the US-027 editOnly guard can.
+	userTS := time.Now().Add(-1 * time.Hour)
+	ingestTS := time.Now()
+
+	userCreate := EditBatch{
+		ID:              "user-1",
+		OntologyAPIName: testOntology,
+		UserID:          "alice",
+		Timestamp:       userTS,
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "order",
+				PrimaryKey: "ord-1",
+				Source:     EditSourceUser,
+				Properties: map[string]interface{}{
+					"orderID": "ord-1",
+					"status":  "pending",
+					"notes":   "VIP",
+				},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(ctx, userCreate); err != nil {
+		t.Fatalf("user create: %v", err)
+	}
+
+	ingestMod := EditBatch{
+		ID:              "ingest-1",
+		OntologyAPIName: testOntology,
+		UserID:          "ingest-svc",
+		Timestamp:       ingestTS,
+		Edits: []Edit{
+			{
+				Type:       EditTypeModify,
+				ObjectType: "order",
+				PrimaryKey: "ord-1",
+				Source:     EditSourceIngest,
+				Properties: map[string]interface{}{
+					"orderID": "ord-1",
+					"status":  "shipped",
+					"notes":   "SPAM", // must be stripped
+				},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(ctx, ingestMod); err != nil {
+		t.Fatalf("ingest mod: %v", err)
+	}
+
+	doc := consumer.fetchDocument(testOntology, "order", "ord-1")
+	if doc == nil {
+		t.Fatal("expected order doc to exist after ingest")
+	}
+	if got, _ := doc["notes"].(string); got != "VIP" {
+		t.Fatalf("editOnly notes overwritten: got %q, want VIP", got)
+	}
+	if got, _ := doc["status"].(string); got != "shipped" {
+		t.Fatalf("non-editOnly status not updated: got %q, want shipped", got)
+	}
+}
+
+// TestEditOnly_IngestOmitsField verifies that when an ingest edit does NOT
+// explicitly send the editOnly field, the field survives on the Bleve doc
+// via the fetch+merge path. Otherwise a bleve upsert would silently drop
+// editOnly state from the full-doc replacement.
+func TestEditOnly_IngestOmitsField(t *testing.T) {
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	props := []index.Property{
+		{APIName: "orderID", BaseType: "string", IsSearchable: true},
+		{APIName: "status", BaseType: "string", IsSearchable: true},
+		{APIName: "notes", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex(index.ScopedKey(testOntology, "order"), props); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	consumer := &Consumer{
+		indexMgr:      mgr,
+		maxDeliveries: DefaultMaxDeliveries,
+	}
+	consumer.SetEditOnlyField(func(objectType, field string) bool {
+		return objectType == "order" && field == "notes"
+	})
+	repo := &fakeHistoryRepo{}
+	consumer.SetHistoryRepo(repo)
+	consumer.SetObjectTypeRIDs(map[string]string{
+		"order": "ri.ontology.main.object-type.order",
+	})
+	ctx := context.Background()
+
+	userCreate := EditBatch{
+		ID:              "user-1",
+		OntologyAPIName: testOntology,
+		Timestamp:       time.Now().Add(-1 * time.Hour),
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "order",
+				PrimaryKey: "ord-2",
+				Source:     EditSourceUser,
+				Properties: map[string]interface{}{
+					"orderID": "ord-2",
+					"status":  "pending",
+					"notes":   "HANDLE WITH CARE",
+				},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(ctx, userCreate); err != nil {
+		t.Fatalf("user create: %v", err)
+	}
+
+	// Ingest update that does NOT send "notes" at all.
+	ingestMod := EditBatch{
+		ID:              "ingest-1",
+		OntologyAPIName: testOntology,
+		Timestamp:       time.Now(),
+		Edits: []Edit{
+			{
+				Type:       EditTypeModify,
+				ObjectType: "order",
+				PrimaryKey: "ord-2",
+				Source:     EditSourceIngest,
+				Properties: map[string]interface{}{
+					"orderID": "ord-2",
+					"status":  "delivered",
+				},
+			},
+		},
+	}
+	if err := consumer.applyBatchWithHistory(ctx, ingestMod); err != nil {
+		t.Fatalf("ingest mod: %v", err)
+	}
+
+	doc := consumer.fetchDocument(testOntology, "order", "ord-2")
+	if doc == nil {
+		t.Fatal("doc missing")
+	}
+	if got, _ := doc["notes"].(string); got != "HANDLE WITH CARE" {
+		t.Fatalf("editOnly notes silently dropped by ingest upsert: got %q", got)
+	}
+	if got, _ := doc["status"].(string); got != "delivered" {
+		t.Fatalf("non-editOnly status not updated: got %q", got)
 	}
 }
 

@@ -1459,3 +1459,63 @@ new features — only run verification suites and commit the gate.
     the flag with NOT NULL DEFAULT FALSE so legacy rows still read back as
     false after migration — no application-level null handling needed.
 ---
+
+## 2026-04-11 - US-027
+- Added US-027 editOnly preservation guard to the funnel Consumer. New
+  Consumer.editOnlyField hook (opt-in via SetEditOnlyField) drives a new
+  preserveEditOnlyFields pass that runs BEFORE resolveConflicts in
+  applyBatchWithHistory. For every ingest CREATE/MODIFY: strip any keys
+  the hook flags as editOnly, fetch the current bleve doc, and merge its
+  editOnly fields back onto the stripped map so the downstream bleve
+  upsert cannot lose the user value. Empty-after-strip edits are dropped
+  (log line) instead of clobbering the doc with an empty upsert. DELETE
+  edits bypass the guard (delegated to US-021 timestamp protection).
+- Files changed:
+  - pkg/funnel/consumer.go (editOnlyField field + SetEditOnlyField +
+    preserveEditOnlyFields + wire into applyBatchWithHistory)
+  - pkg/funnel/conflict_test.go (TestEditOnlyAlwaysWins +
+    TestEditOnly_IngestOmitsField — red-first, both green after impl)
+  - test/integration/edit_only_test.go (new,
+    TestEditOnly_IngestCannotOverwriteUserNotes; boots real PG via
+    testcontainers, seeds Order.notes with IsEditOnly=true, drives full
+    Consumer.ApplyBatch happy path + regression)
+  - test/foundry_parity/us027_edit_only.json (parity fixture)
+  - scripts/ralph/prd.json (US-027 passes=true)
+- Quality:
+  - go test ./... green
+  - go test -tags integration ./test/integration/ -run EditOnly green (~1s)
+  - go vet ./... clean
+  - gofmt clean on all 3 edited Go files
+- **Learnings for future iterations:**
+  - US-021 and US-027 are composable but orthogonal guards. US-021 is
+    timestamp-based (only ingest edits older than the latest user edit are
+    filtered) and applies across the whole edit. US-027 is flag-based
+    (per-field IsEditOnly) and applies unconditionally. The Consumer runs
+    preserveEditOnlyFields FIRST so US-027 always rewrites the Properties
+    map before resolveConflicts makes its skip-or-merge decision; the
+    US-021 merge path therefore already sees a sanitised map and the two
+    passes never contradict each other.
+  - bleve upserts replace the full doc — a partial ingest MODIFY that
+    omits a field silently deletes that field. For editOnly this is the
+    real silent-corruption bug US-027 guards against, NOT just the case
+    where ingest tries to overwrite with a wrong value. That is why
+    preserveEditOnlyFields unconditionally fetches the current doc and
+    merges editOnly fields back even when the ingest map omits them
+    entirely. TestEditOnly_IngestOmitsField pins this behaviour.
+  - For the integration test, resolving IsEditOnly via repo.ListProperties
+    inside the hook closure is fine because per-lookup latency is a few
+    ms against a testcontainers PG. Production main.go is NOT yet wired;
+    the follow-up (US-046 / US-052 range) should build a cached
+    (objectType, field) -> IsEditOnly map at startup and refresh on
+    schema-change events, then call SetEditOnlyField once.
+  - funnel.NewConsumer(nil, mgr) works fine for unit/integration tests
+    that drive ApplyBatch directly — the nats.JetStreamContext is never
+    dereferenced on the in-process path, so passing nil is the cleanest
+    fixture and matches edit_conflict_test.go precedent.
+  - fetchOrderDoc in test/integration/edit_only_test.go is the canonical
+    "read a single bleve doc by PK" pattern: NewDocIDQuery + SearchRequest
+    with Fields=['*'] and Size=1. Copy this into future integration tests
+    that need to assert on the post-batch bleve state; don't reach for
+    idx.Document() directly because its field visitor is bleve-internal
+    and more brittle than the Search API.
+---
