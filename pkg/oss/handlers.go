@@ -66,6 +66,13 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}/{attachmentRid}", h.GetAttachmentPropertyMetadataByRID)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/attachments/{property}", h.GetAttachmentPropertyMetadata)
 
+	// MediaReferenceProperty endpoints (Foundry OSv2). Reuses the attachment
+	// BlobStore under the hood. Upload lives on /objectTypes/{objectType},
+	// while read endpoints address a specific object/primaryKey.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/metadata", h.GetMediaPropertyMetadata)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/content", h.GetMediaPropertyContent)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectType}/media/{property}/upload", h.UploadMediaProperty)
+
 	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/aggregate", h.InterfaceAggregateObjects)

@@ -1057,6 +1057,51 @@ components:
           type: string
           description: IANA media type of the blob.
           example: image/png
+    MediaMetadata:
+      type: object
+      description: |
+        Foundry OSv2 MediaMetadata wire shape returned by the
+        MediaReferenceProperty metadata endpoint.
+      required: [path, sizeBytes, mediaType]
+      properties:
+        path:
+          type: string
+          description: Logical path of the media item inside its media set.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Blob size in bytes.
+        mediaType:
+          type: string
+          description: IANA media type of the blob.
+          example: image/jpeg
+    MediaReference:
+      type: object
+      description: |
+        Foundry OSv2 MediaReference wire shape. Points at a single media-set
+        item and carries the mime type for convenience.
+      required: [mimeType, reference]
+      properties:
+        mimeType:
+          type: string
+          example: image/png
+        reference:
+          type: object
+          required: [type, mediaSetViewItem]
+          properties:
+            type:
+              type: string
+              enum: [mediaSetViewItem]
+            mediaSetViewItem:
+              type: object
+              required: [mediaSetRid, mediaSetViewRid, mediaItemRid]
+              properties:
+                mediaSetRid:
+                  type: string
+                mediaSetViewRid:
+                  type: string
+                mediaItemRid:
+                  type: string
 security:
   - bearerAuth: []
 paths:
@@ -2778,3 +2823,125 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/metadata:
+    get:
+      operationId: getMediaPropertyMetadata
+      summary: Get media reference metadata via object property
+      description: |
+        Returns the MediaMetadata record (path, sizeBytes, mediaType) for
+        the media reference stored in the given object's media property.
+      tags: [MediaReferenceProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          description: MediaReference property API name on the object type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Media metadata record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaMetadata"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/content:
+    get:
+      operationId: getMediaPropertyContent
+      summary: Download media reference blob via object property
+      description: |
+        Streams the raw blob bytes for the media reference stored in the
+        given object's media property. The response Content-Type is the
+        stored mediaType.
+      tags: [MediaReferenceProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Raw blob bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectType}/media/{property}/upload:
+    post:
+      operationId: uploadMediaProperty
+      summary: Upload a new media reference
+      description: |
+        Uploads raw media bytes and returns a MediaReference pointing at
+        the newly created blob. The mediaItemPath query parameter is
+        required; the request Content-Type becomes the stored mediaType.
+      tags: [MediaReferenceProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          description: ObjectType API name.
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          description: MediaReference property API name on the object type.
+          schema:
+            type: string
+        - in: query
+          name: mediaItemPath
+          required: true
+          description: Logical path of the new media item inside the media set.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: MediaReference pointing at the newly uploaded blob.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaReference"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"

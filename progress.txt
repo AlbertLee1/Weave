@@ -949,3 +949,27 @@
   - contract_test 里的 newContractTestRouter 已经 wire 了 AttachmentStore（US-033 交付）— 本次不需要再改，OSS handler 的 SetAttachmentStore 调用会自动在 newContractTestRouter 构造的 NewFullRouter 中生效
   - attachment.BlobStore.Stat() 是正确的 metadata-only 路径 — 避免 Get() 打开 reader 只为了关闭
 ---
+
+## 2026-04-11 - US-035: MediaReferenceProperty 3 endpoints
+- 新增 3 个 Foundry MediaReferenceProperty 端点，复用 attachment.BlobStore 作为底层媒体存储后端：
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/media/{property}/metadata → MediaMetadata {path, sizeBytes, mediaType}
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/media/{property}/content → 原始字节流
+  - POST /api/v2/ontologies/{o}/objectTypes/{objectType}/media/{property}/upload?mediaItemPath=X → MediaReference {mimeType, reference: {type, mediaSetViewItem: {mediaSetRid, mediaSetViewRid, mediaItemRid}}}
+- handler 在 nil attachmentStore 时返回 MediaStoreNotConfigured；无 mediaItemPath 时返回 MissingMediaItemPath
+- 属性值支持两种形态：裸 RID 字符串 或 MediaReference 对象（含 reference.mediaSetViewItem.mediaItemRid 的嵌套 map）
+- 文件变更：
+  - pkg/oss/handlers_media_property.go — NEW: 3 个 handler + resolveMediaPropertyRID + extractMediaReferenceRID + writeMediaStoreError
+  - pkg/oss/handlers_media_property_test.go — NEW: 8 个 TDD 测试 (metadata/content/upload 正反路径)
+  - pkg/oss/handlers.go — 在 RegisterRoutes 内注册 3 条新路由，复用已有的 SetAttachmentStore 依赖
+  - cmd/server/openapi_spec.yaml — 新增 MediaMetadata + MediaReference schemas，新增 3 条 path 定义
+  - api/openapi.yaml — 镜像同步（cp openapi_spec.yaml → api/openapi.yaml）
+  - prd.json — US-035 passes: true
+- **Learnings for future iterations:**
+  - Foundry MediaReference 结构：{mimeType, reference: {type: "mediaSetViewItem", mediaSetViewItem: {mediaSetRid, mediaSetViewRid, mediaItemRid}}}；单机版我们用常量 ri.mio.main.media-set.default / ri.mio.main.media-set-view.default 填充 mediaSetRid/viewRid，把 attachment blob RID 放进 mediaItemRid
+  - MediaMetadata wire shape 是 {path, sizeBytes, mediaType} —— 不同于 AttachmentV2 的 {rid, filename, sizeBytes, mediaType}；我们用 stored filename 作为 path（单机存储没有层级路径概念）
+  - 上传路径是 /objectTypes/{objectType}/media/{property}/upload（在 objectTypes 分支下），读取路径是 /objects/{type}/{pk}/media/{property}/{metadata|content}（在 objects 分支下）—— 是 Foundry 的刻意差别，因为上传时还没有持久化对象
+  - mediaItemPath 从 query 参数取，Content-Type 头决定存储的 mediaType；与 attachment Upload handler 相同的模式
+  - 属性值既接受字符串 RID 也接受完整的 MediaReference map（future-proof），extractMediaReferenceRID 内部解构 reference.mediaSetViewItem.mediaItemRid
+  - 新路由直接复用 US-033 已经 wire 的 h.attachmentStore 字段 —— 不需要新增 ServerDeps 字段或 NewFullRouter 改动，也不需要改 contract router
+  - 全套 go test ./... 通过（server 2.2s / oss 33s / chinook 212s / northwind 137s / e2e 9s）
+---
