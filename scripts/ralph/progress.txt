@@ -1328,3 +1328,50 @@ new features — only run verification suites and commit the gate.
     conflicts) should lean on the same helper pattern rather than
     hand-rolling 409 construction at every handler.
 ---
+
+## 2026-04-11 - US-024
+- Added optimistic-concurrency UX to the Action Console: when a user types
+  a target ObjectType + primaryKey, the page loads the current version via
+  a new useObjectVersion hook and stamps it as expectedVersion in the
+  ActionApplyRequest.options. On a 409 StaleObject response, a dedicated
+  banner surfaces "This object was updated elsewhere - Reload to continue"
+  with a Reload button that refetches the object version (React Query
+  refetch) and clears the banner. Non-stale errors still flow through the
+  existing applyMutation.isError path.
+- Files changed:
+  - web/src/api/types.ts (ActionApplyOptions.expectedVersion?: number)
+  - web/src/hooks/useObjectVersion.ts (new)
+  - web/src/hooks/__tests__/useObjectVersion.test.ts (new, 4 tests)
+  - web/src/components/actions/ActionConsolePage.tsx
+  - web/src/components/actions/__tests__/ActionConsolePage.test.tsx
+    (new, 2 tests)
+- Quality: `npx vitest run` → 38 files / 192 tests green. `npx tsc --noEmit`
+  clean. `go test ./...` green. `go vet ./...` clean.
+- **Learnings for future iterations:**
+  - `getObjectHistory({limit: 1})` is the cheapest "what version are we
+    on" query — totalVersions in the envelope IS the current version
+    because the consumer increments nextVersion monotonically from 1
+    (see US-023 learnings). No dedicated /version endpoint needed.
+  - `ApiRequestError.statusCode` + `errorName === "StaleObject"` is the
+    canonical 409 discriminator on the frontend. Use this pair instead
+    of parsing error.message — the handler side formats the name via
+    staleObjectAPIError (pkg/actions/handlers.go) which emits
+    errorName="StaleObject" + statusCode=409 via apierror.NewConflict.
+  - React Query's `refetch()` bypasses the `enabled` guard once a query
+    has been primed — the stale-banner Reload button just calls
+    versionQuery.refetch() and the hook wakes up without needing state
+    toggles. Don't try to re-enable by toggling primaryKey to "" and
+    back; that drops the cached data.
+  - TanStack Query test wrappers need `retry: false` in defaultOptions
+    — otherwise error assertions wait 3+ retries and time out. Follow
+    the makeWrapper pattern in useObjectSets.test.ts.
+  - ApiRequestError.parameters carries {expectedVersion, currentVersion,
+    objectType, primaryKey} as strings (per US-023 wire format). The UX
+    only renders currentVersion today, but all four are available for
+    richer banners in the future (e.g., "v2 → v9 on Employee/E1").
+  - The Action Console did not previously load any per-object data, so
+    the target ObjectType + primaryKey inputs are a net-new UI affordance.
+    Existing ParameterForm has no concept of an "object reference"
+    parameter type; US-027 or later should consider wiring this directly
+    to a FunctionArg typed as "objectReference" for auto-population.
+---

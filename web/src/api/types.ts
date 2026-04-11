@@ -143,6 +143,9 @@ export interface WhereClause {
 export interface ActionApplyOptions {
   mode?: 'VALIDATE_ONLY' | 'VALIDATE_AND_EXECUTE';
   returnEdits?: 'ALL' | 'ALL_V2_WITH_DELETIONS' | 'NONE';
+  // Optimistic concurrency: server compares against current object version
+  // and returns 409 StaleObject if they diverge. See US-023/US-024.
+  expectedVersion?: number;
 }
 
 // ActionApplyRequest is the Foundry OSv2 body shape for

@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useParams } from 'react-router';
 import { useActionTypes, useApplyAction } from '../../hooks/useActions';
+import { useObjectVersion } from '../../hooks/useObjectVersion';
 import type { ActionType, ActionApplyResponse } from '../../api/types';
+import { ApiRequestError } from '../../api/client';
 import { ParameterForm } from './ParameterForm';
 import { ActionResult } from './ActionResult';
 import { LoadingSpinner } from '../common/LoadingSpinner';
@@ -15,21 +17,57 @@ export function ActionConsolePage() {
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
   const [result, setResult] = useState<ActionApplyResponse | null>(null);
+  const [targetObjectType, setTargetObjectType] = useState('');
+  const [targetPrimaryKey, setTargetPrimaryKey] = useState('');
+  const [staleConflict, setStaleConflict] = useState<null | {
+    currentVersion?: string;
+  }>(null);
+
+  const versionQuery = useObjectVersion({
+    ontologyApiName: ontology ?? '',
+    objectType: targetObjectType,
+    primaryKey: targetPrimaryKey,
+  });
 
   function handleSelectAction(action: ActionType) {
     setSelectedAction(action);
     setParamValues({});
     setResult(null);
+    setStaleConflict(null);
   }
 
   function handleExecute() {
     if (!selectedAction) return;
+    setStaleConflict(null);
+    const expectedVersion = versionQuery.version;
     applyMutation.mutate(
-      { action: selectedAction.apiName, parameters: paramValues },
+      {
+        action: selectedAction.apiName,
+        parameters: paramValues,
+        ...(expectedVersion !== undefined
+          ? { options: { expectedVersion } }
+          : {}),
+      },
       {
         onSuccess: (data) => setResult(data),
+        onError: (err) => {
+          if (
+            err instanceof ApiRequestError &&
+            err.statusCode === 409 &&
+            err.errorName === 'StaleObject'
+          ) {
+            setStaleConflict({
+              currentVersion: err.parameters?.currentVersion,
+            });
+          }
+        },
       },
     );
+  }
+
+  function handleReload() {
+    setStaleConflict(null);
+    void versionQuery.refetch();
   }
 
   if (!ontology) {
@@ -94,6 +132,56 @@ export function ActionConsolePage() {
               )}
             </div>
 
+            {/* Target object (optional) — used for optimistic concurrency */}
+            <div>
+              <h3 className="text-xs font-medium text-text-primary mb-3">Target Object (optional)</h3>
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col">
+                  <label
+                    htmlFor="target-object-type"
+                    className="text-xs text-text-secondary font-sans mb-1"
+                  >
+                    Target object type
+                  </label>
+                  <input
+                    id="target-object-type"
+                    type="text"
+                    value={targetObjectType}
+                    onChange={(e) => setTargetObjectType(e.target.value)}
+                    className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
+                    placeholder="Employee"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <label
+                    htmlFor="target-primary-key"
+                    className="text-xs text-text-secondary font-sans mb-1"
+                  >
+                    Target primary key
+                  </label>
+                  <input
+                    id="target-primary-key"
+                    type="text"
+                    value={targetPrimaryKey}
+                    onChange={(e) => setTargetPrimaryKey(e.target.value)}
+                    className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
+                    placeholder="E1"
+                  />
+                </div>
+                {versionQuery.version !== undefined && (
+                  <div className="text-xs text-text-secondary">
+                    Current version:{' '}
+                    <span
+                      data-testid="object-version"
+                      className="font-mono text-accent-cyan"
+                    >
+                      {versionQuery.version}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Parameters form */}
             <div>
               <h3 className="text-xs font-medium text-text-primary mb-3">Parameters</h3>
@@ -104,6 +192,29 @@ export function ActionConsolePage() {
               />
             </div>
 
+            {/* Stale-object conflict banner */}
+            {staleConflict && (
+              <div
+                role="alert"
+                className="border border-accent-error rounded p-3 bg-accent-error/10"
+              >
+                <div className="text-xs text-text-primary font-medium">
+                  This object was updated elsewhere
+                </div>
+                <div className="text-xs text-text-secondary mt-1">
+                  Reload to continue
+                  {staleConflict.currentVersion &&
+                    ` (current version: ${staleConflict.currentVersion})`}
+                </div>
+                <button
+                  onClick={handleReload}
+                  className="mt-2 bg-accent-error text-bg-primary px-3 py-1 rounded text-xs font-medium hover:bg-accent-error/80"
+                >
+                  Reload
+                </button>
+              </div>
+            )}
+
             {/* Execute button */}
             <div>
               <button
@@ -113,7 +224,7 @@ export function ActionConsolePage() {
               >
                 {applyMutation.isPending ? 'Executing...' : 'Execute Action'}
               </button>
-              {applyMutation.isError && (
+              {applyMutation.isError && !staleConflict && (
                 <div className="mt-2 text-xs text-accent-error">
                   Error: {applyMutation.error instanceof Error ? applyMutation.error.message : 'Action failed'}
                 </div>
