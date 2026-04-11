@@ -2210,3 +2210,42 @@ new features — only run verification suites and commit the gate.
     walking — already documented in the Codebase Patterns but worth
     re-flagging here: do not try to fake past tense as a stem target.
 ---
+
+## 2026-04-12 01:35 - US-036
+- Added test/integration/phase6/phase6_percentile_groupby_test.go
+- Seeds the real Northwind orders fixture (830 rows) into a Bleve index
+  scoped to a fresh ontology, POSTs to /objectSets/aggregate with
+  approximatePercentile(freight) × groupBy(shipCountry), and asserts each
+  per-bucket approximation is within 5% relative error of the ground-truth
+  percentile. Runs two calls: scalar p95 plus multi-percentile [50, 95, 99]
+  (map return shape) to exercise both bleve_agg.go dispatch arms.
+- Top-level accuracy marker is asserted non-empty (ACCURATE or APPROXIMATE)
+  on every response, covering US-014's plumbing under the groupBy path.
+- Files changed: test/integration/phase6/phase6_percentile_groupby_test.go
+- **Learnings for future iterations:**
+  - hdrhistogram-go's Histogram.ValueAtPercentile uses rank rounding
+    `count = int64((P/100)*N + 0.5)`, NOT nearest-rank (ceil). For small
+    buckets (N≈16-30) this disagrees with pkg/oss/aggregation.exactPercentileSort
+    by exactly one rank and can push relative error past any reasonable
+    bound. When writing Phase 6 percentile parity tests against live
+    Northwind buckets, reference percentiles MUST mirror HdrHistogram's
+    rounding — the included `referencePercentileForBucket` helper is the
+    canonical definition.
+  - Argentina (N=16) at p95 was the canonical failure case for this:
+    nearest-rank → sorted[15]=217.86 vs HdrHistogram → sorted[14]=90.85,
+    a full rank apart. The 5% bound from US-018 assumes the algorithm and
+    the reference agree on tie-breaking.
+  - Multi-percentile response shape is `map[string]interface{}` after JSON
+    unmarshal (keys are percentile strings like "50"/"95"/"99"); the
+    scalar path returns a bare float64. A single aggregation request can
+    mix both styles but each MetricValue.Value must be asserted with the
+    correct shape — see extractCountScalarPercentile vs extractMultiPercentile.
+  - Northwind orders.csv has the expected 830 rows with freight in column
+    index 7 and shipCountry in column 13 (0-based). Some rows have empty
+    shipCountry / freight that need to be filtered when seeding.
+  - base ObjectSet aggregation goes through the Bleve-facet engine (not
+    the derived in-memory path) because Result.DerivedValues is empty;
+    aggregate handler builds a DocIDQuery from Result.PrimaryKeys before
+    handing off to the facet engine. No link resolver required for the
+    base+aggregate path, so objectset.NewExecutor(mgr, nil, store) is fine.
+---
