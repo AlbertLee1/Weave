@@ -1574,3 +1574,79 @@ new features — only run verification suites and commit the gate.
     makes data-free UI-only specs (like the reworked search-and-filter
     spec) valid even against an empty ObjectType.
 ---
+
+## 2026-04-11 - US-029
+- Added `scripts/e2e-setup.sh` and `scripts/e2e-teardown.sh` — idempotent
+  Playwright stack bring-up/tear-down. Setup order: docker compose
+  (postgres+nats, `up -d --wait`) → `go build -o bin/weave ./cmd/server`
+  → nohup `bin/weave` with PID file at `.e2e-pids/weave.pid` + log tail
+  at `.e2e-logs/weave.log` → health poll on `:9117/health` (60s budget)
+  → `npx vite --host 127.0.0.1 --port 5173` with PID file at
+  `.e2e-pids/vite.pid` + log at `.e2e-logs/vite.log` → poll `:5173`
+  homepage (60s budget). Teardown is strictly reverse: TERM vite → TERM
+  weave → `docker compose down`; each process gets 10s to exit gracefully
+  before KILL, and `.e2e-pids/` is `rmdir`'d when empty.
+- Idempotency guarantees (all validated by running the scripts twice):
+  * Setup on warm stack short-circuits with "already healthy — reusing"
+    and returns 0 without touching the running PIDs.
+  * Setup detects "port in use but no tracked PID file" and aborts with
+    a clear error message pointing at `scripts/e2e-teardown.sh`, rather
+    than silently double-starting.
+  * Teardown on cold stack logs "no PID file, nothing to stop" for each
+    process and still runs `docker compose down` (which itself is a
+    no-op when services are already down).
+  * `kill_pid_file` tolerates empty PID files and already-dead PIDs.
+- `make e2e-up` / `make e2e-down` Makefile targets shell out to the
+  scripts. Added both to `.PHONY`.
+- `.gitignore` now excludes `.e2e-pids/` and `.e2e-logs/` so the runtime
+  directories never leak into commits.
+- `web/e2e/README.md` "Backend prerequisites" section updated to document
+  the new entry point (`make e2e-up` / `make e2e-down`) and drop the
+  "manually start it" fallback that was there during US-028.
+- Quality: `bash -n` clean on both scripts; `go vet ./...` clean;
+  `go test ./...` clean (no Go source touched). Shellcheck not installed
+  locally on this box so it was not invoked, but the scripts use
+  conservative POSIX-style quoting, `local` only inside functions, and
+  all unbound-variable fallbacks (`${1:-}`).
+- Smoke tested end-to-end on macOS:
+  1. `./scripts/e2e-setup.sh` — cold start (fresh build, new weave PID,
+     new vite PID; `/health` 200, `:5173` 200).
+  2. `./scripts/e2e-setup.sh` — warm re-run — skipped both starts.
+  3. `./scripts/e2e-teardown.sh` — TERM'd both PIDs cleanly in <1s each,
+     `docker compose down` succeeded, `.e2e-pids/` auto-removed.
+  4. `./scripts/e2e-teardown.sh` — cold re-run — reported "no PID file",
+     `docker compose down` no-op, exit 0.
+  5. `make e2e-up` / `make e2e-down` — also validated end-to-end.
+- Files changed:
+  - scripts/e2e-setup.sh (new, executable)
+  - scripts/e2e-teardown.sh (new, executable)
+  - Makefile (add e2e-up / e2e-down targets + .PHONY)
+  - .gitignore (ignore .e2e-pids/ and .e2e-logs/)
+  - web/e2e/README.md (switch Backend prerequisites to new entry point)
+- **Learnings for future iterations:**
+  - `docker compose up -d --wait <svc>` is the right idempotent primitive
+    for service-scoped bring-up: it returns immediately on already-healthy
+    services and waits for health on cold starts. Prefer this over ad-hoc
+    curl polling loops.
+  - For PID file + nohup pattern in bash, `nohup ./bin/weave >> log 2>&1 &
+    echo $! > pidfile` works, but when the start happens inside a
+    subshell (`( cd web && nohup ... & echo $! > pidfile )`) the `$!`
+    refers to the background job *inside* that subshell — exactly what
+    you want for vite. Don't try to capture `$!` from outside.
+  - `kill -0 PID` is the canonical "is this PID still alive" check and
+    is POSIX — no need for `ps | grep`.
+  - When writing teardown scripts, always `rm -f pidfile` unconditionally
+    after the kill loop (even if the process was already dead), otherwise
+    the next setup run will see a stale PID file and take a different
+    branch. The current teardown handles both the "alive", "dead but
+    tracked", and "empty/missing" cases symmetrically.
+  - `tr -d '[:space:]' < file` is the cleanest way to read a single-line
+    PID file while tolerating trailing newlines that nohup or editors
+    inject. Avoid `$(cat file)` — it does word-splitting but keeps the
+    newline on some shells.
+  - The weave binary lives at `bin/weave` (root-relative) — the gitignore
+    already excludes `bin/`, so rebuilds in e2e-setup are transparent.
+  - Acceptance criterion "shellcheck passes" was tested by careful
+    review only on this box (no shellcheck binary). Future CI should
+    wire shellcheck into lint — flagging this for the CI gate story.
+---

@@ -46,6 +46,10 @@ tasks/
 scripts/ralph/
 web/.omc/
 
+# E2E stack runtime (scripts/e2e-setup.sh)
+.e2e-pids/
+.e2e-logs/
+
 # Python cache
 **/__pycache__/
 *.pyc

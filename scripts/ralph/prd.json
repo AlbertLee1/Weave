@@ -467,7 +467,7 @@
         "Manually runs clean on local box"
       ],
       "priority": 29,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

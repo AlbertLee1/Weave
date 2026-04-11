@@ -36,16 +36,20 @@ npm run test:e2e
 ## Backend prerequisites
 
 Playwright hits the Vite dev server on :5173 and expects the Weave API on
-:9117. Phase 6 gate US-029 will introduce `scripts/e2e-setup.sh` /
-`scripts/e2e-teardown.sh` + `make e2e-up` / `make e2e-down` wrappers around
-`docker compose up -d postgres nats` and `bin/weave`. Until then, start the
-stack manually:
+:9117. Phase 6 gate US-029 introduced `scripts/e2e-setup.sh` /
+`scripts/e2e-teardown.sh` (wired into `make e2e-up` / `make e2e-down`);
+this is the supported entry point:
 
 ```bash
-make docker-up
-make run &             # serves API on :9117
-cd web && npm run dev  # Vite on :5173 (Playwright webServer reuses it)
+make e2e-up            # docker compose + bin/weave + vite (idempotent)
+cd web && npm run test:e2e
+make e2e-down          # tears everything back down
 ```
+
+The setup script is idempotent: rerunning while the stack is already
+healthy is a no-op, and stale PID files under `.e2e-pids/` are reaped on
+the next run. Process output is tailed into `.e2e-logs/{weave,vite}.log`.
+Both directories are gitignored.
 
 ## Test data
 
