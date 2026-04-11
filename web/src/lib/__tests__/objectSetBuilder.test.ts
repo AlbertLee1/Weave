@@ -78,6 +78,45 @@ describe('nodeToDefinition / definitionToNode round-trip', () => {
     expect(back).toBeDefined();
   });
 
+  it('round-trips a withProperties node with derivedProperties', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'withProperties',
+      objectSet: emptyBase('customer'),
+      derivedProperties: [
+        {
+          name: 'orderCount',
+          link: 'customerOrders',
+          direction: 'forward',
+          metric: 'count',
+        },
+      ],
+    };
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({
+      type: 'withProperties',
+      objectSet: { type: 'base', objectType: 'customer' },
+      derivedProperties: [
+        {
+          name: 'orderCount',
+          link: 'customerOrders',
+          direction: 'forward',
+          metric: 'count',
+        },
+      ],
+    });
+    const back = definitionToNode(def);
+    expect(back.type).toBe('withProperties');
+    if (back.type === 'withProperties') {
+      expect(back.derivedProperties).toHaveLength(1);
+      expect(back.derivedProperties?.[0]).toMatchObject({
+        name: 'orderCount',
+        link: 'customerOrders',
+        metric: 'count',
+      });
+    }
+  });
+
   it('round-trips a searchAround node', () => {
     const node: ObjectSetNode = {
       id: '1',

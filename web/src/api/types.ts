@@ -332,10 +332,19 @@ export interface ReferenceObjectSet {
   reference: string;
 }
 
+export interface DerivedPropertyDef {
+  name: string;
+  link: string;
+  direction?: 'forward' | 'reverse';
+  metric: 'count' | 'sum' | 'avg' | 'min' | 'max';
+  field?: string;
+}
+
 export interface WithPropertiesObjectSet {
   type: 'withProperties';
   objectSet: ObjectSetDefinition;
   properties?: string[];
+  derivedProperties?: DerivedPropertyDef[];
 }
 
 export interface NearestNeighborsObjectSet {

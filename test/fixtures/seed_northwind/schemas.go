@@ -27,6 +27,17 @@ type schemaProperty struct {
 	BaseType     string
 	IsSearchable bool
 	IsSortable   bool
+	// Analyzer mirrors the Foundry TypeConfig.analyzer hint:
+	//   "not_analyzed" → KeywordField (exact-case term match)
+	//   "standard" / empty → TextField (English stemmed)
+	// Foreign-key properties (e.g. customerID) need "not_analyzed" so
+	// TermQuery-based FK resolution (pkg/links/fk_resolver.go) actually hits.
+	Analyzer string
+}
+
+type fkConfigDef struct {
+	SourceProperty string `json:"sourceProperty"`
+	TargetProperty string `json:"targetProperty"`
 }
 
 type linkDef struct {
@@ -35,10 +46,19 @@ type linkDef struct {
 	Source      string // object type apiName
 	Target      string // object type apiName
 	Cardinality string // ONE_TO_MANY / MANY_TO_MANY / ...
+	// FK names the source + target properties for FK-backed resolution.
+	// Empty means the seed writes no foreign_key_config row, matching the
+	// original US-030 behaviour (the link is metadata-only and cannot be
+	// traversed by ObjectSet searchAround / withProperties).
+	FK *fkConfigDef
 }
 
 func northwindSchemas() []schema {
 	return []schema{
+		// FK-bearing properties (customerID) route through the
+		// not_analyzed analyzer so TermQuery-based FK resolution in
+		// pkg/links/fk_resolver.go matches "ALFKI" literally without
+		// the English stemmer clobbering the value.
 		{
 			APIName:           "customer",
 			DisplayName:       "Customer",
@@ -46,7 +66,7 @@ func northwindSchemas() []schema {
 			PrimaryKey:        "customerID",
 			TitleProperty:     "companyName",
 			Properties: []schemaProperty{
-				{APIName: "customerID", DisplayName: "Customer ID", BaseType: "string", IsSearchable: true, IsSortable: true},
+				{APIName: "customerID", DisplayName: "Customer ID", BaseType: "string", IsSearchable: true, IsSortable: true, Analyzer: "not_analyzed"},
 				{APIName: "companyName", DisplayName: "Company Name", BaseType: "string", IsSearchable: true, IsSortable: true},
 				{APIName: "country", DisplayName: "Country", BaseType: "string", IsSearchable: true, IsSortable: true},
 				{APIName: "contactName", DisplayName: "Contact Name", BaseType: "string", IsSearchable: true, IsSortable: false},
@@ -66,8 +86,8 @@ func northwindSchemas() []schema {
 			PrimaryKey:        "orderID",
 			TitleProperty:     "orderID",
 			Properties: []schemaProperty{
-				{APIName: "orderID", DisplayName: "Order ID", BaseType: "string", IsSearchable: true, IsSortable: true},
-				{APIName: "customerID", DisplayName: "Customer ID", BaseType: "string", IsSearchable: true, IsSortable: true},
+				{APIName: "orderID", DisplayName: "Order ID", BaseType: "string", IsSearchable: true, IsSortable: true, Analyzer: "not_analyzed"},
+				{APIName: "customerID", DisplayName: "Customer ID", BaseType: "string", IsSearchable: true, IsSortable: true, Analyzer: "not_analyzed"},
 				{APIName: "freight", DisplayName: "Freight", BaseType: "double", IsSearchable: false, IsSortable: true},
 				{APIName: "shipCountry", DisplayName: "Ship Country", BaseType: "string", IsSearchable: true, IsSortable: true},
 			},
@@ -110,6 +130,10 @@ func northwindLinkTypes() []linkDef {
 			Source:      "customer",
 			Target:      "order",
 			Cardinality: "ONE_TO_MANY",
+			// customer.customerID (PK) -> order.customerID (FK) — the
+			// Playwright withProperties spec (US-040) depends on this
+			// link being FK-resolvable end-to-end.
+			FK: &fkConfigDef{SourceProperty: "customerID", TargetProperty: "customerID"},
 		},
 		{
 			APIName:     "orderCustomer",
@@ -117,6 +141,7 @@ func northwindLinkTypes() []linkDef {
 			Source:      "order",
 			Target:      "customer",
 			Cardinality: "ONE_TO_ONE",
+			FK:          &fkConfigDef{SourceProperty: "customerID", TargetProperty: "customerID"},
 		},
 	}
 }

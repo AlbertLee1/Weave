@@ -138,6 +138,15 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 				IsSearchable:  p.IsSearchable,
 				IsSortable:    p.IsSortable,
 			}
+			if p.Analyzer != "" {
+				cfg, err := json.Marshal(struct {
+					Analyzer string `json:"analyzer"`
+				}{Analyzer: p.Analyzer})
+				if err != nil {
+					return nil, fmt.Errorf("seed: marshal analyzer hint for %q.%q: %w", s.APIName, p.APIName, err)
+				}
+				prop.TypeConfig = cfg
+			}
 			if err := repo.CreateProperty(ctx, prop); err != nil {
 				return nil, fmt.Errorf("seed: create property %q.%q: %w", s.APIName, p.APIName, err)
 			}
@@ -169,6 +178,13 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 			SourceObjectType: src,
 			TargetObjectType: tgt,
 			Cardinality:      l.Cardinality,
+		}
+		if l.FK != nil {
+			raw, err := json.Marshal(l.FK)
+			if err != nil {
+				return nil, fmt.Errorf("seed: marshal FK config for %q: %w", l.APIName, err)
+			}
+			lt.ForeignKeyConfig = raw
 		}
 		if err := repo.CreateLinkType(ctx, lt); err != nil {
 			return nil, fmt.Errorf("seed: create link type %q: %w", l.APIName, err)

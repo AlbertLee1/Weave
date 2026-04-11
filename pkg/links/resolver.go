@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/liyang/weave/pkg/index"
@@ -130,10 +131,19 @@ func (r *Resolver) ResolveLinkedObjects(ctx context.Context, linkTypeRID string,
 	return r.ResolveLinked(ctx, linkTypeRID, sourcePKs, DirectionForward)
 }
 
-// ResolveLinkedObjectsByAPIName resolves links using the link type's API name and source object type RID.
-// Legacy forward-only method.
-func (r *Resolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceObjectTypeRID, linkTypeAPIName string, sourcePKs []string) ([]string, error) {
-	linkTypes, err := r.listOutgoingLinkTypes(ctx, sourceObjectTypeRID)
+// ResolveLinkedObjectsByAPIName resolves links using the link type's API name.
+// The source identifier accepts either an object type RID (legacy) or an API
+// name; API names are translated to an RID via the ontology scope stamped on
+// ctx (see index.WithOntologyScope) + oms.Repository.GetOntology /
+// GetObjectTypeByAPIName. The dual-accept shape lets upstream callers
+// (objectset executor, withProperties, searchAround) pass the friendlier
+// apiname without knowing the per-ontology RID layout.
+func (r *Resolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceIdent, linkTypeAPIName string, sourcePKs []string) ([]string, error) {
+	sourceRID, err := r.resolveSourceObjectTypeRID(ctx, sourceIdent)
+	if err != nil {
+		return nil, err
+	}
+	linkTypes, err := r.listOutgoingLinkTypes(ctx, sourceRID)
 	if err != nil {
 		return nil, fmt.Errorf("list link types: %w", err)
 	}
@@ -144,7 +154,34 @@ func (r *Resolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceObje
 		}
 	}
 
-	return nil, fmt.Errorf("link type %q not found for source %q", linkTypeAPIName, sourceObjectTypeRID)
+	return nil, fmt.Errorf("link type %q not found for source %q", linkTypeAPIName, sourceIdent)
+}
+
+// resolveSourceObjectTypeRID normalises an object-type identifier that may be
+// either an RID (starts with "ri.") or an APIName. API names are translated
+// via the ontology scope on ctx: GetOntology(scope) → GetObjectTypeByAPIName.
+// If either lookup fails the caller's original identifier is returned so the
+// existing error path stays intact ("not found for source X").
+func (r *Resolver) resolveSourceObjectTypeRID(ctx context.Context, sourceIdent string) (string, error) {
+	if sourceIdent == "" || strings.HasPrefix(sourceIdent, "ri.") {
+		return sourceIdent, nil
+	}
+	if r.repo == nil {
+		return sourceIdent, nil
+	}
+	scope := index.OntologyScopeFromContext(ctx)
+	if scope == "" {
+		return sourceIdent, nil
+	}
+	ont, err := r.repo.GetOntology(ctx, scope)
+	if err != nil || ont == nil {
+		return sourceIdent, nil
+	}
+	ot, err := r.repo.GetObjectTypeByAPIName(ctx, ont.RID, sourceIdent)
+	if err != nil || ot == nil {
+		return sourceIdent, nil
+	}
+	return ot.RID, nil
 }
 
 // ResolveLinked is the direction-aware overload.

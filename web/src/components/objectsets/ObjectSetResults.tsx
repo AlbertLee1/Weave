@@ -37,6 +37,49 @@ const PAGE_SIZE = 25;
 
 type Tab = 'browse' | 'aggregate';
 
+// collectDerivedColumns walks the definition and returns the ordered list of
+// derived property names declared by any withProperties node. These surface on
+// each wire row as top-level keys merged in by the backend handler, so the
+// browse table needs an extra column per name even though the ObjectType
+// schema does not declare them.
+function collectDerivedColumns(def: ObjectSetDefinition): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  function visit(d: ObjectSetDefinition): void {
+    switch (d.type) {
+      case 'withProperties': {
+        for (const dp of d.derivedProperties ?? []) {
+          if (dp.name && !seen.has(dp.name)) {
+            seen.add(dp.name);
+            out.push(dp.name);
+          }
+        }
+        visit(d.objectSet);
+        return;
+      }
+      case 'filter':
+      case 'searchAround':
+      case 'nearestNeighbors':
+      case 'asType':
+      case 'asBaseObjectTypes':
+      case 'interfaceLinkSearchAround':
+        visit(d.objectSet);
+        return;
+      case 'union':
+      case 'intersect':
+      case 'subtract':
+        for (const child of d.objectSets) visit(child);
+        return;
+      default:
+        return;
+    }
+  }
+
+  visit(def);
+  return out;
+}
+
 // resolveRootType walks the definition to determine the static result type for
 // schema lookups. searchAround changes type so we fall back to the runtime
 // __apiName from loaded objects in that case.
@@ -101,6 +144,14 @@ export function ObjectSetResults({
   // Resolve the static root type name from the definition for schema lookup.
   const staticTypeName = useMemo(
     () => (def ? resolveRootType(def) : ''),
+    [def],
+  );
+
+  // Derived columns surfaced on each row by the backend, beyond the static
+  // schema. Extracted from the definition so column order matches the spec
+  // order the user typed, even before the first row arrives.
+  const derivedColumns = useMemo(
+    () => (def ? collectDerivedColumns(def) : []),
     [def],
   );
 
@@ -227,6 +278,7 @@ export function ObjectSetResults({
             onNextPage={handleNextPage}
             onPrevPage={handlePrevPage}
             onRowClick={handleRowClick}
+            derivedColumns={derivedColumns}
           />
         )}
 
@@ -328,6 +380,7 @@ interface BrowsePaneProps {
   onNextPage: () => void;
   onPrevPage: () => void;
   onRowClick: (row: WireObject) => void;
+  derivedColumns?: string[];
 }
 
 function BrowsePane({
@@ -340,6 +393,7 @@ function BrowsePane({
   onNextPage,
   onPrevPage,
   onRowClick,
+  derivedColumns,
 }: BrowsePaneProps) {
   if (isLoading) {
     return (
@@ -391,6 +445,7 @@ function BrowsePane({
       onNextPage={onNextPage}
       onPrevPage={onPrevPage}
       currentPage={currentPage}
+      derivedColumns={derivedColumns}
     />
   );
 }

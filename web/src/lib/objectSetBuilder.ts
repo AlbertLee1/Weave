@@ -1,4 +1,8 @@
-import type { ObjectSetDefinition, WhereClause } from '../api/types';
+import type {
+  DerivedPropertyDef,
+  ObjectSetDefinition,
+  WhereClause,
+} from '../api/types';
 
 // ObjectSetNode is a tree node mirroring ObjectSetDefinition with a stable id
 // for React rendering. The `id` field is stripped when converting to a wire
@@ -60,6 +64,7 @@ export interface WithPropertiesNode extends NodeBase {
   type: 'withProperties';
   objectSet: ObjectSetNode;
   properties?: string[];
+  derivedProperties?: DerivedPropertyDef[];
 }
 
 export interface NearestNeighborsNode extends NodeBase {
@@ -130,12 +135,19 @@ export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
     }
     case 'reference':
       return { type: 'reference', reference: node.reference };
-    case 'withProperties':
-      return {
+    case 'withProperties': {
+      const def: ObjectSetDefinition = {
         type: 'withProperties',
         objectSet: nodeToDefinition(node.objectSet),
-        properties: node.properties,
       };
+      if (node.properties && node.properties.length > 0) {
+        def.properties = node.properties;
+      }
+      if (node.derivedProperties && node.derivedProperties.length > 0) {
+        def.derivedProperties = node.derivedProperties.map((dp) => ({ ...dp }));
+      }
+      return def;
+    }
     case 'nearestNeighbors':
       return {
         type: 'nearestNeighbors',
@@ -194,6 +206,7 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
         type: 'withProperties',
         objectSet: definitionToNode(def.objectSet),
         properties: def.properties,
+        derivedProperties: def.derivedProperties?.map((dp) => ({ ...dp })),
       };
     case 'nearestNeighbors':
       return {

@@ -111,6 +111,32 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   and assign ot.Properties = props before handing the ObjectType to
   `index.BuildMapping`, otherwise the generated mapping will be
   empty and every search will silently return zero hits.
+- FK-backed link traversal (searchAround, withProperties) only works
+  when the source + target FK columns are indexed with the
+  `not_analyzed` analyzer — the FK resolver uses bleve.TermQuery which
+  is exact-case and the default English snowball analyzer silently
+  breaks it. Seed fixtures that want to exercise link traversal MUST
+  set `schemaProperty.Analyzer = "not_analyzed"` on both sides so
+  `properties.type_config` carries `{"analyzer":"not_analyzed"}` and
+  the rehydrate path routes the field to a KeywordFieldMapping.
+- `*links.Resolver.ResolveLinkedObjectsByAPIName` now dual-accepts the
+  source identifier: it can be either an object-type RID (legacy) or
+  an APIName — API names are transparently translated to an RID via
+  `index.OntologyScopeFromContext` + `repo.GetOntology` +
+  `repo.GetObjectTypeByAPIName`. This is what makes the ObjectSet
+  executor's apiname-based calls (executeSearchAround,
+  executeWithProperties) reach the DB-backed link_types table. When
+  writing tests that feed apinames, remember to populate the
+  mockRepo's ontologies + otByAPIName maps AND create the Bleve
+  indexes under `index.ScopedKey(scope, apiName)`.
+- withProperties derived columns (Name + Metric output) do NOT live
+  in ObjectType.properties — backend merges them into each WireObject
+  in pkg/oss/objectset/handler.go:171-178. UI tables pick them up via
+  a separate `derivedColumns: string[]` prop on ObjectTable; compute
+  the list from the ObjectSet definition (collectDerivedColumns in
+  ObjectSetResults.tsx) so column order is stable even before the
+  first row arrives. Cells render inside `<span data-derived-column>`
+  wrappers so Playwright specs can target them.
 - pkg/oss/aggregation/engine.go has two parallel groupBy code paths:
   the LIVE recursiveGroupBy + getXxxEntries (exact/fixedWidth/ranges/
   duration/topValues) that returns []groupEntry, and the DEAD
@@ -2478,4 +2504,70 @@ new features — only run verification suites and commit the gate.
     locator by `role=button, name='Execute'`; prefer the dedicated
     `data-testid=aggregation-execute` when writing Playwright specs
     to avoid strict-mode violations.
+---
+
+## 2026-04-12 02:55 - US-040
+- Implemented Phase 6 gate Playwright spec `web/e2e/phase6/withproperties-derived.spec.ts`
+  which drives ObjectSetComposer → withProperties → DataTable flow end-to-end.
+- Extended ObjectSetComposer UI to actually support `withProperties`:
+  - Added `withProperties` to `OBJECT_SET_TYPES`, a nested inner builder,
+    and a per-row `DerivedPropertyEditor` (name/link/direction/metric/field)
+    keyed by `data-testid=derived-property-row`.
+  - Added wire-level `DerivedPropertyDef` type, `derivedProperties` plumbing
+    in `objectSetBuilder.ts` (round-trip + validation), and a
+    `collectDerivedColumns` walker in `ObjectSetResults.tsx` that feeds a new
+    `derivedColumns` prop into `ObjectTable`. Derived cells render with
+    `data-derived-column=<name>` so specs can target them.
+- Fixed production `*links.Resolver.ResolveLinkedObjectsByAPIName` so it
+  accepts either an object-type RID (legacy) or an APIName: new
+  `resolveSourceObjectTypeRID` looks up the scoped ontology via
+  `index.OntologyScopeFromContext` → `repo.GetOntology` →
+  `repo.GetObjectTypeByAPIName`. Previously the executor passed apinames
+  and the DB query (`source_object_type = $1`) silently returned zero
+  rows, so searchAround + withProperties never worked with the real
+  northwind seed even though integration-test mocks covered it.
+- Extended the northwind seed fixture with FK + analyzer wiring so the
+  new spec has real target rows to count:
+  - `linkDef.FK` → persisted as `link_types.foreign_key_config` JSON.
+  - `schemaProperty.Analyzer` → routed through `properties.type_config`
+    so `customerID` on both customer and order indexes uses the
+    `not_analyzed` keyword analyzer. Without this the FK resolver's
+    `TermQuery(val).SetField("customerID")` matches nothing because the
+    default English snowball analyzer lowercases / stems the term.
+- Files changed:
+  - pkg/links/resolver.go
+  - pkg/links/resolver_test.go (+ TestResolveByAPIName_AcceptsAPIName)
+  - test/fixtures/seed_northwind/schemas.go
+  - test/fixtures/seed_northwind/seed.go
+  - web/src/api/types.ts
+  - web/src/lib/objectSetBuilder.ts
+  - web/src/lib/__tests__/objectSetBuilder.test.ts
+  - web/src/components/browser/ObjectTable.tsx
+  - web/src/components/objectsets/ObjectSetBuilder.tsx
+  - web/src/components/objectsets/ObjectSetResults.tsx
+  - web/e2e/phase6/withproperties-derived.spec.ts (new)
+- **Learnings for future iterations:**
+  - FK-based link traversal from the ObjectSet executor only works when
+    the FK columns (customerID etc) are indexed with the `not_analyzed`
+    analyzer. TermQuery is exact-case; the default English snowball
+    analyzer silently breaks it. Every new FK-backed seed link must set
+    TypeConfig analyzer hints on both the source-side and target-side
+    properties.
+  - `*links.Resolver.ResolveLinkedObjectsByAPIName` previously required
+    a caller-supplied RID; it now auto-resolves apinames against the
+    ontology scope stamped on ctx. Production executor paths
+    (`executeSearchAround`, `executeWithProperties`) pass apinames and
+    this is how they reach the DB-backed link_types table end-to-end.
+    Tests that still pass an RID work unchanged.
+  - Derived columns from withProperties do NOT live in
+    `objectType.properties`; the backend merges them into each
+    WireObject via `handler.go:171-178`. UI code needs to pick them up
+    separately. `ObjectTable` now accepts a `derivedColumns: string[]`
+    prop for exactly this — compute the list from the definition (see
+    `collectDerivedColumns` in ObjectSetResults.tsx), don't scan rows.
+  - The optimistic-concurrency.spec.ts (US-038) is currently failing
+    on baseline too (pre-existing flake around
+    `getByTestId('object-version')`); verified via `git stash` before
+    claiming regression. Do NOT attribute that failure to changes in
+    this story.
 ---

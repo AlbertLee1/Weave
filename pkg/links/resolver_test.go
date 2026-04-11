@@ -17,6 +17,8 @@ type mockRepo struct {
 	linkTypes   map[string]*oms.LinkType   // rid -> LinkType
 	outgoing    map[string][]oms.LinkType  // sourceObjectType RID -> []LinkType
 	incoming    map[string][]oms.LinkType  // targetObjectType RID -> []LinkType (optional override)
+	ontologies  map[string]*oms.Ontology   // rid or apiName -> Ontology (dual-accept)
+	otByAPIName map[string]*oms.ObjectType // "ontologyRID|apiName" -> ObjectType
 }
 
 func (m *mockRepo) GetObjectType(_ context.Context, rid string) (*oms.ObjectType, error) {
@@ -60,12 +62,26 @@ func (m *mockRepo) ListIncomingLinkTypes(_ context.Context, objectTypeRID string
 }
 
 // Unused Repository methods — satisfy the interface.
-func (m *mockRepo) CreateOntology(context.Context, *oms.Ontology) error           { return nil }
-func (m *mockRepo) GetOntology(context.Context, string) (*oms.Ontology, error)    { return nil, nil }
-func (m *mockRepo) ListOntologies(context.Context) ([]oms.Ontology, error)        { return nil, nil }
-func (m *mockRepo) UpdateOntology(context.Context, *oms.Ontology) error           { return nil }
-func (m *mockRepo) CreateObjectType(context.Context, *oms.ObjectType) error       { return nil }
-func (m *mockRepo) GetObjectTypeByAPIName(context.Context, string, string) (*oms.ObjectType, error) {
+func (m *mockRepo) CreateOntology(context.Context, *oms.Ontology) error { return nil }
+func (m *mockRepo) GetOntology(_ context.Context, key string) (*oms.Ontology, error) {
+	if m.ontologies == nil {
+		return nil, nil
+	}
+	if o, ok := m.ontologies[key]; ok {
+		return o, nil
+	}
+	return nil, nil
+}
+func (m *mockRepo) ListOntologies(context.Context) ([]oms.Ontology, error)  { return nil, nil }
+func (m *mockRepo) UpdateOntology(context.Context, *oms.Ontology) error     { return nil }
+func (m *mockRepo) CreateObjectType(context.Context, *oms.ObjectType) error { return nil }
+func (m *mockRepo) GetObjectTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.ObjectType, error) {
+	if m.otByAPIName == nil {
+		return nil, nil
+	}
+	if ot, ok := m.otByAPIName[ontologyRID+"|"+apiName]; ok {
+		return ot, nil
+	}
 	return nil, nil
 }
 func (m *mockRepo) ListObjectTypes(context.Context, string) ([]oms.ObjectType, error) {
@@ -73,20 +89,20 @@ func (m *mockRepo) ListObjectTypes(context.Context, string) ([]oms.ObjectType, e
 }
 func (m *mockRepo) UpdateObjectType(context.Context, *oms.ObjectType) error { return nil }
 func (m *mockRepo) DeleteObjectType(context.Context, string) error          { return nil }
-func (m *mockRepo) CreateProperty(context.Context, *oms.Property) error { return nil }
+func (m *mockRepo) CreateProperty(context.Context, *oms.Property) error     { return nil }
 func (m *mockRepo) GetProperty(context.Context, string) (*oms.Property, error) {
 	return nil, nil
 }
 func (m *mockRepo) ListProperties(context.Context, string) ([]oms.Property, error) {
 	return nil, nil
 }
-func (m *mockRepo) UpdateProperty(context.Context, *oms.Property) error { return nil }
-func (m *mockRepo) DeleteProperty(context.Context, string) error        { return nil }
-func (m *mockRepo) CreateLinkType(context.Context, *oms.LinkType) error            { return nil }
-func (m *mockRepo) ListLinkTypes(context.Context, string) ([]oms.LinkType, error)  { return nil, nil }
-func (m *mockRepo) UpdateLinkType(context.Context, *oms.LinkType) error            { return nil }
-func (m *mockRepo) DeleteLinkType(context.Context, string) error                   { return nil }
-func (m *mockRepo) CreateActionType(context.Context, *oms.ActionType) error        { return nil }
+func (m *mockRepo) UpdateProperty(context.Context, *oms.Property) error           { return nil }
+func (m *mockRepo) DeleteProperty(context.Context, string) error                  { return nil }
+func (m *mockRepo) CreateLinkType(context.Context, *oms.LinkType) error           { return nil }
+func (m *mockRepo) ListLinkTypes(context.Context, string) ([]oms.LinkType, error) { return nil, nil }
+func (m *mockRepo) UpdateLinkType(context.Context, *oms.LinkType) error           { return nil }
+func (m *mockRepo) DeleteLinkType(context.Context, string) error                  { return nil }
+func (m *mockRepo) CreateActionType(context.Context, *oms.ActionType) error       { return nil }
 func (m *mockRepo) GetActionType(context.Context, string) (*oms.ActionType, error) {
 	return nil, nil
 }
@@ -96,20 +112,20 @@ func (m *mockRepo) GetActionTypeByAPIName(context.Context, string, string) (*oms
 func (m *mockRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
 	return nil, nil
 }
-func (m *mockRepo) UpdateActionType(context.Context, *oms.ActionType) error { return nil }
-func (m *mockRepo) DeleteActionType(context.Context, string) error         { return nil }
-func (m *mockRepo) CreateInterface(context.Context, *oms.Interface) error            { return nil }
-func (m *mockRepo) GetInterface(context.Context, string) (*oms.Interface, error)     { return nil, nil }
+func (m *mockRepo) UpdateActionType(context.Context, *oms.ActionType) error      { return nil }
+func (m *mockRepo) DeleteActionType(context.Context, string) error               { return nil }
+func (m *mockRepo) CreateInterface(context.Context, *oms.Interface) error        { return nil }
+func (m *mockRepo) GetInterface(context.Context, string) (*oms.Interface, error) { return nil, nil }
 func (m *mockRepo) GetInterfaceByAPIName(context.Context, string, string) (*oms.Interface, error) {
 	return nil, nil
 }
 func (m *mockRepo) ListInterfaces(context.Context, string) ([]oms.Interface, error) {
 	return nil, nil
 }
-func (m *mockRepo) UpdateInterface(context.Context, *oms.Interface) error            { return nil }
-func (m *mockRepo) DeleteInterface(context.Context, string) error                    { return nil }
-func (m *mockRepo) AttachInterface(context.Context, *oms.ObjectTypeInterface) error  { return nil }
-func (m *mockRepo) DetachInterface(context.Context, string, string) error            { return nil }
+func (m *mockRepo) UpdateInterface(context.Context, *oms.Interface) error           { return nil }
+func (m *mockRepo) DeleteInterface(context.Context, string) error                   { return nil }
+func (m *mockRepo) AttachInterface(context.Context, *oms.ObjectTypeInterface) error { return nil }
+func (m *mockRepo) DetachInterface(context.Context, string, string) error           { return nil }
 func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
 	return nil, nil
 }
@@ -119,35 +135,37 @@ func (m *mockRepo) ListObjectTypeInterfaces(context.Context, string) ([]oms.Obje
 }
 
 // SharedProperty stubs
-func (m *mockRepo) CreateSharedProperty(context.Context, *oms.SharedProperty) error   { return nil }
+func (m *mockRepo) CreateSharedProperty(context.Context, *oms.SharedProperty) error { return nil }
 func (m *mockRepo) GetSharedProperty(context.Context, string) (*oms.SharedProperty, error) {
 	return nil, nil
 }
 func (m *mockRepo) ListSharedProperties(context.Context, string) ([]oms.SharedProperty, error) {
 	return nil, nil
 }
-func (m *mockRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error   { return nil }
-func (m *mockRepo) DeleteSharedProperty(context.Context, string) error                { return nil }
+func (m *mockRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error { return nil }
+func (m *mockRepo) DeleteSharedProperty(context.Context, string) error              { return nil }
 
 // TypeGroup stubs
-func (m *mockRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error             { return nil }
-func (m *mockRepo) GetTypeGroup(context.Context, string) (*oms.TypeGroup, error)      { return nil, nil }
-func (m *mockRepo) ListTypeGroups(context.Context, string) ([]oms.TypeGroup, error)   { return nil, nil }
-func (m *mockRepo) UpdateTypeGroup(context.Context, *oms.TypeGroup) error             { return nil }
-func (m *mockRepo) DeleteTypeGroup(context.Context, string) error                     { return nil }
-func (m *mockRepo) AssignTypeGroup(context.Context, string, string) error             { return nil }
-func (m *mockRepo) RemoveTypeGroup(context.Context, string, string) error             { return nil }
+func (m *mockRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error           { return nil }
+func (m *mockRepo) GetTypeGroup(context.Context, string) (*oms.TypeGroup, error)    { return nil, nil }
+func (m *mockRepo) ListTypeGroups(context.Context, string) ([]oms.TypeGroup, error) { return nil, nil }
+func (m *mockRepo) UpdateTypeGroup(context.Context, *oms.TypeGroup) error           { return nil }
+func (m *mockRepo) DeleteTypeGroup(context.Context, string) error                   { return nil }
+func (m *mockRepo) AssignTypeGroup(context.Context, string, string) error           { return nil }
+func (m *mockRepo) RemoveTypeGroup(context.Context, string, string) error           { return nil }
 func (m *mockRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
 
 // ValueType stubs
-func (m *mockRepo) CreateValueType(context.Context, *oms.ValueType) error             { return nil }
-func (m *mockRepo) GetValueType(context.Context, string) (*oms.ValueType, error)          { return nil, nil }
-func (m *mockRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueType, error) { return nil, nil }
-func (m *mockRepo) ListValueTypes(context.Context) ([]oms.ValueType, error)           { return nil, nil }
-func (m *mockRepo) UpdateValueType(context.Context, *oms.ValueType) error             { return nil }
-func (m *mockRepo) DeleteValueType(context.Context, string) error                     { return nil }
+func (m *mockRepo) CreateValueType(context.Context, *oms.ValueType) error        { return nil }
+func (m *mockRepo) GetValueType(context.Context, string) (*oms.ValueType, error) { return nil, nil }
+func (m *mockRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueType, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListValueTypes(context.Context) ([]oms.ValueType, error) { return nil, nil }
+func (m *mockRepo) UpdateValueType(context.Context, *oms.ValueType) error   { return nil }
+func (m *mockRepo) DeleteValueType(context.Context, string) error           { return nil }
 
 // DatasourceBinding stubs
 func (m *mockRepo) CreateDatasourceBinding(context.Context, *oms.DatasourceBinding) error {
@@ -173,8 +191,8 @@ func (m *mockRepo) GetQueryTypeByAPIName(context.Context, string, string) (*oms.
 	return nil, nil
 }
 func (m *mockRepo) ListQueryTypes(context.Context, string) ([]oms.QueryType, error) { return nil, nil }
-func (m *mockRepo) UpdateQueryType(context.Context, *oms.QueryType) error            { return nil }
-func (m *mockRepo) DeleteQueryType(context.Context, string) error                    { return nil }
+func (m *mockRepo) UpdateQueryType(context.Context, *oms.QueryType) error           { return nil }
+func (m *mockRepo) DeleteQueryType(context.Context, string) error                   { return nil }
 
 // ActionLog stubs
 func (m *mockRepo) InsertActionLog(context.Context, *oms.ActionLog) error { return nil }
@@ -528,6 +546,85 @@ func TestResolveByAPIName_Found(t *testing.T) {
 	}
 }
 
+// TestResolveByAPIName_AcceptsAPIName verifies that when the source identifier
+// passed to ResolveLinkedObjectsByAPIName is an object type APIName (not an
+// RID), the resolver transparently resolves it via the ontology scope stamped
+// on ctx + oms.Repository.GetOntology / GetObjectTypeByAPIName. This is the
+// production wiring that makes withProperties / searchAround work end-to-end
+// without the executor having to translate apiname → RID itself.
+func TestResolveByAPIName_AcceptsAPIName(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	t.Cleanup(func() { mgr.Close() })
+
+	empProps := []index.Property{
+		{APIName: "employeeid", BaseType: "string", IsSearchable: true},
+		{APIName: "deptid", BaseType: "string", IsSearchable: true},
+	}
+	// Scoped index keys match the per-ontology Bleve namespacing used by
+	// scopedFKKey once a scope is set on ctx.
+	empKey := index.ScopedKey("northwind", "employee")
+	deptKey := index.ScopedKey("northwind", "department")
+	if _, err := mgr.EnsureIndex(empKey, empProps); err != nil {
+		t.Fatalf("ensure employee index: %v", err)
+	}
+	deptProps := []index.Property{
+		{APIName: "deptid", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex(deptKey, deptProps); err != nil {
+		t.Fatalf("ensure department index: %v", err)
+	}
+	if err := mgr.IndexDocument(empKey, "emp1", map[string]interface{}{"employeeid": "emp1", "deptid": "d1"}); err != nil {
+		t.Fatalf("index emp: %v", err)
+	}
+	if err := mgr.IndexDocument(deptKey, "d1", map[string]interface{}{"deptid": "d1"}); err != nil {
+		t.Fatalf("index dept: %v", err)
+	}
+
+	empOT := &oms.ObjectType{RID: "ri.ot.employee", APIName: "employee", PrimaryKey: "employeeid"}
+	deptOT := &oms.ObjectType{RID: "ri.ot.department", APIName: "department", PrimaryKey: "deptid"}
+	lt := oms.LinkType{
+		RID:              "ri.lt.emp-dept",
+		APIName:          "employeedepartment",
+		SourceObjectType: "ri.ot.employee",
+		TargetObjectType: "ri.ot.department",
+		Cardinality:      "MANY_TO_ONE",
+		ForeignKeyConfig: mustJSON(links.FKConfig{SourceProperty: "deptid", TargetProperty: "deptid"}),
+	}
+
+	repo := &mockRepo{
+		objectTypes: map[string]*oms.ObjectType{
+			"ri.ot.employee":   empOT,
+			"ri.ot.department": deptOT,
+		},
+		linkTypes: map[string]*oms.LinkType{"ri.lt.emp-dept": &lt},
+		outgoing: map[string][]oms.LinkType{
+			"ri.ot.employee": {lt},
+		},
+		ontologies: map[string]*oms.Ontology{
+			"northwind":        {RID: "ri.ont.northwind", APIName: "northwind"},
+			"ri.ont.northwind": {RID: "ri.ont.northwind", APIName: "northwind"},
+		},
+		otByAPIName: map[string]*oms.ObjectType{
+			"ri.ont.northwind|employee":   empOT,
+			"ri.ont.northwind|department": deptOT,
+		},
+	}
+
+	resolver := links.NewResolver(repo, mgr)
+	ctx := index.WithOntologyScope(context.Background(), "northwind")
+
+	pks, err := resolver.ResolveLinkedObjectsByAPIName(ctx, "employee", "employeedepartment", []string{"emp1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pks) != 1 {
+		t.Fatalf("expected 1 target PK, got %d", len(pks))
+	}
+	if pks[0] != "d1" {
+		t.Fatalf("expected target PK %q, got %q", "d1", pks[0])
+	}
+}
+
 func TestResolveByAPIName_NotFound(t *testing.T) {
 	resolver := setupEmployeeDept(t)
 	ctx := context.Background()
@@ -641,11 +738,11 @@ func TestResolveM2M_NotSupported(t *testing.T) {
 		objectTypes: make(map[string]*oms.ObjectType),
 		linkTypes: map[string]*oms.LinkType{
 			"ri.lt.m2m": {
-				RID:             "ri.lt.m2m",
-				APIName:         "manytomany",
+				RID:              "ri.lt.m2m",
+				APIName:          "manytomany",
 				SourceObjectType: "ri.ot.a",
 				TargetObjectType: "ri.ot.b",
-				Cardinality:     "MANY_TO_MANY",
+				Cardinality:      "MANY_TO_MANY",
 				// No ForeignKeyConfig — M2M uses JoinTableConfig
 			},
 		},
@@ -744,7 +841,11 @@ func TestResolve_SourceObjectNotInIndex(t *testing.T) {
 }
 
 func (m *mockRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
-func (m *mockRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
+func (m *mockRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) {
+	return nil, nil
+}
 func (m *mockRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }
+func (m *mockRepo) DeleteSecurityPolicy(_ context.Context, _ string) error              { return nil }

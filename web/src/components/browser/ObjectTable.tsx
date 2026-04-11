@@ -16,6 +16,11 @@ interface ObjectTableProps {
   hasNextPage?: boolean;
   hasPrevPage?: boolean;
   currentPage?: number;
+  // derivedColumns are property keys that are not declared on the ObjectType
+  // schema but are attached to each row by the backend (e.g. withProperties
+  // DerivedPropertyDef outputs). They render after the schema columns and are
+  // tagged `data-derived-column` so Playwright specs can target them.
+  derivedColumns?: string[];
 }
 
 export function ObjectTable({
@@ -30,6 +35,7 @@ export function ObjectTable({
   hasNextPage,
   hasPrevPage,
   currentPage,
+  derivedColumns,
 }: ObjectTableProps) {
   const columns = useMemo<Column<WireObject>[]>(() => {
     const cols: Column<WireObject>[] = [];
@@ -64,8 +70,37 @@ export function ObjectTable({
       }
     }
 
+    // Derived columns (e.g. withProperties output). Tag the cell via a
+    // zero-width wrapper so Playwright can select with data-derived-column.
+    if (derivedColumns && derivedColumns.length > 0) {
+      const seen = new Set(cols.map((c) => c.key));
+      for (const name of derivedColumns) {
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        cols.push({
+          key: name,
+          header: name,
+          sortable: false,
+          render: (row) => {
+            const val = row[name];
+            const display =
+              val === null || val === undefined
+                ? ''
+                : typeof val === 'object'
+                  ? truncate(JSON.stringify(val), 80)
+                  : truncate(String(val), 80);
+            return (
+              <span data-derived-column={name} data-testid={`derived-cell-${name}`}>
+                {display}
+              </span>
+            );
+          },
+        });
+      }
+    }
+
     return cols;
-  }, [objectType]);
+  }, [objectType, derivedColumns]);
 
   return (
     <DataTable<WireObject>

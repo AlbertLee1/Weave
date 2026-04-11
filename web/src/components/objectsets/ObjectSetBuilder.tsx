@@ -1,4 +1,8 @@
-import type { ObjectSetDefinition, WhereClause } from '../../api/types';
+import type {
+  DerivedPropertyDef,
+  ObjectSetDefinition,
+  WhereClause,
+} from '../../api/types';
 
 const OBJECT_SET_TYPES = [
   'base',
@@ -7,6 +11,7 @@ const OBJECT_SET_TYPES = [
   'intersect',
   'subtract',
   'searchAround',
+  'withProperties',
 ] as const;
 
 type SupportedType = (typeof OBJECT_SET_TYPES)[number];
@@ -63,7 +68,110 @@ function defaultForType(
         link: '',
         direction: 'forward',
       };
+    case 'withProperties':
+      return {
+        type: 'withProperties',
+        objectSet: { type: 'base', objectType: firstType },
+        derivedProperties: [
+          {
+            name: 'derived',
+            link: '',
+            direction: 'forward',
+            metric: 'count',
+          },
+        ],
+      };
   }
+}
+
+const DERIVED_METRICS = ['count', 'sum', 'avg', 'min', 'max'] as const;
+
+function DerivedPropertyEditor({
+  value,
+  onChange,
+  onRemove,
+}: {
+  value: DerivedPropertyDef;
+  onChange: (dp: DerivedPropertyDef) => void;
+  onRemove?: () => void;
+}) {
+  const needsField = value.metric !== 'count';
+  return (
+    <div
+      className="flex flex-wrap gap-2 items-center mt-1"
+      data-testid="derived-property-row"
+    >
+      <input
+        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-28"
+        placeholder="name"
+        value={value.name}
+        onChange={(e) => onChange({ ...value, name: e.target.value })}
+        aria-label="derived name"
+        data-testid="derived-name"
+      />
+      <input
+        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-32"
+        placeholder="link apiName"
+        value={value.link}
+        onChange={(e) => onChange({ ...value, link: e.target.value })}
+        aria-label="derived link"
+        data-testid="derived-link"
+      />
+      <select
+        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary"
+        value={value.direction ?? 'forward'}
+        onChange={(e) =>
+          onChange({
+            ...value,
+            direction: e.target.value as 'forward' | 'reverse',
+          })
+        }
+        aria-label="derived direction"
+        data-testid="derived-direction"
+      >
+        <option value="forward">forward</option>
+        <option value="reverse">reverse</option>
+      </select>
+      <select
+        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary"
+        value={value.metric}
+        onChange={(e) =>
+          onChange({
+            ...value,
+            metric: e.target.value as DerivedPropertyDef['metric'],
+          })
+        }
+        aria-label="derived metric"
+        data-testid="derived-metric"
+      >
+        {DERIVED_METRICS.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+      {needsField && (
+        <input
+          className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-24"
+          placeholder="field"
+          value={value.field ?? ''}
+          onChange={(e) => onChange({ ...value, field: e.target.value })}
+          aria-label="derived field"
+          data-testid="derived-field"
+        />
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          className="text-xs font-mono text-accent-error hover:text-accent-error/70"
+          onClick={onRemove}
+          aria-label="remove derived property"
+        >
+          x
+        </button>
+      )}
+    </div>
+  );
 }
 
 function WhereEditor({
@@ -214,6 +322,64 @@ export function ObjectSetBuilder({
             onChange={(nested) => onChange({ ...value, objectSet: nested })}
             depth={depth + 1}
           />
+        </div>
+      )}
+
+      {/* withProperties: nested inner + derived property rows */}
+      {value.type === 'withProperties' && (
+        <div className="flex flex-col gap-1 pl-2 border-l border-border">
+          <ObjectSetBuilder
+            objectTypes={objectTypes}
+            value={value.objectSet}
+            onChange={(nested) => onChange({ ...value, objectSet: nested })}
+            depth={depth + 1}
+          />
+          <div
+            className="flex flex-col gap-1 mt-1"
+            data-testid="derived-property-list"
+          >
+            {(value.derivedProperties ?? []).map((dp, i) => (
+              <DerivedPropertyEditor
+                key={i}
+                value={dp}
+                onChange={(next) => {
+                  const updated = [...(value.derivedProperties ?? [])];
+                  updated[i] = next;
+                  onChange({ ...value, derivedProperties: updated });
+                }}
+                onRemove={
+                  (value.derivedProperties ?? []).length > 1
+                    ? () => {
+                        const updated = [...(value.derivedProperties ?? [])];
+                        updated.splice(i, 1);
+                        onChange({ ...value, derivedProperties: updated });
+                      }
+                    : undefined
+                }
+              />
+            ))}
+            <button
+              type="button"
+              className="text-xs font-mono text-accent-cyan hover:text-accent-cyan/70 self-start mt-1"
+              data-testid="derived-property-add"
+              onClick={() =>
+                onChange({
+                  ...value,
+                  derivedProperties: [
+                    ...(value.derivedProperties ?? []),
+                    {
+                      name: 'derived',
+                      link: '',
+                      direction: 'forward',
+                      metric: 'count',
+                    },
+                  ],
+                })
+              }
+            >
+              + add derived property
+            </button>
+          </div>
         </div>
       )}
 
