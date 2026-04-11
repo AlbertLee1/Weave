@@ -1,0 +1,54 @@
+{
+  "story": "US-007",
+  "title": "Interface loadObjectsOrInterfaces heap merge executor",
+  "description": "Expected Foundry-compatible wire shape for loadObjectsOrInterfaces when the root ObjectSet is an interfaceBase spanning multiple implementing ObjectTypes. Pagination is heap-merged over per-type sub-cursors: the executor loads each implementing type concurrently, sorts its primary keys ASC, and the handler emits a composite MultiTypeCursor that tracks per-type offsets. Exhausted sub-cursors are dropped from the outgoing token.",
+  "fixture": {
+    "ontology": "northwind",
+    "objectSet": {
+      "type": "interfaceBase",
+      "interfaceType": "HasOwner"
+    },
+    "select": ["id", "name"],
+    "pageSize": 7
+  },
+  "expected": {
+    "sortKey": ["primaryKey", "objectType"],
+    "sortOrder": ["ascending", "ascending"],
+    "pagination": {
+      "strategy": "multi-type heap merge",
+      "cursor": "pagination.MultiTypeCursor",
+      "subCursor": "pagination.CompositeCursor{ObjectType, InnerCursor=strconv.Itoa(offset)}",
+      "exhaustedSubCursorHandling": "drop",
+      "comment": "Per-type buckets are sorted ASC by primary key in the executor; the handler performs an iterative min-heap selection per page using per-type offsets decoded from the inbound MultiTypeCursor."
+    },
+    "responseShape": {
+      "data": [
+        {
+          "$apiName": "<concrete implementing ObjectType>",
+          "$primaryKey": "<pk>",
+          "$rid": "ri.phonograph2-objects.main.object.<pk>",
+          "id": "<selected field>",
+          "name": "<selected field>"
+        }
+      ],
+      "totalCount": "<string:int across all implementing types>",
+      "totalCountAccuracy": "EXACT",
+      "nextPageToken": "<base64 MultiTypeCursor or omitted on final page>"
+    },
+    "errorCodes": {
+      "invalidPageToken": "InvalidParameter:InvalidPageToken",
+      "missingObjectSet": "InvalidParameter:MissingObjectSet",
+      "selectRequired": "InvalidParameter:SelectRequired",
+      "previewRequired": "InvalidParameter:PreviewRequired"
+    }
+  },
+  "coveredBy": [
+    "pkg/oss/objectset/handler_preview_cursor_test.go::TestInterfacePagingHeapMerge",
+    "pkg/oss/objectset/handler_preview_cursor_test.go::TestInterfacePagingHeapMerge_ExhaustedSubTypeDropped"
+  ],
+  "notes": [
+    "A dedicated parity runner is not yet wired up; this fixture documents the expected shape for US-007 and will be consumed by test/foundry_parity/run.go once the Phase 6 Gate introduces it.",
+    "The aggregate handler still uses the flat Result.PrimaryKeys list on interfaceBase results so approximate aggregations over a polymorphic set keep working without knowing about per-type offsets.",
+    "Tie-break when two implementing types share a primary key value is stable: we pick the lexicographically smaller ObjectType API name."
+  ]
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/liyang/weave/pkg/index"
@@ -83,6 +84,16 @@ type Result struct {
 	// derived values appear as regular top-level properties in V2 responses.
 	// Nil for any execution that does not declare withProperties.
 	DerivedValues map[string]map[string]interface{}
+	// PerTypePKs is populated by interfaceBase execution with one entry
+	// per implementing ObjectType, each sorted ASC by primary key. It is
+	// the input to composite-cursor heap-merge pagination at the handler
+	// layer (US-007). Nil for non-interfaceBase results.
+	PerTypePKs map[string][]string
+	// Origins is populated alongside PerTypePKs and is parallel to
+	// PrimaryKeys: Origins[i] is the ObjectType API name that contributed
+	// PrimaryKeys[i]. Kept so downstream consumers can recover per-row
+	// type info without re-walking PerTypePKs.
+	Origins []string
 }
 
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
@@ -165,8 +176,10 @@ func (e *Executor) executeAsBaseObjectTypes(ctx context.Context, def *Definition
 }
 
 // executeInterfaceBase resolves the interface to its implementing ObjectTypes
-// via the InterfaceResolver, then queries each type's Bleve index for all
-// objects. A nil resolver returns an error.
+// via the InterfaceResolver, queries each type's Bleve index concurrently,
+// and heap-merges the per-type PK lists into a globally-sorted flat stream.
+// Per-type buckets (sorted ASC) are retained on Result.PerTypePKs so the
+// handler layer can drive composite-cursor pagination (US-007).
 func (e *Executor) executeInterfaceBase(ctx context.Context, def *Definition) (*Result, error) {
 	if e.interfaceResol == nil {
 		return nil, fmt.Errorf("interfaceBase: interface resolver not configured")
@@ -176,31 +189,94 @@ func (e *Executor) executeInterfaceBase(ctx context.Context, def *Definition) (*
 		return nil, fmt.Errorf("interfaceBase resolve %q: %w", def.InterfaceType, err)
 	}
 
-	seen := make(map[string]bool)
-	var allPKs []string
-	truncated := false
+	// Load every implementing ObjectType concurrently. Each goroutine owns
+	// a slice result that is deposited under a mutex — no shared growth.
+	var (
+		mu        sync.Mutex
+		perType   = make(map[string][]string, len(types))
+		loadErr   error
+		truncated bool
+		wg        sync.WaitGroup
+	)
 	for _, objType := range types {
-		sub, err := e.executeBase(ctx, &Definition{Type: "base", ObjectType: objType})
-		if err != nil {
-			return nil, fmt.Errorf("interfaceBase %s: %w", objType, err)
-		}
-		if sub.Truncated {
-			truncated = true
-		}
-		for _, pk := range sub.PrimaryKeys {
-			if !seen[pk] {
-				seen[pk] = true
-				allPKs = append(allPKs, pk)
+		objType := objType
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sub, subErr := e.executeBase(ctx, &Definition{Type: "base", ObjectType: objType})
+			mu.Lock()
+			defer mu.Unlock()
+			if subErr != nil {
+				if loadErr == nil {
+					loadErr = fmt.Errorf("interfaceBase %s: %w", objType, subErr)
+				}
+				return
 			}
+			if sub.Truncated {
+				truncated = true
+			}
+			sorted := make([]string, len(sub.PrimaryKeys))
+			copy(sorted, sub.PrimaryKeys)
+			sort.Strings(sorted)
+			perType[objType] = sorted
+		}()
+	}
+	wg.Wait()
+	if loadErr != nil {
+		return nil, loadErr
+	}
+
+	// Heap-merge the sorted per-type buckets into a globally sorted stream.
+	// Stable tiebreaker: (pk, objectType) so identical PKs across types have
+	// a deterministic order even though PK collisions are not expected.
+	sortedTypes := make([]string, 0, len(perType))
+	for t := range perType {
+		sortedTypes = append(sortedTypes, t)
+	}
+	sort.Strings(sortedTypes)
+
+	heads := make(map[string]int, len(sortedTypes))
+	active := make([]string, 0, len(sortedTypes))
+	for _, t := range sortedTypes {
+		if len(perType[t]) > 0 {
+			active = append(active, t)
+		}
+	}
+
+	totalSize := 0
+	for _, t := range sortedTypes {
+		totalSize += len(perType[t])
+	}
+	flatPKs := make([]string, 0, totalSize)
+	origins := make([]string, 0, totalSize)
+	for len(active) > 0 {
+		minIdx := 0
+		for i := 1; i < len(active); i++ {
+			tMin := active[minIdx]
+			tCur := active[i]
+			pkMin := perType[tMin][heads[tMin]]
+			pkCur := perType[tCur][heads[tCur]]
+			if pkCur < pkMin || (pkCur == pkMin && tCur < tMin) {
+				minIdx = i
+			}
+		}
+		t := active[minIdx]
+		flatPKs = append(flatPKs, perType[t][heads[t]])
+		origins = append(origins, t)
+		heads[t]++
+		if heads[t] >= len(perType[t]) {
+			active = append(active[:minIdx], active[minIdx+1:]...)
 		}
 	}
 
 	return &Result{
 		// Tag the result with the interface API name so downstream callers
-		// know this is a polymorphic set. Concrete per-type execution happens
-		// at the handler layer for interface data query endpoints (US-026).
+		// know this is a polymorphic set. Per-row concrete type is carried
+		// in Origins; per-type buckets live in PerTypePKs for cursor use.
 		ObjectType:  def.InterfaceType,
-		PrimaryKeys: allPKs,
+		PrimaryKeys: flatPKs,
+		Origins:     origins,
+		PerTypePKs:  perType,
 		Truncated:   truncated,
 	}, nil
 }

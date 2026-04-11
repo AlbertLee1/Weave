@@ -49,3 +49,54 @@ func DecodeCompositeCursor(s string) (*CompositeCursor, error) {
 	}
 	return &c, nil
 }
+
+// MultiTypeCursor wraps a set of per-sub-type CompositeCursor entries. It is
+// the wire format for paging a polymorphic (interface) ObjectSet that spans
+// multiple implementing ObjectTypes. Exhausted sub-cursors are dropped from
+// SubCursors before encoding, so an empty slice (or empty MultiTypeCursor)
+// means "no more pages".
+type MultiTypeCursor struct {
+	SubCursors []CompositeCursor `json:"subCursors"`
+}
+
+// IsExhausted reports whether the cursor carries any live sub-cursors.
+func (m *MultiTypeCursor) IsExhausted() bool {
+	if m == nil {
+		return true
+	}
+	for _, sc := range m.SubCursors {
+		if !sc.IsExhausted() {
+			return false
+		}
+	}
+	return true
+}
+
+// Encode serializes the multi-type cursor to a URL-safe base64 JSON string.
+// Returns the empty string if no live sub-cursors remain so callers can use
+// the empty string as the "last page" sentinel.
+func (m *MultiTypeCursor) Encode() string {
+	if m == nil || len(m.SubCursors) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(m)
+	return base64.URLEncoding.EncodeToString(data)
+}
+
+// DecodeMultiTypeCursor parses a base64 multi-type cursor string. An empty
+// input yields a zero-valued cursor (all sub-streams exhausted). Malformed
+// base64 or JSON produce a non-nil error without leaking the raw payload.
+func DecodeMultiTypeCursor(s string) (*MultiTypeCursor, error) {
+	if s == "" {
+		return &MultiTypeCursor{}, nil
+	}
+	data, err := base64.URLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid multi-type cursor: %w", err)
+	}
+	var m MultiTypeCursor
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("invalid multi-type cursor: %w", err)
+	}
+	return &m, nil
+}
