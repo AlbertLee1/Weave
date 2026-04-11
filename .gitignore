@@ -37,3 +37,20 @@ data/
 # Environment
 .env
 .env.local
+
+# Local agent / tooling state
+.claude/
+.omc/
+.ralph-repo/
+tasks/
+scripts/ralph/
+web/.omc/
+
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Built binaries at repo root
+/server
+/weave-cli
+/weave-mcp
