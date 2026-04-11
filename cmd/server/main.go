@@ -33,6 +33,7 @@ import (
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/timeseries"
+	"github.com/liyang/weave/pkg/transactions"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -57,6 +58,7 @@ type ServerDeps struct {
 	TimeSeriesStore  timeseries.Store
 	GeotemporalStore geotemporal.Store
 	CipherDecryptor  cipher.Decryptor
+	TransactionStore transactions.Store
 	CORSOrigins      []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -226,6 +228,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.AttachmentStore != nil {
 			attachmentHandler := attachment.NewHandler(deps.AttachmentStore)
 			attachmentHandler.RegisterRoutes(api)
+		}
+
+		// OntologyTransaction experimental edits endpoint (US-041).
+		// Gated behind ?preview=true — only "append edits" is exposed.
+		if deps.TransactionStore != nil {
+			txnHandler := transactions.NewHandler(deps.TransactionStore)
+			txnHandler.RegisterRoutes(api)
 		}
 
 		// ObjectSet endpoints
@@ -429,6 +438,11 @@ func main() {
 			log.Printf("[CIPHER] AES-256-GCM decryptor enabled")
 		}
 	}
+
+	// 2f. OntologyTransaction experimental store (US-041). In-memory only —
+	// transactions are ephemeral per-process and do NOT survive restarts.
+	// The endpoint is gated behind ?preview=true so this is intentional.
+	deps.TransactionStore = transactions.NewMemoryStore()
 
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType

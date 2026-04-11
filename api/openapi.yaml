@@ -1155,6 +1155,53 @@ components:
         plaintext:
           type: string
           description: Decrypted plaintext of the addressed ciphertext property.
+    TransactionEditRequest:
+      type: object
+      description: |
+        Request body for the experimental OntologyTransaction edits endpoint.
+        Contains the set of edits to append to an open transaction.
+      required: [edits]
+      properties:
+        edits:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TransactionEdit"
+    TransactionEdit:
+      type: object
+      description: |
+        One buffered edit on an OntologyTransaction. Mirrors the internal
+        EditBatch payload emitted by ActionExecutor, minus the batch
+        metadata.
+      required: [type, objectType, primaryKey]
+      properties:
+        type:
+          type: string
+          enum: [CREATE, MODIFY, DELETE]
+        objectType:
+          type: string
+        primaryKey:
+          type: string
+        properties:
+          type: object
+          additionalProperties: true
+          description: Property values (required for CREATE/MODIFY, ignored for DELETE).
+    TransactionEditResponse:
+      type: object
+      description: |
+        Response envelope for the experimental OntologyTransaction edits
+        endpoint. Reports how many edits were just appended and the
+        running total buffered on the transaction.
+      required: [transactionId, appendedEdits, totalEdits]
+      properties:
+        transactionId:
+          type: string
+        appendedEdits:
+          type: integer
+          format: int32
+        totalEdits:
+          type: integer
+          format: int32
 security:
   - bearerAuth: []
 paths:
@@ -3345,3 +3392,48 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/transactions/{transactionId}/edits:
+    post:
+      operationId: applyOntologyTransactionEdits
+      summary: Append edits to an OntologyTransaction (experimental)
+      description: |
+        **Experimental** — this endpoint requires `?preview=true` and is
+        subject to change. Appends a batch of edits to an open
+        OntologyTransaction buffer identified by `{transactionId}`.
+        Buffered edits are ephemeral and do NOT survive server restarts
+        in the single-machine build; commit / abort semantics are
+        intentionally omitted until the Foundry transaction contract
+        stabilises.
+      tags: [OntologyTransaction]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: transactionId
+          required: true
+          schema:
+            type: string
+          description: Opaque client-supplied identifier for the open transaction.
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+          description: Must be `true`; the endpoint is experimental and gated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionEditRequest"
+      responses:
+        "200":
+          description: Edits appended to the transaction buffer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionEditResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"

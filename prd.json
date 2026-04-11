@@ -658,8 +658,8 @@
         "go test ./... passes"
       ],
       "priority": 41,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Shipped pkg/transactions (Store interface + MemoryStore) and POST /api/v2/ontologies/{o}/transactions/{transactionId}/edits. Gated behind ?preview=true per experimental contract; request body is {edits:[...]}, response is {transactionId, appendedEdits, totalEdits}. Rejects missing preview, empty edits, invalid EditType, missing objectType/primaryKey. OpenAPI spec adds TransactionEditRequest/TransactionEdit/TransactionEditResponse schemas + one path entry under OntologyTransaction tag. Wired via ServerDeps.TransactionStore in main.go and contract_test.go. 9 new unit tests green; full go test ./... green."
     },
     {
       "id": "US-042",

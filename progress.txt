@@ -1137,3 +1137,33 @@
   - The Foundry DecryptionResult wire shape is just `{plaintext: string}` — no metadata fields, no key version (the server owns that). Keep the wire type minimal so future KMS backends can return plaintext without having to fabricate keyMetadata the SDK never uses
 ---
 
+
+## 2026-04-11 - US-041: OntologyTransaction experimental endpoint
+- New pkg/transactions (Store interface + MemoryStore + Handler) backing the Foundry OSv2 OntologyTransaction experimental edits endpoint.
+- Shipped 1 endpoint gated behind ?preview=true:
+  - POST /api/v2/ontologies/{o}/transactions/{transactionId}/edits
+- Wire shape: request `{edits: [{type, objectType, primaryKey, properties?}]}` reusing funnel.Edit directly; response `{transactionId, appendedEdits, totalEdits}`. Edits are buffered per (ontology, transactionId) key so the same transactionId in two ontologies never collides. Commit/abort are intentionally out of scope — only "append edits" ships today.
+- Validation: missing ?preview=true → 400 PreviewRequired, nil Store → 500 TransactionStoreNotConfigured, empty edits array → 400 NoEditsProvided, bad edit.type → 400 InvalidEditType, missing objectType/primaryKey → 400 InvalidEdit.
+- TDD red→green: wrote pkg/transactions/store_test.go (4 tests) and handlers_test.go (5 tests) first; compile-failed with "no non-test Go files" then store+handler impl landed and all 9 tests went green in one shot.
+- Wired as a ServerDeps field (TransactionStore) boot-initialised to NewMemoryStore() in main.go Phase 2f; NewFullRouter instantiates transactions.NewHandler and calls RegisterRoutes when the dep is non-nil. Contract test router injects the same in-memory store so the new spec path has a chi route and TestContract_NoOrphanedSpecPaths stays green.
+- OpenAPI: added TransactionEditRequest / TransactionEdit / TransactionEditResponse schemas + one path entry under the new OntologyTransaction tag in cmd/server/openapi_spec.yaml, then cp'd to api/openapi.yaml for the byte-identical contract check. The description text explicitly calls the endpoint out as "Experimental — requires ?preview=true and is subject to change" so SDK generators pick up the marker.
+- Files changed:
+  - pkg/transactions/store.go — NEW: Store interface, Key, MemoryStore (RWMutex + append/list)
+  - pkg/transactions/store_test.go — NEW: 4 TDD tests (append/list, accumulate, txn isolation, cross-ontology isolation)
+  - pkg/transactions/handlers.go — NEW: Handler, RegisterRoutes, ApplyEdits + wire types
+  - pkg/transactions/handlers_test.go — NEW: 5 TDD tests (success, preview required, empty, invalid type, multi-append accumulation)
+  - cmd/server/main.go — ServerDeps.TransactionStore, transactions import, Phase 2f boot init, NewFullRouter handler wiring
+  - cmd/server/contract_test.go — transactions import, contract router injects NewMemoryStore()
+  - cmd/server/openapi_spec.yaml — 3 new schemas + 1 new path entry (OntologyTransaction tag)
+  - api/openapi.yaml — byte-identical mirror
+  - prd.json — US-041 passes:true + notes
+  - progress.txt — this entry
+- Tests: `go test ./pkg/transactions/...` 9/9 green; `go test ./cmd/server/... -run Contract` 3/3 green; `go test ./...` full suite green (33 packages incl. new pkg/transactions, chinook + northwind + e2e all cached).
+- **Learnings for future iterations:**
+  - When a Foundry endpoint is marked "experimental" in the spec, the Weave convention is to gate it behind ?preview=true at the handler (same helper shape as pkg/oms/handlers_v2_metadata.go's requirePreview). Don't invent a new query param or header — mirrored across interfaceTypes / valueTypes / objectType fullMetadata / transactions.
+  - funnel.Edit is already a Foundry-shaped type (CREATE/MODIFY/DELETE + objectType + primaryKey + properties) — new transaction-adjacent endpoints should reuse it directly rather than defining a parallel wire struct. Keeps buffered data compatible with ActionExecutor's EditBatch for any future commit/replay path.
+  - OntologyTransaction buffers are ephemeral in this phase: MemoryStore only, no PG migration. This is consistent with the geotemporal pattern from US-039 (defer persistent backend until the storage shape stabilises). If/when commit semantics land, the Store interface gains a `CommitTransaction` method and a PGStore implementation can be added without touching the handler.
+  - New handler packages under pkg/ that need ServerDeps wiring follow the same 4-point checklist every time: (1) ServerDeps field + import, (2) boot init (Phase 2x), (3) NewFullRouter conditional setup, (4) contract_test.go newContractTestRouter injection. Missing (4) fails TestContract_AllRoutesDocumented with "route registered but no spec path" OR TestContract_NoOrphanedSpecPaths with "spec path has no route".
+  - Transactions Store Key is `{Ontology, TransactionID}` so the same transactionId in different ontologies is isolated — mirrors how the OSS endpoints scope everything by ontologyApiName. A flat `map[string][]Edit` keyed only by transactionId would silently leak across ontologies in multi-tenant setups; the struct key makes the isolation explicit and test-visible.
+  - strconv.Itoa is fine for error payloads; resist the temptation to hand-roll an int→string helper just to avoid one extra import (I started to, then removed it — YAGNI).
+---
