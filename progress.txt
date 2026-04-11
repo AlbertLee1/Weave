@@ -1071,3 +1071,37 @@
   - Appending new OpenAPI paths: the current file ends exactly at the last paths: entry with no trailing section, so the edit replaces the final entry + appends new ones without needing to find the next section boundary
 ---
 
+## 2026-04-11 - US-039: GeotemporalSeriesProperty 2 endpoints
+- Shipped 2 Foundry endpoints on a dedicated /geotemporalSeries/ path prefix (distinct from /timeseries/):
+  - GET  /api/v2/ontologies/{o}/objects/{type}/{pk}/geotemporalSeries/{propertyName}/latestValue
+  - POST /api/v2/ontologies/{o}/objects/{type}/{pk}/geotemporalSeries/{propertyName}/streamHistoricValues
+- Wire shape `GeotemporalSeriesValue {time, position}` where position is a GeoJSON Point object `{type:"Point",coordinates:[lng,lat]}`. Position stored as interface{} in Go so the store is shape-agnostic.
+- New pkg/geotemporal package mirrors pkg/timeseries in structure but with a simpler surface (LatestValue / StreamHistoricValues / AppendValue — no FirstPoint since the Foundry API doesn't expose it, no PGStore since persistent backend is the Phase 4 open question #3 per the PRD):
+  - store.go: Store interface, Value struct, SeriesKey, ErrNoValues
+  - memory_store.go: MemoryStore (sync.RWMutex + sort.SliceStable on append)
+  - memory_store_test.go: 3 TDD tests (empty series, append-read, isolation between series)
+- Handlers live in pkg/oss/handlers_geotemporal.go and plug into the existing oss.Handler via a new SetGeotemporalStore setter — same optional-dep pattern as SetTimeSeriesStore/SetAttachmentStore. Nil store returns GeotemporalStoreNotConfigured (500); ErrNoValues maps to 404 GeotemporalValueNotFound; missing object returns 404 ObjectNotFound via svc.GetObject existence check.
+- TDD red→green: handler tests referenced SetGeotemporalStore before the method existed (compile-time RED confirmed). After implementing the handler + registering routes in RegisterRoutes, all 4 handler tests green.
+- Wired in cmd/server/main.go (ServerDeps.GeotemporalStore + boot init with in-memory default) and cmd/server/contract_test.go (newContractTestRouter injects geotemporal.NewMemoryStore()) so the spec contract test sees the new routes.
+- OpenAPI: added GeotemporalSeriesValue schema + 2 path entries (GeotemporalSeriesProperty tag) in cmd/server/openapi_spec.yaml, then cp'd to api/openapi.yaml for byte-identical contract verification.
+- Files changed:
+  - pkg/geotemporal/store.go — NEW: Store interface + Value + SeriesKey + ErrNoValues
+  - pkg/geotemporal/memory_store.go — NEW: MemoryStore
+  - pkg/geotemporal/memory_store_test.go — NEW: 3 TDD tests
+  - pkg/oss/handlers_geotemporal.go — NEW: 2 handlers + resolveGeotemporalKey + writeGeotemporalError + SetGeotemporalStore
+  - pkg/oss/handlers_geotemporal_test.go — NEW: 4 TDD tests (success, empty→404, stream, not-configured)
+  - pkg/oss/handlers.go — geotemporalStore field + 2 route registrations + new import
+  - cmd/server/main.go — ServerDeps.GeotemporalStore + boot wiring + NewFullRouter setter call + new import
+  - cmd/server/contract_test.go — inject geotemporal.NewMemoryStore() + new import
+  - cmd/server/openapi_spec.yaml — GeotemporalSeriesValue schema + 2 path entries
+  - api/openapi.yaml — byte-identical mirror
+  - prd.json — US-039 passes:true + notes
+- Tests: `go test ./pkg/geotemporal/...` 3/3 green; `go test ./pkg/oss -run 'TestGetGeotemporal|TestPostGeotemporal'` 4/4 green; `go test ./...` full suite green (31 packages, chinook 209s + northwind 132s + e2e 9s).
+- **Learnings for future iterations:**
+  - When a Foundry property-type's backend is an open question (PostGIS vs JSONB for geotemporal), ship only the in-memory Store for the first iteration. Don't pre-build a PGStore abstraction before the storage shape is decided — the PG path can be added later without changing the Store interface.
+  - GeotemporalSeriesValue uses `position` (GeoJSON) as the value field, not `value` — the wire shape intentionally diverges from TimeSeriesPoint so the two packages should NOT share a common Point type. Keeping pkg/geotemporal separate from pkg/timeseries keeps Foundry's wire semantics clear in the code.
+  - All US-039 path parameters use {propertyName} (unlike the mixed {property}/{propertyName} in US-037/US-038), so resolveGeotemporalKey only needs to read one chi URL param — no fallback logic required.
+  - New optional-dep stores follow the established OSS setter pattern exactly: (1) add field to Handler struct with doc comment, (2) add Setter, (3) wire in main.go's NewFullRouter block after attachmentStore/timeseriesStore, (4) wire in contract_test.go newContractTestRouter, (5) boot init in main.go Phase 2 (2b/2c/2d numbering), (6) ServerDeps field with matching type. Missing any of (3)-(5) breaks the contract test with "orphaned spec path" (if the route is registered but not the store) or a compile error.
+  - ServerDeps field alignment: when adding a second store field, gofmt may re-align all adjacent struct field columns; use the replacer-pair that includes both lines if the gofmt re-flow matters
+---
+

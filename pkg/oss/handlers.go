@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/attachment"
+	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
@@ -37,6 +38,11 @@ type Handler struct {
 	// routes return TimeSeriesStoreNotConfigured. Wired via
 	// SetTimeSeriesStore from main.go after construction.
 	timeseriesStore timeseries.Store
+	// geotemporalStore backs the object-path GeotemporalSeriesProperty
+	// endpoints (/objects/{type}/{pk}/geotemporalSeries/{propertyName}/...).
+	// When nil, those routes return GeotemporalStoreNotConfigured. Wired
+	// via SetGeotemporalStore from main.go after construction.
+	geotemporalStore geotemporal.Store
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -91,6 +97,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	// either chi URL param.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{propertyName}/latestValue", h.GetTimeSeriesLatestValue)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamValues", h.StreamTimeSeriesValues)
+
+	// GeotemporalSeriesProperty endpoints (US-039). Distinct /geotemporalSeries/
+	// path prefix from TimeSeriesProperty; wire shape is GeotemporalSeriesValue
+	// {time, position} where position is a GeoJSON Point.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/geotemporalSeries/{propertyName}/latestValue", h.GetGeotemporalLatestValue)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/geotemporalSeries/{propertyName}/streamHistoricValues", h.StreamGeotemporalHistoricValues)
 
 	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)

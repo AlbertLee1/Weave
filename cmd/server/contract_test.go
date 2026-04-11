@@ -22,6 +22,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/timeseries"
 	"gopkg.in/yaml.v3"
 )
@@ -177,8 +178,9 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		ActionExecutor:  actionExecutor,
 		ObjSetStore:     objSetStore,
 		ObjSetExecutor:  objSetExecutor,
-		AttachmentStore: attachment.NewLocalStore(t.TempDir()),
-		TimeSeriesStore: timeseries.NewMemoryStore(),
+		AttachmentStore:  attachment.NewLocalStore(t.TempDir()),
+		TimeSeriesStore:  timeseries.NewMemoryStore(),
+		GeotemporalStore: geotemporal.NewMemoryStore(),
 	}
 	return NewFullRouter(deps)
 }

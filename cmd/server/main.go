@@ -16,13 +16,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/mcp"
@@ -33,27 +33,29 @@ import (
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // ServerDeps holds all server dependencies.
 type ServerDeps struct {
-	OmsRepo        oms.Repository
-	UserRepo       auth.UserRepository
-	APIKeyRepo     auth.APIKeyRepository
-	RoleResolver   *auth.RoleResolver
-	JWTSigner      *auth.JWTSigner
-	RefreshService *auth.RefreshService
-	IndexMgr       *index.Manager
-	LinkResolver   links.LinkResolver
-	OssSvc         oss.Service
-	AggEngine      *aggregation.Engine
-	ActionExecutor *actions.Executor
-	ObjSetStore    *objectset.Store
-	ObjSetExecutor *objectset.Executor
-	FunnelConsumer *funnel.Consumer
-	AttachmentStore attachment.BlobStore
-	TimeSeriesStore timeseries.Store
-	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
+	OmsRepo          oms.Repository
+	UserRepo         auth.UserRepository
+	APIKeyRepo       auth.APIKeyRepository
+	RoleResolver     *auth.RoleResolver
+	JWTSigner        *auth.JWTSigner
+	RefreshService   *auth.RefreshService
+	IndexMgr         *index.Manager
+	LinkResolver     links.LinkResolver
+	OssSvc           oss.Service
+	AggEngine        *aggregation.Engine
+	ActionExecutor   *actions.Executor
+	ObjSetStore      *objectset.Store
+	ObjSetExecutor   *objectset.Executor
+	FunnelConsumer   *funnel.Consumer
+	AttachmentStore  attachment.BlobStore
+	TimeSeriesStore  timeseries.Store
+	GeotemporalStore geotemporal.Store
+	CORSOrigins      []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -196,6 +198,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			if deps.TimeSeriesStore != nil {
 				ossHandler.SetTimeSeriesStore(deps.TimeSeriesStore)
+			}
+			if deps.GeotemporalStore != nil {
+				ossHandler.SetGeotemporalStore(deps.GeotemporalStore)
 			}
 			ossHandler.RegisterRoutes(api)
 		}
@@ -401,6 +406,10 @@ func main() {
 	} else {
 		deps.TimeSeriesStore = timeseries.NewMemoryStore()
 	}
+
+	// 2d. Geotemporal store. In-memory only for now — PostGIS/JSONB backend
+	// is deferred per the Phase 4 open question in the PRD.
+	deps.GeotemporalStore = geotemporal.NewMemoryStore()
 
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType

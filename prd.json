@@ -629,8 +629,8 @@
         "go test ./... passes"
       ],
       "priority": 39,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New pkg/geotemporal (Store/MemoryStore/Value) + 2 handlers on oss.Handler via SetGeotemporalStore. In-memory only (PostGIS deferred per open question #3). TDD red→green verified."
     },
     {
       "id": "US-040",

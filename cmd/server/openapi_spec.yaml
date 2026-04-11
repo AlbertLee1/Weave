@@ -1117,6 +1117,34 @@ components:
           example: "2026-04-01T00:00:00Z"
         value:
           description: Point value; type depends on the series.
+    GeotemporalSeriesValue:
+      type: object
+      description: |
+        Foundry OSv2 GeotemporalSeriesValue wire shape: a single
+        (time, position) reading on a geotemporal series. time is ISO 8601;
+        position is a GeoJSON Point object `{type:"Point",coordinates:[lng,lat]}`.
+      required: [time, position]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: Value timestamp (RFC3339 / ISO 8601).
+          example: "2026-04-01T00:00:00Z"
+        position:
+          type: object
+          description: GeoJSON Point at the given timestamp.
+          required: [type, coordinates]
+          properties:
+            type:
+              type: string
+              enum: [Point]
+            coordinates:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items:
+                type: number
+              description: "[longitude, latitude]"
 security:
   - bearerAuth: []
 paths:
@@ -3179,6 +3207,89 @@ paths:
                   $ref: "#/components/schemas/TimeSeriesPoint"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/geotemporalSeries/{propertyName}/latestValue:
+    get:
+      operationId: getGeotemporalLatestValue
+      summary: Get the latest value of a geotemporal series property
+      description: |
+        Returns the most recent GeotemporalSeriesValue for the given
+        object's GeotemporalSeriesProperty. The wire shape is
+        `{time, position}` where position is a GeoJSON Point.
+      tags: [GeotemporalSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: propertyName
+          required: true
+          description: GeotemporalSeriesProperty API name on the object type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest value in the series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeotemporalSeriesValue"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/geotemporalSeries/{propertyName}/streamHistoricValues:
+    post:
+      operationId: streamGeotemporalHistoricValues
+      summary: Stream every historic value of a geotemporal series property
+      description: |
+        Returns every value in the geotemporal series ordered by time
+        ascending. The request body is reserved for future range filters
+        and is currently ignored on this server.
+      tags: [GeotemporalSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: propertyName
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Values in the series, ordered ascending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeotemporalSeriesValue"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
