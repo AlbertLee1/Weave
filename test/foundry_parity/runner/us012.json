@@ -1,0 +1,18 @@
+{
+  "name": "us012-health-smoke",
+  "story": "US-012",
+  "title": "TypeClass-driven index mapping — runner liveness smoke",
+  "request": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "expected": {
+    "status": 200,
+    "body": {
+      "status": "alive"
+    }
+  },
+  "notes": [
+    "Bootstrap seed for the Phase 6 parity runner. The mapping contract for TypeClass-driven indexing (keyword vs text vs numeric branches of pkg/index/mapping_builder.go) is documented in test/foundry_parity/us012_typeclass.json; this fixture only pins runner infrastructure."
+  ]
+}

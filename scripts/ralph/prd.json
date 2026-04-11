@@ -499,7 +499,7 @@
         "go build ./test/foundry_parity/ succeeds"
       ],
       "priority": 31,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

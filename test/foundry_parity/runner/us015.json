@@ -1,0 +1,18 @@
+{
+  "name": "us015-health-smoke",
+  "story": "US-015",
+  "title": "Multi-groupBy aggregation — runner liveness smoke",
+  "request": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "expected": {
+    "status": 200,
+    "body": {
+      "status": "alive"
+    }
+  },
+  "notes": [
+    "Bootstrap seed for the Phase 6 parity runner. The full 3-level groupBy × 3-metric aggregation contract is documented in test/foundry_parity/us015_multi_groupby.json and covered by pkg/oss/aggregation/engine_multigroupby_test.go; this fixture is the runner stub."
+  ]
+}

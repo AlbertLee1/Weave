@@ -1,0 +1,18 @@
+{
+  "name": "us008-health-smoke",
+  "story": "US-008",
+  "title": "Interface polymorphic paging — runner liveness smoke",
+  "request": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "expected": {
+    "status": 200,
+    "body": {
+      "status": "alive"
+    }
+  },
+  "notes": [
+    "Bootstrap seed for the Phase 6 parity runner. The full interface-paging scenario (HasOwner multi-type page stability) is documented in test/foundry_parity/us008_interface_paging.json and covered by pkg/oss/objectset/interface_test.go; this runner fixture only proves the runner can exercise a GET endpoint end-to-end."
+  ]
+}

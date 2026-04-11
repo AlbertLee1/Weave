@@ -1,0 +1,18 @@
+{
+  "name": "us022-health-smoke",
+  "story": "US-022",
+  "title": "Edit conflict resolution — runner liveness smoke",
+  "request": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "expected": {
+    "status": 200,
+    "body": {
+      "status": "alive"
+    }
+  },
+  "notes": [
+    "Bootstrap seed for the Phase 6 parity runner. The 100-iteration user-edit-wins conflict harness is documented in test/foundry_parity/us022_edit_conflict.json and lives at pkg/funnel/conflict_test.go; this fixture only guarantees make test-parity has a non-empty executable set."
+  ]
+}

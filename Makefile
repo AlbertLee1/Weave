@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed
+.PHONY: test test-unit test-integration test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity
 
 test: test-unit
 
@@ -68,6 +68,13 @@ e2e-down: ## Stop the Playwright E2E stack (idempotent)
 
 e2e-seed: ## Wipe + reseed Northwind + test users for Playwright
 	@./test/fixtures/e2e_seed.sh
+
+test-parity: ## Run the Foundry parity runner (starts the E2E stack if not already up)
+	@if ! curl -fsS http://localhost:9117/health >/dev/null 2>&1; then \
+		echo "[test-parity] weave not reachable at :9117, bringing up the E2E stack"; \
+		./scripts/e2e-setup.sh; \
+	fi
+	@go run ./test/foundry_parity -v
 
 build-with-ui: web-build build
 

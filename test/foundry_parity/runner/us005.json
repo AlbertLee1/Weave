@@ -1,0 +1,19 @@
+{
+  "name": "us005-health-smoke",
+  "story": "US-005",
+  "title": "withProperties cursor stability — runner liveness smoke",
+  "request": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "expected": {
+    "status": 200,
+    "body": {
+      "status": "alive"
+    }
+  },
+  "notes": [
+    "Bootstrap seed for the Phase 6 parity runner. Until Phase 6 Gate wires a seeded Northwind dataset into make test-parity, this fixture exercises the runner's parse/compare pipeline against the unconditional /health endpoint so the runner itself has coverage on a clean server.",
+    "The doc-style fixture documenting the expected withProperties response shape lives alongside at test/foundry_parity/us005_withproperties.json."
+  ]
+}

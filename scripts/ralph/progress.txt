@@ -147,6 +147,19 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   call `POST /api/admin/indexes/rebuild` to hydrate Bleve.
   `link_types.cardinality` only allows `ONE_TO_ONE / ONE_TO_MANY /
   MANY_TO_MANY` — `MANY_TO_ONE` breaks the CHECK constraint.
+- Foundry parity fixtures are split into two co-located sets:
+  descriptive/documentary JSON at `test/foundry_parity/*.json` (prose
+  for sortKey / responseShape / errorCodes / coveredBy, and several
+  files already repurpose top-level `request`/`expected` for prose)
+  and executable JSON at `test/foundry_parity/runner/*.json` (envelope
+  `{name, story, request: {method, path, headers?, body?},
+  expected: {status, body?}, notes}`). The runner
+  `test/foundry_parity/run.go` (package main) walks both recursively
+  and classifies via isExecutable: empty request.path → documentary →
+  SKIP. Add new real parity fixtures to `runner/` only; never overload
+  the doc corpus. Makefile target `make test-parity` brings up the
+  stack via scripts/e2e-setup.sh when :9117 is unreachable and then
+  `go run ./test/foundry_parity -v`.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -1795,4 +1808,89 @@ new features — only run verification suites and commit the gate.
     what the production action executor writes, so queries that
     resolve conflicts via the US-021 user-edit-wins rule see the
     seed rows as authoritative user state.
+---
+
+## 2026-04-12 - US-031
+- New package main at test/foundry_parity/run.go — parity runner that walks
+  test/foundry_parity/**/*.json, decodes each file into a shared Fixture
+  envelope, and for any fixture with request.path fires an HTTP call
+  against -base (default http://localhost:9117, env WEAVE_BASE_URL). Body
+  comparison runs through canonicalJSON → line-based LCS diff so the
+  failure output is unified-diff style.
+- Documentary fixtures (the existing us005/us007/us008/us012/us015/us022/
+  us027 files that describe response shapes but have no runnable request
+  line) are parsed successfully but classified isExecutable=false and
+  reported as SKIP — no false failures on the existing doc corpus.
+- test/foundry_parity/run_test.go: 9 unit tests covering canonicalJSON
+  key sorting, isExecutable gating, diffLines LCS output, loadFixtures
+  recursive walk, runFixture success / status mismatch / body diff /
+  POST body round-trip paths, plus a TestSeedFixturesLoadable contract
+  test that asserts the 5 seed fixtures exist, parse, and declare
+  expected.status.
+- 5 seed runner fixtures under test/foundry_parity/runner/: us005.json,
+  us008.json, us012.json, us015.json, us022.json. Each targets
+  GET /health and asserts status=200 + body={"status":"alive"} so the
+  seed set passes against any running Weave server regardless of data
+  state. Notes in each fixture point to the companion doc-style file.
+- Makefile: new `test-parity` target that curls /health first and
+  falls back to `./scripts/e2e-setup.sh` (the existing idempotent stack
+  bring-up from US-029) when weave is not reachable, then shells out to
+  `go run ./test/foundry_parity -v`. No changes to other targets.
+- Smoke-run against a local python http.server that returns
+  `{"status":"alive"}` on /health: 5 passed / 5 executed, 7 skipped
+  (documentary), exit 0.
+- `go test ./test/foundry_parity/` green, `go vet ./...` clean,
+  `go build ./test/foundry_parity/` produces a binary, `go test ./...`
+  full regression passes, `gofmt -l test/foundry_parity/` empty.
+- Files changed:
+  - test/foundry_parity/run.go (new)
+  - test/foundry_parity/run_test.go (new)
+  - test/foundry_parity/runner/us005.json (new)
+  - test/foundry_parity/runner/us008.json (new)
+  - test/foundry_parity/runner/us012.json (new)
+  - test/foundry_parity/runner/us015.json (new)
+  - test/foundry_parity/runner/us022.json (new)
+  - Makefile (new test-parity target + .PHONY update)
+  - scripts/ralph/prd.json (US-031 passes=true)
+- **Learnings for future iterations:**
+  - The pre-existing us005…us027 fixture files at test/foundry_parity/
+    are intentionally descriptive — they document sortKey, responseShape,
+    errorCodes, covered Go tests, etc. Several of them already carry a
+    top-level `request` field holding a prose description (see us015 and
+    us022), so you CANNOT reuse the `request` key as the runner's
+    executable path without a destructive rewrite. The runner therefore
+    keeps executable fixtures in a dedicated test/foundry_parity/runner/
+    subdirectory while the doc-style files keep living at the top level.
+    When future stories need to add real (non-smoke) executable parity
+    fixtures they should add new files under runner/ and leave the
+    descriptive siblings untouched.
+  - loadFixtures sorts by filepath, and
+    "test/foundry_parity/runner/usNNN.json" sorts BEFORE
+    "test/foundry_parity/usNNN_*.json" because 'r' (from the runner
+    directory segment) precedes 'u' at the first differing byte.
+    Any future assertion about fixture ordering must account for this,
+    not for the "subdirectory comes last" assumption.
+  - canonicalJSON relies on encoding/json's guarantee that map[string]any
+    marshals map keys in lexicographical order. This makes the body
+    comparison deterministic without pulling in a third-party JSON
+    library, but any switch to a different JSON library (e.g. jsoniter
+    or goccy) would need to re-establish that guarantee or the diff
+    output will become unstable.
+  - The diffLines helper is a simple O(n*m) LCS table — fine for
+    single-digit line counts, but rebuild it on top of go-cmp/diff or
+    a proper Myers diff before wiring it into any fixture that ships
+    hundreds of body lines (e.g. Aggregation full-tree responses for
+    US-116).
+  - `make test-parity` shells out to `./scripts/e2e-setup.sh` when
+    /health is unreachable. That script runs docker compose + nohups
+    bin/weave + starts vite; budget ~45s on a cold machine. The runner
+    itself is sub-second so the dominant wall-clock is stack bring-up.
+    If a future story only needs the API (no Vite), consider splitting
+    e2e-setup.sh into api-up/ui-up so parity runs can skip the vite
+    cost — filing as a follow-up, not blocking.
+  - Makefile `.PHONY` line must include every new target; missing the
+    entry silently causes `make` to inspect the filesystem for a
+    `test-parity` file and no-op if one happens to exist. Adding the
+    target to the single .PHONY line at the top of the file is the
+    project convention.
 ---
