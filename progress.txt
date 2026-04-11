@@ -1398,3 +1398,22 @@
   - When adding AI tools that delegate to the existing executor, narrow interfaces in pkg/mcp (SemanticSearcher) keep the package free of objectset imports and let test stubs sit beside the tool tests. The production adapter (executorSemanticSearcher in cmd/server) is the only place that knows both halves — exactly the pattern pkg/funnel/EmbeddingStore uses to avoid importing the full oms.Repository surface.
   - Pre-existing tests that assert on a "not yet supported" error message become rotting documentation the moment the feature lands. Renaming the test (TestExecute_NearestNeighbors_NotSupported → ..._RequiresVectorStore) is better than deleting it because the rename preserves the regression: nearestNeighbors WITHOUT a vector store still errors clearly, just with a different message that better describes the actual misconfiguration.
 ---
+
+## 2026-04-11 - US-047: Phase 5 integration gate: architecture evolution complete
+- Final verification story — no code changes, verification only
+- All 5 acceptance criteria satisfied:
+  1. Full regression (go test ./...) — GREEN across all 33 packages
+  2. Integration suite (go test -tags integration ./...) — GREEN incl. chinook (230s), northwind (155s), oms (118s), auth (69s), oss (54s), objectset (54s)
+  3. Multi-ontology isolation: TestMultiOntologyIsolation_SameObjectTypeName PASS (pkg/oss)
+  4. Cache decorator regression-safe: pkg/oms + pkg/links suites both green with CachedRepository/CachedResolver wired
+  5. MCP AI tools callable: TestTool_SemanticSearch_{HappyPath,NotConfigured}, TestTool_ExplainObject_{Bundles,UnknownType}, TestTool_DraftAction_{RendersTemplate,UnknownAction} — all PASS
+- Client suites:
+  - Frontend vitest: 186/186 passing across 36 test files
+  - Python SDK pytest: 69/69 passing
+- PRD: US-047 passes:true — all 47 user stories now complete
+- **Learnings for future iterations:**
+  - Phase gate stories are pure verification — NEVER add ad-hoc fix work under the gate's ticket; open a separate follow-up story if regressions surface
+  - Run `go test -tags integration ./...` at every phase gate: integration-tagged tests are invisible to `go test ./...` and can rot silently (noted in earlier patterns; re-verified here)
+  - A single `make test && make test-integration && web vitest && python pytest` composite is the Phase-5 cold-start verification contract for this branch — use it on every future cold-read of the repo
+  - MCP AI tool verification pattern: run `go test ./pkg/mcp/... -run "AI|Explain|Draft|Semantic" -v` as a fast smoke check that all idempotently-registered AI tools still respond correctly both with and without the SemanticSearcher wired
+---

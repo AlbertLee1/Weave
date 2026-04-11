@@ -749,7 +749,7 @@
         "go test ./... + full client suite green"
       ],
       "priority": 47,
-      "passes": false,
+      "passes": true,
       "notes": "Final verification story."
     }
   ]
