@@ -18,6 +18,10 @@ import (
 type perPKLinkResolver struct {
 	// linkAPIName -> (source PK -> target PKs)
 	edges map[string]map[string][]string
+	// linkAPIName -> (target PK -> source PKs) for reverse traversal. Populated
+	// so the resolver can satisfy reverseLinkFinder for US-003 withProperties
+	// reverse direction tests. Nil map means reverse not wired.
+	reverseEdges map[string]map[string][]string
 	// linkAPIName -> target ObjectType API name. Populated so the resolver
 	// can satisfy LinkTargetTypeResolver for withProperties sum/avg/min/max,
 	// which must re-query the target ObjectType's index for numeric fields.
@@ -25,6 +29,14 @@ type perPKLinkResolver struct {
 }
 
 func (m *perPKLinkResolver) ResolveLinked(ctx context.Context, linkTypeKey string, pks []string, dir links.Direction) ([]string, error) {
+	if dir == links.DirectionReverse {
+		edges := m.reverseEdges[linkTypeKey]
+		var out []string
+		for _, pk := range pks {
+			out = append(out, edges[pk]...)
+		}
+		return out, nil
+	}
 	edges := m.edges[linkTypeKey]
 	var out []string
 	for _, pk := range pks {
@@ -39,6 +51,13 @@ func (m *perPKLinkResolver) ResolveLinkedObjects(ctx context.Context, linkTypeRI
 
 func (m *perPKLinkResolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceOTAPIName, linkAPIName string, sourcePKs []string) ([]string, error) {
 	return m.ResolveLinked(ctx, linkAPIName, sourcePKs, links.DirectionForward)
+}
+
+// ResolveLinkedReverseByAPIName satisfies the executor's reverseLinkFinder
+// interface: for a caller-OT that sits on the *target* end of the link, return
+// the PKs of the source-end objects pointing at each caller PK.
+func (m *perPKLinkResolver) ResolveLinkedReverseByAPIName(ctx context.Context, callerOTAPIName, linkAPIName string, callerPKs []string) ([]string, error) {
+	return m.ResolveLinked(ctx, linkAPIName, callerPKs, links.DirectionReverse)
 }
 
 func (m *perPKLinkResolver) ResolveTargetObjectType(ctx context.Context, sourceObjectType, linkTypeAPIName string) (string, error) {
@@ -350,6 +369,186 @@ func TestWithPropertiesNumericMissingField(t *testing.T) {
 	if err := def.Validate(); err == nil {
 		t.Fatal("expected validation error for missing field on numeric metric")
 	}
+}
+
+// setupProductOrderLineExecutor stages a Northwind-shaped "product ← orderLine"
+// fixture for US-003 reverse-direction testing: the link `orderLineProduct` is
+// declared forward from OrderLine to Product (each orderLine points at one
+// product), so walking it in reverse from a Product PK should yield the PKs of
+// the orderLines that reference it.
+//
+//	p1 ← ol1, ol2, ol4   (3 orderLines)
+//	p2 ← ol3             (1 orderLine)
+//	p3 ← —               (0 orderLines)
+func setupProductOrderLineExecutor(t *testing.T) *objectset.Executor {
+	t.Helper()
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { mgr.Close() })
+
+	productProps := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("product", productProps); err != nil {
+		t.Fatalf("EnsureIndex product: %v", err)
+	}
+	products := []struct{ id, name string }{
+		{"p1", "Alpha"},
+		{"p2", "Beta"},
+		{"p3", "Gamma"},
+	}
+	for _, p := range products {
+		if err := mgr.IndexDocument("product", p.id, map[string]interface{}{
+			"id":   p.id,
+			"name": p.name,
+		}); err != nil {
+			t.Fatalf("IndexDocument %s: %v", p.id, err)
+		}
+	}
+
+	olProps := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+		{APIName: "productId", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("orderLine", olProps); err != nil {
+		t.Fatalf("EnsureIndex orderLine: %v", err)
+	}
+	orderLines := []struct{ id, productID string }{
+		{"ol1", "p1"},
+		{"ol2", "p1"},
+		{"ol3", "p2"},
+		{"ol4", "p1"},
+	}
+	for _, ol := range orderLines {
+		if err := mgr.IndexDocument("orderLine", ol.id, map[string]interface{}{
+			"id":        ol.id,
+			"productId": ol.productID,
+		}); err != nil {
+			t.Fatalf("IndexDocument %s: %v", ol.id, err)
+		}
+	}
+
+	resolver := &perPKLinkResolver{
+		edges: map[string]map[string][]string{
+			"orderLineProduct": {
+				"ol1": {"p1"},
+				"ol2": {"p1"},
+				"ol3": {"p2"},
+				"ol4": {"p1"},
+			},
+		},
+		reverseEdges: map[string]map[string][]string{
+			"orderLineProduct": {
+				"p1": {"ol1", "ol2", "ol4"},
+				"p2": {"ol3"},
+			},
+		},
+		targets: map[string]string{
+			"orderLineProduct": "product",
+		},
+	}
+
+	store := objectset.NewStore(time.Hour)
+	return objectset.NewExecutor(mgr, resolver, store)
+}
+
+// TestWithPropertiesReverseCount asserts US-003: a withProperties definition
+// with Direction="reverse" counts source-end objects pointing at each base PK
+// via the reverseLinkFinder path instead of the forward ResolveLinked helper.
+func TestWithPropertiesReverseCount(t *testing.T) {
+	exec := setupProductOrderLineExecutor(t)
+	ctx := context.Background()
+
+	def := &objectset.Definition{
+		Type:      "withProperties",
+		ObjectSet: &objectset.Definition{Type: "base", ObjectType: "product"},
+		DerivedProperties: []objectset.DerivedPropertyDef{
+			{
+				Name:      "totalOrders",
+				Link:      "orderLineProduct",
+				Direction: "reverse",
+				Metric:    "count",
+			},
+		},
+	}
+
+	result, err := exec.Execute(ctx, def)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.PrimaryKeys) != 3 {
+		t.Fatalf("expected 3 products, got %d: %v", len(result.PrimaryKeys), result.PrimaryKeys)
+	}
+	if result.DerivedValues == nil {
+		t.Fatalf("expected DerivedValues to be populated")
+	}
+
+	expected := map[string]int64{
+		"p1": 3,
+		"p2": 1,
+		"p3": 0,
+	}
+	for pk, want := range expected {
+		raw, ok := result.DerivedValues[pk]["totalOrders"]
+		if !ok {
+			t.Errorf("totalOrders missing for %s", pk)
+			continue
+		}
+		got, ok := raw.(int64)
+		if !ok {
+			t.Errorf("%s totalOrders: want int64, got %T (%v)", pk, raw, raw)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s totalOrders: got %d, want %d", pk, got, want)
+		}
+	}
+}
+
+// TestWithPropertiesReverseRequiresResolver asserts that when the underlying
+// resolver does not implement reverseLinkFinder, a reverse-direction
+// withProperties fails with a clear error instead of silently returning zeros.
+func TestWithPropertiesReverseRequiresResolver(t *testing.T) {
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { mgr.Close() })
+	if _, err := mgr.EnsureIndex("product", []index.Property{{APIName: "id", BaseType: "string", IsSearchable: true}}); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+	if err := mgr.IndexDocument("product", "p1", map[string]interface{}{"id": "p1"}); err != nil {
+		t.Fatalf("IndexDocument: %v", err)
+	}
+
+	exec := objectset.NewExecutor(mgr, &forwardOnlyResolver{}, objectset.NewStore(time.Hour))
+	def := &objectset.Definition{
+		Type:      "withProperties",
+		ObjectSet: &objectset.Definition{Type: "base", ObjectType: "product"},
+		DerivedProperties: []objectset.DerivedPropertyDef{
+			{Name: "totalOrders", Link: "orderLineProduct", Direction: "reverse", Metric: "count"},
+		},
+	}
+	_, err := exec.Execute(context.Background(), def)
+	if err == nil {
+		t.Fatal("expected error when resolver does not support reverse direction")
+	}
+	if !strings.Contains(err.Error(), "reverse") {
+		t.Errorf("expected reverse-support error, got %v", err)
+	}
+}
+
+// forwardOnlyResolver satisfies links.LinkResolver but deliberately omits
+// ResolveLinkedReverseByAPIName so the executor's reverse path must bail out.
+type forwardOnlyResolver struct{}
+
+func (forwardOnlyResolver) ResolveLinked(ctx context.Context, linkTypeKey string, pks []string, dir links.Direction) ([]string, error) {
+	return nil, nil
+}
+func (forwardOnlyResolver) ResolveLinkedObjects(ctx context.Context, linkTypeRID string, sourcePKs []string) ([]string, error) {
+	return nil, nil
+}
+func (forwardOnlyResolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceOT, linkAPIName string, sourcePKs []string) ([]string, error) {
+	return nil, nil
 }
 
 // TestWithPropertiesCount_ValidationMissingMetric asserts that a derived

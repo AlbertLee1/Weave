@@ -485,20 +485,25 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		if err != nil {
 			return nil, fmt.Errorf("withProperties %q: %w", dp.Name, err)
 		}
-		if dir != links.DirectionForward {
-			return nil, fmt.Errorf("withProperties %q: reverse direction not yet supported", dp.Name)
+
+		resolveLinks, err := e.linkResolverForDirection(dp, dir)
+		if err != nil {
+			return nil, err
 		}
 
 		switch dp.Metric {
 		case "count":
 			for _, pk := range inner.PrimaryKeys {
-				targets, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, inner.ObjectType, dp.Link, []string{pk})
+				targets, err := resolveLinks(ctx, inner.ObjectType, dp.Link, []string{pk})
 				if err != nil {
 					return nil, fmt.Errorf("withProperties %q resolve link %q: %w", dp.Name, dp.Link, err)
 				}
 				derived[pk][dp.Name] = int64(len(targets))
 			}
 		case "sum", "avg", "min", "max":
+			if dir != links.DirectionForward {
+				return nil, fmt.Errorf("withProperties %q: reverse direction numeric metrics not yet supported", dp.Name)
+			}
 			if err := e.evaluateNumericDerived(ctx, inner, dp, derived); err != nil {
 				return nil, err
 			}
@@ -513,6 +518,22 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		Truncated:     inner.Truncated,
 		DerivedValues: derived,
 	}, nil
+}
+
+// linkResolverForDirection returns a closure that walks dp.Link in the
+// requested direction, hiding the forward / reverse split from callers. Reverse
+// traversal requires the underlying resolver to implement reverseLinkFinder;
+// otherwise we surface an explicit error so the caller cannot silently fall
+// through to a forward walk.
+func (e *Executor) linkResolverForDirection(dp DerivedPropertyDef, dir links.Direction) (func(context.Context, string, string, []string) ([]string, error), error) {
+	if dir == links.DirectionForward {
+		return e.linkResolver.ResolveLinkedObjectsByAPIName, nil
+	}
+	finder, ok := e.linkResolver.(reverseLinkFinder)
+	if !ok {
+		return nil, fmt.Errorf("withProperties %q: link resolver does not support reverse direction", dp.Name)
+	}
+	return finder.ResolveLinkedReverseByAPIName, nil
 }
 
 // evaluateNumericDerived computes sum / avg / min / max of dp.Field across
