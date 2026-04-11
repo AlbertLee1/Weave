@@ -2,7 +2,6 @@ package aggregation
 
 import (
 	"math"
-	"sort"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -84,7 +83,7 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			if spec.Percentile != nil {
 				percentile = *spec.Percentile
 			}
-			val, t, err := computePercentile(idx, baseQuery, spec.Field, percentile, scanSize)
+			val, t, err := approxPercentileFromIndex(idx, baseQuery, spec.Field, percentile, scanSize)
 			if err != nil {
 				return nil, false, err
 			}
@@ -234,53 +233,4 @@ func computeStdDevOrVariance(idx bleve.Index, q query.Query, field string, isSqr
 		return math.Sqrt(variance), truncated, nil
 	}
 	return variance, truncated, nil
-}
-
-// computePercentile computes the approximate percentile of a numeric field.
-// percentile is in the range [0, 100]. Returns (value, truncated, error).
-func computePercentile(idx bleve.Index, q query.Query, field string, percentile float64, scanSize int) (interface{}, bool, error) {
-	searchReq := bleve.NewSearchRequest(q)
-	searchReq.Size = scanSize
-	searchReq.Fields = []string{field}
-
-	result, err := idx.Search(searchReq)
-	if err != nil {
-		return nil, false, err
-	}
-
-	truncated := result.Total > uint64(len(result.Hits))
-
-	if len(result.Hits) == 0 {
-		return nil, truncated, nil
-	}
-
-	var values []float64
-	for _, hit := range result.Hits {
-		val, ok := hit.Fields[field]
-		if !ok {
-			continue
-		}
-		numVal, ok := val.(float64)
-		if !ok {
-			continue
-		}
-		values = append(values, numVal)
-	}
-
-	if len(values) == 0 {
-		return nil, truncated, nil
-	}
-
-	sort.Float64s(values)
-
-	rank := percentile / 100.0 * float64(len(values))
-	idx2 := int(math.Ceil(rank)) - 1
-	if idx2 < 0 {
-		idx2 = 0
-	}
-	if idx2 >= len(values) {
-		idx2 = len(values) - 1
-	}
-
-	return values[idx2], truncated, nil
 }

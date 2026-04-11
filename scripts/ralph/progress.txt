@@ -919,3 +919,47 @@ new features — only run verification suites and commit the gate.
     therefore defines its helper inline as a closure inside the single
     test function rather than a package-level helper.
 ---
+
+## 2026-04-11 - US-016
+- Added HdrHistogram-backed approximatePercentile implementation. `approx_percentile.go`
+  exposes `computeApproxPercentileHdr(values, percentile)` (in-memory on a float64 slice)
+  and `approxPercentileFromIndex(...)` (the Bleve-backed caller that preserves the
+  legacy (value, truncated, error) triple). bleve_agg.go's `approximatePercentile`
+  arm now routes through the new path and the dead sort-based `computePercentile`
+  has been removed.
+- `pkg/oss/aggregation/percentile_test.go` writes the failing red test first:
+  * `TestComputeApproxPercentileHdr_DirectCall` drives the new function directly
+    (so the package fails to compile until `computeApproxPercentileHdr` exists).
+  * `TestApproximatePercentile_Gaussian10k` builds a 10k Gaussian Bleve index
+    and asserts p50/p95/p99 fall within 10% of the analytic normal quantiles
+    (via Beasley-Springer-Moro inverse CDF). US-018 will tighten to ≤5%.
+  * `TestApproximatePercentile_Scalar` pins the single-percentile scalar shape.
+- `go get github.com/HdrHistogram/hdrhistogram-go@v1.2.0` added to go.mod.
+- Files changed:
+  - pkg/oss/aggregation/approx_percentile.go (new)
+  - pkg/oss/aggregation/percentile_test.go (new)
+  - pkg/oss/aggregation/bleve_agg.go (removed dead computePercentile, swapped switch arm)
+  - go.mod / go.sum (HdrHistogram dependency)
+- **Learnings for future iterations:**
+  - HdrHistogram records int64 only. To feed arbitrary float fields: (1) find min,
+    shift so recorded values are ≥ 1, (2) multiply by a fixed fractional scale
+    (we use 1e3 for 3 decimal places), (3) reverse both transforms when reading
+    back the quantile. Highest-trackable is derived from the scaled max.
+  - bleve hit.Fields always comes back as float64 for numeric fields (see existing
+    comment in engine.go). We do not need the full coerceNumeric helper that the
+    objectset package uses — the simple float64 type assertion is enough here.
+  - The existing `setupAccuracyIndex(t, n)` helper in accuracy_test.go is reusable
+    for small-sample percentile tests — no need to reinvent a second helper.
+  - `AggregationResponse.Data[0].Metrics` is the correct shape for single-bucket
+    (non-groupBy) aggregation responses. There's no top-level `resp.Metrics`
+    field — I wasted a compile cycle assuming otherwise.
+  - US-017 will add `Histogram.ValueAtPercentiles(percentiles []float64)` to
+    compute p50/p95/p99 in one pass. The hdrhistogram-go API already exposes it,
+    so US-017 is just plumbing a new `Percentiles []float64` field onto
+    AggregationSpec + a map[string]float64 response shape.
+  - US-018 needs an `exact` sort-based reference (easy to resurrect — git blame
+    for the computePercentile function removed in this commit) and a
+    `testing.B` bench loop. The ≤5% delta assertion should live inside a
+    regular Test function driven by `-bench=...` so `go test` fails rather
+    than silently reporting slow numbers.
+---
