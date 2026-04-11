@@ -175,7 +175,31 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 		}
 	}
 
-	// 5. Object history seed data --------------------------------------
+	// 5. Action types ---------------------------------------------------
+	// Each E2E-visible action lives under the northwind ontology so the
+	// Action Console page (and the Playwright specs driving it) can
+	// exercise apply + optimistic concurrency against the seeded
+	// customers. Rules / parameters are stored as raw JSON because the
+	// PGRepository does its own marshalling and the inputs are
+	// hand-authored in schemas.go.
+	for _, a := range northwindActionTypes() {
+		at := &oms.ActionType{
+			RID:         stableRID("action-type", opts.OntologyAPIName+"-"+a.APIName),
+			OntologyRID: ontRID,
+			APIName:     a.APIName,
+			DisplayName: a.DisplayName,
+			Description: a.Description,
+			Status:      "ACTIVE",
+			Parameters:  json.RawMessage(a.Parameters),
+			Rules:       json.RawMessage(a.Rules),
+		}
+		if err := repo.CreateActionType(ctx, at); err != nil {
+			return nil, fmt.Errorf("seed: create action type %q: %w", a.APIName, err)
+		}
+		logf("[seed] created action type %s", a.APIName)
+	}
+
+	// 6. Object history seed data --------------------------------------
 	// One CREATE row per seed object per object type. Index rebuild will
 	// replay these into Bleve via LoadLatestObjectStates.
 	for _, s := range schemas {
@@ -202,7 +226,7 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 		logf("[seed] wrote %d history rows for %s", len(s.SeedRows), s.APIName)
 	}
 
-	// 6. Test users -----------------------------------------------------
+	// 7. Test users -----------------------------------------------------
 	userRepo := auth.NewPGUserRepository(pool)
 	userIDs := make([]string, 0, len(opts.TestUsers))
 	for _, u := range opts.TestUsers {
@@ -274,6 +298,20 @@ func wipe(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 		if _, err := pool.Exec(ctx,
 			`DELETE FROM link_types WHERE ontology_rid = $1`, ontRID); err != nil {
 			return fmt.Errorf("delete link_types: %w", err)
+		}
+		// Action types (ontology scoped). action_logs references
+		// action_types; delete the logs first to satisfy the FK before
+		// dropping the types themselves.
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM action_logs
+			 WHERE action_type_rid IN (
+			   SELECT rid FROM action_types WHERE ontology_rid = $1
+			 )`, ontRID); err != nil {
+			return fmt.Errorf("delete action_logs: %w", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM action_types WHERE ontology_rid = $1`, ontRID); err != nil {
+			return fmt.Errorf("delete action_types: %w", err)
 		}
 		// Object types — properties cascade via ON DELETE CASCADE (see
 		// migration 000001_initial_schema.up.sql L33).

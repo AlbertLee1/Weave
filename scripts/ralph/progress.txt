@@ -2284,3 +2284,81 @@ new features — only run verification suites and commit the gate.
     guard, so the timestamps only matter for liveness confirmation of
     non-editOnly fields (status).
 ---
+
+## 2026-04-12 - US-038
+- New Playwright spec `web/e2e/phase6/optimistic-concurrency.spec.ts`
+  that spins up two isolated `browser.newContext()` tabs on
+  `/actions/northwind`, drives both through the Action Console for the
+  same `customer/ALFKI` target, races two applies of the seeded
+  `updateCustomerContact` action and asserts:
+    * Tab A succeeds (no stale banner, NATS consumer rolls the version).
+    * Tab B surfaces `role=alert` "This object was updated elsewhere"
+      banner + Reload button (StaleObject 409 UX from US-024).
+    * Click Reload -> banner clears, `data-testid=object-version` chip
+      advances past the pre-race snapshot.
+- Extended the Playwright seeder library (`test/fixtures/seed_northwind`)
+  to write a baseline `updateCustomerContact` action type through
+  `oms.PGRepository.CreateActionType`. The rule is a minimal
+  `modifyObject` on `customer` bound to the `contactName` parameter;
+  schema definition lives in `schemas.go:northwindActionTypes()`.
+- `wipe()` now also drops `action_logs` + `action_types` for the
+  northwind ontology so repeated `Seed()` calls stay idempotent once
+  action logs start piling up from Apply invocations between runs.
+- Preflight: `beforeAll` fetches
+  `/api/v2/ontologies/northwind/actionTypes` and fails loudly if
+  `updateCustomerContact` is absent — saves a confusing mid-test
+  failure when `scripts/e2e-setup.sh` hasn't been run.
+- Files changed:
+  - test/fixtures/seed_northwind/schemas.go (new actionTypeDef +
+    northwindActionTypes)
+  - test/fixtures/seed_northwind/seed.go (+ action type write, +
+    action_logs/action_types wipe)
+  - web/e2e/phase6/optimistic-concurrency.spec.ts (new)
+- Verification:
+  - `go vet ./...` clean
+  - `gofmt -l test/fixtures/seed_northwind/` clean
+  - `go test ./...` (unit suite) passes
+  - `cd web && npx tsc --noEmit` clean
+  - `cd web && npx playwright test --list phase6/optimistic-concurrency.spec.ts`
+    lists the spec (1 test).
+  - Full Playwright run requires `scripts/e2e-setup.sh` + the live
+    stack; not executed in this iteration. Browser-level verification
+    must be rerun as part of the Phase 6 gate (US-042).
+- **Learnings for future iterations:**
+  - `test/fixtures/seed_northwind` is now the canonical place to ship
+    Playwright-facing ActionTypes. New E2E specs that need more rule
+    coverage should extend `northwindActionTypes()` rather than
+    creating their own private seeds — the existing idempotent wipe
+    handles action_types cleanup for us.
+  - `PGRepository.CreateActionType` accepts JSON `[]` for parameters
+    and rules straight from raw strings, so the seed can hand-author
+    the definitions as multi-line string literals without cgen via
+    encoding/json. Keeps schemas.go readable and diff-friendly.
+  - `pkg/oms.parametersToV2` converts the stored array-of-objects
+    params format into the Foundry V2 Record wire format, using the
+    `description` field as-is. Playwright specs therefore get a
+    stable `placeholder` to select inputs against — the
+    `ParameterForm` component renders descriptions as input
+    placeholders (no htmlFor label linkage). Pick
+    `page.getByPlaceholder(...)` over `getByLabel` for parameter
+    form inputs until the component grows aria labels.
+  - Two-tab optimistic-concurrency races are best modelled with
+    `browser.newContext()` pairs, NOT two pages inside one context —
+    the shared React Query cache inside one context would merge the
+    two useObjectVersion() snapshots and hide the stale read. Keep
+    the contexts isolated and close them in a `finally` block so one
+    failed assertion doesn't leak Chromium processes into CI.
+  - Phase 6 gate playbook: the first Playwright spec for a given
+    feature often needs a seed extension to land alongside the spec.
+    When that happens, also update `test/fixtures/seed_northwind/
+    seed.go` wipe() to delete any new tables the seed now writes —
+    otherwise idempotency breaks the second seed run (the first run
+    works because PG is empty on fresh containers).
+  - `playwright.config.ts` already has `workers: 1` and
+    `fullyParallel: false`, so the race between Tab A commit and Tab
+    B version-check is driven by the short `page.waitForTimeout(750)`
+    after the Tab A submit; the NATS consumer typically rolls
+    object_history forward well under that window in dev mode. If
+    flakes appear, raise the wait before breaking the underlying
+    flow.
+---

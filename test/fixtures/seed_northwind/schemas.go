@@ -120,3 +120,38 @@ func northwindLinkTypes() []linkDef {
 		},
 	}
 }
+
+type actionTypeDef struct {
+	APIName     string
+	DisplayName string
+	Description string
+	Parameters  string // JSON array of actionParamDef
+	Rules       string // JSON array of pkg/actions.Rule
+}
+
+// northwindActionTypes returns the baseline ActionTypes the Playwright E2E
+// specs need to exercise the Action Console flows (US-038 optimistic
+// concurrency in particular). Each definition is a minimal JSON snippet
+// that lines up with pkg/actions.ParseRules / parametersToV2.
+func northwindActionTypes() []actionTypeDef {
+	return []actionTypeDef{
+		{
+			APIName:     "updateCustomerContact",
+			DisplayName: "Update Customer Contact",
+			Description: "Change the contact name on a customer record (used by US-038 optimistic-concurrency spec).",
+			Parameters: `[
+				{"id":"primaryKey","type":"string","required":true,"description":"Customer primary key"},
+				{"id":"contactName","type":"string","required":true,"description":"New contact name"}
+			]`,
+			Rules: `[
+				{
+					"type":"modifyObject",
+					"objectType":"customer",
+					"propertyBindings":{
+						"contactName":{"type":"parameter","value":"contactName"}
+					}
+				}
+			]`,
+		},
+	}
+}
