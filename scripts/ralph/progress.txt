@@ -147,6 +147,15 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   call `POST /api/admin/indexes/rebuild` to hydrate Bleve.
   `link_types.cardinality` only allows `ONE_TO_ONE / ONE_TO_MANY /
   MANY_TO_MANY` — `MANY_TO_ONE` breaks the CHECK constraint.
+- withProperties over a polymorphic (interfaceBase) inner keys
+  DerivedValues by polymorphicDerivedKey(type, pk) — NUL-separated — not
+  plain pk. Any consumer of polymorphic Result.DerivedValues MUST read
+  through the helper in pkg/oss/objectset/executor.go, NOT `derived[pk]`.
+  The executor branches in executeWithProperties when inner.PerTypePKs
+  != nil → executeWithPropertiesPolymorphic; current scope is forward
+  count only. Numeric metrics / reverse direction error out with a clear
+  "not yet supported" message. The handler's writePreviewInterfacePage
+  merges polymorphic derived values onto each row via the same helper.
 - Foundry parity fixtures are split into two co-located sets:
   descriptive/documentary JSON at `test/foundry_parity/*.json` (prose
   for sortKey / responseShape / errorCodes / coveredBy, and several
@@ -1893,4 +1902,100 @@ new features — only run verification suites and commit the gate.
     `test-parity` file and no-op if one happens to exist. Adding the
     target to the single .PHONY line at the top of the file is the
     project convention.
+---
+
+## 2026-04-12 - US-032
+- New Phase 6 cross-US integration test
+  test/integration/phase6/phase6_withproperties_interface_test.go combines
+  withProperties derived values with interfaceBase polymorphic paging. It
+  seeds the Northwind HasOwner interface (customer + employee + supplier =
+  129 rows), attaches a synthetic `reportCount` derived property through a
+  mock perPKLinkResolver, pages the polymorphic result through
+  loadObjectsOrInterfaces at pageSize=13, and asserts every emitted row
+  carries an int64 reportCount (surfaced as float64 post-JSON) plus
+  composite-cursor round-tripping (DecodeMultiTypeCursor succeeds and
+  SubCursors is non-empty for every non-final page).
+- Before this story the executor's withProperties path short-circuited to
+  a single-type flow: it called the link resolver with inner.ObjectType,
+  which for an interfaceBase inner was the interface API name ("HasOwner"),
+  never a concrete ObjectType. It also dropped PerTypePKs / Origins on the
+  returned Result, collapsing the polymorphic paging path in
+  writePreviewInterfacePage → the flat-offset path — so rows were fetched
+  against scopedIndexKey("HasOwner"), missed the real per-type indexes,
+  and emitted zero data with $apiName="HasOwner".
+- pkg/oss/objectset/executor.go: executeWithProperties now branches when
+  inner.PerTypePKs != nil and delegates to new
+  executeWithPropertiesPolymorphic. The polymorphic path computes derived
+  values per concrete (type, pk) tuple, iterates PerTypePKs so the link
+  resolver sees the real source ObjectType, and stores results in
+  DerivedValues keyed by a new helper polymorphicDerivedKey(type, pk)
+  (NUL-separated so "|"/":" in primary keys cannot collide). The returned
+  Result propagates PerTypePKs / Origins / PrimaryKeys unchanged from the
+  inner interfaceBase so the existing heap-merge paging keeps walking the
+  same sub-streams. Numeric metrics + reverse direction over an interface
+  base explicitly error with a "not yet supported" message — Phase 6
+  US-032 scope is forward count only.
+- pkg/oss/objectset/handler_preview.go: writePreviewInterfacePage now
+  merges result.DerivedValues onto each emitted row via
+  polymorphicDerivedKey(row.objectType, row.pk). Only derived keys that
+  appear in the caller's select[] are surfaced, matching the single-type
+  preview behaviour.
+- New Makefile target `test-integration-phase6` (+ .PHONY entry) runs only
+  the Phase 6 integration suite for fast iteration.
+- Files changed:
+  - pkg/oss/objectset/executor.go
+  - pkg/oss/objectset/handler_preview.go
+  - test/integration/phase6/phase6_withproperties_interface_test.go (new)
+  - Makefile (new target + .PHONY)
+  - scripts/ralph/prd.json (US-032 passes=true)
+- Quality:
+  - `go test ./...` green (including full chinook + northwind suites)
+  - `go vet ./...` and `go vet -tags integration ./...` clean
+  - `gofmt -l pkg/oss/objectset/ test/integration/phase6/` empty
+  - `make test-integration-phase6` PASS in ~6s (testcontainers pgvector
+    boot ~1s, test ~5s)
+- **Learnings for future iterations:**
+  - withProperties over a polymorphic inner must key DerivedValues by
+    (type, pk) not by pk alone. Two ObjectTypes can legitimately share a
+    primary key value (especially numeric ids) and the single-type keying
+    silently clobbered one side. The helper polymorphicDerivedKey uses a
+    NUL byte as the separator so "|" / ":" in real PKs cannot collide with
+    the key scheme. Any future consumer of Result.DerivedValues that walks
+    a polymorphic result MUST go through polymorphicDerivedKey, not
+    `derived[pk]`.
+  - The handler preview has two parallel output paths (writePreviewInterfacePage
+    + the flat-offset fallback in loadPreview). Derived-value merging lives
+    only on the single-type LoadObjects path in handler.go until this US.
+    When adding a new preview-shaped feature always walk BOTH paths —
+    flat-offset is easy to miss because interface tests never hit it and
+    single-type tests exercise handler.LoadObjects instead. Phase 6 US-032
+    added the polymorphic merge; a future story should still add flat
+    derived-merge to writePreviewInterfacePage's fallback path if
+    withProperties ever wraps a non-interface multi-type result.
+  - executeInterfaceBase writes the interface API name (e.g. "HasOwner")
+    into Result.ObjectType. Any executor that inspects ObjectType to call
+    the link resolver MUST NOT assume it is a concrete ObjectType — always
+    iterate PerTypePKs / Origins to recover the per-row concrete type.
+    The legacy flat `for _, pk := range inner.PrimaryKeys { resolve(inner.ObjectType, ...) }`
+    loop is the wrong shape for polymorphic inputs.
+  - Integration tests under test/integration/phase6 use package
+    `phase6_test` with //go:build integration. Helpers (pgInterfaceResolver,
+    perPKLinkResolver, interfacePagingTypes, northwindFixturePath) are
+    duplicated from test/integration/interface_paging_test.go because Go
+    does not allow importing `_test.go` symbols across packages. When a
+    fourth Phase 6 test needs the same helpers, promote them into a
+    shared non-test file under test/integration/phase6/ or a new
+    internal helper package.
+  - testutil.StartPGContainer(t) spins up pgvector/pgvector:pg16 and takes
+    ~1s on a warm Docker Desktop. Phase 6 cross-US tests budget ~5-7s
+    including migrations + Bleve seed + pagination roundtrips. No reason
+    to avoid real containers — much faster than trying to fake it.
+  - DerivedPropertyDef.Link is a single string across the whole polymorphic
+    base set. Current mock resolver ignores source ObjectType and keys
+    edges purely by the link API name, which is enough for count. Real
+    production resolvers will need to either (a) require the link API
+    name to exist on every implementing ObjectType or (b) per-type
+    fallback to a synonym table. Flag this as a follow-up for any future
+    story that needs production polymorphic withProperties through
+    pkg/links.Resolver.
 ---

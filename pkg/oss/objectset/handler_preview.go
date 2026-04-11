@@ -250,6 +250,23 @@ func (h *Handler) writePreviewInterfacePage(w http.ResponseWriter, ctx context.C
 				item[f] = v
 			}
 		}
+		// Merge any withProperties-derived values onto the row. The executor
+		// keys polymorphic derived values by (objectType, pk) so PK collisions
+		// across implementing types stay separated.
+		if result.DerivedValues != nil {
+			if vals, ok := result.DerivedValues[polymorphicDerivedKey(row.objectType, row.pk)]; ok {
+				for k, v := range vals {
+					// Only surface derived keys that were explicitly
+					// selected, to mirror the single-type preview behaviour.
+					for _, f := range req.Select {
+						if f == k {
+							item[k] = v
+							break
+						}
+					}
+				}
+			}
+		}
 		item["$rid"] = fmt.Sprintf("ri.phonograph2-objects.main.object.%s", row.pk)
 		item["$primaryKey"] = row.pk
 		item["$apiName"] = row.objectType

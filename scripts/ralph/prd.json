@@ -515,7 +515,7 @@
         "go test -tags integration ./test/integration/phase6/... -run WithPropertiesInterface passes"
       ],
       "priority": 32,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

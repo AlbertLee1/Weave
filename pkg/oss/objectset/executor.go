@@ -552,6 +552,15 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		return inner, nil
 	}
 
+	// Polymorphic path: when the inner ObjectSet is an interfaceBase (or any
+	// other operator that produces per-type buckets), compute derived values
+	// per concrete ObjectType so the link resolver sees the real source type,
+	// not the interface API name. Values are keyed by (type, pk) so PK
+	// collisions across types do not clobber each other.
+	if inner.PerTypePKs != nil {
+		return e.executeWithPropertiesPolymorphic(ctx, def, inner)
+	}
+
 	derived := make(map[string]map[string]interface{}, len(inner.PrimaryKeys))
 	for _, pk := range inner.PrimaryKeys {
 		derived[pk] = make(map[string]interface{}, len(def.DerivedProperties))
@@ -609,6 +618,68 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 	return &Result{
 		ObjectType:    inner.ObjectType,
 		PrimaryKeys:   orderedPKs,
+		Truncated:     inner.Truncated,
+		DerivedValues: derived,
+	}, nil
+}
+
+// polymorphicDerivedKey encodes (objectType, primaryKey) into a single map
+// key for Result.DerivedValues when the inner set is polymorphic. Using a NUL
+// byte as the separator keeps the key unique even if a primary key legitimately
+// contains "|" or ":". The handler's writePreviewInterfacePage and any other
+// per-row consumer must read polymorphic derived values through this helper
+// instead of indexing DerivedValues by plain primary key.
+func polymorphicDerivedKey(objectType, primaryKey string) string {
+	return objectType + "\x00" + primaryKey
+}
+
+// executeWithPropertiesPolymorphic computes derived values for a polymorphic
+// inner Result (one produced by interfaceBase or any other operator that
+// populates PerTypePKs). Values are keyed by polymorphicDerivedKey so a PK
+// collision between two implementing ObjectTypes cannot clobber either side.
+//
+// Scope for Phase 6 US-032: forward direction, count metric only. Numeric
+// metrics and reverse direction over an interface base are explicitly out of
+// scope and surface a clear error so the unsupported surface is obvious.
+func (e *Executor) executeWithPropertiesPolymorphic(ctx context.Context, def *Definition, inner *Result) (*Result, error) {
+	derived := make(map[string]map[string]interface{}, len(inner.PrimaryKeys))
+	for t, pks := range inner.PerTypePKs {
+		for _, pk := range pks {
+			derived[polymorphicDerivedKey(t, pk)] = make(map[string]interface{}, len(def.DerivedProperties))
+		}
+	}
+
+	for _, dp := range def.DerivedProperties {
+		dir, err := links.ParseDirection(dp.Direction)
+		if err != nil {
+			return nil, fmt.Errorf("withProperties %q: %w", dp.Name, err)
+		}
+		if dir != links.DirectionForward {
+			return nil, fmt.Errorf("withProperties %q over interfaceBase: reverse direction not yet supported", dp.Name)
+		}
+		if dp.Metric != "count" {
+			return nil, fmt.Errorf("withProperties %q over interfaceBase: metric %q not yet supported (only count)", dp.Name, dp.Metric)
+		}
+		for t, pks := range inner.PerTypePKs {
+			for _, pk := range pks {
+				targets, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, t, dp.Link, []string{pk})
+				if err != nil {
+					return nil, fmt.Errorf("withProperties %q resolve link %q on %q: %w", dp.Name, dp.Link, t, err)
+				}
+				derived[polymorphicDerivedKey(t, pk)][dp.Name] = int64(len(targets))
+			}
+		}
+	}
+
+	// Preserve the inner executor's per-type buckets + flat/origins order so
+	// the handler's composite-cursor paging keeps walking the same sub-streams
+	// it always did. The handler merges derived values onto each row via
+	// polymorphicDerivedKey(row.objectType, row.pk).
+	return &Result{
+		ObjectType:    inner.ObjectType,
+		PrimaryKeys:   inner.PrimaryKeys,
+		Origins:       inner.Origins,
+		PerTypePKs:    inner.PerTypePKs,
 		Truncated:     inner.Truncated,
 		DerivedValues: derived,
 	}, nil
