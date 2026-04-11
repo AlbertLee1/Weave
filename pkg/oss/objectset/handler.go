@@ -168,6 +168,15 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 			props = filtered
 		}
 
+		if derived, ok := result.DerivedValues[pk]; ok {
+			if props == nil {
+				props = make(map[string]interface{}, len(derived))
+			}
+			for k, v := range derived {
+				props[k] = v
+			}
+		}
+
 		data = append(data, oss.FormatObject(result.ObjectType, pk, props))
 	}
 
@@ -192,7 +201,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 
 // AggregateObjectSetRequest is the request for objectSet aggregation.
 type AggregateObjectSetRequest struct {
-	ObjectSet   *Definition                `json:"objectSet"`
+	ObjectSet   *Definition                   `json:"objectSet"`
 	Aggregation []aggregation.AggregationSpec `json:"aggregation"`
 	GroupBy     []aggregation.GroupBySpec     `json:"groupBy,omitempty"`
 }

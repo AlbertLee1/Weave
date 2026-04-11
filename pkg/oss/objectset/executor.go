@@ -76,6 +76,12 @@ type Result struct {
 	// approximate prefix of the true result. Downstream APIs should surface
 	// this as an APPROXIMATE marker so the user knows the answer is partial.
 	Truncated bool
+	// DerivedValues carries the per-base-object metrics produced by a
+	// withProperties execution, keyed by primary key and then by derived
+	// property name. Handlers merge these into WireObject.Properties so
+	// derived values appear as regular top-level properties in V2 responses.
+	// Nil for any execution that does not declare withProperties.
+	DerivedValues map[string]map[string]interface{}
 }
 
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
@@ -452,9 +458,56 @@ type reverseLinkFinder interface {
 	ResolveLinkedReverseByAPIName(ctx context.Context, callerObjectType, linkTypeAPIName string, callerPKs []string) ([]string, error)
 }
 
-// executeWithProperties executes the inner ObjectSet — property filtering happens at the response layer.
+// executeWithProperties executes the inner ObjectSet, then evaluates each
+// declared derived property as a single-hop link aggregation per base object.
+// When no DerivedProperties are declared the call degenerates to the inner
+// ObjectSet so pre-existing callers that only used Properties keep working.
+//
+// US-001 scope: count metric over forward direction. sum/avg/min/max and
+// reverse direction land in US-002 / US-003 and intentionally return an
+// explicit error here so the unsupported surface is obvious.
 func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (*Result, error) {
-	return e.execute(ctx, def.ObjectSet)
+	inner, err := e.execute(ctx, def.ObjectSet)
+	if err != nil {
+		return nil, err
+	}
+	if len(def.DerivedProperties) == 0 {
+		return inner, nil
+	}
+
+	derived := make(map[string]map[string]interface{}, len(inner.PrimaryKeys))
+	for _, pk := range inner.PrimaryKeys {
+		derived[pk] = make(map[string]interface{}, len(def.DerivedProperties))
+	}
+
+	for _, dp := range def.DerivedProperties {
+		dir, err := links.ParseDirection(dp.Direction)
+		if err != nil {
+			return nil, fmt.Errorf("withProperties %q: %w", dp.Name, err)
+		}
+		switch dp.Metric {
+		case "count":
+			if dir != links.DirectionForward {
+				return nil, fmt.Errorf("withProperties %q: reverse direction not yet supported", dp.Name)
+			}
+			for _, pk := range inner.PrimaryKeys {
+				targets, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, inner.ObjectType, dp.Link, []string{pk})
+				if err != nil {
+					return nil, fmt.Errorf("withProperties %q resolve link %q: %w", dp.Name, dp.Link, err)
+				}
+				derived[pk][dp.Name] = int64(len(targets))
+			}
+		default:
+			return nil, fmt.Errorf("withProperties %q: metric %q not yet supported", dp.Name, dp.Metric)
+		}
+	}
+
+	return &Result{
+		ObjectType:    inner.ObjectType,
+		PrimaryKeys:   inner.PrimaryKeys,
+		Truncated:     inner.Truncated,
+		DerivedValues: derived,
+	}, nil
 }
 
 // executeReference looks up a stored ObjectSet from the Store and executes it.

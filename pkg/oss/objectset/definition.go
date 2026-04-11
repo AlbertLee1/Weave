@@ -9,11 +9,11 @@ import (
 // ObjectSets are composable and lazy-evaluated.
 type Definition struct {
 	Type       string          `json:"type"`
-	ObjectType string          `json:"objectType,omitempty"`  // for "base", "static", "asType"
-	ObjectSet  *Definition     `json:"objectSet,omitempty"`   // for "filter", "searchAround", "nearestNeighbors", "withProperties", "asType", "asBaseObjectTypes", "interfaceLinkSearchAround"
-	ObjectSets []*Definition   `json:"objectSets,omitempty"`  // for "union", "intersect", "subtract"
-	Where      json.RawMessage `json:"where,omitempty"`       // for "filter" — raw JSON of WhereClause
-	Link       string          `json:"link,omitempty"`        // for "searchAround" — link type API name
+	ObjectType string          `json:"objectType,omitempty"` // for "base", "static", "asType"
+	ObjectSet  *Definition     `json:"objectSet,omitempty"`  // for "filter", "searchAround", "nearestNeighbors", "withProperties", "asType", "asBaseObjectTypes", "interfaceLinkSearchAround"
+	ObjectSets []*Definition   `json:"objectSets,omitempty"` // for "union", "intersect", "subtract"
+	Where      json.RawMessage `json:"where,omitempty"`      // for "filter" — raw JSON of WhereClause
+	Link       string          `json:"link,omitempty"`       // for "searchAround" — link type API name
 	// Direction is optional on "searchAround". "" / "forward" walks the link in
 	// its declared source -> target direction; "reverse" walks target -> source.
 	Direction string `json:"direction,omitempty"`
@@ -27,6 +27,11 @@ type Definition struct {
 
 	// For "withProperties"
 	Properties []string `json:"properties,omitempty"`
+	// DerivedProperties enumerates per-object metrics the executor should
+	// compute by traversing one link hop from each base object. The resulting
+	// values are attached to Result.DerivedValues keyed by base primary key
+	// and by derived property name.
+	DerivedProperties []DerivedPropertyDef `json:"derivedProperties,omitempty"`
 
 	// For "static" — explicit list of primary keys of ObjectType.
 	PrimaryKeys []string `json:"primaryKeys,omitempty"`
@@ -42,6 +47,20 @@ type Definition struct {
 	// For "methodInput" — name of the function method input parameter whose
 	// bound ObjectSet should be used at execution time.
 	Input string `json:"input,omitempty"`
+}
+
+// DerivedPropertyDef declares a single link-hop aggregation the executor
+// evaluates for each object in a withProperties base set. Name is the output
+// key (surfaced to API callers as a regular property), Link is the link type
+// API name to traverse, Direction is "forward" (default) or "reverse", Metric
+// is one of count / sum / avg / min / max and Field is the target property
+// numeric metrics read from — ignored for count.
+type DerivedPropertyDef struct {
+	Name      string `json:"name"`
+	Link      string `json:"link"`
+	Direction string `json:"direction,omitempty"`
+	Metric    string `json:"metric"`
+	Field     string `json:"field,omitempty"`
 }
 
 // PropertyIdentifier identifies a property for nearestNeighbors.
@@ -106,6 +125,17 @@ func (d *Definition) Validate() error {
 	case "withProperties":
 		if d.ObjectSet == nil {
 			return fmt.Errorf("withProperties requires objectSet")
+		}
+		for i, dp := range d.DerivedProperties {
+			if dp.Name == "" {
+				return fmt.Errorf("withProperties derivedProperties[%d] requires name", i)
+			}
+			if dp.Link == "" {
+				return fmt.Errorf("withProperties derivedProperties[%d] (%q) requires link", i, dp.Name)
+			}
+			if dp.Metric == "" {
+				return fmt.Errorf("withProperties derivedProperties[%d] (%q) requires metric", i, dp.Name)
+			}
 		}
 	case "static":
 		if d.ObjectType == "" {
