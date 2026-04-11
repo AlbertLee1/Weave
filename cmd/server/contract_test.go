@@ -16,6 +16,7 @@ import (
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
@@ -181,8 +182,18 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		AttachmentStore:  attachment.NewLocalStore(t.TempDir()),
 		TimeSeriesStore:  timeseries.NewMemoryStore(),
 		GeotemporalStore: geotemporal.NewMemoryStore(),
+		CipherDecryptor:  mustContractCipherDecryptor(t),
 	}
 	return NewFullRouter(deps)
+}
+
+func mustContractCipherDecryptor(t *testing.T) cipher.Decryptor {
+	t.Helper()
+	dec, err := cipher.NewAESGCMDecryptor("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("cipher.NewAESGCMDecryptor: %v", err)
+	}
+	return dec
 }
 
 // TestContract_AllRoutesDocumented verifies that every chi route registered

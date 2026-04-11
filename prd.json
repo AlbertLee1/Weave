@@ -644,8 +644,8 @@
         "go test ./... passes"
       ],
       "priority": 40,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New pkg/cipher (Decryptor interface + AESGCMDecryptor envelope encryption, wire format v1:<base64url(nonce||sealed)>). oss.Handler gains SetCipherDecryptor setter + DecryptCipherTextProperty handler (returns {plaintext}). Wired via ServerDeps.CipherDecryptor, toggled by WEAVE_CIPHER_KEY env (>=32 bytes) or KMS swap. TDD red→green verified (5 cipher tests + 5 handler tests)."
     },
     {
       "id": "US-041",

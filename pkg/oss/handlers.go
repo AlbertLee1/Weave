@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/attachment"
+	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/index"
@@ -43,6 +44,11 @@ type Handler struct {
 	// When nil, those routes return GeotemporalStoreNotConfigured. Wired
 	// via SetGeotemporalStore from main.go after construction.
 	geotemporalStore geotemporal.Store
+	// cipherDecryptor backs the object-path CipherTextProperty decrypt
+	// endpoint (/objects/{type}/{pk}/ciphertexts/{property}/decrypt). When
+	// nil, the route returns CipherDecryptorNotConfigured. Wired via
+	// SetCipherDecryptor from main.go after construction.
+	cipherDecryptor cipher.Decryptor
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -103,6 +109,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	// {time, position} where position is a GeoJSON Point.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/geotemporalSeries/{propertyName}/latestValue", h.GetGeotemporalLatestValue)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/geotemporalSeries/{propertyName}/streamHistoricValues", h.StreamGeotemporalHistoricValues)
+
+	// CipherTextProperty decrypt endpoint (US-040). Returns DecryptionResult
+	// {plaintext}. The decryptor is an envelope-encryption AES-GCM impl by
+	// default; swapping in a KMS-backed Decryptor only requires providing a
+	// different cipher.Decryptor through SetCipherDecryptor.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/ciphertexts/{property}/decrypt", h.DecryptCipherTextProperty)
 
 	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)

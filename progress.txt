@@ -114,6 +114,7 @@
 - When adding new routes to NewFullRouter, you MUST also wire the corresponding deps on newContractTestRouter in cmd/server/contract_test.go — otherwise TestContract_NoOrphanedSpecPaths fails because the new OpenAPI path entries have no matching chi route in the contract router.
 - Phase 4 storage packages (timeseries) pattern: ship both MemoryStore (default single-machine backend + test harness) and PGStore (migration-backed, wired when deps.PGPool != nil). main.go selects based on PGPool presence. Tests use MemoryStore to keep `go test ./...` offline.
 - Foundry TimeSeriesProperty streamPoints endpoint accepts optional ?format=JSON|ARROW. Our single-machine scope only emits JSON — ARROW returns 400 UnsupportedFormat (the endpoint is still callable so Foundry clients that default to JSON work unchanged).
+- pkg/cipher.Decryptor is the swap point for CipherTextProperty decryption. Default AESGCMDecryptor uses envelope encryption with wire format "v1:<base64url(nonce||sealed)>". Swapping in a KMS-backed implementation only requires providing another Decryptor via SetCipherDecryptor — no handler changes. WEAVE_CIPHER_KEY env var (32+ bytes) enables the default at boot; unset = degraded mode with CipherDecryptorNotConfigured 500.
 
 ---
 
@@ -1103,5 +1104,36 @@
   - All US-039 path parameters use {propertyName} (unlike the mixed {property}/{propertyName} in US-037/US-038), so resolveGeotemporalKey only needs to read one chi URL param — no fallback logic required.
   - New optional-dep stores follow the established OSS setter pattern exactly: (1) add field to Handler struct with doc comment, (2) add Setter, (3) wire in main.go's NewFullRouter block after attachmentStore/timeseriesStore, (4) wire in contract_test.go newContractTestRouter, (5) boot init in main.go Phase 2 (2b/2c/2d numbering), (6) ServerDeps field with matching type. Missing any of (3)-(5) breaks the contract test with "orphaned spec path" (if the route is registered but not the store) or a compile error.
   - ServerDeps field alignment: when adding a second store field, gofmt may re-align all adjacent struct field columns; use the replacer-pair that includes both lines if the gofmt re-flow matters
+---
+
+## 2026-04-11 - US-040: CipherTextProperty decrypt endpoint
+- Shipped 1 Foundry endpoint on pkg/oss.Handler backed by a new pkg/cipher package:
+  - GET /api/v2/ontologies/{o}/objects/{type}/{pk}/ciphertexts/{property}/decrypt → DecryptionResult {plaintext}
+- New pkg/cipher package defines a Decryptor interface (Encrypt/Decrypt) with a default AESGCMDecryptor using envelope encryption. Wire format is "v1:<base64url(nonce || aes-gcm(plaintext))>" — every call uses a fresh random nonce, so identical plaintexts produce distinct ciphertexts. The key is a 32-byte master key supplied via WEAVE_CIPHER_KEY env var; tampered/wrong-version/short blobs return ErrInvalidCiphertext.
+- oss.Handler gains cipherDecryptor field + SetCipherDecryptor setter + DecryptCipherTextProperty handler. Handler loads the object via svc.GetObject (404 ObjectNotFound on miss), reads the string value under the {property} path segment (404 PropertyNotFound on miss, 400 InvalidCipherTextProperty if non-string), and delegates to the configured Decryptor. ErrInvalidCiphertext → 400 InvalidCiphertext; nil decryptor → 500 CipherDecryptorNotConfigured.
+- Wired ServerDeps.CipherDecryptor (type cipher.Decryptor), boot init reads WEAVE_CIPHER_KEY (optional — missing key leaves decrypt endpoint in degraded mode). contract_test.go newContractTestRouter injects a deterministic test key so the new route resolves.
+- OpenAPI: new DecryptionResult schema + /ciphertexts/{property}/decrypt path entry under CipherTextProperty tag. cmd/server/openapi_spec.yaml → cp → api/openapi.yaml for byte-identical contract check.
+- TDD red→green: pkg/cipher/decryptor_test.go (6 tests: round-trip, nonce-distinctness, bad version, short blob, tampered, short key rejection) + pkg/oss/handlers_cipher_test.go (5 tests: success, object-not-found, property-not-found, not-configured, invalid-ciphertext). All tests failed on compile before the implementation was written.
+- Files changed:
+  - pkg/cipher/decryptor.go — NEW: Decryptor interface + AESGCMDecryptor (Encrypt/Decrypt) + ErrInvalidCiphertext
+  - pkg/cipher/decryptor_test.go — NEW: 6 TDD tests
+  - pkg/oss/handlers_cipher.go — NEW: SetCipherDecryptor + DecryptCipherTextProperty + decryptionResult wire type
+  - pkg/oss/handlers_cipher_test.go — NEW: 5 TDD tests
+  - pkg/oss/handlers.go — cipherDecryptor field, route registration, cipher import
+  - cmd/server/main.go — ServerDeps.CipherDecryptor, WEAVE_CIPHER_KEY boot init (Phase 2e), NewFullRouter setter call, cipher import
+  - cmd/server/contract_test.go — newContractTestRouter injects test decryptor + mustContractCipherDecryptor helper + cipher import
+  - cmd/server/openapi_spec.yaml — DecryptionResult schema + decrypt path entry (CipherTextProperty tag)
+  - api/openapi.yaml — byte-identical mirror
+  - prd.json — US-040 passes:true + notes
+  - progress.txt — this entry
+- Tests: `go test ./pkg/cipher/...` 6/6 green; `go test ./pkg/oss -run TestDecryptCipher` 5/5 green; `go test ./...` full suite green (31 packages, oss 48s + chinook 229s + northwind 146s + e2e 13s).
+- **Learnings for future iterations:**
+  - When a new endpoint needs a swappable strategy (KMS-backed decryptor, LLM provider, auth backend), ship the interface + default impl in a dedicated pkg/<name> package rather than hard-coding the algo inside the handler. Makes it trivial to drop in a KMS client later without touching oss.Handler.
+  - envelope encryption for AES-GCM: always store (nonce || sealed) as a single blob with a version prefix like "v1:" — future key rotations become `if strings.HasPrefix(ct, "v2:")` branches without breaking old ciphertexts
+  - crypto/cipher package in the Go stdlib shadows the local package name, so handlers that need both must alias — here we just imported only the local pkg/cipher because the handler delegates AEAD ops to the Decryptor interface
+  - Optional-dep boot pattern when the dependency needs config: guard the construction with `if key := os.Getenv(...); key != "" { ... }`. Without the env var the dep is nil → XxxNotConfigured at the handler, consistent with the established pattern for AggEngine/AttachmentStore/TimeSeries/Geotemporal
+  - For contract_test.go wiring: when the new dep needs config (like a cipher key), add a mustContract<Name>(t) helper instead of inlining the constructor call, so the t.Fatalf path is tidy and other tests can reuse it
+  - pkg/cipher/decryptor_test.go uses package cipher_test (external test package) because the test doesn't need to reach into unexported fields — the Decryptor interface is fully exercised through the public API
+  - The Foundry DecryptionResult wire shape is just `{plaintext: string}` — no metadata fields, no key version (the server owns that). Keep the wire type minimal so future KMS backends can return plaintext without having to fabricate keyMetadata the SDK never uses
 ---
 

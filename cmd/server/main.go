@@ -21,6 +21,7 @@ import (
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
@@ -55,6 +56,7 @@ type ServerDeps struct {
 	AttachmentStore  attachment.BlobStore
 	TimeSeriesStore  timeseries.Store
 	GeotemporalStore geotemporal.Store
+	CipherDecryptor  cipher.Decryptor
 	CORSOrigins      []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -201,6 +203,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			if deps.GeotemporalStore != nil {
 				ossHandler.SetGeotemporalStore(deps.GeotemporalStore)
+			}
+			if deps.CipherDecryptor != nil {
+				ossHandler.SetCipherDecryptor(deps.CipherDecryptor)
 			}
 			ossHandler.RegisterRoutes(api)
 		}
@@ -410,6 +415,20 @@ func main() {
 	// 2d. Geotemporal store. In-memory only for now — PostGIS/JSONB backend
 	// is deferred per the Phase 4 open question in the PRD.
 	deps.GeotemporalStore = geotemporal.NewMemoryStore()
+
+	// 2e. CipherTextProperty decryptor. The WEAVE_CIPHER_KEY env var carries
+	// the 32-byte master key; when unset, the decrypt endpoint returns
+	// CipherDecryptorNotConfigured (single-machine degraded mode). Swapping
+	// in a KMS-backed Decryptor is a matter of replacing this assignment.
+	if key := os.Getenv("WEAVE_CIPHER_KEY"); key != "" {
+		dec, err := cipher.NewAESGCMDecryptor(key)
+		if err != nil {
+			log.Printf("[CIPHER] WARNING: WEAVE_CIPHER_KEY invalid: %v — decrypt endpoint disabled", err)
+		} else {
+			deps.CipherDecryptor = dec
+			log.Printf("[CIPHER] AES-256-GCM decryptor enabled")
+		}
+	}
 
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType

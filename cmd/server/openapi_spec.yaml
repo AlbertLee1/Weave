@@ -1145,6 +1145,16 @@ components:
               items:
                 type: number
               description: "[longitude, latitude]"
+    DecryptionResult:
+      type: object
+      description: |
+        Foundry OSv2 DecryptionResult wire shape returned by the
+        CipherTextProperty decrypt endpoint.
+      required: [plaintext]
+      properties:
+        plaintext:
+          type: string
+          description: Decrypted plaintext of the addressed ciphertext property.
 security:
   - bearerAuth: []
 paths:
@@ -3290,6 +3300,47 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/GeotemporalSeriesValue"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/ciphertexts/{property}/decrypt:
+    get:
+      operationId: decryptCipherTextProperty
+      summary: Decrypt a CipherTextProperty
+      description: |
+        Reads the ciphertext stored under the addressed object's property and
+        returns the plaintext via the server-configured Decryptor. The default
+        single-machine build ships an envelope-encryption AES-256-GCM
+        decryptor (wire format `v1:<base64url(nonce||sealed)>`); a
+        KMS-backed Decryptor can be wired in place without changing the API.
+      tags: [CipherTextProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Decryption result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecryptionResult"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
