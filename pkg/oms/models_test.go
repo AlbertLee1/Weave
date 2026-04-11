@@ -5,6 +5,36 @@ import (
 	"testing"
 )
 
+func TestObjectHistory_SourceField_JSON(t *testing.T) {
+	h := ObjectHistory{
+		ID:            "id-1",
+		ObjectTypeRID: "ri.ontology.main.object-type.employee",
+		PrimaryKey:    "emp-1",
+		Version:       1,
+		EditType:      "MODIFY",
+		Source:        "ingest",
+	}
+	data, err := json.Marshal(h)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got, ok := m["source"]; !ok || got != "ingest" {
+		t.Errorf("expected source=ingest, got %v (ok=%v)", got, ok)
+	}
+
+	var roundTrip ObjectHistory
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if roundTrip.Source != "ingest" {
+		t.Errorf("round trip source mismatch: %q", roundTrip.Source)
+	}
+}
+
 func TestOntology_JSON(t *testing.T) {
 	o := Ontology{
 		RID:         "ri.ontology.main.ontology.abc",

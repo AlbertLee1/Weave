@@ -1478,19 +1478,24 @@ func (r *PGRepository) InsertActionLog(ctx context.Context, al *ActionLog) error
 // id and recorded_at timestamps onto h. nil PrevState/NewState are stored as
 // SQL NULL so DELETE rows do not carry stale state.
 func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory) error {
+	source := h.Source
+	if source == "" {
+		source = EditSourceUser
+	}
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO object_history
 		   (object_type_rid, primary_key, version, prev_state, new_state,
-		    edit_type, action_log_rid, user_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		    edit_type, source, action_log_rid, user_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, recorded_at`,
 		h.ObjectTypeRID, h.PrimaryKey, h.Version,
 		nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
-		h.EditType, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID)).
+		h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID)).
 		Scan(&h.ID, &h.RecordedAt)
 	if err != nil {
 		return err
 	}
+	h.Source = source
 	return nil
 }
 
@@ -1503,6 +1508,7 @@ func (r *PGRepository) ListObjectHistory(ctx context.Context, objectTypeRID, pri
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, object_type_rid, primary_key, version,
 		        prev_state, new_state, edit_type,
+		        COALESCE(source, 'user'),
 		        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
 		        recorded_at
 		 FROM object_history
@@ -1520,7 +1526,7 @@ func (r *PGRepository) ListObjectHistory(ctx context.Context, objectTypeRID, pri
 		var h ObjectHistory
 		var prev, next []byte
 		if err := rows.Scan(&h.ID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
-			&prev, &next, &h.EditType,
+			&prev, &next, &h.EditType, &h.Source,
 			&h.ActionLogRID, &h.UserID, &h.RecordedAt); err != nil {
 			return nil, err
 		}
