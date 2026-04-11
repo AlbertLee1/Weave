@@ -154,6 +154,9 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 // GetFullMetadata handles GET /api/v2/ontologies/{ontologyApiName}/fullMetadata.
 // It returns the complete ontology metadata in a single response.
 func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
+	if !requirePreview(w, r) {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 
 	ontology, err := h.repo.GetOntology(r.Context(), ontologyRID)
@@ -223,13 +226,15 @@ func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetActionType handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}.
+// The {actionTypeRid} path param accepts either an apiName or a full RID.
 func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
-	actionRID := chi.URLParam(r, "actionTypeRid")
-	at, err := h.repo.GetActionType(r.Context(), actionRID)
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	actionIdentifier := chi.URLParam(r, "actionTypeRid")
+	at, err := h.repo.GetActionTypeByAPIName(r.Context(), ontologyRID, actionIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ActionTypeNotFound", map[string]string{
-				"actionTypeRid": actionRID,
+				"actionTypeRid": actionIdentifier,
 			}))
 			return
 		}

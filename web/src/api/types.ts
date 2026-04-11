@@ -15,7 +15,7 @@ export interface ObjectType {
   description?: string;
   primaryKey: string;
   titleProperty?: string;
-  status: 'PROMOTED' | 'ACTIVE' | 'EXPERIMENTAL' | 'DEPRECATED' | 'EXAMPLE';
+  status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   icon?: string;
   color?: string;
@@ -53,13 +53,20 @@ export interface LinkType {
   required: boolean;
 }
 
+// ActionParameterV2 — Foundry OSv2 parameter definition with nested dataType.
+export interface ActionParameterV2 {
+  dataType: DataType;
+  required: boolean;
+  description?: string;
+}
+
 export interface ActionType {
   rid: string;
   apiName: string;
   displayName: string;
   description?: string;
   status: string;
-  parameters: unknown;
+  parameters: Record<string, ActionParameterV2>;
   rules?: unknown;
   submissionCriteria?: unknown;
   sideEffects?: unknown;
@@ -132,20 +139,52 @@ export interface WhereClause {
   value: unknown;
 }
 
+// Foundry OSv2 action apply options (mode + returnEdits).
+export interface ActionApplyOptions {
+  mode?: 'VALIDATE_ONLY' | 'VALIDATE_AND_EXECUTE';
+  returnEdits?: 'ALL' | 'ALL_V2_WITH_DELETIONS' | 'NONE';
+}
+
+// ActionApplyRequest is the Foundry OSv2 body shape for
+// POST /api/v2/ontologies/{ontology}/actions/{action}/apply — the action
+// API name lives in the URL, not the body, so this interface carries
+// only the parameter payload.
 export interface ActionApplyRequest {
-  actionType: string;
   parameters: Record<string, unknown>;
+  options?: ActionApplyOptions;
 }
 
+// ActionBatchApplyRequest is the body shape for applyBatch.
+export interface ActionBatchApplyRequest {
+  requests: Array<{ parameters: Record<string, unknown> }>;
+  options?: { returnEdits?: 'ALL' | 'NONE' };
+}
+
+// BatchApplyActionResponse — Foundry OSv2 response envelope for batch apply.
+export interface BatchApplyActionResponse {
+  edits?: ActionResults;
+}
+
+// CountObjectsResponse — response for object count endpoint.
+export interface CountObjectsResponse {
+  count: number;
+}
+
+// SyncApplyActionResponseV2 — Foundry OSv2 response envelope for single apply.
 export interface ActionApplyResponse {
-  edits?: ActionEdit[];
+  operationId?: string;
+  validation?: { result: string };
+  edits?: ActionResults;
 }
 
-export interface ActionEdit {
-  type: 'addObject' | 'modifyObject' | 'deleteObject';
-  objectType: string;
-  primaryKey: string | number;
-  properties?: Record<string, unknown>;
+// ActionResults — Foundry OSv2 edit summary (counts, not individual edits).
+export interface ActionResults {
+  type: 'edits';
+  addedObjectCount: number;
+  modifiedObjectCount: number;
+  deletedObjectCount: number;
+  addedLinksCount: number;
+  deletedLinksCount: number;
 }
 
 export interface ApiError {
@@ -237,6 +276,7 @@ export interface QueryType {
 
 export type ObjectSetDefinition =
   | BaseObjectSet
+  | StaticObjectSet
   | FilterObjectSet
   | UnionObjectSet
   | IntersectObjectSet
@@ -244,7 +284,12 @@ export type ObjectSetDefinition =
   | SearchAroundObjectSet
   | ReferenceObjectSet
   | WithPropertiesObjectSet
-  | NearestNeighborsObjectSet;
+  | NearestNeighborsObjectSet
+  | AsTypeObjectSet
+  | AsBaseObjectTypesObjectSet
+  | InterfaceBaseObjectSet
+  | InterfaceLinkSearchAroundObjectSet
+  | MethodInputObjectSet;
 
 export interface BaseObjectSet {
   type: 'base';
@@ -302,6 +347,39 @@ export interface NearestNeighborsObjectSet {
   };
 }
 
+export interface StaticObjectSet {
+  type: 'static';
+  objectType: string;
+  primaryKeys: string[];
+}
+
+export interface AsTypeObjectSet {
+  type: 'asType';
+  objectType: string;
+  objectSet: ObjectSetDefinition;
+}
+
+export interface AsBaseObjectTypesObjectSet {
+  type: 'asBaseObjectTypes';
+  objectSet: ObjectSetDefinition;
+}
+
+export interface InterfaceBaseObjectSet {
+  type: 'interfaceBase';
+  interfaceType: string;
+}
+
+export interface InterfaceLinkSearchAroundObjectSet {
+  type: 'interfaceLinkSearchAround';
+  objectSet: ObjectSetDefinition;
+  interfaceLink: string;
+}
+
+export interface MethodInputObjectSet {
+  type: 'methodInput';
+  input: string;
+}
+
 export interface OrderByField {
   field: string;
   direction: 'asc' | 'desc';
@@ -313,7 +391,7 @@ export interface OrderBy {
 
 export interface LoadObjectSetRequest {
   objectSet: ObjectSetDefinition;
-  select?: string[];
+  select: string[];
   orderBy?: OrderBy;
   pageSize?: number;
   pageToken?: string;

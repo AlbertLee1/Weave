@@ -139,7 +139,7 @@ func (r *PGRepository) GetObjectTypeByAPIName(ctx context.Context, ontologyRID, 
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid FROM object_types
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND api_name = $2`,
+		 AND (rid = $2 OR api_name = $2)`,
 		ontologyRID, apiName).Scan(&rid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -500,6 +500,22 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 	return at, nil
 }
 
+func (r *PGRepository) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*ActionType, error) {
+	var rid string
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid FROM action_types
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND (rid = $2 OR api_name = $2)`,
+		ontologyRID, apiNameOrRID).Scan(&rid)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return r.GetActionType(ctx, rid)
+}
+
 func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) ([]ActionType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
@@ -561,14 +577,18 @@ func (r *PGRepository) CreateInterface(ctx context.Context, iface *Interface) er
 	if len(sharedProps) == 0 {
 		sharedProps = json.RawMessage(`[]`)
 	}
+	outgoingLT := iface.OutgoingLinkTypes
+	if len(outgoingLT) == 0 {
+		outgoingLT = json.RawMessage(`[]`)
+	}
 	var extendsRID *string
 	if iface.ExtendsRID != "" {
 		extendsRID = &iface.ExtendsRID
 	}
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO interfaces (rid, ontology_rid, api_name, display_name, extends_rid, shared_properties)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		iface.RID, iface.OntologyRID, iface.APIName, iface.DisplayName, extendsRID, sharedProps)
+		`INSERT INTO interfaces (rid, ontology_rid, api_name, display_name, extends_rid, shared_properties, outgoing_link_types)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		iface.RID, iface.OntologyRID, iface.APIName, iface.DisplayName, extendsRID, sharedProps, outgoingLT)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -579,10 +599,10 @@ func (r *PGRepository) GetInterface(ctx context.Context, rid string) (*Interface
 	i := &Interface{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(extends_rid, ''),
-		 COALESCE(shared_properties, '[]'), created_at
+		 COALESCE(shared_properties, '[]'), COALESCE(outgoing_link_types, '[]'), created_at
 		 FROM interfaces WHERE rid = $1`, rid).
 		Scan(&i.RID, &i.OntologyRID, &i.APIName, &i.DisplayName,
-			&i.ExtendsRID, &i.SharedProperties, &i.CreatedAt)
+			&i.ExtendsRID, &i.SharedProperties, &i.OutgoingLinkTypes, &i.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -596,12 +616,12 @@ func (r *PGRepository) GetInterfaceByAPIName(ctx context.Context, ontologyRID, a
 	i := &Interface{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(extends_rid, ''),
-		 COALESCE(shared_properties, '[]'), created_at
+		 COALESCE(shared_properties, '[]'), COALESCE(outgoing_link_types, '[]'), created_at
 		 FROM interfaces
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND api_name = $2`, ontologyRID, apiName).
+		 AND (rid = $2 OR api_name = $2)`, ontologyRID, apiName).
 		Scan(&i.RID, &i.OntologyRID, &i.APIName, &i.DisplayName,
-			&i.ExtendsRID, &i.SharedProperties, &i.CreatedAt)
+			&i.ExtendsRID, &i.SharedProperties, &i.OutgoingLinkTypes, &i.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -614,7 +634,7 @@ func (r *PGRepository) GetInterfaceByAPIName(ctx context.Context, ontologyRID, a
 func (r *PGRepository) ListInterfaces(ctx context.Context, ontologyRID string) ([]Interface, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(extends_rid, ''),
-		 COALESCE(shared_properties, '[]'), created_at
+		 COALESCE(shared_properties, '[]'), COALESCE(outgoing_link_types, '[]'), created_at
 		 FROM interfaces
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -627,7 +647,7 @@ func (r *PGRepository) ListInterfaces(ctx context.Context, ontologyRID string) (
 	for rows.Next() {
 		var i Interface
 		if err := rows.Scan(&i.RID, &i.OntologyRID, &i.APIName, &i.DisplayName,
-			&i.ExtendsRID, &i.SharedProperties, &i.CreatedAt); err != nil {
+			&i.ExtendsRID, &i.SharedProperties, &i.OutgoingLinkTypes, &i.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, i)
@@ -644,10 +664,14 @@ func (r *PGRepository) UpdateInterface(ctx context.Context, iface *Interface) er
 	if len(sharedProps) == 0 {
 		sharedProps = json.RawMessage(`[]`)
 	}
+	outgoingLT := iface.OutgoingLinkTypes
+	if len(outgoingLT) == 0 {
+		outgoingLT = json.RawMessage(`[]`)
+	}
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE interfaces SET display_name=$1, extends_rid=$2, shared_properties=$3
-		 WHERE rid=$4`,
-		iface.DisplayName, extendsRID, sharedProps, iface.RID)
+		`UPDATE interfaces SET display_name=$1, extends_rid=$2, shared_properties=$3, outgoing_link_types=$4
+		 WHERE rid=$5`,
+		iface.DisplayName, extendsRID, sharedProps, outgoingLT, iface.RID)
 	if err != nil {
 		return err
 	}
@@ -1006,6 +1030,23 @@ func (r *PGRepository) GetValueType(ctx context.Context, rid string) (*ValueType
 	return vt, nil
 }
 
+func (r *PGRepository) GetValueTypeByAPIName(ctx context.Context, ridOrApiName string) (*ValueType, error) {
+	vt := &ValueType{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT rid, api_name, display_name, base_type, COALESCE(constraints, '{}'),
+		 COALESCE(version, 1), created_at
+		 FROM value_types WHERE (rid = $1 OR api_name = $1)`, ridOrApiName).
+		Scan(&vt.RID, &vt.APIName, &vt.DisplayName, &vt.BaseType,
+			&vt.Constraints, &vt.Version, &vt.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return vt, nil
+}
+
 func (r *PGRepository) ListValueTypes(ctx context.Context) ([]ValueType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, api_name, display_name, base_type, COALESCE(constraints, '{}'),
@@ -1308,7 +1349,7 @@ func (r *PGRepository) GetQueryTypeByAPIName(ctx context.Context, ontologyRID, a
 		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
 		 FROM query_types
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND api_name = $2`, ontologyRID, apiName).
+		 AND (rid = $2 OR api_name = $2)`, ontologyRID, apiName).
 		Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
 			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt)
 	if err != nil {

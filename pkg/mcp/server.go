@@ -36,6 +36,11 @@ type Server struct {
 	oss      oss.Service
 	oms      oms.Repository
 	executor *actions.Executor
+
+	// semanticSearcher backs the AI tools introduced in US-046. Optional —
+	// when nil, the semantic_search and ask_objectset tools return a clear
+	// "not configured" error rather than empty data.
+	semanticSearcher SemanticSearcher
 }
 
 // ServerOption configures a Server at construction time.
@@ -61,6 +66,11 @@ func NewServer(ossSvc oss.Service, omsRepo oms.Repository, executor *actions.Exe
 		opt(s)
 	}
 	registerWeaveTools(s)
+	// AI tools that don't depend on the SemanticSearcher (explain_object,
+	// draft_action) are always available; semantic_search and ask_objectset
+	// register too but return "not configured" until SetSemanticSearcher is
+	// called. Tool registration is idempotent.
+	registerAITools(s)
 	return s
 }
 

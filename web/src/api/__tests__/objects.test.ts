@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { listObjects, searchObjects, getObject, listLinkedObjects } from '../objects';
+import { listObjects, searchObjects, getObject, listLinkedObjects, countObjects, getLinkedObject } from '../objects';
 
 const server = setupServer();
 beforeAll(() => server.listen());
@@ -30,7 +30,7 @@ describe('objects API', () => {
     expect(result.data).toHaveLength(1);
   });
 
-  it('searchObjects() POSTs with where clause', async () => {
+  it('searchObjects() POSTs with where clause and select', async () => {
     const data = {
       data: [{ __rid: 'ri.1', __primaryKey: '1', __apiName: 'Employee' }],
     };
@@ -44,6 +44,7 @@ describe('objects API', () => {
             field: 'name',
             value: 'Alice',
           });
+          expect(body.select).toEqual(['name', 'employeeId']);
           return HttpResponse.json(data);
         },
       ),
@@ -53,6 +54,7 @@ describe('objects API', () => {
       ontologyApiName: 'test',
       objectType: 'Employee',
       where: { type: 'eq', field: 'name', value: 'Alice' },
+      select: ['name', 'employeeId'],
     });
     expect(result.data).toHaveLength(1);
   });
@@ -97,5 +99,36 @@ describe('objects API', () => {
       linkType: 'department',
     });
     expect(result.data).toHaveLength(1);
+  });
+
+  it('countObjects() POSTs and returns count', async () => {
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/objects/Employee/count',
+        () => HttpResponse.json({ count: 42 }),
+      ),
+    );
+
+    const result = await countObjects('test', 'Employee');
+    expect(result.count).toBe(42);
+  });
+
+  it('getLinkedObject() GETs specific linked object by PK', async () => {
+    const data = {
+      __rid: 'ri.3',
+      __primaryKey: 'DEPT-1',
+      __apiName: 'Department',
+      name: 'Engineering',
+    };
+    server.use(
+      http.get(
+        '/api/v2/ontologies/test/objects/Employee/42/links/department/DEPT-1',
+        () => HttpResponse.json(data),
+      ),
+    );
+
+    const result = await getLinkedObject('test', 'Employee', '42', 'department', 'DEPT-1');
+    expect(result.__primaryKey).toBe('DEPT-1');
+    expect(result.name).toBe('Engineering');
   });
 });

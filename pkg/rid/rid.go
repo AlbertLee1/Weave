@@ -85,6 +85,11 @@ func NewQueryTypeRID() string {
 	return New("ontology", "main", "query-type")
 }
 
+// IsRID reports whether s looks like a Resource Identifier (starts with "ri.").
+func IsRID(s string) bool {
+	return strings.HasPrefix(s, "ri.")
+}
+
 // Parse parses a RID string into its constituent parts.
 // Expected format: ri.{service}.{realm}.{resourceType}.{uuid}
 func Parse(rid string) (*RID, error) {

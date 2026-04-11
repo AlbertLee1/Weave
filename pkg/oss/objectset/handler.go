@@ -6,6 +6,7 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
+	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/index"
@@ -88,8 +89,20 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Foundry V2: select is REQUIRED
+	if len(req.Select) == 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("SelectRequired", map[string]string{
+			"reason": "LoadObjectSetRequestV2.select is required and must be a non-empty array of property apiNames",
+		}))
+		return
+	}
+
+	// Stamp the ontology scope on the context so the executor and downstream
+	// Bleve lookups use per-ontology index keys (US-044).
+	ctx := WithOntologyScope(r.Context(), chi.URLParam(r, "ontologyApiName"))
+
 	// Execute the ObjectSet to get PKs
-	result, err := h.executor.Execute(r.Context(), req.ObjectSet)
+	result, err := h.executor.Execute(ctx, req.ObjectSet)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()}))
 		return
@@ -139,7 +152,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		searchReq.Fields = fields
 		searchReq.Size = 1
 
-		res, err := h.indexMgr.Search(result.ObjectType, searchReq)
+		res, err := h.indexMgr.Search(scopedIndexKey(ctx, h.indexMgr, result.ObjectType), searchReq)
 		if err != nil || len(res.Hits) == 0 {
 			continue
 		}
@@ -197,14 +210,16 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := WithOntologyScope(r.Context(), chi.URLParam(r, "ontologyApiName"))
+
 	// Execute the ObjectSet to determine the object type and PKs.
-	result, err := h.executor.Execute(r.Context(), req.ObjectSet)
+	result, err := h.executor.Execute(ctx, req.ObjectSet)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
-	idx := h.indexMgr.GetIndex(result.ObjectType)
+	idx := h.indexMgr.GetIndex(scopedIndexKey(ctx, h.indexMgr, result.ObjectType))
 	if idx == nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("IndexNotFound", map[string]string{"objectType": result.ObjectType}))
 		return

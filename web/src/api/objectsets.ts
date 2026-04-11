@@ -54,3 +54,31 @@ export function createTemporaryObjectSet(
     { objectSet },
   );
 }
+
+export function getObjectSet(
+  ontologyApiName: string,
+  objectSetRid: string,
+): Promise<ObjectSetDefinition> {
+  return request<ObjectSetDefinition>(
+    'GET',
+    `/api/v2/ontologies/${ontologyApiName}/objectSets/${objectSetRid}`,
+  );
+}
+
+export function loadLinks(
+  ontologyApiName: string,
+  objectSet: ObjectSetDefinition,
+  linkType: string,
+  select: string[],
+  pageSize?: number,
+  pageToken?: string,
+): Promise<LoadObjectSetResponse> {
+  const body: Record<string, unknown> = { objectSet, linkType, select };
+  if (pageSize !== undefined) body.pageSize = pageSize;
+  if (pageToken) body.pageToken = pageToken;
+  return request<LoadObjectSetResponse>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/objectSets/loadLinks`,
+    body,
+  );
+}

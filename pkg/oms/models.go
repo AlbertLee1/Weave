@@ -103,6 +103,55 @@ func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
+// ToFullMetadataJSON returns the V2 wire format JSON for ObjectType
+// with all metadata fields included (properties with full detail, etc.).
+func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
+	wire := map[string]interface{}{
+		"apiName":     ot.APIName,
+		"displayName": ot.DisplayName,
+		"status":      ot.Status,
+		"primaryKey":  ot.PrimaryKey,
+		"rid":         ot.RID,
+		"visibility":  ot.Visibility,
+	}
+
+	if ot.PluralDisplayName != "" {
+		wire["pluralDisplayName"] = ot.PluralDisplayName
+	}
+	if ot.Description != "" {
+		wire["description"] = ot.Description
+	}
+	if ot.TitleProperty != "" {
+		wire["titleProperty"] = ot.TitleProperty
+	}
+	if ot.IconName != "" {
+		wire["icon"] = ot.IconName
+	}
+	if ot.Color != "" {
+		wire["color"] = ot.Color
+	}
+
+	if len(ot.Properties) > 0 {
+		props := make(map[string]interface{})
+		for _, p := range ot.Properties {
+			entry := map[string]interface{}{
+				"dataType": p.DataTypeJSON(),
+				"rid":      p.RID,
+			}
+			if p.DisplayName != "" {
+				entry["displayName"] = p.DisplayName
+			}
+			if p.Description != "" {
+				entry["description"] = p.Description
+			}
+			props[p.APIName] = entry
+		}
+		wire["properties"] = props
+	}
+
+	return json.Marshal(wire)
+}
+
 // Property defines a property on an ObjectType.
 type Property struct {
 	RID              string          `json:"rid"`
@@ -192,6 +241,42 @@ type ActionType struct {
 	CreatedAt          time.Time       `json:"-"`
 }
 
+// actionParamDef is the internal (stored) array-element format.
+type actionParamDef struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	Description string `json:"description,omitempty"`
+}
+
+// parametersToV2 converts the stored array-of-objects parameters format
+// into the Foundry OSv2 Record<ParameterId, ActionParameterV2> wire format.
+// Input:  [{"id":"name","type":"string","required":true,"description":"..."}]
+// Output: {"name":{"dataType":{"type":"string"},"required":true,"description":"..."}}
+func parametersToV2(raw json.RawMessage) map[string]interface{} {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
+		return map[string]interface{}{}
+	}
+
+	var defs []actionParamDef
+	if err := json.Unmarshal(raw, &defs); err != nil {
+		return map[string]interface{}{}
+	}
+
+	result := make(map[string]interface{}, len(defs))
+	for _, d := range defs {
+		entry := map[string]interface{}{
+			"dataType": map[string]interface{}{"type": d.Type},
+			"required": d.Required,
+		}
+		if d.Description != "" {
+			entry["description"] = d.Description
+		}
+		result[d.ID] = entry
+	}
+	return result
+}
+
 // ToWireJSON returns the V2 wire format JSON for ActionType.
 func (at *ActionType) ToWireJSON() ([]byte, error) {
 	wire := map[string]interface{}{
@@ -199,7 +284,7 @@ func (at *ActionType) ToWireJSON() ([]byte, error) {
 		"displayName": at.DisplayName,
 		"rid":         at.RID,
 		"status":      at.Status,
-		"parameters":  json.RawMessage(at.Parameters),
+		"parameters":  parametersToV2(at.Parameters),
 	}
 	if at.Description != "" {
 		wire["description"] = at.Description
@@ -207,15 +292,56 @@ func (at *ActionType) ToWireJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
+// ToFullMetadataJSON returns the V2 wire format JSON for ActionType
+// with all metadata fields included (rules, submissionCriteria, sideEffects, etc.).
+func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
+	wire := map[string]interface{}{
+		"apiName":     at.APIName,
+		"displayName": at.DisplayName,
+		"rid":         at.RID,
+		"status":      at.Status,
+		"parameters":  parametersToV2(at.Parameters),
+	}
+	if at.Description != "" {
+		wire["description"] = at.Description
+	}
+	if len(at.Rules) > 0 && string(at.Rules) != "null" {
+		wire["rules"] = json.RawMessage(at.Rules)
+	}
+	if len(at.SubmissionCriteria) > 0 && string(at.SubmissionCriteria) != "null" {
+		wire["submissionCriteria"] = json.RawMessage(at.SubmissionCriteria)
+	}
+	if len(at.SideEffects) > 0 && string(at.SideEffects) != "null" {
+		wire["sideEffects"] = json.RawMessage(at.SideEffects)
+	}
+	if at.FunctionRID != "" {
+		wire["functionRid"] = at.FunctionRID
+	}
+	wire["isFunctionBacked"] = at.IsFunctionBacked
+	return json.Marshal(wire)
+}
+
+// InterfaceLinkType defines an outgoing link type declared on an interface.
+type InterfaceLinkType struct {
+	APIName                 string `json:"apiName"`
+	DisplayName             string `json:"displayName"`
+	LinkedEntityTypeAPIName string `json:"linkedEntityTypeApiName"`
+	LinkedEntityTypeRID     string `json:"linkedEntityTypeRid,omitempty"`
+	Cardinality             string `json:"cardinality"`
+	Required                bool   `json:"required"`
+	Description             string `json:"description,omitempty"`
+}
+
 // Interface defines a shared contract for ObjectTypes.
 type Interface struct {
-	RID              string          `json:"rid"`
-	OntologyRID      string          `json:"-"`
-	APIName          string          `json:"apiName"`
-	DisplayName      string          `json:"displayName"`
-	ExtendsRID       string          `json:"extendsRid,omitempty"`
-	SharedProperties json.RawMessage `json:"sharedProperties,omitempty"`
-	CreatedAt        time.Time       `json:"-"`
+	RID               string          `json:"rid"`
+	OntologyRID       string          `json:"-"`
+	APIName           string          `json:"apiName"`
+	DisplayName       string          `json:"displayName"`
+	ExtendsRID        string          `json:"extendsRid,omitempty"`
+	SharedProperties  json.RawMessage `json:"sharedProperties,omitempty"`
+	OutgoingLinkTypes json.RawMessage `json:"outgoingLinkTypes,omitempty"`
+	CreatedAt         time.Time       `json:"-"`
 }
 
 // ObjectTypeInterface represents an object type implementing an interface.

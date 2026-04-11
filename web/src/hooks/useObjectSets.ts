@@ -19,7 +19,7 @@ import {
 export interface UseLoadObjectSetParams {
   ontologyApiName: string;
   objectSet: ObjectSetDefinition | null;
-  select?: string[];
+  select: string[];
   pageSize?: number;
   pageToken?: string;
   orderBy?: OrderBy;
@@ -40,8 +40,10 @@ export function useLoadObjectSet(params: UseLoadObjectSetParams) {
       params.orderBy,
     ],
     queryFn: () => {
-      const body: Parameters<typeof loadObjectSet>[1] = { objectSet: objectSet! };
-      if (params.select !== undefined) body.select = params.select;
+      const body: Parameters<typeof loadObjectSet>[1] = {
+        objectSet: objectSet!,
+        select: params.select,
+      };
       if (params.pageSize !== undefined) body.pageSize = params.pageSize;
       if (params.pageToken !== undefined) body.pageToken = params.pageToken;
       if (params.orderBy !== undefined) body.orderBy = params.orderBy;

@@ -128,6 +128,7 @@ func objectSearch(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	common := registerCommon(fs)
 	whereJSON := fs.String("where", "", "JSON-encoded where clause (required)")
+	selectCSV := fs.String("select", "", "Comma-separated property apiNames to return")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -143,11 +144,15 @@ func objectSearch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "weave: --where is not valid JSON: %v\n", err)
 		return 2
 	}
+	var selectProps []string
+	if *selectCSV != "" {
+		selectProps = strings.Split(*selectCSV, ",")
+	}
 	c, code := newCLIClient(stderr)
 	if c == nil {
 		return code
 	}
-	page, err := c.SearchObjects(context.Background(), common.ontology, common.objType, where)
+	page, err := c.SearchObjects(context.Background(), common.ontology, common.objType, where, selectProps)
 	if err != nil {
 		fmt.Fprintf(stderr, "search objects: %v\n", err)
 		return 1

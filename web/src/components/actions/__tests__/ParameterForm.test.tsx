@@ -3,9 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ParameterForm } from '../ParameterForm';
 
 const mockParameters = {
-  name: { type: 'string', description: 'Employee name' },
-  age: { type: 'integer', description: 'Employee age' },
-  active: { type: 'boolean', description: 'Is active' },
+  name: { dataType: { type: 'string' }, required: true, description: 'Employee name' },
+  age: { dataType: { type: 'integer' }, required: false, description: 'Employee age' },
+  active: { dataType: { type: 'boolean' }, required: false, description: 'Is active' },
 };
 
 describe('ParameterForm', () => {

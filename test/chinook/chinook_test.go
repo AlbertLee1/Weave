@@ -353,6 +353,18 @@ func (r *inMemoryOmsRepo) GetActionType(_ context.Context, rid string) (*oms.Act
 	return &cp, nil
 }
 
+func (r *inMemoryOmsRepo) GetActionTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, at := range r.actionTypes {
+		if (at.OntologyRID == ontologyRID) && (at.RID == apiNameOrRID || at.APIName == apiNameOrRID) {
+			cp := *at
+			return &cp, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 func (r *inMemoryOmsRepo) ListActionTypes(_ context.Context, ontologyRID string) ([]oms.ActionType, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -520,6 +532,9 @@ func (r *inMemoryOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ strin
 // ValueType stubs
 func (r *inMemoryOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (r *inMemoryOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) GetValueTypeByAPIName(_ context.Context, _ string) (*oms.ValueType, error) {
 	return nil, oms.ErrNotFound
 }
 func (r *inMemoryOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
@@ -703,8 +718,8 @@ func setupEnv(t *testing.T) *chinookEnv {
 
 		// Actions
 		actionHandler := actions.NewHandler(actionExecutor)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 
 		// Aggregation (inline handler)
 		r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
@@ -1497,6 +1512,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "unitPrice",
 				"value": 0.99,
 			},
+			"select":   []string{"trackId", "unitPrice"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1521,6 +1537,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "unitPrice",
 				"value": 0.99,
 			},
+			"select":   []string{"trackId", "unitPrice"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1549,6 +1566,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "country",
 				"value": "Brazil",
 			},
+			"select": []string{"customerId", "country"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/customer/search", env.ontologyRID), body)
@@ -1571,6 +1589,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "name",
 				"value": "B",
 			},
+			"select":   []string{"trackId", "name"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1608,6 +1627,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 					{"type": "gt", "field": "unitPrice", "value": 0.99},
 				},
 			},
+			"select":   []string{"trackId", "genreId", "unitPrice"},
 			"pageSize": 1000,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1632,6 +1652,7 @@ func TestChinook_Phase5_Search(t *testing.T) {
 				"field": "company",
 				"value": true,
 			},
+			"select":   []string{"customerId", "company"},
 			"pageSize": 100,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -1852,6 +1873,7 @@ func TestChinook_Phase7_ObjectSet(t *testing.T) {
 				"type":       "base",
 				"objectType": "track",
 			},
+			"select": []string{"trackId", "name"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)
@@ -1881,6 +1903,7 @@ func TestChinook_Phase7_ObjectSet(t *testing.T) {
 					"value": 0.99,
 				},
 			},
+			"select": []string{"trackId", "unitPrice"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)
@@ -1906,6 +1929,7 @@ func TestChinook_Phase7_ObjectSet(t *testing.T) {
 				"type":       "base",
 				"objectType": "track",
 			},
+			"select":   []string{"trackId", "name"},
 			"pageSize": 5,
 		}
 		rr := doRequest(t, env, http.MethodPost,
@@ -2010,35 +2034,33 @@ func TestChinook_Phase8_Actions(t *testing.T) {
 
 	t.Run("ApplyCreateArtist_Success", func(t *testing.T) {
 		body := map[string]interface{}{
-			"actionType": "createArtist",
 			"parameters": map[string]interface{}{
 				"name": "Test Band",
 			},
 		}
 		rr := doRequest(t, env, http.MethodPost,
-			fmt.Sprintf("/api/v2/ontologies/%s/actions/apply", env.ontologyRID), body)
+			fmt.Sprintf("/api/v2/ontologies/%s/actions/createArtist/apply", env.ontologyRID), body)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 		}
 
-		var result actions.ApplyResult
+		var result actions.SyncApplyActionResponseV2
 		parseJSON(t, rr, &result)
 
-		if result.ActionRID == "" {
-			t.Error("expected non-empty actionRid in result")
+		if result.Edits == nil {
+			t.Error("expected edits in SyncApplyActionResponseV2")
 		}
-		if len(result.Edits) == 0 {
-			t.Error("expected at least 1 edit in result")
+		if result.Edits != nil && result.Edits.AddedObjectCount == 0 {
+			t.Error("expected addedObjectCount > 0 for createArtist")
 		}
 	})
 
 	t.Run("ApplyCreateArtist_MissingRequiredParam", func(t *testing.T) {
 		body := map[string]interface{}{
-			"actionType": "createArtist",
 			"parameters": map[string]interface{}{},
 		}
 		rr := doRequest(t, env, http.MethodPost,
-			fmt.Sprintf("/api/v2/ontologies/%s/actions/apply", env.ontologyRID), body)
+			fmt.Sprintf("/api/v2/ontologies/%s/actions/createArtist/apply", env.ontologyRID), body)
 		// Should fail validation
 		if rr.Code == http.StatusOK {
 			t.Error("expected error for missing required parameter, but got 200")
@@ -2047,11 +2069,10 @@ func TestChinook_Phase8_Actions(t *testing.T) {
 
 	t.Run("ApplyNonExistentAction", func(t *testing.T) {
 		body := map[string]interface{}{
-			"actionType": "nonExistentAction",
 			"parameters": map[string]interface{}{},
 		}
 		rr := doRequest(t, env, http.MethodPost,
-			fmt.Sprintf("/api/v2/ontologies/%s/actions/apply", env.ontologyRID), body)
+			fmt.Sprintf("/api/v2/ontologies/%s/actions/nonExistentAction/apply", env.ontologyRID), body)
 		// Should fail - action type not found
 		if rr.Code == http.StatusOK {
 			t.Error("expected error for non-existent action type, but got 200")

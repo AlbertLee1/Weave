@@ -15,18 +15,81 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 )
 
+// ApplyOptions controls single-action apply behavior (Foundry OSv2).
+type ApplyOptions struct {
+	Mode        string `json:"mode"`        // VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
+	ReturnEdits string `json:"returnEdits"` // ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
+}
+
+// BatchApplyOptions controls batch apply behavior (Foundry OSv2).
+type BatchApplyOptions struct {
+	ReturnEdits string `json:"returnEdits"` // ALL | NONE (default ALL)
+}
+
 // ApplyRequest is the request to apply an action.
 type ApplyRequest struct {
 	ActionType string                 `json:"actionType"` // API name
 	Parameters map[string]interface{} `json:"parameters"`
+	Options    *ApplyOptions          `json:"options,omitempty"`
 }
 
-// ApplyResult is the result of applying an action.
+// ApplyResult is the internal result of applying an action.
+// Not returned directly to clients — handlers transform this into
+// SyncApplyActionResponseV2 before serializing.
 type ApplyResult struct {
-	ActionRID string        `json:"actionRid"`
-	Edits     []funnel.Edit `json:"edits"`
-	BatchID   string        `json:"batchId"`
-	Offset    uint64        `json:"offset"`
+	ActionRID string        `json:"-"`
+	Edits     []funnel.Edit `json:"-"`
+	BatchID   string        `json:"-"`
+	Offset    uint64        `json:"-"`
+}
+
+// ActionResults is the Foundry OSv2 edit summary returned in response envelopes.
+type ActionResults struct {
+	Type                string `json:"type"`                // always "edits"
+	AddedObjectCount    int    `json:"addedObjectCount"`
+	ModifiedObjectCount int    `json:"modifiedObjectCount"`
+	DeletedObjectCount  int    `json:"deletedObjectCount"`
+	AddedLinksCount     int    `json:"addedLinksCount"`
+	DeletedLinksCount   int    `json:"deletedLinksCount"`
+}
+
+// SyncApplyActionResponseV2 is the Foundry OSv2 response envelope for single apply.
+type SyncApplyActionResponseV2 struct {
+	OperationID string            `json:"operationId,omitempty"`
+	Validation  *ValidationResult `json:"validation,omitempty"`
+	Edits       *ActionResults    `json:"edits,omitempty"`
+}
+
+// BatchApplyActionResponseV2 is the Foundry OSv2 response envelope for batch apply.
+type BatchApplyActionResponseV2 struct {
+	Edits *ActionResults `json:"edits,omitempty"`
+}
+
+// countEdits computes an ActionResults summary from a list of edits.
+func countEdits(edits []funnel.Edit) *ActionResults {
+	r := &ActionResults{Type: "edits"}
+	for _, e := range edits {
+		switch e.Type {
+		case funnel.EditTypeCreate:
+			r.AddedObjectCount++
+		case funnel.EditTypeModify:
+			r.ModifiedObjectCount++
+		case funnel.EditTypeDelete:
+			r.DeletedObjectCount++
+		}
+	}
+	return r
+}
+
+// ValidationResult is the response for VALIDATE_ONLY mode.
+type ValidationResult struct {
+	Result string `json:"result"` // VALID | INVALID
+	// SubmissionCriteria may carry per-criterion results in the future.
+}
+
+// ValidateOnlyResponse is the response envelope for VALIDATE_ONLY apply.
+type ValidateOnlyResponse struct {
+	Validation *ValidationResult `json:"validation"`
 }
 
 // Publisher is the minimal contract the Executor needs from the funnel
@@ -202,7 +265,11 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 // CommitBatch preserves request order when flattening edits from prepared
 // actions so cross-action MODIFY chains collapse in the caller's intended
 // order (later actions win).
-func (e *Executor) CommitBatch(ctx context.Context, prepared []*PreparedAction) (*BatchResult, error) {
+//
+// US-044: ontologyAPIName is propagated onto the EditBatch so the funnel
+// publisher can route the message onto a per-ontology NATS subject and the
+// consumer can apply edits to the per-ontology Bleve index.
+func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prepared []*PreparedAction) (*BatchResult, error) {
 	result := &BatchResult{
 		Mode:    "atomic",
 		Results: make([]*ApplyResult, 0, len(prepared)),
@@ -233,10 +300,11 @@ func (e *Executor) CommitBatch(ctx context.Context, prepared []*PreparedAction) 
 	}
 
 	batch := &funnel.EditBatch{
-		ID:        uuid.New().String(),
-		Edits:     collapsed,
-		UserID:    prepared[0].UserID,
-		Timestamp: time.Now(),
+		ID:              uuid.New().String(),
+		OntologyAPIName: ontologyAPIName,
+		Edits:           collapsed,
+		UserID:          prepared[0].UserID,
+		Timestamp:       time.Now(),
 	}
 
 	var offset uint64
@@ -306,7 +374,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		}, nil
 	}
 
-	br, err := e.CommitBatch(ctx, []*PreparedAction{prep})
+	br, err := e.CommitBatch(ctx, ontologyRID, []*PreparedAction{prep})
 	if err != nil {
 		// Unwrap a *BatchError so the legacy Apply caller sees a plain
 		// string-shaped error (preserves wire compatibility with callers
@@ -341,7 +409,7 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 		}
 		prepared = append(prepared, p)
 	}
-	return e.CommitBatch(ctx, prepared)
+	return e.CommitBatch(ctx, ontologyRID, prepared)
 }
 
 // ApplyBatchBestEffort prepares every request and commits the ones that
@@ -365,7 +433,7 @@ func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string,
 		prepared = append(prepared, p)
 	}
 
-	result, err := e.CommitBatch(ctx, prepared)
+	result, err := e.CommitBatch(ctx, ontologyRID, prepared)
 	if err != nil {
 		return nil, err
 	}

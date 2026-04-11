@@ -46,7 +46,6 @@ export function Sidebar() {
       label: 'Query Builder',
       icon: 'layers',
     },
-    { to: '/admin', label: 'Admin', icon: 'settings' },
   ];
 
   return (

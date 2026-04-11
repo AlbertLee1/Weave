@@ -94,6 +94,9 @@ func (s *stubRehydrateRepo) CreateActionType(context.Context, *oms.ActionType) e
 func (s *stubRehydrateRepo) GetActionType(context.Context, string) (*oms.ActionType, error) {
 	return nil, nil
 }
+func (s *stubRehydrateRepo) GetActionTypeByAPIName(context.Context, string, string) (*oms.ActionType, error) {
+	return nil, nil
+}
 func (s *stubRehydrateRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
 	return nil, nil
 }
@@ -162,6 +165,9 @@ func (s *stubRehydrateRepo) CreateValueType(context.Context, *oms.ValueType) err
 	return nil
 }
 func (s *stubRehydrateRepo) GetValueType(context.Context, string) (*oms.ValueType, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueType, error) {
 	return nil, nil
 }
 func (s *stubRehydrateRepo) ListValueTypes(context.Context) ([]oms.ValueType, error) {
@@ -296,16 +302,18 @@ func TestEnsureAllIndexes_CreatesMissingIndexes(t *testing.T) {
 		t.Fatalf("EnsureAllIndexes: %v", err)
 	}
 
-	// All three ObjectTypes should now have an index.
+	// All three ObjectTypes should now have a per-ontology scoped index
+	// (US-044): the rehydrator keys indexes as "{ontologyApiName}__{objectType}".
 	for _, name := range []string{"Employee", "Customer", "Order"} {
-		if idx := mgr.GetIndex(name); idx == nil {
-			t.Errorf("expected index %q to exist after EnsureAllIndexes", name)
+		key := index.ScopedKey("test", name)
+		if idx := mgr.GetIndex(key); idx == nil {
+			t.Errorf("expected index %q to exist after EnsureAllIndexes", key)
 		}
 	}
 
 	// Each empty index should have DocCount == 0 (verifies the shell is real,
 	// not a placeholder map entry).
-	count, err := mgr.DocCount("Employee")
+	count, err := mgr.DocCount(index.ScopedKey("test", "Employee"))
 	if err != nil {
 		t.Fatalf("DocCount: %v", err)
 	}
@@ -327,8 +335,8 @@ func TestEnsureAllIndexes_IdempotentOnExistingIndexes(t *testing.T) {
 		t.Fatalf("second EnsureAllIndexes: %v", err)
 	}
 
-	// Same indexes should still be reachable.
-	if mgr.GetIndex("Employee") == nil {
+	// Same indexes should still be reachable under the scoped key.
+	if mgr.GetIndex(index.ScopedKey("test", "Employee")) == nil {
 		t.Error("Employee index missing after second call")
 	}
 }

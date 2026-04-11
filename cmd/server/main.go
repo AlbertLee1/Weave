@@ -16,14 +16,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
-	"github.com/liyang/weave/pkg/ai"
-	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/mcp"
@@ -32,25 +32,36 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/sqlqueries"
+	"github.com/liyang/weave/pkg/timeseries"
+	"github.com/liyang/weave/pkg/transactions"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // ServerDeps holds all server dependencies.
 type ServerDeps struct {
-	OmsRepo        oms.Repository
-	UserRepo       auth.UserRepository
-	RoleResolver   *auth.RoleResolver
-	JWTSigner      *auth.JWTSigner
-	RefreshService *auth.RefreshService
-	IndexMgr       *index.Manager
-	LinkResolver   links.LinkResolver
-	OssSvc         oss.Service
-	AggEngine      *aggregation.Engine
-	ActionExecutor *actions.Executor
-	ObjSetStore    *objectset.Store
-	ObjSetExecutor *objectset.Executor
-	FunnelConsumer *funnel.Consumer
-
+	OmsRepo          oms.Repository
+	UserRepo         auth.UserRepository
+	APIKeyRepo       auth.APIKeyRepository
+	RoleResolver     *auth.RoleResolver
+	JWTSigner        *auth.JWTSigner
+	RefreshService   *auth.RefreshService
+	IndexMgr         *index.Manager
+	LinkResolver     links.LinkResolver
+	OssSvc           oss.Service
+	AggEngine        *aggregation.Engine
+	ActionExecutor   *actions.Executor
+	ObjSetStore      *objectset.Store
+	ObjSetExecutor   *objectset.Executor
+	FunnelConsumer   *funnel.Consumer
+	AttachmentStore  attachment.BlobStore
+	TimeSeriesStore  timeseries.Store
+	GeotemporalStore geotemporal.Store
+	CipherDecryptor  cipher.Decryptor
+	TransactionStore transactions.Store
+	SqlQueryEngine   sqlqueries.Engine
+	CORSOrigins      []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -108,6 +119,10 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(SecurityHeadersMiddleware())
+	if deps.CORSOrigins != nil && len(deps.CORSOrigins) > 0 {
+		r.Use(CORSMiddleware(deps.CORSOrigins))
+	}
 
 	// Health endpoints (public, no auth required)
 	// /health is the k8s liveness probe: always returns 200 {"status":"alive"}
@@ -124,6 +139,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents)
 	if deps.OssSvc != nil && deps.OmsRepo != nil {
 		mcpSrv := mcp.NewServer(deps.OssSvc, deps.OmsRepo, deps.ActionExecutor)
+		// US-046: wire the semantic searcher so weave_semantic_search and
+		// weave_ask_objectset can run nearestNeighbors queries via the
+		// ObjectSet executor. Optional — when nil the AI search tools
+		// return a clear "not configured" error.
+		if deps.ObjSetExecutor != nil {
+			mcpSrv.SetSemanticSearcher(newExecutorSemanticSearcher(deps.ObjSetExecutor))
+		}
 		r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
 	}
 
@@ -154,7 +176,26 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 
 	// Auth-protected API routes
 	r.Group(func(api chi.Router) {
-		api.Use(auth.Middleware(deps.JWTSigner))
+		// MiddlewareWithAPIKeys unifies JWT and wvk_ api-key bearer auth.
+		// When any of the api-key dependencies is nil (dev / minimal test
+		// harness) it degrades gracefully to JWT-only — byte-identical to
+		// the old auth.Middleware(signer) behaviour because Middleware is
+		// a thin wrapper over MiddlewareWithAPIKeys(signer, nil, nil, nil).
+		api.Use(auth.MiddlewareWithAPIKeys(
+			deps.JWTSigner,
+			deps.APIKeyRepo,
+			deps.UserRepo,
+			deps.RoleResolver,
+		))
+
+		// US-044: enforce per-ontology scope on every route that carries an
+		// {ontologyApiName} URL param. Dev mode injects an admin user so this
+		// middleware is a no-op for the existing dev surface; in jwt mode it
+		// rejects requests where the caller has no role for the target
+		// ontology. Routes without an {ontologyApiName} param (auth/me, sql
+		// queries, attachments) skip the check because there is nothing to
+		// scope to.
+		api.Use(auth.OntologyScopeMiddleware(auth.PermObjectRead))
 
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
@@ -162,62 +203,78 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// OMS routes
 		if deps.OmsRepo != nil {
 			omsHandler := oms.NewOMSHandler(deps.OmsRepo)
-			RegisterRoutes(api, omsHandler, ai.NewProviderFromEnv())
+			RegisterRoutes(api, omsHandler)
 		}
 
 		// OSS routes
 		if deps.OssSvc != nil {
 			ossHandler := oss.NewHandler(deps.OssSvc)
+			if deps.AggEngine != nil && deps.IndexMgr != nil {
+				ossHandler.SetAggregation(deps.AggEngine, deps.IndexMgr)
+			}
+			if deps.OmsRepo != nil {
+				ossHandler.SetOmsRepo(deps.OmsRepo)
+			}
+			if deps.AttachmentStore != nil {
+				ossHandler.SetAttachmentStore(deps.AttachmentStore)
+			}
+			if deps.TimeSeriesStore != nil {
+				ossHandler.SetTimeSeriesStore(deps.TimeSeriesStore)
+			}
+			if deps.GeotemporalStore != nil {
+				ossHandler.SetGeotemporalStore(deps.GeotemporalStore)
+			}
+			if deps.CipherDecryptor != nil {
+				ossHandler.SetCipherDecryptor(deps.CipherDecryptor)
+			}
 			ossHandler.RegisterRoutes(api)
 		}
 
-		// Action routes
+		// Action routes — Foundry OSv2 shape: the action API name is
+		// carried in the URL, not in the request body.
+		//   POST /api/v2/ontologies/{ontology}/actions/{action}/apply
+		//   POST /api/v2/ontologies/{ontology}/actions/{action}/applyBatch
+		// cf. palantir/foundry-platform-python action.py L58/L148.
 		if deps.ActionExecutor != nil {
 			actionHandler := actions.NewHandler(deps.ActionExecutor)
-			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
 		}
 
-		// Aggregation endpoint
-		if deps.AggEngine != nil && deps.IndexMgr != nil {
-			api.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
-				objectType := chi.URLParam(r, "objectType")
-				var req aggregation.AggregationRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAggregationRequest", map[string]string{
-						"reason": err.Error(),
-					}))
-					return
-				}
-				req.ObjectType = objectType
-
-				idx := deps.IndexMgr.GetIndex(objectType)
-				if idx == nil {
-					apierror.WriteJSON(w, apierror.NewNotFound("IndexNotFound", map[string]string{
-						"objectType": objectType,
-					}))
-					return
-				}
-
-				result, err := deps.AggEngine.Aggregate(idx, &req)
-				if err != nil {
-					apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{
-						"reason": err.Error(),
-					}))
-					return
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(result)
-			})
+		// Attachment endpoints (global — no {ontology} segment).
+		if deps.AttachmentStore != nil {
+			attachmentHandler := attachment.NewHandler(deps.AttachmentStore)
+			attachmentHandler.RegisterRoutes(api)
 		}
+
+		// OntologyTransaction experimental edits endpoint (US-041).
+		// Gated behind ?preview=true — only "append edits" is exposed.
+		if deps.TransactionStore != nil {
+			txnHandler := transactions.NewHandler(deps.TransactionStore)
+			txnHandler.RegisterRoutes(api)
+		}
+
+		// SqlQueries.execute (US-042). Foundry top-level resource — NOT
+		// nested under /ontologies/. Engine may be nil in degraded mode;
+		// the handler reports SqlQueryEngineNotConfigured in that case so
+		// the route is always documented and discoverable.
+		sqlQueryHandler := sqlqueries.NewHandler(deps.SqlQueryEngine)
+		sqlQueryHandler.RegisterRoutes(api)
 
 		// ObjectSet endpoints
 		if deps.ObjSetExecutor != nil && deps.IndexMgr != nil && deps.ObjSetStore != nil {
 			objSetHandler := objectset.NewHandler(deps.ObjSetExecutor, deps.IndexMgr, deps.ObjSetStore)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", objSetHandler.LoadObjects)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks", objSetHandler.LoadLinks)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/aggregate", objSetHandler.Aggregate)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/createTemporary", objSetHandler.CreateTemporary)
+			// Foundry preview endpoints: multi-type + interface-scoped loads.
+			// Register these BEFORE the wildcard /{objectSetRid} so chi does
+			// not swallow the static path segments.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsMultipleObjectTypes", objSetHandler.LoadObjectsMultipleObjectTypes)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsOrInterfaces", objSetHandler.LoadObjectsOrInterfaces)
+			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}", objSetHandler.GetObjectSet)
 		}
 	})
 
@@ -286,7 +343,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	deps := &ServerDeps{}
+	deps := &ServerDeps{
+		CORSOrigins: cfg.CORSOrigins,
+	}
 
 	// 1. PostgreSQL
 	if cfg.PGDSN != "" {
@@ -301,8 +360,14 @@ func main() {
 			log.Printf("warning: migration failed: %v", err)
 		}
 
-		deps.OmsRepo = oms.NewPGRepository(pool)
+		// Wrap the raw PG repository with a 60s TTL cache decorator so that
+		// hot metadata reads (GetOntology / GetObjectTypeByAPIName /
+		// GetLinkType / ListOutgoingLinkTypes / ...) don't hit PostgreSQL
+		// on every request. Writes through the decorator invalidate all
+		// caches; external invalidation is available via InvalidateAll.
+		deps.OmsRepo = oms.NewCachedRepository(oms.NewPGRepository(pool), 60*time.Second)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
+		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),
@@ -371,6 +436,51 @@ func main() {
 	deps.IndexMgr = index.NewManager(cfg.DataDir)
 	defer deps.IndexMgr.Close()
 
+	// 2b. Attachment blob store (filesystem backend under WEAVE_DATA_DIR/attachments).
+	// Unlinked uploads older than 1h are swept by a background cleanup loop.
+	attachmentStore := attachment.NewLocalStore(cfg.DataDir + "/attachments")
+	deps.AttachmentStore = attachmentStore
+	attachmentStore.StartCleanupLoop(ctx, 10*time.Minute, 1*time.Hour)
+
+	// 2c. TimeSeries store. Prefer the PG backend when a pool is wired;
+	// fall back to an in-memory store in degraded mode so unit/dev runs
+	// that skip PG still get live endpoints.
+	if deps.PGPool != nil {
+		deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+	} else {
+		deps.TimeSeriesStore = timeseries.NewMemoryStore()
+	}
+
+	// 2d. Geotemporal store. In-memory only for now — PostGIS/JSONB backend
+	// is deferred per the Phase 4 open question in the PRD.
+	deps.GeotemporalStore = geotemporal.NewMemoryStore()
+
+	// 2e. CipherTextProperty decryptor. The WEAVE_CIPHER_KEY env var carries
+	// the 32-byte master key; when unset, the decrypt endpoint returns
+	// CipherDecryptorNotConfigured (single-machine degraded mode). Swapping
+	// in a KMS-backed Decryptor is a matter of replacing this assignment.
+	if key := os.Getenv("WEAVE_CIPHER_KEY"); key != "" {
+		dec, err := cipher.NewAESGCMDecryptor(key)
+		if err != nil {
+			log.Printf("[CIPHER] WARNING: WEAVE_CIPHER_KEY invalid: %v — decrypt endpoint disabled", err)
+		} else {
+			deps.CipherDecryptor = dec
+			log.Printf("[CIPHER] AES-256-GCM decryptor enabled")
+		}
+	}
+
+	// 2f. OntologyTransaction experimental store (US-041). In-memory only —
+	// transactions are ephemeral per-process and do NOT survive restarts.
+	// The endpoint is gated behind ?preview=true so this is intentional.
+	deps.TransactionStore = transactions.NewMemoryStore()
+
+	// 2g. SqlQueries.execute engine (US-042). Wired only when a PG pool is
+	// available; in degraded mode the handler reports
+	// SqlQueryEngineNotConfigured so the endpoint stays mounted.
+	if deps.PGPool != nil {
+		deps.SqlQueryEngine = sqlqueries.NewPGEngine(deps.PGPool)
+	}
+
 	// 2a. Rehydrate Bleve indexes from PG metadata.
 	// Creates empty index shells (with correct mappings) for every ObjectType
 	// defined in PG so queries don't fail with "index not found" when WEAVE_DATA_DIR
@@ -386,7 +496,12 @@ func main() {
 
 	// 3. Link Resolver
 	if deps.OmsRepo != nil {
-		deps.LinkResolver = links.NewResolver(deps.OmsRepo, deps.IndexMgr)
+		resolver := links.NewResolver(deps.OmsRepo, deps.IndexMgr)
+		// Cache link-type metadata lookups (GetLinkType / ListOutgoingLinkTypes)
+		// with a 60s TTL so repeated traversals across the same links don't
+		// re-read the same rows from PostgreSQL.
+		resolver.SetLinkTypeCache(links.NewLinkTypeCache(60 * time.Second))
+		deps.LinkResolver = resolver
 	}
 
 	// 4. OSS Service
@@ -401,6 +516,15 @@ func main() {
 	deps.ObjSetStore = objectset.NewStore(1 * time.Hour)
 	if deps.LinkResolver != nil {
 		deps.ObjSetExecutor = objectset.NewExecutor(deps.IndexMgr, deps.LinkResolver, deps.ObjSetStore)
+		// US-046: nearestNeighbors backend. The vector store wraps the OMS
+		// repo (which exposes pgvector via FindNearestNeighbors) and the
+		// optional embedding provider resolves text-only NN queries.
+		if deps.OmsRepo != nil {
+			deps.ObjSetExecutor.SetVectorStore(newPGVectorStore(deps.OmsRepo))
+		}
+		if prov := buildEmbeddingProvider(); prov != nil {
+			deps.ObjSetExecutor.SetEmbeddingProvider(prov)
+		}
 	}
 
 	// 7. NATS
@@ -424,6 +548,24 @@ func main() {
 
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
+		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
+
+		// US-046: optional embedding side-channel. Each CREATE/MODIFY edit
+		// for a configured object type produces a vector via the embedding
+		// provider, rate-limited to the configured tokens-per-second budget.
+		// Disabled when no provider, no store, or no objectTypes are set.
+		if prov := buildEmbeddingProvider(); prov != nil && deps.OmsRepo != nil {
+			deps.FunnelConsumer.SetEmbeddingProvider(prov)
+			deps.FunnelConsumer.SetEmbeddingStore(deps.OmsRepo)
+			if cfgMap := loadEmbeddingObjectTypes(); len(cfgMap) > 0 {
+				deps.FunnelConsumer.SetEmbeddingObjectTypes(cfgMap)
+				deps.FunnelConsumer.SetEmbeddingObjectTypeRIDs(loadObjectTypeRIDs(ctx, deps.OmsRepo))
+			}
+			if lim := buildEmbeddingRateLimiter(); lim != nil {
+				deps.FunnelConsumer.SetEmbeddingRateLimiter(lim)
+			}
+		}
+
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)
 		}

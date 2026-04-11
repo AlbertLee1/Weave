@@ -32,7 +32,7 @@ func Connect(url string) (*nats.Conn, error) {
 	return nc, nil
 }
 
-// SetupJetStream creates the NATS JetStream stream for object edits.
+// SetupJetStream creates the NATS JetStream streams for object edits and the DLQ.
 func SetupJetStream(js nats.JetStreamContext) error {
 	_, err := js.AddStream(&nats.StreamConfig{
 		Name:      StreamName,
@@ -44,5 +44,10 @@ func SetupJetStream(js nats.JetStreamContext) error {
 	if err != nil {
 		return fmt.Errorf("create stream: %w", err)
 	}
+
+	if err := SetupDLQStream(js); err != nil {
+		return err
+	}
+
 	return nil
 }

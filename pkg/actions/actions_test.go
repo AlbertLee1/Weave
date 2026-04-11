@@ -76,6 +76,9 @@ func (m *mockOmsRepo) CreateActionType(_ context.Context, _ *oms.ActionType) err
 func (m *mockOmsRepo) GetActionType(_ context.Context, _ string) (*oms.ActionType, error) {
 	return nil, nil
 }
+func (m *mockOmsRepo) GetActionTypeByAPIName(_ context.Context, _, _ string) (*oms.ActionType, error) {
+	return nil, oms.ErrNotFound
+}
 func (m *mockOmsRepo) ListActionTypes(_ context.Context, _ string) ([]oms.ActionType, error) {
 	return m.actionTypes, nil
 }
@@ -139,6 +142,9 @@ func (m *mockOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) (
 // ValueType stubs
 func (m *mockOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (m *mockOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) GetValueTypeByAPIName(_ context.Context, _ string) (*oms.ValueType, error) {
 	return nil, nil
 }
 func (m *mockOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
@@ -900,8 +906,8 @@ func TestExecutor_Apply_ActionLogErrorNonFatal(t *testing.T) {
 
 func setupRouter(handler *Handler) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", handler.Apply)
-	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", handler.ApplyBatch)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", handler.Apply)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", handler.ApplyBatch)
 	return r
 }
 
@@ -925,12 +931,12 @@ func TestHandler_Apply_200(t *testing.T) {
 	handler := NewHandler(exec)
 	router := setupRouter(handler)
 
-	body := mustJSON(ApplyRequest{
-		ActionType: "createEmployee",
-		Parameters: map[string]interface{}{"name": "Bob"},
+	// Foundry v2 body carries only parameters; action API name is in path.
+	body := mustJSON(map[string]interface{}{
+		"parameters": map[string]interface{}{"name": "Bob"},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/apply", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/createEmployee/apply", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -939,32 +945,59 @@ func TestHandler_Apply_200(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var result ApplyResult
+	var result SyncApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(result.Edits) != 1 {
-		t.Fatalf("expected 1 edit in response, got %d", len(result.Edits))
+	if result.Edits == nil {
+		t.Fatal("expected edits in SyncApplyActionResponseV2")
+	}
+	if result.Edits.AddedObjectCount != 1 {
+		t.Fatalf("expected addedObjectCount=1, got %d", result.Edits.AddedObjectCount)
 	}
 }
 
-func TestHandler_Apply_MissingActionType(t *testing.T) {
-	repo := &mockOmsRepo{}
+// TestHandler_Apply_BodyActionTypeIsIgnored verifies that, under the new
+// path-driven schema, a stale `actionType` field in the request body is
+// silently overridden by the URL's {action} segment. This locks the
+// rip-and-replace: the path is the only source of truth.
+func TestHandler_Apply_BodyActionTypeIsIgnored(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
 	exec := NewExecutor(repo, nil)
 	handler := NewHandler(exec)
 	router := setupRouter(handler)
 
+	// Body carries a DIFFERENT actionType than the path segment. The
+	// handler must resolve the path value, not the body value.
 	body := mustJSON(map[string]interface{}{
-		"parameters": map[string]interface{}{},
+		"actionType": "bogus-stale-field",
+		"parameters": map[string]interface{}{"name": "Carol"},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/apply", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
+		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (body actionType should be ignored), got %d: %s",
+			w.Code, w.Body.String())
 	}
 }
 
@@ -988,14 +1021,16 @@ func TestHandler_ApplyBatch_200(t *testing.T) {
 	handler := NewHandler(exec)
 	router := setupRouter(handler)
 
+	// Foundry batch is one-action-many-parameter-sets; the action is in
+	// the path. Body items only need parameters.
 	body := mustJSON(map[string]interface{}{
-		"actions": []ApplyRequest{
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{"name": "Alice"}},
-			{ActionType: "createEmployee", Parameters: map[string]interface{}{"name": "Bob"}},
+		"actions": []map[string]interface{}{
+			{"parameters": map[string]interface{}{"name": "Alice"}},
+			{"parameters": map[string]interface{}{"name": "Bob"}},
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/applyBatch", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/ont-1/actions/createEmployee/applyBatch", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -1004,16 +1039,15 @@ func TestHandler_ApplyBatch_200(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp map[string]json.RawMessage
+	var resp BatchApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	var results []ApplyResult
-	if err := json.Unmarshal(resp["results"], &results); err != nil {
-		t.Fatalf("unmarshal results: %v", err)
+	if resp.Edits == nil {
+		t.Fatal("expected edits in BatchApplyActionResponseV2")
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+	if resp.Edits.AddedObjectCount != 2 {
+		t.Fatalf("expected addedObjectCount=2, got %d", resp.Edits.AddedObjectCount)
 	}
 }
 

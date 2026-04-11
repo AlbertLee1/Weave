@@ -43,6 +43,7 @@ type Repository interface {
 	// ActionType
 	CreateActionType(ctx context.Context, at *ActionType) error
 	GetActionType(ctx context.Context, rid string) (*ActionType, error)
+	GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*ActionType, error)
 	ListActionTypes(ctx context.Context, ontologyRID string) ([]ActionType, error)
 	UpdateActionType(ctx context.Context, at *ActionType) error
 	DeleteActionType(ctx context.Context, rid string) error
@@ -79,6 +80,7 @@ type Repository interface {
 	// ValueType
 	CreateValueType(ctx context.Context, vt *ValueType) error
 	GetValueType(ctx context.Context, rid string) (*ValueType, error)
+	GetValueTypeByAPIName(ctx context.Context, ridOrApiName string) (*ValueType, error)
 	ListValueTypes(ctx context.Context) ([]ValueType, error)
 	UpdateValueType(ctx context.Context, vt *ValueType) error
 	DeleteValueType(ctx context.Context, rid string) error

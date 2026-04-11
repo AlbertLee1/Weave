@@ -4,7 +4,6 @@ import {
   getObjectType,
   listOutgoingLinkTypes,
 } from '../api/ontologies';
-import { listAllLinkTypes } from '../api/admin';
 
 export function useObjectTypes(ontologyApiName: string) {
   return useQuery({
@@ -33,16 +32,5 @@ export function useOutgoingLinkTypes(
     queryKey: ['linkTypes', ontologyApiName, objectTypeApiName],
     queryFn: () => listOutgoingLinkTypes(ontologyApiName, objectTypeApiName),
     enabled: !!ontologyApiName && !!objectTypeApiName,
-  });
-}
-
-export function useLinkTypes(ontologyApiName: string) {
-  return useQuery({
-    queryKey: ['linkTypes', ontologyApiName],
-    queryFn: async () => {
-      const res = await listAllLinkTypes(ontologyApiName);
-      return res.data;
-    },
-    enabled: !!ontologyApiName,
   });
 }

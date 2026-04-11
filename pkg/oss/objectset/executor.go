@@ -27,11 +27,22 @@ type DirectionalLinkTargetTypeResolver interface {
 	ResolveTargetObjectTypeDir(ctx context.Context, callerObjectType, linkTypeAPIName string, dir links.Direction) (string, error)
 }
 
+// InterfaceResolver is an optional dependency the executor uses to evaluate
+// interface-scoped ObjectSet definitions ("interfaceBase"). Implementations
+// return the list of ObjectType API names that implement the given interface.
+// A nil resolver causes interface-scoped definitions to error at execute time.
+type InterfaceResolver interface {
+	ResolveInterfaceObjectTypes(ctx context.Context, interfaceAPIName string) ([]string, error)
+}
+
 // Executor evaluates ObjectSet definitions.
 type Executor struct {
-	indexMgr     *index.Manager
-	linkResolver links.LinkResolver
-	store        *Store
+	indexMgr       *index.Manager
+	linkResolver   links.LinkResolver
+	store          *Store
+	interfaceResol InterfaceResolver
+	vectorStore    NNVectorStore
+	embedProvider  NNEmbeddingProvider
 }
 
 // NewExecutor creates a new ObjectSet executor.
@@ -41,6 +52,13 @@ func NewExecutor(indexMgr *index.Manager, linkResolver links.LinkResolver, store
 		linkResolver: linkResolver,
 		store:        store,
 	}
+}
+
+// SetInterfaceResolver wires an optional InterfaceResolver so the executor can
+// evaluate "interfaceBase" ObjectSet definitions without requiring it at
+// construction time. Leaving this unset causes such definitions to error.
+func (e *Executor) SetInterfaceResolver(r InterfaceResolver) {
+	e.interfaceResol = r
 }
 
 // BaseExecutionCap is the maximum number of primary keys executeBase will
@@ -85,12 +103,125 @@ func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error
 	case "reference":
 		return e.executeReference(ctx, def)
 	case "nearestNeighbors":
-		return nil, fmt.Errorf("nearestNeighbors not yet supported: requires vector index backend")
+		return e.executeNearestNeighbors(ctx, def)
 	case "withProperties":
 		return e.executeWithProperties(ctx, def)
+	case "static":
+		return e.executeStatic(ctx, def)
+	case "asType":
+		return e.executeAsType(ctx, def)
+	case "asBaseObjectTypes":
+		return e.executeAsBaseObjectTypes(ctx, def)
+	case "interfaceBase":
+		return e.executeInterfaceBase(ctx, def)
+	case "interfaceLinkSearchAround":
+		return e.executeInterfaceLinkSearchAround(ctx, def)
+	case "methodInput":
+		return nil, fmt.Errorf("methodInput objectSet not yet supported: bind at function invocation time")
 	default:
 		return nil, fmt.Errorf("unknown objectSet type: %q", def.Type)
 	}
+}
+
+// executeStatic returns the caller-supplied PrimaryKeys verbatim. No index
+// query is performed; the caller has already asserted which objects belong
+// to the set.
+func (e *Executor) executeStatic(ctx context.Context, def *Definition) (*Result, error) {
+	pks := make([]string, len(def.PrimaryKeys))
+	copy(pks, def.PrimaryKeys)
+	return &Result{
+		ObjectType:  def.ObjectType,
+		PrimaryKeys: pks,
+	}, nil
+}
+
+// executeAsType evaluates the inner ObjectSet and relabels the result under
+// the requested ObjectType. Intended for interface implementations — the
+// caller promises the PKs also exist as instances of the target ObjectType.
+func (e *Executor) executeAsType(ctx context.Context, def *Definition) (*Result, error) {
+	inner, err := e.execute(ctx, def.ObjectSet)
+	if err != nil {
+		return nil, fmt.Errorf("execute asType inner: %w", err)
+	}
+	return &Result{
+		ObjectType:  def.ObjectType,
+		PrimaryKeys: inner.PrimaryKeys,
+		Truncated:   inner.Truncated,
+	}, nil
+}
+
+// executeAsBaseObjectTypes passes the inner result through unchanged. In
+// Weave's single-type execution model every Result is already attributed to
+// a concrete base ObjectType, so "downgrade to base" is a no-op at this layer.
+func (e *Executor) executeAsBaseObjectTypes(ctx context.Context, def *Definition) (*Result, error) {
+	return e.execute(ctx, def.ObjectSet)
+}
+
+// executeInterfaceBase resolves the interface to its implementing ObjectTypes
+// via the InterfaceResolver, then queries each type's Bleve index for all
+// objects. A nil resolver returns an error.
+func (e *Executor) executeInterfaceBase(ctx context.Context, def *Definition) (*Result, error) {
+	if e.interfaceResol == nil {
+		return nil, fmt.Errorf("interfaceBase: interface resolver not configured")
+	}
+	types, err := e.interfaceResol.ResolveInterfaceObjectTypes(ctx, def.InterfaceType)
+	if err != nil {
+		return nil, fmt.Errorf("interfaceBase resolve %q: %w", def.InterfaceType, err)
+	}
+
+	seen := make(map[string]bool)
+	var allPKs []string
+	truncated := false
+	for _, objType := range types {
+		sub, err := e.executeBase(ctx, &Definition{Type: "base", ObjectType: objType})
+		if err != nil {
+			return nil, fmt.Errorf("interfaceBase %s: %w", objType, err)
+		}
+		if sub.Truncated {
+			truncated = true
+		}
+		for _, pk := range sub.PrimaryKeys {
+			if !seen[pk] {
+				seen[pk] = true
+				allPKs = append(allPKs, pk)
+			}
+		}
+	}
+
+	return &Result{
+		// Tag the result with the interface API name so downstream callers
+		// know this is a polymorphic set. Concrete per-type execution happens
+		// at the handler layer for interface data query endpoints (US-026).
+		ObjectType:  def.InterfaceType,
+		PrimaryKeys: allPKs,
+		Truncated:   truncated,
+	}, nil
+}
+
+// executeInterfaceLinkSearchAround walks an interface link from the inner
+// ObjectSet. Foundry models interface links as named traversals on the
+// implementing ObjectTypes, so we delegate to the regular link resolver using
+// the interfaceLink API name as the link identifier.
+func (e *Executor) executeInterfaceLinkSearchAround(ctx context.Context, def *Definition) (*Result, error) {
+	sourceResult, err := e.execute(ctx, def.ObjectSet)
+	if err != nil {
+		return nil, fmt.Errorf("execute interfaceLinkSearchAround source: %w", err)
+	}
+	linkedPKs, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, sourceResult.ObjectType, def.InterfaceLink, sourceResult.PrimaryKeys)
+	if err != nil {
+		return nil, fmt.Errorf("resolve interfaceLinkSearchAround: %w", err)
+	}
+
+	targetType := ""
+	if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok {
+		targetType, _ = resolver.ResolveTargetObjectType(ctx, sourceResult.ObjectType, def.InterfaceLink)
+	}
+
+	return &Result{
+		ObjectType:  targetType,
+		PrimaryKeys: linkedPKs,
+		Truncated:   sourceResult.Truncated,
+	}, nil
 }
 
 // executeBase queries the Bleve index for ALL objects of the given type, up
@@ -101,7 +232,7 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 	searchReq.Size = BaseExecutionCap
 	searchReq.Fields = []string{"*"}
 
-	result, err := e.indexMgr.Search(def.ObjectType, searchReq)
+	result, err := e.indexMgr.Search(scopedIndexKey(ctx, e.indexMgr, def.ObjectType), searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search base objectSet %q: %w", def.ObjectType, err)
 	}
@@ -144,7 +275,7 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 
 	searchReq := bleve.NewSearchRequest(conjQ)
 	searchReq.Size = BaseExecutionCap
-	result, err := e.indexMgr.Search(baseResult.ObjectType, searchReq)
+	result, err := e.indexMgr.Search(scopedIndexKey(ctx, e.indexMgr, baseResult.ObjectType), searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search filter objectSet: %w", err)
 	}

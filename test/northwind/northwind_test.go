@@ -353,6 +353,18 @@ func (r *inMemoryOmsRepo) GetActionType(_ context.Context, rid string) (*oms.Act
 	return &cp, nil
 }
 
+func (r *inMemoryOmsRepo) GetActionTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, at := range r.actionTypes {
+		if (at.OntologyRID == ontologyRID) && (at.RID == apiNameOrRID || at.APIName == apiNameOrRID) {
+			cp := *at
+			return &cp, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 func (r *inMemoryOmsRepo) ListActionTypes(_ context.Context, ontologyRID string) ([]oms.ActionType, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -522,6 +534,9 @@ func (r *inMemoryOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) e
 func (r *inMemoryOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
 	return nil, oms.ErrNotFound
 }
+func (r *inMemoryOmsRepo) GetValueTypeByAPIName(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, oms.ErrNotFound
+}
 func (r *inMemoryOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
 	return nil, nil
 }
@@ -665,8 +680,8 @@ func setupEnv(t *testing.T) *northwindEnv {
 		ossHandler.RegisterRoutes(r)
 
 		actionHandler := actions.NewHandler(actionExecutor)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/apply", actionHandler.Apply)
-		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applyBatch", actionHandler.ApplyBatch)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
+		r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 
 		r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate", func(w http.ResponseWriter, r *http.Request) {
 			objectType := chi.URLParam(r, "objectType")
@@ -1635,6 +1650,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "discontinued",
 				"value": true,
 			},
+			"select": []string{"productId", "discontinued"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/product/search", env.ontologyRID), body)
@@ -1665,6 +1681,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "unitPrice",
 				"value": 100.0,
 			},
+			"select": []string{"productId", "unitPrice"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/product/search", env.ontologyRID), body)
@@ -1691,6 +1708,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "freight",
 				"value": 500.0,
 			},
+			"select": []string{"orderId", "freight"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/order/search", env.ontologyRID), body)
@@ -1716,6 +1734,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "country",
 				"value": "Germany",
 			},
+			"select": []string{"customerId", "country"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/customer/search", env.ontologyRID), body)
@@ -1739,6 +1758,7 @@ func TestNorthwind_Phase4_Search(t *testing.T) {
 				"field": "unitsInStock",
 				"value": 0,
 			},
+			"select": []string{"productId", "unitsInStock"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objects/product/search", env.ontologyRID), body)
@@ -1899,6 +1919,7 @@ func TestNorthwind_Phase7_ObjectSet(t *testing.T) {
 				"type":       "base",
 				"objectType": "product",
 			},
+			"select": []string{"productId", "productName"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)
@@ -1928,6 +1949,7 @@ func TestNorthwind_Phase7_ObjectSet(t *testing.T) {
 					"value": true,
 				},
 			},
+			"select": []string{"productId", "discontinued"},
 		}
 		rr := doRequest(t, env, http.MethodPost,
 			fmt.Sprintf("/api/v2/ontologies/%s/objectSets/loadObjects", env.ontologyRID), body)

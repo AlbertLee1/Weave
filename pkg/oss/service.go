@@ -46,23 +46,25 @@ type LinkedObjectsRequest struct {
 	PageToken string
 }
 
-// CreateLinkRequest is the request for creating (or upserting) a single
-// many-to-many link edge between two objects.
-type CreateLinkRequest struct {
-	OntologyRID     string
-	LinkTypeAPIName string
-	SourcePK        string
-	TargetPK        string
-	Properties      map[string]interface{}
+// GetLinkedObjectRequest is the request for getting a single linked object by its primary key.
+type GetLinkedObjectRequest struct {
+	OntologyRID            string
+	ObjectType             string // source object type API name
+	PrimaryKey             string // source object primary key
+	LinkType               string // link type API name
+	LinkedObjectPrimaryKey string // target linked object primary key
+	Direction              string // traversal direction (optional, default "forward")
 }
 
-// DeleteLinkRequest is the request for deleting a single many-to-many link
-// edge between two objects. Idempotent at the repository layer.
-type DeleteLinkRequest struct {
-	OntologyRID     string
-	LinkTypeAPIName string
-	SourcePK        string
-	TargetPK        string
+// CountObjectsRequest is the request for counting objects of a given type.
+type CountObjectsRequest struct {
+	OntologyRID string
+	ObjectType  string
+}
+
+// CountObjectsResponse is the Foundry V2 response for the count endpoint.
+type CountObjectsResponse struct {
+	Count int `json:"count"`
 }
 
 // Service defines the Object Set Service interface.
@@ -71,6 +73,6 @@ type Service interface {
 	ListObjects(ctx context.Context, req ListObjectsRequest) (*ObjectPage, error)
 	SearchObjects(ctx context.Context, req SearchObjectsRequest) (*ObjectPage, error)
 	ListLinkedObjects(ctx context.Context, req LinkedObjectsRequest) (*ObjectPage, error)
-	CreateLink(ctx context.Context, req CreateLinkRequest) error
-	DeleteLink(ctx context.Context, req DeleteLinkRequest) error
+	GetLinkedObject(ctx context.Context, req GetLinkedObjectRequest) (*WireObject, error)
+	CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error)
 }

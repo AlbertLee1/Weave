@@ -1,0 +1,43 @@
+# Git
+.git
+.github
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+bin/
+data/
+coverage.*
+server
+
+# Web build (rebuilt in CI or built separately)
+web/node_modules/
+web/dist/
+web/coverage/
+web/playwright-report/
+web/test-results/
+cmd/server/web/dist/
+
+# Dev tools
+.omc/
+.claude/
+.ralph-repo/
+scripts/ralph/
+tasks/
+
+# Env files
+.env
+.env.local
+
+# CLI binary
+weave-cli
+weave-mcp

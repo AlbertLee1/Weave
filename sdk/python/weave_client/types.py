@@ -89,11 +89,59 @@ class Edit(_CamelModel):
     object_type: Optional[str] = Field(default=None, alias="objectType")
 
 
+class ActionResults(_CamelModel):
+    """Foundry OSv2 edit summary (counts, not individual edits)."""
+    type: str = "edits"
+    added_object_count: int = Field(default=0, alias="addedObjectCount")
+    modified_object_count: int = Field(default=0, alias="modifiedObjectCount")
+    deleted_object_count: int = Field(default=0, alias="deletedObjectCount")
+    added_links_count: int = Field(default=0, alias="addedLinksCount")
+    deleted_links_count: int = Field(default=0, alias="deletedLinksCount")
+
+
 class ApplyActionResponse(_CamelModel):
-    action_rid: str = Field(alias="actionRid")
-    edits: List[Dict[str, Any]] = Field(default_factory=list)
-    batch_id: Optional[str] = Field(default=None, alias="batchId")
-    offset: Optional[int] = None
+    """SyncApplyActionResponseV2 — Foundry OSv2 response for single apply."""
+    operation_id: Optional[str] = Field(default=None, alias="operationId")
+    validation: Optional[Dict[str, Any]] = None
+    edits: Optional[ActionResults] = None
+
+
+class BatchApplyActionResponse(_CamelModel):
+    """Response envelope for applyBatch."""
+    edits: Optional[ActionResults] = None
+
+
+class CountResponse(_CamelModel):
+    """Response for object count requests."""
+    count: int = 0
+
+
+class InterfaceType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    extends_rid: Optional[str] = Field(default=None, alias="extendsRid")
+    shared_properties: Optional[Dict[str, Any]] = Field(default=None, alias="sharedProperties")
+
+
+class ValueType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    base_type: str = Field(alias="baseType")
+    constraints: Optional[Dict[str, Any]] = None
+    version: int = 0
+
+
+class QueryType(_CamelModel):
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    description: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    output: Optional[Dict[str, Any]] = None
+    query: Optional[Dict[str, Any]] = None
+    status: str = ""
 
 
 class LoginUser(_CamelModel):

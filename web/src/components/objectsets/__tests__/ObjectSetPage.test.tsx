@@ -33,7 +33,6 @@ vi.mock('../../../hooks/useObjectTypes', () => ({
     isLoading: false,
   }),
   useOutgoingLinkTypes: () => ({ data: [], isLoading: false }),
-  useLinkTypes: () => ({ data: [], isLoading: false }),
 }));
 
 const server = setupServer();

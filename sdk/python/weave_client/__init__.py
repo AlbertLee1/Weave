@@ -19,12 +19,20 @@ from .exceptions import (
     WeaveNotFoundError,
 )
 from .types import (
+    ActionResults,
+    ActionType,
     ApplyActionResponse,
+    BatchApplyActionResponse,
+    CountResponse,
     Edit,
+    InterfaceType,
+    LinkType,
     LoginResponse,
     ObjectPage,
     ObjectType,
     Ontology,
+    QueryType,
+    ValueType,
     WireObject,
 )
 
@@ -38,8 +46,16 @@ __all__ = [
     "WireObject",
     "ObjectPage",
     "ApplyActionResponse",
+    "BatchApplyActionResponse",
     "Edit",
     "LoginResponse",
+    "ActionResults",
+    "ActionType",
+    "LinkType",
+    "InterfaceType",
+    "ValueType",
+    "QueryType",
+    "CountResponse",
 ]
 
 __version__ = "0.1.0"

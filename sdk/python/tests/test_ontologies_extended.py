@@ -1,0 +1,257 @@
+"""Tests for the extended OntologiesAPI methods (Phase 1 endpoints).
+
+Covers: load_metadata, get_full_metadata, get_object_type_full_metadata,
+get_object_types_by_rid_batch, list/get action types, list/get interface types,
+list/get value types, list/get query types.
+"""
+from __future__ import annotations
+
+import json
+import unittest
+
+from weave_client import Client
+
+from tests.test_client import _StubServer
+
+
+class OntologiesMetadataTests(unittest.TestCase):
+    """Tests for ontology metadata endpoints."""
+
+    def test_load_metadata_posts_subsets(self):
+        resp = json.dumps({"objectTypes": [{"apiName": "Customer"}], "linkTypes": []})
+        routes = {"POST /api/v2/ontologies/nw/metadata": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.load_metadata("nw", {"objectTypes": True, "linkTypes": True})
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"objectTypes": True, "linkTypes": True})
+        self.assertEqual(result["objectTypes"][0]["apiName"], "Customer")
+
+    def test_get_full_metadata(self):
+        resp = json.dumps({"ontology": {"apiName": "nw"}, "objectTypes": []})
+        routes = {"GET /api/v2/ontologies/nw/fullMetadata": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_full_metadata("nw")
+        self.assertEqual(result["ontology"]["apiName"], "nw")
+
+    def test_get_object_type_full_metadata(self):
+        resp = json.dumps({"objectType": {"apiName": "Customer"}, "properties": {}})
+        routes = {"GET /api/v2/ontologies/nw/objectTypes/Customer/fullMetadata": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_object_type_full_metadata("nw", "Customer")
+        self.assertEqual(result["objectType"]["apiName"], "Customer")
+
+    def test_get_object_types_by_rid_batch(self):
+        resp = json.dumps({"data": [
+            {"rid": "ri.ot.1", "apiName": "Customer", "displayName": "Customer",
+             "primaryKey": "id", "status": "ACTIVE", "visibility": "NORMAL"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/objectTypes/getByRidBatch": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_object_types_by_rid_batch("nw", ["ri.ot.1"])
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["ri.ot.1"]})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["apiName"], "Customer")
+
+
+class ActionTypesTests(unittest.TestCase):
+    """Tests for action type endpoints on OntologiesAPI."""
+
+    _ACTION_JSON = {
+        "rid": "ri.at.1",
+        "apiName": "createCustomer",
+        "displayName": "Create Customer",
+        "description": "Creates a customer",
+        "status": "ACTIVE",
+        "parameters": {},
+    }
+
+    def test_list_action_types(self):
+        resp = json.dumps({"data": [self._ACTION_JSON]})
+        routes = {"GET /api/v2/ontologies/nw/actionTypes": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_action_types("nw")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].api_name, "createCustomer")
+        self.assertEqual(result[0].display_name, "Create Customer")
+
+    def test_get_action_type(self):
+        resp = json.dumps(self._ACTION_JSON)
+        routes = {"GET /api/v2/ontologies/nw/actionTypes/createCustomer": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_action_type("nw", "createCustomer")
+        self.assertEqual(result.api_name, "createCustomer")
+        self.assertEqual(result.rid, "ri.at.1")
+
+    def test_get_action_type_by_rid(self):
+        resp = json.dumps(self._ACTION_JSON)
+        routes = {"GET /api/v2/ontologies/nw/actionTypes/byRid/ri.at.1": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_action_type_by_rid("nw", "ri.at.1")
+        self.assertEqual(result.api_name, "createCustomer")
+
+    def test_get_action_types_by_rid_batch(self):
+        resp = json.dumps({"data": [self._ACTION_JSON]})
+        routes = {"POST /api/v2/ontologies/nw/actionTypes/getByRidBatch": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_action_types_by_rid_batch("nw", ["ri.at.1"])
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["ri.at.1"]})
+        self.assertEqual(len(result), 1)
+
+    def test_get_action_type_full_metadata(self):
+        resp = json.dumps({"actionType": self._ACTION_JSON, "rules": []})
+        routes = {"GET /api/v2/ontologies/nw/actionTypes/createCustomer/fullMetadata": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_action_type_full_metadata("nw", "createCustomer")
+        self.assertIn("actionType", result)
+        self.assertEqual(result["actionType"]["apiName"], "createCustomer")
+
+    def test_list_action_types_full_metadata(self):
+        resp = json.dumps({"data": [{"actionType": self._ACTION_JSON, "rules": []}]})
+        routes = {"GET /api/v2/ontologies/nw/actionTypesFullMetadata": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_action_types_full_metadata("nw")
+        self.assertEqual(len(result), 1)
+
+
+class InterfaceTypesTests(unittest.TestCase):
+    """Tests for interface type endpoints."""
+
+    _IFACE_JSON = {
+        "rid": "ri.iface.1",
+        "apiName": "GeoLocatable",
+        "displayName": "Geo Locatable",
+        "extendsRid": None,
+        "sharedProperties": {"latitude": {"baseType": "DOUBLE"}},
+    }
+
+    def test_list_interface_types(self):
+        resp = json.dumps({"data": [self._IFACE_JSON]})
+        routes = {"GET /api/v2/ontologies/nw/interfaceTypes": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_interface_types("nw")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].api_name, "GeoLocatable")
+        self.assertEqual(result[0].display_name, "Geo Locatable")
+        self.assertIsNone(result[0].extends_rid)
+        self.assertIn("latitude", result[0].shared_properties)
+
+    def test_get_interface_type(self):
+        resp = json.dumps(self._IFACE_JSON)
+        routes = {"GET /api/v2/ontologies/nw/interfaceTypes/GeoLocatable": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_interface_type("nw", "GeoLocatable")
+        self.assertEqual(result.api_name, "GeoLocatable")
+        self.assertEqual(result.rid, "ri.iface.1")
+
+
+class ValueTypesTests(unittest.TestCase):
+    """Tests for value type endpoints."""
+
+    _VT_JSON = {
+        "rid": "ri.vt.1",
+        "apiName": "Currency",
+        "displayName": "Currency",
+        "baseType": "DOUBLE",
+        "constraints": {"min": 0},
+        "version": 2,
+    }
+
+    def test_list_value_types(self):
+        resp = json.dumps({"data": [self._VT_JSON]})
+        routes = {"GET /api/v2/ontologies/nw/valueTypes": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_value_types("nw")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].api_name, "Currency")
+        self.assertEqual(result[0].base_type, "DOUBLE")
+        self.assertEqual(result[0].version, 2)
+
+    def test_get_value_type(self):
+        resp = json.dumps(self._VT_JSON)
+        routes = {"GET /api/v2/ontologies/nw/valueTypes/Currency": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_value_type("nw", "Currency")
+        self.assertEqual(result.api_name, "Currency")
+        self.assertEqual(result.constraints, {"min": 0})
+
+
+class QueryTypesTests(unittest.TestCase):
+    """Tests for query type endpoints."""
+
+    _QT_JSON = {
+        "rid": "ri.qt.1",
+        "apiName": "topCustomers",
+        "displayName": "Top Customers",
+        "description": "Returns top N customers",
+        "parameters": {"limit": {"baseType": "INTEGER"}},
+        "output": {"type": "objectSet"},
+        "status": "ACTIVE",
+    }
+
+    def test_list_query_types(self):
+        resp = json.dumps({"data": [self._QT_JSON]})
+        routes = {"GET /api/v2/ontologies/nw/queryTypes": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_query_types("nw")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].api_name, "topCustomers")
+        self.assertEqual(result[0].description, "Returns top N customers")
+        self.assertEqual(result[0].status, "ACTIVE")
+
+    def test_get_query_type(self):
+        resp = json.dumps(self._QT_JSON)
+        routes = {"GET /api/v2/ontologies/nw/queryTypes/topCustomers": (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_query_type("nw", "topCustomers")
+        self.assertEqual(result.api_name, "topCustomers")
+        self.assertIn("limit", result.parameters)
+
+    def test_list_action_types_handles_empty(self):
+        routes = {"GET /api/v2/ontologies/nw/actionTypes": (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_action_types("nw")
+        self.assertEqual(result, [])
+
+    def test_list_interface_types_handles_empty(self):
+        routes = {"GET /api/v2/ontologies/nw/interfaceTypes": (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_interface_types("nw")
+        self.assertEqual(result, [])
+
+    def test_list_value_types_handles_empty(self):
+        routes = {"GET /api/v2/ontologies/nw/valueTypes": (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_value_types("nw")
+        self.assertEqual(result, [])
+
+    def test_list_query_types_handles_empty(self):
+        routes = {"GET /api/v2/ontologies/nw/queryTypes": (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.list_query_types("nw")
+        self.assertEqual(result, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

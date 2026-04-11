@@ -90,6 +90,9 @@ func (m *mockRepo) CreateActionType(context.Context, *oms.ActionType) error     
 func (m *mockRepo) GetActionType(context.Context, string) (*oms.ActionType, error) {
 	return nil, nil
 }
+func (m *mockRepo) GetActionTypeByAPIName(context.Context, string, string) (*oms.ActionType, error) {
+	return nil, nil
+}
 func (m *mockRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
 	return nil, nil
 }
@@ -140,7 +143,8 @@ func (m *mockRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.T
 
 // ValueType stubs
 func (m *mockRepo) CreateValueType(context.Context, *oms.ValueType) error             { return nil }
-func (m *mockRepo) GetValueType(context.Context, string) (*oms.ValueType, error)      { return nil, nil }
+func (m *mockRepo) GetValueType(context.Context, string) (*oms.ValueType, error)          { return nil, nil }
+func (m *mockRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueType, error) { return nil, nil }
 func (m *mockRepo) ListValueTypes(context.Context) ([]oms.ValueType, error)           { return nil, nil }
 func (m *mockRepo) UpdateValueType(context.Context, *oms.ValueType) error             { return nil }
 func (m *mockRepo) DeleteValueType(context.Context, string) error                     { return nil }

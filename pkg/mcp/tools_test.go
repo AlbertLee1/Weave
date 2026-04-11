@@ -44,6 +44,28 @@ func (f *fakeOmsRepo) InsertActionLog(ctx context.Context, log *oms.ActionLog) e
 	return nil
 }
 
+func (f *fakeOmsRepo) GetObjectTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*oms.ObjectType, error) {
+	for _, ot := range f.objectTypes[ontologyRID] {
+		if ot.APIName == apiName {
+			return &ot, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (f *fakeOmsRepo) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	return nil, nil
+}
+
+func (f *fakeOmsRepo) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	for _, at := range f.actionTypes[ontologyRID] {
+		if at.APIName == apiNameOrRID || at.RID == apiNameOrRID {
+			return &at, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 // fakeOssService is a stub oss.Service for the MCP tools.
 type fakeOssService struct {
 	getErr      error
@@ -85,8 +107,15 @@ func (f *fakeOssService) ListLinkedObjects(ctx context.Context, req oss.LinkedOb
 	return &oss.ObjectPage{}, nil
 }
 
-func (f *fakeOssService) CreateLink(ctx context.Context, req oss.CreateLinkRequest) error { return nil }
-func (f *fakeOssService) DeleteLink(ctx context.Context, req oss.DeleteLinkRequest) error { return nil }
+func (f *fakeOssService) GetLinkedObject(ctx context.Context, req oss.GetLinkedObjectRequest) (*oss.WireObject, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (f *fakeOssService) CountObjects(ctx context.Context, req oss.CountObjectsRequest) (*oss.CountObjectsResponse, error) {
+	return &oss.CountObjectsResponse{Count: 0}, nil
+}
+
+
 
 // stubPublisher is a no-op funnel publisher for the action executor.
 type stubPublisher struct{}

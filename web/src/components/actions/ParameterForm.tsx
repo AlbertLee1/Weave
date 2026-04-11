@@ -1,18 +1,13 @@
+import type { ActionParameterV2 } from '../../api/types';
+
 interface ParameterFormProps {
-  parameters: unknown;
+  parameters: Record<string, ActionParameterV2>;
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
 }
 
-interface ParameterDef {
-  type?: string;
-  required?: boolean;
-  description?: string;
-}
-
 export function ParameterForm({ parameters, values, onChange }: ParameterFormProps) {
-  const paramDefs = (parameters ?? {}) as Record<string, ParameterDef>;
-  const entries = Object.entries(paramDefs);
+  const entries = Object.entries(parameters ?? {});
 
   if (entries.length === 0) {
     return (
@@ -33,7 +28,7 @@ export function ParameterForm({ parameters, values, onChange }: ParameterFormPro
   return (
     <div className="flex flex-col gap-4">
       {entries.map(([key, def]) => {
-        const paramType = def.type ?? 'string';
+        const paramType = def.dataType?.type ?? 'string';
         const currentValue = values[key];
 
         if (paramType === 'boolean') {

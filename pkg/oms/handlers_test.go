@@ -23,6 +23,9 @@ type mockRepo struct {
 	actionTypes []oms.ActionType
 	properties  []oms.Property
 	interfaces  []oms.Interface
+	valueTypes  []oms.ValueType
+	queryTypes  []oms.QueryType
+	actionLogs  []oms.ActionLog
 
 	// Error controls
 	createErr error
@@ -79,16 +82,27 @@ func (m *mockRepo) GetObjectType(_ context.Context, rid string) (*oms.ObjectType
 	return nil, oms.ErrNotFound
 }
 
-func (m *mockRepo) GetObjectTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.ObjectType, error) {
+func (m *mockRepo) GetObjectTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ObjectType, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	for i := range m.objectTypes {
-		if m.objectTypes[i].OntologyRID == ontologyRID && m.objectTypes[i].APIName == apiName {
+		ontologyMatch := m.objectTypes[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.objectTypes[i].OntologyRID)
+		entityMatch := m.objectTypes[i].APIName == apiNameOrRID || m.objectTypes[i].RID == apiNameOrRID
+		if ontologyMatch && entityMatch {
 			return &m.objectTypes[i], nil
 		}
 	}
 	return nil, oms.ErrNotFound
+}
+
+func (m *mockRepo) matchOntologyByApiName(identifier, ontologyRID string) bool {
+	for _, o := range m.ontologies {
+		if o.APIName == identifier && o.RID == ontologyRID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *mockRepo) ListObjectTypes(_ context.Context, ontologyRID string) ([]oms.ObjectType, error) {
@@ -230,6 +244,20 @@ func (m *mockRepo) GetActionType(_ context.Context, rid string) (*oms.ActionType
 	return nil, oms.ErrNotFound
 }
 
+func (m *mockRepo) GetActionTypeByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.actionTypes {
+		ontologyMatch := m.actionTypes[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.actionTypes[i].OntologyRID)
+		entityMatch := m.actionTypes[i].APIName == apiNameOrRID || m.actionTypes[i].RID == apiNameOrRID
+		if ontologyMatch && entityMatch {
+			return &m.actionTypes[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 func (m *mockRepo) ListActionTypes(_ context.Context, ontologyRID string) ([]oms.ActionType, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
@@ -289,12 +317,14 @@ func (m *mockRepo) GetInterface(_ context.Context, rid string) (*oms.Interface, 
 	return nil, oms.ErrNotFound
 }
 
-func (m *mockRepo) GetInterfaceByAPIName(_ context.Context, _, apiName string) (*oms.Interface, error) {
+func (m *mockRepo) GetInterfaceByAPIName(_ context.Context, ontologyRID, apiNameOrRID string) (*oms.Interface, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	for i := range m.interfaces {
-		if m.interfaces[i].APIName == apiName {
+		ontologyMatch := m.interfaces[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.interfaces[i].OntologyRID)
+		entityMatch := m.interfaces[i].APIName == apiNameOrRID || m.interfaces[i].RID == apiNameOrRID
+		if ontologyMatch && entityMatch {
 			return &m.interfaces[i], nil
 		}
 	}
@@ -370,12 +400,36 @@ func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]o
 	return nil, nil
 }
 
-// ValueType stubs
+// ValueType methods
 func (m *mockRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
-func (m *mockRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
+func (m *mockRepo) GetValueType(_ context.Context, rid string) (*oms.ValueType, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.valueTypes {
+		if m.valueTypes[i].RID == rid {
+			return &m.valueTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
+func (m *mockRepo) GetValueTypeByAPIName(_ context.Context, ridOrApiName string) (*oms.ValueType, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.valueTypes {
+		if m.valueTypes[i].RID == ridOrApiName || m.valueTypes[i].APIName == ridOrApiName {
+			return &m.valueTypes[i], nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.valueTypes, nil
+}
 func (m *mockRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (m *mockRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
 
@@ -396,22 +450,51 @@ func (m *mockRepo) DeleteDatasourceBinding(_ context.Context, _ string) error { 
 
 // QueryType stubs
 func (m *mockRepo) CreateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
-func (m *mockRepo) GetQueryType(_ context.Context, _ string) (*oms.QueryType, error) {
+func (m *mockRepo) GetQueryType(_ context.Context, rid string) (*oms.QueryType, error) {
+	for i := range m.queryTypes {
+		if m.queryTypes[i].RID == rid {
+			return &m.queryTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) GetQueryTypeByAPIName(_ context.Context, _, _ string) (*oms.QueryType, error) {
+func (m *mockRepo) GetQueryTypeByAPIName(_ context.Context, ontologyIdentifier, apiNameOrRID string) (*oms.QueryType, error) {
+	for i := range m.queryTypes {
+		ontologyMatch := m.queryTypes[i].OntologyRID == ontologyIdentifier || m.matchOntologyByApiName(ontologyIdentifier, m.queryTypes[i].OntologyRID)
+		if ontologyMatch && (m.queryTypes[i].APIName == apiNameOrRID || m.queryTypes[i].RID == apiNameOrRID) {
+			return &m.queryTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListQueryTypes(_ context.Context, _ string) ([]oms.QueryType, error) {
-	return nil, nil
+func (m *mockRepo) ListQueryTypes(_ context.Context, ontologyIdentifier string) ([]oms.QueryType, error) {
+	var out []oms.QueryType
+	for _, qt := range m.queryTypes {
+		ontologyMatch := qt.OntologyRID == ontologyIdentifier || m.matchOntologyByApiName(ontologyIdentifier, qt.OntologyRID)
+		if ontologyMatch {
+			out = append(out, qt)
+		}
+	}
+	return out, nil
 }
 func (m *mockRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
 func (m *mockRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
 
 // ActionLog stubs
 func (m *mockRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
-func (m *mockRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
-	return nil, nil
+func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int) ([]oms.ActionLog, error) {
+	if m.actionLogs == nil {
+		return nil, nil
+	}
+	start := offset
+	if start > len(m.actionLogs) {
+		return nil, nil
+	}
+	end := start + limit
+	if end > len(m.actionLogs) || limit <= 0 {
+		end = len(m.actionLogs)
+	}
+	return m.actionLogs[start:end], nil
 }
 func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
 

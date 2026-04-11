@@ -743,7 +743,11 @@ func TestDefinition_ValidateNearestNeighbors_Valid(t *testing.T) {
 	}
 }
 
-func TestExecute_NearestNeighbors_NotSupported(t *testing.T) {
+// TestExecute_NearestNeighbors_RequiresVectorStore: nearestNeighbors is now
+// implemented but still errors when no vector store has been wired (US-046).
+// Production deployments mount the pgvector-backed store; legacy tests that
+// don't care about vector search should not even reach this branch.
+func TestExecute_NearestNeighbors_RequiresVectorStore(t *testing.T) {
 	executor, _ := setupExecutorTest(t)
 	ctx := context.Background()
 
@@ -761,8 +765,8 @@ func TestExecute_NearestNeighbors_NotSupported(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nearestNeighbors, got nil")
 	}
-	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("expected 'not yet supported' error, got: %v", err)
+	if !strings.Contains(err.Error(), "vector store not configured") {
+		t.Errorf("expected 'vector store not configured' error, got: %v", err)
 	}
 }
 

@@ -60,18 +60,25 @@ function walk(
 function resolveType(def: ObjectSetDefinition): string {
   switch (def.type) {
     case 'base':
+    case 'static':
+      return def.objectType;
+    case 'asType':
       return def.objectType;
     case 'filter':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'asBaseObjectTypes':
       return resolveType(def.objectSet);
     case 'union':
     case 'intersect':
     case 'subtract':
       return def.objectSets.length > 0 ? resolveType(def.objectSets[0]) : '';
     case 'searchAround':
+    case 'interfaceLinkSearchAround':
       return ''; // changes type — backend reports the resolved type
     case 'reference':
+    case 'interfaceBase':
+    case 'methodInput':
       return '';
   }
 }

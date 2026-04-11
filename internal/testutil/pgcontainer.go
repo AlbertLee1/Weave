@@ -3,6 +3,8 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -23,7 +25,7 @@ func StartPGContainer(t *testing.T) *PGContainer {
 	ctx := context.Background()
 
 	pgContainer, err := postgres.Run(ctx,
-		"postgres:16-alpine",
+		"pgvector/pgvector:pg16",
 		postgres.WithDatabase("weave_test"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
@@ -77,14 +79,20 @@ func MigrationsDir() string {
 }
 
 func findMigrationsDir() string {
-	// Walk up from test location to find migrations/
-	paths := []string{
-		"../../migrations",
-		"../../../migrations",
-		"../../../../migrations",
+	dir, err := os.Getwd()
+	if err != nil {
+		return "migrations"
 	}
-	for _, p := range paths {
-		return p
+	for i := 0; i < 8; i++ {
+		candidate := filepath.Join(dir, "migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
 	return "migrations"
 }

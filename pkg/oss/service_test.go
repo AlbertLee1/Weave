@@ -26,25 +26,17 @@ type mockOmsRepo struct {
 	byRID       map[string]*oms.ObjectType // key: RID
 	linkTypes   map[string][]oms.LinkType  // key: objectTypeRID
 
-	// LinkType lookup by (ontologyRID, apiName) for CRUD CreateLink/DeleteLink.
+	// LinkType lookup by (ontologyRID, apiName) for route-removal tests.
 	linkTypesByAPIName map[string]*oms.LinkType // key: ontologyRID+":"+apiName
-
-	// Edge tracking for CreateLink/DeleteLink assertions.
-	upsertedEdges []oms.LinkEdge // copies of edges passed to UpsertLinkEdge
-	deletedEdges  []deletedEdgeKey
-	upsertErr     error
-	deleteErr     error
 
 	// securityPolicies maps objectTypeRID -> attached SecurityPolicies. Tests
 	// populate this directly to exercise the ABAC filter path.
 	securityPolicies map[string][]oms.SecurityPolicy
-}
 
-// deletedEdgeKey records a single DeleteLinkEdge invocation for assertions.
-type deletedEdgeKey struct {
-	LinkTypeRID string
-	SourcePK    string
-	TargetPK    string
+	// interfaces maps ontologyRID+":"+apiName -> Interface for interface data query tests.
+	interfaces map[string]*oms.Interface
+	// interfaceObjectTypes maps interfaceRID -> implementing ObjectTypes.
+	interfaceObjectTypes map[string][]oms.ObjectType
 }
 
 func newMockOmsRepo() *mockOmsRepo {
@@ -176,34 +168,15 @@ func (m *mockOmsRepo) DeleteLinkType(_ context.Context, _ string) error {
 	return nil
 }
 
-// LinkEdge stubs / trackers. The service layer's CreateLink/DeleteLink
-// path uses these to record what was written so tests can assert on shape.
-func (m *mockOmsRepo) UpsertLinkEdge(_ context.Context, edge *oms.LinkEdge) error {
-	if m.upsertErr != nil {
-		return m.upsertErr
-	}
-	if edge != nil {
-		m.upsertedEdges = append(m.upsertedEdges, *edge)
-	}
-	return nil
-}
-func (m *mockOmsRepo) DeleteLinkEdge(_ context.Context, ltRID, src, tgt string) error {
-	if m.deleteErr != nil {
-		return m.deleteErr
-	}
-	m.deletedEdges = append(m.deletedEdges, deletedEdgeKey{
-		LinkTypeRID: ltRID,
-		SourcePK:    src,
-		TargetPK:    tgt,
-	})
-	return nil
-}
+// LinkEdge stubs — required by oms.Repository interface (used by actions).
+func (m *mockOmsRepo) UpsertLinkEdge(_ context.Context, _ *oms.LinkEdge) error { return nil }
+func (m *mockOmsRepo) DeleteLinkEdge(_ context.Context, _, _, _ string) error  { return nil }
 func (m *mockOmsRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ string) error {
 	return nil
 }
 
-// GetLinkTypeByAPIName resolves a LinkType by ontology + API name for the
-// CreateLink/DeleteLink service path. Returns ErrNotFound when missing.
+// GetLinkTypeByAPIName resolves a LinkType by ontology + API name.
+// Required by oms.Repository interface.
 func (m *mockOmsRepo) GetLinkTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.LinkType, error) {
 	if lt, ok := m.linkTypesByAPIName[ontologyRID+":"+apiName]; ok {
 		return lt, nil
@@ -216,6 +189,10 @@ func (m *mockOmsRepo) CreateActionType(_ context.Context, _ *oms.ActionType) err
 }
 
 func (m *mockOmsRepo) GetActionType(_ context.Context, _ string) (*oms.ActionType, error) {
+	return nil, oms.ErrNotFound
+}
+
+func (m *mockOmsRepo) GetActionTypeByAPIName(_ context.Context, _, _ string) (*oms.ActionType, error) {
 	return nil, oms.ErrNotFound
 }
 
@@ -238,8 +215,14 @@ func (m *mockOmsRepo) CreateInterface(_ context.Context, _ *oms.Interface) error
 func (m *mockOmsRepo) GetInterface(_ context.Context, _ string) (*oms.Interface, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) GetInterfaceByAPIName(_ context.Context, _, _ string) (*oms.Interface, error) {
-	return nil, nil
+func (m *mockOmsRepo) GetInterfaceByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.Interface, error) {
+	if m.interfaces != nil {
+		key := ontologyRID + ":" + apiName
+		if iface, ok := m.interfaces[key]; ok {
+			return iface, nil
+		}
+	}
+	return nil, oms.ErrNotFound
 }
 
 func (m *mockOmsRepo) ListInterfaces(_ context.Context, _ string) ([]oms.Interface, error) {
@@ -292,11 +275,19 @@ func (m *mockOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error
 func (m *mockOmsRepo) GetValueType(_ context.Context, _ string) (*oms.ValueType, error) {
 	return nil, nil
 }
+func (m *mockOmsRepo) GetValueTypeByAPIName(_ context.Context, _ string) (*oms.ValueType, error) {
+	return nil, nil
+}
 func (m *mockOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) { return nil, nil }
 func (m *mockOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (m *mockOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
 
-func (m *mockOmsRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
+func (m *mockOmsRepo) ListInterfaceObjectTypes(_ context.Context, interfaceRID string) ([]oms.ObjectType, error) {
+	if m.interfaceObjectTypes != nil {
+		if ots, ok := m.interfaceObjectTypes[interfaceRID]; ok {
+			return ots, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -1274,6 +1265,250 @@ func TestListLinkedObjects_LinkTypeError(t *testing.T) {
 	}
 	if err.Error() != "link resolver error" {
 		t.Errorf("expected 'link resolver error', got %q", err.Error())
+	}
+}
+
+// --- GetLinkedObject Tests (US-018) ---
+
+func TestGetLinkedObject_Found(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	// Set up department index and data
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d1", map[string]interface{}{
+		"deptId":   "d1",
+		"deptName": "engineering",
+	}); err != nil {
+		t.Fatalf("IndexDocument d1: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d2", map[string]interface{}{
+		"deptId":   "d2",
+		"deptName": "marketing",
+	}); err != nil {
+		t.Fatalf("IndexDocument d2: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		DisplayName: "Department",
+		PrimaryKey:  "deptId",
+		Status:      "ACTIVE",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "ONE_TO_MANY",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1", "d2"}
+
+	obj, err := svc.GetLinkedObject(ctx, oss.GetLinkedObjectRequest{
+		OntologyRID:            testOntologyRID,
+		ObjectType:             "employee",
+		PrimaryKey:             "emp1",
+		LinkType:               "employeeDept",
+		LinkedObjectPrimaryKey: "d1",
+	})
+	if err != nil {
+		t.Fatalf("GetLinkedObject: %v", err)
+	}
+	if obj.APIName != "department" {
+		t.Errorf("expected APIName 'department', got %q", obj.APIName)
+	}
+	if obj.PrimaryKey != "d1" {
+		t.Errorf("expected PrimaryKey 'd1', got %v", obj.PrimaryKey)
+	}
+	if obj.Properties["deptName"] != "engineering" {
+		t.Errorf("expected deptName 'engineering', got %v", obj.Properties["deptName"])
+	}
+}
+
+func TestGetLinkedObject_NotLinked(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	ctx := context.Background()
+
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	// Only d1 is linked — d99 is not
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	_, err = svc.GetLinkedObject(ctx, oss.GetLinkedObjectRequest{
+		OntologyRID:            testOntologyRID,
+		ObjectType:             "employee",
+		PrimaryKey:             "emp1",
+		LinkType:               "employeeDept",
+		LinkedObjectPrimaryKey: "d99",
+	})
+	if err == nil {
+		t.Fatal("expected error for unlinked PK, got nil")
+	}
+}
+
+func TestGetLinkedObject_NoLinks(t *testing.T) {
+	svc, _, repo, _ := setupOSSTest(t)
+	ctx := context.Background()
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	// No links resolved (empty result)
+	_, err := svc.GetLinkedObject(ctx, oss.GetLinkedObjectRequest{
+		OntologyRID:            testOntologyRID,
+		ObjectType:             "employee",
+		PrimaryKey:             "emp1",
+		LinkType:               "employeeDept",
+		LinkedObjectPrimaryKey: "d1",
+	})
+	if err == nil {
+		t.Fatal("expected error for no links, got nil")
+	}
+}
+
+func TestHandler_GetLinkedObject_200(t *testing.T) {
+	svc, mgr, repo, linkResolver := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	deptProps := []index.Property{
+		{APIName: "deptId", BaseType: "string", IsSearchable: true},
+		{APIName: "deptName", BaseType: "string", IsSearchable: true},
+	}
+	_, err := mgr.EnsureIndex("department", deptProps)
+	if err != nil {
+		t.Fatalf("EnsureIndex department: %v", err)
+	}
+	if err := mgr.IndexDocument("department", "d1", map[string]interface{}{
+		"deptId":   "d1",
+		"deptName": "engineering",
+	}); err != nil {
+		t.Fatalf("IndexDocument d1: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		DisplayName: "Department",
+		PrimaryKey:  "deptId",
+		Status:      "ACTIVE",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee/emp1/links/employeeDept/d1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if body["__apiName"] != "department" {
+		t.Errorf("expected __apiName 'department', got %v", body["__apiName"])
+	}
+	if body["__primaryKey"] != "d1" {
+		t.Errorf("expected __primaryKey 'd1', got %v", body["__primaryKey"])
+	}
+}
+
+func TestHandler_GetLinkedObject_404(t *testing.T) {
+	svc, _, repo, linkResolver := setupOSSTest(t)
+	handler := oss.NewHandler(svc)
+
+	repo.addObjectType(&oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.department",
+		OntologyRID: testOntologyRID,
+		APIName:     "department",
+		PrimaryKey:  "deptId",
+	})
+
+	repo.addLinkType(oms.LinkType{
+		RID:              "ri.ontology.main.link-type.empDept",
+		APIName:          "employeeDept",
+		SourceObjectType: "ri.ontology.main.object-type.employee",
+		TargetObjectType: "ri.ontology.main.object-type.department",
+		Cardinality:      "MANY_TO_ONE",
+	})
+
+	linkResolver.results["ri.ontology.main.link-type.empDept"] = []string{"d1"}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/"+testOntologyRID+"/objects/employee/emp1/links/employeeDept/d99", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -4,6 +4,7 @@ import type {
   ObjectHistoryResponse,
   WireObject,
   WhereClause,
+  CountObjectsResponse,
 } from './types';
 
 export interface ListObjectsParams {
@@ -33,7 +34,7 @@ export interface SearchObjectsParams {
   pageSize?: number;
   pageToken?: string;
   orderBy?: { field: string; direction?: 'asc' | 'desc' };
-  select?: string[];
+  select: string[];
 }
 
 export function searchObjects(params: SearchObjectsParams): Promise<ObjectPage> {
@@ -82,6 +83,30 @@ export function listLinkedObjects(
   return request<ObjectPage>(
     'GET',
     `/api/v2/ontologies/${params.ontologyApiName}/objects/${params.objectType}/${params.primaryKey}/links/${params.linkType}${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export function countObjects(
+  ontologyApiName: string,
+  objectType: string,
+): Promise<CountObjectsResponse> {
+  return request<CountObjectsResponse>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/objects/${objectType}/count`,
+    {},
+  );
+}
+
+export function getLinkedObject(
+  ontologyApiName: string,
+  objectType: string,
+  primaryKey: string,
+  linkType: string,
+  linkedObjectPrimaryKey: string,
+): Promise<WireObject> {
+  return request<WireObject>(
+    'GET',
+    `/api/v2/ontologies/${ontologyApiName}/objects/${objectType}/${primaryKey}/links/${linkType}/${linkedObjectPrimaryKey}`,
   );
 }
 

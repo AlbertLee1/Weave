@@ -78,6 +78,12 @@ export function BrowserPage() {
       : undefined,
   });
 
+  // Build the select array from known properties (Foundry V2 requires it).
+  const selectFields = useMemo(() => {
+    if (!objectType?.properties) return [];
+    return Object.keys(objectType.properties);
+  }, [objectType]);
+
   // Search objects (with filters/search)
   const searchResult = useSearchObjects({
     ontologyApiName: ontology,
@@ -88,6 +94,7 @@ export function BrowserPage() {
     orderBy: sortField
       ? { field: sortField, direction: sortDirection }
       : undefined,
+    select: selectFields,
     enabled: hasActiveSearch,
   });
 

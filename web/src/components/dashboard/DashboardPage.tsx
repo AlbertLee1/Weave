@@ -1,11 +1,7 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOntologies } from '../../hooks/useOntologies';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
-import { createOntology, type CreateOntologyInput } from '../../api/admin';
 import type { Ontology } from '../../api/types';
-import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { OntologyCard } from './OntologyCard';
@@ -26,34 +22,7 @@ function OntologyCardWithCount({ ontology, onClick, index }: { ontology: Ontolog
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { data: ontologies, isLoading, error } = useOntologies();
-
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<CreateOntologyInput>({
-    apiName: '',
-    displayName: '',
-    description: '',
-  });
-
-  const mutation = useMutation({
-    mutationFn: createOntology,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ontologies'] });
-      setModalOpen(false);
-      setForm({ apiName: '', displayName: '', description: '' });
-    },
-  });
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.apiName.trim() || !form.displayName.trim()) return;
-    mutation.mutate({
-      apiName: form.apiName.trim(),
-      displayName: form.displayName.trim(),
-      description: form.description?.trim() || undefined,
-    });
-  }
 
   const totalObjectTypes = 0;
 
@@ -160,35 +129,6 @@ export function DashboardPage() {
               Define your data universe. Model objects, relationships, and actions in a unified ontology layer.
             </p>
           </div>
-
-          {/* Create CTA */}
-          <div style={{ animation: 'fadeInUp 500ms 280ms ease-out both' }}>
-            <button
-              onClick={() => setModalOpen(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 focus:outline-none"
-              style={{
-                fontFamily: 'var(--font-sans)',
-                background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-                color: '#080B16',
-                boxShadow: '0 4px 20px rgba(245,158,11,0.35), 0 1px 0 rgba(255,255,255,0.1) inset',
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                  '0 6px 28px rgba(245,158,11,0.55), 0 1px 0 rgba(255,255,255,0.1) inset';
-                (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                  '0 4px 20px rgba(245,158,11,0.35), 0 1px 0 rgba(255,255,255,0.1) inset';
-                (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
-              }}
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              New Ontology
-            </button>
-          </div>
         </div>
       </div>
 
@@ -232,32 +172,7 @@ export function DashboardPage() {
       {!ontologies || ontologies.length === 0 ? (
         <EmptyState
           title="No ontologies yet"
-          description="Create your first ontology to start defining your data model and object relationships."
-          action={
-            <button
-              onClick={() => setModalOpen(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200"
-              style={{
-                fontFamily: 'var(--font-sans)',
-                background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-                color: '#080B16',
-                boxShadow: '0 4px 20px rgba(245,158,11,0.3)',
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                  '0 6px 28px rgba(245,158,11,0.5)';
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                  '0 4px 20px rgba(245,158,11,0.3)';
-              }}
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              Create your first ontology
-            </button>
-          }
+          description="Ontologies are managed through the Foundry API. Use the SDK or CLI to create ontologies."
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -271,133 +186,6 @@ export function DashboardPage() {
           ))}
         </div>
       )}
-
-      {/* ── Create Ontology Modal ─────────────────────────────────── */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Ontology">
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label
-              className="block text-xs font-medium text-text-secondary mb-1.5"
-              style={{ fontFamily: 'var(--font-sans)' }}
-            >
-              API Name
-            </label>
-            <input
-              type="text"
-              value={form.apiName}
-              onChange={(e) => setForm((f) => ({ ...f, apiName: e.target.value }))}
-              placeholder="my-ontology"
-              required
-              className="w-full px-3 py-2.5 text-sm text-text-primary bg-bg-tertiary border border-border rounded-lg placeholder:text-text-muted focus:outline-none transition-all"
-              style={{ fontFamily: 'var(--font-mono)' }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(245,158,11,0.45)';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.1)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '';
-                e.currentTarget.style.boxShadow = '';
-              }}
-            />
-          </div>
-
-          <div>
-            <label
-              className="block text-xs font-medium text-text-secondary mb-1.5"
-              style={{ fontFamily: 'var(--font-sans)' }}
-            >
-              Display Name
-            </label>
-            <input
-              type="text"
-              value={form.displayName}
-              onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
-              placeholder="My Ontology"
-              required
-              className="w-full px-3 py-2.5 text-sm text-text-primary bg-bg-tertiary border border-border rounded-lg placeholder:text-text-muted focus:outline-none transition-all"
-              style={{ fontFamily: 'var(--font-sans)' }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(245,158,11,0.45)';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.1)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '';
-                e.currentTarget.style.boxShadow = '';
-              }}
-            />
-          </div>
-
-          <div>
-            <label
-              className="block text-xs font-medium text-text-secondary mb-1.5"
-              style={{ fontFamily: 'var(--font-sans)' }}
-            >
-              Description
-              <span className="ml-1 text-text-muted font-normal">(optional)</span>
-            </label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              placeholder="Describe what this ontology models..."
-              rows={3}
-              className="w-full px-3 py-2.5 text-sm text-text-primary bg-bg-tertiary border border-border rounded-lg placeholder:text-text-muted focus:outline-none transition-all resize-none leading-relaxed"
-              style={{ fontFamily: 'var(--font-sans)' }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(245,158,11,0.45)';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.1)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '';
-                e.currentTarget.style.boxShadow = '';
-              }}
-            />
-          </div>
-
-          {mutation.isError && (
-            <p className="text-xs text-accent-error px-1">
-              {(mutation.error as Error).message || 'Failed to create ontology'}
-            </p>
-          )}
-
-          <div className="flex items-center justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={() => setModalOpen(false)}
-              className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-bg-elevated"
-              style={{ fontFamily: 'var(--font-sans)' }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending || !form.apiName.trim() || !form.displayName.trim()}
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{
-                fontFamily: 'var(--font-sans)',
-                background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-                color: '#080B16',
-                boxShadow: '0 3px 16px rgba(245,158,11,0.3)',
-              }}
-            >
-              {mutation.isPending ? (
-                <>
-                  <span
-                    className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent inline-block"
-                    style={{ animation: 'spin 0.7s linear infinite' }}
-                  />
-                  Creating…
-                </>
-              ) : (
-                'Create Ontology'
-              )}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-      `}</style>
     </div>
   );
 }

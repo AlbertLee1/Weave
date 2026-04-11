@@ -43,10 +43,14 @@ type Tab = 'browse' | 'aggregate';
 function resolveRootType(def: ObjectSetDefinition): string {
   switch (def.type) {
     case 'base':
+    case 'static':
+      return def.objectType;
+    case 'asType':
       return def.objectType;
     case 'filter':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'asBaseObjectTypes':
       return resolveRootType(def.objectSet);
     case 'union':
     case 'intersect':
@@ -55,8 +59,11 @@ function resolveRootType(def: ObjectSetDefinition): string {
         ? resolveRootType(def.objectSets[0])
         : '';
     case 'searchAround':
+    case 'interfaceLinkSearchAround':
       return ''; // backend resolves
     case 'reference':
+    case 'interfaceBase':
+    case 'methodInput':
       return '';
   }
 }
@@ -91,13 +98,29 @@ export function ObjectSetResults({
 
   const currentPageToken = pageTokens[currentPage - 2];
 
+  // Resolve the static root type name from the definition for schema lookup.
+  const staticTypeName = useMemo(
+    () => (def ? resolveRootType(def) : ''),
+    [def],
+  );
+
+  // Fetch the object type metadata so we can derive the select fields.
+  const { data: staticObjectType } = useObjectType(ontologyApiName, staticTypeName);
+
+  // Build the select array from known properties (Foundry V2 requires it).
+  const selectFields = useMemo(() => {
+    if (!staticObjectType?.properties) return [];
+    return Object.keys(staticObjectType.properties);
+  }, [staticObjectType]);
+
   // Browse data
   const browseQuery = useLoadObjectSet({
     ontologyApiName,
     objectSet: def,
+    select: selectFields,
     pageSize: PAGE_SIZE,
     pageToken: currentPageToken,
-    enabled: !!def && tab === 'browse',
+    enabled: !!def && tab === 'browse' && selectFields.length > 0,
   });
 
   // Determine the runtime object type from the first row, falling back to the
@@ -106,8 +129,8 @@ export function ObjectSetResults({
   const resolvedTypeName = useMemo(() => {
     const first = browseQuery.data?.data?.[0];
     if (first?.__apiName) return first.__apiName;
-    return def ? resolveRootType(def) : '';
-  }, [browseQuery.data, def]);
+    return staticTypeName;
+  }, [browseQuery.data, staticTypeName]);
 
   const { data: resolvedObjectType } = useObjectType(
     ontologyApiName,
