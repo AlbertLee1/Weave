@@ -139,6 +139,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents)
 	if deps.OssSvc != nil && deps.OmsRepo != nil {
 		mcpSrv := mcp.NewServer(deps.OssSvc, deps.OmsRepo, deps.ActionExecutor)
+		// US-046: wire the semantic searcher so weave_semantic_search and
+		// weave_ask_objectset can run nearestNeighbors queries via the
+		// ObjectSet executor. Optional — when nil the AI search tools
+		// return a clear "not configured" error.
+		if deps.ObjSetExecutor != nil {
+			mcpSrv.SetSemanticSearcher(newExecutorSemanticSearcher(deps.ObjSetExecutor))
+		}
 		r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
 	}
 
@@ -509,6 +516,15 @@ func main() {
 	deps.ObjSetStore = objectset.NewStore(1 * time.Hour)
 	if deps.LinkResolver != nil {
 		deps.ObjSetExecutor = objectset.NewExecutor(deps.IndexMgr, deps.LinkResolver, deps.ObjSetStore)
+		// US-046: nearestNeighbors backend. The vector store wraps the OMS
+		// repo (which exposes pgvector via FindNearestNeighbors) and the
+		// optional embedding provider resolves text-only NN queries.
+		if deps.OmsRepo != nil {
+			deps.ObjSetExecutor.SetVectorStore(newPGVectorStore(deps.OmsRepo))
+		}
+		if prov := buildEmbeddingProvider(); prov != nil {
+			deps.ObjSetExecutor.SetEmbeddingProvider(prov)
+		}
 	}
 
 	// 7. NATS
@@ -533,6 +549,22 @@ func main() {
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
 		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
+
+		// US-046: optional embedding side-channel. Each CREATE/MODIFY edit
+		// for a configured object type produces a vector via the embedding
+		// provider, rate-limited to the configured tokens-per-second budget.
+		// Disabled when no provider, no store, or no objectTypes are set.
+		if prov := buildEmbeddingProvider(); prov != nil && deps.OmsRepo != nil {
+			deps.FunnelConsumer.SetEmbeddingProvider(prov)
+			deps.FunnelConsumer.SetEmbeddingStore(deps.OmsRepo)
+			if cfgMap := loadEmbeddingObjectTypes(); len(cfgMap) > 0 {
+				deps.FunnelConsumer.SetEmbeddingObjectTypes(cfgMap)
+				deps.FunnelConsumer.SetEmbeddingObjectTypeRIDs(loadObjectTypeRIDs(ctx, deps.OmsRepo))
+			}
+			if lim := buildEmbeddingRateLimiter(); lim != nil {
+				deps.FunnelConsumer.SetEmbeddingRateLimiter(lim)
+			}
+		}
 
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)

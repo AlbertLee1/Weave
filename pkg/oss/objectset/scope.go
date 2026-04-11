@@ -19,3 +19,11 @@ func WithOntologyScope(ctx context.Context, ontologyAPIName string) context.Cont
 func scopedIndexKey(ctx context.Context, mgr *index.Manager, objectType string) string {
 	return index.KeyForCtx(ctx, mgr, objectType)
 }
+
+// OntologyScopeFromContextOrEmpty returns the ontology API name stamped on
+// ctx via WithOntologyScope, or "" when no scope is set. Exposed so the
+// nearestNeighbors executor can pass the ontology through to the vector
+// store without dragging pkg/index into its own package surface.
+func OntologyScopeFromContextOrEmpty(ctx context.Context) string {
+	return index.OntologyScopeFromContext(ctx)
+}

@@ -734,8 +734,8 @@
         "go test ./... passes"
       ],
       "priority": 46,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "nearestNeighbors executor lives in pkg/oss/objectset/nn.go: NNVectorStore + NNEmbeddingProvider interfaces, executor setters SetVectorStore/SetEmbeddingProvider, executeNearestNeighbors threads inner objectSet PKs as candidates and routes vector OR text queries through the configured backend. Funnel embedding hook in pkg/funnel/embeddings.go: SetEmbeddingProvider/SetEmbeddingStore/SetEmbeddingObjectTypes/SetEmbeddingObjectTypeRIDs/SetEmbeddingRateLimiter on Consumer, generateEmbeddings runs after applyBatchEdits on every CREATE/MODIFY for configured types, golang.org/x/time/rate.Limiter gates each call (Allow drops on empty bucket — back-pressure not blocking). MCP gains 4 tools (weave_semantic_search, weave_ask_objectset, weave_explain_object, weave_draft_action) registered idempotently in registerAITools; semantic_search/ask_objectset use SemanticSearcher interface set via SetSemanticSearcher; explain_object bundles oss.GetObject + ObjectType metadata + outgoingLinkTypes; draft_action returns parameter template with type-defaulted values. Production wiring in cmd/server/wiring_us046.go: pgVectorStore adapter (oms.Repository → objectset.NNVectorStore, post-filters by candidate set), executorSemanticSearcher (mcp.SemanticSearcher → objectset.Executor with WithOntologyScope), env-driven embedding provider (WEAVE_EMBED_MOCK / WEAVE_OPENAI_API_KEY), rate limiter (WEAVE_EMBED_RATE_PER_SEC default 5), and per-type config (WEAVE_EMBED_OBJECT_TYPES=Type:prop1+prop2). 19 new tests (5 nn executor, 5 funnel hook, 9 MCP tool); pre-existing TestExecute_NearestNeighbors_NotSupported renamed to ..._RequiresVectorStore; pre-existing TestServer_ToolsList_ReturnsRegistered count bumped 7→11. go test ./... 34 packages green; contract tests 3/3 green."
     },
     {
       "id": "US-047",

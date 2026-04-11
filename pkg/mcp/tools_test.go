@@ -44,6 +44,28 @@ func (f *fakeOmsRepo) InsertActionLog(ctx context.Context, log *oms.ActionLog) e
 	return nil
 }
 
+func (f *fakeOmsRepo) GetObjectTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*oms.ObjectType, error) {
+	for _, ot := range f.objectTypes[ontologyRID] {
+		if ot.APIName == apiName {
+			return &ot, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (f *fakeOmsRepo) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	return nil, nil
+}
+
+func (f *fakeOmsRepo) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
+	for _, at := range f.actionTypes[ontologyRID] {
+		if at.APIName == apiNameOrRID || at.RID == apiNameOrRID {
+			return &at, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
 // fakeOssService is a stub oss.Service for the MCP tools.
 type fakeOssService struct {
 	getErr      error

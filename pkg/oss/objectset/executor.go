@@ -41,6 +41,8 @@ type Executor struct {
 	linkResolver   links.LinkResolver
 	store          *Store
 	interfaceResol InterfaceResolver
+	vectorStore    NNVectorStore
+	embedProvider  NNEmbeddingProvider
 }
 
 // NewExecutor creates a new ObjectSet executor.
@@ -101,7 +103,7 @@ func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error
 	case "reference":
 		return e.executeReference(ctx, def)
 	case "nearestNeighbors":
-		return nil, fmt.Errorf("nearestNeighbors not yet supported: requires vector index backend")
+		return e.executeNearestNeighbors(ctx, def)
 	case "withProperties":
 		return e.executeWithProperties(ctx, def)
 	case "static":

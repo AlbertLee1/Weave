@@ -57,6 +57,10 @@ type Consumer struct {
 	// holds the source of truth and downstream UI sorts by recorded_at.
 	versionMu       sync.Mutex
 	versionCounters map[string]int64
+
+	// embedFields holds the optional embedding side-channel state. See
+	// embeddings.go for the wiring methods and the per-batch hook.
+	embedFields
 }
 
 // NewConsumer creates a new edit consumer.
@@ -343,6 +347,11 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	if err := c.applyBatchEdits(batch.OntologyAPIName, batch.Edits); err != nil {
 		return err
 	}
+
+	// Embedding generation is best-effort: failures here are logged but
+	// must not roll back the index commit. Runs after the index is updated
+	// so a failed embed cannot strand a half-applied batch.
+	c.generateEmbeddings(ctx, batch)
 
 	if c.historyRepo == nil {
 		return nil

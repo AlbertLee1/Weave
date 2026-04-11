@@ -58,8 +58,8 @@ func TestServer_ToolsList_ReturnsRegistered(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got.Tools) != 7 {
-		t.Errorf("len(tools) = %d, want 7", len(got.Tools))
+	if len(got.Tools) != 11 {
+		t.Errorf("len(tools) = %d, want 11", len(got.Tools))
 	}
 	wantNames := map[string]bool{
 		"weave_list_ontologies":   true,
@@ -69,6 +69,11 @@ func TestServer_ToolsList_ReturnsRegistered(t *testing.T) {
 		"weave_search_objects":    true,
 		"weave_list_action_types": true,
 		"weave_apply_action":      true,
+		// US-046 AI tools.
+		"weave_semantic_search": true,
+		"weave_ask_objectset":   true,
+		"weave_explain_object":  true,
+		"weave_draft_action":    true,
 	}
 	for _, td := range got.Tools {
 		if !wantNames[td.Name] {
