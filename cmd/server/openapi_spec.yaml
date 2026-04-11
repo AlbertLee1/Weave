@@ -3088,3 +3088,98 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{propertyName}/latestValue:
+    get:
+      operationId: getTimeSeriesLatestValue
+      summary: Get the latest value of a time series value bank property
+      description: |
+        Returns the most recent TimeSeriesPoint for the value bank stored
+        in the given object's TimeSeriesValueBankProperty. Semantically
+        equivalent to `lastPoint` for TimeSeriesProperty. The path
+        parameter name is `propertyName` (not `property`) — this matches
+        Foundry's API exactly.
+      tags: [TimeSeriesValueBankProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: propertyName
+          required: true
+          description: TimeSeriesValueBankProperty API name on the object type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest value in the series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeSeriesPoint"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamValues:
+    post:
+      operationId: streamTimeSeriesValues
+      summary: Stream every value of a time series value bank property
+      description: |
+        Returns every value in the series ordered by time ascending. The
+        optional `format` query parameter mirrors Foundry's JSON/ARROW
+        toggle; this server only emits JSON and rejects `format=ARROW`
+        with 400 UnsupportedFormat.
+      tags: [TimeSeriesValueBankProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: format
+          required: false
+          description: Response format. Only JSON is supported.
+          schema:
+            type: string
+            enum: [JSON, ARROW]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Values in the series, ordered ascending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeSeriesPoint"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"

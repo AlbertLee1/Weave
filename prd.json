@@ -615,8 +615,8 @@
         "go test ./... passes"
       ],
       "priority": 38,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Delivered 2026-04-11. Two new handlers on pkg/oss Handler: GetTimeSeriesLatestValue (GET, {propertyName}) and StreamTimeSeriesValues (POST, {property}) — path param inconsistency matches Foundry exactly, resolveTimeSeriesKey already accepts either chi URL param. Both reuse the timeseries.Store wired via SetTimeSeriesStore from US-037: latestValue delegates to LastPoint, streamValues shares a new streamTimeSeries helper with StreamTimeSeriesPoints (identical JSON/ARROW format handling, ARROW returns 400 UnsupportedFormat). Routes registered in pkg/oss/handlers.go RegisterRoutes; OpenAPI spec updated with 2 path entries + TimeSeriesValueBankProperty tag in both cmd/server/openapi_spec.yaml and api/openapi.yaml (byte-identical). 4 new TDD tests in pkg/oss/handlers_timeseries_valuebank_test.go (success, empty-series 404, stream success, ARROW rejection). Full regression green (31 packages)."
     },
     {
       "id": "US-039",

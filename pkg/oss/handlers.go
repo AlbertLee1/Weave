@@ -85,6 +85,13 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/lastPoint", h.GetTimeSeriesLastPoint)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamPoints", h.StreamTimeSeriesPoints)
 
+	// TimeSeriesValueBankProperty endpoints (US-038). The {propertyName}
+	// vs {property} path parameter inconsistency is deliberate — it
+	// matches Foundry's OpenAPI exactly. resolveTimeSeriesKey accepts
+	// either chi URL param.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{propertyName}/latestValue", h.GetTimeSeriesLatestValue)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamValues", h.StreamTimeSeriesValues)
+
 	// Interface data query endpoints (Foundry dual prefix: /interfaces/ for data, /interfaceTypes/ for metadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/search", h.InterfaceSearchObjects)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceType}/aggregate", h.InterfaceAggregateObjects)

@@ -1048,3 +1048,26 @@
   - `grep -n "objects/{objectType}/{primaryKey}/media" openapi_spec.yaml` 是给新 object-path endpoint 找 spec 模板最快的办法 —— 直接 copy 相邻路径的参数声明即可
 ---
 
+## 2026-04-11 - US-038: TimeSeriesValueBankProperty 2 endpoints
+- Shipped 2 Foundry endpoints on top of the US-037 timeseries.Store:
+  - GET  /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{propertyName}/latestValue
+  - POST /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/streamValues
+- Path parameter inconsistency ({propertyName} on latestValue vs {property} on streamValues) matches Foundry exactly; resolveTimeSeriesKey from US-037 already falls back between the two chi URL param names, so no handler plumbing changes were needed.
+- Implementation reuses the existing timeseries.Store wired via SetTimeSeriesStore: latestValue → Store.LastPoint, streamValues → Store.StreamPoints. Extracted a streamTimeSeries helper in pkg/oss/handlers_timeseries.go so StreamTimeSeriesPoints and StreamTimeSeriesValues share one body (format=ARROW → 400 UnsupportedFormat, nil points → empty slice, same error translation).
+- TDD RED → GREEN: wrote pkg/oss/handlers_timeseries_valuebank_test.go (4 tests) first and confirmed 3 failing with "404 page not found" before registering routes. After routes landed: all 4 green. Tests cover success, empty-series 404, stream-all, and ARROW rejection.
+- Files changed:
+  - pkg/oss/handlers_timeseries_valuebank_test.go — NEW: 4 TDD tests
+  - pkg/oss/handlers_timeseries.go — 2 new handlers + shared streamTimeSeries helper
+  - pkg/oss/handlers.go — 2 route registrations in RegisterRoutes TimeSeriesValueBankProperty block
+  - cmd/server/openapi_spec.yaml — 2 new path entries with TimeSeriesValueBankProperty tag
+  - api/openapi.yaml — byte-identical mirror
+  - prd.json — US-038 passes:true + notes
+- Tests: go test ./pkg/oss -run 'TestGetTimeSeriesLatestValue|TestPostTimeSeriesStreamValues' 4/4 绿; go test ./... 31/31 packages 绿 (oss 40s + chinook 338s + northwind 141s + e2e 9s, cached packages cached).
+- **Learnings for future iterations:**
+  - US-037 already intentionally built resolveTimeSeriesKey to accept both {property} and {propertyName} chi URL params — US-038 validates that choice; adding new timeseries endpoints does not require touching that helper even when the path param name changes
+  - When two endpoints (streamPoints / streamValues) have byte-identical body beyond the wire shape, extract a lowercase helper (streamTimeSeries) rather than duplicating the format-toggle + nil-slice guard — keeps ARROW rejection and error translation in one place for future maintenance
+  - Foundry API catalog: the only property-type endpoints mounted under the same /timeseries/{...} prefix but with different path-param names are TimeSeriesProperty ({property}) and TimeSeriesValueBankProperty ({propertyName} on latestValue). GeotemporalSeriesProperty (US-039) uses /geotemporalSeries/ not /timeseries/ — no route collision risk
+  - Do not add OpenAPI paths to both yaml files manually — edit cmd/server/openapi_spec.yaml and `cp` to api/openapi.yaml so the contract test's byte-identical check passes on first run
+  - Appending new OpenAPI paths: the current file ends exactly at the last paths: entry with no trailing section, so the edit replaces the final entry + appends new ones without needing to find the next section boundary
+---
+

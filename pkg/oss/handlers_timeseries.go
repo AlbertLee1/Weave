@@ -53,6 +53,44 @@ func (h *Handler) GetTimeSeriesLastPoint(w http.ResponseWriter, r *http.Request)
 // The ?format= query parameter mirrors Foundry's JSON/ARROW toggle. This
 // implementation emits JSON only; ARROW returns 400 UnsupportedFormat.
 func (h *Handler) StreamTimeSeriesPoints(w http.ResponseWriter, r *http.Request) {
+	h.streamTimeSeries(w, r)
+}
+
+// GetTimeSeriesLatestValue handles
+// GET /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{propertyName}/latestValue.
+//
+// TimeSeriesValueBankProperty endpoint (US-038). Returns the most recent
+// point in the series, equivalent to LastPoint for TimeSeriesProperty.
+// The path parameter is {propertyName} (not {property}) — this matches
+// Foundry's API exactly.
+func (h *Handler) GetTimeSeriesLatestValue(w http.ResponseWriter, r *http.Request) {
+	key, ok := h.resolveTimeSeriesKey(w, r)
+	if !ok {
+		return
+	}
+	p, err := h.timeseriesStore.LastPoint(r.Context(), key)
+	if err != nil {
+		writeTimeSeriesError(w, err)
+		return
+	}
+	writeJSONOK(w, p)
+}
+
+// StreamTimeSeriesValues handles
+// POST /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/streamValues.
+//
+// TimeSeriesValueBankProperty endpoint (US-038). Returns all points in
+// the series, equivalent to streamPoints. Honours the same ?format=
+// JSON/ARROW toggle — ARROW returns 400 UnsupportedFormat.
+func (h *Handler) StreamTimeSeriesValues(w http.ResponseWriter, r *http.Request) {
+	h.streamTimeSeries(w, r)
+}
+
+// streamTimeSeries implements the shared body of StreamTimeSeriesPoints
+// (TimeSeriesProperty) and StreamTimeSeriesValues (TimeSeriesValueBank).
+// Foundry splits these by property kind but the wire shape is identical
+// — both emit an ordered []TimeSeriesPoint and reject non-JSON formats.
+func (h *Handler) streamTimeSeries(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 	if format != "" && format != "JSON" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("UnsupportedFormat", map[string]string{
