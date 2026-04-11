@@ -589,7 +589,7 @@
         "go test -tags integration ./test/integration/phase6/... -run EditOnlyIngest passes"
       ],
       "priority": 37,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

@@ -2249,3 +2249,38 @@ new features — only run verification suites and commit the gate.
     handing off to the facet engine. No link resolver required for the
     base+aggregate path, so objectset.NewExecutor(mgr, nil, store) is fine.
 ---
+
+## 2026-04-12 - US-037
+- New `test/integration/phase6/phase6_editonly_ingest_test.go`
+  (`TestPhase6_EditOnlyIngest`): 50 Orders seeded with user `notes="VIP"`,
+  then 10 ingest flood rounds write empty notes + rolling `status` values
+  at strictly newer timestamps. Asserts every order retains `notes="VIP"`
+  and that `status` advanced to the last round's value (so the ingest
+  pipeline was actually reaching bleve).
+- Test reuses `fetchDocP6` from phase6_conflict_optimistic_test.go.
+- EditOnly hook is pre-cached into a `map[string]bool` before the flood
+  to avoid 500+ `ListProperties` calls during the ingest rounds.
+- Test runs with real PG via testcontainers + `database.RunMigrationsUp`
+  + `oms.NewPGRepository`, no NATS (consumer `nil` JetStream; direct
+  `ApplyBatch` invocation).
+- Files changed:
+  - test/integration/phase6/phase6_editonly_ingest_test.go (new)
+- Run: `go test -tags integration ./test/integration/phase6/... -run EditOnlyIngest`
+  → PASS 1.59s.
+- **Learnings for future iterations:**
+  - `funnel.Consumer.SetEditOnlyField` hook is called per ingest field
+    probe on EVERY edit. At scale it is cheap only if the callback does
+    O(1) map lookups; looking up via `repo.ListProperties` inside the
+    callback would fire once per (objectType, field) pair per edit and
+    dominate runtime. Cache before the flood.
+  - Building a 50-edit `EditBatch` in a single `funnel.ApplyBatch` call
+    is the canonical way to fan out ingest work — the consumer loops
+    edits internally and the editOnly guard runs per edit, so one big
+    batch is equivalent to 50 one-edit batches but an order of
+    magnitude faster.
+  - `time.Date(...).Add(N*time.Hour)` is enough to strictly beat the
+    seed `userTS` for every ingest round. No need for `time.Now()`
+    here — the US-027 editOnly guard runs BEFORE the US-021 timestamp
+    guard, so the timestamps only matter for liveness confirmation of
+    non-editOnly fields (status).
+---
