@@ -11,6 +11,23 @@ import (
 	"github.com/liyang/weave/pkg/httputil"
 )
 
+// staleObjectAPIError converts an Executor-level *StaleObjectError into the
+// Palantir-wire-format 409 Conflict response used by US-023 optimistic
+// concurrency. Returns nil when err is not a *StaleObjectError so the
+// caller can fall through to its existing error translation path.
+func staleObjectAPIError(err error) *apierror.APIError {
+	var stale *StaleObjectError
+	if !errors.As(err, &stale) {
+		return nil
+	}
+	return apierror.NewConflict("StaleObject", map[string]string{
+		"objectType":      stale.ObjectType,
+		"primaryKey":      stale.PrimaryKey,
+		"expectedVersion": strconv.Itoa(stale.ExpectedVersion),
+		"currentVersion":  strconv.FormatInt(stale.CurrentVersion, 10),
+	})
+}
+
 // Handler handles action HTTP requests.
 type Handler struct {
 	executor *Executor
@@ -84,6 +101,10 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	// VALIDATE_AND_EXECUTE: normal execution.
 	result, err := h.executor.Apply(r.Context(), ontologyRID, &req)
 	if err != nil {
+		if staleErr := staleObjectAPIError(err); staleErr != nil {
+			apierror.WriteJSON(w, staleErr)
+			return
+		}
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
@@ -188,6 +209,10 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executor.Apply(r.Context(), ontologyRID, &req)
 	if err != nil {
+		if staleErr := staleObjectAPIError(err); staleErr != nil {
+			apierror.WriteJSON(w, staleErr)
+			return
+		}
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
@@ -225,9 +250,9 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqs struct {
-		Actions []ApplyRequest    `json:"actions"`
+		Actions []ApplyRequest     `json:"actions"`
 		Options *BatchApplyOptions `json:"options,omitempty"`
-		Mode    string            `json:"mode"` // old field — rejected if present
+		Mode    string             `json:"mode"` // old field — rejected if present
 	}
 	if err := httputil.ReadJSON(r, &reqs); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{"error": err.Error()}))

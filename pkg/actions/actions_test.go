@@ -24,9 +24,15 @@ type mockOmsRepo struct {
 	actionTypes  []oms.ActionType
 	insertedLogs []*oms.ActionLog
 	insertLogErr error
+	// US-023: optional per-test optimistic-concurrency overrides. When these
+	// maps are non-nil the mock returns the configured ObjectType / version
+	// for ExpectedVersion checks; otherwise the default nil/0 values
+	// preserve the legacy stub behaviour for all pre-existing tests.
+	objectTypesByAPIName map[string]*oms.ObjectType
+	objectVersionCounts  map[string]int64
 }
 
-func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error   { return nil }
+func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error { return nil }
 func (m *mockOmsRepo) GetOntology(_ context.Context, _ string) (*oms.Ontology, error) {
 	return nil, nil
 }
@@ -37,7 +43,12 @@ func (m *mockOmsRepo) CreateObjectType(_ context.Context, _ *oms.ObjectType) err
 func (m *mockOmsRepo) GetObjectType(_ context.Context, _ string) (*oms.ObjectType, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) GetObjectTypeByAPIName(_ context.Context, _, _ string) (*oms.ObjectType, error) {
+func (m *mockOmsRepo) GetObjectTypeByAPIName(_ context.Context, _, apiName string) (*oms.ObjectType, error) {
+	if m.objectTypesByAPIName != nil {
+		if ot, ok := m.objectTypesByAPIName[apiName]; ok {
+			return ot, nil
+		}
+	}
 	return nil, nil
 }
 func (m *mockOmsRepo) ListObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
@@ -96,7 +107,7 @@ func (m *mockOmsRepo) ListInterfaces(_ context.Context, _ string) ([]oms.Interfa
 	return nil, nil
 }
 func (m *mockOmsRepo) UpdateInterface(_ context.Context, _ *oms.Interface) error { return nil }
-func (m *mockOmsRepo) DeleteInterface(_ context.Context, _ string) error { return nil }
+func (m *mockOmsRepo) DeleteInterface(_ context.Context, _ string) error         { return nil }
 func (m *mockOmsRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
 	return nil, nil
 }
@@ -197,7 +208,12 @@ func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistor
 func (m *mockOmsRepo) ListObjectHistory(_ context.Context, _, _ string, _ int) ([]oms.ObjectHistory, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) GetObjectVersionCount(_ context.Context, _, _ string) (int64, error) {
+func (m *mockOmsRepo) GetObjectVersionCount(_ context.Context, objectTypeRID, primaryKey string) (int64, error) {
+	if m.objectVersionCounts != nil {
+		if v, ok := m.objectVersionCounts[objectTypeRID+"|"+primaryKey]; ok {
+			return v, nil
+		}
+	}
 	return 0, nil
 }
 
@@ -214,8 +230,10 @@ func (m *mockOmsRepo) ListSnapshots(_ context.Context, _ string) ([]oms.Ontology
 func (m *mockOmsRepo) GetSnapshot(_ context.Context, _ string, _ int) (*oms.OntologySnapshot, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) GetOntologyVersion(_ context.Context, _ string) (int, error)       { return 0, nil }
-func (m *mockOmsRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) { return 1, nil }
+func (m *mockOmsRepo) GetOntologyVersion(_ context.Context, _ string) (int, error) { return 0, nil }
+func (m *mockOmsRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) {
+	return 1, nil
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1272,10 +1290,18 @@ func TestExecuteSideEffects_Webhook_NonSuccess_BestEffort(t *testing.T) {
 	}
 }
 
-func (m *mockOmsRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
-func (m *mockOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) { return nil, nil }
-func (m *mockOmsRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) { return nil, nil }
-func (m *mockOmsRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error { return nil }
+func (m *mockOmsRepo) CreateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error {
+	return nil
+}
+func (m *mockOmsRepo) GetSecurityPolicy(_ context.Context, _ string) (*oms.SecurityPolicy, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListSecurityPolicies(_ context.Context, _ string) ([]oms.SecurityPolicy, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) UpdateSecurityPolicy(_ context.Context, _ *oms.SecurityPolicy) error {
+	return nil
+}
 func (m *mockOmsRepo) DeleteSecurityPolicy(_ context.Context, _ string) error { return nil }
 
 // ---------------------------------------------------------------------------

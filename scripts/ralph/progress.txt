@@ -1268,3 +1268,63 @@ new features — only run verification suites and commit the gate.
     Future phase6 integration stories should adopt the same "seed once,
     iterate many seeds" pattern instead of spinning per-seed containers.
 ---
+
+## 2026-04-11 - US-023
+- Added ApplyOptions.ExpectedVersion *int (omitempty) + new *StaleObjectError
+  type carrying {ObjectType, PrimaryKey, ExpectedVersion, CurrentVersion}.
+- Executor.Apply now calls checkExpectedVersion after Prepare but BEFORE
+  CommitBatch: it scans prep.Edits for the first MODIFY/DELETE target,
+  resolves ObjectType RID via omsRepo.GetObjectTypeByAPIName (falling back
+  to the API name when no mapping exists, mirroring pkg/funnel consumer
+  behaviour), and compares the result of GetObjectVersionCount against
+  *ExpectedVersion. Mismatch returns a *StaleObjectError; the publisher and
+  action log are never touched.
+- handlers.go gains staleObjectAPIError() which converts the executor-level
+  sentinel into apierror.NewConflict("StaleObject", {expectedVersion,
+  currentVersion, objectType, primaryKey}) — both Apply and ApplyWithOverrides
+  code paths catch the error early so 409 pre-empts the generic 400
+  ActionFailed path.
+- CREATE-only actions skip the version check: there is no target object to
+  compare against, so ExpectedVersion is a no-op.
+- Test mock extensions on mockOmsRepo: new objectTypesByAPIName +
+  objectVersionCounts fields (nil-safe — legacy tests still see the old
+  nil/0 returns). GetObjectTypeByAPIName and GetObjectVersionCount wired to
+  honour them when set.
+- Files changed:
+  - pkg/actions/executor.go (ApplyOptions, StaleObjectError, Apply version
+    check hook, checkExpectedVersion)
+  - pkg/actions/handlers.go (staleObjectAPIError + Apply/ApplyWithOverrides
+    error branches)
+  - pkg/actions/actions_test.go (mockOmsRepo mock extensions)
+  - pkg/actions/optimistic_test.go (new, 6 tests: 4 executor + 2 handler)
+- **Learnings for future iterations:**
+  - The version check belongs in Apply, not Prepare: Prepare is the pure
+    request-to-edits transform used by both single and batch paths, and
+    optimistic concurrency is fundamentally stateful (depends on live
+    version) so keeping it out of Prepare preserves the batch semantics
+    where same-action-multi-param batches can still share a single Prepare
+    codepath. Follow-up: US-054 / batch optimistic concurrency will need
+    per-action expectedVersion slots inside the batch envelope, not a
+    top-level one.
+  - GetObjectVersionCount is an int64 COUNT(*) over object_history — the
+    returned value equals the current highest version because funnel
+    consumer.nextVersion starts at 1 and increments monotonically. Don't
+    try to read max(version) from the history rows; the count is cheaper
+    and equivalent under the "monotonic-from-1" invariant.
+  - When extending mockOmsRepo across many tests, add nil-guarded fields
+    (map[...]X where the method returns a sane default when the map is
+    nil) instead of new constructors — legacy test fixtures stay untouched
+    and the new behaviour opts in per-test. The fakePublisher pattern in
+    batch_test.go already set the precedent.
+  - Palantir apierror wire format uses strings for all parameter values,
+    even numeric ones. Use strconv.FormatInt / strconv.Itoa when stuffing
+    version numbers into the Parameters map so the frontend can parseInt
+    on the other side. The json test must also unmarshal Parameters as
+    map[string]string — a map[string]interface{} will NOT match the wire
+    format.
+  - The handler helper staleObjectAPIError returns *apierror.APIError and
+    is the reusable shim for any executor-level 409-class error. Future
+    conflict stories (US-054 row policy conflicts, US-086 Goja edit
+    conflicts) should lean on the same helper pattern rather than
+    hand-rolling 409 construction at every handler.
+---

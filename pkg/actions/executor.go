@@ -16,9 +16,31 @@ import (
 )
 
 // ApplyOptions controls single-action apply behavior (Foundry OSv2).
+//
+// US-023: ExpectedVersion is an optional optimistic concurrency token. When
+// non-nil, Apply loads the current version of the MODIFY/DELETE target and
+// returns a *StaleObjectError if it does not match, preventing silent
+// overwrites of data the caller has not yet observed.
 type ApplyOptions struct {
-	Mode        string `json:"mode"`        // VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
-	ReturnEdits string `json:"returnEdits"` // ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
+	Mode            string `json:"mode"`                      // VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
+	ReturnEdits     string `json:"returnEdits"`               // ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
+	ExpectedVersion *int   `json:"expectedVersion,omitempty"` // optional, omitempty
+}
+
+// StaleObjectError is returned by Executor.Apply when a caller-supplied
+// ExpectedVersion does not match the target object's current version. The
+// HTTP handler layer converts this to a 409 Conflict response with
+// errorName=StaleObject so Foundry SDK clients can surface a reload UX.
+type StaleObjectError struct {
+	ObjectType      string
+	PrimaryKey      string
+	ExpectedVersion int
+	CurrentVersion  int64
+}
+
+func (e *StaleObjectError) Error() string {
+	return fmt.Sprintf("stale object %s/%s: expected version %d, current version %d",
+		e.ObjectType, e.PrimaryKey, e.ExpectedVersion, e.CurrentVersion)
 }
 
 // BatchApplyOptions controls batch apply behavior (Foundry OSv2).
@@ -45,7 +67,7 @@ type ApplyResult struct {
 
 // ActionResults is the Foundry OSv2 edit summary returned in response envelopes.
 type ActionResults struct {
-	Type                string `json:"type"`                // always "edits"
+	Type                string `json:"type"` // always "edits"
 	AddedObjectCount    int    `json:"addedObjectCount"`
 	ModifiedObjectCount int    `json:"modifiedObjectCount"`
 	DeletedObjectCount  int    `json:"deletedObjectCount"`
@@ -378,6 +400,16 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		return nil, err
 	}
 
+	// US-023: optimistic concurrency. If the caller supplied an expected
+	// version, fail-fast before publishing on mismatch. Done here (not
+	// in Prepare) because it depends on live version state rather than
+	// the pure request → edits transform.
+	if req.Options != nil && req.Options.ExpectedVersion != nil {
+		if err := e.checkExpectedVersion(ctx, ontologyRID, prep.Edits, *req.Options.ExpectedVersion); err != nil {
+			return nil, err
+		}
+	}
+
 	// Short-circuit the noop path to match the legacy nil-edits shape.
 	if len(prep.Edits) == 0 {
 		return &ApplyResult{
@@ -452,6 +484,49 @@ func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string,
 	result.Mode = "bestEffort"
 	result.Failures = failures
 	return result, nil
+}
+
+// checkExpectedVersion enforces the US-023 optimistic concurrency contract
+// for a single apply. The first MODIFY or DELETE edit is treated as the
+// target: its ObjectType API name is resolved to an RID via the OMS repo
+// (falling back to the raw API name when no mapping is configured, mirroring
+// pkg/funnel consumer behaviour), and GetObjectVersionCount returns the
+// current version. Mismatch surfaces a *StaleObjectError. CREATE-only
+// actions are silently skipped because there is no pre-existing object to
+// version-check against.
+func (e *Executor) checkExpectedVersion(ctx context.Context, ontologyRID string, edits []funnel.Edit, expected int) error {
+	var target *funnel.Edit
+	for i := range edits {
+		switch edits[i].Type {
+		case funnel.EditTypeModify, funnel.EditTypeDelete:
+			target = &edits[i]
+		}
+		if target != nil {
+			break
+		}
+	}
+	if target == nil {
+		return nil
+	}
+
+	otRID := target.ObjectType
+	if ot, err := e.omsRepo.GetObjectTypeByAPIName(ctx, ontologyRID, target.ObjectType); err == nil && ot != nil && ot.RID != "" {
+		otRID = ot.RID
+	}
+
+	current, err := e.omsRepo.GetObjectVersionCount(ctx, otRID, target.PrimaryKey)
+	if err != nil {
+		return fmt.Errorf("load object version: %w", err)
+	}
+	if current != int64(expected) {
+		return &StaleObjectError{
+			ObjectType:      target.ObjectType,
+			PrimaryKey:      target.PrimaryKey,
+			ExpectedVersion: expected,
+			CurrentVersion:  current,
+		}
+	}
+	return nil
 }
 
 // classifyPrepareError maps a Prepare-time error to one of the design doc's
