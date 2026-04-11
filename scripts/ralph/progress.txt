@@ -1027,3 +1027,48 @@ new features — only run verification suites and commit the gate.
     happens until the HTTP handler encodes — unit tests can inspect the
     typed map directly.
 ---
+
+## 2026-04-11 - US-018
+- Added pkg/oss/aggregation/percentile_bench_test.go with:
+  * exactPercentileSort() reference (sort-based nearest-rank on a fresh copy)
+  * gaussian10k(seed) deterministic 10k Gaussian dataset helper
+  * TestApproxPercentileAccuracy_5PercentBound — runs during `go test ./...`
+    and fatally fails if |approx - exact| / |exact| > 0.05 on p50/p95/p99
+  * BenchmarkApproxPercentile (scalar, per-percentile sub-benches) —
+    the 5% assertion is re-run inside the b.Fatalf path so a regression
+    presents as a bench FAILURE rather than a silent slowdown
+  * BenchmarkApproxPercentileMulti — single-pass multi-percentile bench
+    with the same 5% gate per percentile key
+  * BenchmarkExactPercentileSort — reference cost for the sort-based path
+- Wrote bench/aggregation_percentile.md documenting methodology, seed, exact
+  vs approx numbers (all 3 percentiles <0.05% relative error — 100x below
+  the 5% bound), M3 Max bench numbers, and reproduction commands.
+- Files changed:
+  - pkg/oss/aggregation/percentile_bench_test.go (new)
+  - bench/aggregation_percentile.md (new, bench/ dir created)
+- Baseline bench numbers captured on Apple M3 Max:
+  - approx p50/p95/p99: ~52µs/op, 123KB/op, 2 allocs/op
+  - approx multi-p: ~70µs/op, 10 allocs/op
+  - exact sort reference: ~206µs/op (approx ~4x faster than exact)
+- **Learnings for future iterations:**
+  - The approx accuracy path has a LOT of headroom on Gaussian data —
+    real-world heavy-tail distributions might push the error higher, so
+    any future story that adds log-normal / pareto fixtures should keep
+    the same 5% bound but add a seed matrix so tail sensitivity is visible.
+  - HdrHistogram's fixed-point scale (1e3) multiplies every recorded value,
+    so the `highest` int64 cap lives at (max+shift)*1000+2. Values above
+    ~9e15 would saturate — not a concern for Foundry property metrics but
+    worth remembering if someone adds nanosecond time fields.
+  - For bench files, prefer b.Run(fmt.Sprintf("p%g", p), ...) so the
+    reported sub-bench name matches the canonical percentile key format
+    used by approxPercentilesFromIndex — keeps grep/diagnostic flow tight.
+  - Bench accuracy gates need to live INSIDE the inner loop vs outside:
+    I put the b.Fatalf comparison AFTER the b.N loop so it only evaluates
+    the last computed value, which is fine because HdrHistogram is
+    deterministic on a fixed input — every iteration returns the same
+    approx value, so checking once is equivalent and avoids burning bench
+    time in a fastpath comparison that would skew ns/op measurements.
+  - `go test ./...` on this repo takes ~14s mostly in pkg/oss/aggregation
+    (bench test Gaussian gen + bleve teardown) — if future stories add
+    more Gaussian fixtures consider sharing a package-level dataset.
+---
