@@ -1,0 +1,97 @@
+{
+  "story": "US-008",
+  "title": "Interface multi-type paging integration test + parity fixture",
+  "description": "End-to-end proof that a HasOwner interface implemented by three Northwind ObjectTypes (customer + employee + supplier) can be paginated through loadObjectsOrInterfaces with pageSize=7 without dropping or duplicating any row. The test boots a real Postgres via testcontainers, persists the ontology + interface + object_type_interfaces rows through pkg/oms.PGRepository, seeds per-type Bleve indexes from the Northwind CSV seed, and exercises the preview handler via chi.",
+  "fixture": {
+    "ontology": "northwind",
+    "interface": {
+      "apiName": "HasOwner",
+      "implementingTypes": ["customer", "employee", "supplier"]
+    },
+    "seed": {
+      "source": "testdata/northwind/{customers,employees,suppliers}.csv",
+      "projection": {
+        "id": "<apiName>:<primaryKey>",
+        "name": "<companyName | lastName>"
+      },
+      "expectedCounts": {
+        "customer": 91,
+        "employee": 9,
+        "supplier": 29,
+        "total": 129
+      },
+      "pkNamespacing": "rows are indexed under '<apiName>:<rawPK>' so employee '1' and supplier '1' never collide in the shared paging map; heap merge then resolves any remaining ties by ObjectType apiName ASC per US-007."
+    },
+    "request": {
+      "endpoint": "POST /api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true",
+      "objectSet": {
+        "type": "interfaceBase",
+        "interfaceType": "HasOwner"
+      },
+      "select": ["id", "name"],
+      "pageSize": 7
+    }
+  },
+  "expected": {
+    "pagination": {
+      "strategy": "multi-type heap merge (US-007)",
+      "cursor": "pagination.MultiTypeCursor",
+      "subCursor": "pagination.CompositeCursor{ObjectType, InnerCursor=strconv.Itoa(offset)}",
+      "exhaustedSubCursorHandling": "drop",
+      "comment": "Per-type buckets are sorted ASC by primary key in the executor; the handler performs an iterative min-heap selection per page using per-type offsets decoded from the inbound MultiTypeCursor. Sub-cursors with offset == len(bucket) are dropped from the emitted token so the wire format shrinks as sub-streams drain."
+    },
+    "totals": {
+      "pagesIncludingTail": 19,
+      "pageShape": {
+        "nonFinal": 7,
+        "final": 3,
+        "derivation": "ceil(129 / 7) = 19 pages; the last page holds 129 - 18*7 = 3 rows."
+      },
+      "totalCount": "129",
+      "totalCountAccuracy": "EXACT",
+      "perTypeCounts": {
+        "customer": 91,
+        "employee": 9,
+        "supplier": 29
+      }
+    },
+    "invariants": [
+      "no row is visited twice (keyed by ($apiName, $primaryKey))",
+      "no row is skipped (sum of perType counts == totalCount)",
+      "every non-final page returns exactly pageSize=7 rows",
+      "nextPageToken advances strictly on every non-final page",
+      "final page has nextPageToken omitted",
+      "totalCount is stable across all pages",
+      "each row exposes $apiName, $primaryKey, $rid, plus every field in select[]"
+    ],
+    "responseShape": {
+      "data": [
+        {
+          "$apiName": "<customer | employee | supplier>",
+          "$primaryKey": "<apiName>:<rawPK>",
+          "$rid": "ri.phonograph2-objects.main.object.<apiName>:<rawPK>",
+          "id": "<apiName>:<rawPK>",
+          "name": "<string>"
+        }
+      ],
+      "totalCount": "129",
+      "totalCountAccuracy": "EXACT",
+      "nextPageToken": "<base64 MultiTypeCursor or omitted on final page>"
+    },
+    "errorCodes": {
+      "invalidPageToken": "InvalidParameter:InvalidPageToken",
+      "missingObjectSet": "InvalidParameter:MissingObjectSet",
+      "selectRequired": "InvalidParameter:SelectRequired",
+      "previewRequired": "InvalidParameter:PreviewRequired"
+    }
+  },
+  "coveredBy": [
+    "test/integration/interface_paging_test.go::TestInterfacePaging_NorthwindHasOwner"
+  ],
+  "notes": [
+    "This fixture documents the wire contract; the integration test is the executable spec. The dedicated parity runner (test/foundry_parity/run.go) will be introduced by the Phase 6 Gate.",
+    "Run the integration test with `go test -tags integration ./test/integration/... -run InterfacePaging`. It requires Docker for testcontainers.",
+    "The executor still calls the InterfaceResolver injected via *Executor.SetInterfaceResolver; production main.go does not yet wire a PG-backed resolver, so this test ships its own pgInterfaceResolver shim around oms.PGRepository. Follow-up work is tracked under the Phase 6 Gate story to fold that shim into main.",
+    "pk namespacing in the fixture (apiName:rawPK) is a test-local choice to keep the 'seen' map unambiguous; it does not change the Foundry wire format assumptions — callers should treat $primaryKey as opaque."
+  ]
+}
