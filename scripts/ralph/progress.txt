@@ -2065,3 +2065,49 @@ new features — only run verification suites and commit the gate.
     derived values, synthesise a temp Bleve index keyed on the derived
     value or extend groupDerivedRows to support numeric bucketing.
 ---
+
+## 2026-04-12 - US-034
+- Added test/integration/phase6/phase6_conflict_optimistic_test.go: cross-US
+  gate test that races user-edit-wins (US-021) with expectedVersion (US-023)
+  on a single employee row backed by real PG + funnel consumer + action
+  executor.
+- Three goroutines: A = first user Apply with expectedVersion=1 (success);
+  B = 50-batch ingest flood with distant-past timestamps (all filtered by
+  US-021); C = second user Apply with stale expectedVersion=1 (fast-fail
+  *StaleObjectError, currentVersion=2). A/C are sequenced via a channel so
+  the 409 assertion is deterministic; B overlaps both phases.
+- Bridge publisher (bridgePublisher) routes executor EditBatch messages
+  synchronously into funnel.Consumer.ApplyBatch so GetObjectVersionCount
+  reflects committed user history rows on the same goroutine — no NATS.
+- Post-race assertions: PG version count == 2, Bleve doc reflects user-A
+  values only (no INGEST-WRONG / user-C leakage), stale error carries
+  ExpectedVersion=1 CurrentVersion=2 PrimaryKey=emp-1.
+- Files changed:
+  - test/integration/phase6/phase6_conflict_optimistic_test.go (new)
+- **Learnings for future iterations:**
+  - actions.Executor.Apply takes an "ontologyRID" string that actually
+    flows onto EditBatch.OntologyAPIName unchanged. Handlers pass the URL
+    path's ontologyApiName here, not the real RID. Phase 6 tests that
+    build a consumer with scopedKey = ScopedKey(ont.APIName, otAPIName)
+    MUST call executor.Apply(ctx, ont.APIName, ...), otherwise the batch
+    routes to ScopedKey(ontRID, ot) and the index lookup fails with
+    "index not found for object type". This mismatch (parameter named
+    ontologyRID but semantically an apiName) is load-bearing across every
+    action-executor integration test; keep passing the API name.
+  - In-process integration tests that need action executor + user-edit-
+    wins conflict filter + PG history on the same call stack can avoid
+    NATS entirely by writing a tiny bridgePublisher that implements
+    actions.Publisher and delegates Publish → funnel.Consumer.ApplyBatch.
+    Synchronous, single-goroutine history visibility, no JetStream
+    plumbing. Pattern is reusable for US-035..US-042 Phase 6 tests.
+  - Consumer.resolveConflicts writes NO history rows for filtered ingest
+    batches — the survivor list is assigned back to batch.Edits before
+    the history-insert loop runs. This is why GetObjectVersionCount
+    stays tight (just 2 after seed + one user modify) even under a 50x
+    ingest flood, and it's the invariant that makes stale-version
+    detection robust under concurrency.
+  - Seed CREATE timestamp must be strictly after every ingest batch
+    timestamp so LatestUserEditAt > ingest.Timestamp for the very first
+    ingest attempt. seedTime = time.Now(), ingestBase = seedTime - 24h
+    gives a wide margin and no flakiness on slow CI.
+---

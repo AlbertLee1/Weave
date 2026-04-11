@@ -544,7 +544,7 @@
         "go test -tags integration ./test/integration/phase6/... -run ConflictOptimistic passes"
       ],
       "priority": 34,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
