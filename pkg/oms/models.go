@@ -154,21 +154,25 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 
 // Property defines a property on an ObjectType.
 type Property struct {
-	RID              string          `json:"rid"`
-	ObjectTypeRID    string          `json:"-"`
-	APIName          string          `json:"apiName"`
-	DisplayName      string          `json:"displayName,omitempty"`
-	Description      string          `json:"description,omitempty"`
-	BaseType         string          `json:"baseType"`
-	TypeConfig       json.RawMessage `json:"typeConfig,omitempty"`
-	IsArray          bool            `json:"isArray"`
-	IsNullable       bool            `json:"isNullable"`
-	IsSearchable     bool            `json:"isSearchable"`
-	IsSortable       bool            `json:"isSortable"`
-	Status           string          `json:"status,omitempty"`
-	DeprecatedReason string          `json:"deprecatedReason,omitempty"`
-	SharedPropertyRID string         `json:"sharedPropertyRid,omitempty"`
-	CreatedAt        time.Time       `json:"-"`
+	RID               string          `json:"rid"`
+	ObjectTypeRID     string          `json:"-"`
+	APIName           string          `json:"apiName"`
+	DisplayName       string          `json:"displayName,omitempty"`
+	Description       string          `json:"description,omitempty"`
+	BaseType          string          `json:"baseType"`
+	TypeConfig        json.RawMessage `json:"typeConfig,omitempty"`
+	IsArray           bool            `json:"isArray"`
+	IsNullable        bool            `json:"isNullable"`
+	IsSearchable      bool            `json:"isSearchable"`
+	IsSortable        bool            `json:"isSortable"`
+	Status            string          `json:"status,omitempty"`
+	DeprecatedReason  string          `json:"deprecatedReason,omitempty"`
+	SharedPropertyRID string          `json:"sharedPropertyRid,omitempty"`
+	// Derived marks a property as computed at query time (e.g. withProperties
+	// aggregations). Derived properties cannot be primary keys, cannot be
+	// text-searched, and cannot be written through Action edits (US-004).
+	Derived   bool      `json:"derived,omitempty"`
+	CreatedAt time.Time `json:"-"`
 }
 
 // DataTypeJSON returns the Palantir V2 dataType JSON representation.
@@ -210,13 +214,13 @@ type LinkType struct {
 // ToWireJSON returns the V2 wire format JSON for LinkType.
 func (lt *LinkType) ToWireJSON() ([]byte, error) {
 	wire := map[string]interface{}{
-		"apiName":                lt.APIName,
-		"displayName":           lt.DisplayName,
-		"rid":                   lt.RID,
-		"objectTypeApiName":     lt.SourceObjectType,
+		"apiName":                 lt.APIName,
+		"displayName":             lt.DisplayName,
+		"rid":                     lt.RID,
+		"objectTypeApiName":       lt.SourceObjectType,
 		"linkedObjectTypeApiName": lt.TargetObjectType,
-		"cardinality":           lt.Cardinality,
-		"required":              lt.IsRequired,
+		"cardinality":             lt.Cardinality,
+		"required":                lt.IsRequired,
 	}
 	if lt.Description != "" {
 		wire["description"] = lt.Description
@@ -346,8 +350,8 @@ type Interface struct {
 
 // ObjectTypeInterface represents an object type implementing an interface.
 type ObjectTypeInterface struct {
-	ObjectTypeRID  string          `json:"objectTypeRid"`
-	InterfaceRID   string          `json:"interfaceRid"`
+	ObjectTypeRID   string          `json:"objectTypeRid"`
+	InterfaceRID    string          `json:"interfaceRid"`
 	PropertyMapping json.RawMessage `json:"propertyMapping"`
 }
 
