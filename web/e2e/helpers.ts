@@ -39,75 +39,16 @@ export async function createObjectTypeViaAPI(
   return res.json();
 }
 
-/** Create a property via API. */
-export async function createPropertyViaAPI(
-  request: APIRequestContext,
-  objectTypeRid: string,
-  input: { apiName: string; baseType: string; displayName?: string },
+/**
+ * Navigate to the v2 Browser page for a given ontology + object type.
+ * Route: /browser/:ontology/:objectType
+ */
+export async function navigateToBrowser(
+  page: Page,
+  ontologyApiName: string,
+  objectTypeApiName: string,
 ) {
-  const res = await request.post(
-    `${API_BASE}/api/admin/objectTypes/${objectTypeRid}/properties`,
-    { data: input },
-  );
-  if (!res.ok()) throw new Error(`Failed to create property: ${res.status()} ${await res.text()}`);
-  return res.json();
-}
-
-/** Create a link type via API. Uses ontology RID in URL. */
-export async function createLinkTypeViaAPI(
-  request: APIRequestContext,
-  ontologyRid: string,
-  input: {
-    apiName: string;
-    displayName: string;
-    sourceObjectType: string;
-    targetObjectType: string;
-    cardinality: string;
-  },
-) {
-  const data = {
-    apiName: input.apiName,
-    displayName: input.displayName,
-    objectTypeApiName: input.sourceObjectType,
-    linkedObjectTypeApiName: input.targetObjectType,
-    cardinality: input.cardinality,
-  };
-  const res = await request.post(
-    `${API_BASE}/api/admin/ontologies/${ontologyRid}/linkTypes`,
-    { data },
-  );
-  if (!res.ok()) throw new Error(`Failed to create link type: ${res.status()} ${await res.text()}`);
-  return res.json();
-}
-
-/** Create an action type via API. Uses ontology RID in URL. */
-export async function createActionTypeViaAPI(
-  request: APIRequestContext,
-  ontologyRid: string,
-  input: {
-    apiName: string;
-    displayName: string;
-    status?: string;
-    parameters?: unknown;
-    rules?: unknown;
-  },
-) {
-  const data = { status: 'EXPERIMENTAL', parameters: [], rules: [], ...input };
-  const res = await request.post(
-    `${API_BASE}/api/admin/ontologies/${ontologyRid}/actionTypes`,
-    { data },
-  );
-  if (!res.ok()) throw new Error(`Failed to create action type: ${res.status()} ${await res.text()}`);
-  return res.json();
-}
-
-/** Navigate to admin page and select an ontology by apiName (frontend URL). */
-export async function navigateToAdmin(page: Page, ontologyApiName?: string) {
-  if (ontologyApiName) {
-    await page.goto(`/admin/${ontologyApiName}`);
-  } else {
-    await page.goto('/admin');
-  }
+  await page.goto(`/browser/${ontologyApiName}/${objectTypeApiName}`);
   await page.waitForLoadState('domcontentloaded');
 }
 

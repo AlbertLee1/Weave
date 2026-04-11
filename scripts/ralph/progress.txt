@@ -1519,3 +1519,58 @@ new features — only run verification suites and commit the gate.
     idx.Document() directly because its field visitor is bleve-internal
     and more brittle than the Search API.
 ---
+
+## 2026-04-11 - US-028
+- Removed 8 dead admin Playwright specs that were stranded after v1 US-006
+  deleted the admin UI routes: action-type-crud, object-type-crud,
+  link-type-crud, interface-management, property-management, ontology-crud,
+  export-import, delete-confirmation.
+- Re-scoped web/e2e/search-and-filter.spec.ts from the old admin page
+  (`/admin/:ontology`) to the v2 Browser page
+  (`/browser/:ontology/:objectType`). Now exercises SearchBar + Filters
+  toggle via `data-testid` selectors (`search-input`, `toggle-filters`).
+- Trimmed web/e2e/helpers.ts: dropped `navigateToAdmin`,
+  `createPropertyViaAPI`, `createLinkTypeViaAPI`, `createActionTypeViaAPI`
+  (nothing references them anymore). Added `navigateToBrowser(page,
+  ontologyApiName, objectTypeApiName)` helper. `createOntologyViaAPI` +
+  `createObjectTypeViaAPI` + `uniqueName` retained.
+- Added web/e2e/README.md documenting the new phase-based layout
+  (phase6..phase9 subdirs to come), backend prerequisites, and the
+  US-029/US-030 follow-up work for `scripts/e2e-setup.sh` +
+  `test/fixtures/e2e_seed.sh`.
+- Quality: `npx tsc --noEmit` in web/ clean (exit 0); `npm run test`
+  (vitest) exit 0; direct tsc spot-check on e2e/*.ts clean;
+  `go vet ./...` clean. `go test ./...` skipped — story is frontend-only,
+  no Go files touched.
+- Files changed:
+  - web/e2e/action-type-crud.spec.ts (DELETED)
+  - web/e2e/delete-confirmation.spec.ts (DELETED)
+  - web/e2e/export-import.spec.ts (DELETED)
+  - web/e2e/interface-management.spec.ts (DELETED)
+  - web/e2e/link-type-crud.spec.ts (DELETED)
+  - web/e2e/object-type-crud.spec.ts (DELETED)
+  - web/e2e/ontology-crud.spec.ts (DELETED)
+  - web/e2e/property-management.spec.ts (DELETED)
+  - web/e2e/helpers.ts
+  - web/e2e/search-and-filter.spec.ts
+  - web/e2e/README.md (new)
+- **Learnings for future iterations:**
+  - `web/tsconfig.app.json` has `"include": ["src"]`, so `npx tsc --noEmit`
+    at `web/` root does NOT type-check `web/e2e/`. Playwright has its own
+    TS transpile pipeline, so type errors in specs surface only at test
+    time. For CI-safe editing, spot-check e2e specs with a direct
+    `npx tsc --noEmit --target es2020 --module esnext --moduleResolution
+    bundler --strict --skipLibCheck e2e/*.ts` invocation.
+  - The v2 Browser page (pkg: `web/src/components/browser/BrowserPage.tsx`)
+    has no admin counterpart — `/admin/*` routes were stripped in v1 US-006.
+    Future spec authors should use `navigateToBrowser` + `getByTestId` over
+    class selectors; the canonical test ids in `SearchBar.tsx` are
+    `search-input` and `toggle-filters`.
+  - The SearchBar `onSearch` callback fires on `Enter` AND on clearing to
+    empty (see SearchBar.handleChange) — tests asserting on "clear then
+    results reappear" can rely on this without needing a debounce.
+  - `SearchBar` is purely client-side state; the backend round-trip only
+    fires through `useSearchObjects` once `hasActiveSearch` flips on. This
+    makes data-free UI-only specs (like the reworked search-and-filter
+    spec) valid even against an empty ObjectType.
+---
