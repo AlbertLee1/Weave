@@ -228,6 +228,21 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When the ObjectSet produced withProperties-derived values AND at least
+	// one metric targets a derived field, route through the in-memory path
+	// that reads values straight from Result.DerivedValues. The Bleve-facet
+	// engine would otherwise return nil for any derived metric because the
+	// field is not present in the base index.
+	if aggregationNeedsDerivedPath(req.Aggregation, result.DerivedValues) {
+		aggResult, err := h.aggregateWithDerived(ctx, result, &req)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("AggregationFailed", map[string]string{"error": err.Error()}))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, aggResult)
+		return
+	}
+
 	idx := h.indexMgr.GetIndex(scopedIndexKey(ctx, h.indexMgr, result.ObjectType))
 	if idx == nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("IndexNotFound", map[string]string{"objectType": result.ObjectType}))

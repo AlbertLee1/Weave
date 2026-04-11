@@ -530,7 +530,7 @@
         "go test -tags integration ./test/integration/phase6/... -run AggregationDerived passes"
       ],
       "priority": 33,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

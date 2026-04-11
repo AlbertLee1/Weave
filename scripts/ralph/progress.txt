@@ -156,6 +156,17 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   count only. Numeric metrics / reverse direction error out with a clear
   "not yet supported" message. The handler's writePreviewInterfacePage
   merges polymorphic derived values onto each row via the same helper.
+- handler.Aggregate in pkg/oss/objectset has two execution paths: the
+  legacy Bleve-facet engine (base fields only) and a new in-memory
+  derived-aware path in handler_aggregate_derived.go. Routing is decided
+  by aggregationNeedsDerivedPath(req.Aggregation, result.DerivedValues) —
+  true iff any metric field name appears as a key in Result.DerivedValues.
+  The derived path supports exact groupBy (recursive, multi-level) and
+  count/min/max/sum/avg metrics. Non-exact groupBy types error out with
+  an explicit message rather than silently degrading. When you add a
+  metric to the engine, mirror it in computeDerivedMetrics. Base metric
+  fields (non-derived) are fetched in one DocIDQuery alongside groupBy
+  fields so mixed base+derived metric requests still work.
 - Foundry parity fixtures are split into two co-located sets:
   descriptive/documentary JSON at `test/foundry_parity/*.json` (prose
   for sortKey / responseShape / errorCodes / coveredBy, and several
@@ -1998,4 +2009,59 @@ new features — only run verification suites and commit the gate.
     fallback to a synonym table. Flag this as a follow-up for any future
     story that needs production polymorphic withProperties through
     pkg/links.Resolver.
+---
+
+## 2026-04-12 - US-033
+- Added test/integration/phase6/phase6_aggregation_derived_test.go: seeds 91
+  Northwind customers with country + contactTitle as not_analyzed keyword
+  fields, attaches a synthetic customerOrders link resolver that gives each
+  customer a cyclic 0..4 order count, then POSTs two aggregate calls against
+  the /objectSets/aggregate route: single-layer groupBy=country and
+  two-layer groupBy=country × contactTitle, each asking for count +
+  avg(orderCount). Ground truth is computed in Go from the deterministic
+  fixture and asserted per bucket.
+- Red → Green required a new handler path. The existing Bleve-facet
+  aggregation engine reads metric fields from the base index, so avg of a
+  withProperties-derived field silently returned 0. Added
+  pkg/oss/objectset/handler_aggregate_derived.go with
+  aggregationNeedsDerivedPath detection + aggregateWithDerived in-memory
+  path. Handler.Aggregate branches to the derived path when any metric
+  Field appears in Result.DerivedValues.
+- Derived path supports: exact groupBy (recursive, multi-level), metrics
+  count / min / max / sum / avg. Base metric fields (non-derived) are
+  fetched in a single Bleve DocIDQuery lookup alongside groupBy fields so
+  a mixed base+derived metric request still works. Non-exact groupBy
+  types error out explicitly rather than returning a degraded result.
+- Files changed:
+  - pkg/oss/objectset/handler.go (route to derived path)
+  - pkg/oss/objectset/handler_aggregate_derived.go (new)
+  - test/integration/phase6/phase6_aggregation_derived_test.go (new)
+- **Learnings for future iterations:**
+  - The Bleve-backed aggregation engine (pkg/oss/aggregation) has NO
+    awareness of Result.DerivedValues. Any future metric that needs
+    withProperties values must either mirror the handler_aggregate_derived
+    path or extend the engine with an injected per-PK value map. The
+    current split keeps the engine single-purpose (Bleve only) and puts
+    the derived-aware merging inside the ObjectSet handler, which already
+    owns Result.DerivedValues.
+  - handler.Aggregate now has TWO code paths: the legacy Bleve path (all
+    base fields) and the new derived path (any metric field derived).
+    Detection is purely by metric.Field vs Result.DerivedValues row keys;
+    if you add a new metric type (e.g. stdDev) to the derived path,
+    remember to mirror it in engine.bleve_agg.go's computeMetrics switch
+    and to update both code paths.
+  - flattenBleveField: Bleve returns single-value fields as the raw type
+    but multi-value (array) fields as []interface{}. GroupBy keying must
+    collapse arrays to the first element or use a stable stringified key.
+    The handler_aggregate_derived helper does the first-element collapse.
+  - `index.Property{Analyzer: "not_analyzed"}` is the test-shortcut to
+    get a keyword field without going through pg.CreateProperty +
+    BuildMapping — sufficient for Phase 6 cross-US tests that only
+    need exact facet grouping, not full typeclass BuildMapping.
+  - Derived-aware aggregation only supports `exact` groupBy in this
+    release. fixedWidth / duration / ranges / topValues over derived
+    values are not wired; they error out with a clear "only exact
+    supported" message. If a future US needs numeric bucketing over
+    derived values, synthesise a temp Bleve index keyed on the derived
+    value or extend groupDerivedRows to support numeric bucketing.
 ---
