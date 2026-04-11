@@ -61,6 +61,7 @@ func EnsureAllIndexes(ctx context.Context, mgr *Manager, repo rehydrateRepo) err
 					BaseType:     p.BaseType,
 					IsSearchable: p.IsSearchable,
 					IsArray:      p.IsArray,
+					Analyzer:     AnalyzerFromTypeConfig(p.TypeConfig),
 				})
 			}
 

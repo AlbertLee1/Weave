@@ -180,6 +180,68 @@ func TestFieldMapping_NotSearchable(t *testing.T) {
 	}
 }
 
+// TestManager_EnsureIndex_HonoursAnalyzerNotIndexed is the Consumer-path half
+// of US-010. The canonical bootstrap flow is:
+//
+//  1. funnel.Consumer / rehydrate.EnsureAllIndexes walks OMS properties.
+//  2. Each property is converted to an index.Property.
+//  3. mgr.EnsureIndex allocates the Bleve index via the internal buildMapping.
+//
+// Before US-010, buildMapping used FieldMappingForBaseType which did not know
+// about the analyzer hint, so even with a not_indexed TypeConfig on the OMS
+// row, the rehydrated Bleve index would happily tokenise and search the
+// property. This test drives an index.Property{Analyzer: "not_indexed"} all
+// the way through EnsureIndex + IndexDocument + Search and asserts that the
+// Bleve index excludes it from full-text matches while still returning the
+// stored value via Hit.Fields.
+func TestManager_EnsureIndex_HonoursAnalyzerNotIndexed(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	props := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+		{APIName: "blob", BaseType: "string", IsSearchable: true, Analyzer: index.AnalyzerNotIndexed},
+	}
+	if _, err := mgr.EnsureIndex("patent", props); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
+
+	doc := map[string]interface{}{
+		"id":   "p1",
+		"blob": "confidential prior art notes",
+	}
+	if err := mgr.IndexDocument("patent", "p1", doc); err != nil {
+		t.Fatalf("IndexDocument: %v", err)
+	}
+
+	// Field match on the not_indexed property must miss.
+	blobQ := bleve.NewMatchQuery("confidential")
+	blobQ.SetField("blob")
+	res, err := mgr.Search("patent", bleve.NewSearchRequest(blobQ))
+	if err != nil {
+		t.Fatalf("search blob: %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("blob field search after EnsureIndex got total=%d, want 0 (not_indexed)", res.Total)
+	}
+
+	// Stored payload must still come back when searching by id.
+	idQ := bleve.NewMatchQuery("p1")
+	idQ.SetField("id")
+	idReq := bleve.NewSearchRequest(idQ)
+	idReq.Fields = []string{"blob"}
+	idRes, err := mgr.Search("patent", idReq)
+	if err != nil {
+		t.Fatalf("search id: %v", err)
+	}
+	if idRes.Total != 1 {
+		t.Fatalf("id search got total=%d, want 1", idRes.Total)
+	}
+	if got := idRes.Hits[0].Fields["blob"]; got != "confidential prior art notes" {
+		t.Errorf("stored blob = %v, want original payload", got)
+	}
+}
+
 // --- Manager tests ---
 
 func sampleProperties() []index.Property {

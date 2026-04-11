@@ -47,8 +47,14 @@ func BuildMapping(ot *oms.ObjectType) *mapping.IndexMappingImpl {
 // buildFieldMapping converts a single oms.Property into a Bleve FieldMapping.
 // Returns nil when the property should be skipped entirely.
 func buildFieldMapping(p oms.Property) *mapping.FieldMapping {
-	analyzer := propertyAnalyzer(p)
+	return fieldMappingFor(propertyAnalyzer(p), p.BaseType, p.IsSearchable)
+}
 
+// fieldMappingFor is the shared core used by BuildMapping (oms.Property path)
+// and Manager.buildMapping (index.Property path). Centralising the switch
+// here keeps the two entry points from drifting as new analyzer hints are
+// added.
+func fieldMappingFor(analyzer, baseType string, isSearchable bool) *mapping.FieldMapping {
 	if analyzer == AnalyzerNotIndexed {
 		fm := mapping.NewTextFieldMapping()
 		fm.Index = false
@@ -56,21 +62,21 @@ func buildFieldMapping(p oms.Property) *mapping.FieldMapping {
 		return fm
 	}
 
-	if !p.IsSearchable {
+	if !isSearchable {
 		fm := mapping.NewTextFieldMapping()
 		fm.Index = false
 		fm.Store = true
 		return fm
 	}
 
-	if isTextBaseType(p.BaseType) {
+	if isTextBaseType(baseType) {
 		if analyzer == AnalyzerNotAnalyzed {
 			return mapping.NewKeywordFieldMapping()
 		}
 		return mapping.NewTextFieldMapping()
 	}
 
-	switch p.BaseType {
+	switch baseType {
 	case "integer", "short", "long", "float", "double", "byte":
 		return mapping.NewNumericFieldMapping()
 	case "boolean":
@@ -82,6 +88,25 @@ func buildFieldMapping(p oms.Property) *mapping.FieldMapping {
 	}
 
 	return mapping.NewTextFieldMapping()
+}
+
+// AnalyzerFromTypeConfig extracts the `analyzer` hint from a property's
+// TypeConfig JSON blob. It returns an empty string for nil / malformed input
+// so callers can treat "no hint" the same as "default text".
+//
+// This is the canonical helper used by the rehydrate bootstrap (which only
+// has oms.Property in hand) to populate index.Property.Analyzer.
+func AnalyzerFromTypeConfig(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var cfg struct {
+		Analyzer string `json:"analyzer"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Analyzer
 }
 
 // propertyAnalyzer extracts the analyzer hint from p.TypeConfig if present.

@@ -26,11 +26,23 @@ func NewManager(dataDir string) *Manager {
 }
 
 // Property describes a property for index mapping purposes.
+//
+// Analyzer carries the Foundry-style typeclass hint extracted from the
+// property's TypeConfig:
+//
+//   - "not_analyzed" → Keyword field (case-sensitive, exact match).
+//   - "not_indexed"  → stored but Index=false (travels in payload, invisible
+//     to full-text / term queries).
+//   - "standard" or empty → default text field.
+//
+// Empty string preserves backwards-compatible behaviour for callers that do
+// not know about typeclasses yet (funnel_test.go, links/*, etc.).
 type Property struct {
 	APIName      string
 	BaseType     string
 	IsSearchable bool
 	IsArray      bool
+	Analyzer     string
 }
 
 // EnsureIndex creates or opens an index for the given object type.
@@ -214,7 +226,10 @@ func (m *Manager) buildMapping(properties []Property) mapping.IndexMapping {
 	docMapping := bleve.NewDocumentMapping()
 
 	for _, prop := range properties {
-		fm := FieldMappingForBaseType(prop.BaseType, prop.IsSearchable)
+		fm := fieldMappingFor(prop.Analyzer, prop.BaseType, prop.IsSearchable)
+		if fm == nil {
+			continue
+		}
 		docMapping.AddFieldMappingsAt(prop.APIName, fm)
 	}
 

@@ -148,6 +148,112 @@ func TestBuildMappingDefaultsToText(t *testing.T) {
 	}
 }
 
+// TestBuildMappingNotIndexed is the US-010 acceptance test. A property tagged
+// with analyzer=not_indexed must round-trip through the API (stored) but be
+// completely invisible to full-text / term queries on its field. This is the
+// Foundry "hide from search, keep in payload" semantic for attachment blobs,
+// long prose, or PII that still needs to travel over the wire.
+func TestBuildMappingNotIndexed(t *testing.T) {
+	ot := &oms.ObjectType{
+		APIName: "Patent",
+		Properties: []oms.Property{
+			{
+				APIName:      "id",
+				BaseType:     "string",
+				IsSearchable: true,
+			},
+			{
+				APIName:      "abstract",
+				BaseType:     "string",
+				IsSearchable: true,
+				TypeConfig:   json.RawMessage(`{"analyzer":"not_indexed"}`),
+			},
+		},
+	}
+
+	im := BuildMapping(ot)
+	if im == nil {
+		t.Fatal("BuildMapping returned nil")
+	}
+
+	// Sanity: the FieldMapping for abstract must be stored but not indexed.
+	dm := im.DefaultMapping
+	absDM, ok := dm.Properties["abstract"]
+	if !ok {
+		t.Fatalf("missing abstract mapping")
+	}
+	if len(absDM.Fields) != 1 {
+		t.Fatalf("abstract got %d fields, want 1", len(absDM.Fields))
+	}
+	fm := absDM.Fields[0]
+	if fm.Index {
+		t.Errorf("abstract Index = true, want false (not_indexed)")
+	}
+	if !fm.Store {
+		t.Errorf("abstract Store = false, want true (not_indexed keeps payload)")
+	}
+
+	idx, err := bleve.NewMemOnly(im)
+	if err != nil {
+		t.Fatalf("NewMemOnly: %v", err)
+	}
+	defer idx.Close()
+
+	doc := map[string]interface{}{
+		"id":       "p1",
+		"abstract": "quantum compute entanglement",
+	}
+	if err := idx.Index("p1", doc); err != nil {
+		t.Fatalf("index p1: %v", err)
+	}
+
+	// Field-scoped query on abstract must return zero hits: the property is
+	// excluded from the inverted index entirely.
+	absQ := bleve.NewMatchQuery("quantum")
+	absQ.SetField("abstract")
+	absRes, err := idx.Search(bleve.NewSearchRequest(absQ))
+	if err != nil {
+		t.Fatalf("search abstract=quantum: %v", err)
+	}
+	if absRes.Total != 0 {
+		t.Errorf("abstract field search expected 0 hits, got total=%d", absRes.Total)
+	}
+
+	// A TermQuery on the stored value is equally dead — stored != indexed.
+	termQ := bleve.NewTermQuery("quantum")
+	termQ.SetField("abstract")
+	termRes, err := idx.Search(bleve.NewSearchRequest(termQ))
+	if err != nil {
+		t.Fatalf("term abstract=quantum: %v", err)
+	}
+	if termRes.Total != 0 {
+		t.Errorf("abstract term search expected 0 hits, got total=%d", termRes.Total)
+	}
+
+	// But the stored payload is still retrievable — search by the indexed
+	// id field and ask Bleve to return the abstract field. The returned
+	// Hit.Fields map must carry the full stored value so that callers of
+	// oss.FormatObject can include it in the wire response.
+	idQ := bleve.NewMatchQuery("p1")
+	idQ.SetField("id")
+	idReq := bleve.NewSearchRequest(idQ)
+	idReq.Fields = []string{"abstract"}
+	idRes, err := idx.Search(idReq)
+	if err != nil {
+		t.Fatalf("search id=p1: %v", err)
+	}
+	if idRes.Total != 1 {
+		t.Fatalf("id field search got total=%d, want 1", idRes.Total)
+	}
+	got, ok := idRes.Hits[0].Fields["abstract"]
+	if !ok {
+		t.Fatalf("stored abstract missing from Hit.Fields: %+v", idRes.Hits[0].Fields)
+	}
+	if got != "quantum compute entanglement" {
+		t.Errorf("stored abstract = %v, want %q", got, "quantum compute entanglement")
+	}
+}
+
 // TestBuildMappingNotAnalyzed verifies the single-field shape: the returned
 // mapping for a not_analyzed field must use the keyword analyzer explicitly.
 func TestBuildMappingNotAnalyzed(t *testing.T) {

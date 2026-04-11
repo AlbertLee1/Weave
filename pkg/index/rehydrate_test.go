@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -367,6 +368,82 @@ func TestEnsureAllIndexes_NilRepo(t *testing.T) {
 	// Defensive: nil repo should be a no-op.
 	if err := index.EnsureAllIndexes(context.Background(), mgr, nil); err != nil {
 		t.Fatalf("expected nil repo to be no-op, got: %v", err)
+	}
+}
+
+// TestEnsureAllIndexes_PropagatesAnalyzerNotIndexed is the end-to-end half
+// of US-010. It exercises the real bootstrap path: a PG-backed ObjectType
+// whose property row stores {"analyzer":"not_indexed"} in TypeConfig must,
+// after EnsureAllIndexes, produce a Bleve index that excludes that property
+// from field-scoped search while still preserving the stored value.
+func TestEnsureAllIndexes_PropagatesAnalyzerNotIndexed(t *testing.T) {
+	mgr := index.NewManager(t.TempDir())
+	defer mgr.Close()
+
+	repo := &stubRehydrateRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.test", APIName: "test"},
+		},
+		objectTypes: map[string][]oms.ObjectType{
+			"ri.ontology.main.ontology.test": {
+				{
+					RID:         "ri.ontology.main.objectType.patent",
+					OntologyRID: "ri.ontology.main.ontology.test",
+					APIName:     "Patent",
+					PrimaryKey:  "id",
+				},
+			},
+		},
+		properties: map[string][]oms.Property{
+			"ri.ontology.main.objectType.patent": {
+				{APIName: "id", BaseType: "string", IsSearchable: true},
+				{
+					APIName:      "abstract",
+					BaseType:     "string",
+					IsSearchable: true,
+					TypeConfig:   []byte(`{"analyzer":"not_indexed"}`),
+				},
+			},
+		},
+	}
+
+	if err := index.EnsureAllIndexes(context.Background(), mgr, repo); err != nil {
+		t.Fatalf("EnsureAllIndexes: %v", err)
+	}
+
+	key := index.ScopedKey("test", "Patent")
+	if err := mgr.IndexDocument(key, "p1", map[string]interface{}{
+		"id":       "p1",
+		"abstract": "quantum compute entanglement",
+	}); err != nil {
+		t.Fatalf("IndexDocument: %v", err)
+	}
+
+	// Field query on the not_indexed property must miss.
+	absQ := bleve.NewMatchQuery("quantum")
+	absQ.SetField("abstract")
+	absRes, err := mgr.Search(key, bleve.NewSearchRequest(absQ))
+	if err != nil {
+		t.Fatalf("search abstract: %v", err)
+	}
+	if absRes.Total != 0 {
+		t.Errorf("abstract search after rehydrate got total=%d, want 0 (not_indexed)", absRes.Total)
+	}
+
+	// Stored value must still come back via id lookup + Fields projection.
+	idQ := bleve.NewMatchQuery("p1")
+	idQ.SetField("id")
+	req := bleve.NewSearchRequest(idQ)
+	req.Fields = []string{"abstract"}
+	idRes, err := mgr.Search(key, req)
+	if err != nil {
+		t.Fatalf("search id: %v", err)
+	}
+	if idRes.Total != 1 {
+		t.Fatalf("id search got total=%d, want 1", idRes.Total)
+	}
+	if got := idRes.Hits[0].Fields["abstract"]; got != "quantum compute entanglement" {
+		t.Errorf("stored abstract = %v, want original", got)
 	}
 }
 
