@@ -180,6 +180,29 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   the doc corpus. Makefile target `make test-parity` brings up the
   stack via scripts/e2e-setup.sh when :9117 is unreachable and then
   `go run ./test/foundry_parity -v`.
+- LoadObjects and the loadObjectsOrInterfaces preview path use DIFFERENT
+  reserved-key prefixes on emitted rows. pkg/oss/wire.go FormatObject
+  writes `__primaryKey` / `__apiName` / `__rid` (double underscore) for
+  the canonical LoadObjects path, while handler_preview.go writes
+  `$primaryKey` / `$apiName` / `$rid` for ?preview=true responses. A test
+  that POSTs /objectSets/loadObjects MUST parse `__primaryKey`; a test
+  that POSTs /objectSets/loadObjectsOrInterfaces?preview=true MUST parse
+  `$primaryKey`. Grepping the existing interface-paging test (which is
+  preview-shaped) for the `$` form will lead you astray when writing a
+  non-preview test.
+- pkg/oss/where convertEq on a string value emits a bleve.MatchQuery.
+  MatchQuery looks up the field's mapping-time analyzer via
+  IndexMapping.AnalyzerNameForPath, so a Keyword field query runs through
+  the identity keyword analyzer — meaning `eq "USA"` matches an indexed
+  "USA" but NOT an indexed "usa". That is the correct US-050 contract but
+  easy to misremember as "MatchQuery always lowercases". convertContains
+  on the other hand emits a bleve.NewTermQuery which BYPASSES the
+  query-side analyzer entirely — against an English-snowball field,
+  TermQuery("run") matches indexed "runs"/"running" (both stem to "run"),
+  but TermQuery("running") finds nothing because the index only stores
+  "run". Phase 6 US-035 pins this asymmetry; any future rewrite that
+  switches contains to MatchQuery will surface loudly through those
+  assertions.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -2110,4 +2133,80 @@ new features — only run verification suites and commit the gate.
     timestamp so LatestUserEditAt > ingest.Timestamp for the very first
     ingest attempt. seedTime = time.Now(), ingestBase = seedTime - 24h
     gives a wide margin and no flakiness on slow CI.
+---
+
+## 2026-04-12 - US-035
+- Added test/integration/phase6/phase6_typeclass_search_test.go: the Phase 6
+  cross-US gate test that pins the TypeClass-driven Bleve mapping (US-050)
+  against Where-clause search on loadObjects.
+- Single ObjectType "customer" is indexed with two divergent analyzers:
+    * country      -> analyzer.not_analyzed (Keyword field, identity).
+    * description  -> analyzer.standard     (English snowball + lowercase).
+  Fixture rows mix "USA" / "usa" country values and Porter-safe stem triples
+  ("runs daily", "Running promotions") so every assertion pins a single
+  analyzer behaviour.
+- Assertions run against POST /objectSets/loadObjects:
+    1. filter {country eq "usa"} -> 0 rows (keyword analyzer keeps "USA"
+       verbatim, MatchQuery on a keyword field does NOT lowercase).
+    2. filter {country eq "USA"} -> 2 rows (control that keyword indexing
+       is actually wired).
+    3. filter {description contains "run"} -> 2 rows ("runs" and "Running"
+       both stem down to "run" at index time, so TermQuery("run") against
+       the stemmed token file lights both docs up).
+    4. filter {description contains "Running"} -> 0 rows (documented
+       TermQuery gotcha: convertContains bypasses the query-side analyzer,
+       so "Running" is NOT stemmed at query time and misses the "run"
+       token file — this pins current behaviour so any future switch to
+       MatchQuery surfaces loudly).
+- Files changed:
+  - test/integration/phase6/phase6_typeclass_search_test.go (new)
+  - scripts/ralph/prd.json (US-035 passes=true)
+- Quality:
+  - `go test -tags integration ./test/integration/phase6/... -run TypeClassSearch -v` PASS (~2.6s)
+  - `go test ./...` green (cached)
+  - `go vet ./...` and `go vet -tags integration ./test/integration/phase6/...` clean
+  - `gofmt -l test/integration/phase6/phase6_typeclass_search_test.go` empty
+- **Learnings for future iterations:**
+  - LoadObjects emits row keys as `__primaryKey` / `__apiName` / `__rid`
+    (double underscore — see pkg/oss/wire.go FormatObject). The preview path
+    (writePreviewInterfacePage in handler_preview.go) uses `$primaryKey` /
+    `$apiName` / `$rid` with a dollar prefix. These are NOT interchangeable.
+    Phase 6 tests that target LoadObjects MUST read __primaryKey and tests
+    that target the preview (loadObjectsOrInterfaces?preview=true) MUST read
+    $primaryKey. Grepping phase6_withproperties_interface_test.go for
+    $primaryKey will lead you astray for a non-preview test.
+  - pkg/oss/where convertEq on a string value constructs a
+    bleve.MatchQuery(value).SetField(field). MatchQuery looks up the field's
+    mapping-time analyzer via IndexMapping.AnalyzerNameForPath, so for a
+    Keyword field the query runs through the identity keyword analyzer and
+    preserves case. This means `eq "USA"` matches an indexed "USA" but NOT
+    an indexed "usa", which is exactly the US-050 contract. Do NOT assume
+    MatchQuery always lowercases — that is only the standard/English
+    analyzer behaviour.
+  - pkg/oss/where convertContains uses bleve.NewTermQuery(value), which
+    BYPASSES the query-side analyzer. Against a field indexed with the
+    English snowball, only the exact stemmed form hits: TermQuery("run")
+    matches docs containing "runs"/"running" (both stem to "run"), but
+    TermQuery("running") finds nothing because the index has "run" only.
+    Phase 6 tests pin this asymmetry so any future rewrite toward MatchQuery
+    is caught immediately.
+  - KeyForCtx (pkg/index/scope.go) resolves index lookups to a scoped key
+    like `northwind_typeclass__customer` when the scope is stamped on ctx,
+    and falls back to the bare objectType name when the scoped index is
+    absent. Phase 6 tests seed indexes via mgr.EnsureIndex("customer", ...)
+    without a scope prefix; the handler still finds them through this
+    fallback. Any future test that explicitly seeds via ScopedKey must
+    make sure to use the same key on both write and read, or the fallback
+    will quietly mask the mismatch by serving the bare index.
+  - bleve's keyword analyzer (analysis/analyzer/keyword/keyword.go) is a
+    single-tokenizer-only construct — no lowercase filter, no stemmer.
+    "USA" indexed with a KeywordField produces exactly one token "USA".
+    NewKeywordFieldMapping() sets Analyzer="keyword" on the mapping, which
+    is what AnalyzerNameForPath returns, which is what MatchQuery uses.
+  - Porter English (bleve analyzer "en") stems "runs" -> "run" and
+    "running" -> "run", but does NOT stem "ran" -> "run" (it is a
+    suffix-only stemmer and "ran" has no matching suffix rule). Safe
+    stem triples for fixtures: run/runs/running, shoe/shoes, walk/walks/
+    walking — already documented in the Codebase Patterns but worth
+    re-flagging here: do not try to fake past tense as a stem target.
 ---
