@@ -463,9 +463,9 @@ type reverseLinkFinder interface {
 // When no DerivedProperties are declared the call degenerates to the inner
 // ObjectSet so pre-existing callers that only used Properties keep working.
 //
-// US-001 scope: count metric over forward direction. sum/avg/min/max and
-// reverse direction land in US-002 / US-003 and intentionally return an
-// explicit error here so the unsupported surface is obvious.
+// Scope: count / sum / avg / min / max over forward direction. Reverse
+// direction lands in US-003 and intentionally returns an explicit error so
+// the unsupported surface is obvious.
 func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (*Result, error) {
 	inner, err := e.execute(ctx, def.ObjectSet)
 	if err != nil {
@@ -485,17 +485,22 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		if err != nil {
 			return nil, fmt.Errorf("withProperties %q: %w", dp.Name, err)
 		}
+		if dir != links.DirectionForward {
+			return nil, fmt.Errorf("withProperties %q: reverse direction not yet supported", dp.Name)
+		}
+
 		switch dp.Metric {
 		case "count":
-			if dir != links.DirectionForward {
-				return nil, fmt.Errorf("withProperties %q: reverse direction not yet supported", dp.Name)
-			}
 			for _, pk := range inner.PrimaryKeys {
 				targets, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, inner.ObjectType, dp.Link, []string{pk})
 				if err != nil {
 					return nil, fmt.Errorf("withProperties %q resolve link %q: %w", dp.Name, dp.Link, err)
 				}
 				derived[pk][dp.Name] = int64(len(targets))
+			}
+		case "sum", "avg", "min", "max":
+			if err := e.evaluateNumericDerived(ctx, inner, dp, derived); err != nil {
+				return nil, err
 			}
 		default:
 			return nil, fmt.Errorf("withProperties %q: metric %q not yet supported", dp.Name, dp.Metric)
@@ -508,6 +513,131 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		Truncated:     inner.Truncated,
 		DerivedValues: derived,
 	}, nil
+}
+
+// evaluateNumericDerived computes sum / avg / min / max of dp.Field across
+// forward-linked target objects for every base PK in inner. The target
+// ObjectType is resolved via LinkTargetTypeResolver so the numeric field can
+// be read from the correct Bleve index. Non-numeric fields surface as
+// DerivedPropertyTypeMismatch.
+func (e *Executor) evaluateNumericDerived(ctx context.Context, inner *Result, dp DerivedPropertyDef, derived map[string]map[string]interface{}) error {
+	targetType := ""
+	if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok {
+		tt, err := resolver.ResolveTargetObjectType(ctx, inner.ObjectType, dp.Link)
+		if err != nil {
+			return fmt.Errorf("withProperties %q resolve target type for link %q: %w", dp.Name, dp.Link, err)
+		}
+		targetType = tt
+	}
+	if targetType == "" {
+		return fmt.Errorf("withProperties %q: link resolver cannot determine target ObjectType for link %q", dp.Name, dp.Link)
+	}
+	targetIndexKey := scopedIndexKey(ctx, e.indexMgr, targetType)
+
+	for _, pk := range inner.PrimaryKeys {
+		targets, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, inner.ObjectType, dp.Link, []string{pk})
+		if err != nil {
+			return fmt.Errorf("withProperties %q resolve link %q: %w", dp.Name, dp.Link, err)
+		}
+		if len(targets) == 0 {
+			switch dp.Metric {
+			case "sum":
+				derived[pk][dp.Name] = float64(0)
+			default: // avg, min, max
+				derived[pk][dp.Name] = nil
+			}
+			continue
+		}
+
+		searchReq := bleve.NewSearchRequest(bleve.NewDocIDQuery(targets))
+		searchReq.Fields = []string{dp.Field}
+		searchReq.Size = len(targets)
+		res, err := e.indexMgr.Search(targetIndexKey, searchReq)
+		if err != nil {
+			return fmt.Errorf("withProperties %q fetch targets for %q: %w", dp.Name, pk, err)
+		}
+
+		var (
+			sum        float64
+			count      int
+			haveMinMax bool
+			minV       float64
+			maxV       float64
+		)
+		for _, hit := range res.Hits {
+			raw, ok := hit.Fields[dp.Field]
+			if !ok || raw == nil {
+				continue
+			}
+			num, ok := coerceNumeric(raw)
+			if !ok {
+				return fmt.Errorf("withProperties %q: DerivedPropertyTypeMismatch: field %q on %q is not numeric (got %T)", dp.Name, dp.Field, targetType, raw)
+			}
+			sum += num
+			count++
+			if !haveMinMax {
+				minV = num
+				maxV = num
+				haveMinMax = true
+			} else {
+				if num < minV {
+					minV = num
+				}
+				if num > maxV {
+					maxV = num
+				}
+			}
+		}
+
+		if count == 0 {
+			switch dp.Metric {
+			case "sum":
+				derived[pk][dp.Name] = float64(0)
+			default:
+				derived[pk][dp.Name] = nil
+			}
+			continue
+		}
+
+		switch dp.Metric {
+		case "sum":
+			derived[pk][dp.Name] = sum
+		case "avg":
+			derived[pk][dp.Name] = sum / float64(count)
+		case "min":
+			derived[pk][dp.Name] = minV
+		case "max":
+			derived[pk][dp.Name] = maxV
+		}
+	}
+	return nil
+}
+
+// coerceNumeric converts a Bleve field value to float64. Bleve stores numeric
+// fields as float64 when round-tripped through Search with Fields=[...], but
+// callers may also hand us ints or json.Numbers depending on the indexing
+// path. Returns ok=false for anything non-numeric so the executor can emit
+// DerivedPropertyTypeMismatch.
+func coerceNumeric(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	}
+	return 0, false
 }
 
 // executeReference looks up a stored ObjectSet from the Store and executes it.

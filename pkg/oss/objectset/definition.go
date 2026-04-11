@@ -136,6 +136,16 @@ func (d *Definition) Validate() error {
 			if dp.Metric == "" {
 				return fmt.Errorf("withProperties derivedProperties[%d] (%q) requires metric", i, dp.Name)
 			}
+			switch dp.Metric {
+			case "count":
+				// count ignores Field
+			case "sum", "avg", "min", "max":
+				if dp.Field == "" {
+					return fmt.Errorf("withProperties derivedProperties[%d] (%q) metric %q requires field", i, dp.Name, dp.Metric)
+				}
+			default:
+				return fmt.Errorf("withProperties derivedProperties[%d] (%q) unknown metric %q", i, dp.Name, dp.Metric)
+			}
 		}
 	case "static":
 		if d.ObjectType == "" {
