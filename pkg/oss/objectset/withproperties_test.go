@@ -2,6 +2,7 @@ package objectset_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -549,6 +550,123 @@ func (forwardOnlyResolver) ResolveLinkedObjects(ctx context.Context, linkTypeRID
 }
 func (forwardOnlyResolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceOT, linkAPIName string, sourcePKs []string) ([]string, error) {
 	return nil, nil
+}
+
+// TestWithPropertiesCursorStability asserts US-005: when a withProperties
+// ObjectSet is executed, the returned PrimaryKeys are sorted by
+// (firstDerivedValue ASC, primaryKey ASC) so that offset-based pagination can
+// slice the result into pages without ever losing or duplicating a base
+// object, even when many base objects share the same derived value.
+//
+// Fixture: 50 customers with orderCount determined by id % 5 (so 10 customers
+// share each of the 5 distinct counts). Pagination with pageSize=17 should
+// walk the full set across 3 pages with no duplicates and no gaps, and each
+// page's rows must respect the composite sort order.
+func TestWithPropertiesCursorStability(t *testing.T) {
+	dir := t.TempDir()
+	mgr := index.NewManager(dir)
+	t.Cleanup(func() { mgr.Close() })
+
+	custProps := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("customer", custProps); err != nil {
+		t.Fatalf("EnsureIndex customer: %v", err)
+	}
+	orderProps := []index.Property{
+		{APIName: "id", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := mgr.EnsureIndex("order", orderProps); err != nil {
+		t.Fatalf("EnsureIndex order: %v", err)
+	}
+
+	edges := map[string][]string{}
+	for i := 0; i < 50; i++ {
+		cid := fmt.Sprintf("c%03d", i)
+		if err := mgr.IndexDocument("customer", cid, map[string]interface{}{"id": cid}); err != nil {
+			t.Fatalf("IndexDocument customer %s: %v", cid, err)
+		}
+		// orderCount bucket = i % 5 → ten customers per count (0..4) guarantees
+		// large tie groups so the pk tiebreaker is actually exercised.
+		count := i % 5
+		orders := make([]string, 0, count)
+		for j := 0; j < count; j++ {
+			oid := fmt.Sprintf("o-%s-%d", cid, j)
+			if err := mgr.IndexDocument("order", oid, map[string]interface{}{"id": oid}); err != nil {
+				t.Fatalf("IndexDocument order %s: %v", oid, err)
+			}
+			orders = append(orders, oid)
+		}
+		edges[cid] = orders
+	}
+
+	resolver := &perPKLinkResolver{
+		edges:   map[string]map[string][]string{"customerOrders": edges},
+		targets: map[string]string{"customerOrders": "order"},
+	}
+	store := objectset.NewStore(time.Hour)
+	exec := objectset.NewExecutor(mgr, resolver, store)
+
+	def := &objectset.Definition{
+		Type:      "withProperties",
+		ObjectSet: &objectset.Definition{Type: "base", ObjectType: "customer"},
+		DerivedProperties: []objectset.DerivedPropertyDef{
+			{Name: "orderCount", Link: "customerOrders", Direction: "forward", Metric: "count"},
+		},
+	}
+
+	result, err := exec.Execute(context.Background(), def)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.PrimaryKeys) != 50 {
+		t.Fatalf("expected 50 customers, got %d", len(result.PrimaryKeys))
+	}
+
+	// Assert composite sort order: non-decreasing (orderCount, pk).
+	for i := 1; i < len(result.PrimaryKeys); i++ {
+		prev := result.PrimaryKeys[i-1]
+		cur := result.PrimaryKeys[i]
+		prevV, ok := result.DerivedValues[prev]["orderCount"].(int64)
+		if !ok {
+			t.Fatalf("derived orderCount for %s missing or not int64", prev)
+		}
+		curV, ok := result.DerivedValues[cur]["orderCount"].(int64)
+		if !ok {
+			t.Fatalf("derived orderCount for %s missing or not int64", cur)
+		}
+		if curV < prevV {
+			t.Errorf("not sorted by derivedValue at index %d: %s(%d) then %s(%d)", i, prev, prevV, cur, curV)
+			continue
+		}
+		if curV == prevV && cur < prev {
+			t.Errorf("pk tiebreaker violated at index %d: %s then %s (both count=%d)", i, prev, cur, curV)
+		}
+	}
+
+	// Simulate offset-based pagination over 3 pages × 17 + overflow.
+	pageSize := 17
+	seen := make(map[string]bool, 50)
+	totalPages := 0
+	for start := 0; start < len(result.PrimaryKeys); start += pageSize {
+		end := start + pageSize
+		if end > len(result.PrimaryKeys) {
+			end = len(result.PrimaryKeys)
+		}
+		for _, pk := range result.PrimaryKeys[start:end] {
+			if seen[pk] {
+				t.Errorf("duplicate %s across pages", pk)
+			}
+			seen[pk] = true
+		}
+		totalPages++
+	}
+	if len(seen) != 50 {
+		t.Errorf("expected 50 unique customers across all pages, got %d", len(seen))
+	}
+	if totalPages != 3 {
+		t.Errorf("expected 3 pages (17+17+16), got %d", totalPages)
+	}
 }
 
 // TestWithPropertiesCount_ValidationMissingMetric asserts that a derived

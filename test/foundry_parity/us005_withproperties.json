@@ -1,0 +1,59 @@
+{
+  "story": "US-005",
+  "title": "withProperties cursor stability",
+  "description": "Expected Foundry-compatible response shape when loadObjects is invoked on a withProperties ObjectSet with a single count metric. Pagination must be stable: result rows are ordered by (firstDerivedValue ASC, primaryKey ASC) so offset-based paging never drops or duplicates base objects.",
+  "fixture": {
+    "ontology": "northwind",
+    "objectSet": {
+      "type": "withProperties",
+      "objectSet": {
+        "type": "base",
+        "objectType": "customer"
+      },
+      "derivedProperties": [
+        {
+          "name": "orderCount",
+          "link": "customerOrders",
+          "direction": "forward",
+          "metric": "count"
+        }
+      ]
+    },
+    "select": ["id", "name", "orderCount"],
+    "pageSize": 17
+  },
+  "expected": {
+    "sortKey": ["orderCount", "id"],
+    "sortOrder": ["ascending", "ascending"],
+    "pagination": {
+      "strategy": "offset",
+      "pageSize": 17,
+      "stableAcrossPages": true,
+      "comment": "Tied derivedValue rows fall back to primaryKey ascending; empty link sets (count=0) sort first."
+    },
+    "responseShape": {
+      "data": [
+        {
+          "__apiName": "customer",
+          "__primaryKey": "<pk>",
+          "orderCount": "<int64>"
+        }
+      ],
+      "totalCount": "<string:int>",
+      "totalCountAccuracy": "EXACT",
+      "nextPageToken": "<base64 cursor or omitted on final page>"
+    },
+    "errorCodes": {
+      "derivedPropertyAsPrimaryKey": "DerivedPropertyNotAllowedAsPrimaryKey",
+      "derivedPropertyTextSearch": "DerivedPropertyTextSearchUnsupported",
+      "derivedPropertyEdit": "DerivedPropertyReadOnly"
+    }
+  },
+  "coveredBy": [
+    "pkg/oss/objectset/withproperties_test.go::TestWithPropertiesCursorStability"
+  ],
+  "notes": [
+    "A dedicated parity runner is not yet wired up; this fixture documents the expected shape for US-005 and will be consumed by test/foundry_parity/run.go once the Phase 6 Gate introduces it.",
+    "Numeric tie-break uses primary key string comparison; the executor copies the inner result's PrimaryKeys slice before sorting so nested callers continue to see the inner order."
+  ]
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/liyang/weave/pkg/index"
@@ -512,12 +513,70 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		}
 	}
 
+	// US-005: stabilise pagination. Sort PKs by (firstDerivedValue ASC,
+	// primaryKey ASC) so offset-based page slicing never drops or duplicates
+	// rows even when many base objects share the same derived value. We copy
+	// inner.PrimaryKeys first so inner callers (e.g. other operators that
+	// reference the same inner Result) observe the order the inner executor
+	// returned.
+	orderedPKs := make([]string, len(inner.PrimaryKeys))
+	copy(orderedPKs, inner.PrimaryKeys)
+	sortKey := def.DerivedProperties[0].Name
+	sort.SliceStable(orderedPKs, func(i, j int) bool {
+		pi, pj := orderedPKs[i], orderedPKs[j]
+		if cmp := compareDerivedValues(derived[pi][sortKey], derived[pj][sortKey]); cmp != 0 {
+			return cmp < 0
+		}
+		return pi < pj
+	})
+
 	return &Result{
 		ObjectType:    inner.ObjectType,
-		PrimaryKeys:   inner.PrimaryKeys,
+		PrimaryKeys:   orderedPKs,
 		Truncated:     inner.Truncated,
 		DerivedValues: derived,
 	}, nil
+}
+
+// compareDerivedValues orders two derived property values so withProperties
+// results have a deterministic, offset-pagination-safe order. Numeric values
+// (the common case for count / sum / avg / min / max) are compared
+// numerically; nil sorts before any concrete value so pages with empty link
+// sets land predictably on the left side; non-numeric fall back to a string
+// representation so unexpected types still yield a total ordering instead of
+// panicking.
+func compareDerivedValues(a, b interface{}) int {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+	af, aOk := coerceNumeric(a)
+	bf, bOk := coerceNumeric(b)
+	if aOk && bOk {
+		switch {
+		case af < bf:
+			return -1
+		case af > bf:
+			return 1
+		default:
+			return 0
+		}
+	}
+	as := fmt.Sprintf("%v", a)
+	bs := fmt.Sprintf("%v", b)
+	switch {
+	case as < bs:
+		return -1
+	case as > bs:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // linkResolverForDirection returns a closure that walks dp.Link in the
