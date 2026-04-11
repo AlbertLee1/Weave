@@ -20,21 +20,22 @@ type AggregationRequest struct {
 
 // AggregationSpec defines what to aggregate.
 type AggregationSpec struct {
-	Type       string   `json:"type"`                      // "count", "min", "max", "sum", "avg", "approximateDistinct", "standardDeviation", "variance", "approximatePercentile"
-	Field      string   `json:"field,omitempty"`           // required for min/max/sum/avg
-	Name       string   `json:"name,omitempty"`            // output name
-	Percentile *float64 `json:"percentile,omitempty"`      // for approximatePercentile (0-100)
+	Type        string    `json:"type"`                  // "count", "min", "max", "sum", "avg", "approximateDistinct", "standardDeviation", "variance", "approximatePercentile"
+	Field       string    `json:"field,omitempty"`       // required for min/max/sum/avg
+	Name        string    `json:"name,omitempty"`        // output name
+	Percentile  *float64  `json:"percentile,omitempty"`  // for approximatePercentile (0-100), scalar result
+	Percentiles []float64 `json:"percentiles,omitempty"` // for approximatePercentile batch: single HdrHistogram pass, map[string]float64 result
 }
 
 // GroupBySpec defines how to group results.
 type GroupBySpec struct {
-	Type          string         `json:"type"`                    // "exact", "fixedWidth", "range", "ranges", "duration", "topValues"
+	Type          string         `json:"type"` // "exact", "fixedWidth", "range", "ranges", "duration", "topValues"
 	Field         string         `json:"field"`
 	MaxGroups     *int           `json:"maxGroupCount,omitempty"`
-	Width         *float64       `json:"fixedWidth,omitempty"`    // for fixedWidth
-	Ranges        []Range        `json:"ranges,omitempty"`        // for range/ranges
-	Duration      string         `json:"duration,omitempty"`      // ISO 8601: P1D, P1W, P1M, P1Y
-	DurationValue *DurationValue `json:"value,omitempty"`         // for duration: {unit: "DAYS", value: 30}
+	Width         *float64       `json:"fixedWidth,omitempty"` // for fixedWidth
+	Ranges        []Range        `json:"ranges,omitempty"`     // for range/ranges
+	Duration      string         `json:"duration,omitempty"`   // ISO 8601: P1D, P1W, P1M, P1Y
+	DurationValue *DurationValue `json:"value,omitempty"`      // for duration: {unit: "DAYS", value: 30}
 }
 
 // DurationValue represents a duration using Palantir V2 unit/value format.

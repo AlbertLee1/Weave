@@ -963,3 +963,67 @@ new features — only run verification suites and commit the gate.
     regular Test function driven by `-bench=...` so `go test` fails rather
     than silently reporting slow numbers.
 ---
+
+## 2026-04-11 - US-017 Multiple percentiles in single query
+- Added `Percentiles []float64` field to `AggregationSpec`; scalar
+  `Percentile *float64` preserved so existing call sites stay unchanged.
+  When `Percentiles` is non-empty the `approximatePercentile` arm routes
+  through a new multi-path and returns a single MetricValue whose Value
+  is `map[string]float64` keyed by `%g`-formatted percentile strings
+  ("50", "95", "99", "99.9"). Scalar path returns `float64` as before.
+- Extracted a shared `buildHistogram(values)` helper in
+  `approx_percentile.go` that performs the shift/scale + record loop once.
+  Both `computeApproxPercentileHdr` (single) and the new
+  `computeApproxPercentilesHdr` (multi) reuse it, so a single pass over
+  the input values populates one HdrHistogram that answers N percentile
+  queries via repeated `h.ValueAtPercentile(p)` — satisfies the "same
+  histogram used for all percentiles in one pass" acceptance criterion.
+- New `approxPercentilesFromIndex(idx, q, field, percentiles, scanSize)`
+  preserves the legacy `(value, truncated, error)` triple so
+  `bleve_agg.go` dispatches uniformly between scalar and multi paths.
+- Red-first TDD:
+  * `TestComputeApproxPercentilesHdr_DirectCall` exercises the pure
+    helper on a 10k Gaussian slice; compile-fails until the new function
+    and AggregationSpec field exist.
+  * `TestMultiPercentileSingleQuery` drives the full `eng.Aggregate`
+    request path with `Percentiles: []float64{50, 95, 99}`, asserting
+    the metric value is `map[string]float64` of length 3 and each key
+    is within 10% of the analytic normal-distribution quantile.
+- Files changed:
+  - pkg/oss/aggregation/engine.go (AggregationSpec.Percentiles field +
+    gofmt realign of GroupBySpec struct tags)
+  - pkg/oss/aggregation/approx_percentile.go (buildHistogram helper,
+    computeApproxPercentilesHdr, approxPercentilesFromIndex, scalar
+    path now delegates to buildHistogram)
+  - pkg/oss/aggregation/bleve_agg.go (switch arm dispatches to multi
+    path when Percentiles non-empty, scalar path otherwise)
+  - pkg/oss/aggregation/percentile_test.go (2 new tests)
+- Quality: go test ./pkg/oss/aggregation/... green; go test ./... green
+  (~8 min including Chinook/Northwind); go vet ./... clean; gofmt -l on
+  all four edited files clean (engine.go picked up an unrelated
+  alignment refresh in GroupBySpec because AggregationSpec now has a
+  longer tag column — that's expected gofmt behaviour, not drift).
+- **Learnings for future iterations:**
+  - HdrHistogram-go does NOT expose a batch `ValueAtPercentiles([]float64)`
+    method; the idiomatic way to answer N queries in "one pass" is to
+    record once and call `ValueAtPercentile(p)` N times on the same
+    histogram. That's O(N log bucket_count) after the O(records) build,
+    so multi-percentile stays cheap compared with rescanning the index.
+  - Key format `%g` collapses `50.0 → "50"` and keeps `99.9 → "99.9"`,
+    which lines up with how JSON clients will request percentiles. Do
+    NOT use `%v` — it would render integer-valued floats with a
+    trailing zero on some platforms and break the round-trip.
+  - gofmt tab stops in a struct are computed per-line against the whole
+    block. Adding a new field with a longer tag re-triggers alignment
+    across sibling fields/structs. Run `gofmt -w` on the file you
+    touched BEFORE committing so the diff only shows your real change.
+  - When adding an optional sibling field to an existing schema (scalar
+    `Percentile` vs slice `Percentiles`), keep both for backward-compat
+    and pick via a single `if len(slice) > 0` at dispatch time. Avoids
+    cascading renames through every caller that still uses the scalar.
+  - Reading MetricValue.Value back in tests: `m.Value.(map[string]float64)`
+    works because the Go runtime preserves the concrete type through the
+    `interface{}` boxing in `MetricValue.Value`. No json round-trip
+    happens until the HTTP handler encodes — unit tests can inspect the
+    typed map directly.
+---

@@ -200,3 +200,101 @@ func TestComputeApproxPercentileHdr_DirectCall(t *testing.T) {
 		}
 	}
 }
+
+// TestComputeApproxPercentilesHdr_DirectCall drives the multi-percentile
+// helper directly, asserting that a SINGLE HdrHistogram feeds p50/p95/p99
+// in one pass. Keys are the unadorned numeric percentile strings ("50",
+// "95", "99") so JSON response consumers can round-trip them without
+// parsing a prefix.
+func TestComputeApproxPercentilesHdr_DirectCall(t *testing.T) {
+	const (
+		n      = 10000
+		mean   = 5000.0
+		stddev = 1000.0
+	)
+	r := rand.New(rand.NewSource(11))
+	values := make([]float64, 0, n)
+	for i := 0; i < n; i++ {
+		v := r.NormFloat64()*stddev + mean
+		if v < 0 {
+			v = 0
+		}
+		values = append(values, v)
+	}
+
+	got, err := computeApproxPercentilesHdr(values, []float64{50, 95, 99})
+	if err != nil {
+		t.Fatalf("computeApproxPercentilesHdr: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
+	}
+	for _, p := range []float64{50, 95, 99} {
+		key := fmt.Sprintf("%g", p)
+		v, ok := got[key]
+		if !ok {
+			t.Fatalf("missing key %q in %v", key, got)
+		}
+		want := mean + stddev*normalInverseCDF(p/100.0)
+		tolerance := 0.1 * want
+		if math.Abs(v-want) > tolerance {
+			t.Errorf("p%v = %.2f, want ~%.2f (±%.2f)", p, v, want, tolerance)
+		}
+	}
+}
+
+// TestMultiPercentileSingleQuery asserts the Aggregation request-level
+// contract for US-017: passing Percentiles: [50, 95, 99] in one
+// AggregationSpec returns a single MetricValue whose Value is a
+// map[string]float64 keyed by percentile string. Scalar Percentile is
+// still honoured when Percentiles is empty.
+func TestMultiPercentileSingleQuery(t *testing.T) {
+	const (
+		n      = 10000
+		mean   = 5000.0
+		stddev = 1000.0
+	)
+	idx := setupGaussianIndex(t, n, mean, stddev, 99)
+	eng := NewEngine()
+	eng.MaxDocScanSize = 20000
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{
+				Type:        "approximatePercentile",
+				Field:       "latency",
+				Percentiles: []float64{50, 95, 99},
+				Name:        "lat",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if len(resp.Data) != 1 || len(resp.Data[0].Metrics) != 1 {
+		t.Fatalf("data/metrics shape = %v", resp.Data)
+	}
+	m := resp.Data[0].Metrics[0]
+	if m.Name != "lat" {
+		t.Errorf("metric name = %q, want lat", m.Name)
+	}
+	got, ok := m.Value.(map[string]float64)
+	if !ok {
+		t.Fatalf("metric value type = %T, want map[string]float64", m.Value)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
+	}
+	for _, p := range []float64{50, 95, 99} {
+		key := fmt.Sprintf("%g", p)
+		v, ok := got[key]
+		if !ok {
+			t.Fatalf("missing key %q in %v", key, got)
+		}
+		want := mean + stddev*normalInverseCDF(p/100.0)
+		tolerance := 0.1 * want
+		if math.Abs(v-want) > tolerance {
+			t.Errorf("p%v = %.2f, want ~%.2f (±%.2f)", p, v, want, tolerance)
+		}
+	}
+}

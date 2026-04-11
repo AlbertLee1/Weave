@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"fmt"
 	"math"
 
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
@@ -32,7 +33,18 @@ func computeApproxPercentileHdr(values []float64, percentile float64) (float64, 
 	if len(values) == 0 {
 		return math.NaN(), nil
 	}
+	h, shift, err := buildHistogram(values)
+	if err != nil {
+		return 0, err
+	}
+	raw := h.ValueAtPercentile(percentile)
+	return float64(raw)/percentileScale - shift, nil
+}
 
+// buildHistogram constructs an HdrHistogram populated with the given values.
+// It encapsulates the shift/scale dance so both the single-percentile and
+// multi-percentile call paths can share one pass over the input data.
+func buildHistogram(values []float64) (*hdrhistogram.Histogram, float64, error) {
 	minV := values[0]
 	maxV := values[0]
 	for _, v := range values[1:] {
@@ -44,8 +56,6 @@ func computeApproxPercentileHdr(values []float64, percentile float64) (float64, 
 		}
 	}
 
-	// Shift so the smallest recorded value is at least 1. HdrHistogram
-	// cannot record zero or negative numbers with LowestDiscernibleValue=1.
 	shift := 0.0
 	if minV <= 0 {
 		shift = -minV + 1
@@ -66,12 +76,81 @@ func computeApproxPercentileHdr(values []float64, percentile float64) (float64, 
 			scaled = highest
 		}
 		if err := h.RecordValue(scaled); err != nil {
-			return 0, err
+			return nil, 0, err
 		}
 	}
+	return h, shift, nil
+}
 
-	raw := h.ValueAtPercentile(percentile)
-	return float64(raw)/percentileScale - shift, nil
+// computeApproxPercentilesHdr returns a set of percentiles (each 0–100)
+// over the supplied slice of float64 values, computed in a SINGLE pass
+// over one shared HdrHistogram. Keys in the returned map use the
+// canonical `%g` formatting of each requested percentile ("50", "95",
+// "99", "99.9"), so callers can round-trip them through JSON without
+// a dedicated parser.
+//
+// Returns an empty map when the input slice is empty.
+func computeApproxPercentilesHdr(values []float64, percentiles []float64) (map[string]float64, error) {
+	out := make(map[string]float64, len(percentiles))
+	if len(values) == 0 || len(percentiles) == 0 {
+		return out, nil
+	}
+
+	h, shift, err := buildHistogram(values)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, p := range percentiles {
+		raw := h.ValueAtPercentile(p)
+		out[fmt.Sprintf("%g", p)] = float64(raw)/percentileScale - shift
+	}
+	return out, nil
+}
+
+// approxPercentilesFromIndex is the Bleve-backed multi-percentile counterpart
+// to approxPercentileFromIndex. It scans the index once, pipes the numeric
+// field into buildHistogram exactly once, and returns a map[string]float64
+// keyed by percentile string. The triple shape mirrors the legacy scalar
+// path so bleve_agg.go can dispatch uniformly.
+func approxPercentilesFromIndex(idx bleve.Index, q query.Query, field string, percentiles []float64, scanSize int) (interface{}, bool, error) {
+	searchReq := bleve.NewSearchRequest(q)
+	searchReq.Size = scanSize
+	searchReq.Fields = []string{field}
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, err
+	}
+
+	truncated := result.Total > uint64(len(result.Hits))
+
+	if len(result.Hits) == 0 {
+		return nil, truncated, nil
+	}
+
+	values := make([]float64, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		raw, ok := hit.Fields[field]
+		if !ok {
+			continue
+		}
+		numVal, ok := raw.(float64)
+		if !ok {
+			continue
+		}
+		values = append(values, numVal)
+	}
+
+	if len(values) == 0 {
+		return nil, truncated, nil
+	}
+
+	out, err := computeApproxPercentilesHdr(values, percentiles)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, truncated, nil
 }
 
 // approxPercentileFromIndex replaces the legacy sort-based computePercentile

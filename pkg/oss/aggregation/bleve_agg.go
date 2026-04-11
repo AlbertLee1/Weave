@@ -79,18 +79,29 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "approximatePercentile":
-			percentile := 50.0
-			if spec.Percentile != nil {
-				percentile = *spec.Percentile
+			if len(spec.Percentiles) > 0 {
+				val, t, err := approxPercentilesFromIndex(idx, baseQuery, spec.Field, spec.Percentiles, scanSize)
+				if err != nil {
+					return nil, false, err
+				}
+				if t {
+					truncated = true
+				}
+				metrics = append(metrics, MetricValue{Name: name, Value: val})
+			} else {
+				percentile := 50.0
+				if spec.Percentile != nil {
+					percentile = *spec.Percentile
+				}
+				val, t, err := approxPercentileFromIndex(idx, baseQuery, spec.Field, percentile, scanSize)
+				if err != nil {
+					return nil, false, err
+				}
+				if t {
+					truncated = true
+				}
+				metrics = append(metrics, MetricValue{Name: name, Value: val})
 			}
-			val, t, err := approxPercentileFromIndex(idx, baseQuery, spec.Field, percentile, scanSize)
-			if err != nil {
-				return nil, false, err
-			}
-			if t {
-				truncated = true
-			}
-			metrics = append(metrics, MetricValue{Name: name, Value: val})
 		}
 	}
 
