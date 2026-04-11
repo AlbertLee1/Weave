@@ -96,6 +96,21 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   consumer only needs 2–3 calls, define a local interface (see
   `pkg/index/rebuild.go RebuildRepo` and `rehydrate.go rehydrateRepo`)
   and keep the concrete PG method un-exported from the interface.
+- Text FieldMapping defaults to the English ("en") Snowball analyzer
+  via `pkg/index/mapping_builder.go:standardTextAnalyzer`. Lowercase
+  + Porter stemmer + possessive strip is the baseline for
+  analyzer.standard / unset properties; not_analyzed still routes to
+  KeywordField (identity analyzer). When writing new text-field
+  search tests prefer `bleve.NewMatchQuery(...)` — TermQuery skips
+  the analyzer and breaks the moment a stemmer is in play. Use
+  TermQuery ONLY on not_analyzed / keyword fields. Porter English
+  does NOT stem "runner" → "run"; safe stem pairs for fixtures:
+  run/runs/running, shoe/shoes, walk/walks/walking.
+- oms.ObjectType returned by GetObjectTypeByAPIName does NOT carry
+  its Properties slice — call ListProperties(ctx, ot.RID) separately
+  and assign ot.Properties = props before handing the ObjectType to
+  `index.BuildMapping`, otherwise the generated mapping will be
+  empty and every search will silently return zero hits.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -700,4 +715,55 @@ new features — only run verification suites and commit the gate.
   panic-on-use). For unit-testing specific handlers, prefer small
   hand-written stubs satisfying the narrow interface — embedding drags
   in the full 50-method surface and makes test failures harder to read.
+---
+
+## 2026-04-11 - US-012
+- Added test/integration/typeclass_indexing_test.go with testcontainers-backed
+  PG round-trip + BuildMapping-driven in-memory Bleve indexes. Customer.country
+  (not_analyzed) asserts TermQuery case-sensitivity; Product.description
+  (standard) asserts MatchQuery stemming via the English analyzer.
+- Updated pkg/index/mapping_builder.go: default text fields now explicitly
+  use Bleve's English ("en") analyzer instead of the implicit "standard"
+  analyzer. English adds Porter/Snowball stemming + possessive strip on top
+  of the lowercasing the old default already did. not_analyzed still routes
+  to KeywordField unchanged; not_indexed still routes to Index=false stored
+  text unchanged.
+- Updated pkg/index/manager_test.go TestManager_Search_ByField to use
+  MatchQuery instead of TermQuery — TermQuery bypasses the field analyzer
+  and silently breaks under any stemmer change. MatchQuery is the correct
+  wire for text-field queries.
+- Added test/foundry_parity/us012_typeclass.json documenting the wire
+  contract, the mapping/analyzer chart, and the fixture co-mention of
+  "runs marathon" on p2 so Porter stem-reaches both docs on a single
+  "run" query.
+- Files changed:
+  - pkg/index/mapping_builder.go
+  - pkg/index/manager_test.go
+  - test/integration/typeclass_indexing_test.go (new)
+  - test/foundry_parity/us012_typeclass.json (new)
+- **Learnings for future iterations:**
+  - bleve's implicit "standard" analyzer lowercases + tokenises but does
+    NOT stem. If a future US wants Foundry-like root-form matching on a
+    text field, the mapping builder must explicitly set
+    FieldMapping.Analyzer = "en" (or another snowball language). Just
+    leaving Analyzer blank keeps the old non-stemming behaviour.
+  - Porter/Snowball English does NOT fold "runner" -> "run". It's a
+    noun stem, not a verb form. Test fixtures that want a single query
+    to hit multiple docs via stemming should prefer verb conjugations
+    ("run"/"runs"/"running") — those all collapse to "run". Plural
+    nouns (shoes -> shoe) and -ing/-s verbs are the safe bets.
+  - TermQuery bypasses the field analyzer entirely — the raw surface
+    form is matched against the indexed token. Any analyzer upgrade
+    (lowercasing, stemming, stopword filters) can and will break
+    previously passing TermQuery-based tests. Rule of thumb: use
+    MatchQuery for text fields, reserve TermQuery for keyword
+    (not_analyzed) fields where the analyzer is identity.
+  - Property.TypeConfig round-trips through PG as JSONB: write with
+    `json.RawMessage(...)`, read back with ListProperties, then use
+    index.AnalyzerFromTypeConfig to extract the hint. The rehydrate
+    bootstrap already does this dance — integration tests must too.
+  - ObjectType.Properties is NOT populated by GetObjectTypeByAPIName;
+    it's a separate ListProperties call keyed by the ObjectType RID.
+    Manual hydration is required before BuildMapping can inspect the
+    properties slice.
 ---

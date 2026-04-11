@@ -455,7 +455,12 @@ func TestManager_Search_ByField(t *testing.T) {
 		}
 	}
 
-	query := bleve.NewTermQuery("alice")
+	// MatchQuery runs the field's analyzer over the query term so it stays
+	// robust against analyzer upgrades (e.g. the US-012 switch to the
+	// English stemmer: "Alice" → "alic"). TermQuery bypasses the analyzer
+	// and would silently drop to zero hits whenever the stemmer or any
+	// token filter mutates the raw surface form.
+	query := bleve.NewMatchQuery("alice")
 	query.SetField("name")
 	req := bleve.NewSearchRequest(query)
 

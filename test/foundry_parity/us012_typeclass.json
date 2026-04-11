@@ -1,0 +1,94 @@
+{
+  "story": "US-012",
+  "title": "TypeClass integration test (case sensitivity + stemming)",
+  "description": "End-to-end proof that a Property declaring analyzer.not_analyzed in its TypeConfig round-trips through the PG-backed OMS as a case-sensitive Bleve KeywordField, while a Property declaring analyzer.standard (or unset) produces a stemmed English text field. The integration boots a real Postgres via testcontainers, persists Customer and Product ObjectType rows plus their Property rows through pkg/oms.PGRepository, hydrates them via ListProperties, and runs pkg/index.BuildMapping on the reloaded ObjectTypes to construct two in-memory Bleve indexes. The assertions pin the wire-level search semantics Foundry SDK consumers rely on.",
+  "fixture": {
+    "ontology": "typeclass_demo",
+    "objectTypes": {
+      "Customer": {
+        "primaryKey": "id",
+        "properties": [
+          {
+            "apiName": "id",
+            "baseType": "string",
+            "isSearchable": true
+          },
+          {
+            "apiName": "country",
+            "baseType": "string",
+            "isSearchable": true,
+            "typeConfig": {
+              "analyzer": "not_analyzed"
+            }
+          }
+        ],
+        "docs": [
+          { "id": "c1", "country": "USA" },
+          { "id": "c2", "country": "usa" }
+        ]
+      },
+      "Product": {
+        "primaryKey": "id",
+        "properties": [
+          {
+            "apiName": "id",
+            "baseType": "string",
+            "isSearchable": true
+          },
+          {
+            "apiName": "description",
+            "baseType": "string",
+            "isSearchable": true,
+            "typeConfig": {
+              "analyzer": "standard"
+            }
+          }
+        ],
+        "docs": [
+          { "id": "p1", "description": "running shoes" },
+          { "id": "p2", "description": "runner runs marathon" }
+        ]
+      }
+    }
+  },
+  "mappingContract": {
+    "not_analyzed": "KeywordField — case-sensitive exact match, no tokenisation, no stemming. Backed by bleve.NewKeywordFieldMapping() with Analyzer=keyword.",
+    "standard": "TextField with the English (en) Snowball analyzer — lowercase, possessive strip, English stopwords, Porter stemmer. Backed by bleve.NewTextFieldMapping() with Analyzer set to 'en'.",
+    "not_indexed": "TextField with Index=false, Store=true — value travels over the wire, invisible to all text / term queries (covered by US-010).",
+    "unset": "Same as standard — the default for properties that do not declare a TypeConfig analyzer hint."
+  },
+  "expected": {
+    "caseSensitivity": {
+      "query": "country term query, not_analyzed field",
+      "USA": ["c1"],
+      "usa": ["c2"],
+      "invariant": "A keyword field NEVER folds case. 'USA' and 'usa' must never return the other doc."
+    },
+    "stemming": {
+      "query": "description match query, standard (English) field",
+      "run": {
+        "hits": ["p1", "p2"],
+        "reason": "Porter stems 'running' → 'run' (p1 via 'running shoes') AND 'runs' → 'run' (p2 via 'runs marathon'). Both docs match a single 'run' query. Note: 'runner' as a pure noun does NOT stem to 'run' under Snowball English, so p2's description intentionally co-mentions the verb 'runs' to demonstrate stem reachability."
+      },
+      "SHOES": {
+        "hits": ["p1"],
+        "reason": "The English analyzer lowercases and stems the query ('SHOES' → 'shoe') which only matches p1's 'running shoes'. p2 must not be returned. This is the counter-check to the case-sensitivity assertion on Customer.country above: text fields are case-INSENSITIVE, keyword fields are case-SENSITIVE."
+      }
+    },
+    "persistenceContract": {
+      "roundTrip": "Property.TypeConfig is persisted as JSONB and reloaded via ListProperties(); the analyzer hint extracted by index.AnalyzerFromTypeConfig must equal the originally-written value. This is asserted BEFORE any Bleve query runs so that a silent TypeConfig write-side drop cannot mask a wrong-for-right-reason pass."
+    }
+  },
+  "coveredBy": [
+    "test/integration/typeclass_indexing_test.go::TestTypeClass_CaseSensitivityAndStemming",
+    "pkg/index/mapping_builder_test.go::TestBuildMappingKeywordVsText",
+    "pkg/index/mapping_builder_test.go::TestBuildMappingDefaultsToText",
+    "pkg/index/mapping_builder_test.go::TestBuildMappingNotAnalyzed"
+  ],
+  "notes": [
+    "Run the integration test with `go test -tags integration ./test/integration/... -run TypeClass`. It requires Docker for testcontainers.",
+    "The English analyzer is explicitly selected (standardTextAnalyzer = \"en\" in pkg/index/mapping_builder.go) rather than relying on bleve's built-in 'standard' analyzer, because the latter lowercases + tokenises but does NOT stem. Switching to 'en' is the single line change that moves the default from 'exact lowercase match' to 'word-root match', which is the Foundry TypeClass=standard semantic.",
+    "TermQuery bypasses the field analyzer and therefore breaks under any stemming change — the Manager test TestManager_Search_ByField was updated from TermQuery to MatchQuery in this story. Any future search that targets a text field MUST use MatchQuery (which runs the analyzer over the query term) or explicitly lowercase + stem the term before issuing a TermQuery. The not_analyzed country assertions in this fixture use TermQuery deliberately — the keyword analyzer is identity, so the raw surface form and the indexed token are identical.",
+    "Porter/Snowball English does not fold 'runner' → 'run'; it is a root noun. The fixture co-mentions 'runs marathon' on p2 so a single 'run' query stem-matches both docs. Future stories that need 'runner' → 'run' would require a custom analyzer chain and are out of scope for US-012."
+  ]
+}

@@ -4,9 +4,21 @@ import (
 	"encoding/json"
 
 	"github.com/blevesearch/bleve/v2"
+	// Register the English language analyzer so fieldMappingFor can select
+	// it by name for standard-text fields. The Porter/Snowball stemmer this
+	// package ships gives Foundry-like semantics for word-root matching
+	// (e.g. "run" lights up "running" / "runs") — see US-012.
+	_ "github.com/blevesearch/bleve/v2/analysis/lang/en"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/liyang/weave/pkg/oms"
 )
+
+// standardTextAnalyzer is the Bleve analyzer name used for default / standard
+// text fields. We deliberately route to the English analyzer (lowercase +
+// possessive strip + snowball stemmer) rather than bleve's "standard"
+// analyzer so that root-form queries behave like Foundry's TypeClass=standard
+// semantics. See US-012 for the acceptance contract.
+const standardTextAnalyzer = "en"
 
 // Analyzer names recognised by BuildMapping via a property's TypeConfig
 // `analyzer` field. These mirror the Foundry OSv2 property typeclass
@@ -73,7 +85,9 @@ func fieldMappingFor(analyzer, baseType string, isSearchable bool) *mapping.Fiel
 		if analyzer == AnalyzerNotAnalyzed {
 			return mapping.NewKeywordFieldMapping()
 		}
-		return mapping.NewTextFieldMapping()
+		fm := mapping.NewTextFieldMapping()
+		fm.Analyzer = standardTextAnalyzer
+		return fm
 	}
 
 	switch baseType {
