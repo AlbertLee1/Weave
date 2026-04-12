@@ -4593,3 +4593,17 @@ new features — only run verification suites and commit the gate.
     tests login as different users from localhost, a limit of 5/min exhausts
     fast. WEAVE_LOGIN_RATE_LIMIT env var lets the E2E stack use 60.
 ---
+
+## 2026-04-12 - US-086
+- Implemented `pkg/functions/goja_runtime.go` — sandboxed Goja JavaScript runtime
+- Added `github.com/dop251/goja` dependency to go.mod
+- `Runtime.Execute(ctx, source, input)` compiles+runs JS source, calls `main(input)`
+- Sandbox disables: require, fetch, fs, net, process, child_process, os, setTimeout, setInterval, setImmediate
+- Context-based timeout goroutine interrupts VM on cancel or MaxExecutionTime
+- Files changed: go.mod, go.sum, pkg/functions/goja_runtime.go, pkg/functions/goja_runtime_test.go
+- **Learnings for future iterations:**
+  - Goja doesn't expose Node/browser globals by default, but we defensively Set+Delete them to guarantee `typeof X === "undefined"` even if future goja versions change.
+  - Goja returns `int64` for integer JS arithmetic results (e.g. `3+4` → `int64(7)`), not `float64`. Tests must accept both numeric types via type switch.
+  - `vm.GlobalObject().Delete(name)` after `vm.Set(name, goja.Undefined())` ensures `typeof` returns `"undefined"` rather than just the value being undefined.
+  - The `main(input)` convention keeps function sources simple and testable — input is passed as the first arg, return value is exported.
+---
