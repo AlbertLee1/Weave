@@ -4625,3 +4625,17 @@ new features — only run verification suites and commit the gate.
   - Memory watchdog uses delta from baseline HeapAlloc, not absolute — this isolates the function's allocation from the rest of the process. However, concurrent Goja executions would share the Go heap, so the delta approach is approximate.
   - `context.WithTimeout` layered on top of the caller's context gives two-level cancellation: caller can cancel early, and the configured MaxExecutionTime acts as an absolute ceiling.
 ---
+
+## 2026-04-12 - US-088
+- Implemented `pkg/functions/goja_shim.go` registering global `ontology` object with `load` and `search` methods
+- `ontology.load(objectType, primaryKey)` — synchronous call to OntologyClient.GetObject, returns flat JS object with properties + __rid/__primaryKey/__apiName
+- `ontology.search(objectType, where, opts?)` — synchronous call to OntologyClient.SearchObjects, returns {data: [...], totalCount, nextPageToken}
+- Defined `OntologyClient` narrow interface (GetObject, SearchObjects) to keep pkg/functions decoupled from full OSS service
+- Added `Runtime.SetOntologyClient()` setter; shim only registers when client is non-nil
+- Files changed: pkg/functions/goja_shim.go (new), pkg/functions/goja_shim_test.go (new), pkg/functions/goja_runtime.go (added ontologyClient field + shim wiring)
+- **Learnings for future iterations:**
+  - Goja `vm.NewGoError(err)` is the correct way to throw a Go error as a JS exception from a host function; `panic(vm.NewGoError(err))` propagates it to the caller
+  - WhereClause roundtrip through JS: export JS object → `json.Marshal` → `json.Unmarshal` into Go struct. This preserves the json.RawMessage `Value` field correctly
+  - Goja numeric types from JS: `int64` for integer-valued numbers, `float64` for fractional — handle both in pageSize parsing
+  - The shim registration must happen AFTER sandbox globals are cleared but BEFORE `vm.RunString(source)` so user code can call `ontology.*`
+---
