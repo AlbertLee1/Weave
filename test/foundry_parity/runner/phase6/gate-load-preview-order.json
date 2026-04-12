@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-order",
+  "request": {
+    "body": {
+      "objectSet": {
+        "objectType": "order",
+        "type": "base"
+      },
+      "pageSize": 5,
+      "select": [
+        "orderID",
+        "customerID",
+        "shipCountry"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "loadObjectsOrInterfaces base order pageSize=5 (preview)"
+}

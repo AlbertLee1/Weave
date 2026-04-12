@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-search-where-eq-customer-country-switzerland",
+  "request": {
+    "body": {
+      "pageSize": 5,
+      "select": [
+        "__primaryKey"
+      ],
+      "where": {
+        "field": "country",
+        "type": "eq",
+        "value": "switzerland"
+      }
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/customer/search"
+  },
+  "story": "US-042",
+  "title": "search customer where country=switzerland"
+}

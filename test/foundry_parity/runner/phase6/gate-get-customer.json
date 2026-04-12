@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-get-customer",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/customer/ALFKI"
+  },
+  "story": "US-042",
+  "title": "Get a seeded customer by primary key"
+}

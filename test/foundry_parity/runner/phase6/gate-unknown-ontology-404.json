@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 404
+  },
+  "name": "gate-unknown-ontology-404",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/does-not-exist"
+  },
+  "story": "US-042",
+  "title": "GET unknown ontology returns 404"
+}

@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-search-where-eq-order-shipCountry-france",
+  "request": {
+    "body": {
+      "pageSize": 5,
+      "select": [
+        "__primaryKey"
+      ],
+      "where": {
+        "field": "shipCountry",
+        "type": "eq",
+        "value": "france"
+      }
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/order/search"
+  },
+  "story": "US-042",
+  "title": "search order where shipCountry=france"
+}

@@ -1,0 +1,15 @@
+{
+  "expected": {
+    "status": 400
+  },
+  "name": "gate-search-missing-select-400",
+  "request": {
+    "body": {
+      "pageSize": 1
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/customer/search"
+  },
+  "story": "US-042",
+  "title": "search without select returns 400"
+}

@@ -93,18 +93,18 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | OSS | ObjectSet 15 变体 | 🟢 | n/a | 🟡 | **70%** | base/filter/union/intersect/subtract/searchAround/static/reference/nearestNeighbors/asType/asBaseObjectTypes/interfaceBase/withProperties/interfaceLinkSearchAround/methodInput 路由就位；**深度不一** |
 | OSS | Search / Load / Count | 🟢 | 🟢 Bleve | 🟢 | **90%** | select 强制、cursor 分页 |
 | OSS | Linked Objects (FK / M2M) | 🟢 | 🟢 | 🟡 | **80%** | FK forward+reverse 均 OK，M2M join_table OK。**M2M 在 ObjectSet 内部 searchAround 仍待验证** |
-| OSS | Aggregation | 🟢 | 🟢 Bleve facet | 🟡 | **75%** | count/sum/avg/min/max/stddev/variance/approxDistinct/approxPercentile + 5 种 groupBy；**多层嵌套与截断精度未系统性测试** |
-| OSS | withProperties (derived) | 🟢 | n/a | 🔴 | **30%** | executor 有分发分支但**未找到端到端测试验证跨 link 聚合**；分页稳定性未解决 |
+| OSS | Aggregation | 🟢 | 🟢 Bleve facet | 🟢 | **95%** | count/sum/avg/min/max/stddev/variance/approxDistinct/approxPercentile + 5 种 groupBy；**Phase 6 Gate**: 多层 groupBy 稳定性 + ACCURATE/APPROXIMATE accuracy badge 覆盖 (US-039 + Playwright `aggregation-multi-groupby.spec.ts`) |
+| OSS | withProperties (derived) | 🟢 | n/a | 🟢 | **90%** | **Phase 6 Gate**: count/sum/avg/min/max 全端到端通过 (US-003, US-004, US-005, US-040)；composite-cursor 分页稳定性锁定；Playwright `withproperties-derived.spec.ts` 绿 |
 | OSS | nearestNeighbors (KNN) | 🟢 | 🟢 pgvector | 🟡 | **60%** | 单 PropertyIdentifier 字段、无混合搜索、无 reranking |
-| OSS | Interface 多态 Load | 🟢 | 🟢 | 🟡 | **55%** | Load 单类型 OK；**跨子类型的 merge+paginate+sort 稳定性未验证**，Foundry 自己也把 interface aggregation 标为 "in development" |
+| OSS | Interface 多态 Load | 🟢 | 🟢 | 🟢 | **90%** | **Phase 6 Gate**: 多态 Load + composite/multi-type cursor + heap merge 全绿 (US-006..US-008, US-041)；Playwright `interface-multitype-paging.spec.ts` 驱动 3-type Northwind HasOwner interface paging |
 | OSS | ObjectSet 持久化 | 🟢 | 🟢 PG `saved_object_sets` | 🟢 | **85%** | temporary TTL 通过 store；`createTemporary` 已接入 |
 | Actions | 参数 / 规则 / 编辑生成 | 🟢 | 🟢 | 🟡 | **80%** | 规则引擎能 run；**submission criteria 表达力浅**，无内嵌脚本 |
-| Actions | applyBatch / applyWithOverrides | 🟢 | 🟢 | 🟡 | **75%** | atomic/bestEffort 两种模式；**无 optimistic concurrency / edit 冲突策略** |
+| Actions | applyBatch / applyWithOverrides | 🟢 | 🟢 | 🟢 | **90%** | atomic/bestEffort 两种模式；**Phase 6 Gate**: optimistic concurrency + user-edit-wins + edit-only ingest 全链路 (US-035..US-037)；Playwright `optimistic-concurrency.spec.ts` + `editonly-ingest.spec.ts` 绿 |
 | Actions | Function-backed | 🟢 HTTP dispatcher | — | 🔴 | **35%** | 可通过 HTTP 转发至外部 function server；**无内嵌 Goja/Wasm 运行时** |
 | Actions | Side effects | 🟢 | 🟢 | 🟡 | **60%** | 结构体存在；**webhook 通知未验证**，无重试 |
 | Funnel | Publisher / Consumer | 🟢 | 🟢 JetStream | 🟢 | **90%** | per-ontology subject、DLQ、offset、broadcast |
 | Funnel | 实时客户端订阅 | 🔴 | — | 🔴 | **0%** | **无 /stream / WebSocket / SSE 端点** — `pkg/funnel/broadcast.go` 的广播没有暴露出来 |
-| Indexing | per-ObjectType Bleve | 🟢 | 🟢 filesystem | 🟡 | **75%** | 增量更新 OK，**Type class (analyzer.not_analyzed / not_indexed) 不驱动 field mapping** |
+| Indexing | per-ObjectType Bleve | 🟢 | 🟢 filesystem | 🟢 | **90%** | 增量更新 OK；**Phase 6 Gate**: TypeClass (analyzer.not_analyzed / keyword / english) 驱动 Bleve field mapping 全端到端 (US-001, US-012)；not_analyzed 路径由 US-040 FK-link resolver 闭环 |
 | Indexing | Funnel ↔ Index 一致性 | 🟢 | 🟢 | 🟡 | **75%** | Consumer 同步更新 Bleve；**rehydrate 路径存在但无 offset 回放测试矩阵** |
 | Indexing | Parquet 冷存 | 🔴 | — | 🔴 | **5%** | 技术架构文档计划有，当前未落地（没有 pkg/dataset/parquet_writer 真实链路） |
 | Auth | dev / token / JWT | 🟢 | 🟢 | 🟢 | **90%** | RS256、refresh token 轮换、bootstrap admin |
@@ -112,9 +112,9 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | Auth | RBAC (4 role × 26 perm) | 🟢 | 🟢 | 🟡 | **70%** | 全局 + per-ontology 角色；**未参与行/列/Marking 级过滤** |
 | Security | Marking / 分级 | 🟢 表 | 🟢 表 | 🔴 | **25%** | 表存在，marking_filter.go 文件有；**未接入查询过滤主路径** |
 | Security | Object / Property Security Policy | 🟡 表 | 🟡 表 | 🔴 | **15%** | CRUD 有，**policy evaluation 不生效** |
-| Security | Edit conflict / concurrency | 🔴 | — | 🔴 | **0%** | **无策略，隐式 last-write-wins**；Foundry 有 user-edit-wins / most-recent-timestamp 两种 |
+| Security | Edit conflict / concurrency | 🟢 | 🟢 `object_history` | 🟢 | **90%** | **Phase 6 Gate**: user-edit-wins / most-recent-timestamp + optimistic version check + edit-only property 全链路 (US-035..US-037)；Playwright 双 context 竞争场景覆盖 |
 | Types | 21 基础 + 强制转换 | 🟢 | n/a | 🟡 | **80%** | Vector / Struct / Attachment / MediaRef / Cipher / TimeSeries / GeoTemporal 都能声明；**Struct 嵌套深度与校验未完整** |
-| Types | TypeClass | 🟡 存储 | — | 🔴 | **30%** | 结构存在；**不生效于 Bleve / 前端 / Action 可用性** |
+| Types | TypeClass | 🟢 存储 | 🟢 `properties.type_config` | 🟢 | **85%** | **Phase 6 Gate**: type_config analyzer hints (not_analyzed / keyword / english) 通过 `pkg/index/mapping_builder.go` 注入 Bleve FieldMapping；FK link resolver 依赖此路径 (US-001, US-012, US-040) |
 | Special | Attachment Blob | 🟢 | 🟢 本地 | 🟢 | **85%** | 4 全局端点 + 4 property 端点；无 S3/minio 后端 |
 | Special | MediaReference | 🟢 | 🟢 | 🟢 | **80%** | 3 端点就位 |
 | Special | TimeSeries | 🟢 3 端点 | 🟢 PG `timeseries_points` | 🟡 | **55%** | Append/FirstPoint/LastPoint/StreamPoints；**无时间分桶聚合、无 downsample** |

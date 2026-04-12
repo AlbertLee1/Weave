@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-get-order",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/order/10251"
+  },
+  "story": "US-042",
+  "title": "Get a seeded order by primary key"
+}

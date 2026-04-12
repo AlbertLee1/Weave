@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-ontology-get",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind"
+  },
+  "story": "US-042",
+  "title": "Get ontology by apiName"
+}

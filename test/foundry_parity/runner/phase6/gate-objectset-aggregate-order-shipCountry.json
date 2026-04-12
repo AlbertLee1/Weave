@@ -1,0 +1,31 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-objectset-aggregate-order-shipCountry",
+  "request": {
+    "body": {
+      "aggregation": [
+        {
+          "name": "total",
+          "type": "count"
+        }
+      ],
+      "groupBy": [
+        {
+          "field": "shipCountry",
+          "maxGroupCount": 20,
+          "type": "exact"
+        }
+      ],
+      "objectSet": {
+        "objectType": "order",
+        "type": "base"
+      }
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/aggregate"
+  },
+  "story": "US-042",
+  "title": "objectSets/aggregate order groupBy shipCountry"
+}

@@ -1,0 +1,37 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-aggregate-3-layer-groupby",
+  "request": {
+    "body": {
+      "aggregation": [
+        {
+          "name": "total",
+          "type": "count"
+        }
+      ],
+      "groupBy": [
+        {
+          "field": "shipCountry",
+          "maxGroupCount": 10,
+          "type": "exact"
+        },
+        {
+          "field": "customerID",
+          "maxGroupCount": 10,
+          "type": "exact"
+        },
+        {
+          "field": "orderID",
+          "maxGroupCount": 10,
+          "type": "exact"
+        }
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/order/aggregate"
+  },
+  "story": "US-042",
+  "title": "Aggregate count with 3-layer groupBy"
+}

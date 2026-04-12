@@ -1,0 +1,33 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-withproperties-order-count",
+  "request": {
+    "body": {
+      "objectSet": {
+        "derivedProperties": [
+          {
+            "link": "customerOrders",
+            "metric": "count",
+            "name": "order_count"
+          }
+        ],
+        "objectSet": {
+          "objectType": "customer",
+          "type": "base"
+        },
+        "type": "withProperties"
+      },
+      "pageSize": 5,
+      "select": [
+        "customerID",
+        "order_count"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "withProperties customer.order_count = count(customerOrders)"
+}

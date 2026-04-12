@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-product-ps2",
+  "request": {
+    "body": {
+      "objectSet": {
+        "objectType": "product",
+        "type": "base"
+      },
+      "pageSize": 2,
+      "select": [
+        "productID",
+        "productName"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "loadObjectsOrInterfaces base product pageSize=2"
+}

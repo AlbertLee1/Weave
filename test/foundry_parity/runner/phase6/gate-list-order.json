@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-list-order",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/order"
+  },
+  "story": "US-042",
+  "title": "List order objects"
+}

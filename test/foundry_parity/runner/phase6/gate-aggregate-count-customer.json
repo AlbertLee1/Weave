@@ -1,0 +1,20 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-aggregate-count-customer",
+  "request": {
+    "body": {
+      "aggregation": [
+        {
+          "name": "total",
+          "type": "count"
+        }
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/customer/aggregate"
+  },
+  "story": "US-042",
+  "title": "Aggregate count for customer"
+}

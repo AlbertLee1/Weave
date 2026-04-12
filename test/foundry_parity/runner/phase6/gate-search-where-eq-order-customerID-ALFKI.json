@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-search-where-eq-order-customerID-ALFKI",
+  "request": {
+    "body": {
+      "pageSize": 5,
+      "select": [
+        "__primaryKey"
+      ],
+      "where": {
+        "field": "customerID",
+        "type": "eq",
+        "value": "ALFKI"
+      }
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/order/search"
+  },
+  "story": "US-042",
+  "title": "search order where customerID=ALFKI"
+}

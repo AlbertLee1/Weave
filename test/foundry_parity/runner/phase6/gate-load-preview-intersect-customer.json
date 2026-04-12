@@ -1,0 +1,39 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-intersect-customer",
+  "request": {
+    "body": {
+      "objectSet": {
+        "objectSets": [
+          {
+            "objectType": "customer",
+            "type": "base"
+          },
+          {
+            "objectSet": {
+              "objectType": "customer",
+              "type": "base"
+            },
+            "type": "filter",
+            "where": {
+              "field": "country",
+              "type": "eq",
+              "value": "germany"
+            }
+          }
+        ],
+        "type": "intersect"
+      },
+      "pageSize": 5,
+      "select": [
+        "customerID"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "loadObjectsOrInterfaces intersect over customer"
+}

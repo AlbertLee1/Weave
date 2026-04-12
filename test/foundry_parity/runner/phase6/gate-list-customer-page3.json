@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-list-customer-page3",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/customer?pageSize=3"
+  },
+  "story": "US-042",
+  "title": "List customer with pageSize=3"
+}

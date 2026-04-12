@@ -1,0 +1,31 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-objectset-aggregate-customer-country",
+  "request": {
+    "body": {
+      "aggregation": [
+        {
+          "name": "total",
+          "type": "count"
+        }
+      ],
+      "groupBy": [
+        {
+          "field": "country",
+          "maxGroupCount": 20,
+          "type": "exact"
+        }
+      ],
+      "objectSet": {
+        "objectType": "customer",
+        "type": "base"
+      }
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/aggregate"
+  },
+  "story": "US-042",
+  "title": "objectSets/aggregate customer groupBy country"
+}

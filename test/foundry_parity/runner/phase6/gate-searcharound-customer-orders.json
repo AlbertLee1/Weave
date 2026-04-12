@@ -1,0 +1,26 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-searcharound-customer-orders",
+  "request": {
+    "body": {
+      "objectSet": {
+        "link": "customerOrders",
+        "objectSet": {
+          "objectType": "customer",
+          "type": "base"
+        },
+        "type": "searchAround"
+      },
+      "pageSize": 5,
+      "select": [
+        "orderID"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "searchAround customer \u2192 order via customerOrders"
+}

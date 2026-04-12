@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-outgoing-linktypes-order",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objectTypes/order/outgoingLinkTypes"
+  },
+  "story": "US-042",
+  "title": "List outgoing link types for order"
+}

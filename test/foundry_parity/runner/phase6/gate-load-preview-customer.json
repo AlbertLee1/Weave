@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-customer",
+  "request": {
+    "body": {
+      "objectSet": {
+        "objectType": "customer",
+        "type": "base"
+      },
+      "pageSize": 5,
+      "select": [
+        "customerID",
+        "companyName",
+        "country"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "loadObjectsOrInterfaces base customer pageSize=5 (preview)"
+}

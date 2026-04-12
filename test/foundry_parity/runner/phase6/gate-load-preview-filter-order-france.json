@@ -1,0 +1,31 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-filter-order-france",
+  "request": {
+    "body": {
+      "objectSet": {
+        "objectSet": {
+          "objectType": "order",
+          "type": "base"
+        },
+        "type": "filter",
+        "where": {
+          "field": "shipCountry",
+          "type": "eq",
+          "value": "france"
+        }
+      },
+      "pageSize": 5,
+      "select": [
+        "orderID",
+        "shipCountry"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "loadObjectsOrInterfaces filter order.shipCountry=france"
+}

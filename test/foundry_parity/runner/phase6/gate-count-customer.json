@@ -1,0 +1,13 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-count-customer",
+  "request": {
+    "body": {},
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/customer/count"
+  },
+  "story": "US-042",
+  "title": "Count customer objects"
+}

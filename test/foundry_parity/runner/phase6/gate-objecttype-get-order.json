@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-objecttype-get-order",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objectTypes/order"
+  },
+  "story": "US-042",
+  "title": "Get object type order"
+}

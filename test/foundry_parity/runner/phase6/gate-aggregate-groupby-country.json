@@ -1,0 +1,27 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-aggregate-groupby-country",
+  "request": {
+    "body": {
+      "aggregation": [
+        {
+          "name": "total",
+          "type": "count"
+        }
+      ],
+      "groupBy": [
+        {
+          "field": "country",
+          "maxGroupCount": 50,
+          "type": "exact"
+        }
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/customer/aggregate"
+  },
+  "story": "US-042",
+  "title": "Aggregate count grouped by customer.country"
+}

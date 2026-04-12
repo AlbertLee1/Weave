@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-get-product",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/product/4"
+  },
+  "story": "US-042",
+  "title": "Get a seeded product by primary key"
+}

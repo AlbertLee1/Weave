@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 404
+  },
+  "name": "gate-unknown-customer-404",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/customer/NOPE_NOT_A_CUSTOMER"
+  },
+  "story": "US-042",
+  "title": "GET unknown customer PK returns 404"
+}

@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-list-product-ps5",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/product?pageSize=5"
+  },
+  "story": "US-042",
+  "title": "List product pageSize=5"
+}

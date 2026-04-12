@@ -1,0 +1,13 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-count-order",
+  "request": {
+    "body": {},
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/order/count"
+  },
+  "story": "US-042",
+  "title": "Count order objects"
+}

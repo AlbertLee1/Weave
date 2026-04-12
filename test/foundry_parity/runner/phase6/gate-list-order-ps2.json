@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-list-order-ps2",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/ontologies/northwind/objects/order?pageSize=2"
+  },
+  "story": "US-042",
+  "title": "List order pageSize=2"
+}

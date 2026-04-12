@@ -1,0 +1,18 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-search-product",
+  "request": {
+    "body": {
+      "pageSize": 2,
+      "select": [
+        "__primaryKey"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objects/product/search"
+  },
+  "story": "US-042",
+  "title": "Search product with pageSize=2"
+}

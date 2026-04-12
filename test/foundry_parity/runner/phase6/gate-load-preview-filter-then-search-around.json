@@ -1,0 +1,34 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-filter-then-search-around",
+  "request": {
+    "body": {
+      "objectSet": {
+        "link": "customerOrders",
+        "objectSet": {
+          "objectSet": {
+            "objectType": "customer",
+            "type": "base"
+          },
+          "type": "filter",
+          "where": {
+            "field": "country",
+            "type": "eq",
+            "value": "germany"
+          }
+        },
+        "type": "searchAround"
+      },
+      "pageSize": 5,
+      "select": [
+        "orderID"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "searchAround(filter(customer.country=germany), customerOrders)"
+}

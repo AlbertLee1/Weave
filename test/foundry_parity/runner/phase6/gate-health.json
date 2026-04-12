@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-health",
+  "request": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "story": "US-042",
+  "title": "GET /health smoke"
+}

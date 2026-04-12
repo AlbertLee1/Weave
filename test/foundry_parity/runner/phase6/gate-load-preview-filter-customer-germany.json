@@ -1,0 +1,31 @@
+{
+  "expected": {
+    "status": 200
+  },
+  "name": "gate-load-preview-filter-customer-germany",
+  "request": {
+    "body": {
+      "objectSet": {
+        "objectSet": {
+          "objectType": "customer",
+          "type": "base"
+        },
+        "type": "filter",
+        "where": {
+          "field": "country",
+          "type": "eq",
+          "value": "germany"
+        }
+      },
+      "pageSize": 5,
+      "select": [
+        "customerID",
+        "country"
+      ]
+    },
+    "method": "POST",
+    "path": "/api/v2/ontologies/northwind/objectSets/loadObjectsOrInterfaces?preview=true"
+  },
+  "story": "US-042",
+  "title": "loadObjectsOrInterfaces filter customer.country=germany"
+}
