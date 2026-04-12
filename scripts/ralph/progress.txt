@@ -3155,3 +3155,67 @@ new features — only run verification suites and commit the gate.
     it to a separate narrow interface alongside. This keeps the cmd/server
     ↔ oms.Repository coupling observable.
 ---
+
+## 2026-04-12 - US-049 Aggregation rejects filtered fields
+- Added `oss.PropertyFilterProvider` interface + `Handler.propertyFilter`
+  field + `SetPropertyFilterProvider` setter, mirroring the existing
+  objectset.PropertyFilterProvider shape so cmd/server's propertyFilterAdapter
+  satisfies both interfaces without a second adapter type.
+- `AggregateObjects` now calls `rejectFilteredAggregationFields` before
+  handing the request to the Bleve-facet engine. The helper resolves
+  `AllowedProperties(ctx, objectType)` once per request, builds a set, and
+  rejects any `groupBy.field` or `metric.field` outside the allow list with
+  `apierror.NewPermissionDenied("PropertyNotAccessible", {objectType, property})`
+  → HTTP 403. Field-less metrics (count, etc.) short-circuit to "allow"
+  so an un-related groupBy stays legal. Nil provider and nil allow list
+  ("no PROPERTY-scope policy attached") both pass through unchanged.
+- Wired the new setter in cmd/server/main.go alongside the existing
+  objSetHandler.SetPropertyFilterProvider call so the shared
+  propertyFilterAdapter gates both /objectSets/aggregate and
+  /objects/{type}/aggregate off the same *security.Engine. No new adapter
+  type required.
+- Red→Green TDD: pkg/oss/handlers_aggregate_policy_test.go exercises three
+  cases (groupBy-hidden → 403, metric-hidden → 403, groupBy-allowed → 200)
+  plus two guards (nil provider → 200, explicit empty allow list → 403).
+  test/integration/column_policy_test.go runs the full PG+Bleve+engine
+  stack end-to-end: manager can sum/avg salary and groupBy deptId w/
+  avg(salary); peer (engineer) sees 403+PropertyNotAccessible on any
+  salary reference, peer's count-only aggregation on deptId still
+  succeeds.
+- Verified: go test ./..., go vet ./..., gofmt -l (clean), and
+  go test -tags integration ./test/integration/... -run ColumnPolicy.
+- Files changed:
+  - pkg/oss/handlers_aggregate.go (PropertyFilterProvider interface,
+    SetPropertyFilterProvider, rejectFilteredAggregationFields,
+    AggregateObjects hook)
+  - pkg/oss/handlers.go (new propertyFilter field on Handler)
+  - pkg/oss/handlers_aggregate_policy_test.go (new, 3 test funcs)
+  - test/integration/column_policy_test.go (new, full matrix)
+  - cmd/server/main.go (SetPropertyFilterProvider wiring for ossHandler)
+  - scripts/ralph/prd.json (US-049 passes=true)
+  - scripts/ralph/progress.txt (this entry)
+- **Learnings for future iterations:**
+  - `oss.Handler` and `pkg/oss/objectset.Handler` each own their own
+    narrow PropertyFilterProvider interface. Both interfaces share the
+    exact `AllowedProperties(ctx, objectType) ([]string, error)` method
+    signature, so a single `*propertyFilterAdapter` in cmd/server
+    satisfies both and can be passed to both setters. Future read paths
+    in other OSS packages should keep copying this interface definition
+    locally rather than sharing a single package-level type — avoids a
+    cross-package coupling and keeps each handler's import graph narrow.
+  - US-049 column-level enforcement on aggregation runs BEFORE the Bleve
+    facet search, not after. A post-query filter on metrics would leak
+    min/max/sum values via timing / error codes before the redaction
+    kicks in; pre-flight rejection keeps the 403 semantics exact and
+    means the Bleve search never touches a disallowed field.
+  - Field-less metrics (count + other zero-field aggregations) MUST be
+    allowed even under an empty allow list because they do not read any
+    column. `rejectFilteredAggregationFields` short-circuits on
+    `spec.Field == ""` before the set lookup so peer-level visitors can
+    still issue `{"type":"count"}` with a `groupBy` on an allowed field.
+  - Unit tests in pkg/oss/ can reuse `setupOSSTest` from service_test.go
+    to get a real Bleve-backed handler; add `SetAggregation` +
+    `SetPropertyFilterProvider` in the test body. The integration test
+    mirrors the production propertyFilterAdapter wiring with a tiny
+    in-test filterAdapter struct so the test does not import cmd/server.
+---

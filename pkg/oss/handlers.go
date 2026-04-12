@@ -49,6 +49,11 @@ type Handler struct {
 	// nil, the route returns CipherDecryptorNotConfigured. Wired via
 	// SetCipherDecryptor from main.go after construction.
 	cipherDecryptor cipher.Decryptor
+	// propertyFilter is the optional US-049 column-level gate that
+	// AggregateObjects consults to reject requests whose groupBy.field or
+	// metric.field reference properties outside the caller's allow list.
+	// Wired via SetPropertyFilterProvider from main.go. Nil => no gate.
+	propertyFilter PropertyFilterProvider
 }
 
 // NewHandler creates a new OSS HTTP handler.

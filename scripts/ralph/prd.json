@@ -784,7 +784,7 @@
         "go test -tags integration ./test/integration/... -run ColumnPolicy passes"
       ],
       "priority": 49,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

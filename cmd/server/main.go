@@ -219,6 +219,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.AggEngine != nil && deps.IndexMgr != nil {
 				ossHandler.SetAggregation(deps.AggEngine, deps.IndexMgr)
 			}
+			// US-049: same adapter that objSetHandler uses for load paths —
+			// gates /objects/{type}/aggregate against AllowedProperties so
+			// column-level secrecy cannot be bypassed via aggregation.
+			if deps.PolicyEngine != nil && deps.OmsRepo != nil {
+				ossHandler.SetPropertyFilterProvider(newPropertyFilterAdapter(deps.OmsRepo, deps.PolicyEngine))
+			}
 			if deps.OmsRepo != nil {
 				ossHandler.SetOmsRepo(deps.OmsRepo)
 			}
