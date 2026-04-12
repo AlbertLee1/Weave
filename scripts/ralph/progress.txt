@@ -3970,3 +3970,24 @@ new features — only run verification suites and commit the gate.
     nil channel), which is the correct Go pattern for conditionally excluding
     a select case without splitting into two separate select statements.
 ---
+
+## 2026-04-12 - US-059
+- Implemented `useObjectSetSubscription` React hook that wraps the browser EventSource API for SSE subscriptions
+- Hook API: `useObjectSetSubscription(ontology, objectSetRid, { enabled, onEvent })`
+- Features:
+  - Connects to `/api/v2/ontologies/{ontology}/objectSets/{rid}/subscribe`
+  - Exponential backoff reconnect: 1s → 2s → 4s → ... → max 30s
+  - Resets backoff on successful connection
+  - Tracks Last-Event-ID via `lastEventId` query parameter on reconnect
+  - Automatic cleanup on unmount (closes EventSource, clears timers)
+  - Guards against empty ontology/rid/disabled state
+- Files changed:
+  - `web/src/hooks/useObjectSetSubscription.ts` (new)
+  - `web/src/hooks/__tests__/useObjectSetSubscription.test.ts` (new, 10 tests)
+- **Learnings for future iterations:**
+  - Browser EventSource API doesn't support custom headers — use query parameters for Last-Event-ID replay instead of the native `Last-Event-ID` header
+  - Use `useRef` for the `onEvent` callback to avoid effect re-runs when the callback identity changes; refs are stable across renders
+  - Mock EventSource in tests by using `vi.stubGlobal('EventSource', MockClass)` — class instances track state for assertions
+  - `vi.useFakeTimers()` + `vi.advanceTimersByTime()` are essential for testing exponential backoff without real delays
+  - The `disposed` flag pattern prevents reconnect after unmount when a timer is already scheduled
+---
