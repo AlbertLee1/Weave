@@ -46,8 +46,9 @@ type LoginHandlerDeps struct {
 	Signer         *JWTSigner
 	RefreshService *RefreshService
 	// RateLimit is the max attempts per IP per minute. <=0 disables.
-	RateLimit  int
-	AuditStore audit.Store
+	RateLimit   int
+	AuditStore  audit.Store
+	MarkingRepo MarkingRepository // US-082: optional; when set, user markings are included in the JWT
 }
 
 // LoginHandler implements POST /api/auth/login. It returns access + refresh
@@ -148,12 +149,24 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// US-082: resolve user marking grants so the JWT carries the caller's
+	// held markings for downstream marking-based row filter enforcement.
+	var markings []string
+	if h.deps.MarkingRepo != nil {
+		markings, err = h.deps.MarkingRepo.GetUserMarkings(ctx, user.ID)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("LoginMarkingResolveFailed", map[string]string{"reason": err.Error()}))
+			return
+		}
+	}
+
 	access, err := h.deps.Signer.Sign(SignInput{
 		UserID:        user.ID,
 		Email:         user.Email,
 		Name:          user.Name,
 		Roles:         global,
 		OntologyRoles: scoped,
+		Markings:      markings,
 	})
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("LoginSignFailed", map[string]string{"reason": err.Error()}))

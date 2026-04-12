@@ -79,6 +79,17 @@ func northwindSecurityPolicies() []securityPolicyDef {
 				{"userAttr":"roles","values":["editor","admin"],"properties":["salary"]}
 			]`,
 		},
+		// US-082: OBJECT-scope marking-based row filter for customer.
+		// The markingSubset rule checks that the user's held markings
+		// (from JWT → user.Attributes["markings"]) cover the object's
+		// __markings field. ACME-only users see only ACME-tagged rows;
+		// ACME2-only users see only ACME2-tagged rows.
+		{
+			RID:           "ri.ontology.main.security-policy.customer-row-markings",
+			ObjectTypeAPI: "customer",
+			PolicyType:    "OBJECT",
+			RulesJSON:     `[{"type":"markingSubset","objectProperty":"__markings"}]`,
+		},
 	}
 }
 
@@ -99,13 +110,16 @@ func northwindSchemas() []schema {
 				{APIName: "companyName", DisplayName: "Company Name", BaseType: "string", IsSearchable: true, IsSortable: true},
 				{APIName: "country", DisplayName: "Country", BaseType: "string", IsSearchable: true, IsSortable: true},
 				{APIName: "contactName", DisplayName: "Contact Name", BaseType: "string", IsSearchable: true, IsSortable: false},
+				// US-082: reserved marking field for row-level MAC. not_analyzed
+				// so TermQuery-based marking subset checks hit exactly.
+				{APIName: "__markings", DisplayName: "Markings", BaseType: "string", IsSearchable: true, IsSortable: false, Analyzer: "not_analyzed"},
 			},
 			SeedRows: []map[string]interface{}{
-				{"customerID": "ALFKI", "companyName": "Alfreds Futterkiste", "country": "germany", "contactName": "Maria Anders"},
-				{"customerID": "BERGS", "companyName": "Berglunds snabbköp", "country": "sweden", "contactName": "Christina Berglund"},
-				{"customerID": "BLONP", "companyName": "Blondesddsl père et fils", "country": "france", "contactName": "Frédérique Citeaux"},
-				{"customerID": "CACTU", "companyName": "Cactus Comidas para llevar", "country": "argentina", "contactName": "Patricio Simpson"},
-				{"customerID": "CHOPS", "companyName": "Chop-suey Chinese", "country": "switzerland", "contactName": "Yang Wang"},
+				{"customerID": "ALFKI", "companyName": "Alfreds Futterkiste", "country": "germany", "contactName": "Maria Anders", "__markings": "ACME"},
+				{"customerID": "BERGS", "companyName": "Berglunds snabbköp", "country": "sweden", "contactName": "Christina Berglund", "__markings": "ACME"},
+				{"customerID": "BLONP", "companyName": "Blondesddsl père et fils", "country": "france", "contactName": "Frédérique Citeaux", "__markings": "ACME2"},
+				{"customerID": "CACTU", "companyName": "Cactus Comidas para llevar", "country": "argentina", "contactName": "Patricio Simpson", "__markings": "ACME2"},
+				{"customerID": "CHOPS", "companyName": "Chop-suey Chinese", "country": "switzerland", "contactName": "Yang Wang", "__markings": "ACME"},
 			},
 		},
 		{

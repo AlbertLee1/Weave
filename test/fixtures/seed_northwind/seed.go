@@ -43,6 +43,7 @@ type TestUser struct {
 	Email    string
 	Password string
 	Roles    []string
+	Markings []string // US-082: marking grants inserted into user_markings
 }
 
 // Result summarises what Seed() wrote. It is the wire contract between
@@ -65,6 +66,9 @@ func DefaultOptions() Options {
 			{Email: "admin@test", Password: "test1234", Roles: []string{auth.RoleAdmin}},
 			{Email: "manager@test", Password: "test1234", Roles: []string{auth.RoleEditor}},
 			{Email: "peer@test", Password: "test1234", Roles: []string{auth.RoleViewer}},
+			// US-082: marking-scoped users for policy-row-filter Playwright spec.
+			{Email: "acme@test", Password: "test1234", Roles: []string{auth.RoleViewer}, Markings: []string{"ACME"}},
+			{Email: "acme2@test", Password: "test1234", Roles: []string{auth.RoleViewer}, Markings: []string{"ACME2"}},
 		},
 	}
 }
@@ -318,6 +322,39 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 		}
 		userIDs = append(userIDs, id)
 		logf("[seed] created user %s (%v)", u.Email, u.Roles)
+	}
+
+	// 7b. User marking grants (US-082) ----------------------------------
+	// Insert custom markings into the markings table (ON CONFLICT to stay
+	// idempotent against the base-seeded 5 canonical markings), then grant
+	// each TestUser.Markings entry via user_markings.
+	markingSeen := map[string]bool{}
+	for _, u := range opts.TestUsers {
+		for _, m := range u.Markings {
+			if markingSeen[m] {
+				continue
+			}
+			markingSeen[m] = true
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO markings (name, display_name)
+				 VALUES ($1, $1)
+				 ON CONFLICT (name) DO NOTHING`, m); err != nil {
+				return nil, fmt.Errorf("seed: upsert marking %q: %w", m, err)
+			}
+		}
+	}
+	for _, u := range opts.TestUsers {
+		for _, m := range u.Markings {
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO user_markings (user_id, marking_name, granted_by)
+				 VALUES ($1, $2, 'seed')
+				 ON CONFLICT DO NOTHING`, u.Email, m); err != nil {
+				return nil, fmt.Errorf("seed: grant marking %q to %q: %w", m, u.Email, err)
+			}
+		}
+		if len(u.Markings) > 0 {
+			logf("[seed] granted markings %v to %s", u.Markings, u.Email)
+		}
 	}
 
 	res := &Result{

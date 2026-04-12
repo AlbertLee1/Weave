@@ -176,12 +176,20 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// Public auth endpoints — login/refresh/logout are NOT behind the
 	// auth middleware because they are how clients obtain or rotate tokens.
 	if deps.JWTSigner != nil && deps.RefreshService != nil && deps.UserRepo != nil {
+		// US-082: construct a PGMarkingRepository so the login handler can
+		// include the user's held markings in the JWT for marking-based row
+		// filter enforcement.
+		var markingRepo auth.MarkingRepository
+		if deps.PGPool != nil {
+			markingRepo = auth.NewPGMarkingRepository(deps.PGPool)
+		}
 		loginHandler := auth.NewLoginHandler(auth.LoginHandlerDeps{
 			Users:          deps.UserRepo,
 			Resolver:       deps.RoleResolver,
 			Signer:         deps.JWTSigner,
 			RefreshService: deps.RefreshService,
 			RateLimit:      5,
+			MarkingRepo:    markingRepo,
 		})
 		refreshHandler := auth.NewRefreshHandler(auth.RefreshHandlerDeps{
 			Users:          deps.UserRepo,
