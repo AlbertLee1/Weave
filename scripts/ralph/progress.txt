@@ -4326,3 +4326,17 @@ new features — only run verification suites and commit the gate.
   - LoginHandler uses in-memory RefreshStore/MemoryRefreshStore even in integration tests — only the UserRepository and AuditStore need PG backing
   - audit.PGStore.List() supports filtering by Action + ResourceType — efficient for asserting specific event types in tests
 ---
+
+## 2026-04-12 - US-076
+- Implemented Phase 7 cross-US test combining edit conflict (US-021/US-027) with write-level column policy enforcement
+- Added `SetWritablePropertyFilter` hook to funnel.Consumer for write-level property filtering on ingest edits
+- Added `filterWritableProperties` method that strips non-writable fields from ingest edits and merges current bleve values back
+- Test verifies: ingest user policy-restricted to only write Order.notes, but notes is also editOnly — both guards compose correctly, all user-set values (status, amount, notes) preserved after ingest flood
+- Files changed:
+  - pkg/funnel/consumer.go (added writablePropertyFilter field, SetWritablePropertyFilter setter, filterWritableProperties method, wired into applyBatchWithHistory)
+  - test/integration/phase7/phase7_edit_conflict_policy_test.go (new)
+- **Learnings for future iterations:**
+  - The consumer pipeline order matters: filterWritableProperties → preserveEditOnlyFields → resolveConflicts. The writable filter runs first so editOnly guard only sees fields that passed policy check
+  - Write-level property filter follows the same fetch-merge pattern as editOnly: strip forbidden fields, then merge current bleve values back so the upsert preserves prior state
+  - Non-ingest edits (Source != EditSourceIngest) pass through all three guards unchanged — user edits are never subject to ingest-targeted filters
+---

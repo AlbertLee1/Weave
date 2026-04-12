@@ -1201,7 +1201,7 @@
         "go test -tags integration ./test/integration/phase7/... -run EditConflictPolicy passes"
       ],
       "priority": 76,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
