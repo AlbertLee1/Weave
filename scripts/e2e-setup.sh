@@ -36,6 +36,7 @@ VITE_URL="http://localhost:5173"
 export PG_DSN="${PG_DSN:-postgres://weave:weave@localhost:5432/weave?sslmode=disable}"
 export NATS_URL="${NATS_URL:-nats://localhost:4222}"
 export AUTH_MODE="${AUTH_MODE:-dev}"
+export WEAVE_LOGIN_RATE_LIMIT="${WEAVE_LOGIN_RATE_LIMIT:-60}"
 
 log()  { printf '[e2e-setup] %s\n' "$*"; }
 warn() { printf '[e2e-setup] WARN: %s\n' "$*" >&2; }

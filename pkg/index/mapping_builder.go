@@ -84,7 +84,21 @@ func fieldMappingFor(analyzer, baseType string, isSearchable bool) *mapping.Fiel
 	}
 
 	if !isSearchable {
-		fm := mapping.NewTextFieldMapping()
+		// Use the type-appropriate field mapping so numeric/boolean/date
+		// values round-trip through Bleve correctly. A TextFieldMapping
+		// cannot store float64 values, so salary-like fields would be
+		// silently dropped.
+		var fm *mapping.FieldMapping
+		switch baseType {
+		case "integer", "short", "long", "float", "double", "byte":
+			fm = mapping.NewNumericFieldMapping()
+		case "boolean":
+			fm = mapping.NewBooleanFieldMapping()
+		case "date", "timestamp":
+			fm = mapping.NewDateTimeFieldMapping()
+		default:
+			fm = mapping.NewTextFieldMapping()
+		}
 		fm.Index = false
 		fm.Store = true
 		return fm

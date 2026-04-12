@@ -1,39 +1,18 @@
 import { test, expect } from '@playwright/test';
-import {
-  createOntologyViaAPI,
-  createObjectTypeViaAPI,
-  navigateToBrowser,
-  uniqueName,
-} from './helpers';
+import { navigateToBrowser } from './helpers';
 
 /**
  * Search and filter UI on the v2 Browser page
  * (`/browser/:ontology/:objectType`).
  *
- * Only exercises front-end components — a freshly-created ObjectType has no
- * indexed documents, so these assertions stay on the SearchBar / FilterBuilder
- * rendering contract and do not require live Bleve data. Data-backed search
- * parity is covered by the Phase 6 gate specs created under US-038+.
+ * Uses pre-seeded Northwind data (employee object type). Only exercises
+ * front-end components — assertions stay on the SearchBar / FilterBuilder
+ * rendering contract. Data-backed search parity is covered by the Phase 6
+ * gate specs created under US-038+.
  */
 test.describe('Browser search and filter', () => {
-  let ontologyApiName: string;
-  let ontologyRid: string;
+  const ontologyApiName = 'northwind';
   const objectTypeApiName = 'employee';
-
-  test.beforeAll(async ({ request }) => {
-    ontologyApiName = uniqueName('search-ont');
-    const ont = await createOntologyViaAPI(request, {
-      apiName: ontologyApiName,
-      displayName: `Search Test ${ontologyApiName}`,
-    });
-    ontologyRid = ont.rid;
-
-    await createObjectTypeViaAPI(request, ontologyRid, {
-      apiName: objectTypeApiName,
-      displayName: 'Employee',
-      primaryKey: 'id',
-    });
-  });
 
   test('search input renders and accepts text', async ({ page }) => {
     await navigateToBrowser(page, ontologyApiName, objectTypeApiName);

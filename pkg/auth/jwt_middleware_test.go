@@ -154,7 +154,12 @@ func TestJWTMode_TamperedToken(t *testing.T) {
 	tok, _ := signer.Sign(SignInput{UserID: "user:alice"})
 
 	bs := []byte(tok)
-	bs[len(bs)/2] = 'A'
+	// Ensure the byte actually changes (avoid no-op when it is already 'A').
+	if bs[len(bs)/2] == 'A' {
+		bs[len(bs)/2] = 'B'
+	} else {
+		bs[len(bs)/2] = 'A'
+	}
 	mw := Middleware(signer)
 	srv := mw(handler())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

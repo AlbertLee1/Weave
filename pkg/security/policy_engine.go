@@ -210,6 +210,12 @@ func (e *Engine) SetPolicies(objectTypeRID string, policies []Policy) {
 func (e *Engine) Evaluate(ctx context.Context, user *auth.User, ot oms.ObjectType) (query.Query, error) {
 	_ = ctx
 
+	// Admin users bypass all row-level security policies. This matches
+	// Foundry semantics where platform admins have unrestricted access.
+	if user != nil && auth.HasPermission(user.Roles, auth.PermUserManage) {
+		return bleve.NewMatchAllQuery(), nil
+	}
+
 	e.mu.RLock()
 	policies := e.policies[ot.RID]
 	version := e.versions[ot.RID]
@@ -282,6 +288,13 @@ func (e *Engine) AllowedForIngest(ctx context.Context, user *auth.User, ot oms.O
 // mental model simple (each rule is an additive grant).
 func (e *Engine) AllowedProperties(ctx context.Context, user *auth.User, ot oms.ObjectType) []string {
 	_ = ctx
+
+	// Admin users bypass column-level security policies — they see all
+	// properties. Return nil ("no PROPERTY-scope policy attached") so the
+	// handler passes the full property payload through unchanged.
+	if user != nil && auth.HasPermission(user.Roles, auth.PermUserManage) {
+		return nil
+	}
 
 	e.mu.RLock()
 	policies := e.policies[ot.RID]

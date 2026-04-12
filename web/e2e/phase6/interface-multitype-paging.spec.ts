@@ -67,7 +67,7 @@ async function fetchPage(
       type: 'interfaceBase',
       interfaceType: INTERFACE_API_NAME,
     },
-    select: [],
+    select: ['customerID'],
     pageSize: PAGE_SIZE,
   };
   if (pageToken) body.pageToken = pageToken;
@@ -87,7 +87,7 @@ test.describe('Phase 6 gate — interface multi-type paging (US-041)', () => {
   test.beforeAll(async ({ request }) => {
     // Preflight: the Northwind seed must expose the HasOwner interface.
     const res = await request.get(
-      `${API_BASE}/api/v2/ontologies/${ONTOLOGY_API_NAME}/interfaceTypes`,
+      `${API_BASE}/api/v2/ontologies/${ONTOLOGY_API_NAME}/interfaceTypes?preview=true`,
     );
     expect(
       res.ok(),

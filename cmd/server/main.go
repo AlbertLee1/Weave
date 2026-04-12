@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -183,12 +184,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.PGPool != nil {
 			markingRepo = auth.NewPGMarkingRepository(deps.PGPool)
 		}
+		loginRateLimit := 5
+		if v := os.Getenv("WEAVE_LOGIN_RATE_LIMIT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				loginRateLimit = n
+			}
+		}
 		loginHandler := auth.NewLoginHandler(auth.LoginHandlerDeps{
 			Users:          deps.UserRepo,
 			Resolver:       deps.RoleResolver,
 			Signer:         deps.JWTSigner,
 			RefreshService: deps.RefreshService,
-			RateLimit:      5,
+			RateLimit:      loginRateLimit,
 			MarkingRepo:    markingRepo,
 		})
 		refreshHandler := auth.NewRefreshHandler(auth.RefreshHandlerDeps{

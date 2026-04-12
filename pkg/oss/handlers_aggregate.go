@@ -100,6 +100,7 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")
+	ctx := index.WithOntologyScope(r.Context(), ontologyAPIName)
 
 	var req aggregation.AggregationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -110,7 +111,7 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ObjectType = objectType
 
-	if apiErr := h.rejectFilteredAggregationFields(r.Context(), objectType, &req); apiErr != nil {
+	if apiErr := h.rejectFilteredAggregationFields(ctx, objectType, &req); apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
 		return
 	}

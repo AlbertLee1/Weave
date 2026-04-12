@@ -83,19 +83,23 @@ test.describe('Policy column-hiding (US-081)', () => {
 
   test('manager login → Employee browser → salary data visible', async ({
     page,
+    request,
   }) => {
-    // Login via the UI form.
-    await page.goto('/login');
-    await page.getByLabel(/email/i).fill('manager@test');
-    await page.getByLabel(/password/i).fill('test1234');
-    await page.getByRole('button', { name: /sign in/i }).click();
+    // Obtain a JWT token via direct API login so we can inject it into
+    // browser API requests. The in-memory authStore does not survive full
+    // page navigations (page.goto), so we use page.route to add the
+    // Authorization header on every API call.
+    const login = await request.post(`${API_BASE}/api/auth/login`, {
+      data: { email: 'manager@test', password: 'test1234' },
+    });
+    expect(login.ok(), `login as manager failed: ${login.status()}`).toBe(true);
+    const token = ((await login.json()) as { access_token: string }).access_token;
 
-    // Wait for redirect away from /login.
-    await page.waitForURL((url) => !url.pathname.includes('/login'), {
-      timeout: 10_000,
+    await page.route('**/api/**', async (route) => {
+      const headers = { ...route.request().headers(), authorization: `Bearer ${token}` };
+      await route.continue({ headers });
     });
 
-    // Navigate to the Employee browser page.
     await page.goto(`/browser/${ONTOLOGY}/${OBJECT_TYPE}`);
     await page.waitForLoadState('domcontentloaded');
 
@@ -112,19 +116,22 @@ test.describe('Policy column-hiding (US-081)', () => {
 
   test('peer login → Employee browser → salary data absent', async ({
     page,
+    request,
   }) => {
-    // Login via the UI form as peer.
-    await page.goto('/login');
-    await page.getByLabel(/email/i).fill('peer@test');
-    await page.getByLabel(/password/i).fill('test1234');
-    await page.getByRole('button', { name: /sign in/i }).click();
+    // Obtain a JWT token for the peer user and inject via page.route
+    // so the dev-mode middleware picks up the viewer role instead of
+    // the default admin dev-user.
+    const login = await request.post(`${API_BASE}/api/auth/login`, {
+      data: { email: 'peer@test', password: 'test1234' },
+    });
+    expect(login.ok(), `login as peer failed: ${login.status()}`).toBe(true);
+    const token = ((await login.json()) as { access_token: string }).access_token;
 
-    // Wait for redirect away from /login.
-    await page.waitForURL((url) => !url.pathname.includes('/login'), {
-      timeout: 10_000,
+    await page.route('**/api/**', async (route) => {
+      const headers = { ...route.request().headers(), authorization: `Bearer ${token}` };
+      await route.continue({ headers });
     });
 
-    // Navigate to the Employee browser page.
     await page.goto(`/browser/${ONTOLOGY}/${OBJECT_TYPE}`);
     await page.waitForLoadState('domcontentloaded');
 

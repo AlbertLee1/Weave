@@ -90,8 +90,18 @@ func TestPGStore_InsertAndList(t *testing.T) {
 	if len(byAction) != 1 {
 		t.Fatalf("expected 1 CREATE event, got %d", len(byAction))
 	}
-	if string(byAction[0].DiffJSON) != `{"after":{"apiName":"Employee"}}` {
-		t.Errorf("DiffJSON mismatch: %s", string(byAction[0].DiffJSON))
+	// Compare semantically: JSONB normalises whitespace on round-trip.
+	var gotDiff, wantDiff map[string]any
+	if err := json.Unmarshal(byAction[0].DiffJSON, &gotDiff); err != nil {
+		t.Fatalf("unmarshal got DiffJSON: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"after":{"apiName":"Employee"}}`), &wantDiff); err != nil {
+		t.Fatalf("unmarshal want DiffJSON: %v", err)
+	}
+	gotBytes, _ := json.Marshal(gotDiff)
+	wantBytes, _ := json.Marshal(wantDiff)
+	if string(gotBytes) != string(wantBytes) {
+		t.Errorf("DiffJSON mismatch: got %s, want %s", string(gotBytes), string(wantBytes))
 	}
 
 	// Filter by resource type
