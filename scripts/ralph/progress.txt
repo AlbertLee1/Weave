@@ -4352,3 +4352,23 @@ new features — only run verification suites and commit the gate.
   - The LoginHandler's internal ipRateLimiter does NOT set Retry-After header; only the global cmd/server middleware does. Cross-US tests that need Retry-After must reproduce the middleware layer
   - Use httptest.NewRecorder + direct r.ServeHTTP calls (not httptest.NewServer + real HTTP) when testing rate limits to minimize inter-request delay from TCP overhead
 ---
+
+## 2026-04-12 - US-078
+- Created Playwright E2E spec for login rate-limit UI behaviour
+- Backend: updated ipRateLimiter.allow() to return (bool, time.Duration); login handler now sets Retry-After header and retryAfterSeconds in 429 response body
+- Backend: changed login rate limit from 10 to 5 attempts/min in cmd/server/main.go
+- Frontend: exported AuthApiError from api.ts; updated LoginPage.tsx to detect 429 and show "Too many attempts, try again in Ns"
+- Added 2 unit tests for 429 handling (with and without retryAfterSeconds field)
+- Files changed:
+  - web/e2e/phase7/login-rate-limit.spec.ts (new)
+  - pkg/auth/login_handler.go (ipRateLimiter.allow returns retry duration; 429 response includes Retry-After + retryAfterSeconds)
+  - cmd/server/main.go (RateLimit: 10 → 5)
+  - web/src/auth/api.ts (export AuthApiError)
+  - web/src/auth/LoginPage.tsx (detect 429, show rate-limit message)
+  - web/src/auth/__tests__/LoginPage.test.tsx (2 new tests for 429 handling)
+- **Learnings for future iterations:**
+  - The Playwright test exhausts the per-IP rate limit via direct API calls (page.request.post to :9117) then submits via the UI form for the 6th attempt — this avoids dependence on Playwright's form-fill speed for triggering rate limits
+  - ipRateLimiter.allow() now returns (bool, time.Duration); the Duration is the time until the oldest hit in the window expires, computed as pruned[0].Add(window).Sub(now)
+  - The login handler's inline rate limiter (ipRateLimiter) and the global rate limit middleware (cmd/server/rate_limit.go) are separate — the inline one fires after the middleware. The inline one now also sets Retry-After header (previously only the middleware did)
+  - gofmt drift on cmd/server/main.go is pre-existing (import ordering); per codebase patterns, do not blanket-reformat
+---
