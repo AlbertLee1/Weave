@@ -4395,3 +4395,15 @@ new features — only run verification suites and commit the gate.
   - `getByText(uniqueId)` in strict mode fails when the ID appears in multiple cells (e.g. customerID + companyName containing the ID). Use `getByRole('cell', { name: uniqueId, exact: true })` to match the exact cell
   - The full SSE pipeline (action → NATS JetStream → consumer → Bleve index → Broadcast → SSE EventSource → query invalidation → refetch) takes 1-3s in local dev; 5s timeout is safe
 ---
+
+## 2026-04-12 - US-080
+- Implemented Playwright spec for SSE reconnect (offline → online → buffered events delivered)
+- Test flow: enable realtime → setOffline(true) → POST 3 createCustomer actions → setOffline(false) → assert 3 new rows appear
+- Files changed:
+  - web/e2e/phase7/sse-reconnect.spec.ts (new, 1 test)
+- **Learnings for future iterations:**
+  - Playwright `request` fixture is independent of browser context's offline state — `request.post()` works even when `page.context().setOffline(true)` is active, because `request` operates at the Node.js level
+  - The frontend SSE hook passes `lastEventId` as a URL query param, but the backend reads `Last-Event-ID` header. However, `SubscribeWithReplay(16, 0)` with `fromSeq=0` replays ALL buffered events from the ring buffer, so reconnect still works
+  - When running the full E2E suite, SSE connection accumulation from prior tests can exhaust the 10-connection-per-user cap, causing timeouts. Individual or phase-scoped runs are more reliable
+  - After `setOffline(true)`, the EventSource hook enters backoff (1s→2s→4s). After `setOffline(false)`, reconnection succeeds on the next timer fire. Total latency is ~2-4s offline wait + backoff delay
+---
