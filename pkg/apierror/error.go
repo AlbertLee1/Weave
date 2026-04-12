@@ -83,6 +83,13 @@ func NewInternal(name string, params map[string]string) *APIError {
 	return newAPIError("INTERNAL", name, params, http.StatusInternalServerError)
 }
 
+// NewTooManyRequests creates a RESOURCE_EXHAUSTED API error (HTTP 429). Used
+// by rate-limited surfaces such as the SSE subscribe endpoint when the
+// per-user connection cap has been reached.
+func NewTooManyRequests(name string, params map[string]string) *APIError {
+	return newAPIError("RESOURCE_EXHAUSTED", name, params, http.StatusTooManyRequests)
+}
+
 // WriteJSON writes an APIError as a JSON HTTP response with the appropriate status code.
 func WriteJSON(w http.ResponseWriter, err *APIError) {
 	w.Header().Set("Content-Type", "application/json")

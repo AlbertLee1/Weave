@@ -1,0 +1,2611 @@
+{
+  "project": "Weave",
+  "branchName": "ralph/phase-6-8",
+  "description": "Weave OSv2 Deep Parity (Phase 6-9). From 'API surface alignment' (68/68 Foundry endpoints) to 'semantic depth alignment'. 168 stories across 4 phases with per-phase hard integration gates (Go cross-US + Playwright E2E + Foundry parity fixture). TDD mandatory. Narrative in docs/PRD-Weave-OSv2-深度复刻-V2.md; execution spec in tasks/prd-v2-deep-parity.md.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "withProperties count metric (forward direction)",
+      "description": "As a Foundry SDK user, I want ObjectSet withProperties to compute count over one forward link hop so that employees.withProperty('reportsCount', pivotTo('reports').count()) returns real numbers.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/oss/objectset/withproperties_test.go TestWithPropertiesCount verifies Northwind Customer.orderCount for 3 customers",
+        "pkg/oss/objectset/executor.go executeWithProperties implements count metric via link resolver + forward direction",
+        "Derived value attached to WireObject under key matching withProperties.name",
+        "go test ./pkg/oss/objectset/... -run WithPropertiesCount passes",
+        "go test ./... passes (no regression)",
+        "gofmt + go vet clean"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "withProperties sum/avg/min/max numeric metrics",
+      "description": "As a Foundry SDK user, I want withProperties to support sum, avg, min, max over numeric fields of linked objects, so that derived aggregates match Foundry semantics.",
+      "acceptanceCriteria": [
+        "Failing tests first: 4 new cases in withproperties_test.go for sum/avg/min/max on Northwind Order.totalAmount",
+        "executeWithProperties handles 4 new metric types with type validation (non-numeric returns DerivedPropertyTypeMismatch)",
+        "avg uses float64 arithmetic",
+        "Empty link set returns 0 for count/sum, null for min/max/avg",
+        "go test ./pkg/oss/objectset/... -run WithProperties passes",
+        "go test ./... passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "withProperties reverse direction",
+      "description": "As a Foundry SDK user, I want withProperties to traverse link in reverse direction so that Product.totalOrders can aggregate back from OrderLine.",
+      "acceptanceCriteria": [
+        "Failing test first: TestWithPropertiesReverse exercises Product.totalOrders via reverse OrderLine->Product",
+        "executeWithProperties routes DirectionReverse through pkg/links resolver",
+        "Forward and reverse tests both green on Northwind",
+        "go test ./pkg/oss/objectset/... -run WithProperties passes",
+        "go test ./... passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Derived property constraints and error codes",
+      "description": "As a Foundry-compatible server, I want derived properties to be blocked from primary-key use, text-search filtering, and Action edits, matching Foundry's read-only semantics.",
+      "acceptanceCriteria": [
+        "Failing test first: TestDerivedPropertyConstraints covers 3 blocked cases",
+        "pkg/oms validation rejects derived property as primaryKey with DerivedPropertyNotAllowedAsPrimaryKey",
+        "pkg/oss/where rejects text-search on derived property with DerivedPropertyTextSearchUnsupported",
+        "pkg/actions validation rejects edits on derived property with DerivedPropertyReadOnly",
+        "Error codes follow apierror convention",
+        "go test ./pkg/oms/... ./pkg/oss/... ./pkg/actions/... passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "withProperties cursor stability + parity fixture",
+      "description": "As a paginating SDK user, I want withProperties results to have stable cursor ordering (derived value then primary key tiebreak) so that pagination never loses or duplicates rows.",
+      "acceptanceCriteria": [
+        "Failing test first: TestWithPropertiesCursorStability paginates 50 Northwind customers by orderCount in 3 pages",
+        "pkg/oss/objectset cursor encoder uses (derivedValue, primaryKey) as composite sort key",
+        "Parity fixture test/foundry_parity/us005_withproperties.json covers expected shape",
+        "make test-parity -run US005 passes",
+        "go test ./pkg/oss/objectset/... -run CursorStability passes",
+        "go test ./... passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "ObjectSet composite cursor encoding utility",
+      "description": "As a backend developer, I need a reusable composite cursor type that encodes objectType + innerCursor so that multi-type ObjectSet pagination can be stable.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/oss/pagination/composite_cursor_test.go encode/decode roundtrip",
+        "New type CompositeCursor{ObjectType string, InnerCursor string}",
+        "Base64 JSON encoding + parsing + graceful handling of malformed input",
+        "Empty inner cursor means exhausted",
+        "go test ./pkg/oss/pagination/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Interface loadObjectsOrInterfaces heap merge executor",
+      "description": "As a Foundry SDK user, I want loadObjectsOrInterfaces to return stable paginated results across multiple implementing ObjectTypes so that turning pages never loses or duplicates objects.",
+      "acceptanceCriteria": [
+        "Failing test first: TestInterfacePagingHeapMerge over 3 ObjectTypes x 20 objects each paged by 7",
+        "pkg/oss/objectset/handler_preview.go uses CompositeCursor from US-006",
+        "Executor loads each ObjectType concurrently with shared sort key, heap merges results",
+        "Exhausted sub-cursors are removed",
+        "go test ./pkg/oss/objectset/... -run InterfacePaging passes",
+        "go test ./... passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Interface multi-type paging integration test + parity fixture",
+      "description": "As a Foundry-compatible server, I want an integration test that proves 3 ObjectTypes implementing the same interface can be paginated to completion without loss or duplication.",
+      "acceptanceCriteria": [
+        "New test test/integration/interface_paging_test.go with testcontainers",
+        "HasOwner interface implemented by Customer + Employee + Supplier (Northwind seed)",
+        "Page through all objects with pageSize=7 and default orderBy",
+        "Assert no duplicates + no misses + totalCount matches sum",
+        "Parity fixture test/foundry_parity/us008_interface_paging.json",
+        "go test -tags integration ./test/integration/... -run InterfacePaging passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Bleve mapping_builder (standard + not_analyzed analyzers)",
+      "description": "As a schema designer, I want property type classes to drive Bleve field mapping so that analyzer.not_analyzed fields are exact-match and standard fields are stemmed.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/index/mapping_builder_test.go tests KeywordField vs TextField selection",
+        "New pkg/index/mapping_builder.go: BuildMapping(*oms.ObjectType) *mapping.IndexMappingImpl",
+        "analyzer.not_analyzed -> KeywordField",
+        "analyzer.standard or unset -> TextField(standard analyzer)",
+        "go test ./pkg/index/... -run MappingBuilder passes",
+        "go test ./... passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Bleve mapping_builder not_indexed support",
+      "description": "As a schema designer, I want analyzer.not_indexed properties to be stored but skipped by Bleve so that they appear in API responses but cannot be searched.",
+      "acceptanceCriteria": [
+        "Failing test first: TestMappingNotIndexed asserts property included in _source but no field query match",
+        "mapping_builder handles not_indexed: set Index=false, Store=true",
+        "Consumer uses new mapping when Ensure / Rehydrate",
+        "go test ./pkg/index/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "weave index rebuild command",
+      "description": "As a server operator, I want to rebuild Bleve indexes for a specific ObjectType so that TypeClass mapping changes take effect without full server restart.",
+      "acceptanceCriteria": [
+        "New CLI subcommand weave-cli admin index rebuild --ontology X --object-type Y (gated to admin)",
+        "HTTP endpoint POST /api/v2/admin/indexes/rebuild with JSON body {ontology, objectType}",
+        "Idempotent: deletes + recreates + reindexes from Parquet (if present) or from PG object_history",
+        "Returns count of indexed documents",
+        "go test ./cmd/weave-cli/... ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "TypeClass integration test (case sensitivity + stemming)",
+      "description": "As a Foundry-compatible server, I want an integration test that proves not_analyzed fields are case-sensitive exact match and standard fields support stemming.",
+      "acceptanceCriteria": [
+        "test/integration/typeclass_indexing_test.go with testcontainers",
+        "Define Customer.country as not_analyzed, Product.description as standard",
+        "Insert rows with 'USA' and 'usa' countries + 'running shoes' and 'runner' descriptions",
+        "Assert country='USA' matches 1 doc, country='usa' matches 1 doc",
+        "Assert description search 'run' matches both product docs",
+        "Parity fixture test/foundry_parity/us012_typeclass.json",
+        "go test -tags integration ./test/integration/... -run TypeClass passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Multi-layer groupBy executor (3 layers nested)",
+      "description": "As a Foundry SDK user, I want Aggregation to support 3 layers of nested groupBy (ExactValue x FixedWidth x Duration) so that complex reporting queries return stable bucket trees.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/oss/aggregation/multi_groupby_test.go TestThreeLayerNested",
+        "Executor recursively builds bucket tree: outer groups contain inner groups",
+        "Bucket keys stable order: by groupBy declaration order + within layer by key sort",
+        "null-group uses bucket.key = null (not string 'null')",
+        "go test ./pkg/oss/aggregation/... -run MultiGroupBy passes",
+        "go test ./... passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Aggregation accuracy marker (APPROXIMATE vs ACCURATE)",
+      "description": "As a Foundry SDK user, I want aggregation responses to mark accuracy=APPROXIMATE when the doc scan limit is hit, so that I know when numbers are estimated.",
+      "acceptanceCriteria": [
+        "Failing test first: TestAggregationAccuracyMarker with small maxDocScanSize",
+        "Executor returns accuracy: 'ACCURATE' | 'APPROXIMATE' in top-level response",
+        "APPROXIMATE triggered when scanned docs > maxDocScanSize",
+        "ACCURATE when full scan succeeds",
+        "go test ./pkg/oss/aggregation/... -run Accuracy passes",
+        "go test ./... passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Multi-groupBy integration test + parity fixture",
+      "description": "As a Foundry-compatible server, I want a real-data integration test over Northwind orders grouped by country x priceBucket x quarter so that multi-layer aggregation is verified end-to-end.",
+      "acceptanceCriteria": [
+        "test/integration/aggregation_multigroupby_test.go with testcontainers",
+        "Northwind seed with 100+ orders across 5 countries x 3 quarters",
+        "groupBy: [country (ExactValue), price (FixedWidth 100), orderDate (Duration P3M)]",
+        "Assert bucket counts and metric values match manual computation",
+        "Parity fixture test/foundry_parity/us015_multi_groupby.json",
+        "go test -tags integration ./test/integration/... -run MultiGroupBy passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "approx_percentile.go with HdrHistogram",
+      "description": "As a Foundry SDK user, I want approximatePercentile aggregation metric backed by HdrHistogram so that p50/p95/p99 return accurate values on large datasets.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/oss/aggregation/percentile_test.go computes p50/p95/p99 on 10k Gaussian data",
+        "New pkg/oss/aggregation/approx_percentile.go using github.com/HdrHistogram/hdrhistogram-go",
+        "Single percentile query returns scalar",
+        "go.mod adds HdrHistogram dependency",
+        "go test ./pkg/oss/aggregation/... -run Percentile passes",
+        "go test ./... passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Multiple percentiles in single query",
+      "description": "As a Foundry SDK user, I want to request p50, p95, p99 in a single aggregation call so that I avoid round-trips.",
+      "acceptanceCriteria": [
+        "Failing test first: TestMultiPercentileSingleQuery passes 3 percentile values",
+        "Metric schema accepts percentiles: [50, 95, 99]",
+        "Response contains map[string]float64 keyed by percentile string",
+        "Same HdrHistogram used for all percentiles in one pass",
+        "go test ./pkg/oss/aggregation/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Percentile precision bench + 5% error assertion",
+      "description": "As a maintainer, I want a benchmark that asserts approximate percentile is within 5% of exact percentile so that we can catch accuracy regressions.",
+      "acceptanceCriteria": [
+        "pkg/oss/aggregation/percentile_bench_test.go computes exact + approx on 10k points and asserts |delta| / exact <= 0.05",
+        "go test -bench=ApproxPercentile ./pkg/oss/aggregation/ runs successfully",
+        "bench/aggregation_percentile.md records baseline numbers",
+        "Bench failure fails the test (not just slow)",
+        "go test ./... passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Migration 000018 object_history source column",
+      "description": "As a backend developer, I need a new source column on object_history so that edit conflict resolution can distinguish user vs ingest writes.",
+      "acceptanceCriteria": [
+        "migrations/000018_object_history_source.up.sql adds column source text not null default 'user'",
+        "Matching down migration",
+        "pkg/oms models update to include Source field",
+        "pg_repository queries select source on reads and insert it on writes",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Edit source=user tagging in actions executor",
+      "description": "As a Foundry-compatible server, I want all edits produced through Action apply to be tagged source=user so that conflict resolution can protect them from ingest overwrites.",
+      "acceptanceCriteria": [
+        "Failing test first: TestActionEditSourceUser asserts all edits emitted by Prepare have Source='user'",
+        "pkg/actions/executor.go Prepare + Apply set Edit.Source='user'",
+        "funnel.Edit struct gains Source field (string, default empty)",
+        "JSON tag for wire + PG storage",
+        "go test ./pkg/actions/... ./pkg/funnel/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Funnel consumer user-edit-wins conflict logic",
+      "description": "As a Foundry-compatible server, I want Funnel consumer to protect user edits from being silently overwritten by ingest edits so that streaming backfills do not lose user changes.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/funnel/conflict_test.go TestUserEditWinsProtection",
+        "Consumer checks object_history last source='user' ts before applying source='ingest' edit",
+        "If user edit is newer: skip non-always-apply fields",
+        "If user edit is older or absent: normal overwrite",
+        "always_apply flag respected (stub for US-026)",
+        "go test ./pkg/funnel/... -run Conflict passes",
+        "go test ./... passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Edit conflict integration test (concurrent user + ingest)",
+      "description": "As a maintainer, I want an integration test that races 100 user edits against 100 ingest edits and asserts user data is never lost, so that user-edit-wins is proven under concurrency.",
+      "acceptanceCriteria": [
+        "test/integration/edit_conflict_test.go with testcontainers",
+        "Spawns 2 goroutines: user apply 100 random edits, funnel ingest 100 random edits",
+        "Runs 10 iterations with different seeds",
+        "Final state asserts: user value always wins on contested fields",
+        "Parity fixture test/foundry_parity/us022_edit_conflict.json",
+        "go test -tags integration ./test/integration/... -run EditConflict passes"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "ApplyOptions.expectedVersion with 409 StaleObject",
+      "description": "As a Foundry SDK user, I want to pass expectedVersion in Action apply options so that stale-object submissions fail fast instead of silently overwriting newer data.",
+      "acceptanceCriteria": [
+        "Failing test first: TestActionExpectedVersionMismatch submits stale version and expects 409",
+        "ApplyOptions struct adds ExpectedVersion *int (optional, omitempty)",
+        "Handler loads target object version and compares",
+        "Mismatch returns HTTP 409 + error code StaleObject + currentVersion in error metadata",
+        "Match allows apply and increments version",
+        "go test ./pkg/actions/... -run ExpectedVersion passes",
+        "go test ./... passes"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Frontend ActionConsole version tracking + 409 reload UX",
+      "description": "As a frontend user, I want the Action Console to automatically include expectedVersion and surface a friendly reload prompt on 409, so that I do not accidentally overwrite newer data.",
+      "acceptanceCriteria": [
+        "web/src/components/actions/ActionConsolePage.tsx tracks current object version on load",
+        "ApplyAction call includes expectedVersion in options",
+        "409 response shows toast 'This object was updated elsewhere - Reload to continue'",
+        "Reload button refetches object",
+        "Vitest covers new hook logic",
+        "npm run test passes",
+        "npx tsc --noEmit passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Migration 000019 is_edit_only column on properties",
+      "description": "As a schema designer, I need an is_edit_only flag on properties so that certain fields always win regardless of conflict strategy.",
+      "acceptanceCriteria": [
+        "migrations/000019_property_edit_only.up.sql adds column is_edit_only bool not null default false",
+        "Down migration drops the column",
+        "pkg/oms Property model adds IsEditOnly field",
+        "pg_repository CRUD reads/writes is_edit_only",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "OMS CRUD respects is_edit_only + OpenAPI",
+      "description": "As a Foundry SDK user, I want to set editOnly=true when creating or updating a Property so that the field is marked as user-edit-protected.",
+      "acceptanceCriteria": [
+        "OMS property create/update accepts editOnly in request body",
+        "GetProperty returns editOnly in response",
+        "api/openapi.yaml + cmd/server/openapi_spec.yaml updated (byte-identical)",
+        "Contract test passes",
+        "go test ./pkg/oms/... ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "Consumer always-apply for edit-only fields + integration test",
+      "description": "As a Foundry-compatible server, I want Funnel consumer to always preserve user values on edit-only fields regardless of ingest, so that user tags and notes are never overwritten.",
+      "acceptanceCriteria": [
+        "pkg/funnel/consumer.go: when evaluating conflict, always preserve user value on fields with property.IsEditOnly=true",
+        "Failing test first: TestEditOnlyAlwaysWins with Order.notes marked editOnly",
+        "Integration test test/integration/edit_only_test.go: user writes 'VIP', ingest overwrites -> notes still 'VIP'",
+        "Parity fixture test/foundry_parity/us027_edit_only.json",
+        "go test -tags integration ./test/integration/... -run EditOnly passes",
+        "go test ./... passes"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "Remove dead admin Playwright specs",
+      "description": "As the Phase 6 Gate owner, I need to remove 10 admin Playwright specs that target routes deleted in v1 US-006, so that npm run test:e2e is not blocked by dead tests.",
+      "acceptanceCriteria": [
+        "Delete web/e2e/action-type-crud.spec.ts, object-type-crud.spec.ts, link-type-crud.spec.ts, interface-management.spec.ts, property-management.spec.ts, ontology-crud.spec.ts, export-import.spec.ts, delete-confirmation.spec.ts",
+        "Keep search-and-filter.spec.ts (update to v2 Browser page selectors)",
+        "Keep helpers.ts (update imports if needed)",
+        "Update web/e2e/README.md or add one describing new phase-based layout",
+        "cd web && npm run test:e2e passes (no spec-related failures)",
+        "npx tsc --noEmit passes"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "scripts/e2e-setup.sh and e2e-teardown.sh",
+      "description": "As the Phase 6 Gate owner, I need idempotent scripts to start and stop the full stack (docker compose + weave server + vite) so that Playwright runs reliably locally and in CI.",
+      "acceptanceCriteria": [
+        "scripts/e2e-setup.sh: docker compose up -d postgres nats; make build; bin/weave server & (PID file); wait-on :9117/health; npm run dev & (PID file); wait-on :5173",
+        "scripts/e2e-teardown.sh: kill PIDs from PID files; docker compose down",
+        "Both scripts are idempotent (safe to run twice)",
+        "Exit codes propagate correctly",
+        "New Makefile targets: make e2e-up / make e2e-down",
+        "Shellcheck passes",
+        "Manually runs clean on local box"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "test/fixtures/e2e_seed.sh Playwright seed data",
+      "description": "As the Phase 6 Gate owner, I need a seed script that resets Weave to a known Playwright baseline (Northwind + test users) so that every spec starts from the same state.",
+      "acceptanceCriteria": [
+        "test/fixtures/e2e_seed.sh: curl-based or Go-based script that imports Northwind via Admin API and creates test users admin@test / manager@test / peer@test",
+        "Idempotent: wipes data first then reseeds",
+        "Called by scripts/e2e-setup.sh after server is up",
+        "Documented in web/e2e/README.md",
+        "Runs in under 30s on local box"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "test/foundry_parity/run.go parity runner bootstrap",
+      "description": "As the Phase 6 Gate owner, I need a Go runner that reads parity fixtures and asserts Weave responses match expected JSON so that make test-parity is a first-class target.",
+      "acceptanceCriteria": [
+        "test/foundry_parity/run.go: main that walks .json fixtures, fires request to running Weave, compares response",
+        "Fixture schema: {name, request: {method, path, body}, expected: {status, body}, notes}",
+        "JSON comparison uses deep equal with key sorting",
+        "Failure output: unified diff format",
+        "Makefile target: make test-parity starts server if not running and runs runner",
+        "At least 5 seed fixtures (us005/us008/us012/us015/us022) present and passing",
+        "go build ./test/foundry_parity/ succeeds"
+      ],
+      "priority": 31,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-032",
+      "title": "Phase 6 cross-US test: withProperties x interface paging",
+      "description": "As the Phase 6 Gate owner, I want a cross-US integration test combining withProperties derived values with Interface polymorphic paging, so that two orthogonal Phase 6 features interoperate.",
+      "acceptanceCriteria": [
+        "test/integration/phase6/phase6_withproperties_interface_test.go",
+        "Load HasOwner interface with derived reportCount on all implementers",
+        "Page through 60+ objects and assert derived values carry across type boundary",
+        "Assert composite cursor works with derived sort",
+        "Makefile target: make test-integration-phase6",
+        "go test -tags integration ./test/integration/phase6/... -run WithPropertiesInterface passes"
+      ],
+      "priority": 32,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "title": "Phase 6 cross-US test: aggregation on derived ObjectSet",
+      "description": "As the Phase 6 Gate owner, I want a cross-US integration test that aggregates an ObjectSet containing withProperties derived values so that Aggregation + derived work together.",
+      "acceptanceCriteria": [
+        "test/integration/phase6/phase6_aggregation_derived_test.go",
+        "Build ObjectSet: Customer with orderCount derived property",
+        "Aggregate groupBy country with metric avg(orderCount)",
+        "Verify buckets numerically correct on Northwind seed",
+        "go test -tags integration ./test/integration/phase6/... -run AggregationDerived passes"
+      ],
+      "priority": 33,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "title": "Phase 6 cross-US test: conflict + optimistic concurrency",
+      "description": "As the Phase 6 Gate owner, I want a cross-US integration test that races user-edit-wins (US-021) with expectedVersion (US-023), so that both correctness features compose correctly.",
+      "acceptanceCriteria": [
+        "test/integration/phase6/phase6_conflict_optimistic_test.go",
+        "Three-way race: user edit, ingest flood, second user edit with stale expectedVersion",
+        "Assert: first user edit persists, ingest never overwrites, second user gets 409",
+        "go test -tags integration ./test/integration/phase6/... -run ConflictOptimistic passes"
+      ],
+      "priority": 34,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "Phase 6 cross-US test: typeclass + search",
+      "description": "As the Phase 6 Gate owner, I want a cross-US integration test combining TypeClass-driven indexing (US-012) with Where clause search so that full search pipeline respects analyzer choice.",
+      "acceptanceCriteria": [
+        "test/integration/phase6/phase6_typeclass_search_test.go",
+        "Index Northwind with country as not_analyzed, description as standard",
+        "Run Where {field=country, op=eq, value=usa} and assert 0 matches",
+        "Run Where {field=description, op=contains, value=run} and assert stemmed matches",
+        "go test -tags integration ./test/integration/phase6/... -run TypeClassSearch passes"
+      ],
+      "priority": 35,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-036",
+      "title": "Phase 6 cross-US test: percentile + groupBy",
+      "description": "As the Phase 6 Gate owner, I want a cross-US integration test that computes approxPercentile per groupBy bucket, so that percentile + grouping compose.",
+      "acceptanceCriteria": [
+        "test/integration/phase6/phase6_percentile_groupby_test.go",
+        "Aggregate Northwind orders groupBy country with metric approxPercentile(95, amount)",
+        "Assert accuracy marker present",
+        "Compare against exact percentile per bucket -> error <= 5%",
+        "go test -tags integration ./test/integration/phase6/... -run PercentileGroupBy passes"
+      ],
+      "priority": 36,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-037",
+      "title": "Phase 6 cross-US test: edit-only ingest flood",
+      "description": "As the Phase 6 Gate owner, I want a cross-US integration test flooding ingest against edit-only fields so that edit-only + user-edit-wins are verified in concert.",
+      "acceptanceCriteria": [
+        "test/integration/phase6/phase6_editonly_ingest_test.go",
+        "User sets Order.notes='VIP' on 50 orders",
+        "Ingest writes empty notes 10 times",
+        "Assert all 50 orders retain 'VIP'",
+        "go test -tags integration ./test/integration/phase6/... -run EditOnlyIngest passes"
+      ],
+      "priority": 37,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-038",
+      "title": "Playwright spec: optimistic-concurrency",
+      "description": "As the Phase 6 Gate owner, I want a Playwright spec that simulates two tabs editing the same object so that the 409 StaleObject UX is verified in a real browser.",
+      "acceptanceCriteria": [
+        "web/e2e/phase6/optimistic-concurrency.spec.ts",
+        "Use two Playwright contexts (isolated tabs) to load same Customer object",
+        "Tab A edits and saves successfully",
+        "Tab B edits and saves -> expect 409 toast + Reload button",
+        "Click Reload -> fresh object loaded, version updated",
+        "cd web && npm run test:e2e -- optimistic-concurrency passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 38,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "Playwright spec: aggregation-multi-groupby",
+      "description": "As the Phase 6 Gate owner, I want a Playwright spec that drives the Aggregation page through a 3-layer groupBy so that the multi-groupBy UI is verified in a real browser.",
+      "acceptanceCriteria": [
+        "web/e2e/phase6/aggregation-multi-groupby.spec.ts",
+        "Navigate to AggregationPage",
+        "Add groupBy: country + priceBucket + quarter",
+        "Add metric: count + sum(amount)",
+        "Execute and assert bucket tree renders with 3 nesting levels",
+        "Assert accuracy badge visible",
+        "cd web && npm run test:e2e -- aggregation-multi-groupby passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 39,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "Playwright spec: withproperties-derived",
+      "description": "As the Phase 6 Gate owner, I want a Playwright spec that uses ObjectSetComposer to add a derived property and verifies the DataTable shows real values.",
+      "acceptanceCriteria": [
+        "web/e2e/phase6/withproperties-derived.spec.ts",
+        "Navigate to ObjectSetPage for Customer",
+        "Open ObjectSetComposer, add withProperties: orderCount via pivotTo(orders).count()",
+        "Execute and assert DataTable has orderCount column with non-null numeric values",
+        "cd web && npm run test:e2e -- withproperties-derived passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 40,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "title": "Playwright spec: interface-multitype-paging",
+      "description": "As the Phase 6 Gate owner, I want a Playwright spec that pages through HasOwner interface objects and verifies cursor stability across ObjectTypes.",
+      "acceptanceCriteria": [
+        "web/e2e/phase6/interface-multitype-paging.spec.ts",
+        "Navigate to BrowserPage, select HasOwner interface",
+        "Record page 1 primary keys, click Next, record page 2, continue 5 pages",
+        "Assert no duplicates across pages + totalCount matches sum",
+        "cd web && npm run test:e2e -- interface-multitype-paging passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 41,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-042",
+      "title": "Phase 6 Gate: final regression + commit",
+      "description": "As the Phase 6 Gate owner, I want to run the full regression suite (go + web + python + playwright + parity) and commit the gate merge, so that Phase 6 is sealed and ready to merge to main.",
+      "acceptanceCriteria": [
+        "make test && make test-integration && make test-integration-phase6 passes",
+        "make web-test passes",
+        "cd web && npm run test:e2e passes (all phase6 + baseline)",
+        "pytest sdk/python passes",
+        "make test-parity passes with >= 80 samples and >= 95% pass rate",
+        "Update docs/PRD-Weave-OSv2-深度复刻-V2.md matrix Phase 6 rows to green",
+        "Gate commit: feat: [US-042] - Phase 6 integration gate: semantic correctness verified"
+      ],
+      "priority": 42,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-043",
+      "title": "pkg/security/policy_engine.go scaffold + eq rule",
+      "description": "As a data owner, I want a row-level policy engine scaffold with the equality rule type so that I can describe 'user.dept == object.owner_dept' policies.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/security/policy_engine_test.go TestEqualityRule",
+        "New pkg/security/policy_engine.go with Evaluate(ctx, user, objectType) (bleve.Query, error)",
+        "Rule type: {type: 'eq', userAttr: string, objectProperty: string}",
+        "Output a bleve TermQuery that narrows to matching objects",
+        "Stored in security_policies table",
+        "go test ./pkg/security/... -run Equality passes",
+        "go test ./... passes"
+      ],
+      "priority": 43,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-044",
+      "title": "Policy DSL: in + marking subset rule types",
+      "description": "As a data owner, I want in and marking subset rules so that I can express 'user.attribute in object.allowed[]' and 'user.markings superset of object.markings'.",
+      "acceptanceCriteria": [
+        "Failing test first: TestInRule and TestMarkingSubsetRule",
+        "New rule types: {type: 'in', userAttr, objectProperty} and {type: 'markingSubset', objectProperty}",
+        "Rule compiler emits correct Bleve boolean query",
+        "go test ./pkg/security/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 44,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-045",
+      "title": "Policy engine cache with version invalidation",
+      "description": "As a backend developer, I want policy compilation results cached for 5 minutes per (user, objectType, policyVersion), so that repeated queries do not recompile policies.",
+      "acceptanceCriteria": [
+        "Failing test first: TestPolicyCacheHitAndInvalidate",
+        "pkg/security/policy_cache.go with LRU + TTL",
+        "Cache key includes policyVersion (from security_policies.updated_at)",
+        "Policy update increments version and invalidates cache",
+        "Hit rate exposed as metric",
+        "go test ./pkg/security/... -run Cache passes",
+        "go test ./... passes"
+      ],
+      "priority": 45,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-046",
+      "title": "Policy engine integration into OSS query compile chain",
+      "description": "As a Foundry-compatible server, I want OSS Load/Search/Aggregate to automatically AND the policy query with user Where clauses so that row-level filtering is enforced.",
+      "acceptanceCriteria": [
+        "Failing test first: TestPolicyAppliedToLoadSearch",
+        "pkg/oss/service_impl.go hooks policy_engine.Evaluate before Bleve search",
+        "Returned query merged with user where via bleve.ConjunctionQuery",
+        "Applies to Load / Search / Aggregate / LoadObjectSet paths",
+        "go test ./pkg/oss/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 46,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-047",
+      "title": "Row-level policy 9-matrix integration test",
+      "description": "As a Foundry-compatible server, I want an end-to-end test covering 3 users x 3 policies x 5 objects so that row filtering is proven against real queries.",
+      "acceptanceCriteria": [
+        "test/integration/policy_matrix_test.go with testcontainers",
+        "Seed: 3 users with different dept / markings, 3 policies (eq + in + markingSubset), 5 objects",
+        "Issue query as each user and assert exact visible object set",
+        "Parity fixture test/foundry_parity/us047_row_policy.json",
+        "go test -tags integration ./test/integration/... -run PolicyMatrix passes"
+      ],
+      "priority": 47,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-048",
+      "title": "AllowedProperties + WireObject serialization filter",
+      "description": "As a data owner, I want to restrict which properties a user can see on an object so that column-level secrecy is enforced at serialization time.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/oss/serialization_filter_test.go TestPropertyFilter",
+        "pkg/security/policy_engine.go adds AllowedProperties(ctx, user, ot) []string",
+        "pkg/oss WireObject serialization drops fields not in allowed list (omitted, not nulled)",
+        "Applied to Load/Search/LoadObjectSet paths",
+        "go test ./pkg/oss/... ./pkg/security/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 48,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-049",
+      "title": "Aggregation rejects filtered fields + integration test",
+      "description": "As a data owner, I want Aggregation to refuse groupBy or metric on properties the user is not allowed to see, so that column-level secrecy cannot be bypassed via aggregation.",
+      "acceptanceCriteria": [
+        "Failing test first: TestAggregationRejectsFilteredField",
+        "Aggregation handler checks groupBy.field and metric.field against AllowedProperties",
+        "Returns 403 + error code PropertyNotAccessible",
+        "Integration test test/integration/column_policy_test.go: manager can aggregate salary, peer cannot",
+        "go test -tags integration ./test/integration/... -run ColumnPolicy passes"
+      ],
+      "priority": 49,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-050",
+      "title": "EvaluateMarkings AND semantics + unit tests",
+      "description": "As a data owner, I want Marking evaluation to follow Foundry AND semantics (user must hold every marking on the object) so that mandatory access control is respected.",
+      "acceptanceCriteria": [
+        "Failing test first: pkg/auth/marking_eval_test.go TestMarkingAndSemantics",
+        "pkg/auth/marking.go EvaluateMarkings(userMarkings, objectMarkings) bool with AND logic",
+        "User missing any object marking -> false",
+        "User has all object markings -> true",
+        "Empty object markings -> true",
+        "go test ./pkg/auth/... -run Marking passes",
+        "go test ./... passes"
+      ],
+      "priority": 50,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-051",
+      "title": "Marking merged into policy engine + Bleve indexing",
+      "description": "As a Foundry-compatible server, I want Marking evaluation integrated with the row-level policy engine and indexed into Bleve so that Marking becomes part of the query filter pipeline.",
+      "acceptanceCriteria": [
+        "policy_engine.Evaluate adds marking subset clause automatically if object has markings",
+        "Funnel consumer writes object markings to Bleve as keyword field _markings",
+        "go test ./pkg/security/... ./pkg/funnel/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 51,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-052",
+      "title": "Marking end-to-end integration test",
+      "description": "As a maintainer, I want an integration test that proves marking filtering works for 3 users x 3 objects, so that Marking is verified under real queries.",
+      "acceptanceCriteria": [
+        "test/integration/marking_test.go",
+        "Seed: 3 users (ACME only / ACME2 only / both) + 3 objects (ACME only / ACME2 only / both required)",
+        "Each user queries all objects and assert visible subset matches marking rule",
+        "Parity fixture test/foundry_parity/us052_marking.json",
+        "go test -tags integration ./test/integration/... -run MarkingE2E passes"
+      ],
+      "priority": 52,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-053",
+      "title": "JWT claim markings[] support in signer/verifier",
+      "description": "As a server operator, I want JWT tokens to carry user markings so that downstream policy evaluation sees them.",
+      "acceptanceCriteria": [
+        "pkg/auth JWT claims struct adds Markings []string",
+        "Signer encodes it",
+        "Verifier decodes it",
+        "go test ./pkg/auth/... -run JWTMarkings passes",
+        "go test ./... passes"
+      ],
+      "priority": 53,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-054",
+      "title": "Middleware marking context injection + /api/v2/me",
+      "description": "As a backend developer, I want middleware to inject decoded markings into request context and /api/v2/me to return them, so that policy engine can read markings uniformly.",
+      "acceptanceCriteria": [
+        "pkg/auth/middleware.go puts markings in context",
+        "pkg/auth context getter Markings(ctx) []string",
+        "/api/v2/me response includes markings array",
+        "Failing test first: TestMeEndpointMarkings",
+        "go test ./pkg/auth/... ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 54,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-055",
+      "title": "SSE ObjectSet subscribe endpoint scaffold",
+      "description": "As a frontend developer, I want an SSE endpoint that streams object change events for a given ObjectSet rid so that the UI can refresh in realtime.",
+      "acceptanceCriteria": [
+        "New handler pkg/oss/subscribe_sse.go",
+        "Route: GET /api/v2/ontologies/{ontology}/objectSets/{objectSetRid}/subscribe",
+        "Response headers: Content-Type text/event-stream, Cache-Control no-cache, Connection keep-alive",
+        "Subscribes to funnel broadcaster for matching ObjectType",
+        "Emits events as SSE data lines with ADDED_OR_UPDATED / DELETED types",
+        "Failing test first: TestSSESubscribeBasicStream",
+        "go test ./pkg/oss/... -run SSESubscribe passes"
+      ],
+      "priority": 55,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-056",
+      "title": "SSE server-side Where filter",
+      "description": "As a frontend developer, I want the SSE stream to apply the ObjectSet Where clause server-side so that only matching events are pushed.",
+      "acceptanceCriteria": [
+        "subscribe_sse.go loads ObjectSet definition by rid, extracts Where",
+        "Each incoming event evaluated against Where before sending",
+        "Failing test first: TestSSEWhereFilter drops non-matching events",
+        "go test ./pkg/oss/... -run SSEWhere passes"
+      ],
+      "priority": 56,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-057",
+      "title": "SSE Last-Event-ID replay via NATS sequence",
+      "description": "As a frontend developer, I want SSE reconnection with Last-Event-ID to replay missed events from NATS so that clients do not lose data on brief disconnects.",
+      "acceptanceCriteria": [
+        "Event id = NATS sequence number",
+        "Request with Last-Event-ID header starts consumer at that sequence+1",
+        "Failing test first: TestSSEReplayFromLastEventID",
+        "go test ./pkg/oss/... -run SSEReplay passes"
+      ],
+      "priority": 57,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-058",
+      "title": "SSE heartbeat + connection limit + integration test",
+      "description": "As a server operator, I want SSE connections to send 30s heartbeats and to cap concurrent connections per user, so that idle clients are detected and resources are bounded.",
+      "acceptanceCriteria": [
+        "Every 30s a comment :ping line is sent on each active connection",
+        "Config max connections per user (default 10) enforced; 429 on breach",
+        "Failing test first: TestSSEHeartbeatAndLimit",
+        "Integration test test/integration/sse_integration_test.go: subscribe + apply 10 actions + assert 10 events",
+        "go test -tags integration ./test/integration/... -run SSEIntegration passes"
+      ],
+      "priority": 58,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-059",
+      "title": "useObjectSetSubscription React hook",
+      "description": "As a frontend developer, I want a React hook that wraps EventSource with exponential backoff reconnect, so that components can declaratively subscribe.",
+      "acceptanceCriteria": [
+        "web/src/hooks/useObjectSetSubscription.ts",
+        "API: useObjectSetSubscription(ontology, rid, { enabled, onEvent })",
+        "Reconnect on error: 1s -> 2s -> 4s -> max 30s",
+        "Attaches Last-Event-ID header on reconnect",
+        "Cleanup on unmount",
+        "Vitest: web/src/hooks/__tests__/useObjectSetSubscription.test.ts mock EventSource",
+        "npm run test passes",
+        "npx tsc --noEmit passes"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-060",
+      "title": "BrowserPage realtime mode toggle",
+      "description": "As a frontend user, I want a Realtime Mode toggle on the Browser page that refreshes the DataTable on SSE events, so that I can watch changes live.",
+      "acceptanceCriteria": [
+        "web/src/components/browser/BrowserPage.tsx adds toggle switch in header",
+        "When on: uses useObjectSetSubscription and invalidates TanStack Query on each event",
+        "Visual indicator (pulsing green dot) when connected",
+        "Vitest coverage updated",
+        "npm run test passes",
+        "npx tsc --noEmit passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-061",
+      "title": "Stream ingest endpoint",
+      "description": "As an ETL operator, I want to push batches of edits directly into an ObjectType stream bypassing Action rules, so that bulk imports are fast.",
+      "acceptanceCriteria": [
+        "Route: POST /api/v2/ontologies/{ontology}/streams/{objectType}/ingest",
+        "Request body: {edits: Edit[]} max 1000",
+        "Edits tagged source='ingest'",
+        "Publishes to NATS subject ontology.{ontology}.ingest",
+        "Failing test first: TestStreamIngestHappyPath",
+        "go test ./pkg/oss/... -run StreamIngest passes"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-062",
+      "title": "Stream ingest policy enforcement",
+      "description": "As a data owner, I want stream ingest to be gated by policy engine so that bulk imports still respect RBAC and row-level policies.",
+      "acceptanceCriteria": [
+        "Stream ingest handler checks user has role ingest-writer",
+        "Applies policy_engine for ingest path (new AllowedForIngest method)",
+        "403 with error IngestNotAllowed if user lacks role or policy denies",
+        "Failing test first: TestStreamIngestPolicy",
+        "go test ./pkg/oss/... ./pkg/security/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-063",
+      "title": "Stream ingest rate limiter + 429 + integration test",
+      "description": "As a server operator, I want stream ingest throttled per ontology with a token bucket so that a runaway client cannot overwhelm the Funnel.",
+      "acceptanceCriteria": [
+        "Token bucket: default 1000 rps per ontology, configurable",
+        "429 with Retry-After header when exhausted",
+        "Integration test test/integration/stream_ingest_test.go: 2000 inserts and rate-limited",
+        "Parity fixture test/foundry_parity/us063_stream_ingest.json",
+        "go test -tags integration ./test/integration/... -run StreamIngest passes"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-064",
+      "title": "Migration 000020 audit_events table + pkg/audit",
+      "description": "As a security auditor, I need an audit_events table and Go package so that every significant action can be recorded with actor, resource, and diff.",
+      "acceptanceCriteria": [
+        "migrations/000020_audit_events.up.sql creates audit_events(id, actor_id, action, resource_type, resource_rid, diff_json, ip, user_agent, ts)",
+        "Down migration",
+        "pkg/audit/audit.go with Record(ctx, event AuditEvent) error",
+        "pg_store implementation",
+        "go test ./pkg/audit/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 64,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-065",
+      "title": "OMS create/update/delete audit triggers",
+      "description": "As a security auditor, I want every OMS metadata change to be recorded in audit_events with diff, so that schema evolution is fully traceable.",
+      "acceptanceCriteria": [
+        "pkg/oms repository create/update/delete calls audit.Record",
+        "Diff encoded as before/after JSON",
+        "Failing test first: TestOMSAuditTrail",
+        "go test ./pkg/oms/... -run Audit passes",
+        "go test ./... passes"
+      ],
+      "priority": 65,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-066",
+      "title": "Auth + policy audit events",
+      "description": "As a security auditor, I want login success/failure, token refresh, api key creation/revoke, and policy changes recorded in audit_events so that auth trails are complete.",
+      "acceptanceCriteria": [
+        "pkg/auth login/refresh/api-key handlers call audit.Record with appropriate action strings",
+        "pkg/security policy CRUD calls audit.Record",
+        "Failing test first: TestAuthAuditTrail",
+        "go test ./pkg/auth/... ./pkg/security/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 66,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-067",
+      "title": "/api/v2/admin/auditEvents read endpoint",
+      "description": "As an admin, I want to query audit events with filters on actor, action, resource_type, and time range so that I can investigate incidents.",
+      "acceptanceCriteria": [
+        "Route: GET /api/v2/admin/auditEvents",
+        "Query params: actor, action, resource_type, since, until, pageSize, pageToken",
+        "Admin-only (403 for non-admin)",
+        "Cursor pagination",
+        "Failing test first: TestAuditEventsEndpoint",
+        "go test ./cmd/server/... ./pkg/audit/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 67,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-068",
+      "title": "Per-endpoint rate limit middleware",
+      "description": "As a server operator, I want configurable per-endpoint token bucket rate limits so that login, apply, and ingest can each have tailored thresholds.",
+      "acceptanceCriteria": [
+        "cmd/server/rate_limit.go middleware using golang.org/x/time/rate",
+        "Config struct: map[method+path]{rps, burst, keyBy}",
+        "keyBy: 'ip' | 'user' | 'ontology'",
+        "429 response includes Retry-After header",
+        "Failing test first: TestRateLimitMiddleware",
+        "go test ./cmd/server/... -run RateLimit passes",
+        "go test ./... passes"
+      ],
+      "priority": 68,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-069",
+      "title": "Rate limit config + CSP tightening + integration test",
+      "description": "As a server operator, I want an initial rate limit config table applied to login/apply/ingest endpoints and a tightened CSP so that the server is production-hardened.",
+      "acceptanceCriteria": [
+        "Rate limit config: login 5 rps/ip, refresh 10 rps/user, apply 100 rps/user, ingest 1000 rps/ontology, default 200 rps/user",
+        "cmd/server/security_middleware.go CSP tightened to allow only self + /api/* + /mcp + /swagger",
+        "Integration test test/integration/rate_limit_test.go exercises each configured endpoint",
+        "go test -tags integration ./test/integration/... -run RateLimit passes",
+        "go test ./... passes"
+      ],
+      "priority": 69,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-070",
+      "title": "Phase 7 cross-US test: policy E2E matrix",
+      "description": "As the Phase 7 Gate owner, I want a cross-US integration test that signs JWT with markings + row filter + column filter and asserts 5 matrix combinations.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_policy_e2e_test.go",
+        "5 user/object combinations covering row + column + marking",
+        "Asserts exact visible object set + visible field set",
+        "make test-integration-phase7 target added to Makefile",
+        "go test -tags integration ./test/integration/phase7/... -run PolicyE2E passes"
+      ],
+      "priority": 70,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-071",
+      "title": "Phase 7 cross-US test: marking propagation",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test that asserts marking AND semantics across 3 users x 3 objects.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_marking_propagation_test.go",
+        "2 markings x 3 objects x 3 users visibility matrix",
+        "go test -tags integration ./test/integration/phase7/... -run MarkingPropagation passes"
+      ],
+      "priority": 71,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-072",
+      "title": "Phase 7 cross-US test: SSE end-to-end",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test that subscribes SSE, applies 10 actions, disconnects, and reconnects with Last-Event-ID to verify lossless delivery.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_sse_subscription_test.go",
+        "Subscribe -> apply 10 actions -> assert 10 events",
+        "Disconnect -> apply 5 more -> reconnect with Last-Event-ID -> assert 5 events received",
+        "go test -tags integration ./test/integration/phase7/... -run SSESubscription passes"
+      ],
+      "priority": 72,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-073",
+      "title": "Phase 7 cross-US test: SSE x policy",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test that subscribes two users with different policies and asserts they see different event subsets.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_sse_policy_test.go",
+        "User A (ACME) and User B (ACME2) subscribe same ObjectSet",
+        "Apply mixed edits with various markings",
+        "Assert A only sees ACME events, B only sees ACME2 events",
+        "go test -tags integration ./test/integration/phase7/... -run SSEPolicy passes"
+      ],
+      "priority": 73,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-074",
+      "title": "Phase 7 cross-US test: stream ingest x policy x rate limit",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test that exercises stream ingest with 1000 edits, unauthorized access, and rate limit breach.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_stream_ingest_test.go",
+        "Authorized bulk 1000 inserts succeed",
+        "Unauthorized user gets 403 IngestNotAllowed",
+        "Rate limit breach gets 429 with Retry-After",
+        "go test -tags integration ./test/integration/phase7/... -run StreamIngest passes"
+      ],
+      "priority": 74,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-075",
+      "title": "Phase 7 cross-US test: audit coverage",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test asserting OMS changes, auth events, and policy changes all produce audit_events rows.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_audit_coverage_test.go",
+        "Create ObjectType -> audit row exists",
+        "Login failure -> audit row",
+        "API key create + revoke -> audit rows",
+        "Policy create -> audit row",
+        "go test -tags integration ./test/integration/phase7/... -run AuditCoverage passes"
+      ],
+      "priority": 75,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-076",
+      "title": "Phase 7 cross-US test: edit conflict x policy",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test combining Phase 6 edit conflict with Phase 7 policy, so that an ingest user limited by policy cannot overwrite protected fields.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_edit_conflict_policy_test.go",
+        "Policy grants ingest role write access only to Order.notes",
+        "Ingest tries to write other fields -> rejected",
+        "Ingest writes notes -> respects edit-only rule",
+        "go test -tags integration ./test/integration/phase7/... -run EditConflictPolicy passes"
+      ],
+      "priority": 76,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-077",
+      "title": "Phase 7 cross-US test: rate limit recovery",
+      "description": "As the Phase 7 Gate owner, I want a cross-US test that exhausts rate limit then waits and asserts normal traffic resumes.",
+      "acceptanceCriteria": [
+        "test/integration/phase7/phase7_rate_limit_recovery_test.go",
+        "Hammer /api/auth/login with wrong password -> 429 after 5 attempts",
+        "Wait Retry-After seconds",
+        "Next login returns 401 (normal)",
+        "go test -tags integration ./test/integration/phase7/... -run RateLimitRecovery passes"
+      ],
+      "priority": 77,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-078",
+      "title": "Playwright spec: login-rate-limit",
+      "description": "As the Phase 7 Gate owner, I want a Playwright spec that hammers the login endpoint and verifies the frontend surfaces the 429 state.",
+      "acceptanceCriteria": [
+        "web/e2e/phase7/login-rate-limit.spec.ts",
+        "Submit wrong password 5 times",
+        "Assert 6th submit shows 'Too many attempts, try again in Ns' UI",
+        "cd web && npm run test:e2e -- login-rate-limit passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 78,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-079",
+      "title": "Playwright spec: browser-realtime-mode",
+      "description": "As the Phase 7 Gate owner, I want a Playwright spec that enables realtime mode on Browser page and asserts the table updates after a backend apply.",
+      "acceptanceCriteria": [
+        "web/e2e/phase7/browser-realtime-mode.spec.ts",
+        "Navigate to Browser, enable Realtime Mode",
+        "Use playwright.request to POST an apply action creating a new object",
+        "Assert new row appears in DataTable within 2 seconds",
+        "cd web && npm run test:e2e -- browser-realtime-mode passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 79,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-080",
+      "title": "Playwright spec: sse-reconnect",
+      "description": "As the Phase 7 Gate owner, I want a Playwright spec that simulates offline/online transitions and verifies SSE reconnect works.",
+      "acceptanceCriteria": [
+        "web/e2e/phase7/sse-reconnect.spec.ts",
+        "Enable realtime mode",
+        "page.context().setOffline(true) -> setOffline(false)",
+        "Meanwhile backend emits 3 events via apply",
+        "Assert 3 events caught up after reconnect",
+        "cd web && npm run test:e2e -- sse-reconnect passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 80,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-081",
+      "title": "Playwright spec: policy-column-hiding",
+      "description": "As the Phase 7 Gate owner, I want a Playwright spec that logs in as manager and peer and verifies salary column visibility difference.",
+      "acceptanceCriteria": [
+        "web/e2e/phase7/policy-column-hiding.spec.ts",
+        "Login as manager@test -> navigate to Employee browser -> assert salary column present",
+        "Logout, login as peer@test -> salary column absent",
+        "cd web && npm run test:e2e -- policy-column-hiding passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 81,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-082",
+      "title": "Playwright spec: policy-row-filter",
+      "description": "As the Phase 7 Gate owner, I want a Playwright spec that verifies marking-based row filter in the Browser page.",
+      "acceptanceCriteria": [
+        "web/e2e/phase7/policy-row-filter.spec.ts",
+        "Login as ACME-only user -> Browser shows only ACME-tagged objects",
+        "Login as ACME2-only user -> Browser shows only ACME2-tagged objects",
+        "cd web && npm run test:e2e -- policy-row-filter passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 82,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-083",
+      "title": "Playwright spec: audit-log-admin",
+      "description": "As the Phase 7 Gate owner, I want a Playwright spec that verifies admin can view audit log and non-admin cannot.",
+      "acceptanceCriteria": [
+        "web/e2e/phase7/audit-log-admin.spec.ts",
+        "Admin login -> navigate to Audit page (new admin route if exists, else API call)",
+        "Assert audit entries visible",
+        "Peer login -> attempt same -> 403 or hidden nav",
+        "cd web && npm run test:e2e -- audit-log-admin passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 83,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-084",
+      "title": "Docs: policy-model.md + sse.md",
+      "description": "As a new adopter, I want documentation of the policy DSL and SSE subscription protocol so that I can write my own policies and subscribe clients correctly.",
+      "acceptanceCriteria": [
+        "docs/security/policy-model.md: rule types, evaluation order, marking AND semantics, cache invalidation",
+        "docs/subscriptions/sse.md: endpoint URL, payload schema, Last-Event-ID, reconnect strategy",
+        "Both files rendered without broken links",
+        "Markdown lint passes"
+      ],
+      "priority": 84,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-085",
+      "title": "Phase 7 Gate: final regression + commit",
+      "description": "As the Phase 7 Gate owner, I want to run full regression (go + web + python + playwright + parity) and commit the gate merge so that Phase 7 is sealed.",
+      "acceptanceCriteria": [
+        "make test && make test-integration && make test-integration-phase6 && make test-integration-phase7 passes",
+        "make web-test passes",
+        "cd web && npm run test:e2e passes (phase6 + phase7 + baseline)",
+        "pytest sdk/python passes",
+        "make test-parity passes with >= 120 samples and >= 95% pass rate",
+        "Gate commit: feat: [US-085] - Phase 7 integration gate: security + realtime verified"
+      ],
+      "priority": 85,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-086",
+      "title": "pkg/functions/goja_runtime.go scaffold + sandbox",
+      "description": "As a function author, I want an embedded JavaScript runtime with disabled fs/net/process so that I can write Weave functions without an external server.",
+      "acceptanceCriteria": [
+        "New package pkg/functions using github.com/dop251/goja",
+        "go.mod adds goja dependency",
+        "Runtime disables require, fetch, fs, net, process, child_process, os globals",
+        "Failing test first: TestGojaSandboxDisabled asserts global.fetch is undefined",
+        "go test ./pkg/functions/... -run Sandbox passes",
+        "go test ./... passes"
+      ],
+      "priority": 86,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-087",
+      "title": "Goja timeout and memory limit",
+      "description": "As a server operator, I want Goja functions to be killed after 5 seconds or 32MB memory so that runaway code cannot take down the process.",
+      "acceptanceCriteria": [
+        "pkg/functions Execute uses context.WithTimeout(5s)",
+        "Goja interrupt via runtime.Interrupt() on timeout",
+        "Memory limited via goja runtime.MaxStackSize and periodic GC",
+        "Failing test first: TestGojaTimeout and TestGojaOOM",
+        "go test ./pkg/functions/... -run TimeoutOOM passes",
+        "go test ./... passes"
+      ],
+      "priority": 87,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-088",
+      "title": "ontology.load and ontology.search JS shim",
+      "description": "As a function author, I want ontology.load(objectType, primaryKey) and ontology.search(objectType, where, opts) JS APIs so that I can read Weave data from inside a function.",
+      "acceptanceCriteria": [
+        "pkg/functions/goja_shim.go registers global 'ontology' with load and search methods",
+        "load invokes OSS GetObject",
+        "search invokes OSS SearchObjects",
+        "Synchronous (blocks JS event loop) - returns JS object",
+        "Failing test first: TestGojaShimLoadSearch",
+        "go test ./pkg/functions/... -run Shim passes"
+      ],
+      "priority": 88,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-089",
+      "title": "Migration 000021 functions table + OMS CRUD",
+      "description": "As a function author, I want to store JavaScript source in a functions table via OMS so that functions become first-class ontology resources.",
+      "acceptanceCriteria": [
+        "migrations/000021_functions.up.sql creates functions(rid, name, version, source_code, created_by, created_at)",
+        "Down migration",
+        "pkg/oms: CreateFunction / GetFunction / ListFunctions / UpdateFunction / DeleteFunction repository methods",
+        "HTTP endpoints under /api/v2/ontologies/{ontology}/functions/",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 89,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-090",
+      "title": "Goja runtime integration test",
+      "description": "As the Phase 8 owner, I want an integration test covering hello world, findOrdersOver, sandbox escape, and OOM to prove the runtime is usable and safe.",
+      "acceptanceCriteria": [
+        "test/integration/goja_runtime_test.go",
+        "Scenario 1: hello world function returns string",
+        "Scenario 2: findOrdersOver(1000) function calls ontology.search and returns IDs",
+        "Scenario 3: sandbox escape via fetch / require - fails",
+        "Scenario 4: while(true) timeout after 5s",
+        "Parity fixture test/foundry_parity/us090_goja.json",
+        "go test -tags integration ./test/integration/... -run GojaRuntime passes"
+      ],
+      "priority": 90,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-091",
+      "title": "Function-backed action dispatch",
+      "description": "As an Action designer, I want ActionType.functionRid to route through Goja for ri.function rids and HTTP dispatcher for URL rids so that both modes work.",
+      "acceptanceCriteria": [
+        "pkg/actions/executor.go inspects functionRid prefix",
+        "ri.function.* -> call pkg/functions.Execute",
+        "http(s):// -> existing http_dispatcher",
+        "Failing test first: TestActionGojaDispatch + TestActionHTTPDispatch",
+        "go test ./pkg/actions/... -run FunctionDispatch passes",
+        "go test ./... passes"
+      ],
+      "priority": 91,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-092",
+      "title": "Function output validation",
+      "description": "As a function author, I want function output validated against expected shape so that malformed returns produce clear errors.",
+      "acceptanceCriteria": [
+        "Expected shape: {edits: Edit[]}",
+        "Invalid shape -> 400 InvalidFunctionOutput",
+        "Edit fields validated (type, objectType, primaryKey)",
+        "Failing test first: TestFunctionOutputValidation",
+        "go test ./pkg/actions/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 92,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-093",
+      "title": "Function-backed action integration test",
+      "description": "As a maintainer, I want an integration test for createOrderAndUpdateInventory function action proving it produces 2 edits that are applied correctly.",
+      "acceptanceCriteria": [
+        "test/integration/function_action_test.go",
+        "Register function that creates an Order and decrements Product.stock",
+        "Apply action with productId, quantity",
+        "Assert Order created and Product.stock decremented",
+        "Parity fixture test/foundry_parity/us093_function_action.json",
+        "go test -tags integration ./test/integration/... -run FunctionAction passes"
+      ],
+      "priority": 93,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-094",
+      "title": "QueryType executeQuery Goja/HTTP dispatch",
+      "description": "As an SDK user, I want POST /queries/{query}/execute to actually invoke the backing function so that query types are not just metadata.",
+      "acceptanceCriteria": [
+        "pkg/oms executeQuery handler routes based on QueryType.functionRid",
+        "Input params mapped to function arguments",
+        "Output returned as JSON",
+        "Failing test first: TestExecuteQueryDispatch",
+        "go test ./pkg/oms/... -run ExecuteQuery passes",
+        "go test ./... passes"
+      ],
+      "priority": 94,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-095",
+      "title": "Query function returning ObjectSet auto-execute",
+      "description": "As an SDK user, I want a query function to return an ObjectSet definition and have the handler execute it and return the object page, so that queries can compose with ObjectSet features.",
+      "acceptanceCriteria": [
+        "If function returns {objectSet: Definition}, handler runs executor and returns page",
+        "If function returns {value: any}, handler wraps as scalar response",
+        "Failing test first: TestQueryFunctionObjectSet + TestQueryFunctionScalar",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 95,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-096",
+      "title": "executeQuery integration test",
+      "description": "As a maintainer, I want an integration test of topCustomers(limit) and totalRevenue() query functions to prove both shapes.",
+      "acceptanceCriteria": [
+        "test/integration/execute_query_test.go",
+        "topCustomers returns top 10 customers by orderCount",
+        "totalRevenue returns scalar sum",
+        "Parity fixture test/foundry_parity/us096_execute_query.json",
+        "go test -tags integration ./test/integration/... -run ExecuteQuery passes"
+      ],
+      "priority": 96,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-097",
+      "title": "Migration 000022 ontology_branches",
+      "description": "As an ontology maintainer, I need an ontology_branches table so that I can record read-only experimental branches for schema evolution.",
+      "acceptanceCriteria": [
+        "migrations/000022_ontology_branches.up.sql creates ontology_branches(name, ontology_rid, base_version, is_experimental, created_at)",
+        "Unique constraint on (ontology_rid, name)",
+        "Down migration",
+        "pkg/oms models.Branch struct",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 97,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-098",
+      "title": "OMS branch CRUD endpoints",
+      "description": "As an ontology maintainer, I want HTTP endpoints to create, list, get, and delete branches so that I can manage experimental branches via API.",
+      "acceptanceCriteria": [
+        "POST /api/v2/ontologies/{ontology}/branches",
+        "GET /api/v2/ontologies/{ontology}/branches",
+        "GET /api/v2/ontologies/{ontology}/branches/{branch}",
+        "DELETE /api/v2/ontologies/{ontology}/branches/{branch}",
+        "Failing test first: TestBranchCRUD",
+        "go test ./pkg/oms/... ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 98,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-099",
+      "title": "Read-only branch view composition",
+      "description": "As an SDK user, I want reads on a branch to return a composed view of base_version snapshot plus branch-specific overlays so that experimental schemas are visible.",
+      "acceptanceCriteria": [
+        "pkg/oms branch resolver: load snapshot at base_version then apply overlay changes",
+        "Read methods take optional branch param",
+        "Writes to branch return 403 BranchReadOnly",
+        "Failing test first: TestBranchReadView",
+        "go test ./pkg/oms/... -run BranchView passes",
+        "go test ./... passes"
+      ],
+      "priority": 99,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-100",
+      "title": "Branch isolation integration test",
+      "description": "As the Phase 8 owner, I want an integration test showing branch additions do not affect HEAD so that branch isolation is proven.",
+      "acceptanceCriteria": [
+        "test/integration/branch_isolation_test.go",
+        "Create snapshot v1 with 3 ObjectTypes, create experimental branch, add 4th ObjectType on branch",
+        "HEAD endpoints return 3 types, branch endpoints return 4 types",
+        "Parity fixture test/foundry_parity/us100_branch_isolation.json",
+        "go test -tags integration ./test/integration/... -run BranchIsolation passes"
+      ],
+      "priority": 100,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-101",
+      "title": "?branch= param + X-Weave-Branch header",
+      "description": "As an SDK user, I want to select a branch via query param or header so that clients can A/B test schema without changing endpoints.",
+      "acceptanceCriteria": [
+        "Middleware reads ?branch= or X-Weave-Branch header (header wins)",
+        "Injects into context",
+        "Applies to all v2 read endpoints",
+        "Failing test first: TestBranchParamAndHeader",
+        "go test ./cmd/server/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 101,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-102",
+      "title": "Write endpoints reject non-HEAD branch",
+      "description": "As a safety measure, I want write endpoints to return 403 BranchReadOnly when branch != HEAD so that experimental branches cannot be corrupted by accidental writes.",
+      "acceptanceCriteria": [
+        "All write paths (OMS admin, action apply, stream ingest) check branch",
+        "Non-HEAD -> 403 + error BranchReadOnly",
+        "Failing test first: TestBranchWriteRejected",
+        "go test ./cmd/server/... ./pkg/actions/... ./pkg/oss/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 102,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-103",
+      "title": "Python SDK + CLI branch parameter",
+      "description": "As an SDK user, I want both Python SDK and CLI to accept a branch parameter so that I can query experimental branches from client tools.",
+      "acceptanceCriteria": [
+        "sdk/python/weave_client/client.py Client accepts branch kwarg",
+        "All calls propagate it as X-Weave-Branch header",
+        "cmd/weave-cli supports --branch flag on read commands",
+        "pytest sdk/python passes",
+        "go test ./cmd/weave-cli/... passes"
+      ],
+      "priority": 103,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-104",
+      "title": "pkg/rid parser @vN version suffix",
+      "description": "As a Foundry-compatible server, I want RID parser to accept optional @vN suffix so that historical snapshots can be addressed.",
+      "acceptanceCriteria": [
+        "pkg/rid: ParseWithVersion(s) (RID, version *int, error)",
+        "Valid suffix: @v1, @v2, ..., @v99999",
+        "No suffix: version=nil (HEAD)",
+        "Malformed suffix: error",
+        "Failing test first: pkg/rid/version_test.go",
+        "go test ./pkg/rid/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 104,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-105",
+      "title": "OMS Get methods with optional version",
+      "description": "As an SDK user, I want OMS Get* methods to accept optional version so that I can read historical ObjectType schema.",
+      "acceptanceCriteria": [
+        "pkg/oms repository Get* methods add optional version *int param",
+        "When set, loads from ontology_snapshots at that version",
+        "When nil, loads HEAD",
+        "Failing test first: TestGetObjectTypeWithVersion",
+        "go test ./pkg/oms/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 105,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-106",
+      "title": "RID version integration test",
+      "description": "As a maintainer, I want an integration test that reads v1, v2, and HEAD versions of an ObjectType to prove version resolution works.",
+      "acceptanceCriteria": [
+        "test/integration/rid_version_test.go",
+        "Create ObjectType v1 with 3 properties, snapshot v1",
+        "Add 4th property, snapshot v2",
+        "GET by RID@v1 returns 3 properties",
+        "GET by RID@v2 returns 4 properties",
+        "GET by RID returns HEAD (4 properties)",
+        "go test -tags integration ./test/integration/... -run RIDVersion passes"
+      ],
+      "priority": 106,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-107",
+      "title": "TimeSeries aggregate endpoint scaffold",
+      "description": "As an SDK user, I want a new endpoint to aggregate TimeSeries points into time buckets so that large datasets can be summarized.",
+      "acceptanceCriteria": [
+        "Route: POST /api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}/timeSeries/{property}/aggregate",
+        "Body: {bucketSize, metric, range}",
+        "Response: {buckets: [{ts, value}]}",
+        "Failing test first: TestTimeSeriesAggregateHandler",
+        "go test ./pkg/oss/... -run TimeSeriesAggregate passes"
+      ],
+      "priority": 107,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-108",
+      "title": "TimeSeries PG bucket aggregation via date_trunc",
+      "description": "As a backend developer, I want pg_store to execute bucket aggregation via PostgreSQL date_trunc so that 100k points per query are fast.",
+      "acceptanceCriteria": [
+        "pkg/timeseries/pg_store.go AggregateBuckets method",
+        "SQL: SELECT date_trunc($1, ts) as bucket, <metric>(value) FROM timeseries_points WHERE ... GROUP BY bucket ORDER BY bucket",
+        "Metric types: avg/min/max/sum/count",
+        "Failing test first: TestPGStoreBucketAggregation",
+        "go test ./pkg/timeseries/... -run BucketAggregation passes",
+        "go test ./... passes"
+      ],
+      "priority": 108,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-109",
+      "title": "TimeSeries aggregate bench + 100k integration test",
+      "description": "As a maintainer, I want a bench and integration test proving 100k point bucket aggregation completes within 500ms.",
+      "acceptanceCriteria": [
+        "test/integration/timeseries_aggregate_test.go seeds 100k points over 30 days",
+        "Assert daily aggregate returns 30 buckets within 500ms",
+        "Assert hourly aggregate returns 720 buckets",
+        "pkg/timeseries/bench_test.go with BenchmarkBucketAggregate",
+        "go test -tags integration ./test/integration/... -run TimeSeriesAggregate passes"
+      ],
+      "priority": 109,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-110",
+      "title": "GeoTemporal pg_store + migration 000023",
+      "description": "As a GeoTemporal SDK user, I want geotemporal data persisted in PostgreSQL so that data survives process restarts.",
+      "acceptanceCriteria": [
+        "migrations/000023_geotemporal_pg.up.sql creates geotemporal_points table with plain lat/lon columns",
+        "Down migration",
+        "pkg/geotemporal/pg_store.go implements Store interface",
+        "Failing test first: TestGeoTemporalPGPersistence",
+        "go test ./pkg/geotemporal/... -run PGStore passes",
+        "go test ./... passes"
+      ],
+      "priority": 110,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-111",
+      "title": "PostGIS optional feature detect",
+      "description": "As a server operator, I want PostGIS to be optional so that basic deployments run on stock PostgreSQL while geo-heavy ones can enable PostGIS.",
+      "acceptanceCriteria": [
+        "Config flag ENABLE_POSTGIS",
+        "Migration conditionally creates geometry column + GIST index when flag set",
+        "pg_store detects column presence at startup and switches queries",
+        "Failing test first: TestGeoTemporalPostGISDetection",
+        "go test ./pkg/geotemporal/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 111,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-112",
+      "title": "GeoTemporal persistence integration test",
+      "description": "As the Phase 8 owner, I want an integration test that writes 100 geotemporal points, restarts the testcontainer process, and asserts no loss.",
+      "acceptanceCriteria": [
+        "test/integration/geotemporal_persistence_test.go",
+        "Write 100 points, close and reopen pool, read back and assert identical",
+        "Parity fixture test/foundry_parity/us112_geotemporal_pg.json",
+        "go test -tags integration ./test/integration/... -run GeoTemporalPersistence passes"
+      ],
+      "priority": 112,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-113",
+      "title": "withProperties 2-hop chained pivotTo",
+      "description": "As a Foundry SDK user, I want withProperties to support chained pivotTo across 2 link hops so that I can compute derived values like department total reports.",
+      "acceptanceCriteria": [
+        "Definition schema allows nested pivotTo in withProperties operand",
+        "Executor traverses 2 hops via link resolver",
+        "Failing test first: TestWithPropertiesTwoHop",
+        "go test ./pkg/oss/objectset/... -run TwoHop passes",
+        "go test ./... passes"
+      ],
+      "priority": 113,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-114",
+      "title": "Multi-hop depth limit + cycle detection",
+      "description": "As a Foundry-compatible server, I want withProperties to reject depth > 3 and detect cycles so that malformed definitions do not cause infinite recursion.",
+      "acceptanceCriteria": [
+        "Max depth 3 enforced in validator",
+        "Visited-RID set prevents cycles during execution",
+        "Error codes: DerivedPropertyDepthExceeded, DerivedPropertyCycleDetected",
+        "Failing test first: TestMultiHopLimits",
+        "go test ./pkg/oss/objectset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 114,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-115",
+      "title": "Multi-hop withProperties integration test",
+      "description": "As a maintainer, I want an integration test covering 1/2/3 hop + cycle scenarios so that multi-hop derived properties are verified end-to-end.",
+      "acceptanceCriteria": [
+        "test/integration/withproperties_multihop_test.go",
+        "1 hop: Employee.reportsCount",
+        "2 hop: Employee.departmentHeadCount",
+        "3 hop: Order.supplierCountryTotalOrders",
+        "Cycle case (Employee.manager -> manager -> manager) returns error",
+        "Parity fixture test/foundry_parity/us115_multihop.json",
+        "go test -tags integration ./test/integration/... -run MultiHop passes"
+      ],
+      "priority": 115,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-116",
+      "title": "/objectSets/aggregate on arbitrary definition",
+      "description": "As a Foundry SDK user, I want /objectSets/aggregate to execute on any definition (filter/union/searchAround) rather than only raw ObjectTypes, matching Foundry shape.",
+      "acceptanceCriteria": [
+        "Handler executes ObjectSet definition first then runs aggregation on resulting primary key set",
+        "Accuracy marker propagated through composed set",
+        "Response shape matches Foundry (buckets/metrics/accuracy order)",
+        "Failing test first: TestAggregateOnObjectSet",
+        "go test ./pkg/oss/objectset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 116,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-117",
+      "title": "Aggregate-on-ObjectSet integration test",
+      "description": "As a maintainer, I want an integration test that aggregates on filter, union, and searchAround ObjectSets so that the feature is proven on composed sets.",
+      "acceptanceCriteria": [
+        "test/integration/aggregate_on_objectset_test.go",
+        "Filter: orders where status=shipped aggregate groupBy country",
+        "Union: active + former employees aggregate count",
+        "SearchAround: customers -> orders aggregate avg(total)",
+        "Parity fixture test/foundry_parity/us117_aggregate_on_set.json",
+        "go test -tags integration ./test/integration/... -run AggregateOnObjectSet passes"
+      ],
+      "priority": 117,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-118",
+      "title": "Phase 8 cross-US test: goja action end-to-end",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test that runs a Goja function-backed action and verifies Bleve indexing + audit recording.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_goja_action_test.go",
+        "Register createOrderAndUpdateInventory function action",
+        "Apply -> assert Order + Product edits applied",
+        "Assert Bleve queries match new state",
+        "Assert audit_events row recorded",
+        "Makefile target make test-integration-phase8",
+        "go test -tags integration ./test/integration/phase8/... -run GojaAction passes"
+      ],
+      "priority": 118,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-119",
+      "title": "Phase 8 cross-US test: goja query",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test that runs topCustomers query function end-to-end via Python SDK.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_goja_query_test.go",
+        "Register topCustomers(limit) and totalRevenue() functions",
+        "Execute via Python SDK client and assert results",
+        "go test -tags integration ./test/integration/phase8/... -run GojaQuery passes",
+        "pytest sdk/python test case added"
+      ],
+      "priority": 119,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-120",
+      "title": "Phase 8 cross-US test: goja sandbox",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test covering sandbox escape attempts + timeout + OOM.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_goja_sandbox_test.go",
+        "Reject fetch, fs, process",
+        "while(true) times out after 5s",
+        "new Array(1e10) OOMs gracefully",
+        "go test -tags integration ./test/integration/phase8/... -run GojaSandbox passes"
+      ],
+      "priority": 120,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-121",
+      "title": "Phase 8 cross-US test: branch isolation",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test for branch isolation combining OMS branches with RID @vN addressing.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_branch_isolation_test.go",
+        "Create base v1 schema, create branch, modify on branch, snapshot branch as v2",
+        "HEAD returns v1, branch returns v2, RID@v1 returns v1, RID@v2 returns v2",
+        "go test -tags integration ./test/integration/phase8/... -run BranchIsolation passes"
+      ],
+      "priority": 121,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-122",
+      "title": "Phase 8 cross-US test: RID version",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test for RID @vN resolution across OMS and OSS.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_rid_version_test.go",
+        "3 snapshots with different property shapes",
+        "Each RID@vN read returns correct historical view",
+        "Objects created against v1 remain queryable when schema evolves",
+        "go test -tags integration ./test/integration/phase8/... -run RIDVersion passes"
+      ],
+      "priority": 122,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-123",
+      "title": "Phase 8 cross-US test: TimeSeries aggregate",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test for TimeSeries bucket aggregation at scale.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_timeseries_aggregate_test.go",
+        "Seed 100k points across 30 days for 10 different series",
+        "Aggregate daily/weekly/monthly and verify counts + values",
+        "Performance assert: <= 500ms per query",
+        "go test -tags integration ./test/integration/phase8/... -run TimeSeriesAggregate passes"
+      ],
+      "priority": 123,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-124",
+      "title": "Phase 8 cross-US test: GeoTemporal persistence",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test proving GeoTemporal survives restart.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_geotemporal_persistence_test.go",
+        "Write 100 points, close pool, reopen, read back and assert identical",
+        "PostGIS and non-PostGIS modes both covered",
+        "go test -tags integration ./test/integration/phase8/... -run GeoTemporalPersistence passes"
+      ],
+      "priority": 124,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-125",
+      "title": "Phase 8 cross-US test: withProperties multi-hop",
+      "description": "As the Phase 8 Gate owner, I want a cross-US test for multi-hop derived properties in a larger fixture.",
+      "acceptanceCriteria": [
+        "test/integration/phase8/phase8_withproperties_multihop_test.go",
+        "10k object Northwind fixture",
+        "1/2/3 hop derived values computed correctly",
+        "Cycle detection triggers error",
+        "go test -tags integration ./test/integration/phase8/... -run MultiHop passes"
+      ],
+      "priority": 125,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-126",
+      "title": "Playwright spec: function-action",
+      "description": "As the Phase 8 Gate owner, I want a Playwright spec that executes a function-backed action via the UI and verifies edit counts.",
+      "acceptanceCriteria": [
+        "web/e2e/phase8/function-action.spec.ts",
+        "Register function action via API (setup)",
+        "Open Action Console, select createOrderAndUpdateInventory",
+        "Fill params, submit, assert ActionResult shows 2 edits (1 create + 1 modify)",
+        "cd web && npm run test:e2e -- function-action passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 126,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-127",
+      "title": "Playwright spec: branch-switcher",
+      "description": "As the Phase 8 Gate owner, I want a Playwright spec for the branch switcher UI so that branch selection is verified in the browser.",
+      "acceptanceCriteria": [
+        "Add branch switcher UI component in Topbar if not yet present",
+        "web/e2e/phase8/branch-switcher.spec.ts",
+        "Select experimental branch -> TypeTree shows branch-specific ObjectType",
+        "Switch back to HEAD -> TypeTree updates",
+        "cd web && npm run test:e2e -- branch-switcher passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 127,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-128",
+      "title": "Playwright spec: timeseries-chart",
+      "description": "As the Phase 8 Gate owner, I want a Playwright spec that exercises the TimeSeries chart with bucket aggregation.",
+      "acceptanceCriteria": [
+        "Add TimeSeries chart UI to ObjectDetail if not present (using SimpleChart)",
+        "web/e2e/phase8/timeseries-chart.spec.ts",
+        "Open an object with TimeSeries property, select daily aggregation",
+        "Assert chart renders with N bucket points",
+        "cd web && npm run test:e2e -- timeseries-chart passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 128,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-129",
+      "title": "Playwright spec: query-function-runner",
+      "description": "As the Phase 8 Gate owner, I want a Playwright spec that runs a query function via UI and verifies results.",
+      "acceptanceCriteria": [
+        "Add Query Runner page if not present",
+        "web/e2e/phase8/query-function-runner.spec.ts",
+        "Execute topCustomers with limit=5 -> 5 rows in result table",
+        "cd web && npm run test:e2e -- query-function-runner passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 129,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-130",
+      "title": "demos/phase8_deep_parity.py notebook + Phase 8 docs",
+      "description": "As a new adopter, I want a demo notebook showing branch + function + TimeSeries + GeoTemporal and complementary docs so that I can see the whole flow.",
+      "acceptanceCriteria": [
+        "demos/phase8_deep_parity.py script (or .ipynb if nbval available) runs end to end",
+        "docs/functions/goja-runtime.md: sandbox, shim, limits",
+        "docs/branches/ontology-versioning.md: branch + RID semver semantics",
+        "Notebook executes clean against a local Weave + seed data",
+        "Markdown lint passes on new docs"
+      ],
+      "priority": 130,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-131",
+      "title": "Phase 8 Gate: final regression + commit",
+      "description": "As the Phase 8 Gate owner, I want to run full regression and commit the Phase 8 gate merge so that runtime + branches + depth are sealed.",
+      "acceptanceCriteria": [
+        "make test && make test-integration && make test-integration-phase6 && make test-integration-phase7 && make test-integration-phase8 passes",
+        "make web-test passes",
+        "cd web && npm run test:e2e passes (all phase6/7/8 + baseline)",
+        "pytest sdk/python passes",
+        "make test-parity passes with >= 150 samples and >= 95% pass rate",
+        "Gate commit: feat: [US-131] - Phase 8 integration gate: runtime + branches + depth verified"
+      ],
+      "priority": 131,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-132",
+      "title": "pkg/dataset/parquet_writer.go",
+      "description": "As a maintainer, I want a Parquet writer that dumps objects per ObjectType to parquet files, so that cold storage rehydration becomes possible.",
+      "acceptanceCriteria": [
+        "New pkg/dataset/parquet_writer.go using github.com/xitongsys/parquet-go or apache/arrow",
+        "WriteObjects(ontology, objectType, []WireObject) writes to data/datasets/{ontology}/{ts}/data.parquet",
+        "Schema inferred from ObjectType definition",
+        "Failing test first: TestParquetWriterRoundtrip",
+        "go.mod adds parquet library",
+        "go test ./pkg/dataset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 132,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-133",
+      "title": "Background materialize job",
+      "description": "As a server operator, I want a background job to materialize all ObjectTypes to Parquet every 6 hours so that rehydration data is always fresh.",
+      "acceptanceCriteria": [
+        "New pkg/dataset/materializer.go with ticker loop",
+        "Config: WEAVE_MATERIALIZE_INTERVAL (default 6h)",
+        "Main wires it after server start",
+        "Metric weave_materialize_last_success_ts",
+        "Failing test first: TestMaterializerRuns",
+        "go test ./pkg/dataset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 133,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-134",
+      "title": "make rehydrate: Parquet to Bleve pipeline",
+      "description": "As a server operator, I want a Makefile target to rehydrate Bleve indexes from the latest Parquet snapshot so that I can recover from corrupted indexes.",
+      "acceptanceCriteria": [
+        "Makefile target rehydrate: wipes data/indexes, invokes bin/weave rehydrate",
+        "CLI command weave rehydrate walks latest Parquet and reindexes",
+        "Failing test first: TestRehydrateRoundTrip (writes 1k objects, deletes indexes, rehydrates)",
+        "go test -tags integration ./pkg/dataset/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 134,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-135",
+      "title": "Parquet cold storage integration test",
+      "description": "As a maintainer, I want a disaster-recovery integration test proving 10k objects survive index wipe and rehydrate.",
+      "acceptanceCriteria": [
+        "test/integration/parquet_rehydrate_test.go",
+        "Seed 10k Northwind objects",
+        "Trigger materialize",
+        "Delete data/indexes",
+        "Run rehydrate",
+        "Assert all 10k queryable again and property equality",
+        "go test -tags integration ./test/integration/... -run ParquetRehydrate passes"
+      ],
+      "priority": 135,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-136",
+      "title": "scripts/bench/gen_northwind_1m.go generator",
+      "description": "As a maintainer, I want a Go script that generates 1M Northwind objects so that performance benchmarks can run at scale.",
+      "acceptanceCriteria": [
+        "scripts/bench/gen_northwind_1m.go writes CSVs or direct PG inserts",
+        "Parameters: --target rows, --seed",
+        "Deterministic given seed",
+        "Runs within 2 minutes on local dev box",
+        "Documented in README"
+      ],
+      "priority": 136,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-137",
+      "title": "make bench target + history output",
+      "description": "As a maintainer, I want a make bench target that runs the full suite and writes results to bench/history/{date}.md.",
+      "acceptanceCriteria": [
+        "Makefile target bench runs go test -bench=. on pkg/oss and pkg/oss/aggregation",
+        "Results appended to bench/history/$(date).md",
+        "Summary line: Load p95, Search p95, Aggregate p95, KNN p95, Action p95",
+        "No test failures during bench",
+        "Documented in docs/operating-guide.md"
+      ],
+      "priority": 137,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-138",
+      "title": "Bench regression detection",
+      "description": "As a CI owner, I want bench to fail when p95 regresses by more than 10% vs baseline so that performance regressions are caught in PRs.",
+      "acceptanceCriteria": [
+        "bench/baseline.json stores target p95 numbers",
+        "make bench-check compares current run against baseline and exits non-zero on > 10% regression",
+        "Nightly CI runs make bench-check",
+        "Documented threshold in bench/README.md",
+        "Shell/Go script clean"
+      ],
+      "priority": 138,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-139",
+      "title": "otelhttp chi middleware + span naming",
+      "description": "As an operator, I want HTTP requests to produce OpenTelemetry spans so that distributed tracing works across request boundaries.",
+      "acceptanceCriteria": [
+        "cmd/server/main.go wraps chi router in otelhttp handler",
+        "Span names: method + route pattern",
+        "Sampler configurable via env OTEL_SAMPLER (default parentbased_always_on)",
+        "Exporter OTLP to OTEL_EXPORTER_OTLP_ENDPOINT",
+        "go test ./cmd/server/... passes"
+      ],
+      "priority": 139,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-140",
+      "title": "Funnel consumer trace context from NATS headers",
+      "description": "As an operator, I want Funnel consumer to recover trace context from NATS message headers so that traces span from HTTP request to edit application.",
+      "acceptanceCriteria": [
+        "Publisher propagates trace context into NATS headers",
+        "Consumer extracts headers and starts child span",
+        "Span name: 'funnel.consume.{eventType}'",
+        "Failing test first: TestFunnelTracePropagation",
+        "go test ./pkg/funnel/... -run TracePropagation passes"
+      ],
+      "priority": 140,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-141",
+      "title": "OTel docker-compose Jaeger example + integration test",
+      "description": "As a new operator, I want a docker-compose example with Jaeger and an integration test that verifies a single request produces at least 5 linked spans.",
+      "acceptanceCriteria": [
+        "docker-compose.jaeger.yml with Jaeger all-in-one",
+        "docs/operating-guide.md section on enabling OTel",
+        "test/integration/trace_propagation_test.go: apply action + assert >= 5 spans in memory exporter + parent-child correct",
+        "go test -tags integration ./test/integration/... -run TracePropagation passes"
+      ],
+      "priority": 141,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-142",
+      "title": "Python SDK ObjectSet builder",
+      "description": "As a Python SDK user, I want a fluent ObjectSet builder so that I can compose filter/searchAround/withProperties Pythonically.",
+      "acceptanceCriteria": [
+        "sdk/python/weave_client/objectset_builder.py",
+        "API: ObjectSetBuilder(ot).filter(where).searchAround(link).withProperty(name, agg).build()",
+        "Returns raw dict definition",
+        "Pytest coverage",
+        "pytest sdk/python passes",
+        "docs/python-sdk.md example updated"
+      ],
+      "priority": 142,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-143",
+      "title": "Python SDK aggregate helpers",
+      "description": "As a Python SDK user, I want metric helpers so that I can write count(), avg('salary'), percentile(95, 'duration') without raw dicts.",
+      "acceptanceCriteria": [
+        "sdk/python/weave_client/aggregate.py with Count, Sum, Avg, Min, Max, ApproxPercentile functions returning dicts",
+        "client.aggregate(ontology, objectType, metrics, groupBy) method",
+        "Pytest coverage",
+        "pytest sdk/python passes"
+      ],
+      "priority": 143,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-144",
+      "title": "Python SDK timeseries + attachments",
+      "description": "As a Python SDK user, I want timeseries.aggregate and attachments.upload/download so that I can work with special properties.",
+      "acceptanceCriteria": [
+        "sdk/python/weave_client/timeseries.py aggregate method hitting US-107 endpoint",
+        "sdk/python/weave_client/attachments.py upload/download",
+        "Pytest coverage including a binary roundtrip",
+        "pytest sdk/python passes",
+        "docs/python-sdk.md updated"
+      ],
+      "priority": 144,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-145",
+      "title": "CLI: weave action apply/list",
+      "description": "As a CLI user, I want action apply and action list commands so that I can execute actions from the shell.",
+      "acceptanceCriteria": [
+        "weave action list --ontology O prints table of action types",
+        "weave action apply --ontology O --action A --params '{...}' submits action",
+        "--json flag for JSON output",
+        "Respects WEAVE_ACCESS_TOKEN",
+        "go test ./cmd/weave-cli/... passes"
+      ],
+      "priority": 145,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-146",
+      "title": "CLI: weave aggregate + objectset run",
+      "description": "As a CLI user, I want aggregate and objectset run commands so that I can test aggregation and ObjectSets without curling raw JSON.",
+      "acceptanceCriteria": [
+        "weave aggregate --ontology O --type T --metric '{...}' --group-by '[...]' prints results",
+        "weave objectset run --ontology O --definition @file.json prints object page",
+        "--json or table output mode",
+        "go test ./cmd/weave-cli/... passes"
+      ],
+      "priority": 146,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-147",
+      "title": "weave-mcp --local embedded mode",
+      "description": "As an MCP consumer, I want weave-mcp to run a fully functional local instance with embedded deps so that offline demos work.",
+      "acceptanceCriteria": [
+        "weave-mcp --local flag starts in-process PG via testcontainers OR uses existing config",
+        "Starts NATS JetStream with local file store",
+        "Opens Bleve local directory",
+        "Registers tools as per pkg/mcp",
+        "Documented in docs/mcp.md",
+        "go test ./cmd/weave-mcp/... passes"
+      ],
+      "priority": 147,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-148",
+      "title": "MCP prompts/list + resources/list real implementation",
+      "description": "As an MCP client, I want prompts/list and resources/list to return real content so that discovery works.",
+      "acceptanceCriteria": [
+        "pkg/mcp/server.go returns pre-defined prompt templates in prompts/list",
+        "resources/list returns current ontology ObjectTypes + ActionTypes as MCP resources",
+        "Failing test first: TestMCPPromptsResources",
+        "go test ./pkg/mcp/... passes",
+        "go test ./... passes"
+      ],
+      "priority": 148,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-149",
+      "title": "docs/operating-guide.md",
+      "description": "As a new operator, I want an operating guide covering config, deploy modes, monitoring, and backup so that I can run Weave in production.",
+      "acceptanceCriteria": [
+        "docs/operating-guide.md with sections: Config (env vars), Deploy (docker-compose + bare), Monitoring (Prom + Jaeger), Backup (PG dump + Parquet), Tuning",
+        "Links to relevant packages and endpoints",
+        "Markdown lint passes",
+        "README.md links to operating-guide"
+      ],
+      "priority": 149,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-150",
+      "title": "docs/upgrade-guide.md (v1 to v2)",
+      "description": "As a v1 adopter, I want a concise upgrade guide so that I can migrate to v2 without surprise.",
+      "acceptanceCriteria": [
+        "docs/upgrade-guide.md listing all v2 breaking or additive changes: Edit.source field, RID @vN suffix, expectedVersion option, branch param, new migrations 000018-000023, new env vars",
+        "Step-by-step upgrade procedure",
+        "Rollback notes",
+        "Markdown lint passes"
+      ],
+      "priority": 150,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-151",
+      "title": "docs/troubleshooting.md top 20 issues",
+      "description": "As a new operator, I want a troubleshooting playbook so that I can self-serve common issues.",
+      "acceptanceCriteria": [
+        "docs/troubleshooting.md with 20 common issues",
+        "Covers: migration failure, Bleve corrupted index, NATS offset drift, JWT expiration, policy debug, SSE disconnects, Goja sandbox errors, branch write 403, rate limit 429",
+        "Each issue: symptom, root cause, fix steps",
+        "Markdown lint passes"
+      ],
+      "priority": 151,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-152",
+      "title": "Phase 9 journey test: schema evolution",
+      "description": "As the Phase 9 Gate owner, I want a long-running journey test covering schema creation, import, aggregate, branch, Parquet materialize and rehydrate.",
+      "acceptanceCriteria": [
+        "test/integration/e2e/journey_schema_evolution_test.go",
+        "Flow: create ontology -> define ObjectTypes -> seed Northwind 100k -> aggregate -> create branch -> modify schema -> query branch + HEAD -> materialize Parquet -> delete indexes -> rehydrate -> verify equality",
+        "Single test function; long runtime acceptable (marked t.Skip in short mode)",
+        "go test -tags integration -run SchemaEvolution ./test/integration/e2e/ passes"
+      ],
+      "priority": 152,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-153",
+      "title": "Phase 9 journey test: function lifecycle",
+      "description": "As the Phase 9 Gate owner, I want a journey test covering function authoring, action wiring, side effects, audit, SSE, and SDK read.",
+      "acceptanceCriteria": [
+        "test/integration/e2e/journey_function_lifecycle_test.go",
+        "Flow: write function -> create function-backed action -> SSE subscribe -> apply -> audit row -> SSE event -> Python SDK reads result",
+        "go test -tags integration -run FunctionLifecycle ./test/integration/e2e/ passes"
+      ],
+      "priority": 153,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-154",
+      "title": "Phase 9 journey test: security end-to-end",
+      "description": "As the Phase 9 Gate owner, I want a journey test covering 3 users with different markings/roles each issuing the same query and getting different results, all traced in audit.",
+      "acceptanceCriteria": [
+        "test/integration/e2e/journey_security_end_to_end_test.go",
+        "3 users, 3 policies, same query, 3 different result sets",
+        "Audit_events contains every user's query + policy evaluation",
+        "go test -tags integration -run SecurityEndToEnd ./test/integration/e2e/ passes"
+      ],
+      "priority": 154,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-155",
+      "title": "Phase 9 journey test: streaming ingest",
+      "description": "As the Phase 9 Gate owner, I want a journey test flooding stream ingest with 1M edits and asserting user edits during flood never lost + Funnel lag stays under threshold.",
+      "acceptanceCriteria": [
+        "test/integration/e2e/journey_streaming_ingest_test.go",
+        "Seed baseline; run ingest flood of 1M edits + concurrent 100 user edits",
+        "Measure Funnel lag via weave_funnel_lag_seconds metric",
+        "Assert p95 lag <= 200ms, all 100 user edits persist",
+        "go test -tags integration -run StreamingIngest ./test/integration/e2e/ passes"
+      ],
+      "priority": 155,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-156",
+      "title": "Phase 9 journey test: disaster recovery",
+      "description": "As the Phase 9 Gate owner, I want a journey test that kills Bleve mid-run, rehydrates from Parquet, and asserts query results unchanged.",
+      "acceptanceCriteria": [
+        "test/integration/e2e/journey_disaster_recovery_test.go",
+        "Seed -> snapshot query results -> delete Bleve dir -> rehydrate -> re-run query -> assert equal",
+        "Also restart PG testcontainer and assert migrations idempotent",
+        "go test -tags integration -run DisasterRecovery ./test/integration/e2e/ passes"
+      ],
+      "priority": 156,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-157",
+      "title": "Playwright spec: smoke (5 pages)",
+      "description": "As the Phase 9 Gate owner, I want a Playwright smoke spec covering Dashboard, Explorer, Browser, ActionConsole, Aggregation pages so that core UI is guarded.",
+      "acceptanceCriteria": [
+        "web/e2e/phase9/smoke.spec.ts",
+        "For each page: visit, wait for main element, perform one interaction, assert no console errors",
+        "cd web && npm run test:e2e -- smoke passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 157,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-158",
+      "title": "Phase 9 Gate: full bench run + target validation",
+      "description": "As the Phase 9 Gate owner, I want a full benchmark run and validation against the v1.0 targets so that performance commitments are met.",
+      "acceptanceCriteria": [
+        "make bench run on Northwind 1M dataset",
+        "Assert Load p95 <= 50ms, Search p95 <= 100ms, Aggregate p95 <= 150ms, KNN p95 <= 100ms, Action p95 <= 200ms, SSE p95 <= 50ms",
+        "Results written to bench/history/v1.0.md",
+        "Fails the story if any target missed"
+      ],
+      "priority": 158,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-159",
+      "title": "Phase 9 Gate: parity fixture 100% pass",
+      "description": "As the Phase 9 Gate owner, I want the parity fixture suite to pass 100% (not 95%) so that v1.0 is a trustworthy Foundry OSv2 clone.",
+      "acceptanceCriteria": [
+        "make test-parity runs >= 150 fixtures",
+        "Pass rate = 100% (any failure fails the story)",
+        "Runner supports filtering by phase/resource for CI",
+        "Documented in test/foundry_parity/README.md"
+      ],
+      "priority": 159,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-160",
+      "title": "docs/releases/v1.0.0.md release notes",
+      "description": "As a user, I want release notes for v1.0 so that I can see what's included and how to upgrade.",
+      "acceptanceCriteria": [
+        "docs/releases/v1.0.0.md with Phase 1-5 summary, Phase 6-9 summary, known limits, upgrade pointer",
+        "Lists breaking changes explicitly",
+        "Acknowledges MAY-tier features not shipped",
+        "Markdown lint passes"
+      ],
+      "priority": 160,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-161",
+      "title": "README.md v1.0 badge + v2 summary",
+      "description": "As a visitor, I want the README top to show v1.0 readiness and the one-line v2 summary so that project status is clear.",
+      "acceptanceCriteria": [
+        "README.md adds v1.0 badge near top",
+        "One-line summary: '100% Foundry OSv2 surface + deep semantic parity (single-machine Go clone)'",
+        "Links to operating-guide, upgrade-guide, troubleshooting",
+        "Markdown lint passes"
+      ],
+      "priority": 161,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-162",
+      "title": "Dockerfile final build + v1.0.0 image tag",
+      "description": "As a release engineer, I want a clean Dockerfile build with a v1.0.0 tag so that users can pull a stable image.",
+      "acceptanceCriteria": [
+        "docker build -t weave:v1.0.0 . succeeds",
+        "Multi-stage build remains small",
+        "Image runs and responds to /health",
+        "Documented in operating-guide",
+        "No credentials embedded"
+      ],
+      "priority": 162,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-163",
+      "title": "CHANGES-v2.md complete",
+      "description": "As a user upgrading from v1, I want a single CHANGES-v2.md listing every user-observable change so that I know what to expect.",
+      "acceptanceCriteria": [
+        "docs/CHANGES-v2.md lists: new endpoints, new columns, new headers, new JWT claims, new error codes, new env vars",
+        "Each entry has: type (Added/Changed/Deprecated/Removed), link to US, migration note",
+        "Markdown lint passes"
+      ],
+      "priority": 163,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-164",
+      "title": "Markdown lint pass for all new docs",
+      "description": "As a doc reader, I want all new markdown to pass lint so that reading experience is consistent.",
+      "acceptanceCriteria": [
+        "Run markdownlint-cli2 over docs/ and README.md",
+        "Zero warnings for Phase 6-9 files",
+        "Lint config committed if needed",
+        "Any violations fixed in place"
+      ],
+      "priority": 164,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-165",
+      "title": "Phase 9 Gate: full regression (all phases)",
+      "description": "As the Phase 9 Gate owner, I want the full test and lint suite to run cleanly so that v1.0 is unambiguously green.",
+      "acceptanceCriteria": [
+        "make test && make test-integration && make test-integration-phase6 && make test-integration-phase7 && make test-integration-phase8 passes",
+        "make web-test && cd web && npm run test:e2e passes",
+        "pytest sdk/python passes",
+        "make test-parity passes 100%",
+        "make bench-check passes targets",
+        "markdownlint passes",
+        "gofmt + go vet clean"
+      ],
+      "priority": 165,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-166",
+      "title": "Phase 9 Gate: performance KPIs documented",
+      "description": "As a stakeholder, I want the final v1.0 performance KPIs documented so that future regressions can be detected.",
+      "acceptanceCriteria": [
+        "bench/history/v1.0.md contains: Load/Search/Aggregate/KNN/Action/SSE p95 with timestamps",
+        "bench/baseline.json updated to v1.0 numbers",
+        "Referenced from docs/releases/v1.0.0.md"
+      ],
+      "priority": 166,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-167",
+      "title": "Completion matrix final update",
+      "description": "As a project historian, I want the PRD completion matrix fully updated to reflect v1.0 state so that the narrative matches reality.",
+      "acceptanceCriteria": [
+        "docs/PRD-Weave-OSv2-深度复刻-V2.md matrix all modules >= 85% or explicitly marked non-goal",
+        "tasks/prd-v2-deep-parity.md status markers updated",
+        "README.md updated to v1.0 state",
+        "Markdown lint passes"
+      ],
+      "priority": 167,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-168",
+      "title": "v1.0.0 tag + final gate commit",
+      "description": "As the release owner, I want the v1.0.0 tag applied and the final gate commit merged so that the release is official.",
+      "acceptanceCriteria": [
+        "git tag v1.0.0 on final gate commit",
+        "Gate commit: feat: [US-168] - Phase 9 integration gate: v1.0 release ready",
+        "Commit body lists: total stories delivered, total tests, parity fixture count, bench KPIs",
+        "No uncommitted files",
+        "User prompted before push (not pushed automatically)"
+      ],
+      "priority": 168,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

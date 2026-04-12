@@ -14,9 +14,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oss/where"
 )
+
+// authWithTestUser is a thin wrapper around auth.WithUser that creates a
+// minimal auth.User with the supplied ID. The US-058 test uses it (via a
+// chi middleware) to stand in for the real auth middleware while keeping
+// the helper local to pkg/oss.
+func authWithTestUser(ctx context.Context, id string) context.Context {
+	return auth.WithUser(ctx, &auth.User{ID: id})
+}
 
 type sseEventFrame struct {
 	EventType string                 `json:"eventType"`
@@ -579,6 +588,177 @@ func expectIDFrame(t *testing.T, ch <-chan sseIDFrame, timeout time.Duration) ss
 		t.Fatal("timed out waiting for SSE id frame")
 		return sseIDFrame{}
 	}
+}
+
+// TestSSEHeartbeatAndLimit is the US-058 red-first acceptance test. It
+// exercises two orthogonal behaviours of the SSE subscribe handler:
+//
+//  1. Heartbeat: every configured interval the server emits a `:ping` SSE
+//     comment line so idle clients and intermediaries can detect a live
+//     connection without having to wait for application events.
+//  2. Per-user connection cap: when the caller already holds MaxConnections
+//     open subscriptions for the same authenticated user, the next request
+//     is rejected with HTTP 429 and a RESOURCE_EXHAUSTED error body. A
+//     different user is unaffected.
+//
+// The test configures a 50ms heartbeat and a cap of 2 so both behaviours
+// land deterministically inside normal go-test timeouts.
+func TestSSEHeartbeatAndLimit(t *testing.T) {
+	const rid = "rid-heartbeat-1"
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
+
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+	handler.SetHeartbeatInterval(50 * time.Millisecond)
+	handler.SetMaxConnectionsPerUser(2)
+
+	r := chi.NewRouter()
+	// The test uses an X-Test-User header as a lightweight stand-in for the
+	// real auth middleware — the SSE handler only needs an auth.User on the
+	// request context to key its connection counter.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if uid := req.Header.Get("X-Test-User"); uid != "" {
+				req = req.WithContext(authWithTestUser(req.Context(), uid))
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	url := srv.URL + "/api/v2/ontologies/northwind/objectSets/" + rid + "/subscribe"
+
+	// --- Part 1: heartbeat ----------------------------------------------
+	// Open a single subscription for "alice" and scan the raw body for a
+	// `:ping` comment line. The server must emit one within a small
+	// multiple of the heartbeat interval (50ms configured above) even
+	// though no events are ever published.
+	ctxHB, cancelHB := context.WithCancel(context.Background())
+	defer cancelHB()
+	reqHB, err := http.NewRequestWithContext(ctxHB, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	reqHB.Header.Set("X-Test-User", "alice")
+	respHB, err := http.DefaultClient.Do(reqHB)
+	if err != nil {
+		t.Fatalf("do heartbeat: %v", err)
+	}
+	defer respHB.Body.Close()
+	if respHB.StatusCode != http.StatusOK {
+		t.Fatalf("heartbeat status = %d, want 200", respHB.StatusCode)
+	}
+
+	lineCh := make(chan string, 32)
+	var wgHB sync.WaitGroup
+	wgHB.Add(1)
+	go func() {
+		defer wgHB.Done()
+		reader := bufio.NewReader(respHB.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			select {
+			case lineCh <- strings.TrimRight(line, "\r\n"):
+			case <-ctxHB.Done():
+				return
+			}
+		}
+	}()
+
+	heartbeatDeadline := time.After(1 * time.Second)
+	sawPing := false
+	for !sawPing {
+		select {
+		case line := <-lineCh:
+			if strings.HasPrefix(line, ":ping") {
+				sawPing = true
+			}
+		case <-heartbeatDeadline:
+			t.Fatalf("timed out waiting for :ping heartbeat line")
+		}
+	}
+
+	// --- Part 2: connection cap -----------------------------------------
+	// Alice already holds one active connection. Open one more (limit=2),
+	// then assert the third is rejected with 429. Each passing subscription
+	// must stay open across the cap check so the handler's counter actually
+	// shows "2 in flight" when the third request arrives.
+	ctxCap, cancelCap := context.WithCancel(context.Background())
+	defer cancelCap()
+
+	openAlice2, err := http.NewRequestWithContext(ctxCap, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new alice2 request: %v", err)
+	}
+	openAlice2.Header.Set("X-Test-User", "alice")
+	respAlice2, err := http.DefaultClient.Do(openAlice2)
+	if err != nil {
+		t.Fatalf("do alice2: %v", err)
+	}
+	defer respAlice2.Body.Close()
+	if respAlice2.StatusCode != http.StatusOK {
+		t.Fatalf("alice2 status = %d, want 200", respAlice2.StatusCode)
+	}
+	// Drain alice2 body concurrently so the server-side handler stays
+	// unblocked on its writes.
+	go io.Copy(io.Discard, respAlice2.Body)
+	// Give the handler a brief moment to register the second subscription
+	// into the connection counter before we fire the capped third request.
+	waitForSubscriber(t, b, 2, 200*time.Millisecond)
+
+	alice3Req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new alice3 request: %v", err)
+	}
+	alice3Req.Header.Set("X-Test-User", "alice")
+	respAlice3, err := http.DefaultClient.Do(alice3Req)
+	if err != nil {
+		t.Fatalf("do alice3: %v", err)
+	}
+	defer respAlice3.Body.Close()
+	if respAlice3.StatusCode != http.StatusTooManyRequests {
+		body, _ := io.ReadAll(respAlice3.Body)
+		t.Fatalf("alice3 status = %d, want 429 (body=%s)", respAlice3.StatusCode, string(body))
+	}
+	body3, _ := io.ReadAll(respAlice3.Body)
+	if !strings.Contains(string(body3), "SSEConnectionLimitExceeded") {
+		t.Errorf("alice3 body = %s, want SSEConnectionLimitExceeded error", string(body3))
+	}
+
+	// --- Part 3: isolation across users ---------------------------------
+	// A different user must NOT be affected by alice's cap. Open and
+	// immediately close a carol subscription and assert 200.
+	ctxCarol, cancelCarol := context.WithCancel(context.Background())
+	carolReq, err := http.NewRequestWithContext(ctxCarol, http.MethodGet, url, nil)
+	if err != nil {
+		cancelCarol()
+		t.Fatalf("new carol request: %v", err)
+	}
+	carolReq.Header.Set("X-Test-User", "carol")
+	respCarol, err := http.DefaultClient.Do(carolReq)
+	if err != nil {
+		cancelCarol()
+		t.Fatalf("do carol: %v", err)
+	}
+	if respCarol.StatusCode != http.StatusOK {
+		cancelCarol()
+		respCarol.Body.Close()
+		t.Fatalf("carol status = %d, want 200", respCarol.StatusCode)
+	}
+	cancelCarol()
+	respCarol.Body.Close()
+
+	cancelCap()
+	cancelHB()
+	wgHB.Wait()
 }
 
 func TestSSESubscribeObjectSetNotFound(t *testing.T) {
