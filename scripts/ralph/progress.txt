@@ -4677,3 +4677,25 @@ new features — only run verification suites and commit the gate.
   - Goja sandbox escape tests verify that globals are deleted (not just undefined) - the runtime double-deletes by setting to Undefined then calling Delete
   - Integration tests in test/integration/ use package integration_test with //go:build integration tag
 ---
+
+## 2026-04-12 - US-091
+- Implemented GojaDispatcher: executes function-backed actions via embedded Goja JS runtime
+  - FunctionLookup narrow interface for function source retrieval by RID
+  - Converts Goja output {edits: Edit[]} to []funnel.Edit with full validation
+  - Passes action parameters as FunctionRequest-shaped input to JS main()
+- Implemented RoutingDispatcher: routes based on FunctionRID prefix
+  - http:// / https:// → existing HTTPDispatcher
+  - ri.* (default) → GojaDispatcher
+  - Either sub-dispatcher may be nil with clear error messages
+- 10 tests covering: basic dispatch, multiple edits, function not found, invalid output,
+  function error field, HTTP routing, Goja routing, HTTPS routing, nil dispatcher errors
+- Files changed:
+  - pkg/actions/goja_dispatcher.go (new)
+  - pkg/actions/goja_dispatcher_test.go (new)
+  - pkg/actions/routing_dispatcher.go (new)
+- **Learnings for future iterations:**
+  - GojaDispatcher uses the narrow FunctionLookup interface (just GetFunction) rather than the full oms.Repository — follows the codebase pattern from pkg/index/rebuild.go
+  - Goja result.Export() returns map[string]interface{} for JS objects and []interface{} for JS arrays — convertGojaResult handles this Go-native shape directly without JSON round-trip
+  - The FunctionRequest wire shape (actionTypeRid/actionTypeApiName/functionRid/parameters) is shared between HTTP and Goja dispatch so JS function authors see the same input structure
+  - RoutingDispatcher is the intended FunctionDispatcher to wire in cmd/server/main.go — replaces the bare HTTPDispatcher
+---
