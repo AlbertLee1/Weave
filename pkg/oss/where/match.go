@@ -1,0 +1,284 @@
+package where
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// MatchClause evaluates a WhereClause tree in-memory against a single row
+// (a property map, typically from a funnel.BroadcastEvent). It is the
+// complement to ConvertToBleveQuery — used by paths like SSE subscribe
+// where we need to filter a live event stream without running every event
+// through a Bleve index.
+//
+// Evaluation is intentionally conservative: unsupported operators or
+// malformed values return false so the caller drops the event rather than
+// leaking a row that was never meant to match. A nil clause matches every
+// row so an ObjectSet without a filter hop streams unconditionally.
+//
+// Supported operators (covering the US-056 Browser realtime filter set):
+//
+//	eq, gt, gte, lt, lte, isNull, contains, startsWith, and, or, not.
+//
+// Unsupported operators (wildcard / containsAllTerms / geo / ...) fall back
+// to false. Future stories that need them should extend this switch rather
+// than inventing a second evaluator.
+func MatchClause(clause *WhereClause, row map[string]interface{}) bool {
+	if clause == nil {
+		return true
+	}
+	if row == nil {
+		row = map[string]interface{}{}
+	}
+
+	switch clause.Type {
+	case "eq":
+		return matchEq(clause, row)
+	case "gt":
+		return matchRange(clause, row, false, true, false, false)
+	case "gte":
+		return matchRange(clause, row, true, true, false, false)
+	case "lt":
+		return matchRange(clause, row, false, false, false, true)
+	case "lte":
+		return matchRange(clause, row, false, false, true, true)
+	case "isNull":
+		return matchIsNull(clause, row)
+	case "contains":
+		return matchContains(clause, row)
+	case "startsWith":
+		return matchStartsWith(clause, row)
+	case "and":
+		return matchAnd(clause, row)
+	case "or":
+		return matchOr(clause, row)
+	case "not":
+		return matchNot(clause, row)
+	default:
+		return false
+	}
+}
+
+func matchEq(clause *WhereClause, row map[string]interface{}) bool {
+	raw, ok := row[clause.Field]
+	if !ok {
+		return false
+	}
+
+	// Number
+	var numVal float64
+	if err := json.Unmarshal(clause.Value, &numVal); err == nil {
+		if rowNum, ok := coerceNumber(raw); ok {
+			return rowNum == numVal
+		}
+		return false
+	}
+
+	// Bool — ordering matters: JSON numbers don't unmarshal into bool so we
+	// can always try bool before string, but we must try bool BEFORE string
+	// because `true` and `false` are valid JSON literals that are NOT valid
+	// JSON strings.
+	var boolVal bool
+	if err := json.Unmarshal(clause.Value, &boolVal); err == nil {
+		if rowBool, ok := raw.(bool); ok {
+			return rowBool == boolVal
+		}
+		return false
+	}
+
+	// String
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err == nil {
+		if rowStr, ok := raw.(string); ok {
+			return rowStr == strVal
+		}
+		return false
+	}
+
+	return false
+}
+
+func matchRange(clause *WhereClause, row map[string]interface{}, minInclusive, hasMin, maxInclusive, hasMax bool) bool {
+	raw, ok := row[clause.Field]
+	if !ok {
+		return false
+	}
+
+	var numVal float64
+	if err := json.Unmarshal(clause.Value, &numVal); err == nil {
+		rowNum, ok := coerceNumber(raw)
+		if !ok {
+			return false
+		}
+		if hasMin {
+			if minInclusive {
+				if rowNum < numVal {
+					return false
+				}
+			} else {
+				if rowNum <= numVal {
+					return false
+				}
+			}
+		}
+		if hasMax {
+			if maxInclusive {
+				if rowNum > numVal {
+					return false
+				}
+			} else {
+				if rowNum >= numVal {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	// String (treated as lexicographic comparison — good enough for ISO dates).
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err == nil {
+		rowStr, ok := raw.(string)
+		if !ok {
+			return false
+		}
+		if hasMin {
+			if minInclusive {
+				if rowStr < strVal {
+					return false
+				}
+			} else {
+				if rowStr <= strVal {
+					return false
+				}
+			}
+		}
+		if hasMax {
+			if maxInclusive {
+				if rowStr > strVal {
+					return false
+				}
+			} else {
+				if rowStr >= strVal {
+					return false
+				}
+			}
+		}
+		return true
+	}
+
+	return false
+}
+
+func matchIsNull(clause *WhereClause, row map[string]interface{}) bool {
+	var want bool
+	if err := json.Unmarshal(clause.Value, &want); err != nil {
+		return false
+	}
+	raw, present := row[clause.Field]
+	isNull := !present || raw == nil
+	return isNull == want
+}
+
+func matchContains(clause *WhereClause, row map[string]interface{}) bool {
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
+		return false
+	}
+	rowVal, ok := row[clause.Field].(string)
+	if !ok {
+		return false
+	}
+	return strings.Contains(strings.ToLower(rowVal), strings.ToLower(strVal))
+}
+
+func matchStartsWith(clause *WhereClause, row map[string]interface{}) bool {
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
+		return false
+	}
+	rowVal, ok := row[clause.Field].(string)
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(rowVal), strings.ToLower(strVal))
+}
+
+func matchAnd(clause *WhereClause, row map[string]interface{}) bool {
+	var subs []WhereClause
+	if err := json.Unmarshal(clause.Value, &subs); err != nil {
+		return false
+	}
+	for i := range subs {
+		if !MatchClause(&subs[i], row) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchOr(clause *WhereClause, row map[string]interface{}) bool {
+	var subs []WhereClause
+	if err := json.Unmarshal(clause.Value, &subs); err != nil {
+		return false
+	}
+	if len(subs) == 0 {
+		return false
+	}
+	for i := range subs {
+		if MatchClause(&subs[i], row) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchNot(clause *WhereClause, row map[string]interface{}) bool {
+	// Palantir V2 accepts both single-object and single-element-array forms.
+	var subs []WhereClause
+	if err := json.Unmarshal(clause.Value, &subs); err == nil && len(subs) > 0 {
+		return !MatchClause(&subs[0], row)
+	}
+	var sub WhereClause
+	if err := json.Unmarshal(clause.Value, &sub); err != nil {
+		return false
+	}
+	return !MatchClause(&sub, row)
+}
+
+// coerceNumber tolerates the handful of Go numeric shapes that can land in a
+// property map after JSON decoding or map[string]interface{} hand-construction
+// in tests / funnel payloads. Bool is explicitly NOT treated as a number.
+func coerceNumber(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		if f, err := n.Float64(); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}

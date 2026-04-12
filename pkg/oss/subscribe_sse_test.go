@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 type sseEventFrame struct {
@@ -23,18 +24,18 @@ type sseEventFrame struct {
 }
 
 type stubObjectSetLookup struct {
-	byRid map[string]string
+	byRid map[string]SubscriptionSpec
 }
 
-func (s *stubObjectSetLookup) ResolveBaseObjectType(rid string) (string, error) {
+func (s *stubObjectSetLookup) ResolveSubscription(rid string) (SubscriptionSpec, error) {
 	if s == nil || s.byRid == nil {
-		return "", ErrObjectSetNotFound
+		return SubscriptionSpec{}, ErrObjectSetNotFound
 	}
-	ot, ok := s.byRid[rid]
+	spec, ok := s.byRid[rid]
 	if !ok {
-		return "", ErrObjectSetNotFound
+		return SubscriptionSpec{}, ErrObjectSetNotFound
 	}
-	return ot, nil
+	return spec, nil
 }
 
 // TestSSESubscribeBasicStream is the US-055 red-first acceptance test for the
@@ -49,7 +50,9 @@ func (s *stubObjectSetLookup) ResolveBaseObjectType(rid string) (string, error) 
 //     ObjectSet base ObjectType reach the client
 func TestSSESubscribeBasicStream(t *testing.T) {
 	const rid = "rid-order-scaffold-1"
-	lookup := &stubObjectSetLookup{byRid: map[string]string{rid: "order"}}
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
 
 	b := funnel.NewBroadcast()
 	handler := NewSubscribeSSEHandler(lookup, b)
@@ -178,8 +181,151 @@ func TestSSESubscribeBasicStream(t *testing.T) {
 	wg.Wait()
 }
 
+// TestSSEWhereFilter is the red-first acceptance test for US-056. It
+// exercises the server-side Where evaluation path: the stored ObjectSet
+// definition declares `status = "SHIPPED" AND amount > 100` and the
+// handler MUST drop events that do not satisfy the clause before writing
+// them to the SSE stream.
+//
+//   - Event 1 {status=SHIPPED, amount=150} — MATCH, delivered
+//   - Event 2 {status=PENDING, amount=500} — NO match (status wrong), dropped
+//   - Event 3 {status=SHIPPED, amount=50}  — NO match (amount too low), dropped
+//   - Event 4 {status=SHIPPED, amount=200} — MATCH, delivered
+//
+// The client reader must see exactly events 1 and 4, in order, and must
+// NOT see events 2 or 3.
+func TestSSEWhereFilter(t *testing.T) {
+	const rid = "rid-order-where-1"
+	clauseJSON := `{
+        "type": "and",
+        "value": [
+            {"type": "eq", "field": "status", "value": "SHIPPED"},
+            {"type": "gt", "field": "amount", "value": 100}
+        ]
+    }`
+	var clause where.WhereClause
+	if err := json.Unmarshal([]byte(clauseJSON), &clause); err != nil {
+		t.Fatalf("unmarshal where clause: %v", err)
+	}
+
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order", Where: &clause},
+	}}
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v2/ontologies/northwind/objectSets/"+rid+"/subscribe", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	eventsCh := make(chan sseEventFrame, 8)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			var evt sseEventFrame
+			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+				t.Errorf("json decode %q: %v", payload, err)
+				return
+			}
+			select {
+			case eventsCh <- evt:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	waitForSubscriber(t, b, 1, 500*time.Millisecond)
+
+	// MATCH — status=SHIPPED AND amount=150 > 100
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "CREATE",
+		ObjectType: "order",
+		PrimaryKey: "o-1",
+		Properties: map[string]interface{}{"status": "SHIPPED", "amount": 150.0},
+		EditedAt:   time.Now(),
+	})
+	// DROP — status != SHIPPED
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "MODIFY",
+		ObjectType: "order",
+		PrimaryKey: "o-2",
+		Properties: map[string]interface{}{"status": "PENDING", "amount": 500.0},
+		EditedAt:   time.Now(),
+	})
+	// DROP — amount <= 100
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "MODIFY",
+		ObjectType: "order",
+		PrimaryKey: "o-3",
+		Properties: map[string]interface{}{"status": "SHIPPED", "amount": 50.0},
+		EditedAt:   time.Now(),
+	})
+	// MATCH
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "CREATE",
+		ObjectType: "order",
+		PrimaryKey: "o-4",
+		Properties: map[string]interface{}{"status": "SHIPPED", "amount": 200.0},
+		EditedAt:   time.Now(),
+	})
+
+	first := expectEvent(t, eventsCh, 2*time.Second)
+	if pk, _ := first.Object["__primaryKey"].(string); pk != "o-1" {
+		t.Errorf("first __primaryKey = %v, want o-1", first.Object["__primaryKey"])
+	}
+	second := expectEvent(t, eventsCh, 2*time.Second)
+	if pk, _ := second.Object["__primaryKey"].(string); pk != "o-4" {
+		t.Errorf("second __primaryKey = %v, want o-4", second.Object["__primaryKey"])
+	}
+
+	select {
+	case unexpected := <-eventsCh:
+		t.Errorf("unexpected extra event: %+v", unexpected)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
 func TestSSESubscribeObjectSetNotFound(t *testing.T) {
-	lookup := &stubObjectSetLookup{byRid: map[string]string{}}
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{}}
 	b := funnel.NewBroadcast()
 	handler := NewSubscribeSSEHandler(lookup, b)
 

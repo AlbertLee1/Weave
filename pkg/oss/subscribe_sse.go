@@ -10,6 +10,7 @@ import (
 
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 // ErrObjectSetNotFound is returned by ObjectSetLookup implementations when
@@ -17,18 +18,32 @@ import (
 // SSE handler maps it to a 404 ObjectSetNotFound response.
 var ErrObjectSetNotFound = errors.New("objectSet not found")
 
+// SubscriptionSpec is the decoded view of an ObjectSet definition needed by
+// the SSE subscribe handler. ObjectType names the single base ObjectType the
+// stream filters on; Where carries the AND-collapsed filter tree extracted
+// from any filter hops along the path from the outermost definition down to
+// the base. Both Where and the row-level matcher are optional — an empty
+// Where streams every event for the ObjectType.
+type SubscriptionSpec struct {
+	ObjectType string
+	Where      *where.WhereClause
+}
+
 // ObjectSetLookup is the narrow contract the SSE subscribe handler needs
 // from the ObjectSet store. It is a local interface rather than a direct
 // dependency on pkg/oss/objectset because that package imports pkg/oss
 // (handler.go), which would create an import cycle. main.go wires a
 // tiny adapter around *objectset.Store when building the handler.
 type ObjectSetLookup interface {
-	// ResolveBaseObjectType returns the single ObjectType the SSE stream
-	// should filter on for the given ObjectSet rid. Returns an empty string
-	// when the definition does not reduce to one base type (union,
-	// interfaceBase, ...). Returns ErrObjectSetNotFound when the rid is
-	// unknown so the handler can emit a dedicated 404.
-	ResolveBaseObjectType(objectSetRid string) (string, error)
+	// ResolveSubscription returns the SubscriptionSpec (base ObjectType + any
+	// Where filter extracted from filter hops) the SSE stream should use for
+	// the given ObjectSet rid. Returns an ObjectType of "" when the
+	// definition does not reduce to a single base type (union /
+	// interfaceBase / subtract / ...); the handler emits a clean 400
+	// rather than silently producing a wrong stream. Returns
+	// ErrObjectSetNotFound when the rid is unknown so the handler can emit
+	// a dedicated 404.
+	ResolveSubscription(objectSetRid string) (SubscriptionSpec, error)
 }
 
 // SubscribeSSEHandler is the US-055 ObjectSet Server-Sent Events scaffold.
@@ -71,17 +86,17 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	objectType, err := h.lookup.ResolveBaseObjectType(objectSetRid)
+	spec, err := h.lookup.ResolveSubscription(objectSetRid)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("ObjectSetNotFound", map[string]string{
 			"objectSetRid": objectSetRid,
 		}))
 		return
 	}
-	if objectType == "" {
+	if spec.ObjectType == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("SSEUnsupportedObjectSet", map[string]string{
 			"objectSetRid": objectSetRid,
-			"reason":       "SSE subscribe scaffold currently requires a base ObjectSet type",
+			"reason":       "SSE subscribe currently requires a base ObjectSet type",
 		}))
 		return
 	}
@@ -113,7 +128,10 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			if !open {
 				return
 			}
-			if evt.ObjectType != objectType {
+			if evt.ObjectType != spec.ObjectType {
+				continue
+			}
+			if spec.Where != nil && !where.MatchClause(spec.Where, evt.Properties) {
 				continue
 			}
 			payload := sseEventPayload(evt)
