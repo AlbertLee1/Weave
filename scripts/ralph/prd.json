@@ -1469,7 +1469,7 @@
         "go test -tags integration ./test/integration/... -run FunctionAction passes"
       ],
       "priority": 93,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

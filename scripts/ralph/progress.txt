@@ -4721,3 +4721,17 @@ new features — only run verification suites and commit the gate.
   - ValidateRawFunctionOutput and ValidateFunctionOutput share the same validateFunctionEdit helper, keeping field-level validation DRY across Goja and HTTP dispatch paths
   - After ValidateRawFunctionOutput passes, the type assertions in convertGojaResult (editsSlice, editMap) are guaranteed safe — no need for defensive ok checks
 ---
+
+## 2026-04-12 - US-093
+- Implemented integration test for function-backed action: `TestFunctionAction_CreateOrderAndDecrementStock`
+- Full integration stack: real PostgreSQL (OMS metadata + function storage), real Bleve (object indexes), Goja VM (function execution), in-process funnel consumer (edit application)
+- Test flow: seed Product(PROD-001, stock=100) → apply createOrderAndUpdateInventory(productId=PROD-001, quantity=10) → verify 2 edits produced (CREATE order + MODIFY product) → apply via consumer to Bleve → verify Order created and Product.stock=90
+- Created parity fixture: test/foundry_parity/us093_function_action.json
+- Files changed:
+  - test/integration/function_action_test.go (new — integration test)
+  - test/foundry_parity/us093_function_action.json (new — parity fixture)
+- **Learnings for future iterations:**
+  - The handler passes ontology API name (not RID) to executor.Apply; ListActionTypes supports both via OR query in WHERE clause. Integration tests must pass APIName to match how ScopedKey is constructed for Bleve index lookup
+  - Consumer.ApplyBatch can be called directly (no NATS) for integration testing the full edit pipeline
+  - recordingPublisher is a useful test double pattern for capturing published EditBatches without standing up real NATS
+---
