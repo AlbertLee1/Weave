@@ -4034,3 +4034,25 @@ new features — only run verification suites and commit the gate.
   - Contract tests need every route registered to pass — add a stub publisher to newContractTestRouter when adding new routes that depend on optional deps
   - gofmt alignment drift is common after adding constants to a const block — always run gofmt on edited files
 ---
+
+## 2026-04-12 - US-062
+- Implemented stream ingest policy enforcement
+- Added `ingest-writer` role to RBAC permission matrix (pkg/auth/permissions.go) — grants only `PermStreamIngest`
+- Added `AllowedForIngest(ctx, user, ot)` method to `security.Engine` — evaluates OBJECT-scoped policies, returns false when compiled query is MatchNoneQuery
+- Added `IngestPolicyChecker` interface to `pkg/oss/stream_ingest.go` with `SetPolicyChecker` setter
+- Handler returns 403 `IngestNotAllowed` when policy checker denies or errors
+- Created `ingestPolicyAdapter` in `cmd/server/policy_provider.go` that resolves ontology+objectType API names to OMS types before delegating to Engine
+- Wired adapter into main.go stream ingest route registration
+- Files changed:
+  - pkg/auth/permissions.go (added RoleIngestWriter + rolePermissions entry)
+  - pkg/security/policy_engine.go (added AllowedForIngest method)
+  - pkg/security/policy_engine_test.go (3 new tests: NoPolicies, PolicyDenies, PolicyAllows)
+  - pkg/oss/stream_ingest.go (added IngestPolicyChecker interface, SetPolicyChecker, policy enforcement in ServeHTTP)
+  - pkg/oss/stream_ingest_test.go (4 new subtests: denied→403, allowed→200, error→403, nil checker backwards compat)
+  - cmd/server/policy_provider.go (added ingestPolicyAdapter)
+  - cmd/server/main.go (wired ingestPolicyAdapter into stream ingest handler)
+- **Learnings for future iterations:**
+  - AllowedForIngest reuses Evaluate + MatchNoneQuery check — simple boolean wrapper over existing Bleve query compilation
+  - The policyProviderRepo interface in cmd/server/ is shared by policyQueryAdapter, propertyFilterAdapter, and now ingestPolicyAdapter — add new adapters alongside these
+  - StreamIngestHandler accepts optional dependencies via SetXxx setters (same pattern as ServiceImpl) so backwards compat is automatic when deps are nil
+---
