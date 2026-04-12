@@ -468,6 +468,15 @@ new features — only run verification suites and commit the gate.
   → oms.SecurityPolicy). When needing auth context inside an oms decorator,
   use a callback function (ActorFunc) injected from the caller (e.g.
   cmd/server/main.go). See AuditedRepository pattern.
+- Login handler must have MarkingRepo wired (auth.PGMarkingRepository) to
+  include markings in JWT. Without it, marking-based policies fail-close
+  (MatchNoneQuery → 0 results) because user.Attributes["markings"] is empty.
+- Playwright browser tests that need auth: use page.route('**/api/**') to
+  intercept requests and inject the Authorization header. page.goto() resets
+  the SPA's in-memory Zustand store so tokens from prior login are lost.
+- PG_DSN env var must be set when starting bin/weave for login/auth routes
+  to be registered. Without PG, UserRepo/RefreshService are nil → login
+  handler condition false → SPA catches /api/auth/login as NotFound.
 
 ---
 
@@ -4442,4 +4451,26 @@ new features — only run verification suites and commit the gate.
   - Security policies in the security_policies table are now loaded at server startup via loadPoliciesFromDB(). Previously the engine booted empty — tests/seeds that write to the table now have their policies enforced automatically.
   - The PROPERTY-scope policy uses UserAttr="roles" checking against user.Attributes["roles"] (copied from user.Roles by handleDev). The seed uses Values=["editor","admin"] so both manager and admin users can see salary.
   - Column header visibility in the UI comes from objectType.properties (schema-level) which is NOT filtered by user permissions. The actual data filtering happens at the WireObject level. The spec asserts on data visibility, not column header presence.
+---
+
+## 2026-04-12 - US-082
+- Implemented Playwright spec for marking-based row filter verification
+- What was implemented:
+  - web/e2e/phase7/policy-row-filter.spec.ts: 4 tests (2 API-level, 2 browser-level)
+  - API-level: ACME user sees only ALFKI/BERGS/CHOPS; ACME2 user sees only BLONP/CACTU
+  - Browser-level: uses page.route() to inject JWT auth header so marking-based policy is enforced
+  - Backend: login handler now fetches user markings from user_markings table and includes them in JWT
+  - Seed: customer objects tagged with __markings (ACME or ACME2), OBJECT-scope markingSubset policy, two new test users acme@test / acme2@test with marking grants
+- Files changed:
+  - cmd/server/main.go (PGMarkingRepository wired into login handler deps)
+  - pkg/auth/login_handler.go (MarkingRepo added to deps, markings fetched and included in JWT SignInput)
+  - test/fixtures/seed_northwind/schemas.go (__markings property on customer, OBJECT-scope markingSubset policy)
+  - test/fixtures/seed_northwind/seed.go (acme@test / acme2@test users, marking grants, ACME/ACME2 marking rows)
+  - web/e2e/phase7/policy-row-filter.spec.ts (new — 4 tests)
+- **Learnings for future iterations:**
+  - The login handler previously did NOT include user markings in the JWT. MarkingRepo must be wired in main.go and markings fetched via GetUserMarkings during login for marking-based policies to work end-to-end.
+  - page.goto() in Playwright causes full page reload which resets the in-memory Zustand auth store. For tests that need authenticated API access in the browser, use page.route('**/api/**') to intercept requests and inject the Authorization header rather than relying on the SPA login flow.
+  - The login rate limiter (5 attempts/minute/IP) can trip when running multiple test specs sequentially. Fresh server restart clears the limiter state.
+  - The OBJECT-scope markingSubset policy rule with objectProperty="__markings" (double underscore) matches auth.MarkingsField convention. The policy engine's auto-marking field (security.MarkingField="_markings" single underscore) is only used by SetMarkingsEnabled auto-clause, not by explicit policy rules.
+  - PG_DSN must be set as environment variable when starting the server for login/auth endpoints to work — without it, UserRepo/RefreshService are nil and login route is not registered.
 ---

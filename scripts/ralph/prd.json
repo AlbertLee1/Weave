@@ -1,7 +1,7 @@
 {
   "project": "Weave",
   "branchName": "ralph/phase-6-8",
-  "description": "Weave OSv2 Deep Parity (Phase 6-9). From 'API surface alignment' (68/68 Foundry endpoints) to 'semantic depth alignment'. 168 stories across 4 phases with per-phase hard integration gates (Go cross-US + Playwright E2E + Foundry parity fixture). TDD mandatory. Narrative in docs/PRD-Weave-OSv2-\u6df1\u5ea6\u590d\u523b-V2.md; execution spec in tasks/prd-v2-deep-parity.md.",
+  "description": "Weave OSv2 Deep Parity (Phase 6-9). From 'API surface alignment' (68/68 Foundry endpoints) to 'semantic depth alignment'. 168 stories across 4 phases with per-phase hard integration gates (Go cross-US + Playwright E2E + Foundry parity fixture). TDD mandatory. Narrative in docs/PRD-Weave-OSv2-深度复刻-V2.md; execution spec in tasks/prd-v2-deep-parity.md.",
   "userStories": [
     {
       "id": "US-001",
@@ -669,7 +669,7 @@
         "cd web && npm run test:e2e passes (all phase6 + baseline)",
         "pytest sdk/python passes",
         "make test-parity passes with >= 80 samples and >= 95% pass rate",
-        "Update docs/PRD-Weave-OSv2-\u6df1\u5ea6\u590d\u523b-V2.md matrix Phase 6 rows to green",
+        "Update docs/PRD-Weave-OSv2-深度复刻-V2.md matrix Phase 6 rows to green",
         "Gate commit: feat: [US-042] - Phase 6 integration gate: semantic correctness verified"
       ],
       "priority": 42,
@@ -1294,7 +1294,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 82,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -2583,7 +2583,7 @@
       "title": "Completion matrix final update",
       "description": "As a project historian, I want the PRD completion matrix fully updated to reflect v1.0 state so that the narrative matches reality.",
       "acceptanceCriteria": [
-        "docs/PRD-Weave-OSv2-\u6df1\u5ea6\u590d\u523b-V2.md matrix all modules >= 85% or explicitly marked non-goal",
+        "docs/PRD-Weave-OSv2-深度复刻-V2.md matrix all modules >= 85% or explicitly marked non-goal",
         "tasks/prd-v2-deep-parity.md status markers updated",
         "README.md updated to v1.0 state",
         "Markdown lint passes"
