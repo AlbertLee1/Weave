@@ -1,7 +1,10 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { useObjectType } from '../../hooks/useObjectTypes';
 import { useListObjects, useSearchObjects } from '../../hooks/useObjects';
+import { useCreateTemporaryObjectSet } from '../../hooks/useObjectSets';
+import { useObjectSetSubscription } from '../../hooks/useObjectSetSubscription';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
@@ -41,6 +44,39 @@ export function BrowserPage() {
   // Detail panel state
   const [selectedObject, setSelectedObject] = useState<WireObject | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+
+  // Realtime mode state
+  const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const createObjectSet = useCreateTemporaryObjectSet(ontology);
+
+  const handleRealtimeToggle = useCallback(() => {
+    if (!realtimeEnabled) {
+      // Turning on: create a temporary ObjectSet for this objectType
+      createObjectSet.mutate(
+        { type: 'base', objectType: objectTypeParam },
+        {
+          onSuccess: (resp) => {
+            setObjectSetRid(resp.objectSetRid);
+          },
+        },
+      );
+      setRealtimeEnabled(true);
+    } else {
+      // Turning off
+      setRealtimeEnabled(false);
+      setObjectSetRid(null);
+    }
+  }, [realtimeEnabled, createObjectSet, objectTypeParam]);
+
+  // SSE subscription
+  useObjectSetSubscription(ontology, objectSetRid ?? '', {
+    enabled: realtimeEnabled && !!objectSetRid,
+    onEvent: useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['objects'] });
+    }, [queryClient]),
+  });
 
   // Determine whether we need to use search or list
   const hasActiveSearch = searchText.trim().length > 0 || filters.length > 0;
@@ -180,11 +216,30 @@ export function BrowserPage() {
             {objectType.apiName}
           </p>
         </div>
-        {page?.totalCount && (
-          <span className="text-xs font-mono text-text-secondary">
-            {page.totalCount} total
-          </span>
-        )}
+        <div className="flex items-center gap-4">
+          {page?.totalCount && (
+            <span className="text-xs font-mono text-text-secondary">
+              {page.totalCount} total
+            </span>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            {realtimeEnabled && objectSetRid && (
+              <span
+                data-testid="realtime-indicator"
+                className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"
+              />
+            )}
+            <span className="text-xs font-mono text-text-secondary">Realtime</span>
+            <input
+              type="checkbox"
+              aria-label="Realtime"
+              checked={realtimeEnabled}
+              onChange={handleRealtimeToggle}
+              className="sr-only peer"
+            />
+            <span className="relative w-8 h-4 rounded-full bg-border-secondary peer-checked:bg-green-500 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-4" />
+          </label>
+        </div>
       </div>
 
       {/* Search bar */}
