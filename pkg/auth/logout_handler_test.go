@@ -13,7 +13,7 @@ import (
 func newLogoutHandlerHarness(t *testing.T) (*LogoutHandler, *RefreshService) {
 	t.Helper()
 	rs := NewRefreshService(NewMemoryRefreshStore(), RefreshServiceOptions{AbsoluteTTL: 7 * 24 * time.Hour})
-	h := NewLogoutHandler(rs)
+	h := NewLogoutHandler(rs, nil)
 	return h, rs
 }
 

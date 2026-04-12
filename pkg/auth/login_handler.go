@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/audit"
 )
 
 // LoginRequest is the JSON request body for POST /api/auth/login.
@@ -43,15 +45,16 @@ type LoginHandlerDeps struct {
 	Signer         *JWTSigner
 	RefreshService *RefreshService
 	// RateLimit is the max attempts per IP per minute. <=0 disables.
-	RateLimit int
+	RateLimit  int
+	AuditStore audit.Store
 }
 
 // LoginHandler implements POST /api/auth/login. It returns access + refresh
 // tokens on success, and a generic 401 on any failure (wrong password,
 // missing user, password not set, etc.) to avoid user enumeration.
 type LoginHandler struct {
-	deps     LoginHandlerDeps
-	limiter  *ipRateLimiter
+	deps            LoginHandlerDeps
+	limiter         *ipRateLimiter
 	signerAccessTTL time.Duration
 }
 
@@ -111,6 +114,7 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrUserNotFound) {
 			// Constant-time dummy compare to keep timing flat.
 			_ = VerifyDummyPassword(req.Password)
+			h.auditLogin(ctx, req.Email, "login_failed", r)
 			writeInvalidCredentials(w)
 			return
 		}
@@ -120,10 +124,12 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if user.PasswordHash == "" {
 		_ = VerifyDummyPassword(req.Password)
+		h.auditLogin(ctx, req.Email, "login_failed", r)
 		writeInvalidCredentials(w)
 		return
 	}
 	if err := VerifyPassword(user.PasswordHash, req.Password); err != nil {
+		h.auditLogin(ctx, user.ID, "login_failed", r)
 		writeInvalidCredentials(w)
 		return
 	}
@@ -153,6 +159,8 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.auditLogin(ctx, user.ID, "login_success", r)
+
 	resp := LoginResponse{
 		AccessToken:  access,
 		RefreshToken: refreshPlain,
@@ -169,6 +177,20 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *LoginHandler) auditLogin(ctx context.Context, actorID, action string, r *http.Request) {
+	if h.deps.AuditStore == nil {
+		return
+	}
+	_ = audit.Record(ctx, h.deps.AuditStore, audit.AuditEvent{
+		ActorID:      actorID,
+		Action:       action,
+		ResourceType: "Session",
+		ResourceRID:  actorID,
+		IP:           clientIP(r),
+		UserAgent:    r.UserAgent(),
+	})
 }
 
 func writeInvalidCredentials(w http.ResponseWriter) {

@@ -3,6 +3,8 @@ package auth
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/liyang/weave/pkg/audit"
 )
 
 // LogoutHandler implements POST /api/auth/logout. It revokes the supplied
@@ -11,12 +13,13 @@ import (
 // token does not produce an error so the SPA can call it on logout regardless
 // of session state.
 type LogoutHandler struct {
-	rs *RefreshService
+	rs         *RefreshService
+	auditStore audit.Store
 }
 
-// NewLogoutHandler builds a logout handler.
-func NewLogoutHandler(rs *RefreshService) *LogoutHandler {
-	return &LogoutHandler{rs: rs}
+// NewLogoutHandler builds a logout handler. auditStore may be nil.
+func NewLogoutHandler(rs *RefreshService, auditStore audit.Store) *LogoutHandler {
+	return &LogoutHandler{rs: rs, auditStore: auditStore}
 }
 
 // ServeHTTP implements http.Handler.
@@ -34,6 +37,19 @@ func (h *LogoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if plain != "" && h.rs != nil {
 		_ = h.rs.Revoke(r.Context(), plain)
+	}
+
+	if h.auditStore != nil {
+		actorID := ""
+		if u := UserFromContext(r.Context()); u != nil {
+			actorID = u.ID
+		}
+		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
+			ActorID:      actorID,
+			Action:       "logout",
+			ResourceType: "Session",
+			ResourceRID:  actorID,
+		})
 	}
 
 	// Always clear the refresh cookie on the client.

@@ -230,3 +230,31 @@ func (a *AuditedRepository) DeleteInterface(ctx context.Context, rid string) err
 	a.record(ctx, "DELETE", "Interface", rid, makeDiff(before, nil))
 	return nil
 }
+
+// --- SecurityPolicy ---
+
+func (a *AuditedRepository) CreateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error {
+	if err := a.Repository.CreateSecurityPolicy(ctx, sp); err != nil {
+		return err
+	}
+	a.record(ctx, "CREATE", "SecurityPolicy", sp.RID, makeDiff(nil, sp))
+	return nil
+}
+
+func (a *AuditedRepository) UpdateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error {
+	before, _ := a.Repository.GetSecurityPolicy(ctx, sp.RID)
+	if err := a.Repository.UpdateSecurityPolicy(ctx, sp); err != nil {
+		return err
+	}
+	a.record(ctx, "UPDATE", "SecurityPolicy", sp.RID, makeDiff(before, sp))
+	return nil
+}
+
+func (a *AuditedRepository) DeleteSecurityPolicy(ctx context.Context, rid string) error {
+	before, _ := a.Repository.GetSecurityPolicy(ctx, rid)
+	if err := a.Repository.DeleteSecurityPolicy(ctx, rid); err != nil {
+		return err
+	}
+	a.record(ctx, "DELETE", "SecurityPolicy", rid, makeDiff(before, nil))
+	return nil
+}

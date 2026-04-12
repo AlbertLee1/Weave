@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/audit"
 )
 
 // RefreshCookieName is the name of the httpOnly refresh cookie. Kept here so
@@ -24,6 +25,7 @@ type RefreshHandlerDeps struct {
 	Resolver       *RoleResolver
 	Signer         *JWTSigner
 	RefreshService *RefreshService
+	AuditStore     audit.Store
 }
 
 // RefreshHandler implements POST /api/auth/refresh. It rotates the refresh
@@ -102,6 +104,15 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("RefreshSignFailed", map[string]string{"reason": err.Error()}))
 		return
+	}
+
+	if h.deps.AuditStore != nil {
+		_ = audit.Record(ctx, h.deps.AuditStore, audit.AuditEvent{
+			ActorID:      user.ID,
+			Action:       "token_refresh",
+			ResourceType: "Session",
+			ResourceRID:  user.ID,
+		})
 	}
 
 	ttl := 15 * 60

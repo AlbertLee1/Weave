@@ -18,23 +18,25 @@ type inMemoryRepo struct {
 	oms.Repository // embed noopRepo for unimplemented methods
 	mu             sync.Mutex
 
-	ontologies  map[string]*oms.Ontology
-	objectTypes map[string]*oms.ObjectType
-	properties  map[string]*oms.Property
-	linkTypes   map[string]*oms.LinkType
-	actionTypes map[string]*oms.ActionType
-	interfaces  map[string]*oms.Interface
+	ontologies       map[string]*oms.Ontology
+	objectTypes      map[string]*oms.ObjectType
+	properties       map[string]*oms.Property
+	linkTypes        map[string]*oms.LinkType
+	actionTypes      map[string]*oms.ActionType
+	interfaces       map[string]*oms.Interface
+	securityPolicies map[string]*oms.SecurityPolicy
 }
 
 func newInMemoryRepo() *inMemoryRepo {
 	return &inMemoryRepo{
-		Repository:  &noopRepo{},
-		ontologies:  map[string]*oms.Ontology{},
-		objectTypes: map[string]*oms.ObjectType{},
-		properties:  map[string]*oms.Property{},
-		linkTypes:   map[string]*oms.LinkType{},
-		actionTypes: map[string]*oms.ActionType{},
-		interfaces:  map[string]*oms.Interface{},
+		Repository:       &noopRepo{},
+		ontologies:       map[string]*oms.Ontology{},
+		objectTypes:      map[string]*oms.ObjectType{},
+		properties:       map[string]*oms.Property{},
+		linkTypes:        map[string]*oms.LinkType{},
+		actionTypes:      map[string]*oms.ActionType{},
+		interfaces:       map[string]*oms.Interface{},
+		securityPolicies: map[string]*oms.SecurityPolicy{},
 	}
 }
 
@@ -289,6 +291,50 @@ func (r *inMemoryRepo) DeleteInterface(_ context.Context, rid string) error {
 		return oms.ErrNotFound
 	}
 	delete(r.interfaces, rid)
+	return nil
+}
+
+// --- SecurityPolicy ---
+
+func (r *inMemoryRepo) CreateSecurityPolicy(_ context.Context, sp *oms.SecurityPolicy) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.securityPolicies[sp.RID]; ok {
+		return oms.ErrDuplicate
+	}
+	cp := *sp
+	r.securityPolicies[sp.RID] = &cp
+	return nil
+}
+
+func (r *inMemoryRepo) GetSecurityPolicy(_ context.Context, rid string) (*oms.SecurityPolicy, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sp, ok := r.securityPolicies[rid]; ok {
+		cp := *sp
+		return &cp, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (r *inMemoryRepo) UpdateSecurityPolicy(_ context.Context, sp *oms.SecurityPolicy) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.securityPolicies[sp.RID]; !ok {
+		return oms.ErrNotFound
+	}
+	cp := *sp
+	r.securityPolicies[sp.RID] = &cp
+	return nil
+}
+
+func (r *inMemoryRepo) DeleteSecurityPolicy(_ context.Context, rid string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.securityPolicies[rid]; !ok {
+		return oms.ErrNotFound
+	}
+	delete(r.securityPolicies, rid)
 	return nil
 }
 
@@ -603,6 +649,71 @@ func TestOMSAuditTrail(t *testing.T) {
 		})
 		if len(store.Events()) != countBefore {
 			t.Error("audit event should not be recorded on error")
+		}
+	})
+
+	t.Run("CreateSecurityPolicy", func(t *testing.T) {
+		sp := &oms.SecurityPolicy{
+			RID:           "ri.ontology.main.policy.row1",
+			ObjectTypeRID: "ri.ontology.main.objectType.employee",
+			PolicyType:    "OBJECT",
+			Rules:         json.RawMessage(`[{"type":"eq","userAttr":"dept","objectProperty":"department"}]`),
+		}
+		if err := repo.CreateSecurityPolicy(userCtx, sp); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		events := store.Events()
+		last := events[len(events)-1]
+		if last.Action != "CREATE" || last.ResourceType != "SecurityPolicy" {
+			t.Errorf("got action=%q type=%q, want CREATE/SecurityPolicy", last.Action, last.ResourceType)
+		}
+		if last.ResourceRID != sp.RID {
+			t.Errorf("resourceRID = %q, want %q", last.ResourceRID, sp.RID)
+		}
+		if last.ActorID != "user-1" {
+			t.Errorf("actorID = %q, want user-1", last.ActorID)
+		}
+	})
+
+	t.Run("UpdateSecurityPolicy", func(t *testing.T) {
+		sp := &oms.SecurityPolicy{
+			RID:           "ri.ontology.main.policy.row1",
+			ObjectTypeRID: "ri.ontology.main.objectType.employee",
+			PolicyType:    "OBJECT",
+			Rules:         json.RawMessage(`[{"type":"in","userAttr":"region","objectProperty":"region"}]`),
+		}
+		if err := repo.UpdateSecurityPolicy(userCtx, sp); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		events := store.Events()
+		last := events[len(events)-1]
+		if last.Action != "UPDATE" || last.ResourceType != "SecurityPolicy" {
+			t.Errorf("got action=%q type=%q, want UPDATE/SecurityPolicy", last.Action, last.ResourceType)
+		}
+		diff := parseDiff(t, last.DiffJSON)
+		if string(diff.Before) == "null" {
+			t.Error("before should contain old state")
+		}
+		if string(diff.After) == "null" {
+			t.Error("after should contain new state")
+		}
+	})
+
+	t.Run("DeleteSecurityPolicy", func(t *testing.T) {
+		if err := repo.DeleteSecurityPolicy(userCtx, "ri.ontology.main.policy.row1"); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		events := store.Events()
+		last := events[len(events)-1]
+		if last.Action != "DELETE" || last.ResourceType != "SecurityPolicy" {
+			t.Errorf("got action=%q type=%q, want DELETE/SecurityPolicy", last.Action, last.ResourceType)
+		}
+		diff := parseDiff(t, last.DiffJSON)
+		if string(diff.Before) == "null" {
+			t.Error("before should contain old state")
+		}
+		if string(diff.After) != "null" {
+			t.Errorf("after = %s, want null", diff.After)
 		}
 	})
 }

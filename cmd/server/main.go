@@ -183,7 +183,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			Signer:         deps.JWTSigner,
 			RefreshService: deps.RefreshService,
 		})
-		logoutHandler := auth.NewLogoutHandler(deps.RefreshService)
+		logoutHandler := auth.NewLogoutHandler(deps.RefreshService, nil)
 		r.Method(http.MethodPost, "/api/auth/login", loginHandler)
 		r.Method(http.MethodPost, "/api/auth/refresh", refreshHandler)
 		r.Method(http.MethodPost, "/api/auth/logout", logoutHandler)

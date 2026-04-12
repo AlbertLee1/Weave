@@ -15,7 +15,7 @@ import (
 func newAPIKeyHandlerHarness(t *testing.T) (*APIKeyHandler, *fakeAPIKeyRepo) {
 	t.Helper()
 	repo := newFakeAPIKeyRepo()
-	h := NewAPIKeyHandler(repo)
+	h := NewAPIKeyHandler(repo, nil)
 	return h, repo
 }
 

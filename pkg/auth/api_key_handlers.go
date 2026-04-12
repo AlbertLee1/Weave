@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/audit"
 )
 
 // APIKeyCreateRequest is the JSON body of POST /api/admin/api-keys.
@@ -50,12 +51,14 @@ type APIKeyListResponse struct {
 
 // APIKeyHandler implements the admin REST endpoints for managing API keys.
 type APIKeyHandler struct {
-	repo APIKeyRepository
+	repo       APIKeyRepository
+	auditStore audit.Store
 }
 
 // NewAPIKeyHandler constructs an admin handler around an APIKeyRepository.
-func NewAPIKeyHandler(repo APIKeyRepository) *APIKeyHandler {
-	return &APIKeyHandler{repo: repo}
+// auditStore may be nil to disable audit logging.
+func NewAPIKeyHandler(repo APIKeyRepository, auditStore audit.Store) *APIKeyHandler {
+	return &APIKeyHandler{repo: repo, auditStore: auditStore}
 }
 
 // Create handles POST /api/admin/api-keys. It mints a fresh key, persists
@@ -124,6 +127,15 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 			"reason": err.Error(),
 		}))
 		return
+	}
+
+	if h.auditStore != nil {
+		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
+			ActorID:      u.ID,
+			Action:       "api_key_create",
+			ResourceType: "APIKey",
+			ResourceRID:  rec.ID,
+		})
 	}
 
 	resp := APIKeyCreateResponse{
@@ -233,5 +245,15 @@ func (h *APIKeyHandler) DeleteFor(w http.ResponseWriter, r *http.Request, id str
 		}))
 		return
 	}
+
+	if h.auditStore != nil {
+		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
+			ActorID:      u.ID,
+			Action:       "api_key_revoke",
+			ResourceType: "APIKey",
+			ResourceRID:  id,
+		})
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
