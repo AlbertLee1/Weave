@@ -1126,7 +1126,7 @@
         "go test -tags integration ./test/integration/phase7/... -run MarkingPropagation passes"
       ],
       "priority": 71,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

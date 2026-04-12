@@ -4244,3 +4244,18 @@ new features — only run verification suites and commit the gate.
   - Column-level policy testing at aggregate level needs handler-layer httptest setup (chi router + propertyFilterAdapter), not just service-layer calls
   - Marking enforcement (subset semantics) is additive with row-level policy: row filter runs at Bleve query time, marking filter runs post-Bleve in applyMarkingFilter
 ---
+
+## 2026-04-12 - US-071
+- Implemented Phase 7 cross-US integration test for marking AND (subset) propagation semantics
+- Test verifies 2 markings (ALPHA, BETA) × 3 objects × 3 users visibility matrix
+- Objects: item1 [ALPHA], item2 [BETA], item3 [ALPHA,BETA] — the dual-marked item3 is the key AND-semantics canary
+- Users: alphaUser [ALPHA], betaUser [BETA], bothUser [ALPHA,BETA]
+- Three test parts: ListObjects matrix, SearchObjects matrix, explicit AND-semantics assertions for dual-marked object
+- All 12 subtests pass, confirming subset enforcement works correctly
+- Files changed:
+  - test/integration/phase7/phase7_marking_propagation_test.go (new)
+- **Learnings for future iterations:**
+  - Marking-only tests (no row-level dept filter) are simpler: just SetMarkingsEnabled on the engine, no SetPolicies call needed
+  - The existing helper functions (extractPKs, slicesEqual, mustParseWhere) in the phase7_test package are shared across test files — don't redeclare them
+  - Bleve 200ms sleep after indexing is still necessary for marking field to be queryable
+---
