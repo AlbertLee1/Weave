@@ -4308,3 +4308,21 @@ new features — only run verification suites and commit the gate.
   - The IngestNotAllowed error comes from the policy checker (ABAC), not RequirePermission (RBAC) — users must have the right role AND pass policy evaluation
   - RequirePermission middleware returns "PermissionDenied" (not "IngestNotAllowed") when RBAC role is missing — test the two 403 flavors separately if needed
 ---
+
+## 2026-04-12 15:20 - US-075
+- Implemented Phase 7 cross-US test: audit coverage
+- Integration test at test/integration/phase7/phase7_audit_coverage_test.go
+- 4 sub-tests verifying audit_events rows are persisted to PostgreSQL:
+  1. CreateObjectType_produces_audit_row — OMS AuditedRepository writes CREATE/ObjectType event
+  2. LoginFailure_produces_audit_row — LoginHandler writes login_failed/Session event
+  3. APIKey_create_and_revoke_produce_audit_rows — APIKeyHandler writes api_key_create + api_key_revoke events
+  4. PolicyCreate_produces_audit_row — AuditedRepository writes CREATE/SecurityPolicy event
+- Uses real PG container + all migrations, PGStore for audit persistence, PGUserRepository and PGAPIKeyRepository for auth
+- Files changed:
+  - test/integration/phase7/phase7_audit_coverage_test.go (new)
+- **Learnings for future iterations:**
+  - api_keys table has FK constraint on user_id -> users table; must seed a real user row before creating API keys in integration tests
+  - AuditedRepository is a decorator pattern — wrap the real PGRepository with it to get audit events on all OMS write operations
+  - LoginHandler uses in-memory RefreshStore/MemoryRefreshStore even in integration tests — only the UserRepository and AuditStore need PG backing
+  - audit.PGStore.List() supports filtering by Action + ResourceType — efficient for asserting specific event types in tests
+---

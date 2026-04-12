@@ -1186,7 +1186,7 @@
         "go test -tags integration ./test/integration/phase7/... -run AuditCoverage passes"
       ],
       "priority": 75,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
