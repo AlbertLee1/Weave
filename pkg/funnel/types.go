@@ -29,12 +29,21 @@ const (
 // -wins conflict logic (US-021). Action-executor edits are stamped "user"; a
 // future streaming ingest path will stamp "ingest". It is omitempty so the
 // on-the-wire shape stays backwards compatible with pre-US-020 consumers.
+//
+// Markings is the US-051 side-channel used to ship per-object marking sets
+// into the Bleve index. Values land under the reserved keyword field
+// security.MarkingField (a.k.a. "_markings") on the indexed document so the
+// policy engine's auto-marking clause can AND-combine a TermQuery against
+// the same field. omitempty keeps the wire shape backwards compatible with
+// pre-US-051 publishers; an empty slice is treated identically to "no
+// markings" and no key is written into the indexed doc.
 type Edit struct {
 	Type       EditType               `json:"type"`
 	ObjectType string                 `json:"objectType"`
 	PrimaryKey string                 `json:"primaryKey"`
 	Properties map[string]interface{} `json:"properties,omitempty"` // for CREATE/MODIFY
 	Source     string                 `json:"source,omitempty"`
+	Markings   []string               `json:"markings,omitempty"`
 }
 
 // EditBatch represents a batch of edits to be applied atomically.

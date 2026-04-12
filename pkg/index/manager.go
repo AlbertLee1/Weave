@@ -233,6 +233,12 @@ func (m *Manager) buildMapping(properties []Property) mapping.IndexMapping {
 		docMapping.AddFieldMappingsAt(prop.APIName, fm)
 	}
 
+	// US-051: every ObjectType index reserves a KeywordField for marking
+	// values so the policy engine's auto-marking clause can AND-combine a
+	// TermQuery against the same field without depending on schema-author
+	// opt-in.
+	docMapping.AddFieldMappingsAt(MarkingsField, mapping.NewKeywordFieldMapping())
+
 	indexMapping.DefaultMapping = docMapping
 	return indexMapping
 }

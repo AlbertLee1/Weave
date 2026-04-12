@@ -131,8 +131,13 @@ func TestBuildMappingDefaultsToText(t *testing.T) {
 		t.Fatal("DefaultMapping is nil")
 	}
 	dm := im.DefaultMapping
-	if len(dm.Properties) != 3 {
-		t.Errorf("got %d property mappings, want 3", len(dm.Properties))
+	// US-051: BuildMapping now reserves a KeywordField for MarkingsField on
+	// every ObjectType. The schema-authored properties still number 3.
+	if len(dm.Properties) != 4 {
+		t.Errorf("got %d property mappings, want 4 (3 schema + %s)", len(dm.Properties), MarkingsField)
+	}
+	if _, ok := dm.Properties[MarkingsField]; !ok {
+		t.Errorf("missing %s keyword mapping", MarkingsField)
 	}
 	nameDM, ok := dm.Properties["name"]
 	if !ok {

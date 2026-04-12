@@ -20,6 +20,13 @@ const (
 	// DefaultMaxDeliveries is the maximum number of delivery attempts before
 	// a message is terminated (dead-lettered).
 	DefaultMaxDeliveries = 5
+
+	// markingsField is the reserved Bleve keyword field that carries every
+	// object's marking set. Kept in lockstep with pkg/security.MarkingField
+	// (which the policy engine's auto-marking clause targets). A separate
+	// constant here avoids dragging pkg/security into pkg/funnel's import
+	// graph — if you change one, change the other.
+	markingsField = "_markings"
 )
 
 // HistoryRecorder is the minimal subset of oms.Repository required by the
@@ -265,16 +272,31 @@ func (c *Consumer) applyEdit(ontologyAPIName string, edit Edit) error {
 	scopedKey := index.ScopedKey(ontologyAPIName, edit.ObjectType)
 	switch edit.Type {
 	case EditTypeCreate, EditTypeModify:
-		doc := make(map[string]interface{})
-		for k, v := range edit.Properties {
-			doc[k] = v
-		}
+		doc := buildIndexDoc(edit)
 		return c.indexMgr.IndexDocument(scopedKey, edit.PrimaryKey, doc)
 	case EditTypeDelete:
 		return c.indexMgr.DeleteDocument(scopedKey, edit.PrimaryKey)
 	default:
 		return fmt.Errorf("unknown edit type: %q", edit.Type)
 	}
+}
+
+// buildIndexDoc copies edit.Properties into a fresh map and merges Markings
+// under the reserved markingsField key so the policy engine's auto-marking
+// clause can AND-combine a TermQuery against the same field. An absent or
+// empty marking slice leaves the key unset so "public object" docs stay
+// distinguishable from "denied all" docs at query time.
+func buildIndexDoc(edit Edit) map[string]interface{} {
+	doc := make(map[string]interface{}, len(edit.Properties)+1)
+	for k, v := range edit.Properties {
+		doc[k] = v
+	}
+	if len(edit.Markings) > 0 {
+		markings := make([]string, len(edit.Markings))
+		copy(markings, edit.Markings)
+		doc[markingsField] = markings
+	}
+	return doc
 }
 
 // applyBatchEdits groups edits by object type (preserving per-type order) and
@@ -332,18 +354,16 @@ func (c *Consumer) applyBatchEdits(ontologyAPIName string, edits []Edit) error {
 }
 
 // toBatchOp converts a funnel.Edit into an index.BatchOp, copying the
-// properties map so downstream mutations cannot race with bleve.
+// properties map so downstream mutations cannot race with bleve. US-051
+// merges edit.Markings into the doc under markingsField so the index write
+// and the policy engine's auto-marking clause agree on the field name.
 func toBatchOp(edit Edit) (index.BatchOp, error) {
 	switch edit.Type {
 	case EditTypeCreate, EditTypeModify:
-		doc := make(map[string]interface{}, len(edit.Properties))
-		for k, v := range edit.Properties {
-			doc[k] = v
-		}
 		return index.BatchOp{
 			Type:       index.BatchOpIndex,
 			PrimaryKey: edit.PrimaryKey,
-			Document:   doc,
+			Document:   buildIndexDoc(edit),
 		}, nil
 	case EditTypeDelete:
 		return index.BatchOp{

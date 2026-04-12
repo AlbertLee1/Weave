@@ -29,6 +29,13 @@ const (
 	AnalyzerNotIndexed  = "not_indexed"
 )
 
+// MarkingsField is the reserved Bleve keyword field that carries every
+// object's marking set. Kept in lockstep with pkg/security.MarkingField
+// (the policy engine's auto-marking clause) and pkg/funnel.markingsField
+// (the ingest-side writer). Declared here so every ObjectType mapping can
+// register a KeywordField for markings without going through the schema.
+const MarkingsField = "_markings"
+
 // BuildMapping constructs a Bleve IndexMapping from an oms.ObjectType,
 // honouring each property's `TypeConfig.analyzer` hint:
 //
@@ -51,6 +58,8 @@ func BuildMapping(ot *oms.ObjectType) *mapping.IndexMappingImpl {
 		}
 		dm.AddFieldMappingsAt(p.APIName, fm)
 	}
+
+	dm.AddFieldMappingsAt(MarkingsField, mapping.NewKeywordFieldMapping())
 
 	im.DefaultMapping = dm
 	return im

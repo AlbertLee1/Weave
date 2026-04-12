@@ -56,6 +56,13 @@ const (
 // (JWT injection) and US-058 (OSP merge) write/read the same key.
 const userMarkingsKey = "markings"
 
+// MarkingField is the reserved keyword field name used by the Funnel consumer
+// to persist each object's marking set into Bleve, and the field the
+// auto-marking clause in Evaluate targets when an ObjectType is flagged as
+// markings-enabled via SetMarkingsEnabled. Keeping this in one place means
+// the indexing pipeline and the policy engine cannot drift.
+const MarkingField = "_markings"
+
 // Rule is one clause inside a Policy. The JSON tags must match the DSL
 // spelled out in the story so that existing JSONB rows decode without
 // a schema migration.
@@ -106,6 +113,11 @@ type Engine struct {
 	policies map[string][]Policy // keyed by ObjectType RID
 	versions map[string]int64    // keyed by ObjectType RID; bumped on SetPolicies
 	cache    *PolicyCache
+	// markingsEnabled is the set of ObjectType RIDs for which Evaluate must
+	// auto-append a marking-subset clause against MarkingField. Populated via
+	// SetMarkingsEnabled so callers (main.go, tests) can turn the feature on
+	// per ObjectType without authoring a synthetic Policy row.
+	markingsEnabled map[string]struct{}
 }
 
 // NewEngine returns an Engine with no policies registered. Un-policied
@@ -113,9 +125,41 @@ type Engine struct {
 // AND-combine the result into their pipeline unconditionally.
 func NewEngine() *Engine {
 	return &Engine{
-		policies: make(map[string][]Policy),
-		versions: make(map[string]int64),
+		policies:        make(map[string][]Policy),
+		versions:        make(map[string]int64),
+		markingsEnabled: make(map[string]struct{}),
 	}
+}
+
+// SetMarkingsEnabled toggles auto-marking enforcement for an ObjectType RID.
+// Passing enabled=true registers the RID so every subsequent Evaluate call
+// AND-combines a marking-subset clause against MarkingField on top of any
+// explicit OBJECT-scope policies. Passing enabled=false removes the RID.
+//
+// The per-RID version counter is bumped on every call so an attached
+// PolicyCache drops stale compiled queries. Safe for concurrent use.
+func (e *Engine) SetMarkingsEnabled(objectTypeRID string, enabled bool) {
+	e.mu.Lock()
+	if enabled {
+		e.markingsEnabled[objectTypeRID] = struct{}{}
+	} else {
+		delete(e.markingsEnabled, objectTypeRID)
+	}
+	e.versions[objectTypeRID]++
+	cache := e.cache
+	e.mu.Unlock()
+	if cache != nil {
+		cache.InvalidateObjectType(objectTypeRID)
+	}
+}
+
+// MarkingsEnabled reports whether SetMarkingsEnabled has registered the
+// given ObjectType RID for auto-marking enforcement.
+func (e *Engine) MarkingsEnabled(objectTypeRID string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	_, ok := e.markingsEnabled[objectTypeRID]
+	return ok
 }
 
 // SetCache attaches a PolicyCache for compiled-query memoisation. Passing nil
@@ -170,6 +214,7 @@ func (e *Engine) Evaluate(ctx context.Context, user *auth.User, ot oms.ObjectTyp
 	policies := e.policies[ot.RID]
 	version := e.versions[ot.RID]
 	cache := e.cache
+	_, markingsOn := e.markingsEnabled[ot.RID]
 	e.mu.RUnlock()
 
 	var userID string
@@ -183,7 +228,7 @@ func (e *Engine) Evaluate(ctx context.Context, user *auth.User, ot oms.ObjectTyp
 		}
 	}
 
-	q, err := compilePolicies(policies, user)
+	q, err := compilePolicies(policies, user, markingsOn)
 	if err != nil {
 		return nil, err
 	}
@@ -299,11 +344,11 @@ func propertyRuleMatches(r Rule, user *auth.User) bool {
 // compilePolicies runs the DSL compiler over every OBJECT-typed policy in
 // policies. Extracted from Evaluate so cached results can short-circuit the
 // compile pass without duplicating fail-closed / fallthrough logic.
-func compilePolicies(policies []Policy, user *auth.User) (query.Query, error) {
-	if len(policies) == 0 {
-		return bleve.NewMatchAllQuery(), nil
-	}
-
+//
+// markingsEnabled=true appends a synthetic RuleTypeMarkingSubset clause
+// against MarkingField so ObjectTypes registered via SetMarkingsEnabled
+// inherit marking enforcement without a persisted policy row.
+func compilePolicies(policies []Policy, user *auth.User, markingsEnabled bool) (query.Query, error) {
 	var clauses []query.Query
 	for _, p := range policies {
 		if p.PolicyType != "" && p.PolicyType != PolicyTypeObject {
@@ -321,6 +366,22 @@ func compilePolicies(policies []Policy, user *auth.User) (query.Query, error) {
 				return q, nil
 			}
 			clauses = append(clauses, q)
+		}
+	}
+
+	if markingsEnabled {
+		mq, err := compileRule(Rule{
+			Type:           RuleTypeMarkingSubset,
+			ObjectProperty: MarkingField,
+		}, user)
+		if err != nil {
+			return nil, fmt.Errorf("auto marking clause: %w", err)
+		}
+		if _, deny := mq.(*query.MatchNoneQuery); deny {
+			return mq, nil
+		}
+		if mq != nil {
+			clauses = append(clauses, mq)
 		}
 	}
 
