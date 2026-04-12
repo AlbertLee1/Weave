@@ -32,7 +32,8 @@ const memCheckInterval = 50 * time.Millisecond
 
 // Runtime is a sandboxed JavaScript execution environment backed by Goja.
 type Runtime struct {
-	config Config
+	config         Config
+	ontologyClient OntologyClient
 }
 
 // NewRuntime creates a new sandboxed Goja runtime with the given config.
@@ -101,6 +102,9 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 			}
 		}
 	}()
+
+	// Register ontology shim if client is configured.
+	r.registerOntologyShim(vm, execCtx)
 
 	// Compile and run the source
 	_, err := vm.RunString(source)
