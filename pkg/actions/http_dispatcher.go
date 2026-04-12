@@ -116,6 +116,11 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, at *oms.ActionType, param
 		return nil, fmt.Errorf("function dispatcher: function %s reported error: %s", at.FunctionRID, fnResp.Error)
 	}
 
+	// Validate the response structure before converting edits.
+	if err := ValidateFunctionOutput(&fnResp); err != nil {
+		return nil, err
+	}
+
 	edits := make([]funnel.Edit, 0, len(fnResp.Edits))
 	for i, fe := range fnResp.Edits {
 		edit, err := fe.ToFunnelEdit()

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/functions"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
@@ -215,8 +216,15 @@ func TestActionGojaDispatch_InvalidOutput(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid function output")
 	}
-	if !strings.Contains(err.Error(), "expected {edits: Edit[]}") {
-		t.Errorf("expected output shape error, got: %v", err)
+	apiErr, ok := err.(*apierror.APIError)
+	if !ok {
+		t.Fatalf("expected *apierror.APIError, got %T: %v", err, err)
+	}
+	if apiErr.ErrorName != "InvalidFunctionOutput" {
+		t.Errorf("expected ErrorName=InvalidFunctionOutput, got %q", apiErr.ErrorName)
+	}
+	if apiErr.StatusCode != 400 {
+		t.Errorf("expected StatusCode=400, got %d", apiErr.StatusCode)
 	}
 }
 

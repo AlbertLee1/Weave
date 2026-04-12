@@ -69,35 +69,30 @@ func (d *GojaDispatcher) Dispatch(ctx context.Context, at *oms.ActionType, param
 
 // convertGojaResult validates the Goja return value matches the
 // {edits: Edit[]} shape and converts it to funnel.Edit slice.
+// Structural validation is delegated to ValidateRawFunctionOutput so both
+// Goja and HTTP paths share the same InvalidFunctionOutput error semantics.
 func convertGojaResult(rid string, result interface{}) ([]funnel.Edit, error) {
 	resultMap, ok := result.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("goja dispatcher: function %q returned %T, expected {edits: Edit[]}", rid, result)
+		return nil, ValidateRawFunctionOutput(result) // returns InvalidFunctionOutput
 	}
 
-	// Check for error field
+	// Check for error field before structural validation.
 	if errMsg, ok := resultMap["error"]; ok {
 		if s, ok := errMsg.(string); ok && s != "" {
 			return nil, fmt.Errorf("goja dispatcher: function %q reported error: %s", rid, s)
 		}
 	}
 
-	editsRaw, ok := resultMap["edits"]
-	if !ok {
-		return nil, fmt.Errorf("goja dispatcher: function %q did not return 'edits' key", rid)
+	// Validate the raw output structure ({edits: Edit[]} with valid fields).
+	if err := ValidateRawFunctionOutput(result); err != nil {
+		return nil, err
 	}
 
-	editsSlice, ok := editsRaw.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("goja dispatcher: function %q 'edits' is %T, expected array", rid, editsRaw)
-	}
-
+	editsSlice := resultMap["edits"].([]interface{})
 	edits := make([]funnel.Edit, 0, len(editsSlice))
 	for i, raw := range editsSlice {
-		editMap, ok := raw.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("goja dispatcher: edit %d from %q is %T, expected object", i, rid, raw)
-		}
+		editMap := raw.(map[string]interface{})
 
 		fe := FunctionEdit{
 			Type:       asString(editMap["type"]),
