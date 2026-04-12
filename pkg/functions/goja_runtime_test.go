@@ -2,7 +2,9 @@ package functions
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestGojaRuntime_HelloWorld(t *testing.T) {
@@ -209,4 +211,121 @@ func TestGojaRuntime_MainThrows(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when main throws")
 	}
+}
+
+func TestGojaTimeoutOOM(t *testing.T) {
+	t.Run("timeout_infinite_loop", func(t *testing.T) {
+		cfg := Config{
+			MaxExecutionTime: 500 * time.Millisecond,
+			MaxMemoryBytes:   32 * 1024 * 1024,
+		}
+		rt := NewRuntime(cfg)
+
+		start := time.Now()
+		_, err := rt.Execute(context.Background(), `
+			function main(input) {
+				while(true) {}
+			}
+		`, nil)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected timeout error for infinite loop")
+		}
+		if !strings.Contains(err.Error(), "timeout") && !strings.Contains(err.Error(), "cancel") && !strings.Contains(err.Error(), "interrupt") {
+			t.Fatalf("expected timeout-related error, got: %v", err)
+		}
+		// Should complete within a reasonable margin of the configured timeout
+		if elapsed > 3*time.Second {
+			t.Fatalf("timeout took too long: %v (expected ~500ms)", elapsed)
+		}
+	})
+
+	t.Run("timeout_context_cancellation", func(t *testing.T) {
+		cfg := Config{
+			MaxExecutionTime: 10 * time.Second,
+			MaxMemoryBytes:   32 * 1024 * 1024,
+		}
+		rt := NewRuntime(cfg)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		_, err := rt.Execute(ctx, `
+			function main(input) {
+				while(true) {}
+			}
+		`, nil)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected error when context is cancelled")
+		}
+		if elapsed > 3*time.Second {
+			t.Fatalf("context cancellation took too long: %v (expected ~500ms)", elapsed)
+		}
+	})
+
+	t.Run("oom_deep_recursion", func(t *testing.T) {
+		cfg := Config{
+			MaxExecutionTime: 10 * time.Second, // Long timeout so stack limit triggers first
+			MaxMemoryBytes:   32 * 1024 * 1024,
+		}
+		rt := NewRuntime(cfg)
+
+		start := time.Now()
+		_, err := rt.Execute(context.Background(), `
+			function main(input) {
+				function recurse(n) { return recurse(n + 1); }
+				return recurse(0);
+			}
+		`, nil)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected stack overflow error for deep recursion")
+		}
+		// Must be caught by stack limit, not timeout — should resolve well under 2s
+		if elapsed > 2*time.Second {
+			t.Fatalf("deep recursion took %v — should be caught by stack limit, not timeout", elapsed)
+		}
+		// Goja's stack overflow error includes the call site (e.g. "at recurse (<eval>:...)")
+		// rather than the words "stack overflow" — accept either form.
+		errStr := err.Error()
+		isStackError := strings.Contains(errStr, "stack") ||
+			strings.Contains(errStr, "overflow") ||
+			strings.Contains(errStr, "at recurse")
+		if !isStackError {
+			t.Fatalf("expected stack overflow error, got: %v", err)
+		}
+	})
+
+	t.Run("oom_large_allocation", func(t *testing.T) {
+		cfg := Config{
+			MaxExecutionTime: 10 * time.Second, // Long timeout so memory limit triggers first
+			MaxMemoryBytes:   1 * 1024 * 1024,  // 1MB limit
+		}
+		rt := NewRuntime(cfg)
+
+		start := time.Now()
+		_, err := rt.Execute(context.Background(), `
+			function main(input) {
+				var arr = [];
+				for (var i = 0; i < 10000000; i++) {
+					arr.push("x".repeat(1000));
+				}
+				return arr.length;
+			}
+		`, nil)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected memory limit error for large allocation")
+		}
+		// Must be caught by memory watchdog, not timeout
+		if elapsed > 5*time.Second {
+			t.Fatalf("large allocation took %v — should be caught by memory limit, not timeout", elapsed)
+		}
+	})
 }

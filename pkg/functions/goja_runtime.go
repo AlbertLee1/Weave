@@ -3,6 +3,8 @@ package functions
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -22,6 +24,12 @@ func DefaultConfig() Config {
 	}
 }
 
+// maxCallStackSize caps recursion depth to prevent stack overflow.
+const maxCallStackSize = 1024
+
+// memCheckInterval is how often the memory watchdog polls heap usage.
+const memCheckInterval = 50 * time.Millisecond
+
 // Runtime is a sandboxed JavaScript execution environment backed by Goja.
 type Runtime struct {
 	config Config
@@ -36,11 +44,16 @@ func NewRuntime(cfg Config) *Runtime {
 // The source must define a `function main(input)` that returns a value.
 // The input parameter is passed as the first argument to main.
 func (r *Runtime) Execute(ctx context.Context, source string, input interface{}) (interface{}, error) {
+	// Apply execution timeout via context
+	execCtx, cancel := context.WithTimeout(ctx, r.config.MaxExecutionTime)
+	defer cancel()
+
 	vm := goja.New()
 
+	// Sandbox: limit call stack depth to prevent runaway recursion.
+	vm.SetMaxCallStackSize(maxCallStackSize)
+
 	// Sandbox: explicitly remove dangerous globals.
-	// Goja doesn't provide these by default, but we delete them defensively
-	// in case any future goja version or user code defines them.
 	dangerousGlobals := []string{
 		"require", "fetch", "fs", "net", "process",
 		"child_process", "os", "setTimeout", "setInterval",
@@ -49,23 +62,43 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 	for _, name := range dangerousGlobals {
 		_ = vm.Set(name, goja.Undefined())
 	}
-	// Now delete them so typeof returns "undefined"
 	for _, name := range dangerousGlobals {
 		vm.GlobalObject().Delete(name)
 	}
 
-	// Set up context-based timeout
+	// Set up context-based timeout and memory watchdog.
+	var interrupted atomic.Bool
 	done := make(chan struct{})
 	defer close(done)
 
+	// Capture baseline heap allocation before execution.
+	var baseline runtime.MemStats
+	runtime.ReadMemStats(&baseline)
+
 	go func() {
-		select {
-		case <-ctx.Done():
-			vm.Interrupt("execution cancelled: " + ctx.Err().Error())
-		case <-time.After(r.config.MaxExecutionTime):
-			vm.Interrupt("execution timeout exceeded")
-		case <-done:
-			// execution completed normally
+		ticker := time.NewTicker(memCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-execCtx.Done():
+				if interrupted.CompareAndSwap(false, true) {
+					vm.Interrupt("execution timeout exceeded")
+				}
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				// Periodic GC + memory check
+				runtime.GC()
+				var current runtime.MemStats
+				runtime.ReadMemStats(&current)
+				if current.HeapAlloc > baseline.HeapAlloc+uint64(r.config.MaxMemoryBytes) {
+					if interrupted.CompareAndSwap(false, true) {
+						vm.Interrupt("memory limit exceeded")
+					}
+					return
+				}
+			}
 		}
 	}()
 
