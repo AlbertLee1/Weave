@@ -140,6 +140,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	if deps.CORSOrigins != nil && len(deps.CORSOrigins) > 0 {
 		r.Use(CORSMiddleware(deps.CORSOrigins))
 	}
+	// US-069: per-endpoint rate limiting with default fallback.
+	rateLimitRules, defaultRateLimitRule := DefaultRateLimitRules()
+	r.Use(NewRateLimitMiddlewareWithDefault(rateLimitRules, defaultRateLimitRule))
 
 	// Health endpoints (public, no auth required)
 	// /health is the k8s liveness probe: always returns 200 {"status":"alive"}

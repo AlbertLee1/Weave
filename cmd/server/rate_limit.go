@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/auth"
 	"golang.org/x/time/rate"
 )
@@ -61,6 +60,23 @@ func (cr *compiledRule) matchPath(path string) bool {
 	return true
 }
 
+// extractParam returns the value of the named {param} placeholder from the
+// given URL path, using this rule's pattern as the template. Returns "" if
+// the param name is not found or the path doesn't match.
+func (cr *compiledRule) extractParam(path, paramName string) string {
+	pathSegs := splitPath(path)
+	if len(pathSegs) != len(cr.segments) {
+		return ""
+	}
+	target := "{" + paramName + "}"
+	for i, seg := range cr.segments {
+		if seg == target {
+			return pathSegs[i]
+		}
+	}
+	return ""
+}
+
 // getLimiter returns (or lazily creates) the token bucket for the given key.
 func (cr *compiledRule) getLimiter(key string) *rate.Limiter {
 	if v, ok := cr.limiters.Load(key); ok {
@@ -83,6 +99,27 @@ func splitPath(p string) []string {
 	return out
 }
 
+// DefaultRateLimitRules returns the production rate limit configuration table
+// and a default fallback rule for unmatched requests.
+//
+// Endpoint-specific rules:
+//   - POST /api/auth/login       → 5 rps / IP
+//   - POST /api/auth/refresh     → 10 rps / user
+//   - POST .../actions/{a}/apply → 100 rps / user
+//   - POST .../streams/{ot}/ingest → 1000 rps / ontology
+//
+// Default (unmatched requests): 200 rps / user
+func DefaultRateLimitRules() ([]RateLimitRule, *RateLimitRule) {
+	rules := []RateLimitRule{
+		{Method: "POST", Pattern: "/api/auth/login", RPS: 5, Burst: 5, KeyBy: KeyByIP},
+		{Method: "POST", Pattern: "/api/auth/refresh", RPS: 10, Burst: 10, KeyBy: KeyByUser},
+		{Method: "POST", Pattern: "/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", RPS: 100, Burst: 100, KeyBy: KeyByUser},
+		{Method: "POST", Pattern: "/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest", RPS: 1000, Burst: 1000, KeyBy: KeyByOntology},
+	}
+	defaultRule := &RateLimitRule{RPS: 200, Burst: 200, KeyBy: KeyByUser}
+	return rules, defaultRule
+}
+
 // NewRateLimitMiddleware returns a chi-compatible middleware that enforces
 // per-endpoint token bucket rate limits according to the given rules.
 //
@@ -93,6 +130,13 @@ func splitPath(p string) []string {
 //
 // Requests that match no rule pass through without rate limiting.
 func NewRateLimitMiddleware(rules []RateLimitRule) func(http.Handler) http.Handler {
+	return NewRateLimitMiddlewareWithDefault(rules, nil)
+}
+
+// NewRateLimitMiddlewareWithDefault is like NewRateLimitMiddleware but accepts
+// an optional default rule that applies to requests not matching any explicit
+// rule. When defaultRule is nil, unmatched requests pass through freely.
+func NewRateLimitMiddlewareWithDefault(rules []RateLimitRule, defaultRule *RateLimitRule) func(http.Handler) http.Handler {
 	compiled := make([]*compiledRule, len(rules))
 	for i, r := range rules {
 		compiled[i] = &compiledRule{
@@ -104,15 +148,27 @@ func NewRateLimitMiddleware(rules []RateLimitRule) func(http.Handler) http.Handl
 		}
 	}
 
+	var compiledDefault *compiledRule
+	if defaultRule != nil {
+		compiledDefault = &compiledRule{
+			rps:   defaultRule.RPS,
+			burst: defaultRule.Burst,
+			keyBy: defaultRule.KeyBy,
+		}
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rule := matchRule(compiled, r.Method, r.URL.Path)
+			if rule == nil {
+				rule = compiledDefault
+			}
 			if rule == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			key := extractKey(rule.keyBy, r)
+			key := extractKey(rule, r)
 			lim := rule.getLimiter(key)
 
 			if !lim.Allow() {
@@ -150,18 +206,21 @@ func matchRule(rules []*compiledRule, method, path string) *compiledRule {
 	return nil
 }
 
-// extractKey derives the rate-limit bucket key from the request according to
-// the configured KeyBy strategy. When user-keyed and no auth context exists
-// (e.g. public endpoints like /api/auth/refresh), it falls back to IP.
-func extractKey(kb KeyBy, r *http.Request) string {
-	switch kb {
+// extractKey derives the rate-limit bucket key from the request and the
+// matched rule. The rule's pattern is used to extract URL params directly
+// from the path (not chi.URLParam) so the middleware works as global
+// r.Use() middleware where chi hasn't resolved route params yet.
+// When user-keyed and no auth context exists (e.g. public endpoints like
+// /api/auth/refresh), it falls back to IP.
+func extractKey(rule *compiledRule, r *http.Request) string {
+	switch rule.keyBy {
 	case KeyByUser:
 		if u := auth.UserFromContext(r.Context()); u != nil && u.ID != "" {
 			return "user:" + u.ID
 		}
 		return "ip:" + clientIP(r)
 	case KeyByOntology:
-		ont := chi.URLParam(r, "ontologyApiName")
+		ont := rule.extractParam(r.URL.Path, "ontologyApiName")
 		if ont != "" {
 			return "ont:" + ont
 		}

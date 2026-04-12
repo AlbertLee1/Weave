@@ -218,6 +218,77 @@ func TestRateLimitMiddleware_MethodMismatchPassesThrough(t *testing.T) {
 	}
 }
 
+func TestDefaultRateLimitRules(t *testing.T) {
+	rules, defaultRule := DefaultRateLimitRules()
+
+	// Verify the 4 explicit endpoint rules exist
+	if len(rules) != 4 {
+		t.Fatalf("expected 4 explicit rules, got %d", len(rules))
+	}
+
+	// login: 5 rps/ip
+	login := rules[0]
+	if login.Method != "POST" || login.Pattern != "/api/auth/login" || login.RPS != 5 || login.KeyBy != KeyByIP {
+		t.Errorf("login rule mismatch: %+v", login)
+	}
+
+	// refresh: 10 rps/user
+	refresh := rules[1]
+	if refresh.Method != "POST" || refresh.Pattern != "/api/auth/refresh" || refresh.RPS != 10 || refresh.KeyBy != KeyByUser {
+		t.Errorf("refresh rule mismatch: %+v", refresh)
+	}
+
+	// apply: 100 rps/user
+	apply := rules[2]
+	if apply.Method != "POST" || apply.Pattern != "/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply" || apply.RPS != 100 || apply.KeyBy != KeyByUser {
+		t.Errorf("apply rule mismatch: %+v", apply)
+	}
+
+	// ingest: 1000 rps/ontology
+	ingest := rules[3]
+	if ingest.Method != "POST" || ingest.Pattern != "/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest" || ingest.RPS != 1000 || ingest.KeyBy != KeyByOntology {
+		t.Errorf("ingest rule mismatch: %+v", ingest)
+	}
+
+	// default: 200 rps/user
+	if defaultRule == nil {
+		t.Fatal("expected a non-nil default rule")
+	}
+	if defaultRule.RPS != 200 || defaultRule.KeyBy != KeyByUser {
+		t.Errorf("default rule mismatch: %+v", defaultRule)
+	}
+}
+
+func TestRateLimitMiddleware_DefaultFallbackRule(t *testing.T) {
+	rules := []RateLimitRule{
+		{Method: "POST", Pattern: "/api/auth/login", RPS: 1, Burst: 1, KeyBy: KeyByIP},
+	}
+	defaultRule := &RateLimitRule{RPS: 1, Burst: 1, KeyBy: KeyByUser}
+	mw := NewRateLimitMiddlewareWithDefault(rules, defaultRule)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// An unmatched route should still be rate-limited by the default rule
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies", nil)
+	req1.RemoteAddr = "10.0.0.1:12345"
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first unmatched request: expected 200, got %d", w1.Code)
+	}
+
+	// Second request from same IP (falls back to IP since no user context)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies", nil)
+	req2.RemoteAddr = "10.0.0.1:12345"
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second unmatched request: expected 429, got %d", w2.Code)
+	}
+}
+
 func TestRateLimitMiddleware_UserFallbackToIP(t *testing.T) {
 	rules := []RateLimitRule{
 		{Method: "POST", Pattern: "/api/auth/refresh", RPS: 1, Burst: 1, KeyBy: KeyByUser},
