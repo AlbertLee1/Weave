@@ -59,8 +59,14 @@ type ServerDeps struct {
 	// OSS service's Load/Search paths and the ObjectSet executor's
 	// base/filter paths both read through it so a single SetPolicies call
 	// updates every read surface.
-	PolicyEngine     *security.Engine
-	FunnelConsumer   *funnel.Consumer
+	PolicyEngine   *security.Engine
+	FunnelConsumer *funnel.Consumer
+	// FunnelBroadcast is the in-process fan-out hub the SSE subscribe
+	// endpoint (US-055) reads from. The consumer can opt in to publishing
+	// events onto the hub via its OnChange hook; tests (and degraded-mode
+	// bootstraps) may leave it nil and the SSE route will return a clean
+	// 500 SSESubscribeNotConfigured.
+	FunnelBroadcast  *funnel.Broadcast
 	AttachmentStore  attachment.BlobStore
 	TimeSeriesStore  timeseries.Store
 	GeotemporalStore geotemporal.Store
@@ -295,6 +301,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsMultipleObjectTypes", objSetHandler.LoadObjectsMultipleObjectTypes)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsOrInterfaces", objSetHandler.LoadObjectsOrInterfaces)
 			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}", objSetHandler.GetObjectSet)
+
+			// US-055: SSE ObjectSet subscribe scaffold. Wire only when a
+			// broadcaster is present — degraded mode (no NATS) leaves the
+			// field nil and the route falls through to chi's 404 just like
+			// any unwired optional subsystem.
+			if deps.FunnelBroadcast != nil {
+				sseHandler := oss.NewSubscribeSSEHandler(
+					newObjectSetLookupAdapter(deps.ObjSetStore),
+					deps.FunnelBroadcast,
+				)
+				api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", sseHandler.ServeHTTP)
+			}
 		}
 
 		// Admin: index rebuild (US-011). Gated to admin-level roles via
@@ -610,6 +628,20 @@ func main() {
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
 		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
+
+		// US-055: stand up the in-process SSE broadcast hub and have the
+		// consumer fan every applied edit onto it so HTTP subscribers can
+		// tail the change stream. Event.Type is CREATE / MODIFY / DELETE,
+		// matching funnel.EditType, which the SSE handler collapses to
+		// ADDED_OR_UPDATED / DELETED on the wire.
+		deps.FunnelBroadcast = funnel.NewBroadcast()
+		deps.FunnelConsumer.SetOnChange(func(e funnel.ChangeEvent) {
+			deps.FunnelBroadcast.Publish(funnel.BroadcastEvent{
+				Type:       string(e.EditType),
+				ObjectType: e.ObjectType,
+				PrimaryKey: e.PrimaryKey,
+			})
+		})
 
 		// US-046: optional embedding side-channel. Each CREATE/MODIFY edit
 		// for a configured object type produces a vector via the embedding

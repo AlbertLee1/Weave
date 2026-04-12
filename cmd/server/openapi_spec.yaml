@@ -2606,6 +2606,41 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe:
+    get:
+      operationId: subscribeObjectSet
+      summary: Subscribe to an ObjectSet change stream over Server-Sent Events (US-055 scaffold)
+      description: |
+        Streams object change events for the given ObjectSet rid as
+        Server-Sent Events. Each event is emitted on a `data:` line as
+        JSON: `{"eventType":"ADDED_OR_UPDATED"|"DELETED","object":WireObject}`.
+        The ObjectSet definition's base ObjectType is used to filter the
+        in-process funnel broadcaster, so only events matching the
+        ObjectSet are delivered. Where-clause filtering, Last-Event-ID
+        replay, heartbeats and per-user connection limits are layered on
+        by follow-up stories (US-056 ~ US-058).
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectSetRid
+          required: true
+          schema:
+            type: string
+          description: The RID of the ObjectSet to subscribe to.
+      responses:
+        "200":
+          description: SSE stream. Response body is an unbounded sequence of `data:` lines carrying JSON event payloads.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actions/{action}/apply:
     post:
       operationId: applyAction
