@@ -4273,3 +4273,20 @@ new features — only run verification suites and commit the gate.
   - The handler emits "id: <seq>" on a separate line before "data: {...}" — reader must track currentID state across lines
   - Existing phase7_test helpers (extractPKs, slicesEqual, mustParseWhere) are shared but not needed for SSE tests — SSE tests use their own local types
 ---
+
+## 2026-04-12 - US-073
+- Phase 7 cross-US test: SSE x policy — two users with different marking grants subscribe to same ObjectSet and see different event subsets
+- Added SSEEventFilter interface to pkg/oss/subscribe_sse.go with SetEventFilter setter
+- Wired per-event policy check into ServeHTTP event loop (after ObjectType/Where checks, before sseEventPayload)
+- Integration test publishes 6 events with mixed markings: ACME-only, ACME2-only, public (no markings), dual-marked (needs BOTH)
+- UserA (ACME) sees 3 events, UserB (ACME2) sees 3 events, neither sees dual-marked event
+- Files changed:
+  - pkg/oss/subscribe_sse.go (SSEEventFilter interface, SetEventFilter, AllowEvent check in event loop)
+  - test/integration/phase7/phase7_sse_policy_test.go (new)
+- **Learnings for future iterations:**
+  - SSE policy filtering uses the same auth.EvaluateMarkings(userMarkings, objectMarkings) as Load/Search paths — keep a single source of truth
+  - User is captured once from request context before the event loop to avoid re-extraction per event
+  - markingEventFilter in the test implements oss.SSEEventFilter using the security.MarkingField ("_markings") key from event Properties
+  - auth.MarkingsField ("__markings") is for indexed documents; security.MarkingField ("_markings") is for policy evaluation — use the correct one per context
+  - Test injects user into context via X-Test-User header middleware, reusing the stubSSELookup from the SSE subscription test
+---
