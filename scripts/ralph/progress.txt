@@ -4658,3 +4658,22 @@ new features — only run verification suites and commit the gate.
   - contractOmsRepo and other embedding-based repos automatically delegate to the embedded interface — no stubs needed
   - Contract tests (TestContract_AllRoutesDocumented) enforce that every chi route has an OpenAPI entry — always update api/openapi.yaml AND copy to cmd/server/openapi_spec.yaml
 ---
+
+## 2026-04-12 - US-090
+- Implemented Goja runtime integration test covering 4 scenarios:
+  1. Hello world: basic function execution returns "Hello, World!"
+  2. findOrdersOver(1000): JS function calls ontology.search with gt where clause against real Bleve index, returns 3 matching order IDs
+  3. Sandbox escape: fetch and require calls are blocked (globals deleted)
+  4. Timeout: while(true) infinite loop interrupted after 5s default timeout
+- Full-stack integration: real PostgreSQL (testcontainers) + Bleve index + Goja VM with ontology shim
+- Created ossOntologyClient adapter bridging oss.Service to functions.OntologyClient with pre-bound ontologyRID
+- Function source stored in and retrieved from PostgreSQL (functions table) to prove CRUD round-trip
+- Files changed:
+  - test/integration/goja_runtime_test.go (new)
+  - test/foundry_parity/us090_goja.json (new)
+- **Learnings for future iterations:**
+  - The ossOntologyClient adapter pattern (pre-binding ontologyRID) is reusable for any code that needs to bridge the narrow functions.OntologyClient interface with the full oss.Service
+  - scopedBleveKey falls back to plain objectType name when no scoped key exists, so tests can use just objectType for EnsureIndex without worrying about ontology scoping
+  - Goja sandbox escape tests verify that globals are deleted (not just undefined) - the runtime double-deletes by setting to Undefined then calling Delete
+  - Integration tests in test/integration/ use package integration_test with //go:build integration tag
+---
