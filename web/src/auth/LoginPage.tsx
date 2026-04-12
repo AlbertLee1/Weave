@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { login } from './api';
+import { AuthApiError, login } from './api';
 
 /**
  * LoginPage renders the email + password form and posts to /api/auth/login.
@@ -25,8 +25,16 @@ export function LoginPage() {
     try {
       await login(email.trim(), password);
       navigate('/', { replace: true });
-    } catch {
-      setError('Invalid email or password');
+    } catch (err) {
+      if (err instanceof AuthApiError && err.status === 429) {
+        const body = err.body as Record<string, unknown> | null;
+        const secs = (body && typeof body.retryAfterSeconds === 'number')
+          ? body.retryAfterSeconds
+          : 60;
+        setError(`Too many attempts, try again in ${secs}s`);
+      } else {
+        setError('Invalid email or password');
+      }
     } finally {
       setPending(false);
     }

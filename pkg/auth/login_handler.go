@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -82,12 +83,18 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if h.limiter != nil {
 		ip := clientIP(r)
-		if !h.limiter.allow(ip) {
+		if ok, retryAfter := h.limiter.allow(ip); !ok {
+			retryS := int(retryAfter.Seconds())
+			if retryS < 1 {
+				retryS = 1
+			}
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryS))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"errorCode": "RATE_LIMITED",
-				"errorName": "TooManyLoginAttempts",
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"errorCode":         "RATE_LIMITED",
+				"errorName":         "TooManyLoginAttempts",
+				"retryAfterSeconds": retryS,
 			})
 			return
 		}
@@ -242,7 +249,7 @@ func newIPRateLimiter(max int, window time.Duration) *ipRateLimiter {
 	}
 }
 
-func (l *ipRateLimiter) allow(ip string) bool {
+func (l *ipRateLimiter) allow(ip string) (bool, time.Duration) {
 	now := time.Now()
 	cutoff := now.Add(-l.window)
 	l.mu.Lock()
@@ -257,11 +264,13 @@ func (l *ipRateLimiter) allow(ip string) bool {
 	}
 	if len(pruned) >= l.max {
 		l.hits[ip] = pruned
-		return false
+		// Return time until the oldest hit expires.
+		retryAfter := pruned[0].Add(l.window).Sub(now)
+		return false, retryAfter
 	}
 	pruned = append(pruned, now)
 	l.hits[ip] = pruned
-	return true
+	return true, 0
 }
 
 // Compile-time interface check.

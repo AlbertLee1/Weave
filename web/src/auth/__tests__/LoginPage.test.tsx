@@ -117,4 +117,52 @@ describe('LoginPage', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
+
+  it('shows rate-limit message on 429', async () => {
+    server.use(
+      http.post('/api/auth/login', () =>
+        new HttpResponse(
+          JSON.stringify({
+            errorCode: 'RATE_LIMITED',
+            errorName: 'TooManyLoginAttempts',
+            retryAfterSeconds: 45,
+          }),
+          { status: 429, headers: { 'Retry-After': '45' } },
+        ),
+      ),
+    );
+
+    renderLogin();
+    await userEvent.type(screen.getByLabelText(/email/i), 'alice@example.com');
+    await userEvent.type(screen.getByLabelText(/password/i), 'wrong');
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/too many attempts, try again in 45s/i)).toBeInTheDocument();
+    });
+    expect(useAuthStore.getState().accessToken).toBeNull();
+  });
+
+  it('shows fallback rate-limit message when retryAfterSeconds is missing', async () => {
+    server.use(
+      http.post('/api/auth/login', () =>
+        new HttpResponse(
+          JSON.stringify({
+            errorCode: 'TooManyRequests',
+            errorName: 'TooManyRequests',
+          }),
+          { status: 429 },
+        ),
+      ),
+    );
+
+    renderLogin();
+    await userEvent.type(screen.getByLabelText(/email/i), 'alice@example.com');
+    await userEvent.type(screen.getByLabelText(/password/i), 'wrong');
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/too many attempts, try again in 60s/i)).toBeInTheDocument();
+    });
+  });
 });

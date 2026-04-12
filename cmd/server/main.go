@@ -180,7 +180,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			Resolver:       deps.RoleResolver,
 			Signer:         deps.JWTSigner,
 			RefreshService: deps.RefreshService,
-			RateLimit:      10,
+			RateLimit:      5,
 		})
 		refreshHandler := auth.NewRefreshHandler(auth.RefreshHandlerDeps{
 			Users:          deps.UserRepo,

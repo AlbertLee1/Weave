@@ -22,7 +22,7 @@ export interface LoginResponse {
   user: LoginUser;
 }
 
-class AuthApiError extends Error {
+export class AuthApiError extends Error {
   status: number;
   body: unknown;
   constructor(status: number, body: unknown, message: string) {
