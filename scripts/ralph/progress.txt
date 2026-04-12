@@ -415,6 +415,14 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   `cmd/server/main.go` SetOnChange forwarder is the single point that
   copies `ChangeEvent.Offset → BroadcastEvent.Sequence`; any alternate
   publisher must do the same for replay to work.
+- BrowserPage's Realtime toggle checkbox is `sr-only` (visually hidden via
+  Tailwind). Playwright can't `.check()` it because the adjacent
+  `<span>Realtime</span>` intercepts pointer events. Use
+  `page.locator('label').filter({ hasText: 'Realtime' }).click()` instead.
+  Same pattern applies to any sr-only checkbox wrapped in a `<label>`.
+- The e2e server binary (`bin/weave`) can go stale: if SSE subscribe returns
+  HTML (SPA catch-all) instead of `text/event-stream`, rebuild the binary
+  and restart — the running process is from a prior `scripts/e2e-setup.sh`.
 
 ## Goal
 From "API surface alignment" (72% weighted) to "semantic depth alignment" (90%).
@@ -4371,4 +4379,19 @@ new features — only run verification suites and commit the gate.
   - ipRateLimiter.allow() now returns (bool, time.Duration); the Duration is the time until the oldest hit in the window expires, computed as pruned[0].Add(window).Sub(now)
   - The login handler's inline rate limiter (ipRateLimiter) and the global rate limit middleware (cmd/server/rate_limit.go) are separate — the inline one fires after the middleware. The inline one now also sets Retry-After header (previously only the middleware did)
   - gofmt drift on cmd/server/main.go is pre-existing (import ordering); per codebase patterns, do not blanket-reformat
+---
+
+## 2026-04-12 - US-079
+- Implemented Playwright spec for Browser realtime mode
+- Added `createCustomer` action type to northwind seed (createObject rule)
+- Playwright spec navigates to Browser page, enables Realtime Mode toggle, POSTs a createCustomer action via API, and asserts the new row appears in the DataTable within 5s via the SSE pipeline
+- Second test verifies the realtime indicator disappears when toggled off
+- Files changed:
+  - web/e2e/phase7/browser-realtime-mode.spec.ts (new, 2 tests)
+  - test/fixtures/seed_northwind/schemas.go (added createCustomer action type)
+- **Learnings for future iterations:**
+  - The Realtime checkbox is `sr-only` (visually hidden) — Playwright can't click it directly because the sibling `<span>Realtime</span>` intercepts pointer events. Use `page.locator('label').filter({ hasText: 'Realtime' }).click()` instead of `getByRole('checkbox').check()`
+  - The running e2e server binary must be rebuilt when new routes are added — the binary at bin/weave may be stale from a prior `scripts/e2e-setup.sh` run. If SSE subscribe returns HTML instead of event-stream, rebuild and restart
+  - `getByText(uniqueId)` in strict mode fails when the ID appears in multiple cells (e.g. customerID + companyName containing the ID). Use `getByRole('cell', { name: uniqueId, exact: true })` to match the exact cell
+  - The full SSE pipeline (action → NATS JetStream → consumer → Bleve index → Broadcast → SSE EventSource → query invalidation → refetch) takes 1-3s in local dev; 5s timeout is safe
 ---
