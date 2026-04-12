@@ -2856,3 +2856,55 @@ new features — only run verification suites and commit the gate.
     directly. Future tests that assert BooleanQuery structure should reuse this
     helper rather than digging into bleve internals each time.
 ---
+
+## 2026-04-12 - US-045
+- Implemented policy engine LRU+TTL cache with version invalidation.
+- Added pkg/security/policy_cache.go: `PolicyCache` keyed by (userID,
+  objectTypeRID, policyVersion) with `container/list`-backed LRU + wall-clock
+  TTL (default 5 min), `Get` / `Put` / `InvalidateObjectType`, `Stats`, and
+  `HitRate` for metric exposition. Injected `now func() time.Time` lets tests
+  drive TTL expiry without real sleeps.
+- Extended pkg/security/policy_engine.go: `Engine` now tracks a per-RID
+  `versions` counter (bumped on `SetPolicies`) plus an optional attached
+  `*PolicyCache`; `Evaluate` short-circuits on cache hit, and `SetPolicies`
+  calls `cache.InvalidateObjectType` so stale entries are swept immediately
+  alongside the version bump. Added `SetCache` and `PolicyVersion` accessors.
+- Factored the policy compile loop out of `Evaluate` into `compilePolicies`
+  so the cache-miss path can reuse the same fail-closed / fallthrough logic
+  that the original inlined version had.
+- Failing test first: `TestPolicyCacheHitAndInvalidate` (miss → hit → policy
+  update → miss on bumped version + stale-key assertion). Added
+  `TestPolicyCacheTTLExpiry`, `TestPolicyCacheLRUEviction`,
+  `TestPolicyCacheHitRate`, and `TestPolicyCacheInvalidateObjectType` for the
+  auxiliary guarantees in the US-045 acceptance criteria.
+- Files changed: pkg/security/policy_cache.go (new),
+  pkg/security/policy_cache_test.go (new), pkg/security/policy_engine.go.
+- Quality: `go test ./pkg/security/... -run Cache`, `go test ./...`,
+  `go vet ./pkg/security/...`, `gofmt -l` on edited files — all clean.
+- **Learnings for future iterations:**
+  - Engine already held a `sync.RWMutex` but did not use it for anything
+    invalidation-shaped. Keep cache wiring inside the same lock window when
+    mutating policies: read `e.cache` while holding the write lock, then
+    release BEFORE calling `cache.InvalidateObjectType` so the cache's own
+    mutex can never deadlock against the engine's.
+  - `query.NewTermQuery` / `query.NewMatchAllQuery` live in
+    `github.com/blevesearch/bleve/v2/search/query`, but the test file can use
+    the higher-level `bleve.New...` shortcuts too — the current pattern in
+    `policy_engine.go` mixes both, so follow whichever is already local.
+  - When seeding a cache test without going through Engine, use the lower-level
+    `query.NewTermQuery` constructor (no `bleve` import) to keep test deps
+    minimal. Package-scoped helper `newTestTermQuery` in
+    policy_cache_test.go is the reference.
+  - TTL tests: inject `cache.now = func() time.Time { return t }` instead of
+    `time.Sleep`. The field is package-private but tests in the same package
+    can reach it. Future cache-TTL tests should reuse this pattern — do NOT
+    introduce real sleeps.
+  - `container/list.Element.Value` holds `*policyCacheEntry`; cast sites use
+    `el.Value.(*policyCacheEntry)`. Never store the entry by value — LRU
+    reordering relies on pointer identity for `MoveToFront` round-trips.
+  - `Get` treats a TTL-expired entry as a miss AND evicts it inline; that
+    keeps `Stats().Size` honest without a background sweeper goroutine.
+  - `PolicyVersion` starts at 0 for un-policied RIDs and is bumped even when
+    `SetPolicies(rid, nil)` is used to clear policies; tests downstream of
+    US-046 that compare version numbers should not assume monotonic from 1.
+---

@@ -77,30 +77,63 @@ type Policy struct {
 // Engine compiles the row-level policies registered for an ObjectType into
 // a Bleve query. The Evaluate result is intended to be AND-combined by OSS
 // Load / Search / Aggregate into their own query pipelines.
+//
+// An optional PolicyCache (attached via SetCache) memoises compiled queries
+// per (userID, objectTypeRID, policyVersion). SetPolicies bumps the per-RID
+// version and invalidates cached entries so stale results never serve.
 type Engine struct {
 	mu       sync.RWMutex
 	policies map[string][]Policy // keyed by ObjectType RID
+	versions map[string]int64    // keyed by ObjectType RID; bumped on SetPolicies
+	cache    *PolicyCache
 }
 
 // NewEngine returns an Engine with no policies registered. Un-policied
 // ObjectTypes always compile to a MatchAll query so callers can safely
 // AND-combine the result into their pipeline unconditionally.
 func NewEngine() *Engine {
-	return &Engine{policies: make(map[string][]Policy)}
+	return &Engine{
+		policies: make(map[string][]Policy),
+		versions: make(map[string]int64),
+	}
+}
+
+// SetCache attaches a PolicyCache for compiled-query memoisation. Passing nil
+// disables caching. Safe to call at runtime, but existing entries under the
+// previous cache are not carried over.
+func (e *Engine) SetCache(c *PolicyCache) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cache = c
+}
+
+// PolicyVersion returns the current version counter for an ObjectType RID.
+// Un-policied RIDs return 0. Callers can combine this with PolicyCache.Get to
+// perform a standalone lookup outside the Engine.Evaluate fast path.
+func (e *Engine) PolicyVersion(objectTypeRID string) int64 {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.versions[objectTypeRID]
 }
 
 // SetPolicies registers (replacing any previous set) the policies for a given
-// ObjectType RID. Subsequent stories will wire PG loading into this method.
+// ObjectType RID, bumps the per-RID version counter, and drops any attached
+// cache entries for that RID so stale compiled queries never serve again.
 func (e *Engine) SetPolicies(objectTypeRID string, policies []Policy) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if len(policies) == 0 {
 		delete(e.policies, objectTypeRID)
-		return
+	} else {
+		copied := make([]Policy, len(policies))
+		copy(copied, policies)
+		e.policies[objectTypeRID] = copied
 	}
-	copied := make([]Policy, len(policies))
-	copy(copied, policies)
-	e.policies[objectTypeRID] = copied
+	e.versions[objectTypeRID]++
+	cache := e.cache
+	e.mu.Unlock()
+	if cache != nil {
+		cache.InvalidateObjectType(objectTypeRID)
+	}
 }
 
 // Evaluate compiles every OBJECT-typed policy registered for ot into a single
@@ -115,8 +148,36 @@ func (e *Engine) Evaluate(ctx context.Context, user *auth.User, ot oms.ObjectTyp
 
 	e.mu.RLock()
 	policies := e.policies[ot.RID]
+	version := e.versions[ot.RID]
+	cache := e.cache
 	e.mu.RUnlock()
 
+	var userID string
+	if user != nil {
+		userID = user.ID
+	}
+
+	if cache != nil && userID != "" {
+		if cached, ok := cache.Get(userID, ot.RID, version); ok {
+			return cached, nil
+		}
+	}
+
+	q, err := compilePolicies(policies, user)
+	if err != nil {
+		return nil, err
+	}
+
+	if cache != nil && userID != "" {
+		cache.Put(userID, ot.RID, version, q)
+	}
+	return q, nil
+}
+
+// compilePolicies runs the DSL compiler over every OBJECT-typed policy in
+// policies. Extracted from Evaluate so cached results can short-circuit the
+// compile pass without duplicating fail-closed / fallthrough logic.
+func compilePolicies(policies []Policy, user *auth.User) (query.Query, error) {
 	if len(policies) == 0 {
 		return bleve.NewMatchAllQuery(), nil
 	}
