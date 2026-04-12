@@ -65,6 +65,18 @@ type ObjectSetLookup interface {
 	ResolveSubscription(objectSetRid string) (SubscriptionSpec, error)
 }
 
+// SSEEventFilter is an optional per-event policy filter that the SSE handler
+// applies before delivering each event to a subscriber. Implementations
+// typically check the subscribing user's markings / ABAC attributes against
+// the event's properties to enforce the same visibility rules used by the
+// Load / Search / Aggregate read paths. A nil filter passes everything.
+type SSEEventFilter interface {
+	// AllowEvent returns true if the given event should be visible to the
+	// subscribing user. Called inside the hot event loop — implementations
+	// must be fast and allocation-light.
+	AllowEvent(user *auth.User, evt funnel.BroadcastEvent) bool
+}
+
 // SubscribeSSEHandler is the US-055 ObjectSet Server-Sent Events scaffold.
 // It resolves a stored ObjectSet by rid, subscribes to the in-process funnel
 // broadcaster, filters events down to the ObjectSet's base ObjectType and
@@ -84,6 +96,11 @@ type SubscribeSSEHandler struct {
 	// before the handler is installed on a router.
 	heartbeatInterval time.Duration
 	maxPerUser        int
+
+	// US-073: optional per-event policy filter. When non-nil the handler
+	// calls AllowEvent for each candidate SSE frame before writing it to
+	// the subscriber; events the filter rejects are silently dropped.
+	eventFilter SSEEventFilter
 
 	// connMu guards counts — the per-connection-key live subscriber
 	// tally. Keys are derived from the authenticated user (preferred) or
@@ -124,6 +141,15 @@ func (h *SubscribeSSEHandler) SetHeartbeatInterval(d time.Duration) {
 // hub. Safe to call before the handler is installed on a router.
 func (h *SubscribeSSEHandler) SetMaxConnectionsPerUser(n int) {
 	h.maxPerUser = n
+}
+
+// SetEventFilter installs an optional per-event policy filter. When set,
+// the handler calls AllowEvent(user, evt) for each candidate SSE frame and
+// drops events the filter rejects. This is the SSE equivalent of the
+// applyMarkingFilter / applyPolicyFilter passes on the Load / Search paths.
+// Safe to call before the handler is installed on a router.
+func (h *SubscribeSSEHandler) SetEventFilter(f SSEEventFilter) {
+	h.eventFilter = f
 }
 
 // acquireSlot attempts to reserve a connection slot for the given key. It
@@ -269,6 +295,12 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 
 	ctx := r.Context()
+	// US-073: capture the subscribing user once so the per-event filter
+	// does not need to re-extract on every iteration.
+	var sseUser *auth.User
+	if h.eventFilter != nil {
+		sseUser = auth.UserFromContext(ctx)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -286,6 +318,10 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if spec.Where != nil && !where.MatchClause(spec.Where, evt.Properties) {
+				continue
+			}
+			// US-073: per-event policy filter (marking / ABAC).
+			if h.eventFilter != nil && !h.eventFilter.AllowEvent(sseUser, evt) {
 				continue
 			}
 			payload := sseEventPayload(evt)
