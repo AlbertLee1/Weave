@@ -204,5 +204,28 @@ func northwindActionTypes() []actionTypeDef {
 				}
 			]`,
 		},
+		{
+			APIName:     "createCustomer",
+			DisplayName: "Create Customer",
+			Description: "Create a new customer record (used by US-079 browser-realtime-mode spec).",
+			Parameters: `[
+				{"id":"customerID","type":"string","required":true,"description":"Customer ID"},
+				{"id":"companyName","type":"string","required":true,"description":"Company name"},
+				{"id":"country","type":"string","required":false,"description":"Country"},
+				{"id":"contactName","type":"string","required":false,"description":"Contact name"}
+			]`,
+			Rules: `[
+				{
+					"type":"createObject",
+					"objectType":"customer",
+					"propertyBindings":{
+						"customerID":{"type":"parameter","value":"customerID"},
+						"companyName":{"type":"parameter","value":"companyName"},
+						"country":{"type":"parameter","value":"country"},
+						"contactName":{"type":"parameter","value":"contactName"}
+					}
+				}
+			]`,
+		},
 	}
 }
