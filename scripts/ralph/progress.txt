@@ -63,6 +63,10 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   struct, nil-check before `audit.Record(...)`. OMS audit uses the
   AuditedRepository decorator. Both share the same `audit.AuditEvent` struct
   and `audit.MemoryStore` for testing.
+- When adding a new route: always add it to api/openapi.yaml AND copy to
+  cmd/server/openapi_spec.yaml. The contract test
+  (TestContract_AllRoutesDocumented) enforces that every chi route appears in
+  the spec or the allowlist.
 - Reverse-direction withProperties routes through an optional reverseLinkFinder
   interface (ResolveLinkedReverseByAPIName) on the link resolver; the executor
   short-circuits with an explicit error when a resolver only speaks forward.
@@ -4147,4 +4151,30 @@ new features — only run verification suites and commit the gate.
   - Handler audit pattern: add optional audit.Store to deps struct, nil-check before recording. Keeps audit opt-in and backwards-compatible.
   - When changing handler constructor signatures (NewLogoutHandler, NewAPIKeyHandler), update all callers: test files AND cmd/server/main.go.
   - LoginHandler struct fields need gofmt alignment when deps struct is modified — pre-existing drift in field alignment.
+---
+
+## 2026-04-12 - US-067
+- Implemented `GET /api/v2/admin/auditEvents` read endpoint with filtering and cursor pagination
+- Added offset-based pagination support to `audit.ListFilter` (PageSize, Offset fields)
+- Updated `MemoryStore.List` to sort by ts DESC and apply pagination
+- Updated `PGStore.List` to add LIMIT/OFFSET when PageSize > 0
+- Created `cmd/server/admin_audit.go` with `NewAdminAuditEventsHandler`
+  - Query params: actor, action, resource_type, since, until, pageSize, pageToken
+  - Base64-encoded offset cursor for pagination
+  - Graceful 503 when store is nil (degraded mode)
+- Admin-only via `auth.RequirePermission(auth.PermUserManage)` in router
+- Wired `audit.PGStore` in main.go when PG pool is available
+- Added `AuditStore audit.Store` to `ServerDeps`
+- Updated OpenAPI spec with /api/v2/admin/auditEvents path + AuditEvent/AuditEventsResponse schemas
+- Files changed:
+  - cmd/server/admin_audit.go (new — handler)
+  - cmd/server/admin_audit_test.go (new — 11 tests covering list-all, filters, pagination, auth, errors)
+  - cmd/server/main.go (added AuditStore field, import, PG init, route wiring)
+  - pkg/audit/audit.go (added PageSize/Offset to ListFilter, sort + pagination in MemoryStore)
+  - pkg/audit/pg_store.go (added LIMIT/OFFSET to List query)
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml (new endpoint + schemas)
+- **Learnings for future iterations:**
+  - Contract test (TestContract_AllRoutesDocumented) requires every new route to be in api/openapi.yaml — always update both api/openapi.yaml AND cmd/server/openapi_spec.yaml
+  - Existing pagination pattern uses offset-based cursor (base64-encoded JSON with Offset field) — see pkg/oss/pagination/cursor.go
+  - Admin-only routes use `auth.RequirePermission(auth.PermUserManage)` middleware — same pattern for all admin endpoints
 ---
