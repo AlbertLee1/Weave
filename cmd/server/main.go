@@ -32,6 +32,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/transactions"
@@ -41,19 +42,24 @@ import (
 
 // ServerDeps holds all server dependencies.
 type ServerDeps struct {
-	OmsRepo          oms.Repository
-	UserRepo         auth.UserRepository
-	APIKeyRepo       auth.APIKeyRepository
-	RoleResolver     *auth.RoleResolver
-	JWTSigner        *auth.JWTSigner
-	RefreshService   *auth.RefreshService
-	IndexMgr         *index.Manager
-	LinkResolver     links.LinkResolver
-	OssSvc           oss.Service
-	AggEngine        *aggregation.Engine
-	ActionExecutor   *actions.Executor
-	ObjSetStore      *objectset.Store
-	ObjSetExecutor   *objectset.Executor
+	OmsRepo        oms.Repository
+	UserRepo       auth.UserRepository
+	APIKeyRepo     auth.APIKeyRepository
+	RoleResolver   *auth.RoleResolver
+	JWTSigner      *auth.JWTSigner
+	RefreshService *auth.RefreshService
+	IndexMgr       *index.Manager
+	LinkResolver   links.LinkResolver
+	OssSvc         oss.Service
+	AggEngine      *aggregation.Engine
+	ActionExecutor *actions.Executor
+	ObjSetStore    *objectset.Store
+	ObjSetExecutor *objectset.Executor
+	// PolicyEngine is the shared row-level security engine (US-046). The
+	// OSS service's Load/Search paths and the ObjectSet executor's
+	// base/filter paths both read through it so a single SetPolicies call
+	// updates every read surface.
+	PolicyEngine     *security.Engine
 	FunnelConsumer   *funnel.Consumer
 	AttachmentStore  attachment.BlobStore
 	TimeSeriesStore  timeseries.Store
@@ -525,6 +531,18 @@ func main() {
 		deps.OssSvc = oss.NewService(deps.OmsRepo, deps.IndexMgr, deps.LinkResolver)
 	}
 
+	// 4b. Row-level Policy Engine (US-046). The engine is shared between the
+	// OSS service's Load/Search paths and the ObjectSet executor's
+	// base/filter paths so every read surface sees the same row filtering
+	// without each call site re-loading policies from the database.
+	// DB-backed policy loading / cache invalidation arrives in a follow-up
+	// story; for now the engine boots empty and SetPolicies is exposed for
+	// tests and the upcoming loader to populate.
+	deps.PolicyEngine = security.NewEngine()
+	if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
+		impl.SetPolicyEngine(deps.PolicyEngine)
+	}
+
 	// 5. Aggregation Engine
 	deps.AggEngine = aggregation.NewEngine()
 
@@ -539,6 +557,12 @@ func main() {
 		// interface short-circuit with "interface resolver not configured".
 		if deps.OmsRepo != nil {
 			deps.ObjSetExecutor.SetInterfaceResolver(newPGInterfaceResolver(deps.OmsRepo))
+		}
+		// US-046: wire the shared row-level policy engine into the
+		// executor through a narrow adapter so LoadObjectSet / Aggregate
+		// paths enforce the same row filter as Load / Search.
+		if deps.OmsRepo != nil && deps.PolicyEngine != nil {
+			deps.ObjSetExecutor.SetPolicyProvider(newPolicyQueryAdapter(deps.OmsRepo, deps.PolicyEngine))
 		}
 		// US-046: nearestNeighbors backend. The vector store wraps the OMS
 		// repo (which exposes pgvector via FindNearestNeighbors) and the

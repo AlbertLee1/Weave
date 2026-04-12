@@ -15,6 +15,7 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/pagination"
 	"github.com/liyang/weave/pkg/oss/where"
+	"github.com/liyang/weave/pkg/security"
 )
 
 // ServiceImpl implements the Service interface.
@@ -27,6 +28,13 @@ type ServiceImpl struct {
 	// read. When nil, all object reads bypass policy evaluation (back-compat
 	// for tests and dev mode that haven't wired the filter yet).
 	policyFilter *PolicyFilter
+
+	// policyEngine is the optional query-time row-level policy compiler
+	// (US-046). When attached every Load/Search path AND-combines the
+	// per-user policy query into the Bleve request BEFORE the search runs,
+	// so denied rows never materialise. A nil engine short-circuits to
+	// bleve.NewMatchAllQuery() so existing callers are unaffected.
+	policyEngine *security.Engine
 }
 
 // NewService creates a new OSS service.
@@ -44,6 +52,49 @@ func NewService(omsRepo oms.Repository, indexMgr *index.Manager, linkResolver li
 // don't seed any policies).
 func (s *ServiceImpl) SetPolicyFilter(f *PolicyFilter) {
 	s.policyFilter = f
+}
+
+// SetPolicyEngine attaches the query-time row-level policy engine. The
+// engine is consulted inside each Load/Search path to compile the caller's
+// policy clause, which is then AND-combined with the user-supplied where
+// filter via bleve.NewConjunctionQuery. Pass nil to detach (tests / dev
+// mode). Safe to call at any point — every read re-reads the field.
+func (s *ServiceImpl) SetPolicyEngine(e *security.Engine) {
+	s.policyEngine = e
+}
+
+// compilePolicyQuery compiles the row-level security policy for ot into a
+// Bleve query suitable for AND-combining into a read request. When the
+// policy engine is not attached the function returns nil — callers MUST
+// treat a nil return as "no extra filter" and use their base query
+// unchanged (no wrapping conjunction). An engine that resolves to a
+// match-all clause is also returned as nil to avoid degenerate
+// ConjunctionQuery wrappers.
+func (s *ServiceImpl) compilePolicyQuery(ctx context.Context, ot oms.ObjectType) (query.Query, error) {
+	if s.policyEngine == nil {
+		return nil, nil
+	}
+	user := auth.UserFromContext(ctx)
+	q, err := s.policyEngine.Evaluate(ctx, user, ot)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := q.(*query.MatchAllQuery); ok {
+		return nil, nil
+	}
+	return q, nil
+}
+
+// mergePolicyQuery AND-combines a user-supplied Bleve query with the
+// compiled policy query. Returns the userQ unchanged when policyQ is nil,
+// otherwise wraps both in a ConjunctionQuery. Keeps the single "merge
+// policy with user where" idiom in one place so every call site stays
+// consistent.
+func mergePolicyQuery(userQ, policyQ query.Query) query.Query {
+	if policyQ == nil {
+		return userQ
+	}
+	return bleve.NewConjunctionQuery(userQ, policyQ)
 }
 
 // applyPolicyFilter is the single chokepoint where every read method funnels
@@ -64,13 +115,20 @@ func (s *ServiceImpl) applyPolicyFilter(ctx context.Context, ontologyRID, object
 // ErrNotFound (not ErrForbidden) so the policy itself does not leak the
 // object's existence. Allowed objects may have property values redacted.
 func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*WireObject, error) {
-	if _, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType); err != nil {
+	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
+	if err != nil {
 		return nil, err
 	}
 
-	// Look up by document ID (indexed with PK as doc ID)
-	q := bleve.NewDocIDQuery([]string{req.PrimaryKey})
-	searchReq := bleve.NewSearchRequest(q)
+	// Look up by document ID (indexed with PK as doc ID). US-046 merges the
+	// row-level policy query into the request so denied rows never hit the
+	// decoder; the mergePolicyQuery helper keeps the wrapping in one place.
+	idQ := bleve.NewDocIDQuery([]string{req.PrimaryKey})
+	policyQ, err := s.compilePolicyQuery(ctx, *ot)
+	if err != nil {
+		return nil, err
+	}
+	searchReq := bleve.NewSearchRequest(mergePolicyQuery(idQ, policyQ))
 	searchReq.Fields = []string{"*"}
 	searchReq.Size = 1
 
@@ -117,7 +175,14 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		pageSize = pagination.MaxPageSize
 	}
 
-	searchReq := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
+	// US-046: merge the row-level policy query into the match-all base so
+	// denied rows are filtered at query time. A nil policyQ leaves the
+	// match-all untouched (back-compat for tests that don't wire an engine).
+	policyQ, err := s.compilePolicyQuery(ctx, *ot)
+	if err != nil {
+		return nil, err
+	}
+	searchReq := bleve.NewSearchRequest(mergePolicyQuery(bleve.NewMatchAllQuery(), policyQ))
 	searchReq.Fields = []string{"*"}
 	searchReq.Size = pageSize
 	searchReq.From = cursor.Offset
@@ -178,6 +243,14 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	} else {
 		bleveQuery = bleve.NewMatchAllQuery()
 	}
+
+	// US-046: AND-combine the row-level policy query into the caller's
+	// where clause so denied rows never enter the Bleve result set.
+	policyQ, err := s.compilePolicyQuery(ctx, *ot)
+	if err != nil {
+		return nil, err
+	}
+	bleveQuery = mergePolicyQuery(bleveQuery, policyQ)
 
 	cursor, err := pagination.DecodeCursor(req.PageToken)
 	if err != nil {

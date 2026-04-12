@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oss/where"
@@ -37,6 +38,17 @@ type InterfaceResolver interface {
 	ResolveInterfaceObjectTypes(ctx context.Context, interfaceAPIName string) ([]string, error)
 }
 
+// PolicyQueryProvider returns a row-level policy query to AND-combine with
+// the executor's Bleve request for the given ObjectType API name. It exists
+// so pkg/oss/objectset can call into pkg/security without a direct import,
+// keeping the dependency graph flat. A (nil, nil) return signals "no policy
+// attached" and the base query flows through unchanged. US-046 wires a
+// thin adapter that resolves apiName → RID and forwards to
+// *security.Engine.Evaluate.
+type PolicyQueryProvider interface {
+	PolicyQuery(ctx context.Context, objectType string) (query.Query, error)
+}
+
 // Executor evaluates ObjectSet definitions.
 type Executor struct {
 	indexMgr       *index.Manager
@@ -45,6 +57,7 @@ type Executor struct {
 	interfaceResol InterfaceResolver
 	vectorStore    NNVectorStore
 	embedProvider  NNEmbeddingProvider
+	policyProvider PolicyQueryProvider
 }
 
 // NewExecutor creates a new ObjectSet executor.
@@ -61,6 +74,48 @@ func NewExecutor(indexMgr *index.Manager, linkResolver links.LinkResolver, store
 // construction time. Leaving this unset causes such definitions to error.
 func (e *Executor) SetInterfaceResolver(r InterfaceResolver) {
 	e.interfaceResol = r
+}
+
+// SetPolicyProvider wires the optional row-level policy query provider
+// (US-046). When attached the executor AND-combines the per-object-type
+// policy query into its executeBase / executeFilter Bleve requests so
+// LoadObjectSet and Aggregate paths see the same row filtering that
+// ServiceImpl applies to Load / Search. Passing nil detaches the hook.
+func (e *Executor) SetPolicyProvider(p PolicyQueryProvider) {
+	e.policyProvider = p
+}
+
+// resolvePolicyQuery looks up the policy query for objectType via the
+// installed provider. It returns (nil, nil) when no provider is installed
+// or the provider declines to emit a clause (no policy attached); callers
+// MUST treat a nil return as "no extra filter" and use their base query
+// unchanged. A degenerate match-all clause is also collapsed to nil so the
+// caller does not wrap in a redundant ConjunctionQuery.
+func (e *Executor) resolvePolicyQuery(ctx context.Context, objectType string) (query.Query, error) {
+	if e.policyProvider == nil {
+		return nil, nil
+	}
+	q, err := e.policyProvider.PolicyQuery(ctx, objectType)
+	if err != nil {
+		return nil, err
+	}
+	if q == nil {
+		return nil, nil
+	}
+	if _, ok := q.(*query.MatchAllQuery); ok {
+		return nil, nil
+	}
+	return q, nil
+}
+
+// mergePolicyQuery AND-combines a user query with the compiled policy
+// query; returns userQ unchanged when policyQ is nil. Mirrors the helper
+// in pkg/oss/service_impl.go so both entry points ship the same idiom.
+func mergePolicyQuery(userQ, policyQ query.Query) query.Query {
+	if policyQ == nil {
+		return userQ
+	}
+	return bleve.NewConjunctionQuery(userQ, policyQ)
 }
 
 // BaseExecutionCap is the maximum number of primary keys executeBase will
@@ -311,7 +366,11 @@ func (e *Executor) executeInterfaceLinkSearchAround(ctx context.Context, def *De
 // to BaseExecutionCap. If the returned hit count equals the cap the result is
 // flagged as Truncated so the caller can surface an APPROXIMATE warning.
 func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, error) {
-	searchReq := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
+	policyQ, err := e.resolvePolicyQuery(ctx, def.ObjectType)
+	if err != nil {
+		return nil, fmt.Errorf("resolve policy for base objectSet %q: %w", def.ObjectType, err)
+	}
+	searchReq := bleve.NewSearchRequest(mergePolicyQuery(bleve.NewMatchAllQuery(), policyQ))
 	searchReq.Size = BaseExecutionCap
 	searchReq.Fields = []string{"*"}
 
@@ -353,8 +412,16 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 
 	// Build a query that intersects the base PKs with the where filter.
 	// Use DocIDQuery to limit to the base result PKs, combined with the where filter.
+	// US-046: AND-combine the row-level policy query so deny-listed rows
+	// can't slip back in through the doc-id branch. The base PKs are
+	// already policy-filtered via executeBase, but re-applying here keeps
+	// the where-side query self-sufficient and makes the invariant local.
+	policyQ, err := e.resolvePolicyQuery(ctx, baseResult.ObjectType)
+	if err != nil {
+		return nil, fmt.Errorf("resolve policy for filter objectSet %q: %w", baseResult.ObjectType, err)
+	}
 	docIDQ := bleve.NewDocIDQuery(baseResult.PrimaryKeys)
-	conjQ := bleve.NewConjunctionQuery(docIDQ, bleveQuery)
+	conjQ := bleve.NewConjunctionQuery(docIDQ, mergePolicyQuery(bleveQuery, policyQ))
 
 	searchReq := bleve.NewSearchRequest(conjQ)
 	searchReq.Size = BaseExecutionCap

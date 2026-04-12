@@ -21,6 +21,22 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
 - `auth.User.Attributes map[string]any` is the designated surface for policy
   evaluation inputs (dept, region, clearance, ...). US-059 JWT marking
   injection should populate this map, not `Roles`.
+- Row-level policy enforcement has TWO hook points. ServiceImpl owns
+  `SetPolicyEngine(*security.Engine)` + `compilePolicyQuery` +
+  `mergePolicyQuery` for Load/Search/GetObject paths. The ObjectSet executor
+  (`pkg/oss/objectset/executor.go`) owns `SetPolicyProvider` against a narrow
+  `PolicyQueryProvider` interface — the concrete adapter lives at
+  `cmd/server/policy_provider.go` and translates apiName → RID via the
+  ontology scope on context, keeping `pkg/oss/objectset` free of a direct
+  `pkg/security` import. Single hook inside `executeBase` covers union /
+  intersect / subtract via recursion; `executeFilter` gets its own explicit
+  hook so the docID ∩ where branch stays self-sufficient. `mergePolicyQuery`
+  collapses a MatchAllQuery policy clause to nil to avoid degenerate
+  1-clause ConjunctionQuery wrappers.
+- `oss.Service` is an interface but `*ServiceImpl` owns the ABAC setters —
+  wire them in main.go via `deps.OssSvc.(*oss.ServiceImpl)` rather than
+  widening the public interface. Same pattern applies to any future method
+  that only the concrete implementation ships.
 - ObjectSet executor Result can carry out-of-band per-PK payloads by adding a
   new map field (see Result.DerivedValues); handlers merge into WireObject
   Properties just before oss.FormatObject. Keeps Execute signature stable
@@ -2907,4 +2923,93 @@ new features — only run verification suites and commit the gate.
   - `PolicyVersion` starts at 0 for un-policied RIDs and is bumped even when
     `SetPolicies(rid, nil)` is used to clear policies; tests downstream of
     US-046 that compare version numbers should not assume monotonic from 1.
+---
+
+## 2026-04-12 - US-046 Policy engine integration into OSS query compile chain
+- Hooked `security.Engine.Evaluate` into every OSS read surface:
+  * `pkg/oss/service_impl.go` GetObject / ListObjects / SearchObjects now
+    compile a per-request policy query through `compilePolicyQuery` +
+    `mergePolicyQuery` and AND-combine it with the user's where clause (or
+    with the match-all / docID base query) BEFORE calling `indexMgr.Search`,
+    so denied rows never materialise.
+  * `pkg/oss/objectset/executor.go` gained a narrow
+    `PolicyQueryProvider` interface (`PolicyQuery(ctx, objectTypeAPIName)`)
+    plus `SetPolicyProvider` setter; `executeBase` and `executeFilter`
+    merge the provider's clause into their Bleve requests so LoadObjectSet
+    and downstream set-algebra (union/intersect/subtract) inherit the same
+    filter. The executor deliberately does NOT import pkg/security — the
+    dependency graph stays flat and the adapter lives at the wiring layer.
+- `cmd/server/policy_provider.go` new — implements the executor's
+  `PolicyQueryProvider` by resolving apiName → ontology RID (via the
+  context-stamped ontology scope) → ObjectType RID, then forwarding to
+  `*security.Engine.Evaluate`. Narrow in-package `policyProviderRepo`
+  matches the existing `interfaceResolverRepo` pattern so the 50+-method
+  `oms.Repository` interface is untouched.
+- `cmd/server/main.go` now owns `deps.PolicyEngine = security.NewEngine()`,
+  attaches it to the OSS `*ServiceImpl` via a type assertion, and wires
+  the adapter into the ObjectSet executor alongside
+  `SetInterfaceResolver`. The engine boots empty for US-046; DB-backed
+  policy loading / cache invalidation lands in a follow-up story.
+- Failing test first: `TestPolicyAppliedToLoadSearch` in
+  `pkg/oss/policy_engine_integration_test.go` — seeds a `security.Engine`
+  with an `eq` rule on `deptId`, calls `SetPolicyEngine` on the real
+  `ServiceImpl`, and asserts
+  (a) ListObjects returns only the 2 d1 rows,
+  (b) SearchObjects(name=alice) returns emp1,
+  (c) SearchObjects(name=charlie) returns zero rows even though charlie
+      matches the where clause (policy deny wins),
+  (d) GetObject(emp3) returns ErrNotFound (existence hidden), and
+  (e) GetObject(emp1) still succeeds.
+  A second `TestPolicyAppliedToLoadSearch_FailClosed` covers the
+  missing-attribute path — the engine compiles MatchNone, every
+  ListObjects row vanishes.
+- Quality: `go test ./...`, `go vet ./...`, `gofmt -l` on edited files —
+  all clean. `pkg/oss` full suite runs 52s; `pkg/oss/objectset` 36s.
+- Files changed:
+  - pkg/oss/service_impl.go
+  - pkg/oss/policy_engine_integration_test.go (new)
+  - pkg/oss/objectset/executor.go
+  - cmd/server/main.go
+  - cmd/server/policy_provider.go (new)
+  - scripts/ralph/prd.json (US-046 passes=true)
+  - scripts/ralph/progress.txt (this entry)
+- **Learnings for future iterations:**
+  - `oss.Service` is an interface — to call `*ServiceImpl`-only methods
+    like `SetPolicyEngine` / `SetPolicyFilter` from `cmd/server/main.go`,
+    type-assert `deps.OssSvc.(*oss.ServiceImpl)` rather than expanding the
+    public interface. The assertion is the same idiom the existing
+    SetPolicyFilter wiring would need — follow it for future hooks.
+  - Keep the policy-query merge in a single helper (`mergePolicyQuery`) so
+    every caller uses `ConjunctionQuery(userQ, policyQ)` consistently. A
+    nil policyQ MUST short-circuit to "return userQ unchanged" — wrapping
+    in a 1-clause ConjunctionQuery degrades Bleve's planner and obscures
+    the "no policy attached" case in debug output. `compilePolicyQuery`
+    also collapses MatchAllQuery to nil so un-policied ObjectTypes flow
+    through without any wrapper at all.
+  - The executor adapter pattern (`PolicyQueryProvider` interface in
+    `pkg/oss/objectset` + concrete shim in `cmd/server/policy_provider.go`)
+    keeps `pkg/oss/objectset` free of a direct `pkg/security` import,
+    mirroring the `InterfaceResolver` / `pgInterfaceResolver` split. Future
+    cross-package hooks that need OMS lookup → policy/cache/etc should
+    reuse this pattern rather than widening either package's dependency
+    graph.
+  - The executor's `executeBase` is the single chokepoint for row filtering
+    on LoadObjectSet — `executeUnion` / `executeIntersect` / `executeSubtract`
+    recursively call `execute` → `executeBase`, so a single hook there
+    covers all set-algebra branches. `executeFilter` still deserves an
+    explicit hook because its final Bleve search is re-issued with a
+    `DocIDQuery ∩ where` and would otherwise trust the already-filtered
+    base PKs implicitly — keeping the policy merge local makes the
+    invariant visible and survives any future refactor that drops the
+    base-first call chain.
+  - Context plumbing: `PolicyQuery(ctx, objectType)` relies on the
+    ontology scope stamped onto the context by request middleware
+    (`index.WithOntologyScope`). When wiring a new executor caller,
+    double-check the ontology scope is present — otherwise the adapter
+    fail-closes with "no ontology scope on context" rather than silently
+    returning all rows.
+  - `security.Engine.Evaluate` accepts a nil `*auth.User`; the eq /
+    in / markingSubset rules all compile to MatchNone in that case. The
+    service hook therefore does not need an explicit "user is nil" guard —
+    passing nil through produces the correct fail-closed answer.
 ---
