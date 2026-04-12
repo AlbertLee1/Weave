@@ -77,6 +77,13 @@ type Consumer struct {
 	// like tags and notes are never overwritten by ingest, regardless of
 	// batch timestamps. Default (nil) means no fields are protected.
 	editOnlyField func(objectType, field string) bool
+	// writablePropertyFilter is the US-076 hook for column-level write
+	// enforcement. When non-nil and the function returns false for
+	// (objectType, field), the consumer strips that field from every
+	// ingest CREATE/MODIFY and merges the current bleve value back so
+	// policy-restricted fields are preserved. Default (nil) means all
+	// fields are writable (no filter).
+	writablePropertyFilter func(objectType, field string) bool
 	// objectTypeRIDs maps API name -> RID for resolving objectType -> RID
 	// when recording history. Updated by callers via SetObjectTypeRIDs.
 	objectTypeRIDs map[string]string
@@ -141,6 +148,15 @@ func (c *Consumer) SetAlwaysApplyField(fn func(objectType, field string) bool) {
 // Pass nil to disable (default behaviour). Safe to call before Start().
 func (c *Consumer) SetEditOnlyField(fn func(objectType, field string) bool) {
 	c.editOnlyField = fn
+}
+
+// SetWritablePropertyFilter wires the US-076 write-level column policy hook.
+// When set, every ingest CREATE/MODIFY has its Properties filtered: only
+// fields for which the function returns true are kept. Stripped fields are
+// restored from the current bleve doc so the upsert preserves the prior
+// value. Pass nil to disable (default behaviour). Safe to call before Start().
+func (c *Consumer) SetWritablePropertyFilter(fn func(objectType, field string) bool) {
+	c.writablePropertyFilter = fn
 }
 
 // SetObjectTypeRIDs supplies the API-name -> RID lookup table used when
@@ -449,6 +465,64 @@ func (c *Consumer) resolveConflicts(ctx context.Context, batch EditBatch) []Edit
 	return out
 }
 
+// filterWritableProperties implements the US-076 write-level column policy.
+// For every ingest CREATE/MODIFY edit, any (objectType, field) for which
+// writablePropertyFilter returns false is stripped from the incoming
+// Properties and the current bleve doc's value for that field is merged
+// back in. This guarantees ingest edits cannot overwrite policy-protected
+// fields even when the batch timestamp is newer than the latest user edit.
+//
+// A nil writablePropertyFilter hook degrades this to a pass-through.
+// Non-ingest edits pass through unchanged.
+func (c *Consumer) filterWritableProperties(batch EditBatch) []Edit {
+	if c.writablePropertyFilter == nil {
+		return batch.Edits
+	}
+	out := make([]Edit, 0, len(batch.Edits))
+	for _, e := range batch.Edits {
+		if e.Source != EditSourceIngest || e.Type == EditTypeDelete {
+			out = append(out, e)
+			continue
+		}
+
+		hasStripped := false
+		filtered := make(map[string]interface{}, len(e.Properties))
+		for k, v := range e.Properties {
+			if c.writablePropertyFilter(e.ObjectType, k) {
+				filtered[k] = v
+			} else {
+				hasStripped = true
+			}
+		}
+
+		if !hasStripped {
+			out = append(out, e)
+			continue
+		}
+
+		// Merge stripped fields from the current bleve doc so the upsert
+		// preserves prior values for policy-protected fields.
+		if current := c.fetchDocument(batch.OntologyAPIName, e.ObjectType, e.PrimaryKey); current != nil {
+			for k, v := range current {
+				if _, inFiltered := filtered[k]; !inFiltered {
+					filtered[k] = v
+				}
+			}
+		}
+
+		if len(filtered) == 0 {
+			log.Printf("funnel: US-076 drop empty ingest %s for %s/%s after writable filter",
+				e.Type, e.ObjectType, e.PrimaryKey)
+			continue
+		}
+
+		rewritten := e
+		rewritten.Properties = filtered
+		out = append(out, rewritten)
+	}
+	return out
+}
+
 // preserveEditOnlyFields implements the US-027 always-preserve semantics.
 // For every ingest CREATE/MODIFY edit, any (objectType, field) flagged by
 // editOnlyField is stripped from the incoming Properties and the current
@@ -547,6 +621,10 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 		return fmt.Errorf("apply batch: ontologyApiName is empty")
 	}
 
+	batch.Edits = c.filterWritableProperties(batch)
+	if len(batch.Edits) == 0 {
+		return nil
+	}
 	batch.Edits = c.preserveEditOnlyFields(batch)
 	if len(batch.Edits) == 0 {
 		return nil
