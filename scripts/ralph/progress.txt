@@ -4078,3 +4078,24 @@ new features — only run verification suites and commit the gate.
   - ServerDeps carries the IngestRateLimiter because NewFullRouter only sees deps, not cfg — construct the limiter in main() where cfg is in scope
   - gofmt may reformat alignment in Config struct — run gofmt -w on edited files before committing
 ---
+
+## 2026-04-12 - US-064
+- Implemented audit_events migration and pkg/audit package
+- Migration 000020_audit_events creates table with columns: id (UUID PK), actor_id, action, resource_type, resource_rid, diff_json (JSONB), ip, user_agent, ts (TIMESTAMPTZ)
+- Down migration drops the table
+- pkg/audit/audit.go: AuditEvent struct, Store interface (Insert + List), Record() helper, MemoryStore for unit tests
+- pkg/audit/pg_store.go: PGStore with parameterized ListFilter (actor, action, resource_type, time range)
+- 4 unit tests (Record, MultipleEvents, NilDiffJSON, ListEvents) + 1 integration test (PGStore_InsertAndList)
+- Files changed:
+  - migrations/000020_audit_events.up.sql (NEW)
+  - migrations/000020_audit_events.down.sql (NEW)
+  - pkg/audit/audit.go (NEW)
+  - pkg/audit/audit_test.go (NEW)
+  - pkg/audit/pg_store.go (NEW)
+  - pkg/audit/pg_store_test.go (NEW: integration test)
+- **Learnings for future iterations:**
+  - pkg/audit follows the same Store interface + MemoryStore + PGStore pattern as pkg/auth (RefreshStore, PGRefreshStore)
+  - Record() auto-assigns UUID and UTC timestamp before delegating to Store.Insert — callers don't need to worry about those fields
+  - ListFilter supports ActorID, Action, ResourceType, From, To — these map to the acceptance criteria for US-067 (admin audit endpoint)
+  - Integration tests use //go:build integration tag and testutil.StartPGContainer + database.RunMigrationsUp
+---

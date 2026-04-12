@@ -1019,7 +1019,7 @@
         "go test ./... passes"
       ],
       "priority": 64,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
