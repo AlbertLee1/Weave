@@ -4607,3 +4607,21 @@ new features — only run verification suites and commit the gate.
   - `vm.GlobalObject().Delete(name)` after `vm.Set(name, goja.Undefined())` ensures `typeof` returns `"undefined"` rather than just the value being undefined.
   - The `main(input)` convention keeps function sources simple and testable — input is passed as the first arg, return value is exported.
 ---
+
+## 2026-04-12 - US-087
+- Implemented Goja timeout and memory limit enforcement
+- `Execute` now wraps the caller's context with `context.WithTimeout(MaxExecutionTime)` for deadline enforcement
+- Added `vm.SetMaxCallStackSize(1024)` to catch runaway recursion instantly (stack overflow error, not timeout)
+- Added memory watchdog goroutine: polls `runtime.ReadMemStats` every 50ms, triggers `runtime.GC()`, interrupts VM if HeapAlloc delta exceeds `MaxMemoryBytes`
+- Uses `atomic.Bool` to prevent double-interrupt races between timeout and memory watchdog
+- Tests: `TestGojaTimeoutOOM` with 4 subtests:
+  - `timeout_infinite_loop` — `while(true){}` killed at 500ms
+  - `timeout_context_cancellation` — caller context cancellation propagates
+  - `oom_deep_recursion` — infinite recursion caught in <2s by stack limit (not timeout)
+  - `oom_large_allocation` — 10M×1KB strings caught by memory watchdog in <5s
+- Files changed: pkg/functions/goja_runtime.go, pkg/functions/goja_runtime_test.go
+- **Learnings for future iterations:**
+  - `goja.Runtime.SetMaxCallStackSize(n)` triggers a `*goja.StackOverflowError` whose Error() shows the call site (e.g. "at recurse (<eval>:3:41(6))") — it does NOT contain the words "stack overflow". Test assertions must match the call-site pattern or use errors.As.
+  - Memory watchdog uses delta from baseline HeapAlloc, not absolute — this isolates the function's allocation from the rest of the process. However, concurrent Goja executions would share the Go heap, so the delta approach is approximate.
+  - `context.WithTimeout` layered on top of the caller's context gives two-level cancellation: caller can cancel early, and the configured MaxExecutionTime acts as an absolute ceiling.
+---
