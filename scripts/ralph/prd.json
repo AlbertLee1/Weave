@@ -1113,7 +1113,7 @@
         "go test -tags integration ./test/integration/phase7/... -run PolicyE2E passes"
       ],
       "priority": 70,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

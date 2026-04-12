@@ -4228,3 +4228,19 @@ new features — only run verification suites and commit the gate.
   - CSP frame-ancestors 'none' is the CSP equivalent of X-Frame-Options: DENY — both should be set for defense in depth
   - Default fallback rate limit rule requires a separate compiledRule path in the middleware (nil-check cascade: explicit match → default → passthrough)
 ---
+
+## 2026-04-12 14:32 - US-070
+- Implemented Phase 7 cross-US integration test: policy E2E matrix
+- 5 users x 5 objects with combined row-level (eq), column-level (PROPERTY scope), and marking (subset semantics) policies
+- Tests cover 3 paths: ListObjects (visible set + visible fields), SearchObjects (where clause + policy), Aggregate (column policy gate)
+- 16 subtests total: 5 ListObjects, 5 SearchObjects, 4 Aggregate
+- Added `make test-integration-phase7` Makefile target
+- Files changed:
+  - test/integration/phase7/phase7_policy_e2e_test.go (new — comprehensive E2E policy matrix)
+  - Makefile (added test-integration-phase7 target + .PHONY)
+- **Learnings for future iterations:**
+  - Phase 7 integration tests go in `test/integration/phase7/` package `phase7_test` — same testcontainers pattern as phase6
+  - For combined row+column+marking tests, both OBJECT and PROPERTY policies can be passed to a single SetPolicies call on the same ObjectType RID
+  - Column-level policy testing at aggregate level needs handler-layer httptest setup (chi router + propertyFilterAdapter), not just service-layer calls
+  - Marking enforcement (subset semantics) is additive with row-level policy: row filter runs at Bleve query time, marking filter runs post-Bleve in applyMarkingFilter
+---
