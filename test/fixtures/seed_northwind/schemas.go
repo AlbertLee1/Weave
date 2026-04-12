@@ -53,6 +53,35 @@ type linkDef struct {
 	FK *fkConfigDef
 }
 
+// securityPolicyDef describes a PROPERTY-scope or OBJECT-scope policy to
+// seed into the security_policies table. Used by US-081 (policy-column-hiding)
+// so the Playwright spec can verify per-role column visibility end-to-end.
+type securityPolicyDef struct {
+	RID           string // stable RID for the policy row
+	ObjectTypeAPI string // resolved to RID at seed time
+	PolicyType    string // "OBJECT" or "PROPERTY"
+	RulesJSON     string // JSON-encoded []security.Rule
+}
+
+// northwindSecurityPolicies returns the security policies seeded for E2E
+// Playwright specs. The policy-column-hiding spec (US-081) depends on the
+// employee PROPERTY policy to verify that salary is hidden from peer users.
+func northwindSecurityPolicies() []securityPolicyDef {
+	return []securityPolicyDef{
+		{
+			RID:           "ri.ontology.main.security-policy.employee-columns",
+			ObjectTypeAPI: "employee",
+			PolicyType:    "PROPERTY",
+			// Baseline: everyone sees employeeId, name, department.
+			// Editors (manager@test has "editor" global role) also see salary.
+			RulesJSON: `[
+				{"properties":["employeeId","name","department"]},
+				{"userAttr":"roles","values":["editor","admin"],"properties":["salary"]}
+			]`,
+		},
+	}
+}
+
 func northwindSchemas() []schema {
 	return []schema{
 		// FK-bearing properties (customerID) route through the
@@ -117,6 +146,28 @@ func northwindSchemas() []schema {
 				{"productID": "2", "productName": "Chang", "unitPrice": 19.0, "unitsInStock": 17},
 				{"productID": "3", "productName": "Aniseed Syrup", "unitPrice": 10.0, "unitsInStock": 13},
 				{"productID": "4", "productName": "Chef Anton's Cajun Seasoning", "unitPrice": 22.0, "unitsInStock": 53},
+			},
+		},
+		// US-081: Employee object type with a salary property. The property-level
+		// security policy seeded alongside this type (see northwindSecurityPolicies)
+		// grants salary visibility only to editor/admin roles, so the Playwright
+		// policy-column-hiding spec can verify per-role column masking end-to-end.
+		{
+			APIName:           "employee",
+			DisplayName:       "Employee",
+			PluralDisplayName: "Employees",
+			PrimaryKey:        "employeeId",
+			TitleProperty:     "name",
+			Properties: []schemaProperty{
+				{APIName: "employeeId", DisplayName: "Employee ID", BaseType: "string", IsSearchable: true, IsSortable: true, Analyzer: "not_analyzed"},
+				{APIName: "name", DisplayName: "Name", BaseType: "string", IsSearchable: true, IsSortable: true},
+				{APIName: "department", DisplayName: "Department", BaseType: "string", IsSearchable: true, IsSortable: true},
+				{APIName: "salary", DisplayName: "Salary", BaseType: "double", IsSearchable: false, IsSortable: true},
+			},
+			SeedRows: []map[string]interface{}{
+				{"employeeId": "emp1", "name": "Alice Chen", "department": "engineering", "salary": float64(120000)},
+				{"employeeId": "emp2", "name": "Bob Smith", "department": "engineering", "salary": float64(95000)},
+				{"employeeId": "emp3", "name": "Carol Davis", "department": "marketing", "salary": float64(110000)},
 			},
 		},
 	}

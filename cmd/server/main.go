@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
@@ -19,8 +20,8 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
-	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/attachment"
+	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/funnel"
@@ -76,7 +77,7 @@ type ServerDeps struct {
 	TransactionStore  transactions.Store
 	SqlQueryEngine    sqlqueries.Engine
 	IndexDocSource    index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
-	AuditStore        audit.Store                 // US-067: audit event store (nil = endpoint returns 503)
+	AuditStore        audit.Store                // US-067: audit event store (nil = endpoint returns 503)
 	IngestRateLimiter oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
 	CORSOrigins       []string                   // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
@@ -515,6 +516,27 @@ func main() {
 		}
 	} else if cfg.AuthMode == "jwt" {
 		log.Fatalf("[AUTH] FATAL: AUTH_MODE=jwt but WEAVE_JWT_PRIVATE_KEY_PATH (or _PEM) is not set")
+	} else if cfg.AuthMode != "jwt" && deps.JWTSigner == nil {
+		// US-081: auto-generate an ephemeral RSA key pair in dev/token mode so
+		// the login / refresh / logout endpoints are always available. The key
+		// only lives for the lifetime of this process — restarts invalidate all
+		// previously issued tokens, which is fine for local dev and E2E tests.
+		devPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			log.Printf("[AUTH] warning: dev RSA key generation failed: %v", err)
+		} else {
+			devSigner, serr := auth.NewJWTSigner(devPriv, &devPriv.PublicKey, auth.JWTSignerOptions{
+				Issuer:         cfg.JWT.Issuer,
+				Audience:       cfg.JWT.Audience,
+				AccessTokenTTL: cfg.JWT.AccessTokenTTL,
+			})
+			if serr != nil {
+				log.Printf("[AUTH] warning: dev JWT signer init failed: %v", serr)
+			} else {
+				deps.JWTSigner = devSigner
+				log.Printf("[AUTH] ephemeral dev RSA key generated — login/refresh/logout endpoints enabled")
+			}
+		}
 	}
 
 	if cfg.AuthMode == "token" {
@@ -606,6 +628,15 @@ func main() {
 	// story; for now the engine boots empty and SetPolicies is exposed for
 	// tests and the upcoming loader to populate.
 	deps.PolicyEngine = security.NewEngine()
+	// US-081: load persisted security policies from the security_policies
+	// table so that policies seeded by e2e fixtures (or future admin CRUD)
+	// are enforced from the first request. Best-effort: a load failure logs
+	// a warning but does not block startup.
+	if deps.PGPool != nil {
+		if err := loadPoliciesFromDB(ctx, deps.PGPool, deps.PolicyEngine); err != nil {
+			log.Printf("[POLICY] warning: failed to load policies from DB: %v", err)
+		}
+	}
 	if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
 		impl.SetPolicyEngine(deps.PolicyEngine)
 	}

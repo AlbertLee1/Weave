@@ -247,6 +247,26 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 		logf("[seed] created action type %s", a.APIName)
 	}
 
+	// 5b. Security policies (US-081) -----------------------------------
+	// Seed PROPERTY-scope (and eventually OBJECT-scope) policies so the
+	// Playwright policy-column-hiding spec can verify per-role column
+	// visibility end-to-end. The security_policies table is populated
+	// directly (not via oms.Repository.CreateSecurityPolicy) so we
+	// don't need to extend the seed's narrow repo interface.
+	for _, sp := range northwindSecurityPolicies() {
+		otRID, ok := otRIDByName[sp.ObjectTypeAPI]
+		if !ok {
+			return nil, fmt.Errorf("seed: security policy %q references unknown object type %q", sp.RID, sp.ObjectTypeAPI)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO security_policies (rid, object_type_rid, policy_type, rules)
+			 VALUES ($1, $2, $3, $4)`,
+			sp.RID, otRID, sp.PolicyType, sp.RulesJSON); err != nil {
+			return nil, fmt.Errorf("seed: create security policy %q: %w", sp.RID, err)
+		}
+		logf("[seed] created security policy %s for %s", sp.RID, sp.ObjectTypeAPI)
+	}
+
 	// 6. Object history seed data --------------------------------------
 	// One CREATE row per seed object per object type. Index rebuild will
 	// replay these into Bleve via LoadLatestObjectStates.
@@ -370,6 +390,15 @@ func wipe(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 		if _, err := pool.Exec(ctx,
 			`DELETE FROM interfaces WHERE ontology_rid = $1`, ontRID); err != nil {
 			return fmt.Errorf("delete interfaces: %w", err)
+		}
+		// Security policies (FK to object_types.rid) — delete before
+		// object_types to satisfy the foreign key constraint.
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM security_policies
+			 WHERE object_type_rid IN (
+			   SELECT rid FROM object_types WHERE ontology_rid = $1
+			 )`, ontRID); err != nil {
+			return fmt.Errorf("delete security_policies: %w", err)
 		}
 		// Object types — properties cascade via ON DELETE CASCADE (see
 		// migration 000001_initial_schema.up.sql L33).

@@ -55,7 +55,7 @@ func MiddlewareWithAPIKeys(signer *JWTSigner, apiKeys APIKeyRepository, users Us
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch mode {
 			case "", "dev":
-				handleDev(next, w, r)
+				handleDev(signer, next, w, r)
 			case "jwt":
 				handleJWT(signer, apiKeys, users, resolver, next, w, r)
 			case "token":
@@ -215,16 +215,52 @@ func handleAPIKey(tok string, apiKeys APIKeyRepository, users UserRepository, re
 }
 
 // handleDev implements the dev-mode authentication logic.
-func handleDev(next http.Handler, w http.ResponseWriter, r *http.Request) {
+//
+// US-081: when a JWT signer is available (auto-generated or explicitly
+// configured) and the request carries a valid Bearer JWT, the user is
+// populated from the token claims — including Roles and Attributes — so
+// that security policy enforcement (row-level, column-level) works for
+// logged-in users. Requests without a token, or with an invalid/expired
+// token, fall through to the default admin dev-user as before.
+func handleDev(signer *JWTSigner, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	tok := extractBearer(r)
+
+	// When a signer is available and a bearer token is present, try to
+	// verify it as a JWT. On success, build a full user from claims so
+	// the security engine sees real identity / roles / markings.
+	if tok != "" && signer != nil {
+		claims, err := signer.Verify(tok)
+		if err == nil {
+			u := &User{
+				ID:            claims.Subject,
+				Email:         claims.Weave.Email,
+				Name:          claims.Weave.Name,
+				Roles:         claims.Weave.Roles,
+				OntologyRoles: claims.Weave.OntologyRoles,
+				Attributes:    make(map[string]any),
+			}
+			if len(claims.Weave.Markings) > 0 {
+				u.Attributes[MarkingsAttributeKey] = append([]string(nil), claims.Weave.Markings...)
+			}
+			// Copy Roles into Attributes so the property-level policy
+			// engine can check them via UserAttr: "roles".
+			if len(u.Roles) > 0 {
+				u.Attributes["roles"] = append([]string(nil), u.Roles...)
+			}
+			ctx := WithUser(r.Context(), u)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+	}
+
+	// Fallback: default dev user (admin).
 	u := &User{
 		ID:    "dev-user",
 		Roles: []string{"admin"},
 	}
-
-	if token := extractBearer(r); token != "" {
-		u.ID = token
+	if tok != "" {
+		u.ID = tok
 	}
-
 	ctx := WithUser(r.Context(), u)
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
