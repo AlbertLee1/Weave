@@ -4,6 +4,10 @@ Branch:  ralph/phase-6-8
 Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
 
 ## Codebase Patterns
+- Global r.Use() chi middleware runs BEFORE route resolution, so
+  chi.URLParam returns "". For URL-param-dependent middleware
+  (e.g. rate limiting keyed by ontology), use pattern-based segment
+  extraction (compiledRule.extractParam) instead of chi.URLParam.
 - pkg/security hosts the row-level policy engine. Extend `Engine.compileRule`
   in place for new rule types (`in`, `markingSubset`, ...); do NOT branch
   callers on policy type. Un-policied ObjectTypes return `MatchAllQuery` so
@@ -4192,4 +4196,35 @@ new features — only run verification suites and commit the gate.
   - For chi URL params ({param}) to be available in middleware, the middleware must be applied inside the route group (via .With()) not globally — global middleware runs before route resolution
   - When testing rate limiting with chi URL params, build a chi.NewRouter() in the test and mount the middleware + handler so chi resolves params before the middleware runs
   - sync.Map with LoadOrStore is the correct pattern for lazy limiter creation — avoids races from separate Load+Store calls
+---
+
+## 2026-04-12 - US-069
+- Implemented rate limit config table with DefaultRateLimitRules():
+  - POST /api/auth/login → 5 rps / IP
+  - POST /api/auth/refresh → 10 rps / user
+  - POST .../actions/{action}/apply → 100 rps / user
+  - POST .../streams/{objectType}/ingest → 1000 rps / ontology
+  - Default fallback → 200 rps / user
+- Added NewRateLimitMiddlewareWithDefault() with default fallback rule for unmatched requests
+- Tightened CSP in SecurityHeadersMiddleware: added connect-src 'self', img-src 'self' data:, font-src 'self', frame-ancestors 'none', base-uri 'self', form-action 'self'
+- Wired rate limit middleware globally in NewFullRouter (main.go)
+- Fixed extractKey to use extractParam (pattern-based segment matching) instead of chi.URLParam, so ontology-keyed rules work in global r.Use() middleware
+- Created integration test at test/integration/rate_limit_test.go with 6 tests:
+  - TestRateLimit_LoginEndpoint_IPKeyed
+  - TestRateLimit_RefreshEndpoint_UserKeyed
+  - TestRateLimit_ApplyEndpoint_UserKeyed
+  - TestRateLimit_IngestEndpoint_OntologyKeyed
+  - TestRateLimit_DefaultFallback_UnmatchedRoute
+  - TestRateLimit_CSPHeadersTightened
+- Files changed:
+  - cmd/server/rate_limit.go (added DefaultRateLimitRules, NewRateLimitMiddlewareWithDefault, extractParam; fixed extractKey)
+  - cmd/server/rate_limit_test.go (added TestDefaultRateLimitRules, TestRateLimitMiddleware_DefaultFallbackRule)
+  - cmd/server/security_middleware.go (tightened CSP)
+  - cmd/server/security_middleware_test.go (updated CSP assertion)
+  - cmd/server/main.go (wired rate limit middleware)
+  - test/integration/rate_limit_test.go (new — 6 integration tests)
+- **Learnings for future iterations:**
+  - Global r.Use() middleware runs BEFORE chi route resolution, so chi.URLParam is empty. Use pattern-based segment extraction (extractParam) to pull URL params from the path directly.
+  - CSP frame-ancestors 'none' is the CSP equivalent of X-Frame-Options: DENY — both should be set for defense in depth
+  - Default fallback rate limit rule requires a separate compiledRule path in the middleware (nil-check cascade: explicit match → default → passthrough)
 ---
