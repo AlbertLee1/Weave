@@ -4699,3 +4699,25 @@ new features — only run verification suites and commit the gate.
   - The FunctionRequest wire shape (actionTypeRid/actionTypeApiName/functionRid/parameters) is shared between HTTP and Goja dispatch so JS function authors see the same input structure
   - RoutingDispatcher is the intended FunctionDispatcher to wire in cmd/server/main.go — replaces the bare HTTPDispatcher
 ---
+
+## 2026-04-12 - US-092
+- Implemented structured function output validation with proper API error codes
+- Added `ValidateFunctionOutput(*FunctionResponse) error` for validating typed responses (used by HTTP dispatcher)
+- Added `ValidateRawFunctionOutput(interface{}) error` for validating raw Goja output (map[string]interface{})
+- Both return `*apierror.APIError` with ErrorName="InvalidFunctionOutput" and HTTP 400 on failure
+- Validates: response must be non-nil, edits must be an array, each edit must have valid type (CREATE/MODIFY/DELETE), non-empty objectType, non-empty primaryKey
+- Error parameters include editIndex and field for precise error localization
+- Wired ValidateRawFunctionOutput into GojaDispatcher's convertGojaResult, replacing ad-hoc fmt.Errorf checks
+- Wired ValidateFunctionOutput into HTTPDispatcher after JSON unmarshal
+- Updated TestActionGojaDispatch_InvalidOutput to expect structured *apierror.APIError instead of string error
+- Files changed:
+  - pkg/actions/function_output_validation.go (new)
+  - pkg/actions/function_output_validation_test.go (new — 13 test cases)
+  - pkg/actions/goja_dispatcher.go (refactored convertGojaResult)
+  - pkg/actions/goja_dispatcher_test.go (updated InvalidOutput test + added apierror import)
+  - pkg/actions/http_dispatcher.go (added ValidateFunctionOutput call)
+- **Learnings for future iterations:**
+  - When replacing ad-hoc error strings with structured apierror.APIError, existing tests that match on error substrings must be updated to check the ErrorName field instead
+  - ValidateRawFunctionOutput and ValidateFunctionOutput share the same validateFunctionEdit helper, keeping field-level validation DRY across Goja and HTTP dispatch paths
+  - After ValidateRawFunctionOutput passes, the type assertions in convertGojaResult (editsSlice, editMap) are guaranteed safe — no need for defensive ok checks
+---
