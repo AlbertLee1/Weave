@@ -705,7 +705,7 @@
         "go test ./... passes"
       ],
       "priority": 44,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

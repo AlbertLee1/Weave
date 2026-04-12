@@ -37,7 +37,23 @@ type RuleType string
 const (
 	// RuleTypeEq — user.UserAttr must equal object.ObjectProperty.
 	RuleTypeEq RuleType = "eq"
+	// RuleTypeIn — user.UserAttr (a list of values) overlaps object.ObjectProperty.
+	// Compiles to a BooleanQuery whose Should clauses are TermQuery(value,
+	// field=objectProperty) for each value the user holds, MinShould=1.
+	RuleTypeIn RuleType = "in"
+	// RuleTypeMarkingSubset — object.ObjectProperty ⊆ user.markings. User
+	// markings are sourced from user.Attributes[userMarkingsKey] (US-059 will
+	// populate this from JWT claims). Compiles to the same BooleanQuery shape
+	// as RuleTypeIn; for single-valued object marking fields this is exactly
+	// the subset semantics, and multi-valued marking fields are deferred to
+	// US-058 once the markings_sig index is available.
+	RuleTypeMarkingSubset RuleType = "markingSubset"
 )
+
+// userMarkingsKey is the user.Attributes key that RuleTypeMarkingSubset reads
+// to determine the marking set the caller holds. Kept in one place so US-059
+// (JWT injection) and US-058 (OSP merge) write/read the same key.
+const userMarkingsKey = "markings"
 
 // Rule is one clause inside a Policy. The JSON tags must match the DSL
 // spelled out in the story so that existing JSONB rows decode without
@@ -151,8 +167,97 @@ func compileRule(r Rule, user *auth.User) (query.Query, error) {
 		tq := bleve.NewTermQuery(val)
 		tq.SetField(r.ObjectProperty)
 		return tq, nil
+	case RuleTypeIn:
+		if r.UserAttr == "" || r.ObjectProperty == "" {
+			return nil, fmt.Errorf("in rule requires userAttr and objectProperty")
+		}
+		values, ok := userAttrStringSlice(user, r.UserAttr)
+		if !ok || len(values) == 0 {
+			return bleve.NewMatchNoneQuery(), nil
+		}
+		return buildShouldTermsQuery(values, r.ObjectProperty), nil
+	case RuleTypeMarkingSubset:
+		if r.ObjectProperty == "" {
+			return nil, fmt.Errorf("markingSubset rule requires objectProperty")
+		}
+		markings, ok := userAttrStringSlice(user, userMarkingsKey)
+		if !ok || len(markings) == 0 {
+			return bleve.NewMatchNoneQuery(), nil
+		}
+		return buildShouldTermsQuery(markings, r.ObjectProperty), nil
 	default:
 		return nil, fmt.Errorf("unsupported rule type %q", r.Type)
+	}
+}
+
+// buildShouldTermsQuery returns a BooleanQuery whose Should clauses are one
+// TermQuery per value against the given field, MinShould=1. The returned
+// query matches any doc whose field contains at least one of the values;
+// for single-valued fields that is exactly set-membership, for multi-valued
+// fields it is set-intersection (see RuleTypeIn / RuleTypeMarkingSubset).
+func buildShouldTermsQuery(values []string, field string) query.Query {
+	bq := bleve.NewBooleanQuery()
+	shoulds := make([]query.Query, 0, len(values))
+	for _, v := range values {
+		tq := bleve.NewTermQuery(v)
+		tq.SetField(field)
+		shoulds = append(shoulds, tq)
+	}
+	bq.AddShould(shoulds...)
+	bq.SetMinShould(1)
+	return bq
+}
+
+// userAttrStringSlice fetches a list-shaped user attribute. Returns (_, false)
+// when the user is nil, the Attributes map is nil, the key is absent, or the
+// stored value is neither a []string nor a []any of strings. A single string
+// value is tolerated and wrapped in a length-1 slice so callers (RuleTypeIn)
+// don't have to special-case scalar JWT claims that only occasionally hold
+// multiple values.
+func userAttrStringSlice(user *auth.User, key string) ([]string, bool) {
+	if user == nil || user.Attributes == nil {
+		return nil, false
+	}
+	raw, ok := user.Attributes[key]
+	if !ok {
+		return nil, false
+	}
+	switch v := raw.(type) {
+	case []string:
+		if len(v) == 0 {
+			return nil, false
+		}
+		out := make([]string, 0, len(v))
+		for _, s := range v {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	case []any:
+		if len(v) == 0 {
+			return nil, false
+		}
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	case string:
+		if v == "" {
+			return nil, false
+		}
+		return []string{v}, true
+	default:
+		return nil, false
 	}
 }
 

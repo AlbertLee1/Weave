@@ -5,13 +5,19 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
 
 ## Codebase Patterns
 - pkg/security hosts the row-level policy engine. Extend `Engine.compileRule`
-  in place for new rule types (`in`, `subset`, ...); do NOT branch callers on
-  policy type. Un-policied ObjectTypes return `MatchAllQuery` so callers
-  unconditionally AND-combine Evaluate into OSS Load/Search/Aggregate
+  in place for new rule types (`in`, `markingSubset`, ...); do NOT branch
+  callers on policy type. Un-policied ObjectTypes return `MatchAllQuery` so
+  callers unconditionally AND-combine Evaluate into OSS Load/Search/Aggregate
   pipelines. Fail-closed when a referenced user attribute is missing
   (`MatchNoneQuery`, not `MatchAllQuery`). Rule JSON tags must match the
   `security_policies.rules` JSONB shape (`type`/`userAttr`/`objectProperty`).
-  Policies are keyed by ObjectType RID, not APIName.
+  Policies are keyed by ObjectType RID, not APIName. List-valued rule types
+  (`in`, `markingSubset`) share the `buildShouldTermsQuery` helper in
+  policy_engine.go — any future Should/MinShould tweak lands in that one
+  place so eq/in/markingSubset stay shape-consistent. User markings for
+  RuleTypeMarkingSubset live under the fixed key
+  `security.userMarkingsKey = "markings"` in `auth.User.Attributes`; US-058
+  marking evaluator and US-059 JWT injection MUST use this same key.
 - `auth.User.Attributes map[string]any` is the designated surface for policy
   evaluation inputs (dept, region, clearance, ...). US-059 JWT marking
   injection should populate this map, not `Roles`.
@@ -2803,4 +2809,50 @@ new features — only run verification suites and commit the gate.
   - `ObjectType.RID` (not `APIName`) is the policy registration key, since
     the `security_policies.object_type_rid` column holds RIDs and RIDs are
     stable across rename refactors.
+---
+
+## 2026-04-12 - US-044 Policy DSL: in + marking subset rule types
+- Extended pkg/security/policy_engine.go with RuleTypeIn and RuleTypeMarkingSubset,
+  plus a new buildShouldTermsQuery helper and userAttrStringSlice reader
+- Added TestInRule, TestInRule_MissingAttribute, TestMarkingSubsetRule,
+  TestMarkingSubsetRule_NoUserMarkings, and JSON round-trip tests for both rule
+  types in pkg/security/policy_engine_test.go (plus extractBooleanShouldTerms helper)
+- Both rules compile to bleve.BooleanQuery with Should clauses (one TermQuery per
+  value) and MinShould=1; fail-closed to MatchNoneQuery when the referenced list
+  attribute is missing or empty
+- Files changed:
+  - pkg/security/policy_engine.go (+80 lines — two RuleType constants, two new
+    compileRule branches, buildShouldTermsQuery, userAttrStringSlice,
+    userMarkingsKey constant)
+  - pkg/security/policy_engine_test.go (+210 lines — 6 new test funcs, 2 helpers)
+  - scripts/ralph/prd.json (US-044 passes=true)
+- Test run: `go test ./pkg/security/... -v` all 10 test cases pass
+- Full regression: `go test ./...` green
+- **Learnings for future iterations:**
+  - The `in` and `markingSubset` rule types share the same query shape
+    (BooleanQuery + Should TermQueries + MinShould=1). Both delegate to
+    buildShouldTermsQuery so any future refinement (e.g., Must instead of Should
+    for strict subset enforcement on multi-valued fields) lands in one place.
+  - User markings live under the fixed key `userMarkingsKey = "markings"` in
+    `auth.User.Attributes`. US-059 JWT claim injection MUST write to this exact
+    key; US-058 marking evaluator MUST read from it. Do not introduce a separate
+    `Markings []string` field on `auth.User` — the Attributes map is the
+    contract surface that RuleTypeIn and other future list-based rules also use.
+  - `userAttrStringSlice` tolerates `[]string`, `[]any` of strings, and a scalar
+    `string` value (auto-wrapped to length-1 slice). JWT claim libraries
+    routinely decode single-element arrays as scalars, so accepting both avoids
+    surprises once US-059 wires in real tokens.
+  - RuleTypeMarkingSubset for multi-valued object marking fields is a lossy
+    approximation in US-044 (intersection, not true subset). For single-valued
+    marking fields — which is the Foundry default — the approximation is exact.
+    US-058 will layer a `markings_sig` precomputed hash field for the true
+    multi-value subset case; do NOT add that complexity here.
+  - The `omitempty` tag on `Rule.UserAttr` matters for markingSubset JSON
+    round-trip: the rule reads user.markings implicitly so serialised DSL omits
+    the userAttr field entirely. The JSON round-trip test locks this in.
+  - Test helper `extractBooleanShouldTerms` reaches through `BooleanQuery.Should`
+    cast as `*query.DisjunctionQuery` — that is the internal shape bleve uses
+    for Should clauses even when the caller never names DisjunctionQuery
+    directly. Future tests that assert BooleanQuery structure should reuse this
+    helper rather than digging into bleve internals each time.
 ---
