@@ -4474,3 +4474,18 @@ new features — only run verification suites and commit the gate.
   - The OBJECT-scope markingSubset policy rule with objectProperty="__markings" (double underscore) matches auth.MarkingsField convention. The policy engine's auto-marking field (security.MarkingField="_markings" single underscore) is only used by SetMarkingsEnabled auto-clause, not by explicit policy rules.
   - PG_DSN must be set as environment variable when starting the server for login/auth endpoints to work — without it, UserRepo/RefreshService are nil and login route is not registered.
 ---
+
+## 2026-04-12 - US-083
+- Implemented Playwright spec: audit-log-admin (`web/e2e/phase7/audit-log-admin.spec.ts`)
+- 4 test cases:
+  1. Admin user can list audit events via API (200 OK)
+  2. Admin sees audit entries with expected fields (id, action, timestamp)
+  3. Peer (viewer) user is denied access (403 Forbidden)
+  4. Admin can filter audit events by action query param
+- Files changed: web/e2e/phase7/audit-log-admin.spec.ts (new)
+- **Learnings for future iterations:**
+  - The audit events endpoint is `GET /api/v2/admin/auditEvents` gated by `auth.RequirePermission(auth.PermUserManage)` — only admin role has this permission
+  - In dev mode (AUTH_MODE=dev), unauthenticated requests get a default admin user injected, so 401 tests are not meaningful in the E2E environment
+  - Seed fixtures provide: admin@test (admin), manager@test (editor), peer@test (viewer) — all with password test1234
+  - The audit response shape is `{ data: AuditEvent[], nextPageToken?: string }` with filter params: actor, action, resource_type, since, until, pageSize, pageToken
+---
