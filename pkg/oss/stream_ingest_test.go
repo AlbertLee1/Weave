@@ -1,7 +1,9 @@
 package oss
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 )
 
@@ -142,6 +145,130 @@ func TestStreamIngestInvalidJSON(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
 	}
+}
+
+// mockIngestPolicyChecker is a test double for IngestPolicyChecker.
+type mockIngestPolicyChecker struct {
+	allowed bool
+	err     error
+}
+
+func (m *mockIngestPolicyChecker) AllowedForIngest(_ context.Context, _, _ string) (bool, error) {
+	return m.allowed, m.err
+}
+
+// newIngestRouterWithChecker creates a chi router with a StreamIngestHandler
+// that has a policy checker wired in.
+func newIngestRouterWithChecker(pub IngestPublisher, checker IngestPolicyChecker) chi.Router {
+	h := NewStreamIngestHandler(pub)
+	h.SetPolicyChecker(checker)
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest", h.ServeHTTP)
+	return r
+}
+
+// TestStreamIngestPolicy verifies US-062: policy engine enforcement on ingest.
+func TestStreamIngestPolicy(t *testing.T) {
+	validBody := `{"edits":[{"type":"CREATE","objectType":"Order","primaryKey":"pk-1","properties":{"total":100}}]}`
+
+	t.Run("denied by policy returns 403 IngestNotAllowed", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		checker := &mockIngestPolicyChecker{allowed: false}
+		r := newIngestRouterWithChecker(pub, checker)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/northwind/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
+			ID:    "user-1",
+			Roles: []string{auth.RoleIngestWriter},
+		}))
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusForbidden, rr.Body.String())
+		}
+		// Verify error name is IngestNotAllowed
+		var errResp map[string]interface{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("unmarshal error response: %v", err)
+		}
+		if name, _ := errResp["errorName"].(string); name != "IngestNotAllowed" {
+			t.Fatalf("errorName = %q, want %q", name, "IngestNotAllowed")
+		}
+		// Publisher must NOT have been called
+		if len(pub.batches) != 0 {
+			t.Fatalf("publisher received %d batches, want 0", len(pub.batches))
+		}
+	})
+
+	t.Run("allowed by policy returns 200", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		checker := &mockIngestPolicyChecker{allowed: true}
+		r := newIngestRouterWithChecker(pub, checker)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/northwind/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
+			ID:    "user-1",
+			Roles: []string{auth.RoleIngestWriter},
+		}))
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusOK, rr.Body.String())
+		}
+		if len(pub.batches) != 1 {
+			t.Fatalf("publisher received %d batches, want 1", len(pub.batches))
+		}
+	})
+
+	t.Run("policy checker error returns 403", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		checker := &mockIngestPolicyChecker{allowed: false, err: errors.New("engine failure")}
+		r := newIngestRouterWithChecker(pub, checker)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/northwind/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
+			ID:    "user-1",
+			Roles: []string{auth.RoleIngestWriter},
+		}))
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusForbidden, rr.Body.String())
+		}
+	})
+
+	t.Run("nil checker allows ingest (backwards compat)", func(t *testing.T) {
+		// When no policy checker is set, the handler should still work
+		pub := &mockIngestPublisher{}
+		r := newIngestRouter(pub)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/northwind/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusOK, rr.Body.String())
+		}
+	})
 }
 
 // TestStreamIngestExact1000 verifies that exactly 1000 edits is accepted.

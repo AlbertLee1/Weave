@@ -86,6 +86,44 @@ func (a *propertyFilterAdapter) AllowedProperties(ctx context.Context, objectTyp
 	return a.engine.AllowedProperties(ctx, user, *ot), nil
 }
 
+// ingestPolicyAdapter implements pkg/oss.IngestPolicyChecker by resolving
+// the ontology + objectType API names to OMS types and delegating to
+// *security.Engine.AllowedForIngest. This keeps the pkg/oss handler free
+// of a direct pkg/security import (US-062).
+type ingestPolicyAdapter struct {
+	repo   policyProviderRepo
+	engine *security.Engine
+}
+
+func newIngestPolicyAdapter(repo policyProviderRepo, engine *security.Engine) *ingestPolicyAdapter {
+	return &ingestPolicyAdapter{repo: repo, engine: engine}
+}
+
+// AllowedForIngest satisfies oss.IngestPolicyChecker. A nil receiver or nil
+// engine short-circuits to (true, nil) so pre-US-062 deployments where the
+// policy engine is not attached still allow ingest (RBAC guards the route).
+func (a *ingestPolicyAdapter) AllowedForIngest(ctx context.Context, ontologyAPIName, objectType string) (bool, error) {
+	if a == nil || a.engine == nil || a.repo == nil {
+		return true, nil
+	}
+	ont, err := a.repo.GetOntology(ctx, ontologyAPIName)
+	if err != nil {
+		return false, fmt.Errorf("ingest policy: lookup ontology %q: %w", ontologyAPIName, err)
+	}
+	if ont == nil {
+		return false, fmt.Errorf("ingest policy: ontology %q not found", ontologyAPIName)
+	}
+	ot, err := a.repo.GetObjectTypeByAPIName(ctx, ont.RID, objectType)
+	if err != nil {
+		return false, fmt.Errorf("ingest policy: lookup object type %q: %w", objectType, err)
+	}
+	if ot == nil {
+		return false, fmt.Errorf("ingest policy: object type %q not found in ontology %q", objectType, ontologyAPIName)
+	}
+	user := auth.UserFromContext(ctx)
+	return a.engine.AllowedForIngest(ctx, user, *ot)
+}
+
 // PolicyQuery satisfies the objectset.PolicyQueryProvider contract. A nil
 // receiver or nil engine short-circuits to (nil, nil) which the executor
 // treats as "no policy attached" and uses its base query unchanged.

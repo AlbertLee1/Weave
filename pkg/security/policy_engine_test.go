@@ -343,3 +343,77 @@ func TestRule_JSONRoundtrip(t *testing.T) {
 		t.Errorf("json marshal mismatch:\n got: %s\nwant: %s", out, raw)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// US-062: AllowedForIngest
+// ---------------------------------------------------------------------------
+
+// TestAllowedForIngest_NoPolicies — when no policies are registered, ingest
+// is allowed (open by default, the RBAC middleware guards the route).
+func TestAllowedForIngest_NoPolicies(t *testing.T) {
+	engine := NewEngine()
+	ot := oms.ObjectType{RID: "ri.ontology.main.object-type.order", APIName: "Order"}
+	user := &auth.User{ID: "u-etl", Attributes: map[string]any{}}
+
+	allowed, err := engine.AllowedForIngest(context.Background(), user, ot)
+	if err != nil {
+		t.Fatalf("AllowedForIngest error: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allowed=true when no policies registered")
+	}
+}
+
+// TestAllowedForIngest_PolicyDenies — when an OBJECT policy references a user
+// attribute the caller lacks, AllowedForIngest must return false.
+func TestAllowedForIngest_PolicyDenies(t *testing.T) {
+	engine := NewEngine()
+	ot := oms.ObjectType{RID: "ri.ontology.main.object-type.order", APIName: "Order"}
+	engine.SetPolicies(ot.RID, []Policy{{
+		RID:           "p-deny",
+		ObjectTypeRID: ot.RID,
+		PolicyType:    PolicyTypeObject,
+		Rules: []Rule{{
+			Type:           RuleTypeEq,
+			UserAttr:       "deptId",
+			ObjectProperty: "deptId",
+		}},
+	}})
+
+	user := &auth.User{ID: "u-outsider", Attributes: map[string]any{}}
+
+	allowed, err := engine.AllowedForIngest(context.Background(), user, ot)
+	if err != nil {
+		t.Fatalf("AllowedForIngest error: %v", err)
+	}
+	if allowed {
+		t.Fatal("expected allowed=false when policy denies (missing user attr)")
+	}
+}
+
+// TestAllowedForIngest_PolicyAllows — when user attributes satisfy the policy,
+// AllowedForIngest returns true.
+func TestAllowedForIngest_PolicyAllows(t *testing.T) {
+	engine := NewEngine()
+	ot := oms.ObjectType{RID: "ri.ontology.main.object-type.order", APIName: "Order"}
+	engine.SetPolicies(ot.RID, []Policy{{
+		RID:           "p-allow",
+		ObjectTypeRID: ot.RID,
+		PolicyType:    PolicyTypeObject,
+		Rules: []Rule{{
+			Type:           RuleTypeEq,
+			UserAttr:       "deptId",
+			ObjectProperty: "deptId",
+		}},
+	}})
+
+	user := &auth.User{ID: "u-allowed", Attributes: map[string]any{"deptId": "sales"}}
+
+	allowed, err := engine.AllowedForIngest(context.Background(), user, ot)
+	if err != nil {
+		t.Fatalf("AllowedForIngest error: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allowed=true when user attributes satisfy policy")
+	}
+}

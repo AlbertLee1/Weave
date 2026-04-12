@@ -239,6 +239,24 @@ func (e *Engine) Evaluate(ctx context.Context, user *auth.User, ot oms.ObjectTyp
 	return q, nil
 }
 
+// AllowedForIngest evaluates the OBJECT-scoped policies registered for ot and
+// returns whether the caller is permitted to ingest data into that ObjectType.
+//
+// Semantics mirror Evaluate: when no OBJECT policy exists, the default is
+// "allowed" (RBAC middleware already gates the route); when the compiled
+// policy collapses to MatchNoneQuery the caller's attributes do not satisfy
+// the policy and ingest is denied.
+func (e *Engine) AllowedForIngest(ctx context.Context, user *auth.User, ot oms.ObjectType) (bool, error) {
+	q, err := e.Evaluate(ctx, user, ot)
+	if err != nil {
+		return false, err
+	}
+	if _, deny := q.(*query.MatchNoneQuery); deny {
+		return false, nil
+	}
+	return true, nil
+}
+
 // AllowedProperties returns the set of object property API names that the
 // caller is permitted to see on ot. The return convention is:
 //

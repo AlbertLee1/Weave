@@ -262,11 +262,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
 		}
 
-		// US-061: Stream ingest endpoint — bypasses Action rules, publishes
-		// directly to NATS. Gated behind PermStreamIngest so only
-		// ontology-owner+ / admin callers can bulk-import.
+		// US-061/062: Stream ingest endpoint — bypasses Action rules, publishes
+		// directly to NATS. Gated behind PermStreamIngest (RBAC) and the policy
+		// engine (row-level ABAC via AllowedForIngest). The ingest-writer role
+		// added in US-062 grants PermStreamIngest without the broader privileges
+		// of ontology-owner / admin.
 		if deps.FunnelPublisher != nil {
 			ingestHandler := oss.NewStreamIngestHandler(deps.FunnelPublisher)
+			if deps.PolicyEngine != nil {
+				ingestHandler.SetPolicyChecker(
+					newIngestPolicyAdapter(deps.OmsRepo, deps.PolicyEngine))
+			}
 			api.With(auth.RequirePermission(auth.PermStreamIngest)).
 				Method(http.MethodPost,
 					"/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest",

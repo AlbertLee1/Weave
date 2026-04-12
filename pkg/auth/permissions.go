@@ -7,6 +7,7 @@ const (
 	RoleEditor        = "editor"
 	RoleOntologyOwner = "ontology-owner"
 	RoleAdmin         = "admin"
+	RoleIngestWriter  = "ingest-writer"
 )
 
 // Permission codes. Each is "<resource>.<verb>" and is referenced by
@@ -97,6 +98,9 @@ var rolePermissions = map[string][]string{
 		PermDatasourceBindingManage,
 		PermSnapshotManage,
 		PermActionLogRead,
+		PermStreamIngest,
+	},
+	RoleIngestWriter: {
 		PermStreamIngest,
 	},
 	RoleAdmin: {
