@@ -4259,3 +4259,17 @@ new features — only run verification suites and commit the gate.
   - The existing helper functions (extractPKs, slicesEqual, mustParseWhere) in the phase7_test package are shared across test files — don't redeclare them
   - Bleve 200ms sleep after indexing is still necessary for marking field to be queryable
 ---
+
+## 2026-04-12 - US-072
+- Implemented cross-US integration test for SSE end-to-end subscription in test/integration/phase7/phase7_sse_subscription_test.go
+- Part 1: Subscribe → apply 10 actions → assert 10 SSE events arrive in correct order with correct sequence IDs
+- Part 2: Disconnect → publish 5 more events while offline → reconnect with Last-Event-ID=109 → assert exactly 5 replayed events with no duplicates/gaps
+- Files changed:
+  - test/integration/phase7/phase7_sse_subscription_test.go (new)
+- **Learnings for future iterations:**
+  - SSE cross-US tests don't need PG/testcontainers — funnel.Broadcast is in-memory and the SSE handler uses a stubbed ObjectSetLookup
+  - Parse both "id:" and "data:" SSE lines in the reader goroutine to verify Last-Event-ID replay correctness
+  - funnel.NewBroadcast() creates a ring buffer with default capacity 1024 — sufficient for replay tests without explicit NewBroadcastWithReplay
+  - The handler emits "id: <seq>" on a separate line before "data: {...}" — reader must track currentID state across lines
+  - Existing phase7_test helpers (extractPKs, slicesEqual, mustParseWhere) are shared but not needed for SSE tests — SSE tests use their own local types
+---

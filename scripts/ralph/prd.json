@@ -1140,7 +1140,7 @@
         "go test -tags integration ./test/integration/phase7/... -run SSESubscription passes"
       ],
       "priority": 72,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
