@@ -108,6 +108,101 @@ func (s *ServiceImpl) applyPolicyFilter(ctx context.Context, ontologyRID, object
 	return s.policyFilter.FilterObjects(ctx, user, ontologyRID, objectTypeAPIName, objs)
 }
 
+// applyMarkingFilter enforces US-052 Foundry-style mandatory access control
+// (subset / AND semantics) as a post-Bleve verification pass. The policy
+// engine's auto-marking clause (US-051) compiles to a should-terms
+// BooleanQuery against `_markings`, which expresses "at least one overlap"
+// — correct for single-valued marking fields but too loose for multi-valued
+// ones where an object requires the full set of its labels. This pass
+// runs auth.EvaluateMarkings per row so rows whose `_markings` slice is NOT
+// a subset of the user's markings are dropped before handing the page back.
+//
+// Call order: downstream of applyPolicyFilter and upstream of
+// applyPropertyVisibility, mirroring the established "drop denied rows first,
+// then rewrite the survivors' columns" chain. Skipped when the policy engine
+// is not attached, when the ObjectType is not opted in via
+// SetMarkingsEnabled, or when the row list is empty.
+func (s *ServiceImpl) applyMarkingFilter(ctx context.Context, ot *oms.ObjectType, objs []*WireObject) []*WireObject {
+	if s.policyEngine == nil || ot == nil || len(objs) == 0 {
+		return objs
+	}
+	if !s.policyEngine.MarkingsEnabled(ot.RID) {
+		return objs
+	}
+	user := auth.UserFromContext(ctx)
+	userMarkings := extractUserMarkings(user)
+	out := make([]*WireObject, 0, len(objs))
+	for _, o := range objs {
+		if o == nil {
+			continue
+		}
+		objMarkings := extractObjectMarkings(o)
+		if !auth.EvaluateMarkings(userMarkings, objMarkings) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// extractUserMarkings pulls the caller's marking set out of
+// user.Attributes["markings"]. Kept local to service_impl.go so the OSS
+// layer does not reach into pkg/security's unexported userMarkingsKey
+// constant. The value mirrors `security.userMarkingsKey`; when that
+// constant is exported in a future refactor this helper can delegate.
+func extractUserMarkings(user *auth.User) []string {
+	if user == nil || user.Attributes == nil {
+		return nil
+	}
+	raw, ok := user.Attributes["markings"]
+	if !ok {
+		return nil
+	}
+	return coerceStringSlice(raw)
+}
+
+// extractObjectMarkings pulls a marking slice out of a WireObject by
+// reading the reserved `_markings` property key. Bleve preserves
+// multi-valued keyword fields either as []interface{} or []string
+// depending on how the doc was indexed, so coerceStringSlice normalises
+// both shapes plus the scalar-string case (legacy single-value docs).
+func extractObjectMarkings(o *WireObject) []string {
+	if o == nil || o.Properties == nil {
+		return nil
+	}
+	raw, ok := o.Properties[security.MarkingField]
+	if !ok {
+		return nil
+	}
+	return coerceStringSlice(raw)
+}
+
+// coerceStringSlice is a shared helper used by extractUserMarkings and
+// extractObjectMarkings so both paths accept the same input shapes.
+func coerceStringSlice(raw any) []string {
+	switch v := raw.(type) {
+	case nil:
+		return nil
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
+	}
+}
+
 // applyPropertyVisibility enforces US-048 column-level visibility by running
 // the row-level policy engine's AllowedProperties hook against each returned
 // WireObject. The engine short-circuits to nil when no PROPERTY-scope
@@ -176,6 +271,11 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 	if err != nil {
 		return nil, err
 	}
+	// US-052: drop rows whose markings are not a subset of the caller's.
+	// Applied AFTER applyPolicyFilter so the PolicyFilter pass still owns
+	// pre-marking denies, and BEFORE applyPropertyVisibility so column
+	// masking operates on the post-marking survivors only.
+	filtered = s.applyMarkingFilter(ctx, ot, filtered)
 	if len(filtered) == 0 {
 		// Policy denied: hide existence with ErrNotFound rather than 403.
 		return nil, oms.ErrNotFound
@@ -244,6 +344,7 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 	if err != nil {
 		return nil, err
 	}
+	filtered = s.applyMarkingFilter(ctx, ot, filtered)
 	page.Data = s.applyPropertyVisibility(ctx, ot, filtered)
 
 	// Set next page token if there are more results
@@ -327,6 +428,7 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	if err != nil {
 		return nil, err
 	}
+	filtered = s.applyMarkingFilter(ctx, ot, filtered)
 	page.Data = s.applyPropertyVisibility(ctx, ot, filtered)
 
 	// Set next page token if there are more results
@@ -532,6 +634,7 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 	if err != nil {
 		return nil, err
 	}
+	filtered = s.applyMarkingFilter(ctx, targetOT, filtered)
 	page.Data = s.applyPropertyVisibility(ctx, targetOT, filtered)
 
 	// Set next page token if there are more results

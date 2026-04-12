@@ -1,0 +1,70 @@
+{
+  "story": "US-052",
+  "title": "Marking end-to-end integration test (3 users × 3 objects)",
+  "description": "Proves Foundry-style mandatory access control (subset / AND semantics) end-to-end through the real oss.ServiceImpl.ListObjects path with markings enforcement turned on via security.Engine.SetMarkingsEnabled. The 3-user × 3-object matrix is designed so that single-term overlap semantics alone (the should-terms Bleve clause synthesised by the US-051 auto-marking rule) is NOT sufficient — the third 'both required' object exposes the gap between 'overlap ≥ 1 marking' and 'user ⊇ object markings'. US-052 closes that gap with a post-Bleve verification pass that runs auth.EvaluateMarkings per row inside the service layer so rows whose `_markings` slice is not a subset of the caller's marking set are dropped before the page is returned.",
+  "fixture": {
+    "ontology": "marking_e2e",
+    "objectType": "document",
+    "primaryKey": "documentId",
+    "properties": [
+      { "apiName": "documentId", "baseType": "string", "analyzer": "not_analyzed" },
+      { "apiName": "title", "baseType": "string", "analyzer": "not_analyzed" }
+    ],
+    "reservedFields": [
+      { "apiName": "_markings", "baseType": "string", "analyzer": "not_analyzed", "multiValued": true, "source": "pkg/index.BuildMapping hard-reserves this keyword field on every ObjectType index — pkg/security.MarkingField is the canonical constant and pkg/funnel.markingsField / pkg/index.MarkingsField stay in lockstep" }
+    ],
+    "objects": [
+      { "documentId": "docACMEonly", "title": "Acme Proposal", "_markings": ["ACME"] },
+      { "documentId": "docACME2only", "title": "Acme2 Whitepaper", "_markings": ["ACME2"] },
+      { "documentId": "docBothRequired", "title": "Joint Venture", "_markings": ["ACME", "ACME2"] }
+    ],
+    "users": [
+      { "id": "alice", "attributes": { "markings": ["ACME"] } },
+      { "id": "bob", "attributes": { "markings": ["ACME2"] } },
+      { "id": "carol", "attributes": { "markings": ["ACME", "ACME2"] } }
+    ],
+    "engine": {
+      "markingsEnabled": true,
+      "explicitPolicies": [],
+      "note": "SetMarkingsEnabled(document.RID, true) synthesises a Rule{Type: RuleTypeMarkingSubset, ObjectProperty: MarkingField} inside compilePolicies — no explicit OBJECT-scope rules are attached so the auto clause is the only policy in play"
+    }
+  },
+  "request": {
+    "sequence": [
+      "engine.SetMarkingsEnabled(document.RID, true)",
+      "For each userId in [alice, bob, carol]: svc.ListObjects(ctx{user=userId}, {ontology=marking_e2e, objectType=document, pageSize=50})",
+      "Collect returned WireObject.PrimaryKey values and assert the exact set matches the matrix expectation"
+    ],
+    "entryPoint": "oss.ServiceImpl.ListObjects",
+    "policyEngine": "pkg/security.Engine wired via svc.SetPolicyEngine, markings opt-in via svc.policyEngine.SetMarkingsEnabled"
+  },
+  "expected": {
+    "matrix": [
+      { "user": "alice", "userMarkings": ["ACME"], "visible": ["docACMEonly"] },
+      { "user": "bob", "userMarkings": ["ACME2"], "visible": ["docACME2only"] },
+      { "user": "carol", "userMarkings": ["ACME", "ACME2"], "visible": ["docACMEonly", "docACME2only", "docBothRequired"] }
+    ],
+    "semantics": "auth.EvaluateMarkings(user, object) := object.markings ⊆ user.markings. Objects with an empty/nil _markings slice remain public. Single-valued marking overlap (the US-051 should-terms auto-clause) is not sufficient to enforce this and was the red bar for US-052",
+    "rowCount": "ListObjects.totalCount reflects Bleve's pre-subset total (the should-terms pass lets docBothRequired through for alice / bob), but ObjectPage.Data is post-filtered down to the subset-legal rows; future tightening may align totalCount with the post-pass count"
+  },
+  "responseShape": {
+    "ListObjects": {
+      "data": "[]WireObject — each row exposes $primaryKey / $apiName / $rid plus the selected properties",
+      "totalCount": "string — reflects the Bleve hit count after the AND-merged policy pre-filter. The post-Bleve applyMarkingFilter pass may drop additional rows from Data without decrementing totalCount"
+    }
+  },
+  "coveredBy": [
+    "test/integration/marking_test.go::TestMarkingE2E_ThreeUsersThreeObjects",
+    "pkg/auth/marking_eval_test.go::TestMarkingAndSemantics",
+    "pkg/security/auto_marking_test.go",
+    "pkg/funnel/markings_test.go",
+    "pkg/index/mapping_builder_test.go::TestBuildMappingDefaultsToText"
+  ],
+  "notes": [
+    "Run with `go test -tags integration ./test/integration/... -run MarkingE2E`. Requires Docker for testcontainers.",
+    "`_markings` is a reserved keyword field on every ObjectType index — tests do not need to declare it in the schema Properties slice. Writers attach the slice through funnel.Edit.Markings (the explicit side-channel) rather than through Properties['_markings'] so ingest keeps markings as metadata.",
+    "The US-051 auto-marking compile path emits a BooleanQuery with MinShould=1, which is correct for single-valued marking fields but leaks docBothRequired to alice / bob when markings are multi-valued. US-052 resolves this with a post-Bleve verification pass (oss.ServiceImpl.applyMarkingFilter) that runs auth.EvaluateMarkings per row between applyPolicyFilter and applyPropertyVisibility. A future follow-up may fold a markings signature field into the index so subset can be expressed directly as a Bleve query, but the post-pass is sufficient for the US-052 acceptance bar.",
+    "applyMarkingFilter is a no-op unless the engine has SetMarkingsEnabled(ot.RID, true); un-opted object types never pay the per-row EvaluateMarkings cost.",
+    "The same applyMarkingFilter pass is also wired into GetObject, SearchObjects, and ListLinkedObjects so every OSS read path enforces the subset invariant consistently — US-052 only asserts ListObjects but the service-level hook guards the whole read surface."
+  ]
+}
