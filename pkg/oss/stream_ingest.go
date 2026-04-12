@@ -2,10 +2,14 @@ package oss
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/time/rate"
 
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
@@ -31,11 +35,50 @@ type IngestPolicyChecker interface {
 	AllowedForIngest(ctx context.Context, ontologyAPIName, objectType string) (bool, error)
 }
 
+// IngestRateLimiter gates stream ingest requests per ontology. The Allow
+// method returns true when the request may proceed. When false, the
+// handler responds with 429 + Retry-After.
+type IngestRateLimiter interface {
+	Allow(ontology string) bool
+}
+
+// PerOntologyRateLimiter maintains a token-bucket rate limiter per ontology.
+// Limiters are lazily created on first access and share the same rate/burst.
+type PerOntologyRateLimiter struct {
+	rate    rate.Limit
+	burst   int
+	mu      sync.Mutex
+	buckets map[string]*rate.Limiter
+}
+
+// NewPerOntologyRateLimiter creates a rate limiter that allows ratePerSec
+// requests per second per ontology with the given burst capacity.
+func NewPerOntologyRateLimiter(ratePerSec float64, burst int) *PerOntologyRateLimiter {
+	return &PerOntologyRateLimiter{
+		rate:    rate.Limit(ratePerSec),
+		burst:   burst,
+		buckets: make(map[string]*rate.Limiter),
+	}
+}
+
+// Allow returns true when the ontology's token bucket has capacity. Non-blocking.
+func (l *PerOntologyRateLimiter) Allow(ontology string) bool {
+	l.mu.Lock()
+	lim, ok := l.buckets[ontology]
+	if !ok {
+		lim = rate.NewLimiter(l.rate, l.burst)
+		l.buckets[ontology] = lim
+	}
+	l.mu.Unlock()
+	return lim.Allow()
+}
+
 // StreamIngestHandler handles POST .../streams/{objectType}/ingest requests
 // for bulk-importing edits that bypass Action rules.
 type StreamIngestHandler struct {
 	publisher     IngestPublisher
 	policyChecker IngestPolicyChecker
+	rateLimiter   IngestRateLimiter
 }
 
 // NewStreamIngestHandler creates a new stream ingest handler.
@@ -48,6 +91,13 @@ func NewStreamIngestHandler(pub IngestPublisher) *StreamIngestHandler {
 // publishing. When nil, the handler relies solely on RBAC middleware.
 func (h *StreamIngestHandler) SetPolicyChecker(c IngestPolicyChecker) {
 	h.policyChecker = c
+}
+
+// SetRateLimiter wires the optional per-ontology rate limiter. When set,
+// ServeHTTP checks the limiter before processing. When nil, no rate limiting
+// is applied (backwards compatible with pre-US-063 deployments).
+func (h *StreamIngestHandler) SetRateLimiter(l IngestRateLimiter) {
+	h.rateLimiter = l
 }
 
 // streamIngestRequest is the JSON request body for the ingest endpoint.
@@ -65,6 +115,20 @@ type StreamIngestResponse struct {
 func (h *StreamIngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ontology := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")
+
+	// US-063: per-ontology token-bucket rate limiting. Check before any
+	// expensive work (policy evaluation, JSON parsing). When the bucket is
+	// exhausted respond with 429 + Retry-After so the client can back off.
+	if h.rateLimiter != nil && !h.rateLimiter.Allow(ontology) {
+		retryAfter := fmt.Sprintf("%d", int(math.Ceil(1.0)))
+		w.Header().Set("Retry-After", retryAfter)
+		apierror.WriteJSON(w, apierror.NewTooManyRequests("IngestRateLimitExceeded",
+			map[string]string{
+				"ontology": ontology,
+				"reason":   "ingest rate limit exceeded for this ontology",
+			}))
+		return
+	}
 
 	// US-062: policy engine enforcement — when a checker is wired, evaluate
 	// whether the caller's user attributes satisfy the OBJECT-scoped policies

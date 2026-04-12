@@ -271,6 +271,135 @@ func TestStreamIngestPolicy(t *testing.T) {
 	})
 }
 
+// TestStreamIngestRateLimiter verifies US-063: token bucket rate limiting
+// per ontology with 429 + Retry-After on exhaustion.
+func TestStreamIngestRateLimiter(t *testing.T) {
+	validBody := `{"edits":[{"type":"CREATE","objectType":"Order","primaryKey":"pk-1","properties":{"total":100}}]}`
+
+	t.Run("returns 429 with Retry-After when rate limit exhausted", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		h := NewStreamIngestHandler(pub)
+		// Set a very low rate limit: 1 request per second, burst of 1
+		h.SetRateLimiter(NewPerOntologyRateLimiter(1, 1))
+
+		r := chi.NewRouter()
+		r.Post("/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest", h.ServeHTTP)
+
+		// First request should succeed (consumes the 1-token burst)
+		req1 := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/northwind/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req1.Header.Set("Content-Type", "application/json")
+		rr1 := httptest.NewRecorder()
+		r.ServeHTTP(rr1, req1)
+
+		if rr1.Code != http.StatusOK {
+			t.Fatalf("first request: status = %d, want %d; body = %s", rr1.Code, http.StatusOK, rr1.Body.String())
+		}
+
+		// Second request immediately should be rate-limited
+		req2 := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/northwind/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req2.Header.Set("Content-Type", "application/json")
+		rr2 := httptest.NewRecorder()
+		r.ServeHTTP(rr2, req2)
+
+		if rr2.Code != http.StatusTooManyRequests {
+			t.Fatalf("second request: status = %d, want %d; body = %s", rr2.Code, http.StatusTooManyRequests, rr2.Body.String())
+		}
+
+		// Must have Retry-After header
+		retryAfter := rr2.Header().Get("Retry-After")
+		if retryAfter == "" {
+			t.Fatal("missing Retry-After header on 429 response")
+		}
+
+		// Must have RESOURCE_EXHAUSTED error code
+		var errResp map[string]interface{}
+		if err := json.Unmarshal(rr2.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("unmarshal error response: %v", err)
+		}
+		if code, _ := errResp["errorCode"].(string); code != "RESOURCE_EXHAUSTED" {
+			t.Fatalf("errorCode = %q, want %q", code, "RESOURCE_EXHAUSTED")
+		}
+		if name, _ := errResp["errorName"].(string); name != "IngestRateLimitExceeded" {
+			t.Fatalf("errorName = %q, want %q", name, "IngestRateLimitExceeded")
+		}
+
+		// Publisher should only have received one batch (from the first request)
+		if len(pub.batches) != 1 {
+			t.Fatalf("publisher received %d batches, want 1", len(pub.batches))
+		}
+	})
+
+	t.Run("per-ontology isolation: different ontologies have independent limits", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		h := NewStreamIngestHandler(pub)
+		h.SetRateLimiter(NewPerOntologyRateLimiter(1, 1))
+
+		r := chi.NewRouter()
+		r.Post("/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest", h.ServeHTTP)
+
+		// Exhaust ontology "alpha"
+		req1 := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/alpha/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req1.Header.Set("Content-Type", "application/json")
+		rr1 := httptest.NewRecorder()
+		r.ServeHTTP(rr1, req1)
+		if rr1.Code != http.StatusOK {
+			t.Fatalf("alpha first: status = %d, want %d", rr1.Code, http.StatusOK)
+		}
+
+		// ontology "beta" should still be allowed
+		req2 := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/beta/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req2.Header.Set("Content-Type", "application/json")
+		rr2 := httptest.NewRecorder()
+		r.ServeHTTP(rr2, req2)
+		if rr2.Code != http.StatusOK {
+			t.Fatalf("beta first: status = %d, want %d", rr2.Code, http.StatusOK)
+		}
+
+		// "alpha" should be rate-limited
+		req3 := httptest.NewRequest(http.MethodPost,
+			"/api/v2/ontologies/alpha/streams/Order/ingest",
+			strings.NewReader(validBody))
+		req3.Header.Set("Content-Type", "application/json")
+		rr3 := httptest.NewRecorder()
+		r.ServeHTTP(rr3, req3)
+		if rr3.Code != http.StatusTooManyRequests {
+			t.Fatalf("alpha second: status = %d, want %d", rr3.Code, http.StatusTooManyRequests)
+		}
+	})
+
+	t.Run("nil rate limiter allows all requests (backwards compat)", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		h := NewStreamIngestHandler(pub)
+		// No rate limiter set
+
+		r := chi.NewRouter()
+		r.Post("/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest", h.ServeHTTP)
+
+		for i := 0; i < 5; i++ {
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v2/ontologies/northwind/streams/Order/ingest",
+				strings.NewReader(validBody))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("request %d: status = %d, want %d", i, rr.Code, http.StatusOK)
+			}
+		}
+		if len(pub.batches) != 5 {
+			t.Fatalf("publisher received %d batches, want 5", len(pub.batches))
+		}
+	})
+}
+
 // TestStreamIngestExact1000 verifies that exactly 1000 edits is accepted.
 func TestStreamIngestExact1000(t *testing.T) {
 	pub := &mockIngestPublisher{}

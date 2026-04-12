@@ -1,0 +1,58 @@
+{
+  "story": "US-063",
+  "title": "Stream ingest rate limiter + 429 + Retry-After",
+  "description": "Proves that the stream ingest endpoint enforces a per-ontology token-bucket rate limiter (default 1000 rps per ontology, configurable via WEAVE_INGEST_RATE_PER_SEC / WEAVE_INGEST_RATE_BURST). When the bucket is exhausted the handler returns 429 RESOURCE_EXHAUSTED with a Retry-After header. Different ontologies maintain independent buckets so a runaway client on ontology A does not starve ontology B.",
+  "fixture": {
+    "endpoint": "POST /api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest",
+    "rateLimiter": {
+      "type": "token bucket (golang.org/x/time/rate)",
+      "scope": "per ontology",
+      "defaults": { "ratePerSec": 1000, "burst": 1000 },
+      "envOverrides": {
+        "WEAVE_INGEST_RATE_PER_SEC": "float64 — tokens replenished per second",
+        "WEAVE_INGEST_RATE_BURST": "int — maximum burst capacity"
+      }
+    },
+    "requestBody": {
+      "edits": [
+        { "type": "CREATE", "objectType": "Order", "primaryKey": "order-1", "properties": { "total": 100 } }
+      ]
+    }
+  },
+  "request": {
+    "sequence": [
+      "POST /api/v2/ontologies/northwind/streams/Order/ingest with 1000 edits — 200 OK",
+      "POST /api/v2/ontologies/northwind/streams/Order/ingest with 1000 edits — 200 OK (burst=2)",
+      "POST /api/v2/ontologies/northwind/streams/Order/ingest with 1 edit — 429 (burst exhausted)",
+      "POST /api/v2/ontologies/chinook/streams/Track/ingest with 1 edit — 200 OK (independent bucket)"
+    ],
+    "entryPoint": "pkg/oss.StreamIngestHandler.ServeHTTP"
+  },
+  "expected": {
+    "withinBurst": {
+      "status": 200,
+      "body": { "batchId": "<uuid>", "editCount": 1000 }
+    },
+    "rateLimited": {
+      "status": 429,
+      "headers": { "Retry-After": "1" },
+      "body": {
+        "errorCode": "RESOURCE_EXHAUSTED",
+        "errorName": "IngestRateLimitExceeded",
+        "parameters": {
+          "ontology": "northwind",
+          "reason": "ingest rate limit exceeded for this ontology"
+        }
+      }
+    }
+  },
+  "coveredBy": [
+    "pkg/oss/stream_ingest_test.go::TestStreamIngestRateLimiter",
+    "test/integration/stream_ingest_test.go::TestStreamIngest_2000Inserts_And_RateLimited"
+  ],
+  "notes": [
+    "Rate limiter is checked BEFORE policy evaluation and JSON parsing so a burst of 429s is cheap.",
+    "nil rate limiter (pre-US-063 or degraded mode) allows all requests — backwards compatible.",
+    "Wired in cmd/server/main.go via deps.IngestRateLimiter only when NATS/FunnelPublisher is available."
+  ]
+}

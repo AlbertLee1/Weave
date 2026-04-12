@@ -67,15 +67,16 @@ type ServerDeps struct {
 	// events onto the hub via its OnChange hook; tests (and degraded-mode
 	// bootstraps) may leave it nil and the SSE route will return a clean
 	// 500 SSESubscribeNotConfigured.
-	FunnelBroadcast  *funnel.Broadcast
-	AttachmentStore  attachment.BlobStore
-	TimeSeriesStore  timeseries.Store
-	GeotemporalStore geotemporal.Store
-	CipherDecryptor  cipher.Decryptor
-	TransactionStore transactions.Store
-	SqlQueryEngine   sqlqueries.Engine
-	IndexDocSource   index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
-	CORSOrigins      []string                   // Allowed CORS origins (empty = disabled)
+	FunnelBroadcast   *funnel.Broadcast
+	AttachmentStore   attachment.BlobStore
+	TimeSeriesStore   timeseries.Store
+	GeotemporalStore  geotemporal.Store
+	CipherDecryptor   cipher.Decryptor
+	TransactionStore  transactions.Store
+	SqlQueryEngine    sqlqueries.Engine
+	IndexDocSource    index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
+	IngestRateLimiter oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
+	CORSOrigins       []string                   // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -272,6 +273,10 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.PolicyEngine != nil {
 				ingestHandler.SetPolicyChecker(
 					newIngestPolicyAdapter(deps.OmsRepo, deps.PolicyEngine))
+			}
+			// US-063: per-ontology token-bucket rate limiter for stream ingest.
+			if deps.IngestRateLimiter != nil {
+				ingestHandler.SetRateLimiter(deps.IngestRateLimiter)
 			}
 			api.With(auth.RequirePermission(auth.PermStreamIngest)).
 				Method(http.MethodPost,
@@ -645,6 +650,11 @@ func main() {
 
 		publisher = funnel.NewPublisher(js)
 		deps.FunnelPublisher = publisher
+		// US-063: per-ontology ingest rate limiter.
+		deps.IngestRateLimiter = oss.NewPerOntologyRateLimiter(
+			cfg.IngestRateLimit.RatePerSec,
+			cfg.IngestRateLimit.Burst,
+		)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
 		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
 

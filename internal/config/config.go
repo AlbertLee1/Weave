@@ -62,6 +62,13 @@ type FunctionsConfig struct {
 	Timeout time.Duration
 }
 
+// IngestRateLimitConfig controls the per-ontology token-bucket rate limiter
+// on the stream ingest endpoint (US-063). Defaults: 1000 rps, burst 1000.
+type IngestRateLimitConfig struct {
+	RatePerSec float64
+	Burst      int
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -74,9 +81,10 @@ type Config struct {
 	CORSOrigins []string // Parsed from WEAVE_CORS_ORIGINS (comma-separated)
 	JWT         JWTConfig
 
-	Metrics   MetricsConfig
-	Tracing   TracingConfig
-	Functions FunctionsConfig
+	Metrics         MetricsConfig
+	Tracing         TracingConfig
+	Functions       FunctionsConfig
+	IngestRateLimit IngestRateLimitConfig
 }
 
 func Load() (*Config, error) {
@@ -105,6 +113,10 @@ func Load() (*Config, error) {
 			Enabled: false,
 			BaseURL: "",
 			Timeout: 30 * time.Second,
+		},
+		IngestRateLimit: IngestRateLimitConfig{
+			RatePerSec: 1000,
+			Burst:      1000,
 		},
 	}
 
@@ -229,6 +241,21 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid WEAVE_FUNCTIONS_TIMEOUT %q: %w", v, err)
 		}
 		cfg.Functions.Timeout = d
+	}
+
+	if v := os.Getenv("WEAVE_INGEST_RATE_PER_SEC"); v != "" {
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err != nil || parsed <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_INGEST_RATE_PER_SEC %q: must be a positive number", v)
+		}
+		cfg.IngestRateLimit.RatePerSec = parsed
+	}
+	if v := os.Getenv("WEAVE_INGEST_RATE_BURST"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_INGEST_RATE_BURST %q: must be a positive integer", v)
+		}
+		cfg.IngestRateLimit.Burst = n
 	}
 
 	return cfg, nil
