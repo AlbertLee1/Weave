@@ -13,6 +13,7 @@ package security
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
@@ -58,10 +59,29 @@ const userMarkingsKey = "markings"
 // Rule is one clause inside a Policy. The JSON tags must match the DSL
 // spelled out in the story so that existing JSONB rows decode without
 // a schema migration.
+//
+// Row-level (OBJECT-scope) policies use Type + UserAttr + ObjectProperty to
+// compile into a Bleve query (see compileRule). Column-level (PROPERTY-
+// scope) policies use UserAttr + Values + Properties to decide which
+// property API names are visible to the caller (see AllowedProperties); the
+// Type field is not consulted for PROPERTY-scope rules so existing JSONB
+// rows can encode either shape without a type tag collision.
 type Rule struct {
-	Type           RuleType `json:"type"`
+	Type           RuleType `json:"type,omitempty"`
 	UserAttr       string   `json:"userAttr,omitempty"`
 	ObjectProperty string   `json:"objectProperty,omitempty"`
+
+	// Values enumerates the literal user-attribute values that satisfy a
+	// PROPERTY-scope rule's guard. The rule applies when the caller's
+	// user.Attributes[UserAttr] (string or []string) contains any of these
+	// values. Ignored for OBJECT-scope rules.
+	Values []string `json:"values,omitempty"`
+
+	// Properties is the list of object property API names granted by a
+	// PROPERTY-scope rule when its guard matches. Ignored for OBJECT-scope
+	// rules. A rule with an empty UserAttr AND empty Values is an
+	// unconditional grant suitable for baseline visibility lists.
+	Properties []string `json:"properties,omitempty"`
 }
 
 // Policy is one row of the security_policies table. RID / ObjectTypeRID /
@@ -172,6 +192,108 @@ func (e *Engine) Evaluate(ctx context.Context, user *auth.User, ot oms.ObjectTyp
 		cache.Put(userID, ot.RID, version, q)
 	}
 	return q, nil
+}
+
+// AllowedProperties returns the set of object property API names that the
+// caller is permitted to see on ot. The return convention is:
+//
+//   - nil slice  → no PROPERTY-scope policy registered; callers should treat
+//     this as "all properties allowed" and skip wire-level filtering so the
+//     un-policied back-compat path continues to return full property payloads.
+//   - non-nil slice (including empty) → explicit allow list; any property API
+//     name not present MUST be dropped from the serialized WireObject
+//     (omitted, not nulled).
+//
+// Evaluation walks every PROPERTY-typed policy registered for ot.RID. For
+// each rule whose guard applies to the caller, the rule's Properties are
+// added to the running union. A rule with empty UserAttr AND empty Values
+// is an unconditional grant (baseline visibility). When UserAttr is set,
+// the caller's user.Attributes[UserAttr] (string OR []string) must contain
+// at least one of the Values for the grant to apply — or, when Values is
+// empty, the attribute just needs to be present.
+//
+// Security note: the engine fail-closes per RULE, not per POLICY — a rule
+// whose guard misses contributes nothing, but other rules in the same
+// policy still run. This matches the "union of matching grants" semantics
+// that column-level ABAC typically ships with and keeps the data-owner
+// mental model simple (each rule is an additive grant).
+func (e *Engine) AllowedProperties(ctx context.Context, user *auth.User, ot oms.ObjectType) []string {
+	_ = ctx
+
+	e.mu.RLock()
+	policies := e.policies[ot.RID]
+	e.mu.RUnlock()
+
+	var hasPropertyPolicy bool
+	grants := make(map[string]struct{})
+	for _, p := range policies {
+		if p.PolicyType != PolicyTypeProperty {
+			continue
+		}
+		hasPropertyPolicy = true
+		for _, r := range p.Rules {
+			if !propertyRuleMatches(r, user) {
+				continue
+			}
+			for _, prop := range r.Properties {
+				if prop == "" {
+					continue
+				}
+				grants[prop] = struct{}{}
+			}
+		}
+	}
+
+	if !hasPropertyPolicy {
+		return nil
+	}
+
+	out := make([]string, 0, len(grants))
+	for k := range grants {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// propertyRuleMatches decides whether a PROPERTY-scope rule applies to the
+// caller. Semantics:
+//
+//   - Empty UserAttr AND empty Values → unconditional grant (always matches).
+//   - Empty UserAttr AND non-empty Values → invalid guard, never matches
+//     (fail closed; validators should reject this at write time).
+//   - UserAttr set, empty Values → match whenever the caller has any
+//     non-empty value under that attribute key (presence check).
+//   - UserAttr set, non-empty Values → match when any value the caller
+//     holds under that attribute is also listed in Values.
+func propertyRuleMatches(r Rule, user *auth.User) bool {
+	if r.UserAttr == "" {
+		return len(r.Values) == 0
+	}
+	if s, ok := userAttrString(user, r.UserAttr); ok {
+		if len(r.Values) == 0 {
+			return true
+		}
+		for _, v := range r.Values {
+			if v == s {
+				return true
+			}
+		}
+		return false
+	}
+	if list, ok := userAttrStringSlice(user, r.UserAttr); ok {
+		if len(r.Values) == 0 {
+			return true
+		}
+		for _, v := range list {
+			for _, w := range r.Values {
+				if v == w {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // compilePolicies runs the DSL compiler over every OBJECT-typed policy in

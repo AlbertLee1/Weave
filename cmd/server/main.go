@@ -272,6 +272,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// ObjectSet endpoints
 		if deps.ObjSetExecutor != nil && deps.IndexMgr != nil && deps.ObjSetStore != nil {
 			objSetHandler := objectset.NewHandler(deps.ObjSetExecutor, deps.IndexMgr, deps.ObjSetStore)
+			// US-048: wire column-level visibility through the same Engine
+			// as the row-level PolicyQueryProvider. Nil engine / repo is
+			// tolerated — the adapter becomes a no-op and LoadObjects keeps
+			// returning full property payloads.
+			if deps.PolicyEngine != nil && deps.OmsRepo != nil {
+				objSetHandler.SetPropertyFilterProvider(newPropertyFilterAdapter(deps.OmsRepo, deps.PolicyEngine))
+			}
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", objSetHandler.LoadObjects)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks", objSetHandler.LoadLinks)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/aggregate", objSetHandler.Aggregate)

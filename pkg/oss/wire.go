@@ -55,6 +55,44 @@ func (wo *WireObject) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// FilterProperties returns a view of the WireObject whose Properties map
+// only contains keys present in allowed. The contract matches
+// security.Engine.AllowedProperties:
+//
+//   - allowed == nil   → no PROPERTY-scope policy attached, return the same
+//     WireObject pointer unchanged so un-policied call sites stay zero-cost.
+//   - allowed != nil   → explicit allow list. A fresh WireObject is returned
+//     with a filtered Properties map; fields absent from allowed are omitted
+//     (NOT nulled) so the wire JSON matches Foundry's column-level secrecy
+//     behaviour. Reserved keys (__rid / __primaryKey / __apiName) are
+//     preserved via WireObject.MarshalJSON regardless of the allow list.
+//
+// A zero-length (but non-nil) allowed slice is the explicit "restricted to
+// nothing" state and strips every property field while keeping the
+// reserved keys. The original WireObject is never mutated so callers can
+// safely share read-only objects across goroutines.
+func (wo *WireObject) FilterProperties(allowed []string) *WireObject {
+	if wo == nil || allowed == nil {
+		return wo
+	}
+	allowSet := make(map[string]struct{}, len(allowed))
+	for _, k := range allowed {
+		allowSet[k] = struct{}{}
+	}
+	filtered := make(map[string]interface{}, len(allowed))
+	for k, v := range wo.Properties {
+		if _, ok := allowSet[k]; ok {
+			filtered[k] = v
+		}
+	}
+	return &WireObject{
+		RID:        wo.RID,
+		PrimaryKey: wo.PrimaryKey,
+		APIName:    wo.APIName,
+		Properties: filtered,
+	}
+}
+
 // FormatObject creates a WireObject from raw index data.
 func FormatObject(objectType string, primaryKey string, properties map[string]interface{}) *WireObject {
 	return &WireObject{

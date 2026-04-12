@@ -123,6 +123,18 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   construction time (before wrapping in CachedRepository) and pass it
   through a typed ServerDeps field — unwrapping the cached decorator
   later is not supported.
+- Column-level visibility (US-048) flows through
+  `security.Engine.AllowedProperties` with the nil=no-filter,
+  []string{}=strip-everything convention. Every read path must call
+  `applyPropertyVisibility` AFTER the existing row-level
+  `applyPolicyFilter` so the property pass only touches rows the caller
+  can already see. PROPERTY-scope rules live on the same `security.Rule`
+  struct as OBJECT-scope rules (just leave Type blank and populate
+  UserAttr + Values + Properties) so a single security_policies row can
+  hold a mixed-scope policy without a tag collision. For objectset
+  LoadObjects / LoadLinks hook through the
+  `objectset.PropertyFilterProvider` interface wired in cmd/server —
+  do NOT import pkg/security directly from pkg/oss/objectset.
 - Narrow in-package interfaces beat expanding oms.Repository. The
   oms.Repository interface is already 50+ methods with 11 mock
   implementations; every new method forces 11 stub updates. If a
@@ -3067,4 +3079,79 @@ new features — only run verification suites and commit the gate.
     policy/link integration test: default English snowball + TermQuery is a
     silent zero-hit landmine. Set Analyzer: index.AnalyzerNotAnalyzed on
     every field that a Rule.ObjectProperty or link FK points at.
+---
+
+## 2026-04-12 - US-048
+- Added `security.Engine.AllowedProperties(ctx, user, ot) []string` that
+  walks PROPERTY-scope policies and returns the union of granted property
+  API names. Nil return means "no PROPERTY policy attached, allow all"; a
+  non-nil return (including zero-length) is an explicit allow list.
+- Extended `security.Rule` with `Values []string` and `Properties []string`
+  fields so PROPERTY-scope rules can encode "(user.attr ∈ values) ⇒ grant
+  properties" without colliding with the existing OBJECT-scope fields.
+  Unconditional grants (empty UserAttr AND empty Values) are supported for
+  baseline visibility lists.
+- Added `oss.WireObject.FilterProperties(allowed)` that returns a copy with
+  only the allowed keys in Properties; nil allowed short-circuits to the
+  same pointer so un-policied callers pay zero copy cost. Reserved keys
+  (__rid / __primaryKey / __apiName) flow through MarshalJSON regardless.
+- Wired a `ServiceImpl.applyPropertyVisibility` chokepoint into GetObject,
+  ListObjects, SearchObjects, ListLinkedObjects, and GetLinkedObject right
+  after the existing `applyPolicyFilter` pass so denied rows are dropped
+  before the per-row column filter runs.
+- Added a new `objectset.PropertyFilterProvider` interface + Handler
+  setter, and a matching `propertyFilterAdapter` in cmd/server that
+  resolves apiName → RID via the ontology scope on context and forwards
+  to `*security.Engine.AllowedProperties`. LoadObjects and LoadLinks
+  handlers apply the filter via a single `h.applyPropertyVisibility` call.
+- Red→Green TDD: pkg/oss/serialization_filter_test.go exercises three
+  paths (manager sees salary, peer omits salary, zero-length allow list
+  strips every property while keeping reserved keys). Also asserts the
+  raw JSON bytes do not contain "salary" for the peer view so null-encoded
+  regressions cannot slip past the map decoder.
+- Verified: go test ./..., go vet ./..., gofmt -l on touched files,
+  go test -tags integration ./test/integration/... -run PolicyMatrix.
+- Files changed:
+  - pkg/security/policy_engine.go (Rule fields + AllowedProperties)
+  - pkg/oss/wire.go (FilterProperties)
+  - pkg/oss/serialization_filter_test.go (new, 3 tests)
+  - pkg/oss/service_impl.go (applyPropertyVisibility + 5 call sites)
+  - pkg/oss/objectset/handler.go (PropertyFilterProvider interface,
+    Handler field, SetPropertyFilterProvider, applyPropertyVisibility)
+  - pkg/oss/objectset/handler_objectset.go (LoadLinks hook)
+  - cmd/server/main.go (wiring)
+  - cmd/server/policy_provider.go (propertyFilterAdapter)
+  - scripts/ralph/prd.json (US-048 passes=true)
+  - scripts/ralph/progress.txt (this entry)
+- **Learnings for future iterations:**
+  - `security.Rule` is the designated carrier for BOTH row-level and
+    column-level DSL fields. Keep PROPERTY-scope rules type-tag-less (leave
+    Type blank) so existing JSONB rows can mix OBJECT and PROPERTY clauses
+    in the same policy document without a tag collision; AllowedProperties
+    ignores Type entirely and propertyRuleMatches only reads UserAttr +
+    Values. Keep future column-level rule work inside this same struct to
+    avoid a second parallel Rule type.
+  - The AllowedProperties convention is `nil = no-filter, []string{} =
+    strip-everything`. Treat this as a contract, not an accident — every
+    call site (ServiceImpl.applyPropertyVisibility, Handler.applyProperty
+    Visibility, WireObject.FilterProperties) short-circuits on `nil` and
+    must keep doing so, otherwise un-policied traffic would pay a per-row
+    map copy cost. Failing to uphold the contract also breaks the "no
+    PROPERTY-scope policy attached" back-compat path exercised by
+    TestPropertyFilter_NoPolicy_AllowsAll.
+  - Column-level filtering runs AFTER row-level filtering in every read
+    path. Order matters: dropping denied rows first means the per-object
+    property pass only touches rows the caller can see, keeping the hot
+    path allocation-free for rows that would have been dropped anyway.
+    When wiring new read paths follow this order — `applyPolicyFilter`
+    then `applyPropertyVisibility`.
+  - objectset.Handler gets optional providers (not constructor args) so
+    existing tests that pass NewHandler(executor, indexMgr, store) keep
+    compiling. Follow this pattern for US-049+ column/row-level hooks:
+    one optional setter per concern, nil-tolerant, no interface widening.
+  - The propertyFilterAdapter in cmd/server reuses policyProviderRepo
+    (GetOntology + GetObjectTypeByAPIName) — do NOT widen that interface
+    for new adapters; if a future adapter needs another repo method, add
+    it to a separate narrow interface alongside. This keeps the cmd/server
+    ↔ oms.Repository coupling observable.
 ---

@@ -108,6 +108,34 @@ func (s *ServiceImpl) applyPolicyFilter(ctx context.Context, ontologyRID, object
 	return s.policyFilter.FilterObjects(ctx, user, ontologyRID, objectTypeAPIName, objs)
 }
 
+// applyPropertyVisibility enforces US-048 column-level visibility by running
+// the row-level policy engine's AllowedProperties hook against each returned
+// WireObject. The engine short-circuits to nil when no PROPERTY-scope
+// policies are attached to the object type, in which case this pass is a
+// no-op and the input slice is returned unchanged. When an allow list is
+// returned the helper filters every object in place via
+// WireObject.FilterProperties so fields outside the allow list are OMITTED
+// (not nulled) from the serialized response.
+//
+// Call order: downstream of applyPolicyFilter so denied rows are dropped
+// before the per-object column pass runs. The property filter only rewrites
+// property maps — row count is preserved.
+func (s *ServiceImpl) applyPropertyVisibility(ctx context.Context, ot *oms.ObjectType, objs []*WireObject) []*WireObject {
+	if s.policyEngine == nil || ot == nil || len(objs) == 0 {
+		return objs
+	}
+	user := auth.UserFromContext(ctx)
+	allowed := s.policyEngine.AllowedProperties(ctx, user, *ot)
+	if allowed == nil {
+		return objs
+	}
+	out := make([]*WireObject, len(objs))
+	for i, o := range objs {
+		out[i] = o.FilterProperties(allowed)
+	}
+	return out
+}
+
 // GetObject retrieves a single object by its primary key.
 //
 // ABAC: when a PolicyFilter is installed, the freshly-loaded object is run
@@ -152,6 +180,7 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 		// Policy denied: hide existence with ErrNotFound rather than 403.
 		return nil, oms.ErrNotFound
 	}
+	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	return filtered[0], nil
 }
 
@@ -215,7 +244,7 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 	if err != nil {
 		return nil, err
 	}
-	page.Data = filtered
+	page.Data = s.applyPropertyVisibility(ctx, ot, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -298,7 +327,7 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	if err != nil {
 		return nil, err
 	}
-	page.Data = filtered
+	page.Data = s.applyPropertyVisibility(ctx, ot, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -503,7 +532,7 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 	if err != nil {
 		return nil, err
 	}
-	page.Data = filtered
+	page.Data = s.applyPropertyVisibility(ctx, targetOT, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -602,5 +631,7 @@ func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRe
 	hit := batchResult.Hits[0]
 	obj := FormatObject(otherOT.APIName, req.LinkedObjectPrimaryKey, hit.Fields)
 
-	return obj, nil
+	// US-048: apply column-level visibility against the target object type.
+	filtered := s.applyPropertyVisibility(ctx, otherOT, []*WireObject{obj})
+	return filtered[0], nil
 }

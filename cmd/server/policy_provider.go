@@ -38,6 +38,54 @@ func newPolicyQueryAdapter(repo policyProviderRepo, engine *security.Engine) *po
 	return &policyQueryAdapter{repo: repo, engine: engine}
 }
 
+// propertyFilterAdapter implements pkg/oss/objectset.PropertyFilterProvider
+// by resolving apiName → ObjectType (via the ontology scope on context)
+// and forwarding to *security.Engine.AllowedProperties. Lives alongside
+// policyQueryAdapter because it shares the same narrow oms.Repository
+// subset and the same ontology-scope context contract — keeping both
+// adapters in one file makes the cmd/server ↔ pkg/security wiring
+// obvious for future US-05x stories.
+type propertyFilterAdapter struct {
+	repo   policyProviderRepo
+	engine *security.Engine
+}
+
+func newPropertyFilterAdapter(repo policyProviderRepo, engine *security.Engine) *propertyFilterAdapter {
+	return &propertyFilterAdapter{repo: repo, engine: engine}
+}
+
+// AllowedProperties satisfies objectset.PropertyFilterProvider. A nil
+// receiver or nil engine short-circuits to (nil, nil) which the handler
+// treats as "no PROPERTY-scope policy attached" and passes the full
+// property payload through unchanged. Errors surface when the ontology
+// scope is missing or the apiName cannot be resolved, so misconfiguration
+// fails loud rather than silently exposing column-level-secret fields.
+func (a *propertyFilterAdapter) AllowedProperties(ctx context.Context, objectType string) ([]string, error) {
+	if a == nil || a.engine == nil || a.repo == nil {
+		return nil, nil
+	}
+	scope := index.OntologyScopeFromContext(ctx)
+	if scope == "" {
+		return nil, errors.New("property filter: no ontology scope on context")
+	}
+	ont, err := a.repo.GetOntology(ctx, scope)
+	if err != nil {
+		return nil, fmt.Errorf("property filter: lookup ontology %q: %w", scope, err)
+	}
+	if ont == nil {
+		return nil, fmt.Errorf("property filter: ontology %q not found", scope)
+	}
+	ot, err := a.repo.GetObjectTypeByAPIName(ctx, ont.RID, objectType)
+	if err != nil {
+		return nil, fmt.Errorf("property filter: lookup object type %q: %w", objectType, err)
+	}
+	if ot == nil {
+		return nil, fmt.Errorf("property filter: object type %q not found in ontology %q", objectType, scope)
+	}
+	user := auth.UserFromContext(ctx)
+	return a.engine.AllowedProperties(ctx, user, *ot), nil
+}
+
 // PolicyQuery satisfies the objectset.PolicyQueryProvider contract. A nil
 // receiver or nil engine short-circuits to (nil, nil) which the executor
 // treats as "no policy attached" and uses its base query unchanged.

@@ -1,6 +1,7 @@
 package objectset
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -58,12 +59,25 @@ type CreateTemporaryResponse struct {
 	ObjectSetRID string `json:"objectSetRid"`
 }
 
+// PropertyFilterProvider returns the set of property API names that the
+// caller in ctx is permitted to see on objectType. The return convention
+// mirrors security.Engine.AllowedProperties: a nil slice means "no
+// PROPERTY-scope policy attached, allow all fields" and a non-nil slice
+// (including zero-length) is an explicit allow list that downstream
+// WireObject serialization must enforce by omitting unlisted fields. Kept
+// as an interface so pkg/oss/objectset avoids a direct pkg/security import;
+// cmd/server wires a thin adapter that forwards to *security.Engine.
+type PropertyFilterProvider interface {
+	AllowedProperties(ctx context.Context, objectType string) ([]string, error)
+}
+
 // Handler handles ObjectSet HTTP requests.
 type Handler struct {
-	executor  *Executor
-	indexMgr  *index.Manager
-	store     *Store
-	aggEngine *aggregation.Engine
+	executor       *Executor
+	indexMgr       *index.Manager
+	store          *Store
+	aggEngine      *aggregation.Engine
+	propertyFilter PropertyFilterProvider
 }
 
 // NewHandler creates a new ObjectSet handler.
@@ -74,6 +88,41 @@ func NewHandler(executor *Executor, indexMgr *index.Manager, store *Store) *Hand
 		store:     store,
 		aggEngine: aggregation.NewEngine(),
 	}
+}
+
+// SetPropertyFilterProvider wires the optional US-048 column-level
+// visibility hook. When attached, every Load path (LoadObjects, LoadLinks,
+// loadObjectSet) runs its result through the provider and strips any
+// WireObject property not in the returned allow list before serialization.
+// Passing nil detaches the hook. Safe to call at any point during server
+// boot; the Handler re-reads the field on every request.
+func (h *Handler) SetPropertyFilterProvider(p PropertyFilterProvider) {
+	h.propertyFilter = p
+}
+
+// applyPropertyVisibility is the Handler-side chokepoint that US-048
+// column-level policies flow through. It resolves the allow list for the
+// caller via the wired PropertyFilterProvider and filters every object in
+// objs via WireObject.FilterProperties. A nil provider, nil allowed list,
+// or empty input slice short-circuits to the input unchanged so existing
+// back-compat tests don't pay the copy cost. Errors surface unchanged so
+// callers can emit the proper apierror response.
+func (h *Handler) applyPropertyVisibility(ctx context.Context, objectType string, objs []*oss.WireObject) ([]*oss.WireObject, error) {
+	if h.propertyFilter == nil || len(objs) == 0 {
+		return objs, nil
+	}
+	allowed, err := h.propertyFilter.AllowedProperties(ctx, objectType)
+	if err != nil {
+		return nil, err
+	}
+	if allowed == nil {
+		return objs, nil
+	}
+	out := make([]*oss.WireObject, len(objs))
+	for i, o := range objs {
+		out[i] = o.FilterProperties(allowed)
+	}
+	return out, nil
 }
 
 // LoadObjects handles POST /api/v2/ontologies/{ont}/objectSets/loadObjects.
@@ -178,6 +227,14 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		}
 
 		data = append(data, oss.FormatObject(result.ObjectType, pk, props))
+	}
+
+	// US-048: drop property fields the caller is not permitted to see. No-op
+	// when no PROPERTY-scope policy is attached to result.ObjectType.
+	data, err = h.applyPropertyVisibility(ctx, result.ObjectType, data)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("PropertyFilterFailed", map[string]string{"error": err.Error()}))
+		return
 	}
 
 	accuracy := "EXACT"
