@@ -4489,3 +4489,16 @@ new features — only run verification suites and commit the gate.
   - Seed fixtures provide: admin@test (admin), manager@test (editor), peer@test (viewer) — all with password test1234
   - The audit response shape is `{ data: AuditEvent[], nextPageToken?: string }` with filter params: actor, action, resource_type, since, until, pageSize, pageToken
 ---
+
+## 2026-04-12 - US-084
+- What was implemented: Two documentation files covering the security policy model and SSE subscription protocol
+- docs/security/policy-model.md: Comprehensive documentation of rule types (eq, in, markingSubset), evaluation order, marking AND semantics, column-level visibility, fail-closed behavior, cache invalidation strategy, integration points, and quick reference examples
+- docs/subscriptions/sse.md: Complete SSE protocol documentation covering endpoint URL, payload schema, Last-Event-ID handling, reconnection strategy with exponential backoff, heartbeat/keepalive, server-side filtering (where-clause + policy), per-user connection limits, error codes, architecture diagram, and client implementation guidance
+- Cross-links between both documents verified (relative paths ../subscriptions/sse.md and ../security/policy-model.md)
+- Files changed: docs/security/policy-model.md (new), docs/subscriptions/sse.md (new)
+- **Learnings for future iterations:**
+  - Existing docs in this project have the same markdown lint warnings (MD013 line-length, MD060 table alignment, MD040 fenced code language) — no project-level .markdownlint config exists, so these are acceptable baseline
+  - The execution PRD (tasks/prd-v2-deep-parity.md) only covers stories up to US-081 plus gate stories; US-082+ are defined only in scripts/ralph/prd.json acceptance criteria
+  - Policy engine documentation must reference RIDs (not API names) for objectTypeRid since that's how policies are keyed internally
+  - SSE uses NATS JetStream sequence numbers as event IDs, and the ring buffer default is 1024 entries
+---
