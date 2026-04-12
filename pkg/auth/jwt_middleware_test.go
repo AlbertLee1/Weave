@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -69,6 +70,49 @@ func TestJWTMode_ValidTokenAllows(t *testing.T) {
 	if u.OntologyRoles["ri.ontology.main.ontology.northwind"] != "ontology-owner" {
 		t.Errorf("OntologyRoles: got %v", u.OntologyRoles)
 	}
+}
+
+// TestJWTMode_InjectsMarkingsAttribute verifies US-054: when a JWT carries a
+// markings claim, the middleware must inject the slice into
+// user.Attributes[MarkingsAttributeKey] so downstream policy / handler code
+// can read it uniformly via auth.Markings(ctx).
+func TestJWTMode_InjectsMarkingsAttribute(t *testing.T) {
+	t.Setenv("AUTH_MODE", "jwt")
+	signer := newTestSignerWithTTL(t, 15*time.Minute)
+
+	tok, err := signer.Sign(SignInput{
+		UserID:   "user:alice@example.com",
+		Markings: []string{"PUBLIC", "PII"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var captured *User
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = UserFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := Middleware(signer)
+	srv := mw(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	srv.ServeHTTP(httptest.NewRecorder(), req)
+
+	if captured == nil {
+		t.Fatal("expected user in context")
+	}
+	got := Markings(contextWithUser(captured))
+	if len(got) != 2 || got[0] != "PUBLIC" || got[1] != "PII" {
+		t.Errorf("Markings: got %v, want [PUBLIC PII]", got)
+	}
+}
+
+// contextWithUser is a tiny helper that wraps a captured user so Markings()
+// can read from context exactly like a real handler would.
+func contextWithUser(u *User) context.Context {
+	return WithUser(context.Background(), u)
 }
 
 func TestJWTMode_MissingHeader(t *testing.T) {

@@ -15,6 +15,14 @@ type MeResponse struct {
 	Roles         []string          `json:"roles"`
 	OntologyRoles map[string]string `json:"ontologyRoles"`
 	Permissions   []string          `json:"permissions"`
+	// Markings is the caller's held marking set sourced from
+	// user.Attributes[MarkingsAttributeKey]. Populated by US-054 so the UI
+	// can render the access chip row and so the policy editor can preview
+	// RuleTypeMarkingSubset evaluation without re-fetching the JWT.
+	// Emitted as an empty array (never null) when the caller has no
+	// markings so the frontend type can stay string[] rather than
+	// string[]|null.
+	Markings []string `json:"markings"`
 }
 
 // MeHandler returns an http.Handler for GET /api/v2/me. It serializes the
@@ -54,11 +62,17 @@ func MeHandler() http.Handler {
 			ontologyRoles = map[string]string{}
 		}
 
+		markings := Markings(r.Context())
+		if markings == nil {
+			markings = []string{}
+		}
+
 		resp := MeResponse{
 			ID:            u.ID,
 			Roles:         roles,
 			OntologyRoles: ontologyRoles,
 			Permissions:   perms,
+			Markings:      markings,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

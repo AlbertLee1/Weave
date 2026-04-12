@@ -133,6 +133,16 @@ func handleJWT(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository
 		Roles:         claims.Weave.Roles,
 		OntologyRoles: claims.Weave.OntologyRoles,
 	}
+	// US-054: marking claim flows into User.Attributes so
+	// pkg/security.RuleTypeMarkingSubset and pkg/oss marking enforcement
+	// evaluate the caller's held markings uniformly regardless of whether
+	// the user came in through JWT, dev mode, or an API key.
+	if len(claims.Weave.Markings) > 0 {
+		if u.Attributes == nil {
+			u.Attributes = make(map[string]any, 1)
+		}
+		u.Attributes[MarkingsAttributeKey] = append([]string(nil), claims.Weave.Markings...)
+	}
 	ctx := WithUser(r.Context(), u)
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
