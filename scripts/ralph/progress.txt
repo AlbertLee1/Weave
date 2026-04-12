@@ -4008,3 +4008,29 @@ new features — only run verification suites and commit the gate.
   - ObjectDetail imports useOutgoingLinkTypes from useObjectTypes — any mock of useObjectTypes must also provide this export
   - For component tests with SSE, MockEventSource pattern from the existing hook tests works well with MSW for API mocking
 ---
+
+## 2026-04-12 - US-061
+- What was implemented:
+  - New stream ingest endpoint: POST /api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest
+  - Handler in pkg/oss/stream_ingest.go with IngestPublisher interface
+  - Accepts { "edits": Edit[] } max 1000, tags each edit source="ingest"
+  - Publishes EditBatch to NATS via existing funnel.Publisher (reuses existing consumer)
+  - New permission PermStreamIngest = "stream.ingest" granted to ontology-owner and admin roles
+  - Route gated behind auth.RequirePermission(auth.PermStreamIngest)
+  - ServerDeps.FunnelPublisher field uses oss.IngestPublisher interface for testability
+  - OpenAPI spec updated with StreamIngestRequest/StreamIngestResponse schemas
+  - Contract test updated with stubIngestPublisher
+- Files changed:
+  - pkg/oss/stream_ingest.go (new: handler, IngestPublisher interface, StreamIngestResponse type)
+  - pkg/oss/stream_ingest_test.go (new: 5 tests — happy path, empty, max exceeded, invalid JSON, exact 1000)
+  - pkg/auth/permissions.go (added PermStreamIngest to constants, ontology-owner + admin roles, AllPermissions)
+  - cmd/server/main.go (added FunnelPublisher to ServerDeps, wired ingest route, set publisher in NATS setup)
+  - cmd/server/contract_test.go (added stubIngestPublisher, set FunnelPublisher in test deps)
+  - api/openapi.yaml (added stream ingest path + schemas)
+  - cmd/server/openapi_spec.yaml (copy of canonical spec)
+- **Learnings for future iterations:**
+  - The funnel.Publisher is a concrete struct, not an interface — define a narrow in-package interface (IngestPublisher) to keep test mocks simple
+  - FunnelPublisher is created locally in main() and passed to ActionExecutor; to share it with new handlers, stash it on ServerDeps as an interface type
+  - Contract tests need every route registered to pass — add a stub publisher to newContractTestRouter when adding new routes that depend on optional deps
+  - gofmt alignment drift is common after adding constants to a const block — always run gofmt on edited files
+---
