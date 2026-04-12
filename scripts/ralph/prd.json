@@ -753,7 +753,7 @@
         "go test -tags integration ./test/integration/... -run PolicyMatrix passes"
       ],
       "priority": 47,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

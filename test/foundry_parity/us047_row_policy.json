@@ -1,0 +1,93 @@
+{
+  "story": "US-047",
+  "title": "Row-level policy 9-matrix integration test",
+  "description": "Proves that pkg/security.Engine compiled into Bleve queries filters rows correctly through the real oss.ServiceImpl Load path by exercising a 3-user × 3-policy × 5-object matrix end-to-end. Each cell issues ListObjects as a different user with a different active policy (eq / in / markingSubset), and asserts the exact primary key set returned by Bleve. The same 5-object fixture is reused across all three policy regimes — SetPolicies swaps the rule list in place and bumps the per-ObjectType version counter, invalidating any cached compilation from the prior cell so a stale cache cannot leak rows between regimes.",
+  "fixture": {
+    "ontology": "policy_matrix",
+    "objectType": "employee",
+    "primaryKey": "employeeId",
+    "properties": [
+      { "apiName": "employeeId", "baseType": "string", "analyzer": "not_analyzed" },
+      { "apiName": "name", "baseType": "string", "analyzer": "not_analyzed" },
+      { "apiName": "deptId", "baseType": "string", "analyzer": "not_analyzed" },
+      { "apiName": "regions", "baseType": "string", "analyzer": "not_analyzed", "multiValued": true },
+      { "apiName": "classification", "baseType": "string", "analyzer": "not_analyzed" }
+    ],
+    "objects": [
+      { "employeeId": "emp1", "name": "alice", "deptId": "d1", "regions": ["us", "eu"], "classification": "public" },
+      { "employeeId": "emp2", "name": "bob", "deptId": "d1", "regions": ["us"], "classification": "internal" },
+      { "employeeId": "emp3", "name": "carol", "deptId": "d2", "regions": ["eu"], "classification": "internal" },
+      { "employeeId": "emp4", "name": "dave", "deptId": "d2", "regions": ["us", "apac"], "classification": "restricted" },
+      { "employeeId": "emp5", "name": "erin", "deptId": "d3", "regions": ["apac"], "classification": "public" }
+    ],
+    "users": [
+      {
+        "id": "alice",
+        "attributes": { "deptId": "d1", "regions": ["us"], "markings": ["public", "internal"] }
+      },
+      {
+        "id": "bob",
+        "attributes": { "deptId": "d2", "regions": ["us", "eu"], "markings": ["public"] }
+      },
+      {
+        "id": "carol",
+        "attributes": { "deptId": "d3", "regions": ["apac"], "markings": ["public", "internal", "restricted"] }
+      }
+    ],
+    "policies": {
+      "eq": [
+        { "type": "eq", "userAttr": "deptId", "objectProperty": "deptId" }
+      ],
+      "in": [
+        { "type": "in", "userAttr": "regions", "objectProperty": "regions" }
+      ],
+      "markingSubset": [
+        { "type": "markingSubset", "objectProperty": "classification" }
+      ]
+    }
+  },
+  "request": {
+    "sequence": [
+      "For each policyId in [eq, in, markingSubset]: engine.SetPolicies(employee.RID, rules[policyId])",
+      "For each userId in [alice, bob, carol]: svc.ListObjects(ctx{user=userId}, {ontology, objectType=employee, pageSize=50})",
+      "Collect returned WireObject.PrimaryKey values and assert the exact set matches the matrix expectation"
+    ],
+    "entryPoint": "oss.ServiceImpl.ListObjects",
+    "policyEngine": "pkg/security.Engine wired via svc.SetPolicyEngine"
+  },
+  "expected": {
+    "matrix": [
+      { "policy": "eq", "user": "alice", "visible": ["emp1", "emp2"] },
+      { "policy": "eq", "user": "bob", "visible": ["emp3", "emp4"] },
+      { "policy": "eq", "user": "carol", "visible": ["emp5"] },
+      { "policy": "in", "user": "alice", "visible": ["emp1", "emp2", "emp4"] },
+      { "policy": "in", "user": "bob", "visible": ["emp1", "emp2", "emp3", "emp4"] },
+      { "policy": "in", "user": "carol", "visible": ["emp4", "emp5"] },
+      { "policy": "markingSubset", "user": "alice", "visible": ["emp1", "emp2", "emp3", "emp5"] },
+      { "policy": "markingSubset", "user": "bob", "visible": ["emp1", "emp5"] },
+      { "policy": "markingSubset", "user": "carol", "visible": ["emp1", "emp2", "emp3", "emp4", "emp5"] }
+    ],
+    "cacheInvariant": "engine.SetPolicies bumps the per-ObjectType version counter and drops cached compilation entries, so swapping policyId between matrix cells never leaks a stale Bleve query from the prior regime into the next assertion",
+    "failClosed": "A user missing the referenced userAttr (e.g. no markings / no regions / no deptId) would compile to MatchNone — the nine-matrix does not exercise this branch because every user has every attribute; pkg/oss/policy_engine_integration_test.go::TestPolicyAppliedToLoadSearch_FailClosed covers the fallback"
+  },
+  "responseShape": {
+    "ListObjects": {
+      "data": "[]WireObject — each row exposes $primaryKey / $apiName / $rid plus the selected properties",
+      "totalCount": "string — reflects Bleve result.Total AFTER policy filtering (policy is AND-merged into the base query, so denied rows never count)"
+    }
+  },
+  "coveredBy": [
+    "test/integration/policy_matrix_test.go::TestPolicyMatrix_RowLevel_NineCellCoverage",
+    "pkg/oss/policy_engine_integration_test.go::TestPolicyAppliedToLoadSearch",
+    "pkg/oss/policy_engine_integration_test.go::TestPolicyAppliedToLoadSearch_FailClosed",
+    "pkg/security/policy_engine_test.go",
+    "pkg/security/policy_cache_test.go"
+  ],
+  "notes": [
+    "Run with `go test -tags integration ./test/integration/... -run PolicyMatrix`. Requires Docker for testcontainers.",
+    "The `in` rule compiles to a BooleanQuery whose Should clauses are TermQuery(value, field=objectProperty) one per user value, MinShould=1 — for a multi-valued object field Bleve indexes each element as an independent term, so the Should matches any overlap.",
+    "The `markingSubset` rule currently reuses the same Should-terms shape with MinShould=1. For a single-valued object classification field this is exact subset semantics. Multi-valued object marking fields need the markings_sig index from US-058 to enforce true ⊆; that path is explicitly out of scope for this matrix.",
+    "All fields must be indexed as `analyzer: not_analyzed` so compileRule's TermQuery payloads match verbatim. Default English snowball analyzers silently break TermQuery-based policy clauses — Phase 6 learnings cover the same landmine.",
+    "The matrix exercises the ServiceImpl.ListObjects path. The ObjectSet executor's separate policy_provider hook (cmd/server/policy_provider.go + objectset.Executor.SetPolicyProvider) is covered independently by pkg/oss/objectset policy tests and does not need a duplicate matrix here."
+  ]
+}

@@ -3013,3 +3013,58 @@ new features — only run verification suites and commit the gate.
     service hook therefore does not need an explicit "user is nil" guard —
     passing nil through produces the correct fail-closed answer.
 ---
+
+## 2026-04-12 - US-047
+- New PG-backed integration test test/integration/policy_matrix_test.go exercises
+  the 3-user × 3-policy × 5-object row-level policy matrix end-to-end through
+  oss.ServiceImpl.ListObjects with a real security.Engine wired via
+  SetPolicyEngine. Each of the 9 cells asserts the exact visible primary-key
+  set returned by Bleve for eq (deptId), in (regions) and markingSubset
+  (classification) rules.
+- SetPolicies is called once per policy regime to swap the active rule set
+  on the single employee ObjectType — the engine's per-RID version counter
+  bump guarantees no cached compilation from the prior regime leaks into
+  the next assertion.
+- Added parity fixture test/foundry_parity/us047_row_policy.json (descriptive
+  JSON: fixture shape, matrix truth table, coveredBy pointers, notes on
+  single-valued classification ≡ subset semantics + why the executor-side
+  PolicyQueryProvider hook does not need a duplicate matrix here).
+- Verified: go test -tags integration ./test/integration/... -run PolicyMatrix
+  (1.5s under testcontainers/pgvector), go test ./... green, go vet ./...
+  clean, gofmt -l on the touched .go file clean.
+- Files changed:
+  - test/integration/policy_matrix_test.go (new)
+  - test/foundry_parity/us047_row_policy.json (new)
+  - scripts/ralph/prd.json (US-047 passes=true)
+  - scripts/ralph/progress.txt (this entry)
+- **Learnings for future iterations:**
+  - ServiceImpl-driven integration tests for policy can skip seeding oms
+    Property rows entirely — the engine only reads ot.RID and the Bleve
+    mapping is built from a locally supplied []index.Property list via
+    mgr.EnsureIndex. PGRepository.GetObjectTypeByAPIName returns the bare
+    ObjectType row without Properties, which is exactly what the policy
+    path needs.
+  - Swap policies between matrix cells with engine.SetPolicies rather than
+    reconstructing the engine: the per-RID version bump already invalidates
+    cache, and re-using the same *security.Engine keeps the svc.SetPolicyEngine
+    wiring stable across cells. This also doubles as cache-invalidation
+    regression coverage at essentially zero extra cost.
+  - For multi-valued object fields (regions) with the `in` rule, Bleve
+    transparently indexes each array element as an independent term when the
+    field mapping is keyword (analyzer=not_analyzed), so a Should-terms
+    BooleanQuery over the user's value list naturally resolves "user.regions
+    overlaps object.regions" without any special per-value logic in the
+    engine. Documented in the parity notes so US-058 (marking ⊆ multi-valued)
+    knows the current behaviour is overlap, not subset.
+  - The matrix exercises the ServiceImpl read path; the separate
+    objectset.Executor policy_provider hook (PolicyQueryProvider) is covered
+    by its own unit tests. Resist the temptation to duplicate the matrix
+    through handler.LoadObjectSet — it would add ~200 lines of harness
+    without testing a different code path, and the single-hook AND-merge
+    pattern means a bug in one side would already surface through the
+    other via the shared *security.Engine instance.
+  - Learn the not_analyzed field discipline before writing any future
+    policy/link integration test: default English snowball + TermQuery is a
+    silent zero-hit landmine. Set Analyzer: index.AnalyzerNotAnalyzed on
+    every field that a Rule.ObjectProperty or link FK points at.
+---
