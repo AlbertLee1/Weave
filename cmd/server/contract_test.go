@@ -187,6 +187,7 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		CipherDecryptor:  mustContractCipherDecryptor(t),
 		TransactionStore: transactions.NewMemoryStore(),
 		FunnelBroadcast:  funnel.NewBroadcast(),
+		FunnelPublisher:  stubIngestPublisher{},
 	}
 	return NewFullRouter(deps)
 }
@@ -293,3 +294,8 @@ func TestContract_EmbeddedSpecMatchesCanonical(t *testing.T) {
 // method panics with nil-deref if invoked, but chi.Walk only inspects route
 // metadata, never executes the handlers).
 type contractOmsRepo struct{ oms.Repository }
+
+// stubIngestPublisher satisfies oss.IngestPublisher for contract tests.
+type stubIngestPublisher struct{}
+
+func (stubIngestPublisher) Publish(batch *funnel.EditBatch) (uint64, error) { return 0, nil }

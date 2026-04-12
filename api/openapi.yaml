@@ -948,6 +948,40 @@ components:
       properties:
         edits:
           $ref: "#/components/schemas/ActionResults"
+    StreamIngestRequest:
+      type: object
+      description: Bulk-ingest request for streaming edits into an ObjectType.
+      required: [edits]
+      properties:
+        edits:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/IngestEdit"
+    IngestEdit:
+      type: object
+      description: A single edit in a stream ingest batch.
+      required: [type, objectType, primaryKey]
+      properties:
+        type:
+          type: string
+          enum: [CREATE, MODIFY, DELETE]
+        objectType:
+          type: string
+        primaryKey:
+          type: string
+        properties:
+          type: object
+          additionalProperties: true
+    StreamIngestResponse:
+      type: object
+      description: Response envelope for a successful stream ingest.
+      required: [batchId, editCount]
+      properties:
+        batchId:
+          type: string
+        editCount:
+          type: integer
     ApplyActionOverrides:
       type: object
       description: |
@@ -2745,6 +2779,44 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest:
+    post:
+      operationId: streamIngest
+      summary: Bulk-ingest edits into an ObjectType stream (US-061)
+      description: |
+        Pushes a batch of edits directly into the NATS edit stream for the
+        specified ObjectType, bypassing Action rules. Edits are automatically
+        tagged with source="ingest" for the user-edit-wins conflict resolver.
+        Maximum 1000 edits per request. Requires the stream.ingest permission
+        (ontology-owner or admin role).
+      tags: [Streams]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          description: ObjectType API name to ingest into.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StreamIngestRequest"
+      responses:
+        "200":
+          description: Ingest accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamIngestResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
   /api/v2/ontologies/attachments/upload:
     post:
       operationId: uploadAttachment

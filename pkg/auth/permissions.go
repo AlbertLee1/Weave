@@ -12,32 +12,33 @@ const (
 // Permission codes. Each is "<resource>.<verb>" and is referenced by
 // route-level RequirePermission middleware and handler-level scope checks.
 const (
-	PermOntologyRead             = "ontology.read"
-	PermOntologyWrite            = "ontology.write"
-	PermObjectTypeRead           = "objectType.read"
-	PermObjectTypeWrite          = "objectType.write"
-	PermLinkTypeRead             = "linkType.read"
-	PermLinkTypeWrite            = "linkType.write"
-	PermActionTypeRead           = "actionType.read"
-	PermActionTypeWrite          = "actionType.write"
-	PermInterfaceRead            = "interface.read"
-	PermInterfaceWrite           = "interface.write"
-	PermSharedPropertyRead       = "sharedProperty.read"
-	PermSharedPropertyWrite      = "sharedProperty.write"
-	PermTypeGroupRead            = "typeGroup.read"
-	PermTypeGroupWrite           = "typeGroup.write"
-	PermValueTypeRead            = "valueType.read"
-	PermValueTypeWrite           = "valueType.write"
-	PermQueryTypeRead            = "queryType.read"
-	PermQueryTypeWrite           = "queryType.write"
-	PermObjectRead               = "object.read"
-	PermObjectWrite              = "object.write"
-	PermActionExecute            = "action.execute"
-	PermDatasourceBindingManage  = "datasourceBinding.manage"
-	PermSecurityPolicyManage     = "securityPolicy.manage"
-	PermSnapshotManage           = "snapshot.manage"
-	PermActionLogRead            = "actionLog.read"
-	PermUserManage               = "user.manage"
+	PermOntologyRead            = "ontology.read"
+	PermOntologyWrite           = "ontology.write"
+	PermObjectTypeRead          = "objectType.read"
+	PermObjectTypeWrite         = "objectType.write"
+	PermLinkTypeRead            = "linkType.read"
+	PermLinkTypeWrite           = "linkType.write"
+	PermActionTypeRead          = "actionType.read"
+	PermActionTypeWrite         = "actionType.write"
+	PermInterfaceRead           = "interface.read"
+	PermInterfaceWrite          = "interface.write"
+	PermSharedPropertyRead      = "sharedProperty.read"
+	PermSharedPropertyWrite     = "sharedProperty.write"
+	PermTypeGroupRead           = "typeGroup.read"
+	PermTypeGroupWrite          = "typeGroup.write"
+	PermValueTypeRead           = "valueType.read"
+	PermValueTypeWrite          = "valueType.write"
+	PermQueryTypeRead           = "queryType.read"
+	PermQueryTypeWrite          = "queryType.write"
+	PermObjectRead              = "object.read"
+	PermObjectWrite             = "object.write"
+	PermActionExecute           = "action.execute"
+	PermDatasourceBindingManage = "datasourceBinding.manage"
+	PermSecurityPolicyManage    = "securityPolicy.manage"
+	PermSnapshotManage          = "snapshot.manage"
+	PermActionLogRead           = "actionLog.read"
+	PermUserManage              = "user.manage"
+	PermStreamIngest            = "stream.ingest"
 )
 
 // rolePermissions is the static role-to-permission matrix. Lookups go through
@@ -96,6 +97,7 @@ var rolePermissions = map[string][]string{
 		PermDatasourceBindingManage,
 		PermSnapshotManage,
 		PermActionLogRead,
+		PermStreamIngest,
 	},
 	RoleAdmin: {
 		PermOntologyRead,
@@ -124,6 +126,7 @@ var rolePermissions = map[string][]string{
 		PermSnapshotManage,
 		PermActionLogRead,
 		PermUserManage,
+		PermStreamIngest,
 	},
 }
 
@@ -146,6 +149,7 @@ func AllPermissions() []string {
 		PermSnapshotManage,
 		PermActionLogRead,
 		PermUserManage,
+		PermStreamIngest,
 	}
 }
 

@@ -59,8 +59,9 @@ type ServerDeps struct {
 	// OSS service's Load/Search paths and the ObjectSet executor's
 	// base/filter paths both read through it so a single SetPolicies call
 	// updates every read surface.
-	PolicyEngine   *security.Engine
-	FunnelConsumer *funnel.Consumer
+	PolicyEngine    *security.Engine
+	FunnelPublisher oss.IngestPublisher // US-061: may be *funnel.Publisher or stub
+	FunnelConsumer  *funnel.Consumer
 	// FunnelBroadcast is the in-process fan-out hub the SSE subscribe
 	// endpoint (US-055) reads from. The consumer can opt in to publishing
 	// events onto the hub via its OnChange hook; tests (and degraded-mode
@@ -259,6 +260,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
+		}
+
+		// US-061: Stream ingest endpoint — bypasses Action rules, publishes
+		// directly to NATS. Gated behind PermStreamIngest so only
+		// ontology-owner+ / admin callers can bulk-import.
+		if deps.FunnelPublisher != nil {
+			ingestHandler := oss.NewStreamIngestHandler(deps.FunnelPublisher)
+			api.With(auth.RequirePermission(auth.PermStreamIngest)).
+				Method(http.MethodPost,
+					"/api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest",
+					ingestHandler)
 		}
 
 		// Attachment endpoints (global — no {ontology} segment).
@@ -626,6 +638,7 @@ func main() {
 		}
 
 		publisher = funnel.NewPublisher(js)
+		deps.FunnelPublisher = publisher
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
 		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
 
