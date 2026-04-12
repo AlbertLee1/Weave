@@ -19,6 +19,7 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cipher"
@@ -75,6 +76,7 @@ type ServerDeps struct {
 	TransactionStore  transactions.Store
 	SqlQueryEngine    sqlqueries.Engine
 	IndexDocSource    index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
+	AuditStore        audit.Store                 // US-067: audit event store (nil = endpoint returns 503)
 	IngestRateLimiter oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
 	CORSOrigins       []string                   // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
@@ -347,6 +349,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				Repo:      deps.OmsRepo,
 				DocSource: deps.IndexDocSource,
 			}))
+
+		// Admin: audit events (US-067). Gated to admin-level roles via
+		// PermUserManage. The handler gracefully returns 503 when
+		// AuditStore is nil (no PG pool / degraded mode).
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/v2/admin/auditEvents", NewAdminAuditEventsHandler(deps.AuditStore))
 	})
 
 	return r
@@ -438,6 +446,8 @@ func main() {
 		// caches; external invalidation is available via InvalidateAll.
 		pgRepo := oms.NewPGRepository(pool)
 		deps.OmsRepo = oms.NewCachedRepository(pgRepo, 60*time.Second)
+		// US-067: PG-backed audit event store for the admin read endpoint.
+		deps.AuditStore = audit.NewPGStore(pool)
 		// US-011: the index rebuild admin command re-ingests from
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.

@@ -71,6 +71,13 @@ func (s *PGStore) List(ctx context.Context, f ListFilter) ([]AuditEvent, error) 
 	}
 	q += " ORDER BY ts DESC"
 
+	if f.PageSize > 0 {
+		q += fmt.Sprintf(" LIMIT %d", f.PageSize)
+	}
+	if f.Offset > 0 {
+		q += fmt.Sprintf(" OFFSET %d", f.Offset)
+	}
+
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

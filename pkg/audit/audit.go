@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -24,12 +25,16 @@ type AuditEvent struct {
 }
 
 // ListFilter constrains which events Store.List returns.
+// PageSize and Offset provide offset-based pagination. When PageSize is 0 all
+// matching events are returned (backwards-compatible default).
 type ListFilter struct {
 	ActorID      string
 	Action       string
 	ResourceType string
 	From         *time.Time
 	To           *time.Time
+	PageSize     int
+	Offset       int
 }
 
 // Store is the persistence interface for audit events.
@@ -70,7 +75,7 @@ func (s *MemoryStore) Insert(_ context.Context, evt AuditEvent) error {
 func (s *MemoryStore) List(_ context.Context, f ListFilter) ([]AuditEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []AuditEvent
+	var filtered []AuditEvent
 	for _, e := range s.events {
 		if f.ActorID != "" && e.ActorID != f.ActorID {
 			continue
@@ -87,9 +92,26 @@ func (s *MemoryStore) List(_ context.Context, f ListFilter) ([]AuditEvent, error
 		if f.To != nil && e.Timestamp.After(*f.To) {
 			continue
 		}
-		out = append(out, e)
+		filtered = append(filtered, e)
 	}
-	return out, nil
+
+	// Sort by timestamp DESC (newest first) to match PGStore ORDER BY ts DESC.
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Timestamp.After(filtered[j].Timestamp)
+	})
+
+	// Apply offset-based pagination.
+	if f.Offset > 0 {
+		if f.Offset >= len(filtered) {
+			return nil, nil
+		}
+		filtered = filtered[f.Offset:]
+	}
+	if f.PageSize > 0 && len(filtered) > f.PageSize {
+		filtered = filtered[:f.PageSize]
+	}
+
+	return filtered, nil
 }
 
 // Events returns a snapshot of all stored events. Test helper only.

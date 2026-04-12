@@ -1326,6 +1326,44 @@ components:
           type: integer
           format: int32
           description: Number of documents indexed from the source.
+    AuditEvent:
+      type: object
+      description: A single audit log entry.
+      required: [id, actor_id, action, resource_type, resource_rid, ip, user_agent, ts]
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor_id:
+          type: string
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_rid:
+          type: string
+        diff_json:
+          type: object
+          nullable: true
+        ip:
+          type: string
+        user_agent:
+          type: string
+        ts:
+          type: string
+          format: date-time
+    AuditEventsResponse:
+      type: object
+      description: Paginated list of audit events.
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        nextPageToken:
+          type: string
+          description: Opaque cursor for the next page. Empty when no more pages remain.
 security:
   - bearerAuth: []
 paths:
@@ -3669,6 +3707,72 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/admin/auditEvents:
+    get:
+      operationId: listAuditEvents
+      summary: List audit events with optional filters
+      description: |
+        Returns audit events matching the supplied filters with cursor-based
+        pagination. Gated to admin-level roles via `user.manage`.
+      tags: [Admin]
+      parameters:
+        - name: actor
+          in: query
+          schema:
+            type: string
+          description: Filter by actor ID.
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action (e.g. CREATE, UPDATE, DELETE, login_success).
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type (e.g. ObjectType, Property, Session).
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only events at or after this RFC 3339 timestamp.
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only events at or before this RFC 3339 timestamp.
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of events per page.
+        - name: pageToken
+          in: query
+          schema:
+            type: string
+          description: Opaque pagination cursor from a previous response.
+      responses:
+        "200":
+          description: Matching audit events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Audit store is not configured (no PostgreSQL pool).
   /api/admin/indexes/rebuild:
     post:
       operationId: adminIndexRebuild
