@@ -29,7 +29,14 @@ type WeaveClaims struct {
 	OntologyRoles map[string]string `json:"ontology_roles,omitempty"`
 	Email         string            `json:"email,omitempty"`
 	Name          string            `json:"name,omitempty"`
-	Version       int               `json:"v"`
+	// Markings carries the caller's held marking names for Foundry-style
+	// mandatory access control. Middleware injects them into
+	// auth.User.Attributes[security.userMarkingsKey] so the row-level
+	// policy engine's RuleTypeMarkingSubset check can enforce
+	// object ⊆ user at query time. Empty on tokens minted for users with
+	// no marking grants; omitempty keeps those payloads compact.
+	Markings []string `json:"markings,omitempty"`
+	Version  int      `json:"v"`
 }
 
 // Claims is the full JWT claim set used by Weave: registered claims plus the
@@ -64,6 +71,7 @@ type SignInput struct {
 	Name          string
 	Roles         []string
 	OntologyRoles map[string]string
+	Markings      []string
 }
 
 // NewJWTSigner constructs a signer. priv may be nil for a verifier-only
@@ -113,6 +121,7 @@ func (s *JWTSigner) Sign(in SignInput) (string, error) {
 			OntologyRoles: in.OntologyRoles,
 			Email:         in.Email,
 			Name:          in.Name,
+			Markings:      in.Markings,
 			Version:       1,
 		},
 	}
