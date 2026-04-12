@@ -4,6 +4,17 @@ Branch:  ralph/phase-6-8
 Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
 
 ## Codebase Patterns
+- pkg/security hosts the row-level policy engine. Extend `Engine.compileRule`
+  in place for new rule types (`in`, `subset`, ...); do NOT branch callers on
+  policy type. Un-policied ObjectTypes return `MatchAllQuery` so callers
+  unconditionally AND-combine Evaluate into OSS Load/Search/Aggregate
+  pipelines. Fail-closed when a referenced user attribute is missing
+  (`MatchNoneQuery`, not `MatchAllQuery`). Rule JSON tags must match the
+  `security_policies.rules` JSONB shape (`type`/`userAttr`/`objectProperty`).
+  Policies are keyed by ObjectType RID, not APIName.
+- `auth.User.Attributes map[string]any` is the designated surface for policy
+  evaluation inputs (dept, region, clearance, ...). US-059 JWT marking
+  injection should populate this map, not `Roles`.
 - ObjectSet executor Result can carry out-of-band per-PK payloads by adding a
   new map field (see Result.DerivedValues); handlers merge into WireObject
   Properties just before oss.FormatObject. Keeps Execute signature stable
@@ -2746,4 +2757,50 @@ new features — only run verification suites and commit the gate.
          per-story gate (US-037..US-041) and at the phase gate
          itself — the right unit of browser verification is the
          Phase 6/7/8 Gate PR CI run, not per-story.
+---
+
+## 2026-04-12 - US-043
+- Scaffolded `pkg/security/policy_engine.go` with an in-memory `Engine` that
+  compiles OBJECT-type security policies into a Bleve query. Implemented the
+  `eq` rule type (`user.UserAttr == object.ObjectProperty`) producing a
+  `*query.TermQuery` with the user attribute as term and the ObjectProperty as
+  field. Multi-clause policies AND-combine via `ConjunctionQuery`; zero
+  policies short-circuit to `MatchAllQuery`; a rule that references an
+  attribute the caller lacks short-circuits fail-closed to `MatchNoneQuery`.
+- Added optional `Attributes map[string]any` to `pkg/auth.User` (JWT-claims
+  surface, used by the policy engine). Existing `auth.User{}` literals stay
+  zero-valued so no callers changed.
+- Rule JSON tags (`type`/`userAttr`/`objectProperty`) match the shape of
+  existing `security_policies.rules` JSONB rows, so no migration is required.
+- Tests: `TestEqualityRule`, `TestEqualityRule_NoPolicies`,
+  `TestEqualityRule_MissingUserAttr`, `TestRule_JSONRoundtrip` (all in
+  `pkg/security/policy_engine_test.go`). Red confirmed before impl; green
+  after. `go test ./...`, `go vet ./...`, `gofmt -l` on edited files clean.
+- Files changed:
+  - pkg/security/policy_engine.go (new)
+  - pkg/security/policy_engine_test.go (new)
+  - pkg/auth/context.go (add Attributes field)
+  - scripts/ralph/prd.json (US-043 passes=true)
+  - scripts/ralph/progress.txt (this entry)
+- **Learnings for future iterations:**
+  - `pkg/security` is a brand-new package — future security stories
+    (US-044 `in`/`subset` rules, US-045 cache, US-046 OSS integration) should
+    extend `Engine` in place rather than create sibling packages, and extend
+    `compileRule`'s switch rather than branching upstream.
+  - The `security_policies` table has existed since migration 000001 with
+    shape `(rid, object_type_rid, policy_type CHECK ('OBJECT'|'PROPERTY'),
+    rules JSONB, created_at)`. No migration needed until someone wants a
+    `policy_version` column for US-045's cache invalidation.
+  - Fail-closed semantics: when a user lacks a referenced attribute the
+    engine emits `MatchNoneQuery`, not `MatchAllQuery`. Upstream callers
+    must not special-case this away — it is the correct security answer.
+  - `Evaluate` is safe to AND-combine unconditionally into any OSS query
+    pipeline: un-policied ObjectTypes return `MatchAllQuery` which is a
+    no-op clause under Bleve's ConjunctionQuery semantics.
+  - `auth.User.Attributes` is the designated attribute surface for policy
+    evaluation. US-059 (JWT marking injection) should populate this map
+    from claims; do NOT route markings through `Roles`.
+  - `ObjectType.RID` (not `APIName`) is the policy registration key, since
+    the `security_policies.object_type_rid` column holds RIDs and RIDs are
+    stable across rename refactors.
 ---

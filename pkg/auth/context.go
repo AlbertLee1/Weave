@@ -16,6 +16,12 @@ type User struct {
 	Name          string
 	Roles         []string
 	OntologyRoles map[string]string
+
+	// Attributes carries key/value user attributes sourced from JWT claims or
+	// directory lookups (dept, region, clearance, ...). The row-level policy
+	// engine (pkg/security) reads these in eq/in/subset rule evaluation.
+	// A nil map is equivalent to an empty map.
+	Attributes map[string]any
 }
 
 type contextKey string
