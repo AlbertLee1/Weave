@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity
 
 test: test-unit
 
@@ -10,6 +10,9 @@ test-integration:
 
 test-integration-phase6:
 	go test -tags integration ./test/integration/phase6/... -v
+
+test-integration-phase7:
+	go test -tags integration ./test/integration/phase7/... -v
 
 test-cover:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
