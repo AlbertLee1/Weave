@@ -636,10 +636,15 @@ func main() {
 		// ADDED_OR_UPDATED / DELETED on the wire.
 		deps.FunnelBroadcast = funnel.NewBroadcast()
 		deps.FunnelConsumer.SetOnChange(func(e funnel.ChangeEvent) {
+			// US-057: carry the NATS stream sequence forward as the
+			// BroadcastEvent.Sequence so SSE subscribers can use it as the
+			// Server-Sent Events `id:` value and reconnect with a
+			// Last-Event-ID header for gap-free replay.
 			deps.FunnelBroadcast.Publish(funnel.BroadcastEvent{
 				Type:       string(e.EditType),
 				ObjectType: e.ObjectType,
 				PrimaryKey: e.PrimaryKey,
+				Sequence:   e.Offset,
 			})
 		})
 

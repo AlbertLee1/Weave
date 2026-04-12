@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -116,7 +117,20 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	id, ch := h.broadcast.Subscribe(16)
+	// US-057: parse the Last-Event-ID header for Server-Sent Events replay.
+	// The header carries the NATS stream sequence the client last observed;
+	// the hub replays any buffered events with Sequence > fromSeq before
+	// attaching the live subscription. Malformed header values degrade to
+	// fromSeq == 0 so a broken cursor never silently disables replay by
+	// erroring out the request.
+	var fromSeq uint64
+	if headerVal := r.Header.Get("Last-Event-ID"); headerVal != "" {
+		if parsed, err := strconv.ParseUint(headerVal, 10, 64); err == nil {
+			fromSeq = parsed
+		}
+	}
+
+	id, ch := h.broadcast.SubscribeWithReplay(16, fromSeq)
 	defer h.broadcast.Unsubscribe(id)
 
 	ctx := r.Context()
@@ -138,6 +152,11 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			buf, err := json.Marshal(payload)
 			if err != nil {
 				continue
+			}
+			if evt.Sequence > 0 {
+				if _, err := fmt.Fprintf(w, "id: %d\n", evt.Sequence); err != nil {
+					return
+				}
 			}
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", buf); err != nil {
 				return

@@ -324,6 +324,263 @@ func TestSSEWhereFilter(t *testing.T) {
 	wg.Wait()
 }
 
+// TestSSEReplayFromLastEventID is the US-057 red-first acceptance test. It
+// verifies that:
+//   - the handler emits SSE "id:" lines carrying the NATS sequence number
+//   - a reconnecting client that supplies the Last-Event-ID request header
+//     receives only events newer than that sequence from the in-process
+//     replay buffer, followed seamlessly by new live events
+//   - events already consumed before the disconnect (seq <= Last-Event-ID)
+//     are NOT re-delivered
+//
+// The scenario: publish three events with Sequence 10, 11, 12 BEFORE any
+// client connects so they are recorded in the broadcast hub's replay ring
+// buffer. Then connect a client with "Last-Event-ID: 10". The client must
+// receive exactly 11, 12 (from the ring replay path) and then, after a
+// follow-up live Publish with Sequence 13, that event too.
+func TestSSEReplayFromLastEventID(t *testing.T) {
+	const rid = "rid-order-replay-1"
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
+
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	// Pre-seed replay buffer with three events. Sequence mirrors the NATS
+	// stream sequence number that main.go forwards via onChange.
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "CREATE",
+		ObjectType: "order",
+		PrimaryKey: "o-10",
+		Sequence:   10,
+		Properties: map[string]interface{}{"status": "NEW"},
+		EditedAt:   time.Now(),
+	})
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "CREATE",
+		ObjectType: "order",
+		PrimaryKey: "o-11",
+		Sequence:   11,
+		Properties: map[string]interface{}{"status": "NEW"},
+		EditedAt:   time.Now(),
+	})
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "MODIFY",
+		ObjectType: "order",
+		PrimaryKey: "o-12",
+		Sequence:   12,
+		Properties: map[string]interface{}{"status": "SHIPPED"},
+		EditedAt:   time.Now(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v2/ontologies/northwind/objectSets/"+rid+"/subscribe", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	// Client last saw sequence 10 → expects replay starting at 11.
+	req.Header.Set("Last-Event-ID", "10")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	framesCh := make(chan sseIDFrame, 16)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(resp.Body)
+		var currentID string
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "id: ") {
+				currentID = strings.TrimPrefix(line, "id: ")
+				continue
+			}
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			var evt sseEventFrame
+			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+				t.Errorf("json decode %q: %v", payload, err)
+				return
+			}
+			select {
+			case framesCh <- sseIDFrame{ID: currentID, Event: evt}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Replay events 11 and 12 should arrive without any extra Publish.
+	first := expectIDFrame(t, framesCh, 2*time.Second)
+	if first.ID != "11" {
+		t.Errorf("first id = %q, want 11", first.ID)
+	}
+	if pk, _ := first.Event.Object["__primaryKey"].(string); pk != "o-11" {
+		t.Errorf("first __primaryKey = %v, want o-11", first.Event.Object["__primaryKey"])
+	}
+	second := expectIDFrame(t, framesCh, 2*time.Second)
+	if second.ID != "12" {
+		t.Errorf("second id = %q, want 12", second.ID)
+	}
+	if pk, _ := second.Event.Object["__primaryKey"].(string); pk != "o-12" {
+		t.Errorf("second __primaryKey = %v, want o-12", second.Event.Object["__primaryKey"])
+	}
+
+	// Give the live subscription a brief moment to register before the
+	// follow-up Publish, matching the pattern used by the other SSE tests.
+	waitForSubscriber(t, b, 1, 500*time.Millisecond)
+
+	b.Publish(funnel.BroadcastEvent{
+		Type:       "CREATE",
+		ObjectType: "order",
+		PrimaryKey: "o-13",
+		Sequence:   13,
+		Properties: map[string]interface{}{"status": "NEW"},
+		EditedAt:   time.Now(),
+	})
+
+	third := expectIDFrame(t, framesCh, 2*time.Second)
+	if third.ID != "13" {
+		t.Errorf("third id = %q, want 13", third.ID)
+	}
+	if pk, _ := third.Event.Object["__primaryKey"].(string); pk != "o-13" {
+		t.Errorf("third __primaryKey = %v, want o-13", third.Event.Object["__primaryKey"])
+	}
+
+	select {
+	case unexpected := <-framesCh:
+		t.Errorf("unexpected extra event: %+v", unexpected)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+// TestSSEReplayRingBufferSkipsSeenEvents verifies that a client requesting
+// replay from a sequence that is already beyond the ring buffer tail
+// receives no replay events (only live events after reconnect).
+func TestSSEReplayRingBufferSkipsSeenEvents(t *testing.T) {
+	const rid = "rid-order-replay-2"
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	b.Publish(funnel.BroadcastEvent{
+		Type: "CREATE", ObjectType: "order", PrimaryKey: "o-5", Sequence: 5,
+		Properties: map[string]interface{}{}, EditedAt: time.Now(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v2/ontologies/northwind/objectSets/"+rid+"/subscribe", nil)
+	// Client already saw sequence 100 (> any ring entry). No replay expected.
+	req.Header.Set("Last-Event-ID", "100")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	framesCh := make(chan sseIDFrame, 8)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(resp.Body)
+		var currentID string
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "id: ") {
+				currentID = strings.TrimPrefix(line, "id: ")
+				continue
+			}
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			var evt sseEventFrame
+			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+				return
+			}
+			select {
+			case framesCh <- sseIDFrame{ID: currentID, Event: evt}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Within a short window the client must NOT receive the pre-seeded
+	// sequence-5 event — it was acknowledged.
+	select {
+	case unexpected := <-framesCh:
+		t.Errorf("unexpected replay event: %+v", unexpected)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+// sseIDFrame couples an SSE "id:" line with the following "data:" payload so
+// tests can assert id-event pairing.
+type sseIDFrame struct {
+	ID    string
+	Event sseEventFrame
+}
+
+func expectIDFrame(t *testing.T, ch <-chan sseIDFrame, timeout time.Duration) sseIDFrame {
+	t.Helper()
+	select {
+	case f := <-ch:
+		return f
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for SSE id frame")
+		return sseIDFrame{}
+	}
+}
+
 func TestSSESubscribeObjectSetNotFound(t *testing.T) {
 	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{}}
 	b := funnel.NewBroadcast()
