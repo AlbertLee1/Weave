@@ -3991,3 +3991,20 @@ new features — only run verification suites and commit the gate.
   - `vi.useFakeTimers()` + `vi.advanceTimersByTime()` are essential for testing exponential backoff without real delays
   - The `disposed` flag pattern prevents reconnect after unmount when a timer is already scheduled
 ---
+
+## 2026-04-12 11:50 - US-060
+- Implemented BrowserPage realtime mode toggle with SSE subscription
+- Added toggle switch in BrowserPage header with custom checkbox styling
+- When enabled: creates a temporary ObjectSet for the current objectType, then subscribes via useObjectSetSubscription hook
+- On each SSE event: invalidates TanStack Query cache with queryKey ['objects'] to trigger automatic data refresh
+- Pulsing green dot indicator (animate-pulse) shown when connected
+- Files changed:
+  - web/src/components/browser/BrowserPage.tsx (added realtime toggle, SSE subscription, query invalidation)
+  - web/src/components/browser/__tests__/BrowserPage.test.tsx (new: 5 tests with MockEventSource + MSW)
+- **Learnings for future iterations:**
+  - BrowserPage uses both useListObjects and useSearchObjects depending on active filters; invalidating queryKey ['objects'] covers both
+  - useCreateTemporaryObjectSet is a mutation hook from useObjectSets.ts that wraps the createTemporary API
+  - The useObjectSetSubscription hook from US-059 takes (ontology, objectSetRid, { enabled, onEvent }) and handles all reconnection logic internally
+  - ObjectDetail imports useOutgoingLinkTypes from useObjectTypes — any mock of useObjectTypes must also provide this export
+  - For component tests with SSE, MockEventSource pattern from the existing hook tests works well with MSW for API mocking
+---
