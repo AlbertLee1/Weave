@@ -1,0 +1,76 @@
+{
+  "story": "US-093",
+  "title": "Function-backed action integration test",
+  "description": "Proves that a function-backed action (createOrderAndUpdateInventory) executes via the embedded Goja runtime, produces 2 edits (CREATE Order + MODIFY Product to decrement stock), and those edits flow through the executor -> publisher -> consumer -> Bleve pipeline correctly.",
+  "fixture": {
+    "ontology": "fn_action_e2e",
+    "objectTypes": [
+      {
+        "apiName": "product",
+        "primaryKey": "productId",
+        "properties": ["productId (string)", "name (string)", "stock (integer)"]
+      },
+      {
+        "apiName": "order",
+        "primaryKey": "orderId",
+        "properties": ["orderId (string)", "productId (string)", "quantity (integer)"]
+      }
+    ],
+    "function": {
+      "name": "createOrderAndUpdateInventory",
+      "description": "Takes productId and quantity, creates an Order and decrements Product.stock",
+      "input": { "productId": "PROD-001", "quantity": 10 },
+      "output": {
+        "edits": [
+          { "type": "CREATE", "objectType": "order", "primaryKey": "ORD-PROD-001-10", "properties": { "orderId": "ORD-PROD-001-10", "productId": "PROD-001", "quantity": 10 } },
+          { "type": "MODIFY", "objectType": "product", "primaryKey": "PROD-001", "properties": { "productId": "PROD-001", "name": "Widget", "stock": 90 } }
+        ]
+      }
+    },
+    "actionType": {
+      "apiName": "createOrderAndUpdateInventory",
+      "isFunctionBacked": true,
+      "parameters": [
+        { "id": "productId", "type": "string", "required": true },
+        { "id": "quantity", "type": "integer", "required": true }
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "name": "apply_function_action",
+      "setup": "Product PROD-001 seeded with stock=100 in Bleve",
+      "action": {
+        "actionType": "createOrderAndUpdateInventory",
+        "parameters": { "productId": "PROD-001", "quantity": 10 }
+      },
+      "expected": {
+        "editCount": 2,
+        "edits": [
+          { "type": "CREATE", "objectType": "order", "primaryKey": "ORD-PROD-001-10" },
+          { "type": "MODIFY", "objectType": "product", "primaryKey": "PROD-001" }
+        ],
+        "editSource": "user",
+        "publishedBatchCount": 1,
+        "bleveState": {
+          "order": {
+            "ORD-PROD-001-10": { "orderId": "ORD-PROD-001-10", "productId": "PROD-001", "quantity": 10 }
+          },
+          "product": {
+            "PROD-001": { "productId": "PROD-001", "name": "Widget", "stock": 90 }
+          }
+        }
+      }
+    }
+  ],
+  "coveredBy": [
+    "test/integration/function_action_test.go::TestFunctionAction_CreateOrderAndDecrementStock"
+  ],
+  "notes": [
+    "The function source is stored in PostgreSQL (functions table) and retrieved by RID during dispatch.",
+    "GojaDispatcher wraps functions.Runtime and a FunctionLookup interface (satisfied by the OMS PG repo).",
+    "Edits are tagged with Source='user' by tagEditsAsUserSource so the US-021 user-edit-wins guard protects them from subsequent ingest overwrites.",
+    "Consumer.ApplyBatch is called directly (no NATS) to apply edits to Bleve in the integration test.",
+    "The handler passes ontology API name (not RID) to executor.Apply; ListActionTypes supports both via OR query."
+  ]
+}
