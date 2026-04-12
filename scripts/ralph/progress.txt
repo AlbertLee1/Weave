@@ -4178,3 +4178,18 @@ new features — only run verification suites and commit the gate.
   - Existing pagination pattern uses offset-based cursor (base64-encoded JSON with Offset field) — see pkg/oss/pagination/cursor.go
   - Admin-only routes use `auth.RequirePermission(auth.PermUserManage)` middleware — same pattern for all admin endpoints
 ---
+
+## 2026-04-12 - US-068
+- Implemented per-endpoint token bucket rate limiting middleware
+- `cmd/server/rate_limit.go`: RateLimitRule config struct with Method/Pattern/RPS/Burst/KeyBy fields; NewRateLimitMiddleware constructs chi-compatible middleware using golang.org/x/time/rate; path pattern matching with chi-style {param} wildcards; key extraction by IP, user ID, or ontology name; 429 response with Retry-After header and JSON error body
+- `cmd/server/rate_limit_test.go`: 7 tests covering burst blocking, separate IP buckets, user-keyed limiting, ontology-keyed limiting, unmatched routes pass-through, method mismatch pass-through, user-fallback-to-IP when no auth context
+- Files changed:
+  - cmd/server/rate_limit.go (new — middleware implementation)
+  - cmd/server/rate_limit_test.go (new — 7 tests)
+- **Learnings for future iterations:**
+  - golang.org/x/time/rate is already in go.mod — no need to `go get`
+  - chi middleware.RealIP is wired globally in main.go so r.RemoteAddr is already the real client IP
+  - For chi URL params ({param}) to be available in middleware, the middleware must be applied inside the route group (via .With()) not globally — global middleware runs before route resolution
+  - When testing rate limiting with chi URL params, build a chi.NewRouter() in the test and mount the middleware + handler so chi resolves params before the middleware runs
+  - sync.Map with LoadOrStore is the correct pattern for lazy limiter creation — avoids races from separate Load+Store calls
+---
