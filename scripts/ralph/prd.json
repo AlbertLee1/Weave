@@ -1216,7 +1216,7 @@
         "go test -tags integration ./test/integration/phase7/... -run RateLimitRecovery passes"
       ],
       "priority": 77,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

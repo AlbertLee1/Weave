@@ -4340,3 +4340,15 @@ new features — only run verification suites and commit the gate.
   - Write-level property filter follows the same fetch-merge pattern as editOnly: strip forbidden fields, then merge current bleve values back so the upsert preserves prior state
   - Non-ingest edits (Source != EditSourceIngest) pass through all three guards unchanged — user edits are never subject to ingest-targeted filters
 ---
+
+## 2026-04-12 - US-077
+- Implemented Phase 7 cross-US integration test for rate limit recovery lifecycle
+- Test exercises full flow: hammer POST /api/auth/login with wrong password → 429 after 5 attempts → parse Retry-After → wait → next login returns 401 (normal)
+- Uses real PostgreSQL (testcontainers), real LoginHandler with bcrypt password verification, and reproduced rate-limit middleware (token bucket from cmd/server)
+- Files changed:
+  - test/integration/phase7/phase7_rate_limit_recovery_test.go (new)
+- **Learnings for future iterations:**
+  - Token bucket (x/time/rate) refills continuously — when each request takes ~100ms (bcrypt), a 5 rps bucket refills ~0.5 tokens per request. Use RPS ≤ 0.5 for integration tests to ensure burst exhaustion with sequential requests
+  - The LoginHandler's internal ipRateLimiter does NOT set Retry-After header; only the global cmd/server middleware does. Cross-US tests that need Retry-After must reproduce the middleware layer
+  - Use httptest.NewRecorder + direct r.ServeHTTP calls (not httptest.NewServer + real HTTP) when testing rate limits to minimize inter-request delay from TCP overhead
+---
