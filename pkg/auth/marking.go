@@ -32,6 +32,34 @@ type MarkingGrant struct {
 	GrantedBy   string
 }
 
+// EvaluateMarkings implements Foundry-style mandatory access control for
+// object markings. It returns true iff the caller holds every marking the
+// object carries (set containment, AND semantics).
+//
+// Behaviour:
+//   - objectMarkings empty/nil → true (unmarked objects are public).
+//   - userMarkings is missing any required marking → false (fail-closed).
+//   - Comparison is case-sensitive and duplicate-tolerant on both sides.
+//
+// This is the single source of truth for marking evaluation; row-level
+// policy integration (US-051) and JWT claim injection (US-053) both feed
+// into this function rather than re-implementing the subset check.
+func EvaluateMarkings(userMarkings, objectMarkings []string) bool {
+	if len(objectMarkings) == 0 {
+		return true
+	}
+	held := make(map[string]struct{}, len(userMarkings))
+	for _, m := range userMarkings {
+		held[m] = struct{}{}
+	}
+	for _, req := range objectMarkings {
+		if _, ok := held[req]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // MarkingsField is the reserved keyword field name on every indexed
 // document that stores the row's marking labels. Writers (action
 // executor, funnel consumer, importers) populate this field with a
