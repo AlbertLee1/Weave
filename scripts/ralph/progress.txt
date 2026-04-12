@@ -397,7 +397,16 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   `DELETE FROM interfaces WHERE ontology_rid = $1` BEFORE deleting
   object_types, because interfaces has a plain FK to ontologies (no
   cascade). Order: history → link_types → action_logs/action_types →
-  interfaces → object_types → ontologies.
+  interfaces → security_policies → object_types → ontologies.
+- Dev mode now auto-generates ephemeral RSA keys and verifies JWT
+  bearer tokens in handleDev when a signer is available. User's Roles
+  are copied into Attributes["roles"] so PROPERTY-scope policies can
+  check them via UserAttr="roles". Fallback to admin dev-user when no
+  token or invalid token.
+- Security policies in the security_policies DB table are loaded at
+  server startup via cmd/server/policy_loader.go:loadPoliciesFromDB.
+  The engine no longer boots empty — any policy seeded in the DB is
+  enforced automatically on first request.
 - `funnel.BroadcastEvent.Sequence` carries the NATS stream sequence
   number and is both the SSE `id:` line value AND the ring-buffer key
   for US-057 Last-Event-ID replay. `funnel.Broadcast` maintains a
@@ -4406,4 +4415,31 @@ new features — only run verification suites and commit the gate.
   - The frontend SSE hook passes `lastEventId` as a URL query param, but the backend reads `Last-Event-ID` header. However, `SubscribeWithReplay(16, 0)` with `fromSeq=0` replays ALL buffered events from the ring buffer, so reconnect still works
   - When running the full E2E suite, SSE connection accumulation from prior tests can exhaust the 10-connection-per-user cap, causing timeouts. Individual or phase-scoped runs are more reliable
   - After `setOffline(true)`, the EventSource hook enters backoff (1s→2s→4s). After `setOffline(false)`, reconnection succeeds on the next timer fire. Total latency is ~2-4s offline wait + backoff delay
+---
+
+## 2026-04-12 - US-081
+- Implemented Playwright spec for policy-column-hiding (PROPERTY-scope security policy)
+- Infrastructure changes to support e2e column-hiding:
+  - Auto-generate ephemeral dev RSA keys in main.go so login/refresh/logout endpoints work in dev mode
+  - Enhanced handleDev middleware to verify JWTs when a signer is available, building full user identity from claims (including Roles → Attributes["roles"])
+  - Added startup policy loading from security_policies DB table (cmd/server/policy_loader.go)
+  - Extended northwind e2e seed with Employee object type (employeeId, name, department, salary) + 3 seed rows
+  - Seeded a PROPERTY-scope security policy granting salary only to editor/admin roles
+  - Added security_policies wipe to seed.go wipe() for idempotent re-seeding
+- Spec verifies:
+  - API-level: manager (editor) sees salary in response, peer (viewer) does not
+  - UI-level: manager login → salary data visible in table; peer login → salary data absent
+- Files changed:
+  - cmd/server/main.go (dev RSA key generation + policy loader wiring)
+  - cmd/server/policy_loader.go (new — loads policies from security_policies table)
+  - pkg/auth/middleware.go (handleDev enhanced for JWT verification + Roles→Attributes)
+  - test/fixtures/seed_northwind/schemas.go (Employee + securityPolicyDef + northwindSecurityPolicies)
+  - test/fixtures/seed_northwind/seed.go (security policy seeding + wipe)
+  - web/e2e/phase7/policy-column-hiding.spec.ts (new — 3 tests)
+- **Learnings for future iterations:**
+  - In dev mode (AUTH_MODE=dev), handleDev now attempts JWT verification when a signer is available. If verification succeeds, the user is built from claims (including Roles copied to Attributes["roles"]). If not, falls back to the admin dev-user.
+  - Auto-generated ephemeral RSA keys in dev mode mean login/refresh/logout endpoints are always available — no need to explicitly configure WEAVE_JWT_PRIVATE_KEY_PATH for local dev/e2e
+  - Security policies in the security_policies table are now loaded at server startup via loadPoliciesFromDB(). Previously the engine booted empty — tests/seeds that write to the table now have their policies enforced automatically.
+  - The PROPERTY-scope policy uses UserAttr="roles" checking against user.Attributes["roles"] (copied from user.Roles by handleDev). The seed uses Values=["editor","admin"] so both manager and admin users can see salary.
+  - Column header visibility in the UI comes from objectType.properties (schema-level) which is NOT filtered by user permissions. The actual data filtering happens at the WireObject level. The spec asserts on data visibility, not column header presence.
 ---
