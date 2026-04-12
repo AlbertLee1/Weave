@@ -4056,3 +4056,25 @@ new features — only run verification suites and commit the gate.
   - The policyProviderRepo interface in cmd/server/ is shared by policyQueryAdapter, propertyFilterAdapter, and now ingestPolicyAdapter — add new adapters alongside these
   - StreamIngestHandler accepts optional dependencies via SetXxx setters (same pattern as ServiceImpl) so backwards compat is automatic when deps are nil
 ---
+
+## 2026-04-12 - US-063
+- Implemented per-ontology token-bucket rate limiter for stream ingest endpoint
+- Token bucket uses golang.org/x/time/rate (already in go.mod) — same library as embedding rate limiter
+- Default: 1000 rps per ontology with burst of 1000, configurable via WEAVE_INGEST_RATE_PER_SEC / WEAVE_INGEST_RATE_BURST
+- Returns 429 RESOURCE_EXHAUSTED with Retry-After header when bucket is exhausted
+- Rate limit check happens BEFORE policy evaluation and JSON parsing (cheap early exit)
+- Per-ontology isolation: different ontologies maintain independent token buckets
+- nil rate limiter allows all requests (backwards compatible)
+- Files changed:
+  - pkg/oss/stream_ingest.go (added IngestRateLimiter interface, PerOntologyRateLimiter, SetRateLimiter, rate check in ServeHTTP)
+  - pkg/oss/stream_ingest_test.go (3 new rate limiter subtests: 429+Retry-After, per-ontology isolation, nil backwards compat)
+  - internal/config/config.go (added IngestRateLimitConfig struct, env var parsing)
+  - cmd/server/main.go (added IngestRateLimiter to ServerDeps, wired in main() and NewFullRouter)
+  - test/integration/stream_ingest_test.go (NEW: integration test — 2000 inserts + rate-limited + per-ontology isolation)
+  - test/foundry_parity/us063_stream_ingest.json (NEW: parity fixture)
+- **Learnings for future iterations:**
+  - apierror.NewTooManyRequests already exists (added in SSE US-055) — use it for all 429 responses
+  - Rate limiter follows the same SetXxx optional dependency pattern as SetPolicyChecker on StreamIngestHandler
+  - ServerDeps carries the IngestRateLimiter because NewFullRouter only sees deps, not cfg — construct the limiter in main() where cfg is in scope
+  - gofmt may reformat alignment in Config struct — run gofmt -w on edited files before committing
+---
