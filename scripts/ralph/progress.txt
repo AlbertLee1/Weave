@@ -59,6 +59,10 @@ Base:    main (v1 Phase 1-5 complete, 47 US, 68/68 Foundry endpoints)
   paths that deviate.
 - gofmt across the repo has pre-existing drift in many files; only lint your
   own edited files, do not blanket-reformat.
+- Auth handler audit pattern: add optional `audit.Store` to handler deps
+  struct, nil-check before `audit.Record(...)`. OMS audit uses the
+  AuditedRepository decorator. Both share the same `audit.AuditEvent` struct
+  and `audit.MemoryStore` for testing.
 - Reverse-direction withProperties routes through an optional reverseLinkFinder
   interface (ResolveLinkedReverseByAPIName) on the link resolver; the executor
   short-circuits with an explicit error when a resolver only speaks forward.
@@ -4120,4 +4124,27 @@ new features — only run verification suites and commit the gate.
   - The decorator pattern (embed oms.Repository, override write methods) follows the same approach as CachedRepository.
   - The noopRepo stub from cached_repository_test.go can be reused in the same package (oms_test) for other test files.
   - gofmt drift: always run gofmt on edited files before committing.
+---
+
+## 2026-04-12 - US-066
+- What was implemented: Auth + policy audit events — login success/failure, token refresh, logout, API key create/revoke, and security policy CRUD all now emit audit events through pkg/audit
+- Auth handlers (LoginHandler, RefreshHandler, LogoutHandler, APIKeyHandler) accept an optional audit.Store via their deps struct; nil disables auditing
+- AuditedRepository extended with CreateSecurityPolicy, UpdateSecurityPolicy, DeleteSecurityPolicy methods with before/after diff tracking
+- Action strings: login_success, login_failed, token_refresh, logout, api_key_create, api_key_revoke (auth); CREATE/UPDATE/DELETE (policy)
+- ResourceTypes: Session (auth), APIKey (api keys), SecurityPolicy (policies)
+- Files changed:
+  - pkg/auth/login_handler.go (added AuditStore to deps, audit calls on success/failure)
+  - pkg/auth/refresh_handler.go (added AuditStore to deps, audit call on success)
+  - pkg/auth/logout_handler.go (added auditStore field, audit call before 204)
+  - pkg/auth/api_key_handlers.go (added auditStore field, audit calls on create/revoke)
+  - pkg/auth/audit_test.go (new — 6 tests: login success/failed, refresh, API key create/revoke, logout)
+  - pkg/auth/api_key_handlers_test.go (updated NewAPIKeyHandler call signature)
+  - pkg/auth/logout_handler_test.go (updated NewLogoutHandler call signature)
+  - pkg/oms/audited_repository.go (added SecurityPolicy CRUD audit methods)
+  - pkg/oms/audited_repository_test.go (added SecurityPolicy CRUD to inMemoryRepo + 3 new subtests)
+  - cmd/server/main.go (updated NewLogoutHandler call signature)
+- **Learnings for future iterations:**
+  - Handler audit pattern: add optional audit.Store to deps struct, nil-check before recording. Keeps audit opt-in and backwards-compatible.
+  - When changing handler constructor signatures (NewLogoutHandler, NewAPIKeyHandler), update all callers: test files AND cmd/server/main.go.
+  - LoginHandler struct fields need gofmt alignment when deps struct is modified — pre-existing drift in field alignment.
 ---
