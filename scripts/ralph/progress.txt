@@ -435,6 +435,11 @@ fixtures, all three layers must be green to merge to main.
 Every feature US writes the failing test first. Gate stories do not write
 new features — only run verification suites and commit the gate.
 
+- pkg/oms CANNOT import pkg/auth (import cycle via auth/policy_evaluator.go
+  → oms.SecurityPolicy). When needing auth context inside an oms decorator,
+  use a callback function (ActorFunc) injected from the caller (e.g.
+  cmd/server/main.go). See AuditedRepository pattern.
+
 ---
 
 ## 2026-04-11 - US-001
@@ -4098,4 +4103,21 @@ new features — only run verification suites and commit the gate.
   - Record() auto-assigns UUID and UTC timestamp before delegating to Store.Insert — callers don't need to worry about those fields
   - ListFilter supports ActorID, Action, ResourceType, From, To — these map to the acceptance criteria for US-067 (admin audit endpoint)
   - Integration tests use //go:build integration tag and testutil.StartPGContainer + database.RunMigrationsUp
+---
+
+## 2026-04-12 - US-065
+- Implemented AuditedRepository decorator in pkg/oms/audited_repository.go
+- Wraps any oms.Repository and intercepts Create/Update/Delete for 6 core entity types: Ontology, ObjectType, Property, LinkType, ActionType, Interface
+- Diff encoded as {"before": ..., "after": ...} JSON in AuditEvent.DiffJSON
+- Uses ActorFunc callback to extract actor ID from context (avoids pkg/auth import cycle)
+- On error from inner repo, no audit event is recorded
+- Test file pkg/oms/audited_repository_test.go with inMemoryRepo + 15 subtests covering all entity CRUD, diff verification, actor extraction, and error-no-audit
+- Files changed:
+  - pkg/oms/audited_repository.go (new)
+  - pkg/oms/audited_repository_test.go (new)
+- **Learnings for future iterations:**
+  - pkg/oms cannot import pkg/auth due to import cycle (auth/policy_evaluator.go imports oms.SecurityPolicy). Use a callback function (ActorFunc) pattern to inject context extraction.
+  - The decorator pattern (embed oms.Repository, override write methods) follows the same approach as CachedRepository.
+  - The noopRepo stub from cached_repository_test.go can be reused in the same package (oms_test) for other test files.
+  - gofmt drift: always run gofmt on edited files before committing.
 ---
