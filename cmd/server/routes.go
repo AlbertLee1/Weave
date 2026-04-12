@@ -35,6 +35,13 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/fullMetadata", omsHandler.GetFullMetadata)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/metadata", omsHandler.LoadMetadataV2)
 
+	// Function CRUD (US-089)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/functions", omsHandler.CreateFunction)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions", omsHandler.ListFunctions)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.GetFunctionV2)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.UpdateFunction)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.DeleteFunction)
+
 	// QueryType execute route
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
 }

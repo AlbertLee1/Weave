@@ -51,3 +51,17 @@ func (r *inMemoryOmsRepo) GetObjectEmbedding(_ context.Context, _, _, _ string) 
 func (r *inMemoryOmsRepo) FindNearestNeighbors(_ context.Context, _ string, _ []float32, _ int, _ string) ([]oms.NearestNeighborResult, error) {
 	return nil, nil
 }
+
+// Function stubs — e2e tests do not exercise the Function path.
+func (r *inMemoryOmsRepo) CreateFunction(_ context.Context, _ *oms.Function) error { return nil }
+func (r *inMemoryOmsRepo) GetFunction(_ context.Context, _ string) (*oms.Function, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) GetFunctionByName(_ context.Context, _, _ string) (*oms.Function, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) ListFunctions(_ context.Context, _ string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateFunction(_ context.Context, _ *oms.Function) error { return nil }
+func (r *inMemoryOmsRepo) DeleteFunction(_ context.Context, _ string) error        { return nil }

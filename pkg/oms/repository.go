@@ -99,6 +99,14 @@ type Repository interface {
 	UpdateDatasourceBinding(ctx context.Context, db *DatasourceBinding) error
 	DeleteDatasourceBinding(ctx context.Context, rid string) error
 
+	// Function
+	CreateFunction(ctx context.Context, fn *Function) error
+	GetFunction(ctx context.Context, rid string) (*Function, error)
+	GetFunctionByName(ctx context.Context, ontologyRID, name string) (*Function, error)
+	ListFunctions(ctx context.Context, ontologyRID string) ([]Function, error)
+	UpdateFunction(ctx context.Context, fn *Function) error
+	DeleteFunction(ctx context.Context, rid string) error
+
 	// QueryType
 	CreateQueryType(ctx context.Context, qt *QueryType) error
 	GetQueryType(ctx context.Context, rid string) (*QueryType, error)

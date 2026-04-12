@@ -429,6 +429,17 @@ type QueryType struct {
 	CreatedAt   time.Time       `json:"-"`
 }
 
+// Function represents a stored JavaScript function in the ontology.
+type Function struct {
+	RID         string    `json:"rid"`
+	OntologyRID string    `json:"-"`
+	Name        string    `json:"name"`
+	Version     int       `json:"version"`
+	SourceCode  string    `json:"sourceCode"`
+	CreatedBy   string    `json:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 // TypeGroup organizes object types into categories.
 type TypeGroup struct {
 	RID         string    `json:"rid"`

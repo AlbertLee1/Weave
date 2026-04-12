@@ -80,6 +80,11 @@ func NewDatasourceBindingRID() string {
 	return New("ontology", "main", "datasource-binding")
 }
 
+// NewFunctionRID generates a new RID for a function.
+func NewFunctionRID() string {
+	return New("ontology", "main", "function")
+}
+
 // NewQueryTypeRID generates a new RID for a query type.
 func NewQueryTypeRID() string {
 	return New("ontology", "main", "query-type")

@@ -245,6 +245,18 @@ func (s *stubRehydrateRepo) GetOntologyVersion(context.Context, string) (int, er
 func (s *stubRehydrateRepo) IncrementOntologyVersion(context.Context, string) (int, error) {
 	return 1, nil
 }
+func (s *stubRehydrateRepo) CreateFunction(context.Context, *oms.Function) error { return nil }
+func (s *stubRehydrateRepo) GetFunction(context.Context, string) (*oms.Function, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) GetFunctionByName(context.Context, string, string) (*oms.Function, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) ListFunctions(context.Context, string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) UpdateFunction(context.Context, *oms.Function) error { return nil }
+func (s *stubRehydrateRepo) DeleteFunction(context.Context, string) error        { return nil }
 
 // --- Tests ---
 

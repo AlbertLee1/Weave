@@ -26,6 +26,7 @@ type mockRepo struct {
 	valueTypes  []oms.ValueType
 	queryTypes  []oms.QueryType
 	actionLogs  []oms.ActionLog
+	functions   []oms.Function
 
 	// Error controls
 	createErr error

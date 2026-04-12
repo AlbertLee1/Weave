@@ -410,6 +410,23 @@ components:
           additionalProperties: true
         status:
           type: string
+    Function:
+      type: object
+      required: [rid, name, version, sourceCode]
+      properties:
+        rid:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        sourceCode:
+          type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
     ValueType:
       type: object
       required: [rid, apiName, displayName, baseType, version]
@@ -2091,6 +2108,138 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/functions:
+    post:
+      operationId: createFunction
+      summary: Create a new Function
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, sourceCode]
+              properties:
+                name:
+                  type: string
+                sourceCode:
+                  type: string
+                createdBy:
+                  type: string
+      responses:
+        "201":
+          description: Function created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Function"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+    get:
+      operationId: listFunctions
+      summary: List all Functions in an ontology
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: List of functions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Function"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}:
+    get:
+      operationId: getFunction
+      summary: Get a Function by RID or name
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Function details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Function"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateFunction
+      summary: Update an existing Function
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                sourceCode:
+                  type: string
+                version:
+                  type: integer
+      responses:
+        "200":
+          description: Function updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Function"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteFunction
+      summary: Delete a Function
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Function deleted.
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

@@ -51,3 +51,17 @@ func (m *mockRepo) GetObjectEmbedding(_ context.Context, _, _, _ string) (*oms.O
 func (m *mockRepo) FindNearestNeighbors(_ context.Context, _ string, _ []float32, _ int, _ string) ([]oms.NearestNeighborResult, error) {
 	return nil, nil
 }
+
+// Function stubs — fk resolver tests do not exercise the Function path.
+func (m *mockRepo) CreateFunction(_ context.Context, _ *oms.Function) error { return nil }
+func (m *mockRepo) GetFunction(_ context.Context, _ string) (*oms.Function, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) GetFunctionByName(_ context.Context, _, _ string) (*oms.Function, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) ListFunctions(_ context.Context, _ string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (m *mockRepo) UpdateFunction(_ context.Context, _ *oms.Function) error { return nil }
+func (m *mockRepo) DeleteFunction(_ context.Context, _ string) error        { return nil }

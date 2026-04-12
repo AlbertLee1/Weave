@@ -293,6 +293,18 @@ func (*noopRepo) ListQueryTypes(context.Context, string) ([]oms.QueryType, error
 }
 func (*noopRepo) UpdateQueryType(context.Context, *oms.QueryType) error { return nil }
 func (*noopRepo) DeleteQueryType(context.Context, string) error         { return nil }
+func (*noopRepo) CreateFunction(context.Context, *oms.Function) error   { return nil }
+func (*noopRepo) GetFunction(context.Context, string) (*oms.Function, error) {
+	return nil, nil
+}
+func (*noopRepo) GetFunctionByName(context.Context, string, string) (*oms.Function, error) {
+	return nil, nil
+}
+func (*noopRepo) ListFunctions(context.Context, string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (*noopRepo) UpdateFunction(context.Context, *oms.Function) error { return nil }
+func (*noopRepo) DeleteFunction(context.Context, string) error        { return nil }
 func (*noopRepo) InsertActionLog(context.Context, *oms.ActionLog) error { return nil }
 func (*noopRepo) ListActionLogs(context.Context, string, int, int) ([]oms.ActionLog, error) {
 	return nil, nil
