@@ -1170,7 +1170,7 @@
         "go test -tags integration ./test/integration/phase7/... -run StreamIngest passes"
       ],
       "priority": 74,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

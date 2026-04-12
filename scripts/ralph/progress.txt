@@ -4290,3 +4290,21 @@ new features — only run verification suites and commit the gate.
   - auth.MarkingsField ("__markings") is for indexed documents; security.MarkingField ("_markings") is for policy evaluation — use the correct one per context
   - Test injects user into context via X-Test-User header middleware, reusing the stubSSELookup from the SSE subscription test
 ---
+
+## 2026-04-12 - US-074
+- Implemented Phase 7 cross-US test: stream ingest x policy x rate limit
+- Test exercises three interacting concerns in one integration test:
+  1. Authorized bulk 1000 inserts succeed (200 OK, editCount=1000, all edits tagged source=ingest)
+  2. Unauthorized user (policy denied) gets 403 IngestNotAllowed
+  3. Rate limit breach (burst exhaustion) gets 429 with Retry-After header + RESOURCE_EXHAUSTED error code
+- Chi router wired with auth injection middleware + RequirePermission(PermStreamIngest) + StreamIngestHandler
+- Uses testIngestPolicyChecker (denies specific user ID) + PerOntologyRateLimiter (burst=2) + testIngestPublisher (records batches)
+- Rate limit sub-test uses a separate ontology ("rate-test") for independent bucket isolation
+- Files changed:
+  - test/integration/phase7/phase7_stream_ingest_test.go (new)
+- **Learnings for future iterations:**
+  - Cross-US integration tests for stream ingest don't need PG containers — the handler works entirely through interfaces (IngestPublisher, IngestPolicyChecker, IngestRateLimiter)
+  - PerOntologyRateLimiter creates independent token buckets per ontology — use different ontology names in sub-tests for hermetic rate limit testing
+  - The IngestNotAllowed error comes from the policy checker (ABAC), not RequirePermission (RBAC) — users must have the right role AND pass policy evaluation
+  - RequirePermission middleware returns "PermissionDenied" (not "IngestNotAllowed") when RBAC role is missing — test the two 403 flavors separately if needed
+---
