@@ -4639,3 +4639,22 @@ new features — only run verification suites and commit the gate.
   - Goja numeric types from JS: `int64` for integer-valued numbers, `float64` for fractional — handle both in pageSize parsing
   - The shim registration must happen AFTER sandbox globals are cleared but BEFORE `vm.RunString(source)` so user code can call `ontology.*`
 ---
+
+## 2026-04-12 - US-089
+- Implemented migration 000021_functions table (rid, ontology_rid, name, version, source_code, created_by, created_at) with UNIQUE(ontology_rid, name) constraint
+- Added Function model to pkg/oms/models.go
+- Added 6 Repository interface methods: CreateFunction, GetFunction, GetFunctionByName, ListFunctions, UpdateFunction, DeleteFunction
+- Implemented PG repository methods in pkg/oms/pg_repository.go following existing QueryType patterns
+- Added NewFunctionRID() to pkg/rid/rid.go
+- Created pkg/oms/handlers_function.go with 5 HTTP handlers: CreateFunction (POST), ListFunctions (GET), GetFunctionV2 (GET by RID/name), UpdateFunction (PUT), DeleteFunction (DELETE)
+- Registered routes in cmd/server/routes.go under /api/v2/ontologies/{ontologyApiName}/functions/
+- Updated api/openapi.yaml + cmd/server/openapi_spec.yaml with Function schema and 5 endpoints
+- 8 handler tests in pkg/oms/handlers_function_test.go all passing
+- Updated mock repos in 7 packages (actions, links, oss, index, e2e, chinook, northwind) + noopRepo in cached_repository_test.go
+- Files changed: 21 files (3 new implementation, 2 new migrations, 1 new test, 1 new mock, 14 modified for interface compliance)
+- **Learnings for future iterations:**
+  - Adding a new method to oms.Repository requires updating mock/stub repos in ~10 files across the codebase — check all packages, not just pkg/oms
+  - noopRepo in cached_repository_test.go is shared by audited_repository_test.go via embedding — only needs stubs in one place
+  - contractOmsRepo and other embedding-based repos automatically delegate to the embedded interface — no stubs needed
+  - Contract tests (TestContract_AllRoutesDocumented) enforce that every chi route has an OpenAPI entry — always update api/openapi.yaml AND copy to cmd/server/openapi_spec.yaml
+---
