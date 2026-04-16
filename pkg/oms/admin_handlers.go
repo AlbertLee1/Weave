@@ -2730,6 +2730,9 @@ func (h *OMSHandler) DeleteQueryType(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExecuteQueryType handles POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute.
+// When the QueryType has a non-empty FunctionRID and a QueryExecutor is wired,
+// the handler dispatches execution to the backing function. Otherwise it falls
+// back to returning raw metadata for backward compatibility.
 func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	queryAPIName := chi.URLParam(r, "queryApiName")
@@ -2750,7 +2753,41 @@ func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
 	if err := httputil.ReadJSON(r, &inputParams); err != nil {
 		inputParams = map[string]interface{}{}
 	}
+	// Extract "parameters" sub-key if present (Foundry wire format).
+	if nested, ok := inputParams["parameters"].(map[string]interface{}); ok {
+		inputParams = nested
+	}
 
+	// If the query has a backing function and an executor is wired, dispatch.
+	if qt.FunctionRID != "" && h.queryExecutor != nil {
+		result, err := h.queryExecutor.Execute(r.Context(), qt, inputParams)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewBadRequest("QueryExecutionFailed", map[string]string{
+				"error": err.Error(),
+			}))
+			return
+		}
+		// Interpret the function result: if it's a map, check for error/value keys.
+		if m, ok := result.(map[string]interface{}); ok {
+			if errMsg, ok := m["error"]; ok {
+				if s, ok := errMsg.(string); ok && s != "" {
+					apierror.WriteJSON(w, apierror.NewBadRequest("QueryFunctionError", map[string]string{
+						"error": s,
+					}))
+					return
+				}
+			}
+			httputil.WriteJSON(w, http.StatusOK, m)
+			return
+		}
+		// Non-map result: wrap in {value: ...}
+		httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"value": result,
+		})
+		return
+	}
+
+	// Fallback: return metadata without execution.
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"queryTypeRid": qt.RID,
 		"apiName":      qt.APIName,

@@ -425,6 +425,7 @@ type QueryType struct {
 	Parameters  json.RawMessage `json:"parameters"`
 	Output      json.RawMessage `json:"output"`
 	Query       json.RawMessage `json:"query"`
+	FunctionRID string          `json:"functionRid,omitempty"`
 	Status      string          `json:"status"`
 	CreatedAt   time.Time       `json:"-"`
 }

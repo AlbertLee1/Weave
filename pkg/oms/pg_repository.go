@@ -1316,10 +1316,10 @@ func (r *PGRepository) CreateQueryType(ctx context.Context, qt *QueryType) error
 		status = "ACTIVE"
 	}
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO query_types (rid, ontology_rid, api_name, display_name, description, parameters, output, query, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		`INSERT INTO query_types (rid, ontology_rid, api_name, display_name, description, parameters, output, query, status, function_rid)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		qt.RID, qt.OntologyRID, qt.APIName, qt.DisplayName, qt.Description,
-		params, output, query, status)
+		params, output, query, status, qt.FunctionRID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -1330,10 +1330,10 @@ func (r *PGRepository) GetQueryType(ctx context.Context, rid string) (*QueryType
 	qt := &QueryType{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
-		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
+		 parameters, output, query, COALESCE(status, 'ACTIVE'), COALESCE(function_rid, ''), created_at
 		 FROM query_types WHERE rid = $1`, rid).
 		Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
-			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt)
+			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.FunctionRID, &qt.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1347,12 +1347,12 @@ func (r *PGRepository) GetQueryTypeByAPIName(ctx context.Context, ontologyRID, a
 	qt := &QueryType{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
-		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
+		 parameters, output, query, COALESCE(status, 'ACTIVE'), COALESCE(function_rid, ''), created_at
 		 FROM query_types
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND (rid = $2 OR api_name = $2)`, ontologyRID, apiName).
 		Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
-			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt)
+			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.FunctionRID, &qt.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1365,7 +1365,7 @@ func (r *PGRepository) GetQueryTypeByAPIName(ctx context.Context, ontologyRID, a
 func (r *PGRepository) ListQueryTypes(ctx context.Context, ontologyRID string) ([]QueryType, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
-		 parameters, output, query, COALESCE(status, 'ACTIVE'), created_at
+		 parameters, output, query, COALESCE(status, 'ACTIVE'), COALESCE(function_rid, ''), created_at
 		 FROM query_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -1378,7 +1378,7 @@ func (r *PGRepository) ListQueryTypes(ctx context.Context, ontologyRID string) (
 	for rows.Next() {
 		var qt QueryType
 		if err := rows.Scan(&qt.RID, &qt.OntologyRID, &qt.APIName, &qt.DisplayName, &qt.Description,
-			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.CreatedAt); err != nil {
+			&qt.Parameters, &qt.Output, &qt.Query, &qt.Status, &qt.FunctionRID, &qt.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, qt)
@@ -1400,9 +1400,9 @@ func (r *PGRepository) UpdateQueryType(ctx context.Context, qt *QueryType) error
 		query = json.RawMessage(`{}`)
 	}
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE query_types SET display_name=$1, description=$2, parameters=$3, output=$4, query=$5, status=$6
-		 WHERE rid=$7`,
-		qt.DisplayName, qt.Description, params, output, query, qt.Status, qt.RID)
+		`UPDATE query_types SET display_name=$1, description=$2, parameters=$3, output=$4, query=$5, status=$6, function_rid=$7
+		 WHERE rid=$8`,
+		qt.DisplayName, qt.Description, params, output, query, qt.Status, qt.FunctionRID, qt.RID)
 	if err != nil {
 		return err
 	}

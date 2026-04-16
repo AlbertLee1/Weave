@@ -12,12 +12,20 @@ import (
 
 // OMSHandler provides HTTP handlers for OMS V2 and admin endpoints.
 type OMSHandler struct {
-	repo Repository
+	repo          Repository
+	queryExecutor QueryExecutor
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
 func NewOMSHandler(repo Repository) *OMSHandler {
 	return &OMSHandler{repo: repo}
+}
+
+// SetQueryExecutor wires an optional QueryExecutor for function-backed query
+// dispatch. When set, ExecuteQueryType routes QueryTypes with a non-empty
+// FunctionRID through this executor instead of returning raw metadata.
+func (h *OMSHandler) SetQueryExecutor(qe QueryExecutor) {
+	h.queryExecutor = qe
 }
 
 // ListOntologies handles GET /api/v2/ontologies.
