@@ -661,6 +661,68 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryType"
+    OntologyExport:
+      type: object
+      required: [ontology, objectTypes, linkTypes, actionTypes, interfaces, sharedProperties, valueTypes, typeGroups, functions, queryTypes]
+      properties:
+        ontology:
+          $ref: "#/components/schemas/Ontology"
+        objectTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectType"
+        linkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkType"
+        actionTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionType"
+        interfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interface"
+        sharedProperties:
+          type: array
+          items:
+            type: object
+            properties:
+              rid:
+                type: string
+              apiName:
+                type: string
+              displayName:
+                type: string
+              description:
+                type: string
+              baseType:
+                type: string
+        valueTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValueType"
+        typeGroups:
+          type: array
+          items:
+            type: object
+            properties:
+              rid:
+                type: string
+              apiName:
+                type: string
+              displayName:
+                type: string
+              description:
+                type: string
+        functions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Function"
+        queryTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryType"
     OntologyListResponse:
       type: object
       properties:
@@ -2765,6 +2827,25 @@ paths:
                 $ref: "#/components/schemas/OntologyFullMetadata"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/export:
+    get:
+      operationId: exportOntology
+      summary: Export complete ontology definitions as JSON
+      description: Returns the complete ontology definition including all entity types (objectTypes with properties, linkTypes, actionTypes, interfaces, sharedProperties, valueTypes, typeGroups, functions, queryTypes).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Complete ontology export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyExport"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

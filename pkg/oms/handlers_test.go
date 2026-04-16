@@ -26,7 +26,9 @@ type mockRepo struct {
 	valueTypes    []oms.ValueType
 	queryTypes    []oms.QueryType
 	actionLogs    []oms.ActionLog
-	functions     []oms.Function
+	functions        []oms.Function
+	sharedProperties []oms.SharedProperty
+	typeGroups       []oms.TypeGroup
 	branches        []oms.OntologyBranch
 	branchChanges   []oms.BranchChange
 	proposals       []oms.OntologyProposal
@@ -386,8 +388,17 @@ func (m *mockRepo) CreateSharedProperty(_ context.Context, _ *oms.SharedProperty
 func (m *mockRepo) GetSharedProperty(_ context.Context, _ string) (*oms.SharedProperty, error) {
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListSharedProperties(_ context.Context, _ string) ([]oms.SharedProperty, error) {
-	return nil, nil
+func (m *mockRepo) ListSharedProperties(_ context.Context, ontologyRID string) ([]oms.SharedProperty, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var result []oms.SharedProperty
+	for _, sp := range m.sharedProperties {
+		if sp.OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, sp.OntologyRID) {
+			result = append(result, sp)
+		}
+	}
+	return result, nil
 }
 func (m *mockRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedProperty) error { return nil }
 func (m *mockRepo) DeleteSharedProperty(_ context.Context, _ string) error              { return nil }
@@ -397,8 +408,17 @@ func (m *mockRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { 
 func (m *mockRepo) GetTypeGroup(_ context.Context, _ string) (*oms.TypeGroup, error) {
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListTypeGroups(_ context.Context, _ string) ([]oms.TypeGroup, error) {
-	return nil, nil
+func (m *mockRepo) ListTypeGroups(_ context.Context, ontologyRID string) ([]oms.TypeGroup, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var result []oms.TypeGroup
+	for _, tg := range m.typeGroups {
+		if tg.OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, tg.OntologyRID) {
+			result = append(result, tg)
+		}
+	}
+	return result, nil
 }
 func (m *mockRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
 func (m *mockRepo) DeleteTypeGroup(_ context.Context, _ string) error         { return nil }

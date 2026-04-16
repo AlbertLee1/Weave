@@ -29,11 +29,16 @@ type OntologySnapshot struct {
 
 // OntologyExport represents the full export format for an ontology.
 type OntologyExport struct {
-	Ontology    Ontology     `json:"ontology"`
-	ObjectTypes []ObjectType `json:"objectTypes"`
-	LinkTypes   []LinkType   `json:"linkTypes"`
-	ActionTypes []ActionType `json:"actionTypes"`
-	Interfaces  []Interface  `json:"interfaces"`
+	Ontology         Ontology         `json:"ontology"`
+	ObjectTypes      []ObjectType     `json:"objectTypes"`
+	LinkTypes        []LinkType       `json:"linkTypes"`
+	ActionTypes      []ActionType     `json:"actionTypes"`
+	Interfaces       []Interface      `json:"interfaces"`
+	SharedProperties []SharedProperty `json:"sharedProperties"`
+	ValueTypes       []ValueType      `json:"valueTypes"`
+	TypeGroups       []TypeGroup      `json:"typeGroups"`
+	Functions        []Function       `json:"functions"`
+	QueryTypes       []QueryType      `json:"queryTypes"`
 }
 
 // Ontology represents a top-level ontology container.

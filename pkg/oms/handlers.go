@@ -276,6 +276,130 @@ func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ExportOntologyV2 handles GET /api/v2/ontologies/{ontologyApiName}/export.
+// Returns the complete ontology definition including all entity types.
+func (h *OMSHandler) ExportOntologyV2(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+
+	ontology, err := h.repo.GetOntology(r.Context(), ontologyRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
+				"ontologyApiName": ontologyRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetOntologyFailed", nil))
+		return
+	}
+
+	ctx := r.Context()
+
+	objectTypes, err := h.repo.ListObjectTypes(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListObjectTypesFailed", nil))
+		return
+	}
+	for i := range objectTypes {
+		props, err := h.repo.ListProperties(ctx, objectTypes[i].RID)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ListPropertiesFailed", nil))
+			return
+		}
+		objectTypes[i].Properties = props
+	}
+
+	linkTypes, err := h.repo.ListLinkTypes(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListLinkTypesFailed", nil))
+		return
+	}
+
+	actionTypes, err := h.repo.ListActionTypes(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
+		return
+	}
+
+	interfaces, err := h.repo.ListInterfaces(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListInterfacesFailed", nil))
+		return
+	}
+
+	sharedProperties, err := h.repo.ListSharedProperties(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListSharedPropertiesFailed", nil))
+		return
+	}
+
+	valueTypes, err := h.repo.ListValueTypes(ctx)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListValueTypesFailed", nil))
+		return
+	}
+
+	typeGroups, err := h.repo.ListTypeGroups(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListTypeGroupsFailed", nil))
+		return
+	}
+
+	functions, err := h.repo.ListFunctions(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListFunctionsFailed", nil))
+		return
+	}
+
+	queryTypes, err := h.repo.ListQueryTypes(ctx, ontologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListQueryTypesFailed", nil))
+		return
+	}
+
+	// Ensure all arrays are non-nil for consistent JSON serialization
+	if objectTypes == nil {
+		objectTypes = []ObjectType{}
+	}
+	if linkTypes == nil {
+		linkTypes = []LinkType{}
+	}
+	if actionTypes == nil {
+		actionTypes = []ActionType{}
+	}
+	if interfaces == nil {
+		interfaces = []Interface{}
+	}
+	if sharedProperties == nil {
+		sharedProperties = []SharedProperty{}
+	}
+	if valueTypes == nil {
+		valueTypes = []ValueType{}
+	}
+	if typeGroups == nil {
+		typeGroups = []TypeGroup{}
+	}
+	if functions == nil {
+		functions = []Function{}
+	}
+	if queryTypes == nil {
+		queryTypes = []QueryType{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, OntologyExport{
+		Ontology:         *ontology,
+		ObjectTypes:      objectTypes,
+		LinkTypes:        linkTypes,
+		ActionTypes:      actionTypes,
+		Interfaces:       interfaces,
+		SharedProperties: sharedProperties,
+		ValueTypes:       valueTypes,
+		TypeGroups:       typeGroups,
+		Functions:        functions,
+		QueryTypes:       queryTypes,
+	})
+}
+
 // GetActionType handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}.
 // The {actionTypeRid} path param accepts either an apiName or a full RID.
 func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
