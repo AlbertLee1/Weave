@@ -166,4 +166,34 @@
   - GeoJSON polygon coordinates use [lon, lat] order; PointInPolygon treats x=lon, y=lat
   - The PolygonQuery value wraps GeoJSON coordinates: {"polygon": [[[lon,lat],...]] } — outer ring is polygon[0]
   - Bleve NewGeoShapeQuery expects [][][][]float64; for a single polygon, wrap as [][][][]float64{polygonRings}
+- Custom Bleve query types: implement query.Query interface (Searcher method) using internal searcher package (NewMultiPhraseSearcher, NewTermPrefixSearcher, etc.)
+- PhrasePrefixQuery pattern: expand prefix via IndexReader.FieldDictPrefix, build [][]string for NewMultiPhraseSearcher with alternatives at last position
+---
+
+## 2026-04-16 - US-107
+- Implemented containsAllTermsInOrderPrefixLastTerm (autocomplete) operator
+- Files changed:
+  - pkg/oss/where/phrase_prefix_query.go — New file: custom PhrasePrefixQuery Bleve query type implementing query.Query; uses FieldDictPrefix to expand last term prefix, delegates to NewMultiPhraseSearcher for positional adjacency enforcement
+  - pkg/oss/where/converter.go — Added containsAllTermsInOrderPrefixLastTerm case to ConvertToBleveQuery switch + convertContainsAllTermsInOrderPrefixLastTerm function (single-term→PrefixQuery, multi-term→PhrasePrefixQuery)
+  - pkg/oss/where/match.go — Added containsAllTermsInOrderPrefixLastTerm case to MatchClause switch + matchContainsAllTermsInOrderPrefixLastTerm function (sliding window with prefix match on last token)
+  - pkg/oss/where/converter_test.go — 6 new tests: setupAutocompleteIndex helper, multi-term order test (John S → John Smith, not Smith John), single-term prefix test (J → John/Jane/James), empty input test, exact match test, 2 MatchClause in-memory tests
+- **Learnings for future iterations:**
+  - Bleve's public query API (MatchPhraseQuery+PrefixQuery AND) cannot enforce positional order between phrase and prefix — need a custom query type
+  - Custom query type implements query.Query by providing Searcher(ctx, IndexReader, IndexMapping, SearcherOptions) → uses internal searcher package
+  - PhrasePrefixQuery expands prefix via IndexReader.FieldDictPrefix(field, prefix) → iterates DictEntry to collect all matching index terms
+  - NewMultiPhraseSearcher(ctx, reader, [][]string, fuzziness, autoFuzzy, field, boost, opts) enforces positional adjacency with per-position term alternatives
+  - searcher.NewMatchNoneSearcher(indexReader) provides empty result set for no-match cases
+  - In-memory matching (MatchClause) uses sliding window over tokenized field value to enforce sequential order + prefix on last token
+---
+
+## 2026-04-16 - US-108
+- Implemented exactDistinct aggregation metric type using map-based deduplication
+- Files changed:
+  - pkg/oss/aggregation/engine.go — Updated AggregationSpec.Type comment to include "exactDistinct"
+  - pkg/oss/aggregation/bleve_agg.go — Added computeExactDistinct function (scans docs, deduplicates via map[string]struct{}) + added "exactDistinct" case to computeMetrics switch
+  - pkg/oss/aggregation/aggregation_test.go — 2 new tests: exactDistinct with 5 unique values returns exactly 5, exactDistinct vs approximateDistinct comparison
+- **Learnings for future iterations:**
+  - computeExactDistinct uses fmt.Sprint(val) to normalize field values (string or float64) into map keys for deduplication
+  - Unlike approximateDistinct (facet-based, limited to N terms), exactDistinct scans all docs up to MaxDocScanSize and returns truncated=true when exceeding the scan limit
+  - Adding a new metric type: add case to computeMetrics switch in bleve_agg.go, implement compute function, update AggregationSpec.Type comment in engine.go
 ---

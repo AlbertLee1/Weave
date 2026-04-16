@@ -2,6 +2,7 @@ package aggregation
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"path/filepath"
 	"testing"
@@ -1264,5 +1265,88 @@ func TestAggregate_MultipleGroupBy_Metrics(t *testing.T) {
 	// eng/senior: 120000
 	if groupAvg["eng|senior"] != 120000.0 {
 		t.Errorf("eng|senior avg = %v, want 120000", groupAvg["eng|senior"])
+	}
+}
+
+// --- ExactDistinct metric ---
+
+func TestAggregate_ExactDistinct_FiveUniqueValues(t *testing.T) {
+	// Create index with documents having 5 unique city values.
+	indexMapping := bleve.NewIndexMapping()
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("city", mapping.NewTextFieldMapping())
+	docMapping.AddFieldMappingsAt("score", mapping.NewNumericFieldMapping())
+	indexMapping.DefaultMapping = docMapping
+
+	dir := t.TempDir()
+	idx, err := bleve.New(filepath.Join(dir, "exact_distinct"), indexMapping)
+	if err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+
+	cities := []string{"newyork", "london", "tokyo", "paris", "berlin"}
+	for i, city := range cities {
+		if err := idx.Index(fmt.Sprintf("doc%d", i), map[string]interface{}{
+			"city":  city,
+			"score": float64(i * 10),
+		}); err != nil {
+			t.Fatalf("failed to index doc%d: %v", i, err)
+		}
+	}
+
+	eng := NewEngine()
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "exactDistinct", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	val, ok := findMetric(resp.Data[0].Metrics, "city.exactDistinct")
+	if !ok {
+		t.Fatal("expected metric key 'city.exactDistinct'")
+	}
+	if val.(int) != 5 {
+		t.Errorf("got exactDistinct %v, want 5", val)
+	}
+}
+
+func TestAggregate_ExactDistinct_VsApproximateDistinct(t *testing.T) {
+	idx := setupAggIndex(t) // 3 unique departments
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "exactDistinct", Field: "department"},
+			{Type: "approximateDistinct", Field: "department"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	exactVal, ok := findMetric(resp.Data[0].Metrics, "department.exactDistinct")
+	if !ok {
+		t.Fatal("expected metric key 'department.exactDistinct'")
+	}
+	approxVal, ok := findMetric(resp.Data[0].Metrics, "department.approximateDistinct")
+	if !ok {
+		t.Fatal("expected metric key 'department.approximateDistinct'")
+	}
+
+	exactCount := exactVal.(int)
+	approxCount := approxVal.(int)
+
+	// Both should return 3 for this small dataset
+	if exactCount != 3 {
+		t.Errorf("exactDistinct = %d, want 3", exactCount)
+	}
+	// Exact is always precise; approximate may under/over-count on large datasets
+	// but for small datasets they should agree
+	if exactCount != approxCount {
+		t.Errorf("exactDistinct (%d) != approximateDistinct (%d) — for small datasets they should agree", exactCount, approxCount)
 	}
 }

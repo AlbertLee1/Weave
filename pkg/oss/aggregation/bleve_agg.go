@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/blevesearch/bleve/v2"
@@ -55,6 +56,16 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			val, err := computeDistinct(idx, baseQuery, spec.Field)
 			if err != nil {
 				return nil, false, err
+			}
+			metrics = append(metrics, MetricValue{Name: name, Value: val})
+
+		case "exactDistinct":
+			val, t, err := computeExactDistinct(idx, baseQuery, spec.Field, scanSize)
+			if err != nil {
+				return nil, false, err
+			}
+			if t {
+				truncated = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
@@ -189,6 +200,33 @@ func computeDistinct(idx bleve.Index, query query.Query, field string) (int, err
 		return 0, nil
 	}
 	return len(facetResult.Terms.Terms()), nil
+}
+
+// computeExactDistinct counts exact distinct values for a field using map-based deduplication.
+// Unlike computeDistinct (which uses Bleve facets with a term limit), this scans documents
+// and deduplicates with a map for an exact count.
+func computeExactDistinct(idx bleve.Index, q query.Query, field string, scanSize int) (int, bool, error) {
+	searchReq := bleve.NewSearchRequest(q)
+	searchReq.Size = scanSize
+	searchReq.Fields = []string{field}
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return 0, false, err
+	}
+
+	truncated := result.Total > uint64(len(result.Hits))
+
+	seen := make(map[string]struct{})
+	for _, hit := range result.Hits {
+		val, ok := hit.Fields[field]
+		if !ok {
+			continue
+		}
+		seen[fmt.Sprint(val)] = struct{}{}
+	}
+
+	return len(seen), truncated, nil
 }
 
 // computeStdDevOrVariance computes the standard deviation or variance of a numeric field.
