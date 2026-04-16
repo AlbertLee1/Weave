@@ -43,6 +43,10 @@
 - AlreadyRevertedError sentinel type for 409 Conflict on double-revert
 - Repository additions: GetActionLog(id) and UpdateActionLogStatus(id, status) — added to oms.Repository interface + PG impl + all mocks
 - OpenAPI spec lives in api/openapi.yaml AND must be copied to cmd/server/openapi_spec.yaml; contract tests enforce this (TestContract_AllRoutesDocumented, TestContract_EmbeddedSpecMatchesCanonical)
+- Bleve GeoShapeQuery (v2.5.7) works on GeoShape-indexed fields, not geopoint fields; for point data, use PointInPolygon in-memory fallback
+- Geo tests use setupGeoIndex() with NewGeoShapeFieldMapping() to index GeoJSON Point features for polygon query testing
+- doesNotIntersect* operators: negate via BooleanQuery(MatchAll + MustNot(inner)); for BoundingBox use GeoShapeQuery("polygon","intersects") over GeoBoundingBoxQuery for GeoShape field compat
+- PolygonQuery input format: {"polygon": [[[lon,lat],...]] } — GeoJSON Polygon coordinates; converted to [][][][]float64 for Bleve
 
 ---
 
@@ -146,4 +150,20 @@
   - AlreadyRevertedError follows the StaleObjectError pattern: sentinel type checked via errors.As in handler
   - Contract tests (TestContract_AllRoutesDocumented) enforce that every chi route has an OpenAPI spec entry — always update api/openapi.yaml AND copy to cmd/server/openapi_spec.yaml
   - When adding Repository methods, update ALL mock implementations (9+ files across tests) — use the Explore agent to find them all
+---
+
+## 2026-04-16 - US-106
+- Implemented withinPolygon, intersectsPolygon, doesNotIntersectPolygon, doesNotIntersectBoundingBox operators
+- Files changed:
+  - pkg/oss/where/polygon.go — New file: PointInPolygon ray-casting algorithm for in-memory point-in-polygon test
+  - pkg/oss/where/converter.go — Added PolygonQuery type, parsePolygonQuery, polygonToGeoShapeCoords helpers; 4 new convert* functions using bleve.NewGeoShapeQuery for polygon ops and BooleanQuery negation for doesNotIntersect* ops; added doesNotIntersectBoundingBox/doesNotIntersectPolygon to switch
+  - pkg/oss/where/match.go — Added extractGeoPoint, matchPolygon (ray-casting via PointInPolygon), matchBoundingBox for in-memory evaluation; added withinPolygon/intersectsPolygon/doesNotIntersect* to MatchClause switch
+  - pkg/oss/where/converter_test.go — 18 new tests: 5 PointInPolygon unit tests, setupGeoIndex with GeoShape field mapping + GeoJSON Point docs (NYC/LA/London), 3 withinPolygon tests (inside/outside/invalid), 2 intersectsPolygon tests (inside/noMatch), 1 doesNotIntersectPolygon test, 1 doesNotIntersectBoundingBox test, 3 MatchClause polygon tests (inside/outside/doesNotIntersect)
+- **Learnings for future iterations:**
+  - Bleve's GeoShapeQuery works on GeoShape-indexed fields only (NewGeoShapeFieldMapping), not on geopoint fields (NewGeoPointFieldMapping)
+  - For GeoShape field testing, documents must be indexed as GeoJSON: {"type":"Point","coordinates":[lon,lat]}
+  - GeoBoundingBoxQuery does NOT work on GeoShape fields — for doesNotIntersectBoundingBox, convert bbox to rectangular polygon and use GeoShapeQuery("polygon","intersects")
+  - GeoJSON polygon coordinates use [lon, lat] order; PointInPolygon treats x=lon, y=lat
+  - The PolygonQuery value wraps GeoJSON coordinates: {"polygon": [[[lon,lat],...]] } — outer ring is polygon[0]
+  - Bleve NewGeoShapeQuery expects [][][][]float64; for a single polygon, wrap as [][][][]float64{polygonRings}
 ---

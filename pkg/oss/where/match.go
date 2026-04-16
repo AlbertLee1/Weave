@@ -54,6 +54,12 @@ func MatchClause(clause *WhereClause, row map[string]interface{}) bool {
 		return matchOr(clause, row)
 	case "not":
 		return matchNot(clause, row)
+	case "withinPolygon", "intersectsPolygon":
+		return matchPolygon(clause, row)
+	case "doesNotIntersectPolygon":
+		return !matchPolygon(clause, row)
+	case "doesNotIntersectBoundingBox":
+		return !matchBoundingBox(clause, row)
 	default:
 		return false
 	}
@@ -244,6 +250,61 @@ func matchNot(clause *WhereClause, row map[string]interface{}) bool {
 		return false
 	}
 	return !MatchClause(&sub, row)
+}
+
+// extractGeoPoint extracts latitude and longitude from a row's location field.
+// Supports map with "latitude"/"longitude" keys.
+func extractGeoPoint(row map[string]interface{}, field string) (lat, lon float64, ok bool) {
+	raw, exists := row[field]
+	if !exists {
+		return 0, 0, false
+	}
+	locMap, isMap := raw.(map[string]interface{})
+	if !isMap {
+		return 0, 0, false
+	}
+	latVal, latOk := coerceNumber(locMap["latitude"])
+	lonVal, lonOk := coerceNumber(locMap["longitude"])
+	if !latOk || !lonOk {
+		return 0, 0, false
+	}
+	return latVal, lonVal, true
+}
+
+// matchPolygon evaluates withinPolygon / intersectsPolygon in-memory using ray casting.
+// For point data, "within" and "intersects" are equivalent.
+func matchPolygon(clause *WhereClause, row map[string]interface{}) bool {
+	var pq PolygonQuery
+	if err := json.Unmarshal(clause.Value, &pq); err != nil {
+		return false
+	}
+	if len(pq.Polygon) == 0 || len(pq.Polygon[0]) < 3 {
+		return false
+	}
+
+	lat, lon, ok := extractGeoPoint(row, clause.Field)
+	if !ok {
+		return false
+	}
+
+	// GeoJSON polygon coordinates are [lon, lat]; PointInPolygon expects (x=lon, y=lat).
+	return PointInPolygon(lon, lat, pq.Polygon[0])
+}
+
+// matchBoundingBox evaluates intersectsBoundingBox / withinBoundingBox in-memory.
+func matchBoundingBox(clause *WhereClause, row map[string]interface{}) bool {
+	var bb BoundingBox
+	if err := json.Unmarshal(clause.Value, &bb); err != nil {
+		return false
+	}
+
+	lat, lon, ok := extractGeoPoint(row, clause.Field)
+	if !ok {
+		return false
+	}
+
+	return lat >= bb.BottomRight.Latitude && lat <= bb.TopLeft.Latitude &&
+		lon >= bb.TopLeft.Longitude && lon <= bb.BottomRight.Longitude
 }
 
 // coerceNumber tolerates the handful of Go numeric shapes that can land in a

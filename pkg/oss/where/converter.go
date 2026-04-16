@@ -51,9 +51,13 @@ func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
 	case "intersectsBoundingBox":
 		return convertWithinBoundingBox(clause) // same as within for point data
 	case "withinPolygon":
-		return nil, fmt.Errorf("withinPolygon not yet supported")
+		return convertWithinPolygon(clause)
 	case "intersectsPolygon":
-		return nil, fmt.Errorf("intersectsPolygon not yet supported")
+		return convertIntersectsPolygon(clause)
+	case "doesNotIntersectPolygon":
+		return convertDoesNotIntersectPolygon(clause)
+	case "doesNotIntersectBoundingBox":
+		return convertDoesNotIntersectBoundingBox(clause)
 	case "withinDistanceOf":
 		return convertWithinDistanceOf(clause)
 	default:
@@ -323,6 +327,101 @@ func convertWithinDistanceOf(clause *WhereClause) (query.Query, error) {
 	q := bleve.NewGeoDistanceQuery(dq.Center.Longitude, dq.Center.Latitude, dq.Distance)
 	q.SetField(clause.Field)
 	return q, nil
+}
+
+// PolygonQuery for geospatial polygon queries.
+// Polygon is a GeoJSON Polygon coordinates array: [ring][point][lon,lat].
+type PolygonQuery struct {
+	Polygon [][][]float64 `json:"polygon"`
+}
+
+// parsePolygonQuery unmarshals a WhereClause value into a PolygonQuery.
+func parsePolygonQuery(clause *WhereClause) (*PolygonQuery, error) {
+	var pq PolygonQuery
+	if err := json.Unmarshal(clause.Value, &pq); err != nil {
+		return nil, fmt.Errorf("polygon value: %w", err)
+	}
+	if len(pq.Polygon) == 0 || len(pq.Polygon[0]) < 3 {
+		return nil, fmt.Errorf("polygon must have at least one ring with 3+ points")
+	}
+	return &pq, nil
+}
+
+// polygonToGeoShapeCoords converts GeoJSON Polygon coordinates [ring][point][lon,lat]
+// to the [][][][]float64 format expected by bleve.NewGeoShapeQuery.
+func polygonToGeoShapeCoords(polygon [][][]float64) [][][][]float64 {
+	return [][][][]float64{polygon}
+}
+
+// convertWithinPolygon handles the "withinPolygon" operator using Bleve GeoShapeQuery.
+func convertWithinPolygon(clause *WhereClause) (query.Query, error) {
+	pq, err := parsePolygonQuery(clause)
+	if err != nil {
+		return nil, err
+	}
+	coords := polygonToGeoShapeCoords(pq.Polygon)
+	q, err := bleve.NewGeoShapeQuery(coords, "polygon", "within")
+	if err != nil {
+		return nil, fmt.Errorf("withinPolygon: %w", err)
+	}
+	q.SetField(clause.Field)
+	return q, nil
+}
+
+// convertIntersectsPolygon handles the "intersectsPolygon" operator using Bleve GeoShapeQuery.
+func convertIntersectsPolygon(clause *WhereClause) (query.Query, error) {
+	pq, err := parsePolygonQuery(clause)
+	if err != nil {
+		return nil, err
+	}
+	coords := polygonToGeoShapeCoords(pq.Polygon)
+	q, err := bleve.NewGeoShapeQuery(coords, "polygon", "intersects")
+	if err != nil {
+		return nil, fmt.Errorf("intersectsPolygon: %w", err)
+	}
+	q.SetField(clause.Field)
+	return q, nil
+}
+
+// convertDoesNotIntersectPolygon handles the "doesNotIntersectPolygon" operator.
+// It negates the intersectsPolygon query.
+func convertDoesNotIntersectPolygon(clause *WhereClause) (query.Query, error) {
+	inner, err := convertIntersectsPolygon(clause)
+	if err != nil {
+		return nil, err
+	}
+	bq := bleve.NewBooleanQuery()
+	bq.AddMust(bleve.NewMatchAllQuery())
+	bq.AddMustNot(inner)
+	return bq, nil
+}
+
+// convertDoesNotIntersectBoundingBox handles the "doesNotIntersectBoundingBox" operator.
+// Uses GeoShapeQuery with a rectangular polygon so it works on both geopoint and geoshape fields.
+func convertDoesNotIntersectBoundingBox(clause *WhereClause) (query.Query, error) {
+	var bb BoundingBox
+	if err := json.Unmarshal(clause.Value, &bb); err != nil {
+		return nil, fmt.Errorf("doesNotIntersectBoundingBox value: %w", err)
+	}
+	// Convert bounding box to a rectangular polygon (counter-clockwise)
+	rectPolygon := [][][][]float64{{
+		{
+			{bb.TopLeft.Longitude, bb.BottomRight.Latitude},
+			{bb.BottomRight.Longitude, bb.BottomRight.Latitude},
+			{bb.BottomRight.Longitude, bb.TopLeft.Latitude},
+			{bb.TopLeft.Longitude, bb.TopLeft.Latitude},
+			{bb.TopLeft.Longitude, bb.BottomRight.Latitude},
+		},
+	}}
+	inner, err := bleve.NewGeoShapeQuery(rectPolygon, "polygon", "intersects")
+	if err != nil {
+		return nil, fmt.Errorf("doesNotIntersectBoundingBox: %w", err)
+	}
+	inner.SetField(clause.Field)
+	bq := bleve.NewBooleanQuery()
+	bq.AddMust(bleve.NewMatchAllQuery())
+	bq.AddMustNot(inner)
+	return bq, nil
 }
 
 // convertNot handles the "not" logical operator.

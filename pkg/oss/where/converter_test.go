@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/blevesearch/bleve/v2"
@@ -465,18 +464,323 @@ func TestWithinDistanceOf_Basic(t *testing.T) {
 	}
 }
 
-func TestWithinPolygon_NotSupported(t *testing.T) {
+// --- PointInPolygon unit tests ---
+
+func TestPointInPolygon_Inside(t *testing.T) {
+	// Simple square polygon around (0,0): corners at (-1,-1), (1,-1), (1,1), (-1,1)
+	polygon := [][]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}, {-1, -1}}
+	if !PointInPolygon(0, 0, polygon) {
+		t.Fatal("expected point (0,0) inside square polygon")
+	}
+}
+
+func TestPointInPolygon_Outside(t *testing.T) {
+	polygon := [][]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}, {-1, -1}}
+	if PointInPolygon(5, 5, polygon) {
+		t.Fatal("expected point (5,5) outside square polygon")
+	}
+}
+
+func TestPointInPolygon_OnEdge(t *testing.T) {
+	// Points on edges are implementation-defined; just make sure no panic.
+	polygon := [][]float64{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}, {-1, -1}}
+	_ = PointInPolygon(1, 0, polygon)
+}
+
+func TestPointInPolygon_Triangle(t *testing.T) {
+	// Triangle: (0,0), (10,0), (5,10)
+	polygon := [][]float64{{0, 0}, {10, 0}, {5, 10}, {0, 0}}
+	if !PointInPolygon(5, 5, polygon) {
+		t.Fatal("expected point (5,5) inside triangle")
+	}
+	if PointInPolygon(0, 10, polygon) {
+		t.Fatal("expected point (0,10) outside triangle")
+	}
+}
+
+func TestPointInPolygon_EmptyPolygon(t *testing.T) {
+	if PointInPolygon(0, 0, nil) {
+		t.Fatal("expected false for nil polygon")
+	}
+	if PointInPolygon(0, 0, [][]float64{}) {
+		t.Fatal("expected false for empty polygon")
+	}
+}
+
+// --- setupGeoIndex creates a Bleve index with GeoShape field mapping for polygon tests ---
+
+func setupGeoIndex(t *testing.T) bleve.Index {
+	t.Helper()
+
+	indexMapping := bleve.NewIndexMapping()
+	docMapping := bleve.NewDocumentMapping()
+
+	// GeoShape field so that GeoShapeQuery works
+	geoField := bleve.NewGeoShapeFieldMapping()
+	docMapping.AddFieldMappingsAt("location", geoField)
+
+	docMapping.AddFieldMappingsAt("name", bleve.NewTextFieldMapping())
+	indexMapping.DefaultMapping = docMapping
+
+	dir := t.TempDir()
+	idx, err := bleve.New(filepath.Join(dir, "geo_test"), indexMapping)
+	if err != nil {
+		t.Fatalf("create geo index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+
+	// Index point documents as GeoJSON Points
+	// NYC: ~40.7128, -74.0060
+	err = idx.Index("nyc", map[string]interface{}{
+		"name": "nyc",
+		"location": map[string]interface{}{
+			"type":        "Point",
+			"coordinates": []float64{-74.0060, 40.7128},
+		},
+	})
+	if err != nil {
+		t.Fatalf("index nyc: %v", err)
+	}
+
+	// LA: ~34.0522, -118.2437
+	err = idx.Index("la", map[string]interface{}{
+		"name": "la",
+		"location": map[string]interface{}{
+			"type":        "Point",
+			"coordinates": []float64{-118.2437, 34.0522},
+		},
+	})
+	if err != nil {
+		t.Fatalf("index la: %v", err)
+	}
+
+	// London: ~51.5074, -0.1278
+	err = idx.Index("london", map[string]interface{}{
+		"name": "london",
+		"location": map[string]interface{}{
+			"type":        "Point",
+			"coordinates": []float64{-0.1278, 51.5074},
+		},
+	})
+	if err != nil {
+		t.Fatalf("index london: %v", err)
+	}
+
+	return idx
+}
+
+// --- withinPolygon tests ---
+
+func TestWithinPolygon_PointInside(t *testing.T) {
+	idx := setupGeoIndex(t)
+	// Polygon covering the US East Coast (contains NYC, not LA or London)
 	clause := &WhereClause{
 		Type:  "withinPolygon",
 		Field: "location",
-		Value: json.RawMessage(`{}`),
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-80.0, 35.0],
+				[-70.0, 35.0],
+				[-70.0, 45.0],
+				[-80.0, 45.0],
+				[-80.0, 35.0]
+			]]
+		}`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"nyc"})
+}
+
+func TestWithinPolygon_PointOutside(t *testing.T) {
+	idx := setupGeoIndex(t)
+	// Small polygon around London — NYC and LA should not match
+	clause := &WhereClause{
+		Type:  "withinPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-1.0, 51.0],
+				[0.5, 51.0],
+				[0.5, 52.0],
+				[-1.0, 52.0],
+				[-1.0, 51.0]
+			]]
+		}`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"london"})
+}
+
+func TestWithinPolygon_InvalidValue(t *testing.T) {
+	clause := &WhereClause{
+		Type:  "withinPolygon",
+		Field: "location",
+		Value: json.RawMessage(`"invalid"`),
 	}
 	_, err := ConvertToBleveQuery(clause)
 	if err == nil {
-		t.Fatal("expected error for withinPolygon, got nil")
+		t.Fatal("expected error for invalid withinPolygon value")
 	}
-	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("expected 'not yet supported' error, got: %v", err)
+}
+
+// --- intersectsPolygon tests ---
+
+func TestIntersectsPolygon_PointInside(t *testing.T) {
+	idx := setupGeoIndex(t)
+	// Polygon covering US East Coast
+	clause := &WhereClause{
+		Type:  "intersectsPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-80.0, 35.0],
+				[-70.0, 35.0],
+				[-70.0, 45.0],
+				[-80.0, 45.0],
+				[-80.0, 35.0]
+			]]
+		}`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"nyc"})
+}
+
+func TestIntersectsPolygon_NoMatch(t *testing.T) {
+	idx := setupGeoIndex(t)
+	// Polygon in the middle of the Pacific Ocean — no points match
+	clause := &WhereClause{
+		Type:  "intersectsPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-170.0, 10.0],
+				[-160.0, 10.0],
+				[-160.0, 20.0],
+				[-170.0, 20.0],
+				[-170.0, 10.0]
+			]]
+		}`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{})
+}
+
+// --- doesNotIntersectPolygon tests ---
+
+func TestDoesNotIntersectPolygon_ExcludesInside(t *testing.T) {
+	idx := setupGeoIndex(t)
+	// Polygon covering US East Coast — NYC is inside, so it should be excluded
+	clause := &WhereClause{
+		Type:  "doesNotIntersectPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-80.0, 35.0],
+				[-70.0, 35.0],
+				[-70.0, 45.0],
+				[-80.0, 45.0],
+				[-80.0, 35.0]
+			]]
+		}`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	// LA and London are outside the polygon
+	assertIDs(t, ids, []string{"la", "london"})
+}
+
+// --- doesNotIntersectBoundingBox tests ---
+
+func TestDoesNotIntersectBoundingBox_ExcludesInside(t *testing.T) {
+	idx := setupGeoIndex(t)
+	// Bounding box covering US East Coast — NYC is inside
+	clause := &WhereClause{
+		Type:  "doesNotIntersectBoundingBox",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"topLeft": {"latitude": 45.0, "longitude": -80.0},
+			"bottomRight": {"latitude": 35.0, "longitude": -70.0}
+		}`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	// LA and London are outside the bounding box
+	assertIDs(t, ids, []string{"la", "london"})
+}
+
+// --- MatchClause polygon tests (in-memory) ---
+
+func TestMatchClause_WithinPolygon_Inside(t *testing.T) {
+	row := map[string]interface{}{
+		"location": map[string]interface{}{
+			"latitude":  40.7128,
+			"longitude": -74.0060,
+		},
+	}
+	clause := &WhereClause{
+		Type:  "withinPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-80.0, 35.0],
+				[-70.0, 35.0],
+				[-70.0, 45.0],
+				[-80.0, 45.0],
+				[-80.0, 35.0]
+			]]
+		}`),
+	}
+	if !MatchClause(clause, row) {
+		t.Fatal("expected NYC inside East Coast polygon")
+	}
+}
+
+func TestMatchClause_WithinPolygon_Outside(t *testing.T) {
+	row := map[string]interface{}{
+		"location": map[string]interface{}{
+			"latitude":  34.0522,
+			"longitude": -118.2437,
+		},
+	}
+	clause := &WhereClause{
+		Type:  "withinPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-80.0, 35.0],
+				[-70.0, 35.0],
+				[-70.0, 45.0],
+				[-80.0, 45.0],
+				[-80.0, 35.0]
+			]]
+		}`),
+	}
+	if MatchClause(clause, row) {
+		t.Fatal("expected LA outside East Coast polygon")
+	}
+}
+
+func TestMatchClause_DoesNotIntersectPolygon(t *testing.T) {
+	row := map[string]interface{}{
+		"location": map[string]interface{}{
+			"latitude":  34.0522,
+			"longitude": -118.2437,
+		},
+	}
+	clause := &WhereClause{
+		Type:  "doesNotIntersectPolygon",
+		Field: "location",
+		Value: json.RawMessage(`{
+			"polygon": [[
+				[-80.0, 35.0],
+				[-70.0, 35.0],
+				[-70.0, 45.0],
+				[-80.0, 45.0],
+				[-80.0, 35.0]
+			]]
+		}`),
+	}
+	// LA is outside the East Coast polygon, so doesNotIntersect → true
+	if !MatchClause(clause, row) {
+		t.Fatal("expected doesNotIntersectPolygon to match for LA (outside polygon)")
 	}
 }
 
