@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
+	"github.com/liyang/weave/pkg/oms"
 )
 
 // staleObjectAPIError converts an Executor-level *StaleObjectError into the
@@ -318,4 +319,53 @@ func asBatchError(err error) *apierror.APIError {
 		})
 	}
 	return apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()})
+}
+
+// revertRequest is the JSON body for POST .../actions/revert.
+type revertRequest struct {
+	ActionLogID int64 `json:"actionLogId"`
+}
+
+// Revert handles POST /api/v2/ontologies/{ontologyApiName}/actions/revert.
+//
+// Accepts { actionLogId } and reverses the action's edits by publishing a
+// reverse EditBatch. Returns 409 Conflict if the action has already been
+// reverted.
+func (h *Handler) Revert(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+
+	var req revertRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{"error": err.Error()}))
+		return
+	}
+	if req.ActionLogID == 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionLogId", nil))
+		return
+	}
+
+	result, err := h.executor.Revert(r.Context(), ontologyRID, req.ActionLogID)
+	if err != nil {
+		var alreadyReverted *AlreadyRevertedError
+		if errors.As(err, &alreadyReverted) {
+			apierror.WriteJSON(w, apierror.NewConflict("AlreadyReverted", map[string]string{
+				"actionLogId": strconv.FormatInt(alreadyReverted.ActionLogID, 10),
+			}))
+			return
+		}
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ActionLogNotFound", map[string]string{
+				"actionLogId": strconv.FormatInt(req.ActionLogID, 10),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("RevertFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+
+	resp := &SyncApplyActionResponseV2{
+		OperationID: result.BatchID,
+		Edits:       countEdits(result.Edits),
+	}
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }

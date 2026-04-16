@@ -282,6 +282,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/revert", actionHandler.Revert)
 		}
 
 		// US-061/062: Stream ingest endpoint — bypasses Action rules, publishes

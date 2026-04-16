@@ -305,11 +305,13 @@ func (*noopRepo) ListFunctions(context.Context, string) ([]oms.Function, error) 
 }
 func (*noopRepo) UpdateFunction(context.Context, *oms.Function) error { return nil }
 func (*noopRepo) DeleteFunction(context.Context, string) error        { return nil }
-func (*noopRepo) InsertActionLog(context.Context, *oms.ActionLog) error { return nil }
+func (*noopRepo) InsertActionLog(context.Context, *oms.ActionLog) error            { return nil }
+func (*noopRepo) GetActionLog(context.Context, int64) (*oms.ActionLog, error)      { return nil, oms.ErrNotFound }
 func (*noopRepo) ListActionLogs(context.Context, string, int, int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
-func (*noopRepo) CountActionLogs(context.Context, string) (int, error) { return 0, nil }
+func (*noopRepo) CountActionLogs(context.Context, string) (int, error)             { return 0, nil }
+func (*noopRepo) UpdateActionLogStatus(context.Context, int64, string) error       { return nil }
 func (*noopRepo) InsertObjectHistory(context.Context, *oms.ObjectHistory) error {
 	return nil
 }

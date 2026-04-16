@@ -2966,6 +2966,49 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/revert:
+    post:
+      operationId: revertAction
+      summary: Revert a previously executed action (US-105)
+      description: |
+        Undoes a previously executed action by loading its ActionLog, generating
+        reverse edits (CREATE→DELETE, MODIFY→restore PrevState, DELETE→CREATE),
+        and publishing the reverse EditBatch. The original ActionLog is marked
+        as REVERTED. Double-revert returns 409 Conflict.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actionLogId]
+              properties:
+                actionLogId:
+                  type: integer
+                  format: int64
+                  description: The ID of the ActionLog to revert.
+      responses:
+        "200":
+          description: Revert result (SyncApplyActionResponseV2).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncApplyActionResponseV2"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: Action has already been reverted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/streams/{objectType}/ingest:
     post:
       operationId: streamIngest

@@ -195,11 +195,13 @@ func (m *mockRepo) UpdateQueryType(context.Context, *oms.QueryType) error       
 func (m *mockRepo) DeleteQueryType(context.Context, string) error                   { return nil }
 
 // ActionLog stubs
-func (m *mockRepo) InsertActionLog(context.Context, *oms.ActionLog) error { return nil }
+func (m *mockRepo) InsertActionLog(context.Context, *oms.ActionLog) error           { return nil }
+func (m *mockRepo) GetActionLog(context.Context, int64) (*oms.ActionLog, error)     { return nil, oms.ErrNotFound }
 func (m *mockRepo) ListActionLogs(context.Context, string, int, int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
-func (m *mockRepo) CountActionLogs(context.Context, string) (int, error) { return 0, nil }
+func (m *mockRepo) CountActionLogs(context.Context, string) (int, error)            { return 0, nil }
+func (m *mockRepo) UpdateActionLogStatus(context.Context, int64, string) error      { return nil }
 
 // Search stubs
 func (m *mockRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {

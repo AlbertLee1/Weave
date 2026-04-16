@@ -223,10 +223,14 @@ func (s *stubRehydrateRepo) DeleteQueryType(context.Context, string) error { ret
 func (s *stubRehydrateRepo) InsertActionLog(context.Context, *oms.ActionLog) error {
 	return nil
 }
+func (s *stubRehydrateRepo) GetActionLog(context.Context, int64) (*oms.ActionLog, error) {
+	return nil, oms.ErrNotFound
+}
 func (s *stubRehydrateRepo) ListActionLogs(context.Context, string, int, int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
-func (s *stubRehydrateRepo) CountActionLogs(context.Context, string) (int, error) { return 0, nil }
+func (s *stubRehydrateRepo) CountActionLogs(context.Context, string) (int, error)       { return 0, nil }
+func (s *stubRehydrateRepo) UpdateActionLogStatus(context.Context, int64, string) error { return nil }
 func (s *stubRehydrateRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {
 	return nil, nil
 }

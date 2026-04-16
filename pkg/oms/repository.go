@@ -117,8 +117,10 @@ type Repository interface {
 
 	// ActionLog
 	InsertActionLog(ctx context.Context, log *ActionLog) error
+	GetActionLog(ctx context.Context, id int64) (*ActionLog, error)
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
+	UpdateActionLogStatus(ctx context.Context, id int64, status string) error
 
 	// ObjectHistory (Tier 2.3)
 	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error

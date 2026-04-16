@@ -574,10 +574,14 @@ func (r *inMemoryOmsRepo) DeleteQueryType(_ context.Context, _ string) error    
 
 // ActionLog stubs
 func (r *inMemoryOmsRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
+func (r *inMemoryOmsRepo) GetActionLog(_ context.Context, _ int64) (*oms.ActionLog, error) {
+	return nil, oms.ErrNotFound
+}
 func (r *inMemoryOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
-func (r *inMemoryOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+func (r *inMemoryOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
+func (r *inMemoryOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
 
 // Search stubs
 func (r *inMemoryOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {

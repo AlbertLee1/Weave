@@ -483,6 +483,9 @@ func (m *mockRepo) DeleteQueryType(_ context.Context, _ string) error         { 
 
 // ActionLog stubs
 func (m *mockRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
+func (m *mockRepo) GetActionLog(_ context.Context, _ int64) (*oms.ActionLog, error) {
+	return nil, oms.ErrNotFound
+}
 func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int) ([]oms.ActionLog, error) {
 	if m.actionLogs == nil {
 		return nil, nil
@@ -497,7 +500,8 @@ func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int
 	}
 	return m.actionLogs[start:end], nil
 }
-func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
+func (m *mockRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

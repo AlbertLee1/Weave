@@ -39,6 +39,10 @@
 - Consumer has separate LinkEdgeWriter (SetLinkEdgeWriter) and LinkEdgeDeleter (SetLinkEdgeDeleter) interfaces for M2M edge writes/deletes
 - Executor.Prepare resolves link type API names to RIDs via GetLinkTypeByAPIName before publishing
 - Pre-existing build errors in pkg/oms/admin_handlers.go and execute_query_goja_test.go — not blocking tests in other packages
+- Revert logic in pkg/actions/revert.go — generateReverseEdits maps CREATE→DELETE, MODIFY→MODIFY(prevState), DELETE→CREATE(prevState), LINK_CREATE→LINK_DELETE, LINK_DELETE→LINK_CREATE
+- AlreadyRevertedError sentinel type for 409 Conflict on double-revert
+- Repository additions: GetActionLog(id) and UpdateActionLogStatus(id, status) — added to oms.Repository interface + PG impl + all mocks
+- OpenAPI spec lives in api/openapi.yaml AND must be copied to cmd/server/openapi_spec.yaml; contract tests enforce this (TestContract_AllRoutesDocumented, TestContract_EmbeddedSpecMatchesCanonical)
 
 ---
 
@@ -123,4 +127,23 @@
   - The Bleve-based ObjectFetcher implementation (for integration tests) should use indexMgr.Search with DocIDQuery + Fields=["*"], not idx.Document() which returns internal types
   - findPrimaryKey uses convention: "primaryKey", "{objectType}Id", or "id" — test params must match these patterns
   - When testing multi-rule actions, all parameters must be declared in ParameterDef (validation rejects unknown params)
+---
+
+## 2026-04-16 - US-105
+- Implemented Action Undo — Revert endpoint
+- Files changed:
+  - pkg/oms/repository.go — Added GetActionLog(id) and UpdateActionLogStatus(id, status) to Repository interface
+  - pkg/oms/pg_repository.go — PG implementations for GetActionLog (SELECT by ID with PrevEdits) and UpdateActionLogStatus (UPDATE status)
+  - pkg/actions/revert.go — New file: AlreadyRevertedError, RevertResult, Executor.Revert (load log → check status → generate reverse edits → publish → mark REVERTED), generateReverseEdits (CREATE↔DELETE, MODIFY w/ PrevState, LINK_CREATE↔LINK_DELETE)
+  - pkg/actions/handlers.go — Added Revert handler (POST /actions/revert, 409 for double-revert, 404 for not found)
+  - cmd/server/main.go — Route registration: POST /api/v2/ontologies/{ontologyApiName}/actions/revert
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — OpenAPI spec for revert endpoint
+  - pkg/actions/actions_test.go — 11 new tests: CREATE→DELETE, MODIFY→restore, DELETE→recreate, mixed edits, double-revert 409, not found, link edits reversal, publish batch, handler success/409/404 + mockPublisher
+  - 8 mock files updated with GetActionLog/UpdateActionLogStatus stubs
+- **Learnings for future iterations:**
+  - Revert is separate from the Prepare→CommitBatch pipeline — it generates edits from ActionLog, not from rules
+  - generateReverseEdits is a pure function (no side effects) — good for testing
+  - AlreadyRevertedError follows the StaleObjectError pattern: sentinel type checked via errors.As in handler
+  - Contract tests (TestContract_AllRoutesDocumented) enforce that every chi route has an OpenAPI spec entry — always update api/openapi.yaml AND copy to cmd/server/openapi_spec.yaml
+  - When adding Repository methods, update ALL mock implementations (9+ files across tests) — use the Explore agent to find them all
 ---

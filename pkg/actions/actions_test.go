@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,8 @@ type mockOmsRepo struct {
 	// preserve the legacy stub behaviour for all pre-existing tests.
 	objectTypesByAPIName map[string]*oms.ObjectType
 	objectVersionCounts  map[string]int64
+	// US-105: action log lookup for revert tests.
+	actionLogByID map[int64]*oms.ActionLog
 }
 
 func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error { return nil }
@@ -200,6 +203,23 @@ func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]o
 	return nil, nil
 }
 func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+func (m *mockOmsRepo) GetActionLog(_ context.Context, id int64) (*oms.ActionLog, error) {
+	if m.actionLogByID != nil {
+		if al, ok := m.actionLogByID[id]; ok {
+			return al, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, id int64, status string) error {
+	if m.actionLogByID != nil {
+		if al, ok := m.actionLogByID[id]; ok {
+			al.Status = status
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {
@@ -2828,4 +2848,433 @@ func (m *interfaceAwareMockRepo) ListObjectTypeInterfaces(_ context.Context, obj
 		return otis, nil
 	}
 	return nil, nil
+}
+
+// ---------------------------------------------------------------------------
+// Mock Publisher (shared by US-105+ tests)
+// ---------------------------------------------------------------------------
+
+type mockPublisher struct {
+	callCount int
+	lastBatch *funnel.EditBatch
+	returnErr error
+}
+
+func (m *mockPublisher) Publish(batch *funnel.EditBatch) (uint64, error) {
+	m.callCount++
+	m.lastBatch = batch
+	if m.returnErr != nil {
+		return 0, m.returnErr
+	}
+	return uint64(m.callCount), nil
+}
+
+// ---------------------------------------------------------------------------
+// Revert Action Tests (US-105)
+// ---------------------------------------------------------------------------
+
+func TestRevert_CREATE_GeneratesDeleteEdit(t *testing.T) {
+	// A CREATE edit should be reverted with a DELETE edit.
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "Alice"}},
+	}
+	editsJSON, _ := json.Marshal(edits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			1: {
+				ID:            1,
+				ActionTypeRID: "ri.ontology.main.action-type.test",
+				UserID:        "user-1",
+				Parameters:    []byte(`{}`),
+				Edits:         editsJSON,
+				PrevEdits:     nil,
+				Status:        "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+
+	result, err := exec.Revert(context.Background(), "test-ontology", 1)
+	if err != nil {
+		t.Fatalf("Revert failed: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 reverse edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeDelete {
+		t.Errorf("expected DELETE, got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].ObjectType != "Employee" {
+		t.Errorf("expected Employee, got %s", result.Edits[0].ObjectType)
+	}
+	if result.Edits[0].PrimaryKey != "emp-1" {
+		t.Errorf("expected emp-1, got %s", result.Edits[0].PrimaryKey)
+	}
+	// ActionLog should be marked as reverted.
+	if repo.actionLogByID[1].Status != "REVERTED" {
+		t.Errorf("expected status=REVERTED, got %s", repo.actionLogByID[1].Status)
+	}
+}
+
+func TestRevert_MODIFY_RestoresPrevState(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeModify, ObjectType: "Employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "Bob"}},
+	}
+	prevEdits := []map[string]interface{}{
+		{"name": "Alice", "age": float64(30)},
+	}
+	editsJSON, _ := json.Marshal(edits)
+	prevEditsJSON, _ := json.Marshal(prevEdits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			2: {
+				ID:            2,
+				ActionTypeRID: "ri.ontology.main.action-type.test",
+				UserID:        "user-1",
+				Parameters:    []byte(`{}`),
+				Edits:         editsJSON,
+				PrevEdits:     prevEditsJSON,
+				Status:        "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+
+	result, err := exec.Revert(context.Background(), "test-ontology", 2)
+	if err != nil {
+		t.Fatalf("Revert failed: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 reverse edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeModify {
+		t.Errorf("expected MODIFY, got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].Properties["name"] != "Alice" {
+		t.Errorf("expected name=Alice (prev state), got %v", result.Edits[0].Properties["name"])
+	}
+	if result.Edits[0].Properties["age"] != float64(30) {
+		t.Errorf("expected age=30 (prev state), got %v", result.Edits[0].Properties["age"])
+	}
+}
+
+func TestRevert_DELETE_RecreatesFromPrevState(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeDelete, ObjectType: "Employee", PrimaryKey: "emp-1"},
+	}
+	prevEdits := []map[string]interface{}{
+		{"name": "Alice", "department": "Engineering"},
+	}
+	editsJSON, _ := json.Marshal(edits)
+	prevEditsJSON, _ := json.Marshal(prevEdits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			3: {
+				ID:            3,
+				ActionTypeRID: "ri.ontology.main.action-type.test",
+				UserID:        "user-1",
+				Parameters:    []byte(`{}`),
+				Edits:         editsJSON,
+				PrevEdits:     prevEditsJSON,
+				Status:        "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+
+	result, err := exec.Revert(context.Background(), "test-ontology", 3)
+	if err != nil {
+		t.Fatalf("Revert failed: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 reverse edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeCreate {
+		t.Errorf("expected CREATE, got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].Properties["name"] != "Alice" {
+		t.Errorf("expected name=Alice, got %v", result.Edits[0].Properties["name"])
+	}
+	if result.Edits[0].Properties["department"] != "Engineering" {
+		t.Errorf("expected department=Engineering, got %v", result.Edits[0].Properties["department"])
+	}
+}
+
+func TestRevert_MixedEdits(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "New"}},
+		{Type: funnel.EditTypeModify, ObjectType: "Employee", PrimaryKey: "emp-2", Properties: map[string]interface{}{"name": "Updated"}},
+		{Type: funnel.EditTypeDelete, ObjectType: "Employee", PrimaryKey: "emp-3"},
+	}
+	prevEdits := []map[string]interface{}{
+		nil,                                  // CREATE → no prev state
+		{"name": "Original"},                 // MODIFY → prev properties
+		{"name": "Deleted", "role": "admin"}, // DELETE → full prev object
+	}
+	editsJSON, _ := json.Marshal(edits)
+	prevEditsJSON, _ := json.Marshal(prevEdits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			4: {
+				ID:        4,
+				Edits:     editsJSON,
+				PrevEdits: prevEditsJSON,
+				Status:    "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+
+	result, err := exec.Revert(context.Background(), "test-ontology", 4)
+	if err != nil {
+		t.Fatalf("Revert failed: %v", err)
+	}
+	if len(result.Edits) != 3 {
+		t.Fatalf("expected 3 reverse edits, got %d", len(result.Edits))
+	}
+	// CREATE → DELETE
+	if result.Edits[0].Type != funnel.EditTypeDelete {
+		t.Errorf("edit[0]: expected DELETE, got %s", result.Edits[0].Type)
+	}
+	// MODIFY → MODIFY with prev state
+	if result.Edits[1].Type != funnel.EditTypeModify {
+		t.Errorf("edit[1]: expected MODIFY, got %s", result.Edits[1].Type)
+	}
+	if result.Edits[1].Properties["name"] != "Original" {
+		t.Errorf("edit[1]: expected name=Original, got %v", result.Edits[1].Properties["name"])
+	}
+	// DELETE → CREATE with prev state
+	if result.Edits[2].Type != funnel.EditTypeCreate {
+		t.Errorf("edit[2]: expected CREATE, got %s", result.Edits[2].Type)
+	}
+	if result.Edits[2].Properties["role"] != "admin" {
+		t.Errorf("edit[2]: expected role=admin, got %v", result.Edits[2].Properties["role"])
+	}
+}
+
+func TestRevert_DoubleRevert_Returns409(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1"},
+	}
+	editsJSON, _ := json.Marshal(edits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			5: {
+				ID:     5,
+				Edits:  editsJSON,
+				Status: "REVERTED",
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+
+	_, err := exec.Revert(context.Background(), "test-ontology", 5)
+	if err == nil {
+		t.Fatal("expected error for double revert")
+	}
+	var alreadyReverted *AlreadyRevertedError
+	if !errors.As(err, &alreadyReverted) {
+		t.Fatalf("expected *AlreadyRevertedError, got %T: %v", err, err)
+	}
+}
+
+func TestRevert_NotFound(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{},
+	}
+
+	exec := NewExecutor(repo, nil)
+
+	_, err := exec.Revert(context.Background(), "test-ontology", 999)
+	if err == nil {
+		t.Fatal("expected error for non-existent action log")
+	}
+}
+
+func TestRevert_LinkEdits_Skipped(t *testing.T) {
+	// LINK_CREATE and LINK_DELETE edits should be reversed.
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "emp-2", LinkTypeRID: "lt-2", TargetPrimaryKey: "dept-2"},
+	}
+	prevEdits := []map[string]interface{}{nil, nil}
+	editsJSON, _ := json.Marshal(edits)
+	prevEditsJSON, _ := json.Marshal(prevEdits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			6: {
+				ID:        6,
+				Edits:     editsJSON,
+				PrevEdits: prevEditsJSON,
+				Status:    "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+
+	result, err := exec.Revert(context.Background(), "test-ontology", 6)
+	if err != nil {
+		t.Fatalf("Revert failed: %v", err)
+	}
+	if len(result.Edits) != 2 {
+		t.Fatalf("expected 2 reverse edits, got %d", len(result.Edits))
+	}
+	// LINK_CREATE → LINK_DELETE
+	if result.Edits[0].Type != funnel.EditTypeLinkDelete {
+		t.Errorf("edit[0]: expected LINK_DELETE, got %s", result.Edits[0].Type)
+	}
+	// LINK_DELETE → LINK_CREATE
+	if result.Edits[1].Type != funnel.EditTypeLinkCreate {
+		t.Errorf("edit[1]: expected LINK_CREATE, got %s", result.Edits[1].Type)
+	}
+}
+
+func TestRevert_PublishesBatch(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "Alice"}},
+	}
+	editsJSON, _ := json.Marshal(edits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			7: {
+				ID:     7,
+				Edits:  editsJSON,
+				Status: "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+
+	_, err := exec.Revert(context.Background(), "test-ontology", 7)
+	if err != nil {
+		t.Fatalf("Revert failed: %v", err)
+	}
+	if pub.callCount != 1 {
+		t.Errorf("expected 1 publish call, got %d", pub.callCount)
+	}
+	if pub.lastBatch == nil {
+		t.Fatal("expected a published batch")
+	}
+	if pub.lastBatch.OntologyAPIName != "test-ontology" {
+		t.Errorf("expected ontology=test-ontology, got %s", pub.lastBatch.OntologyAPIName)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Revert Handler Tests (US-105)
+// ---------------------------------------------------------------------------
+
+func TestRevertHandler_Success(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1"},
+	}
+	editsJSON, _ := json.Marshal(edits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			1: {
+				ID:     1,
+				Edits:  editsJSON,
+				Status: "SUCCESS",
+			},
+		},
+	}
+
+	pub := &mockPublisher{}
+	exec := NewExecutor(repo, pub)
+	handler := NewHandler(exec)
+
+	body := bytes.NewBufferString(`{"actionLogId": 1}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/actions/revert", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("ontologyApiName", "test")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.Revert(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRevertHandler_DoubleRevert_409(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1"},
+	}
+	editsJSON, _ := json.Marshal(edits)
+
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{
+			1: {
+				ID:     1,
+				Edits:  editsJSON,
+				Status: "REVERTED",
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	handler := NewHandler(exec)
+
+	body := bytes.NewBufferString(`{"actionLogId": 1}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/actions/revert", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("ontologyApiName", "test")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.Revert(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRevertHandler_NotFound_404(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionLogByID: map[int64]*oms.ActionLog{},
+	}
+
+	exec := NewExecutor(repo, nil)
+	handler := NewHandler(exec)
+
+	body := bytes.NewBufferString(`{"actionLogId": 999}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/actions/revert", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("ontologyApiName", "test")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.Revert(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
 }

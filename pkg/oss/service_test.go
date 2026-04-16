@@ -326,10 +326,14 @@ func (m *mockOmsRepo) DeleteQueryType(_ context.Context, _ string) error        
 
 // ActionLog stubs
 func (m *mockOmsRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }
+func (m *mockOmsRepo) GetActionLog(_ context.Context, _ int64) (*oms.ActionLog, error) {
+	return nil, oms.ErrNotFound
+}
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil
 }
-func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error) { return 0, nil }
+func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
+func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

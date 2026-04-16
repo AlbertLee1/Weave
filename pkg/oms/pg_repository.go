@@ -1517,6 +1517,36 @@ func (r *PGRepository) DeleteFunction(ctx context.Context, rid string) error {
 
 // --- ActionLog ---
 
+func (r *PGRepository) GetActionLog(ctx context.Context, id int64) (*ActionLog, error) {
+	al := &ActionLog{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, action_type_rid, user_id, parameters, edits, COALESCE(prev_edits, 'null'),
+		 status, COALESCE(error_message, ''), created_at
+		 FROM action_logs WHERE id = $1`, id).
+		Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters, &al.Edits,
+			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return al, nil
+}
+
+func (r *PGRepository) UpdateActionLogStatus(ctx context.Context, id int64, status string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_logs SET status = $1 WHERE id = $2`,
+		status, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, action_type_rid, user_id, parameters, edits, status,
