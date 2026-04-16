@@ -3,6 +3,7 @@ package automate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -419,6 +420,116 @@ func TestSchedulerPauseResume(t *testing.T) {
 
 	if count != 1 {
 		t.Fatalf("expected 1 entry after resume, got %d", count)
+	}
+}
+
+func TestScheduler_ExecuteActionEffect(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{}
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"generateReport","parameters":{"source":"scheduled"}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-sched-action",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Scheduled Action",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+	})
+
+	s := New(loader, recorder)
+	s.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for cron to fire
+	deadline := time.After(5 * time.Second)
+	for {
+		calls := applier.getCalls()
+		if len(calls) > 0 {
+			if calls[0].ontologyRID != "ri.ontology.main.ontology.1" {
+				t.Fatalf("expected ontologyRID, got %q", calls[0].ontologyRID)
+			}
+			if calls[0].actionType != "generateReport" {
+				t.Fatalf("expected actionType 'generateReport', got %q", calls[0].actionType)
+			}
+			if calls[0].parameters["source"] != "scheduled" {
+				t.Fatalf("expected source 'scheduled', got %v", calls[0].parameters["source"])
+			}
+
+			// Verify execution recorded as success
+			execs := recorder.getExecutions()
+			if len(execs) == 0 {
+				t.Fatal("expected at least 1 execution")
+			}
+			if execs[0].Status != "success" {
+				t.Fatalf("expected status 'success', got %q", execs[0].Status)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for scheduled action effect")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func TestScheduler_ExecuteActionEffect_Failure(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{err: fmt.Errorf("action failed")}
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"badAction","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-sched-fail",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Failing Scheduled Action",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+	})
+
+	s := New(loader, recorder)
+	s.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for cron to fire
+	deadline := time.After(5 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			if execs[0].Status != "error" {
+				t.Fatalf("expected status 'error', got %q", execs[0].Status)
+			}
+			if execs[0].Error == "" {
+				t.Fatal("expected non-empty error message")
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for scheduled execution")
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }
 

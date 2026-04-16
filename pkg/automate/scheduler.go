@@ -48,12 +48,13 @@ type schedulerEntry struct {
 
 // Scheduler manages cron-based automation rule execution.
 type Scheduler struct {
-	loader   RuleLoader
-	recorder ExecutionRecorder
-	cron     *cron.Cron
-	mu       sync.Mutex
-	entries  map[string]cron.EntryID // ruleID → cron entryID
-	ctx      context.Context
+	loader        RuleLoader
+	recorder      ExecutionRecorder
+	actionApplier ActionApplier
+	cron          *cron.Cron
+	mu            sync.Mutex
+	entries       map[string]cron.EntryID // ruleID → cron entryID
+	ctx           context.Context
 }
 
 // New creates a new Scheduler.
@@ -63,6 +64,11 @@ func New(loader RuleLoader, recorder ExecutionRecorder) *Scheduler {
 		recorder: recorder,
 		entries:  make(map[string]cron.EntryID),
 	}
+}
+
+// SetActionApplier sets the action applier for executeAction effects.
+func (s *Scheduler) SetActionApplier(applier ActionApplier) {
+	s.actionApplier = applier
 }
 
 // Start initializes the scheduler, loads active schedule rules, and begins cron execution.
@@ -129,10 +135,11 @@ func (s *Scheduler) addRuleInternal(rule oms.AutomationRule) error {
 	}
 
 	ruleID := rule.ID
+	ontologyRID := rule.OntologyRID
 	effects := rule.Effects
 
 	entryID, err := s.cron.AddFunc(cfg.Cron, func() {
-		s.executeRule(ruleID, effects)
+		s.executeRule(ruleID, ontologyRID, effects)
 	})
 	if err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", cfg.Cron, err)
@@ -145,31 +152,48 @@ func (s *Scheduler) addRuleInternal(rule oms.AutomationRule) error {
 	return nil
 }
 
-func (s *Scheduler) executeRule(ruleID string, effects json.RawMessage) {
+func (s *Scheduler) executeRule(ruleID, ontologyRID string, effects json.RawMessage) {
 	startedAt := time.Now()
 
 	triggerEvent, _ := json.Marshal(map[string]interface{}{
-		"type":      "schedule",
-		"firedAt":   startedAt.UTC().Format(time.RFC3339),
-		"ruleId":    ruleID,
+		"type":    "schedule",
+		"firedAt": startedAt.UTC().Format(time.RFC3339),
+		"ruleId":  ruleID,
 	})
 
-	// For now, just log the execution (effects will be processed in US-128/US-129)
-	log.Printf("[automate] executing rule %s with %d bytes of effects", ruleID, len(effects))
+	log.Printf("[automate] executing scheduled rule %s", ruleID)
+
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Build event data (minimal for schedule triggers)
+	eventData := &TriggerEventData{}
+
+	// Process effects
+	var execErr error
+	if len(effects) > 0 {
+		execErr = processEffects(ctx, effects, ontologyRID, eventData, s.actionApplier)
+	}
 
 	completedAt := time.Now()
+	status := "success"
+	errMsg := ""
+	if execErr != nil {
+		status = "error"
+		errMsg = execErr.Error()
+		log.Printf("[automate] effect execution failed for rule %s: %v", ruleID, execErr)
+	}
+
 	exec := &oms.AutomationExecution{
 		ID:           rid.NewAutomationExecutionRID(),
 		RuleID:       ruleID,
 		TriggerEvent: triggerEvent,
 		StartedAt:    startedAt,
 		CompletedAt:  &completedAt,
-		Status:       "success",
-	}
-
-	ctx := s.ctx
-	if ctx == nil {
-		ctx = context.Background()
+		Status:       status,
+		Error:        errMsg,
 	}
 
 	if err := s.recorder.InsertExecution(ctx, exec); err != nil {

@@ -3,6 +3,7 @@ package automate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -888,6 +889,213 @@ func TestWatcherRemoveNonExistentRule(t *testing.T) {
 
 	// Should not panic
 	w.RemoveRule("nonexistent")
+}
+
+func TestWatcher_ExecuteActionEffect(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{}
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"createReport","parameters":{"employeeId":"${event.primaryKey}","action":"${event.editType}"}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-action",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Action Effect Rule",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+	})
+
+	w := NewWatcher(loader, recorder)
+	w.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-1",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify action was applied with resolved templates
+	calls := applier.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 action call, got %d", len(calls))
+	}
+	if calls[0].ontologyRID != "ri.ontology.main.ontology.1" {
+		t.Fatalf("expected ontologyRID 'ri.ontology.main.ontology.1', got %q", calls[0].ontologyRID)
+	}
+	if calls[0].actionType != "createReport" {
+		t.Fatalf("expected actionType 'createReport', got %q", calls[0].actionType)
+	}
+	if calls[0].parameters["employeeId"] != "emp-1" {
+		t.Fatalf("expected employeeId 'emp-1', got %v", calls[0].parameters["employeeId"])
+	}
+	if calls[0].parameters["action"] != "CREATE" {
+		t.Fatalf("expected action 'CREATE', got %v", calls[0].parameters["action"])
+	}
+
+	// Verify execution recorded as success
+	execs := recorder.getExecutions()
+	if len(execs) != 1 {
+		t.Fatalf("expected 1 execution, got %d", len(execs))
+	}
+	if execs[0].Status != "success" {
+		t.Fatalf("expected status 'success', got %q", execs[0].Status)
+	}
+}
+
+func TestWatcher_ExecuteActionEffect_TemplateWithProperties(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{}
+	fetcher := newMockPropertyFetcher()
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"notifyDept","parameters":{"dept":"${event.properties.department}","pk":"${event.primaryKey}"}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-props",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Props Rule",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+	})
+
+	fetcher.setProperties("Employee", "emp-1", map[string]interface{}{
+		"department": "Engineering",
+	})
+
+	w := NewWatcher(loader, recorder)
+	w.SetActionApplier(applier)
+	w.SetPropertyFetcher(fetcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-1",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	calls := applier.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].parameters["dept"] != "Engineering" {
+		t.Fatalf("expected dept 'Engineering', got %v", calls[0].parameters["dept"])
+	}
+	if calls[0].parameters["pk"] != "emp-1" {
+		t.Fatalf("expected pk 'emp-1', got %v", calls[0].parameters["pk"])
+	}
+}
+
+func TestWatcher_ExecuteActionEffect_Failure(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{err: fmt.Errorf("action type not found")}
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"nonExistent","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-fail",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Failing Rule",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+	})
+
+	w := NewWatcher(loader, recorder)
+	w.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-1",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	execs := recorder.getExecutions()
+	if len(execs) != 1 {
+		t.Fatalf("expected 1 execution, got %d", len(execs))
+	}
+	if execs[0].Status != "error" {
+		t.Fatalf("expected status 'error', got %q", execs[0].Status)
+	}
+	if execs[0].Error == "" {
+		t.Fatal("expected non-empty error message")
+	}
+}
+
+func TestWatcher_ExecuteActionEffect_NoApplier(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"skip","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-no-applier",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "No Applier Rule",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+	})
+
+	// No SetActionApplier — should degrade gracefully
+	w := NewWatcher(loader, recorder)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-1",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Should still record execution as success (effect skipped gracefully)
+	execs := recorder.getExecutions()
+	if len(execs) != 1 {
+		t.Fatalf("expected 1 execution, got %d", len(execs))
+	}
+	if execs[0].Status != "success" {
+		t.Fatalf("expected status 'success', got %q", execs[0].Status)
+	}
 }
 
 func TestWatcherLinkEditTypesIgnored(t *testing.T) {

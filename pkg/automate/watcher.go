@@ -62,6 +62,7 @@ type Watcher struct {
 	loader          DataChangeRuleLoader
 	recorder        ExecutionRecorder
 	propertyFetcher ObjectPropertyFetcher
+	actionApplier   ActionApplier
 	mu              sync.Mutex
 	rules           []watcherRule
 	debounceTimers  map[string]*debounceEntry // ruleID → pending debounce
@@ -82,6 +83,11 @@ func NewWatcher(loader DataChangeRuleLoader, recorder ExecutionRecorder) *Watche
 // SetPropertyFetcher sets an optional property fetcher for where clause evaluation.
 func (w *Watcher) SetPropertyFetcher(fetcher ObjectPropertyFetcher) {
 	w.propertyFetcher = fetcher
+}
+
+// SetActionApplier sets the action applier for executeAction effects.
+func (w *Watcher) SetActionApplier(applier ActionApplier) {
+	w.actionApplier = applier
 }
 
 // Start loads active data-change rules and prepares the watcher for event processing.
@@ -224,7 +230,7 @@ func (w *Watcher) matchRule(wr *watcherRule, event funnel.ChangeEvent) bool {
 // triggerRule fires or debounces execution for a matched rule.
 func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
 	if wr.config.DebounceMs <= 0 {
-		w.executeRule(wr.rule.ID, event, wr.rule.Effects)
+		w.executeRule(wr.rule.ID, wr.rule.OntologyRID, event, wr.rule.Effects)
 		return
 	}
 
@@ -232,6 +238,7 @@ func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
 	defer w.mu.Unlock()
 
 	ruleID := wr.rule.ID
+	ontologyRID := wr.rule.OntologyRID
 	debounceMs := wr.config.DebounceMs
 	effects := wr.rule.Effects
 
@@ -245,7 +252,7 @@ func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
 			delete(w.debounceTimers, ruleID)
 			w.mu.Unlock()
 			if e != nil {
-				w.executeRule(ruleID, e.event, effects)
+				w.executeRule(ruleID, ontologyRID, e.event, effects)
 			}
 		})
 	} else {
@@ -256,14 +263,14 @@ func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
 			delete(w.debounceTimers, ruleID)
 			w.mu.Unlock()
 			if e != nil {
-				w.executeRule(ruleID, e.event, effects)
+				w.executeRule(ruleID, ontologyRID, e.event, effects)
 			}
 		})
 		w.debounceTimers[ruleID] = entry
 	}
 }
 
-func (w *Watcher) executeRule(ruleID string, event funnel.ChangeEvent, effects json.RawMessage) {
+func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEvent, effects json.RawMessage) {
 	startedAt := time.Now()
 
 	triggerEvent, _ := json.Marshal(map[string]interface{}{
@@ -276,19 +283,49 @@ func (w *Watcher) executeRule(ruleID string, event funnel.ChangeEvent, effects j
 
 	log.Printf("[automate] data change trigger fired for rule %s: %s %s %s", ruleID, event.EditType, event.ObjectType, event.PrimaryKey)
 
+	ctx := w.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Build event data for template resolution
+	eventData := &TriggerEventData{
+		PrimaryKey: event.PrimaryKey,
+		EditType:   string(event.EditType),
+		ObjectType: event.ObjectType,
+	}
+
+	// Fetch properties for template resolution (if fetcher available)
+	if w.propertyFetcher != nil {
+		props, err := w.propertyFetcher.FetchProperties(ctx, event.ObjectType, event.PrimaryKey)
+		if err == nil && props != nil {
+			eventData.Properties = props
+		}
+	}
+
+	// Process effects
+	var execErr error
+	if len(effects) > 0 {
+		execErr = processEffects(ctx, effects, ontologyRID, eventData, w.actionApplier)
+	}
+
 	completedAt := time.Now()
+	status := "success"
+	errMsg := ""
+	if execErr != nil {
+		status = "error"
+		errMsg = execErr.Error()
+		log.Printf("[automate] effect execution failed for rule %s: %v", ruleID, execErr)
+	}
+
 	exec := &oms.AutomationExecution{
 		ID:           rid.NewAutomationExecutionRID(),
 		RuleID:       ruleID,
 		TriggerEvent: triggerEvent,
 		StartedAt:    startedAt,
 		CompletedAt:  &completedAt,
-		Status:       "success",
-	}
-
-	ctx := w.ctx
-	if ctx == nil {
-		ctx = context.Background()
+		Status:       status,
+		Error:        errMsg,
 	}
 
 	if err := w.recorder.InsertExecution(ctx, exec); err != nil {
