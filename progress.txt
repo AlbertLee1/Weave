@@ -55,6 +55,10 @@
 - doesNotIntersect* operators: negate via BooleanQuery(MatchAll + MustNot(inner)); for BoundingBox use GeoShapeQuery("polygon","intersects") over GeoBoundingBoxQuery for GeoShape field compat
 - PolygonQuery input format: {"polygon": [[[lon,lat],...]] } — GeoJSON Polygon coordinates; converted to [][][][]float64 for Bleve
 - Branch overlay pattern: validateBranch(w,r) checks ?branch= param; writeBranchChange(ctx, branchID, changeType, entityType, entityRID, before, after) serializes and records; Update handlers use copy-then-modify (updated := *existing) to preserve before_state
+- BranchedRepository decorator in pkg/oms/branched_repository.go — wraps base Repository, overrides List/Get methods to apply branch overlay (ADDED→append, MODIFIED→replace by RID, DELETED→remove by RID)
+- resolveRepo(w, r) helper on OMSHandler: returns base repo or BranchedRepository based on ?branch= query param; validates branch exists (any status allowed for reads)
+- Generic overlay helpers: applyListOverlay[T] and applyGetOverlay[T] with Go generics for type-safe overlay logic
+- json:"-" fields (OntologyRID, ObjectTypeRID) are lost during branch change JSON serialization — ADDED entities from branch may have empty parent references; don't filter ADDED entities by parent ID in overlay
 
 ---
 
@@ -307,4 +311,19 @@
   - writeBranchChange uses uuid.New().String() for BranchChange IDs (no specific RID generator for changes)
   - Branch overlay skips status checks on delete (e.g. ACTIVE ObjectType can be deleted on a branch since it's just a schema experiment)
   - Pattern: branch validation + early return inserted between entity construction/mutation and repo.Create/Update/Delete calls
+---
+
+## 2026-04-16 - US-115
+- Implemented ontology branches — read operations merge main + overlay
+- Files changed:
+  - pkg/oms/branched_repository.go — New file: BranchedRepository decorator wrapping base Repository; overrides ListObjectTypes, GetObjectTypeByAPIName, ListProperties, ListLinkTypes, ListActionTypes, GetActionTypeByAPIName; generic helpers applyListOverlay[T] and applyGetOverlay[T] with unmarshal functions per entity type
+  - pkg/oms/branched_repository_test.go — New file: 14 unit tests using in-package inMemoryRepo; covers ADDED/MODIFIED/DELETED for ListObjectTypes, GetObjectTypeByAPIName; ListProperties overlay, ListLinkTypes overlay, ListActionTypes overlay, GetActionTypeByAPIName overlay, mixed changes, main-reads-unaffected
+  - pkg/oms/handlers.go — Added resolveRepo(w, r) helper (returns base or BranchedRepository based on ?branch=); modified 6 read handlers to use resolveRepo: ListObjectTypes, GetObjectType, ListOutgoingLinkTypes, ListActionTypes, GetActionType, GetFullMetadata
+  - pkg/oms/handlers_branch_read_test.go — New file: 9 handler-level tests for branch read overlay: ListObjectTypes with/without branch, GetObjectType modified/added/not-on-branch, ListActionTypes, GetActionType, BranchNotFound, GetFullMetadata with branch
+- **Learnings for future iterations:**
+  - BranchedRepository embeds Repository interface for delegation of non-overridden methods (Go interface embedding in struct)
+  - Fields tagged json:"-" (OntologyRID, ObjectTypeRID) are lost during BranchChange JSON serialization — don't filter ADDED entities by parent reference
+  - resolveRepo allows any branch status (open/closed/merged) for reads — branch reads are historical, not restricted to open branches
+  - V2 read handlers pass chi URL param directly to repo methods (no OntologyRID resolution) — tests must use full RID in URLs
+  - Generic overlay helpers (applyListOverlay, applyGetOverlay) take function params for RID extraction, apiName extraction, and unmarshal — reusable for all entity types
 ---
