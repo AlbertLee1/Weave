@@ -33,6 +33,11 @@ type Connection struct {
 	conn *websocket.Conn
 	send chan Message
 	done chan struct{} // closed when the connection's goroutines have exited
+
+	// Subscription management (US-133). Protected by subMu.
+	subMu         sync.Mutex
+	subscriptions map[string]*Subscription
+	hub           *Hub // back-pointer for message dispatching
 }
 
 // Hub manages active WebSocket connections and routes messages to them.
@@ -80,10 +85,12 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	connID := uuid.New().String()
 	c := &Connection{
-		id:   connID,
-		conn: wsConn,
-		send: make(chan Message, 64),
-		done: make(chan struct{}),
+		id:            connID,
+		conn:          wsConn,
+		send:          make(chan Message, 64),
+		done:          make(chan struct{}),
+		subscriptions: make(map[string]*Subscription),
+		hub:           h,
 	}
 
 	h.register(c)
@@ -173,6 +180,20 @@ func (h *Hub) Close() {
 	}
 }
 
+// SubscriptionCount returns the number of active subscriptions on a connection.
+// Returns -1 if the connection is not found.
+func (h *Hub) SubscriptionCount(connID string) int {
+	h.mu.Lock()
+	c, ok := h.conns[connID]
+	h.mu.Unlock()
+	if !ok {
+		return -1
+	}
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+	return len(c.subscriptions)
+}
+
 func (h *Hub) register(c *Connection) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -207,16 +228,36 @@ func (c *Connection) writePump(ctx context.Context) {
 	}
 }
 
-// readPump reads messages from the WebSocket. Currently it discards
-// incoming messages (subscription handling will be added in US-133).
-// It exits when the connection is closed or an error occurs.
+// readPump reads messages from the WebSocket and dispatches subscribe /
+// unsubscribe requests. It exits when the connection is closed or an
+// error occurs.
 func (c *Connection) readPump(ctx context.Context) {
 	c.conn.SetReadLimit(32768) // 32KB max message size
 	for {
-		_, _, err := c.conn.Read(ctx)
+		_, data, err := c.conn.Read(ctx)
 		if err != nil {
 			return
 		}
-		// Message handling will be added in US-133 (subscribe/unsubscribe).
+
+		var envelope Message
+		if err := json.Unmarshal(data, &envelope); err != nil {
+			c.send <- Message{Type: "error", Error: "invalid JSON message"}
+			continue
+		}
+
+		var resp Message
+		switch envelope.Type {
+		case "subscribe":
+			resp = c.hub.handleSubscribe(c, envelope.Data)
+		case "unsubscribe":
+			resp = c.hub.handleUnsubscribe(c, envelope.Data)
+		default:
+			resp = Message{Type: "error", Error: "unknown message type: " + envelope.Type}
+		}
+
+		select {
+		case c.send <- resp:
+		default:
+		}
 	}
 }

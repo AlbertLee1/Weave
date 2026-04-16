@@ -68,6 +68,11 @@
 - WebSocket Hub pattern: pkg/subscriptions/hub.go — Hub manages connections map; per-connection context derived from Hub context; readPump cancel triggers writePump exit; Hub.Close cancels context + closes all connections
 - WebSocket auth pattern: pkg/subscriptions/handler.go — TokenValidator func(token)(userID, error); nil validator = dev mode (accept all); ?token= query param validated before websocket.Accept upgrade
 - WebSocket route registered directly in NewFullRouter (not RegisterRoutes) because it's outside the auth middleware group
+- Subscription pattern: pkg/subscriptions/subscription.go — Subscription struct with ID/ObjectType/Where/Select; Matches() evaluates objectType + where.MatchClause; ProjectProperties() filters by Select clause
+- Subscribe/Unsubscribe: handleSubscribe/handleUnsubscribe on Hub; dispatched from readPump via Message.Type switch
+- Connection.subscriptions: map[string]*Subscription with separate subMu lock; max 10 per connection (MaxSubscriptionsPerConnection)
+- HandleObjectChange(objectType, primaryKey, editType, properties): snapshots connections under lock, evaluates subs outside lock, pushes ObjectChangeEvent to matching connections
+- ObjectChangeEvent: { state: "ADDED_OR_UPDATED"|"DELETED", object: {...} } — CREATE/MODIFY→ADDED_OR_UPDATED, DELETE→DELETED
 - Frontend routes in web/src/App.tsx
 - API hooks in web/src/hooks/
 - Sidebar nav in web/src/components/layout/Sidebar.tsx
@@ -728,4 +733,20 @@
   - websocket.Dial(ctx, url, opts) for client-side test connections; httptest.NewServer + URL rewrite "http" → "ws"
   - Hub.Close sends StatusGoingAway to all connections, then waits for goroutines to exit (5s timeout per connection)
   - contract_test.go walks chi router and checks all routes have OpenAPI entries — WebSocket Hub must be non-nil in test deps
+---
+
+## 2026-04-16 - US-133
+- Implemented WebSocket — object change subscription (subscribe/unsubscribe with where/select filtering)
+- Files changed:
+  - pkg/subscriptions/subscription.go — New file: Subscription struct (ID, ObjectType, Where, Select), SubscribeRequest, ObjectChangeEvent types; NewSubscription, Matches (objectType + where.MatchClause), ProjectProperties (select projection), editTypeToState; HandleObjectChange on Hub (snapshot connections, evaluate subs, push events); handleSubscribe (validates objectType, enforces MaxSubscriptionsPerConnection=10), handleUnsubscribe (validates subscriptionId)
+  - pkg/subscriptions/hub.go — Added subMu/subscriptions/hub fields to Connection; updated readPump to parse JSON messages and dispatch subscribe/unsubscribe via Hub methods; added SubscriptionCount(connID) helper; Connection now initialized with empty subscriptions map
+  - pkg/subscriptions/subscription_test.go — New file: 20 tests: NewSubscription, Matches_ObjectType, Matches_WhereClause, Matches_NilWhere, ProjectProperties_NoSelect/WithSelect/MissingField, EditTypeToState; WebSocket integration: Subscribe_Success, Subscribe_MissingObjectType, Subscribe_MaxLimit (10 OK, 11th error), Unsubscribe_Success/NotFound, ThenObjectChange_ReceivesEvent, DeleteEvent_StateIsDeleted, WhereFilter_OnlyMatchingEvents, SelectProjection, DifferentObjectType_NoEvent, MultipleSubscriptions_SameConnection, Unsubscribe_StopsEvents, UnknownMessageType, Disconnect_CleansSubscriptions
+- **Learnings for future iterations:**
+  - Connection.subscriptions uses a separate subMu lock (not Hub.mu) to avoid holding Hub lock during subscription evaluation
+  - HandleObjectChange snapshots connections under Hub.mu, then evaluates subscriptions outside the lock to avoid blocking new connections during event routing
+  - where.MatchClause reused directly for in-memory where clause evaluation — same as SSE and Watcher patterns
+  - readPump now parses JSON messages and dispatches by Type field; unknown types return error message
+  - Disconnect auto-cleans subscriptions because the Connection (and its subscriptions map) is garbage collected when unregistered from Hub.conns
+  - MaxSubscriptionsPerConnection=10 enforced in handleSubscribe before creating the Subscription
+  - ObjectChangeEvent.State maps CREATE/MODIFY→ADDED_OR_UPDATED, DELETE→DELETED (Palantir convention)
 ---
