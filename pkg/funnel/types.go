@@ -6,9 +6,10 @@ import "time"
 type EditType string
 
 const (
-	EditTypeCreate EditType = "CREATE"
-	EditTypeModify EditType = "MODIFY"
-	EditTypeDelete EditType = "DELETE"
+	EditTypeCreate     EditType = "CREATE"
+	EditTypeModify     EditType = "MODIFY"
+	EditTypeDelete     EditType = "DELETE"
+	EditTypeLinkCreate EditType = "LINK_CREATE"
 )
 
 // Edit source discriminators used by the user-edit-wins conflict resolver in
@@ -44,6 +45,9 @@ type Edit struct {
 	Properties map[string]interface{} `json:"properties,omitempty"` // for CREATE/MODIFY
 	Source     string                 `json:"source,omitempty"`
 	Markings   []string               `json:"markings,omitempty"`
+	// Link edit fields — populated for LINK_CREATE / LINK_DELETE edits only.
+	LinkTypeRID      string `json:"linkTypeRid,omitempty"`
+	TargetPrimaryKey string `json:"targetPrimaryKey,omitempty"`
 }
 
 // EditBatch represents a batch of edits to be applied atomically.

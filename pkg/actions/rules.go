@@ -10,10 +10,14 @@ import (
 
 // Rule defines an action rule.
 type Rule struct {
-	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject"
+	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink"
 	ObjectType string `json:"objectType"`
 	// For createObject/modifyObject — property bindings
 	PropertyBindings map[string]PropertyBinding `json:"propertyBindings,omitempty"`
+	// Link rule fields — for createLink rules
+	LinkTypeAPIName        string `json:"linkTypeApiName,omitempty"`
+	SourceObjectPrimaryKey string `json:"sourceObjectPrimaryKey,omitempty"` // parameter ID for source PK
+	TargetObjectPrimaryKey string `json:"targetObjectPrimaryKey,omitempty"` // parameter ID for target PK
 }
 
 // PropertyBinding binds a property to a value source.
@@ -87,6 +91,22 @@ func executeRule(rule Rule, params map[string]interface{}) (funnel.Edit, error) 
 			PrimaryKey: pk,
 		}, nil
 
+	case "createLink":
+		sourcePK := resolveStringParam(rule.SourceObjectPrimaryKey, params)
+		if sourcePK == "" {
+			return funnel.Edit{}, fmt.Errorf("createLink: source primary key not found in parameters for %q", rule.SourceObjectPrimaryKey)
+		}
+		targetPK := resolveStringParam(rule.TargetObjectPrimaryKey, params)
+		if targetPK == "" {
+			return funnel.Edit{}, fmt.Errorf("createLink: target primary key not found in parameters for %q", rule.TargetObjectPrimaryKey)
+		}
+		return funnel.Edit{
+			Type:             funnel.EditTypeLinkCreate,
+			PrimaryKey:       sourcePK,
+			LinkTypeRID:      rule.LinkTypeAPIName, // resolved to RID in Executor.Prepare
+			TargetPrimaryKey: targetPK,
+		}, nil
+
 	default:
 		return funnel.Edit{}, fmt.Errorf("unknown rule type: %q", rule.Type)
 	}
@@ -106,6 +126,16 @@ func resolveBindings(bindings map[string]PropertyBinding, params map[string]inte
 		}
 	}
 	return props
+}
+
+// resolveStringParam extracts a string value from params using the given key.
+func resolveStringParam(key string, params map[string]interface{}) string {
+	if v, ok := params[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 func findPrimaryKey(objectType string, params map[string]interface{}) string {

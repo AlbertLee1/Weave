@@ -1491,3 +1491,239 @@ func TestExecutor_NotFunctionBacked_DispatcherIgnored(t *testing.T) {
 		t.Errorf("expected rules path Employee edit, got %+v", result.Edits)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// createLink Rule Tests (US-100)
+// ---------------------------------------------------------------------------
+
+func TestParseRules_CreateLink(t *testing.T) {
+	data := mustJSON([]Rule{
+		{
+			Type:                   "createLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	})
+	rules, err := ParseRules(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Type != "createLink" {
+		t.Fatalf("unexpected rules: %+v", rules)
+	}
+	if rules[0].LinkTypeAPIName != "employeeDepartment" {
+		t.Fatalf("expected LinkTypeAPIName employeeDepartment, got %s", rules[0].LinkTypeAPIName)
+	}
+}
+
+func TestExecuteRules_CreateLink(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:                   "createLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"employeeId":   "emp-1",
+		"departmentId": "dept-1",
+	}
+	edits, err := ExecuteRules(rules, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	if edits[0].Type != funnel.EditTypeLinkCreate {
+		t.Fatalf("expected LINK_CREATE, got %s", edits[0].Type)
+	}
+	if edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", edits[0].PrimaryKey)
+	}
+	if edits[0].TargetPrimaryKey != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", edits[0].TargetPrimaryKey)
+	}
+	if edits[0].LinkTypeRID != "employeeDepartment" {
+		t.Fatalf("expected LinkTypeRID employeeDepartment (api name, pre-resolve), got %s", edits[0].LinkTypeRID)
+	}
+}
+
+func TestExecuteRules_CreateLink_MissingSourcePK(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:                   "createLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"departmentId": "dept-1",
+	}
+	_, err := ExecuteRules(rules, params)
+	if err == nil {
+		t.Fatal("expected error for missing source PK")
+	}
+}
+
+func TestExecuteRules_CreateLink_MissingTargetPK(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:                   "createLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"employeeId": "emp-1",
+	}
+	_, err := ExecuteRules(rules, params)
+	if err == nil {
+		t.Fatal("expected error for missing target PK")
+	}
+}
+
+func TestExecuteRules_CreateLink_WithObjectRules(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:       "createObject",
+			ObjectType: "Employee",
+			PropertyBindings: map[string]PropertyBinding{
+				"name": {Type: "parameter", Value: "name"},
+			},
+		},
+		{
+			Type:                   "createLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"name":         "Alice",
+		"employeeId":   "emp-1",
+		"departmentId": "dept-1",
+	}
+	edits, err := ExecuteRules(rules, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edits) != 2 {
+		t.Fatalf("expected 2 edits, got %d", len(edits))
+	}
+	if edits[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected first edit CREATE, got %s", edits[0].Type)
+	}
+	if edits[1].Type != funnel.EditTypeLinkCreate {
+		t.Fatalf("expected second edit LINK_CREATE, got %s", edits[1].Type)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CollapseEdits LINK_CREATE Tests (US-100)
+// ---------------------------------------------------------------------------
+
+func TestCollapseEdits_LinkCreate_NoDuplicate(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 link edit (deduped), got %d", len(result))
+	}
+	if result[0].Type != funnel.EditTypeLinkCreate {
+		t.Fatalf("expected LINK_CREATE, got %s", result[0].Type)
+	}
+}
+
+func TestCollapseEdits_LinkCreate_DifferentTargets(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-2"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 link edits (different targets), got %d", len(result))
+	}
+}
+
+func TestCollapseEdits_MixedObjectAndLink(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "Employee", PrimaryKey: "emp-1", Properties: map[string]interface{}{"name": "Alice"}},
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 edits (1 object + 1 link), got %d", len(result))
+	}
+	if result[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected first edit CREATE, got %s", result[0].Type)
+	}
+	if result[1].Type != funnel.EditTypeLinkCreate {
+		t.Fatalf("expected second edit LINK_CREATE, got %s", result[1].Type)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor createLink Tests (US-100)
+// ---------------------------------------------------------------------------
+
+func TestExecutor_Apply_CreateLink(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("linkEmployeeDept", []ParameterDef{
+				{ID: "employeeId", Type: "string", Required: true},
+				{ID: "departmentId", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:                   "createLink",
+					LinkTypeAPIName:        "employeeDepartment",
+					SourceObjectPrimaryKey: "employeeId",
+					TargetObjectPrimaryKey: "departmentId",
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "linkEmployeeDept",
+		Parameters: map[string]interface{}{
+			"employeeId":   "emp-1",
+			"departmentId": "dept-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeLinkCreate {
+		t.Fatalf("expected LINK_CREATE, got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", result.Edits[0].PrimaryKey)
+	}
+	if result.Edits[0].TargetPrimaryKey != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", result.Edits[0].TargetPrimaryKey)
+	}
+}
+
+func TestCountEdits_IncludesLinks(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "A", PrimaryKey: "1"},
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "1", LinkTypeRID: "lt-1", TargetPrimaryKey: "2"},
+	}
+	r := countEdits(edits)
+	if r.AddedObjectCount != 1 {
+		t.Fatalf("expected addedObjectCount=1, got %d", r.AddedObjectCount)
+	}
+	if r.AddedLinksCount != 1 {
+		t.Fatalf("expected addedLinksCount=1, got %d", r.AddedLinksCount)
+	}
+}

@@ -985,3 +985,163 @@ func TestConsumer_RecordHistory_VersionsPerPK(t *testing.T) {
 		t.Fatalf("expected emp-B versions [1,2], got %v", bVersions)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// LINK_CREATE Consumer Tests (US-100)
+// ---------------------------------------------------------------------------
+
+// fakeLinkEdgeWriter records UpsertLinkEdge calls for assertion.
+type fakeLinkEdgeWriter struct {
+	mu    sync.Mutex
+	edges []*oms.LinkEdge
+}
+
+func (f *fakeLinkEdgeWriter) UpsertLinkEdge(_ context.Context, edge *oms.LinkEdge) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.edges = append(f.edges, edge)
+	return nil
+}
+
+func (f *fakeLinkEdgeWriter) snapshot() []*oms.LinkEdge {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]*oms.LinkEdge, len(f.edges))
+	copy(out, f.edges)
+	return out
+}
+
+func TestApplyEdit_LinkCreate(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	writer := &fakeLinkEdgeWriter{}
+	consumer.SetLinkEdgeWriter(writer)
+
+	edit := Edit{
+		Type:             EditTypeLinkCreate,
+		PrimaryKey:       "emp-1",
+		LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+		TargetPrimaryKey: "dept-1",
+	}
+	if err := consumer.applyEdit(testOntology, edit); err != nil {
+		t.Fatalf("applyEdit LINK_CREATE: %v", err)
+	}
+
+	edges := writer.snapshot()
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 link edge, got %d", len(edges))
+	}
+	if edges[0].LinkTypeRID != "ri.ontology.main.link-type.emp-dept" {
+		t.Fatalf("expected link type RID, got %s", edges[0].LinkTypeRID)
+	}
+	if edges[0].SourceObjectPK != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", edges[0].SourceObjectPK)
+	}
+	if edges[0].TargetObjectPK != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", edges[0].TargetObjectPK)
+	}
+}
+
+func TestApplyEdit_LinkCreate_NoWriter(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	// No LinkEdgeWriter set — should succeed (log + skip).
+
+	edit := Edit{
+		Type:             EditTypeLinkCreate,
+		PrimaryKey:       "emp-1",
+		LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+		TargetPrimaryKey: "dept-1",
+	}
+	if err := consumer.applyEdit(testOntology, edit); err != nil {
+		t.Fatalf("expected no error when writer is nil, got: %v", err)
+	}
+}
+
+func TestApplyBatch_LinkCreate(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	writer := &fakeLinkEdgeWriter{}
+	consumer.SetLinkEdgeWriter(writer)
+	consumer.objectTypeRIDs = map[string]string{}
+	consumer.versionCounters = map[string]int64{}
+
+	batch := EditBatch{
+		ID:              "batch-link-1",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
+		Timestamp:       time.Now(),
+		Edits: []Edit{
+			{
+				Type:       EditTypeCreate,
+				ObjectType: "employee",
+				PrimaryKey: "emp-1",
+				Properties: map[string]interface{}{"name": "Alice"},
+			},
+			{
+				Type:             EditTypeLinkCreate,
+				PrimaryKey:       "emp-1",
+				LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+				TargetPrimaryKey: "dept-1",
+			},
+		},
+	}
+
+	if err := consumer.ApplyBatch(context.Background(), batch); err != nil {
+		t.Fatalf("ApplyBatch: %v", err)
+	}
+
+	edges := writer.snapshot()
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 link edge, got %d", len(edges))
+	}
+	if edges[0].SourceObjectPK != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", edges[0].SourceObjectPK)
+	}
+	if edges[0].TargetObjectPK != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", edges[0].TargetObjectPK)
+	}
+}
+
+func TestEditTypeLinkCreate_Constant(t *testing.T) {
+	if EditTypeLinkCreate != "LINK_CREATE" {
+		t.Fatalf("expected LINK_CREATE, got %q", EditTypeLinkCreate)
+	}
+}
+
+func TestEditBatch_LinkCreate_JSON(t *testing.T) {
+	batch := EditBatch{
+		ID:              "batch-1",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
+		Timestamp:       time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
+		Edits: []Edit{
+			{
+				Type:             EditTypeLinkCreate,
+				PrimaryKey:       "emp-1",
+				LinkTypeRID:      "lt-1",
+				TargetPrimaryKey: "dept-1",
+			},
+		},
+	}
+
+	data, err := json.Marshal(batch)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded EditBatch
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(decoded.Edits))
+	}
+	e := decoded.Edits[0]
+	if e.Type != EditTypeLinkCreate {
+		t.Fatalf("expected LINK_CREATE, got %q", e.Type)
+	}
+	if e.LinkTypeRID != "lt-1" {
+		t.Fatalf("expected linkTypeRid lt-1, got %q", e.LinkTypeRID)
+	}
+	if e.TargetPrimaryKey != "dept-1" {
+		t.Fatalf("expected targetPrimaryKey dept-1, got %q", e.TargetPrimaryKey)
+	}
+}

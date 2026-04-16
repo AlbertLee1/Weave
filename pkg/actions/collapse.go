@@ -18,7 +18,31 @@ func CollapseEdits(edits []funnel.Edit) []funnel.Edit {
 	tracked := make(map[editKey]*trackedEdit)
 	var order []editKey // maintain order
 
+	// Track link edits separately — keyed by (linkTypeRID, sourcePK, targetPK).
+	type linkKey struct {
+		linkTypeRID string
+		sourcePK    string
+		targetPK    string
+	}
+	type trackedLinkEdit struct {
+		edit    funnel.Edit
+		removed bool
+	}
+	linkTracked := make(map[linkKey]*trackedLinkEdit)
+	var linkOrder []linkKey
+
 	for _, edit := range edits {
+		// Route link edits to the separate tracker.
+		if edit.Type == funnel.EditTypeLinkCreate {
+			lk := linkKey{edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey}
+			if _, exists := linkTracked[lk]; !exists {
+				linkTracked[lk] = &trackedLinkEdit{edit: edit}
+				linkOrder = append(linkOrder, lk)
+			}
+			// Duplicate LINK_CREATE on same triple → keep first (idempotent).
+			continue
+		}
+
 		key := editKey{edit.ObjectType, edit.PrimaryKey}
 		existing, exists := tracked[key]
 
@@ -55,10 +79,15 @@ func CollapseEdits(edits []funnel.Edit) []funnel.Edit {
 		}
 	}
 
-	// Collect results in order
+	// Collect results in order: object edits first, then link edits.
 	var result []funnel.Edit
 	for _, key := range order {
 		if t := tracked[key]; !t.removed {
+			result = append(result, t.edit)
+		}
+	}
+	for _, lk := range linkOrder {
+		if t := linkTracked[lk]; !t.removed {
 			result = append(result, t.edit)
 		}
 	}

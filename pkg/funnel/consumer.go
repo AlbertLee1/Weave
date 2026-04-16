@@ -44,6 +44,12 @@ type HistoryRecorder interface {
 	LatestUserEditAt(ctx context.Context, objectTypeRID, primaryKey string) (time.Time, bool, error)
 }
 
+// LinkEdgeWriter is the minimal interface for writing M2M link edges.
+// Satisfied by *oms.PGRepository. Tests can supply a fake.
+type LinkEdgeWriter interface {
+	UpsertLinkEdge(ctx context.Context, edge *oms.LinkEdge) error
+}
+
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
 type Consumer struct {
 	js            nats.JetStreamContext
@@ -95,6 +101,10 @@ type Consumer struct {
 	versionMu       sync.Mutex
 	versionCounters map[string]int64
 
+	// linkEdgeWriter writes M2M link edges when LINK_CREATE edits are
+	// processed. Nil = link edits are logged and skipped.
+	linkEdgeWriter LinkEdgeWriter
+
 	// embedFields holds the optional embedding side-channel state. See
 	// embeddings.go for the wiring methods and the per-batch hook.
 	embedFields
@@ -127,6 +137,13 @@ func (c *Consumer) SetDLQPublish(fn DLQPublishFunc) {
 // Pass nil to disable. Safe to call before Start().
 func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
 	c.historyRepo = repo
+}
+
+// SetLinkEdgeWriter enables M2M link-edge persistence for LINK_CREATE edits.
+// Pass nil to disable (link edits will be logged and skipped). Safe to call
+// before Start().
+func (c *Consumer) SetLinkEdgeWriter(w LinkEdgeWriter) {
+	c.linkEdgeWriter = w
 }
 
 // SetAlwaysApplyField wires the US-021 always-apply hook. When set, ingest
@@ -285,16 +302,34 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 }
 
 func (c *Consumer) applyEdit(ontologyAPIName string, edit Edit) error {
-	scopedKey := index.ScopedKey(ontologyAPIName, edit.ObjectType)
 	switch edit.Type {
 	case EditTypeCreate, EditTypeModify:
+		scopedKey := index.ScopedKey(ontologyAPIName, edit.ObjectType)
 		doc := buildIndexDoc(edit)
 		return c.indexMgr.IndexDocument(scopedKey, edit.PrimaryKey, doc)
 	case EditTypeDelete:
+		scopedKey := index.ScopedKey(ontologyAPIName, edit.ObjectType)
 		return c.indexMgr.DeleteDocument(scopedKey, edit.PrimaryKey)
+	case EditTypeLinkCreate:
+		return c.applyLinkCreate(edit)
 	default:
 		return fmt.Errorf("unknown edit type: %q", edit.Type)
 	}
+}
+
+// applyLinkCreate writes a M2M link edge via the configured LinkEdgeWriter.
+func (c *Consumer) applyLinkCreate(edit Edit) error {
+	if c.linkEdgeWriter == nil {
+		log.Printf("funnel: LINK_CREATE skipped (no link edge writer): %s %s→%s",
+			edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey)
+		return nil
+	}
+	edge := &oms.LinkEdge{
+		LinkTypeRID:    edit.LinkTypeRID,
+		SourceObjectPK: edit.PrimaryKey,
+		TargetObjectPK: edit.TargetPrimaryKey,
+	}
+	return c.linkEdgeWriter.UpsertLinkEdge(context.Background(), edge)
 }
 
 // buildIndexDoc copies edit.Properties into a fresh map and merges Markings
@@ -334,38 +369,59 @@ func (c *Consumer) applyBatchEdits(ontologyAPIName string, edits []Edit) error {
 		return fmt.Errorf("apply batch: ontologyApiName is empty")
 	}
 
-	// Preserve insertion order of object types so single-type batches keep
-	// their historical per-type ordering for downstream consumers.
-	type group struct {
-		objectType string
-		scopedKey  string
-		ops        []index.BatchOp
-	}
-	groupIdx := make(map[string]int)
-	var groups []group
-
+	// Separate link edits from object edits — link edits go to the edge
+	// writer, not to Bleve.
+	var objectEdits []Edit
+	var linkEdits []Edit
 	for _, edit := range edits {
-		op, err := toBatchOp(edit)
-		if err != nil {
-			return err
+		if edit.Type == EditTypeLinkCreate {
+			linkEdits = append(linkEdits, edit)
+		} else {
+			objectEdits = append(objectEdits, edit)
 		}
-		if i, ok := groupIdx[edit.ObjectType]; ok {
-			groups[i].ops = append(groups[i].ops, op)
-			continue
-		}
-		groupIdx[edit.ObjectType] = len(groups)
-		groups = append(groups, group{
-			objectType: edit.ObjectType,
-			scopedKey:  index.ScopedKey(ontologyAPIName, edit.ObjectType),
-			ops:        []index.BatchOp{op},
-		})
 	}
 
-	for _, g := range groups {
-		if err := c.indexMgr.ApplyBatch(g.scopedKey, g.ops); err != nil {
-			return fmt.Errorf("apply batch for %q: %w", g.scopedKey, err)
+	// Apply object edits to Bleve in batches grouped by object type.
+	if len(objectEdits) > 0 {
+		type group struct {
+			objectType string
+			scopedKey  string
+			ops        []index.BatchOp
+		}
+		groupIdx := make(map[string]int)
+		var groups []group
+
+		for _, edit := range objectEdits {
+			op, err := toBatchOp(edit)
+			if err != nil {
+				return err
+			}
+			if i, ok := groupIdx[edit.ObjectType]; ok {
+				groups[i].ops = append(groups[i].ops, op)
+				continue
+			}
+			groupIdx[edit.ObjectType] = len(groups)
+			groups = append(groups, group{
+				objectType: edit.ObjectType,
+				scopedKey:  index.ScopedKey(ontologyAPIName, edit.ObjectType),
+				ops:        []index.BatchOp{op},
+			})
+		}
+
+		for _, g := range groups {
+			if err := c.indexMgr.ApplyBatch(g.scopedKey, g.ops); err != nil {
+				return fmt.Errorf("apply batch for %q: %w", g.scopedKey, err)
+			}
 		}
 	}
+
+	// Apply link edits via the edge writer.
+	for _, edit := range linkEdits {
+		if err := c.applyLinkCreate(edit); err != nil {
+			return fmt.Errorf("apply link create: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -635,12 +691,12 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	}
 
 	// Capture prev_state for each edit BEFORE the batch is applied. CREATE
-	// edits get a nil prev_state by definition; MODIFY/DELETE pull the
-	// current document from bleve. Failures are tolerated as nil prev.
+	// and link edits get a nil prev_state by definition; MODIFY/DELETE pull
+	// the current document from bleve. Failures are tolerated as nil prev.
 	prevStates := make([]json.RawMessage, len(batch.Edits))
 	if c.historyRepo != nil {
 		for i, e := range batch.Edits {
-			if e.Type == EditTypeCreate {
+			if e.Type == EditTypeCreate || e.Type == EditTypeLinkCreate {
 				continue
 			}
 			doc := c.fetchDocument(batch.OntologyAPIName, e.ObjectType, e.PrimaryKey)
@@ -666,6 +722,11 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	}
 
 	for i, edit := range batch.Edits {
+		// Link edits have no object-level history — skip.
+		if edit.Type == EditTypeLinkCreate {
+			continue
+		}
+
 		otRID := c.objectTypeRIDs[edit.ObjectType]
 		if otRID == "" {
 			// Fall back to the API name when no RID mapping is configured.

@@ -58,6 +58,11 @@ func NewNotFound(name string, params map[string]string) *APIError {
 	return newAPIError("NOT_FOUND", name, params, http.StatusNotFound)
 }
 
+// NewBadRequest creates a BAD_REQUEST API error (HTTP 400).
+func NewBadRequest(name string, params map[string]string) *APIError {
+	return newAPIError("BAD_REQUEST", name, params, http.StatusBadRequest)
+}
+
 // NewInvalidParameter creates an INVALID_ARGUMENT API error (HTTP 400).
 func NewInvalidParameter(name string, params map[string]string) *APIError {
 	return newAPIError("INVALID_ARGUMENT", name, params, http.StatusBadRequest)

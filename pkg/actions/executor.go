@@ -98,6 +98,8 @@ func countEdits(edits []funnel.Edit) *ActionResults {
 			r.ModifiedObjectCount++
 		case funnel.EditTypeDelete:
 			r.DeletedObjectCount++
+		case funnel.EditTypeLinkCreate:
+			r.AddedLinksCount++
 		}
 	}
 	return r
@@ -274,12 +276,34 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	}
 	tagEditsAsUserSource(edits)
 
+	// Step 9: Resolve link type API names to RIDs for LINK_CREATE edits.
+	e.resolveLinkEdits(ctx, ontologyRID, edits)
+
 	return &PreparedAction{
 		ActionType: actionType,
 		UserID:     userID,
 		Request:    req,
 		Edits:      edits,
 	}, nil
+}
+
+// resolveLinkEdits resolves LinkTypeRID from API name to actual RID for link
+// edits. If resolution fails the API name is preserved as a best-effort
+// fallback — the consumer will still attempt the upsert.
+func (e *Executor) resolveLinkEdits(ctx context.Context, ontologyRID string, edits []funnel.Edit) {
+	for i := range edits {
+		if edits[i].Type != funnel.EditTypeLinkCreate {
+			continue
+		}
+		apiName := edits[i].LinkTypeRID
+		if apiName == "" {
+			continue
+		}
+		lt, err := e.omsRepo.GetLinkTypeByAPIName(ctx, ontologyRID, apiName)
+		if err == nil && lt != nil {
+			edits[i].LinkTypeRID = lt.RID
+		}
+	}
 }
 
 // tagEditsAsUserSource stamps Edit.Source = "user" on every edit in place so
