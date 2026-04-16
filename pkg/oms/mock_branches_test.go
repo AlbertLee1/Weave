@@ -2,6 +2,7 @@ package oms_test
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/liyang/weave/pkg/oms"
@@ -74,6 +75,17 @@ func (m *mockRepo) UpdateBranchStatus(_ context.Context, id, status string) erro
 	return oms.ErrNotFound
 }
 
+func (m *mockRepo) UpdateBranchBaseVersion(_ context.Context, id string, baseVersion int64) error {
+	for i := range m.branches {
+		if m.branches[i].ID == id {
+			m.branches[i].BaseVersion = baseVersion
+			m.branches[i].UpdatedAt = time.Now()
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
 func (m *mockRepo) CreateBranchChange(_ context.Context, c *oms.BranchChange) error {
 	c.CreatedAt = time.Now()
 	m.branchChanges = append(m.branchChanges, *c)
@@ -88,6 +100,26 @@ func (m *mockRepo) ListBranchChanges(_ context.Context, branchID string) ([]oms.
 		}
 	}
 	return result, nil
+}
+
+func (m *mockRepo) UpdateBranchChangeBeforeState(_ context.Context, id string, beforeState json.RawMessage) error {
+	for i := range m.branchChanges {
+		if m.branchChanges[i].ID == id {
+			m.branchChanges[i].BeforeState = beforeState
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+// GetBranches returns the branches slice for test assertions.
+func (m *mockRepo) GetBranches() []oms.OntologyBranch {
+	return m.branches
+}
+
+// GetBranchChanges returns the branchChanges slice for test assertions.
+func (m *mockRepo) GetBranchChanges() []oms.BranchChange {
+	return m.branchChanges
 }
 
 // Branch stubs on noopRepo to satisfy oms.Repository.
@@ -107,9 +139,15 @@ func (n *noopRepo) CloseBranch(_ context.Context, _ string) error {
 func (n *noopRepo) UpdateBranchStatus(_ context.Context, _, _ string) error {
 	return nil
 }
+func (n *noopRepo) UpdateBranchBaseVersion(_ context.Context, _ string, _ int64) error {
+	return nil
+}
 func (n *noopRepo) CreateBranchChange(_ context.Context, _ *oms.BranchChange) error {
 	return nil
 }
 func (n *noopRepo) ListBranchChanges(_ context.Context, _ string) ([]oms.BranchChange, error) {
 	return nil, nil
+}
+func (n *noopRepo) UpdateBranchChangeBeforeState(_ context.Context, _ string, _ json.RawMessage) error {
+	return nil
 }

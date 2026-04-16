@@ -2,6 +2,7 @@ package oss_test
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -23,9 +24,15 @@ func (m *mockOmsRepo) CloseBranch(_ context.Context, _ string) error {
 func (m *mockOmsRepo) UpdateBranchStatus(_ context.Context, _, _ string) error {
 	return nil
 }
+func (m *mockOmsRepo) UpdateBranchBaseVersion(_ context.Context, _ string, _ int64) error {
+	return nil
+}
 func (m *mockOmsRepo) CreateBranchChange(_ context.Context, _ *oms.BranchChange) error {
 	return nil
 }
 func (m *mockOmsRepo) ListBranchChanges(_ context.Context, _ string) ([]oms.BranchChange, error) {
 	return nil, nil
+}
+func (m *mockOmsRepo) UpdateBranchChangeBeforeState(_ context.Context, _ string, _ json.RawMessage) error {
+	return nil
 }

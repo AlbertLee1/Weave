@@ -71,6 +71,8 @@
 - Conflict detection only triggers when ontologyVersion > branch.BaseVersion; entity-level comparison via fetchEntityJSON (GetObjectType/GetProperty/GetLinkType/GetActionType by RID → marshal → compare)
 - MergeConflict response: {errorCode: "MERGE_CONFLICT", conflicts: [{entityType, entityRid, changeType, branchState, mainState}]}
 - applyBranchChanges dispatches by (changeType, entityType) → CRUD operations on main tables; ADDED→Create, MODIFIED→Update, DELETED→Delete
+- Rebase reuses detectConflicts from merge; on success updates base_version + before_state of MODIFIED/DELETED changes
+- UpdateBranchBaseVersion and UpdateBranchChangeBeforeState — new Repository methods for rebase support
 
 ---
 
@@ -416,4 +418,25 @@
   - fetchEntityJSON dispatches by entityType to the appropriate Get method (GetObjectType/GetProperty/GetLinkType/GetActionType) then marshals to JSON
   - UpdateBranchStatus is more flexible than CloseBranch — can set any status string (used for "merged" in merge flow)
   - V2 read handlers pass raw chi URL param to repo (not resolved RID) — ListObjectTypes("test") won't match OntologyRID "ri.ontology.main.ontology.1" in mocks; verify merge results via repo state, not via list endpoints
+---
+
+## 2026-04-16 - US-120
+- Implemented branch rebase endpoint with conflict detection
+- Files changed:
+  - pkg/oms/repository.go — Added UpdateBranchBaseVersion(ctx, id, baseVersion) and UpdateBranchChangeBeforeState(ctx, id, beforeState) to Repository interface
+  - pkg/oms/pg_repository.go — PG implementations for UpdateBranchBaseVersion (UPDATE base_version+updated_at) and UpdateBranchChangeBeforeState (UPDATE before_state)
+  - pkg/oms/handlers_branch.go — Added RebaseBranch handler: POST /branches/{branchId}/rebase; validates branch is open, detects conflicts via detectConflicts (reused from merge), updates before_state for MODIFIED/DELETED changes, updates base_version
+  - pkg/oms/handlers_branch_rebase_test.go — New file: 8 tests: AlreadyUpToDate, NoConflicts (base_version updated), Conflict_SameEntityModified (409+REBASE_CONFLICT), BranchNotFound (404), BranchNotOpen (409), MainAddsObjectType_BranchSeesIt, DeletedEntityConflict, BeforeStateUpdated (before_state refreshed)
+  - cmd/server/routes.go — Registered POST .../branches/{branchId}/rebase route
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added rebaseBranch endpoint spec with 200/409 responses
+  - pkg/oms/mock_branches_test.go — Added UpdateBranchBaseVersion, UpdateBranchChangeBeforeState mocks + GetBranches/GetBranchChanges accessors for test assertions
+  - 6 mock files updated with UpdateBranchBaseVersion/UpdateBranchChangeBeforeState stubs (pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook)
+  - pkg/index/rehydrate_test.go — Added UpdateBranchBaseVersion + UpdateBranchChangeBeforeState stubs
+- **Learnings for future iterations:**
+  - Rebase reuses detectConflicts and fetchEntityJSON from the merge handler — no code duplication needed
+  - detectConflicts skips ADDED changes (can't conflict) and compares MODIFIED/DELETED before_state with current main entity JSON
+  - After successful rebase: before_state updated for MODIFIED/DELETED changes to current main entity, base_version updated to currentVersion
+  - If already up-to-date (currentVersion <= baseVersion) → return branch as-is (200), no changes made
+  - Only open branches can be rebased (closed/merged → 409 BranchNotOpen)
+  - Rebase conflict uses "REBASE_CONFLICT" errorCode (vs "MERGE_CONFLICT" for merge) to distinguish the two flows
 ---

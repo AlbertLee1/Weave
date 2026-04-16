@@ -167,6 +167,95 @@ func (h *OMSHandler) CloseBranch(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RebaseBranch handles POST /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/rebase.
+func (h *OMSHandler) RebaseBranch(w http.ResponseWriter, r *http.Request) {
+	branchID := chi.URLParam(r, "branchId")
+
+	// Load branch
+	branch, err := h.repo.GetBranch(r.Context(), branchID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("BranchNotFound", map[string]string{
+				"branchId": branchID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetBranchFailed", nil))
+		return
+	}
+
+	// Only open branches can be rebased
+	if branch.Status != "open" {
+		apierror.WriteJSON(w, apierror.NewConflict("BranchNotOpen", map[string]string{
+			"branchId": branchID,
+			"status":   branch.Status,
+		}))
+		return
+	}
+
+	// Get current main version
+	currentVersion, err := h.repo.GetOntologyVersion(r.Context(), branch.OntologyRID)
+	if err != nil {
+		currentVersion = 0
+	}
+
+	// Already up to date
+	if int64(currentVersion) <= branch.BaseVersion {
+		httputil.WriteJSON(w, http.StatusOK, branch)
+		return
+	}
+
+	// Load branch changes
+	changes, err := h.repo.ListBranchChanges(r.Context(), branchID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListBranchChangesFailed", nil))
+		return
+	}
+
+	// Detect conflicts using the same logic as merge
+	conflicts, err := h.detectConflicts(r.Context(), changes)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("DetectConflictsFailed", nil))
+		return
+	}
+
+	if len(conflicts) > 0 {
+		httputil.WriteJSON(w, http.StatusConflict, map[string]interface{}{
+			"errorCode": "REBASE_CONFLICT",
+			"conflicts": conflicts,
+		})
+		return
+	}
+
+	// No conflicts — update before_state for MODIFIED/DELETED changes to current main state
+	for _, c := range changes {
+		if c.ChangeType == "ADDED" {
+			continue
+		}
+		currentJSON, err := h.fetchEntityJSON(r.Context(), c.EntityType, c.EntityRID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue // entity deleted on main — already handled by conflict detection
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("FetchEntityFailed", nil))
+			return
+		}
+		if err := h.repo.UpdateBranchChangeBeforeState(r.Context(), c.ID, currentJSON); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("UpdateBeforeStateFailed", nil))
+			return
+		}
+	}
+
+	// Update base version
+	if err := h.repo.UpdateBranchBaseVersion(r.Context(), branchID, int64(currentVersion)); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("UpdateBranchBaseVersionFailed", nil))
+		return
+	}
+
+	branch.BaseVersion = int64(currentVersion)
+	httputil.WriteJSON(w, http.StatusOK, branch)
+}
+
 // BranchDiffEntry represents a single change in a branch diff.
 type BranchDiffEntry struct {
 	EntityType string          `json:"entityType"`

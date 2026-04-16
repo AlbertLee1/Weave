@@ -1,6 +1,9 @@
 package oms
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Repository defines the data access interface for ontology metadata.
 type Repository interface {
@@ -148,8 +151,10 @@ type Repository interface {
 	ListBranches(ctx context.Context, ontologyRID string) ([]OntologyBranch, error)
 	CloseBranch(ctx context.Context, id string) error
 	UpdateBranchStatus(ctx context.Context, id, status string) error
+	UpdateBranchBaseVersion(ctx context.Context, id string, baseVersion int64) error
 	CreateBranchChange(ctx context.Context, c *BranchChange) error
 	ListBranchChanges(ctx context.Context, branchID string) ([]BranchChange, error)
+	UpdateBranchChangeBeforeState(ctx context.Context, id string, beforeState json.RawMessage) error
 
 	// OntologyProposal (US-117)
 	CreateProposal(ctx context.Context, p *OntologyProposal) error

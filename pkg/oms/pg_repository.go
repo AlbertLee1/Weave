@@ -2096,6 +2096,18 @@ func (r *PGRepository) UpdateBranchStatus(ctx context.Context, id, status string
 	return nil
 }
 
+func (r *PGRepository) UpdateBranchBaseVersion(ctx context.Context, id string, baseVersion int64) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ontology_branches SET base_version = $2, updated_at = NOW() WHERE id = $1`, id, baseVersion)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PGRepository) CreateBranchChange(ctx context.Context, c *BranchChange) error {
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO ontology_branch_changes (id, branch_id, change_type, entity_type, entity_rid, before_state, after_state)
@@ -2127,6 +2139,18 @@ func (r *PGRepository) ListBranchChanges(ctx context.Context, branchID string) (
 		result = append(result, c)
 	}
 	return result, nil
+}
+
+func (r *PGRepository) UpdateBranchChangeBeforeState(ctx context.Context, id string, beforeState json.RawMessage) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ontology_branch_changes SET before_state = $2 WHERE id = $1`, id, nilIfNoBytes(beforeState))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // --- OntologyProposal (US-117) ---

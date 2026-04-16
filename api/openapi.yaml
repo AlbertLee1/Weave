@@ -2511,6 +2511,44 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/rebase:
+    post:
+      operationId: rebaseBranch
+      summary: Rebase a branch onto the latest main version
+      description: Updates branch base_version to current main. Non-conflicting main changes are transparently incorporated. Conflicting changes return a conflict list.
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rebase succeeded. Branch base_version updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyBranch"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: Rebase conflict — entities modified on both main and branch.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode:
+                    type: string
+                    example: REBASE_CONFLICT
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MergeConflict"
   /api/v2/ontologies/{ontologyApiName}/proposals:
     post:
       operationId: createProposal

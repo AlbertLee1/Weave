@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -23,9 +24,15 @@ func (r *inMemoryOmsRepo) CloseBranch(_ context.Context, _ string) error {
 func (r *inMemoryOmsRepo) UpdateBranchStatus(_ context.Context, _, _ string) error {
 	return nil
 }
+func (r *inMemoryOmsRepo) UpdateBranchBaseVersion(_ context.Context, _ string, _ int64) error {
+	return nil
+}
 func (r *inMemoryOmsRepo) CreateBranchChange(_ context.Context, _ *oms.BranchChange) error {
 	return nil
 }
 func (r *inMemoryOmsRepo) ListBranchChanges(_ context.Context, _ string) ([]oms.BranchChange, error) {
 	return nil, nil
+}
+func (r *inMemoryOmsRepo) UpdateBranchChangeBeforeState(_ context.Context, _ string, _ json.RawMessage) error {
+	return nil
 }

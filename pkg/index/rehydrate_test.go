@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -274,11 +275,17 @@ func (s *stubRehydrateRepo) ListBranches(context.Context, string) ([]oms.Ontolog
 }
 func (s *stubRehydrateRepo) CloseBranch(context.Context, string) error              { return nil }
 func (s *stubRehydrateRepo) UpdateBranchStatus(context.Context, string, string) error { return nil }
+func (s *stubRehydrateRepo) UpdateBranchBaseVersion(context.Context, string, int64) error {
+	return nil
+}
 func (s *stubRehydrateRepo) CreateBranchChange(context.Context, *oms.BranchChange) error {
 	return nil
 }
 func (s *stubRehydrateRepo) ListBranchChanges(context.Context, string) ([]oms.BranchChange, error) {
 	return nil, nil
+}
+func (s *stubRehydrateRepo) UpdateBranchChangeBeforeState(context.Context, string, json.RawMessage) error {
+	return nil
 }
 
 // Proposal stubs
