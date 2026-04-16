@@ -3278,3 +3278,356 @@ func TestRevertHandler_NotFound_404(t *testing.T) {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Value Type Constraint Enforcement (US-111)
+// ---------------------------------------------------------------------------
+
+// valueTypeAwareMockRepo extends mockOmsRepo with property + value type resolution.
+type valueTypeAwareMockRepo struct {
+	mockOmsRepo
+	properties     map[string][]oms.Property  // objectType apiName → properties
+	valueTypes     map[string]*oms.ValueType  // apiName → ValueType
+	objectTypes    map[string]*oms.ObjectType // apiName → ObjectType
+}
+
+func (m *valueTypeAwareMockRepo) GetObjectTypeByAPIName(_ context.Context, _, apiName string) (*oms.ObjectType, error) {
+	if ot, ok := m.objectTypes[apiName]; ok {
+		return ot, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *valueTypeAwareMockRepo) ListProperties(_ context.Context, objectTypeRID string) ([]oms.Property, error) {
+	// Lookup by RID — iterate objectTypes to find matching RID → apiName → properties.
+	for apiName, ot := range m.objectTypes {
+		if ot.RID == objectTypeRID {
+			return m.properties[apiName], nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *valueTypeAwareMockRepo) GetValueTypeByAPIName(_ context.Context, apiName string) (*oms.ValueType, error) {
+	if vt, ok := m.valueTypes[apiName]; ok {
+		return vt, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func TestExecutor_ValueTypeConstraint_CreateObject_Pass(t *testing.T) {
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createEmployee", []ParameterDef{
+					{ID: "name", Type: "string", Required: true},
+					{ID: "email", Type: "string", Required: true},
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Employee", PropertyBindings: map[string]PropertyBinding{
+						"name":  {Type: "parameter", Value: "name"},
+						"email": {Type: "parameter", Value: "email"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Employee": {RID: "ri.ontology.main.object-type.employee", APIName: "Employee"},
+		},
+		properties: map[string][]oms.Property{
+			"Employee": {
+				{APIName: "name", BaseType: "string"},
+				{APIName: "email", BaseType: "string", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "emailAddress",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"emailAddress": {
+				RID:      "ri.ontology.main.value-type.email",
+				APIName:  "emailAddress",
+				BaseType: "string",
+				Constraints: mustJSON(map[string]interface{}{
+					"regex": `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`,
+				}),
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{
+			"name":  "Alice",
+			"email": "alice@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if result == nil || len(result.Edits) == 0 {
+		t.Fatal("expected edits in result")
+	}
+}
+
+func TestExecutor_ValueTypeConstraint_CreateObject_Fail(t *testing.T) {
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createEmployee", []ParameterDef{
+					{ID: "name", Type: "string", Required: true},
+					{ID: "email", Type: "string", Required: true},
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Employee", PropertyBindings: map[string]PropertyBinding{
+						"name":  {Type: "parameter", Value: "name"},
+						"email": {Type: "parameter", Value: "email"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Employee": {RID: "ri.ontology.main.object-type.employee", APIName: "Employee"},
+		},
+		properties: map[string][]oms.Property{
+			"Employee": {
+				{APIName: "name", BaseType: "string"},
+				{APIName: "email", BaseType: "string", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "emailAddress",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"emailAddress": {
+				RID:      "ri.ontology.main.value-type.email",
+				APIName:  "emailAddress",
+				BaseType: "string",
+				Constraints: mustJSON(map[string]interface{}{
+					"regex": `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`,
+				}),
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	_, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{
+			"name":  "Alice",
+			"email": "not-an-email",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected constraint violation error")
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Fatalf("error should mention field name 'email', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "regex") {
+		t.Fatalf("error should mention constraint type, got: %v", err)
+	}
+}
+
+func TestExecutor_ValueTypeConstraint_ModifyObject_Fail(t *testing.T) {
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("updateAge", []ParameterDef{
+					{ID: "primaryKey", Type: "string", Required: true},
+					{ID: "age", Type: "integer", Required: true},
+				}, []Rule{
+					{Type: "modifyObject", ObjectType: "Employee", PropertyBindings: map[string]PropertyBinding{
+						"age": {Type: "parameter", Value: "age"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Employee": {RID: "ri.ontology.main.object-type.employee", APIName: "Employee"},
+		},
+		properties: map[string][]oms.Property{
+			"Employee": {
+				{APIName: "primaryKey", BaseType: "string"},
+				{APIName: "age", BaseType: "integer", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "positiveAge",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"positiveAge": {
+				RID:      "ri.ontology.main.value-type.age",
+				APIName:  "positiveAge",
+				BaseType: "integer",
+				Constraints: mustJSON(map[string]interface{}{
+					"min": 0,
+					"max": 150,
+				}),
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	_, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "updateAge",
+		Parameters: map[string]interface{}{
+			"primaryKey": "emp-1",
+			"age":        float64(-5),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected constraint violation error for negative age")
+	}
+	if !strings.Contains(err.Error(), "age") {
+		t.Fatalf("error should mention field 'age', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "min") {
+		t.Fatalf("error should mention min constraint, got: %v", err)
+	}
+}
+
+func TestExecutor_ValueTypeConstraint_NoValueType_Passes(t *testing.T) {
+	// Properties without valueTypeApiName in TypeConfig should not be validated.
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createItem", []ParameterDef{
+					{ID: "name", Type: "string", Required: true},
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Item", PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Item": {RID: "ri.ontology.main.object-type.item", APIName: "Item"},
+		},
+		properties: map[string][]oms.Property{
+			"Item": {
+				{APIName: "name", BaseType: "string"}, // no ValueType
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{},
+	}
+
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createItem",
+		Parameters: map[string]interface{}{
+			"name": "anything goes",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected no error when no ValueType is defined, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result")
+	}
+}
+
+func TestExecutor_ValueTypeConstraint_EnumViolation(t *testing.T) {
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createTicket", []ParameterDef{
+					{ID: "title", Type: "string", Required: true},
+					{ID: "priority", Type: "string", Required: true},
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Ticket", PropertyBindings: map[string]PropertyBinding{
+						"title":    {Type: "parameter", Value: "title"},
+						"priority": {Type: "parameter", Value: "priority"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Ticket": {RID: "ri.ontology.main.object-type.ticket", APIName: "Ticket"},
+		},
+		properties: map[string][]oms.Property{
+			"Ticket": {
+				{APIName: "title", BaseType: "string"},
+				{APIName: "priority", BaseType: "string", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "ticketPriority",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"ticketPriority": {
+				RID:      "ri.ontology.main.value-type.priority",
+				APIName:  "ticketPriority",
+				BaseType: "string",
+				Constraints: mustJSON(map[string]interface{}{
+					"enum": []string{"low", "medium", "high", "critical"},
+				}),
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	_, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createTicket",
+		Parameters: map[string]interface{}{
+			"title":    "Bug report",
+			"priority": "urgent", // not in enum
+		},
+	})
+	if err == nil {
+		t.Fatal("expected enum constraint violation error")
+	}
+	if !strings.Contains(err.Error(), "priority") {
+		t.Fatalf("error should mention field 'priority', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "enum") {
+		t.Fatalf("error should mention enum constraint, got: %v", err)
+	}
+}
+
+func TestExecutor_ValueTypeConstraint_NilProperty_Passes(t *testing.T) {
+	// Nil property values should pass (nullability is handled by Validate, not constraints).
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createEmployee", []ParameterDef{
+					{ID: "name", Type: "string", Required: false}, // optional
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Employee", PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Employee": {RID: "ri.ontology.main.object-type.employee", APIName: "Employee"},
+		},
+		properties: map[string][]oms.Property{
+			"Employee": {
+				{APIName: "name", BaseType: "string", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "shortName",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"shortName": {
+				RID:      "ri.ontology.main.value-type.shortname",
+				APIName:  "shortName",
+				BaseType: "string",
+				Constraints: mustJSON(map[string]interface{}{
+					"minLength": 1,
+				}),
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	// name param is nil — should pass constraints (nullability is separate)
+	result, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{
+			"name": nil,
+		},
+	})
+	if err != nil {
+		t.Fatalf("nil value should pass constraint checks, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result")
+	}
+}

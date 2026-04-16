@@ -39,6 +39,7 @@
 - Link edits (LINK_CREATE/LINK_DELETE) flow: Rule → Edit → NATS → Consumer.applyLinkCreate/applyLinkDelete → UpsertLinkEdge/DeleteLinkEdge
 - Consumer has separate LinkEdgeWriter (SetLinkEdgeWriter) and LinkEdgeDeleter (SetLinkEdgeDeleter) interfaces for M2M edge writes/deletes
 - Executor.Prepare resolves link type API names to RIDs via GetLinkTypeByAPIName before publishing
+- ValueType constraints: Constraints struct in pkg/types/constraints.go; Property → ValueType via TypeConfig {"valueTypeApiName": "..."} (no migration); validated in executor.go step 12 (validateValueTypeConstraints)
 - Pre-existing build errors in pkg/oms/admin_handlers.go and execute_query_goja_test.go — not blocking tests in other packages
 - Revert logic in pkg/actions/revert.go — generateReverseEdits maps CREATE→DELETE, MODIFY→MODIFY(prevState), DELETE→CREATE(prevState), LINK_CREATE→LINK_DELETE, LINK_DELETE→LINK_CREATE
 - AlreadyRevertedError sentinel type for 409 Conflict on double-revert
@@ -226,4 +227,20 @@
   - Fuzzy options must thread through logical operators (and/or/not) via recursive ConvertToBleveQueryWithOpts calls
   - resolveFuzziness centralizes default logic: nil→0 (disabled), Fuzzy present but MaxEdits=0→1 (default), otherwise use MaxEdits
   - Non-text operators (numeric, boolean, geo, prefix, wildcard) are unaffected by fuzzy — only MatchQuery-based operators get SetFuzziness
+---
+
+## 2026-04-16 - US-111
+- Implemented Value Type constraint enforcement at write time
+- Files changed:
+  - pkg/types/constraints.go — New file: Constraints struct (Regex, MinLength, MaxLength, Min, Max, Enum), ValidateConstraints(value, constraints) function, toFloat64 numeric coercion helper
+  - pkg/types/constraints_test.go — New file: 19 tests covering regex pass/fail, minLength/maxLength pass/fail, min/max pass/fail, int value range, enum pass/fail, combined constraints, nil value passthrough, empty/null/invalid constraints
+  - pkg/actions/executor.go — Added validateValueTypeConstraints method (step 12 in Prepare pipeline): resolves ObjectType → ListProperties → parses TypeConfig for valueTypeApiName → loads ValueType → validates constraints; imported pkg/types
+  - pkg/actions/actions_test.go — Added valueTypeAwareMockRepo (extends mockOmsRepo with objectTypes/properties/valueTypes maps + overrides for GetObjectTypeByAPIName, ListProperties, GetValueTypeByAPIName); 6 new tests: create pass, create fail (regex), modify fail (min/max), no ValueType passes, enum violation, nil property passes
+- **Learnings for future iterations:**
+  - Property → ValueType link uses TypeConfig JSON ({"valueTypeApiName": "..."}) rather than a dedicated DB column — avoids migration
+  - validateValueTypeConstraints runs after interface validation (step 11) but before fetchPrevEdits (step 13) in the Prepare pipeline
+  - Constraints are flat optional fields on a single struct, not typed discriminated unions — simpler for JSON storage and extensible
+  - ValidateConstraints passes nil values unconditionally (nullability is enforced by existing types.Validate, not constraints)
+  - The valueTypeAwareMockRepo pattern follows the interfaceAwareMockRepo pattern: embed mockOmsRepo, add typed maps, override specific methods
+  - Rules require PropertyBindings (map[string]PropertyBinding) to generate edit properties — tests must include bindings, not just parameter definitions
 ---

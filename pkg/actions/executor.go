@@ -13,6 +13,7 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/types"
 )
 
 // ApplyOptions controls single-action apply behavior (Foundry OSv2).
@@ -325,7 +326,12 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		return nil, fmt.Errorf("interface validation: %w", err)
 	}
 
-	// Step 12 (US-104): Fetch previous object state for MODIFY/DELETE edits.
+	// Step 12 (US-111): Validate ValueType constraints on property values.
+	if err := e.validateValueTypeConstraints(ctx, ontologyRID, edits); err != nil {
+		return nil, fmt.Errorf("constraint validation: %w", err)
+	}
+
+	// Step 13 (US-104): Fetch previous object state for MODIFY/DELETE edits.
 	prevEdits := e.fetchPrevEdits(ctx, ontologyRID, edits)
 
 	return &PreparedAction{
@@ -438,6 +444,64 @@ func (e *Executor) fetchPrevEdits(ctx context.Context, ontologyAPIName string, e
 		// CREATE, LINK_CREATE, LINK_DELETE → prev[i] stays nil
 	}
 	return prev
+}
+
+// validateValueTypeConstraints checks property values against ValueType
+// constraints for CREATE and MODIFY edits. For each property in the edit, if
+// the property definition has a valueTypeApiName in its TypeConfig, the
+// associated ValueType is loaded and its Constraints are enforced. Returns a
+// descriptive error on the first violation with the field name and reason.
+func (e *Executor) validateValueTypeConstraints(ctx context.Context, ontologyRID string, edits []funnel.Edit) error {
+	for _, edit := range edits {
+		if edit.Type != funnel.EditTypeCreate && edit.Type != funnel.EditTypeModify {
+			continue
+		}
+		if len(edit.Properties) == 0 {
+			continue
+		}
+
+		// Look up the ObjectType to get its RID for ListProperties.
+		ot, err := e.omsRepo.GetObjectTypeByAPIName(ctx, ontologyRID, edit.ObjectType)
+		if err != nil || ot == nil {
+			continue // unknown ObjectType — skip validation gracefully
+		}
+
+		props, err := e.omsRepo.ListProperties(ctx, ot.RID)
+		if err != nil {
+			continue // can't load properties — skip gracefully
+		}
+
+		// Build lookup: property apiName → ValueType API name from TypeConfig.
+		propValueTypes := make(map[string]string) // propAPIName → valueTypeApiName
+		for _, p := range props {
+			if len(p.TypeConfig) == 0 {
+				continue
+			}
+			var tc map[string]interface{}
+			if json.Unmarshal(p.TypeConfig, &tc) != nil {
+				continue
+			}
+			if vtName, ok := tc["valueTypeApiName"].(string); ok && vtName != "" {
+				propValueTypes[p.APIName] = vtName
+			}
+		}
+
+		// Validate each property value against its ValueType constraints.
+		for propName, value := range edit.Properties {
+			vtAPIName, ok := propValueTypes[propName]
+			if !ok {
+				continue
+			}
+			vt, err := e.omsRepo.GetValueTypeByAPIName(ctx, vtAPIName)
+			if err != nil || vt == nil {
+				continue // ValueType not found — skip gracefully
+			}
+			if err := types.ValidateConstraints(value, vt.Constraints); err != nil {
+				return fmt.Errorf("property %q: %w", propName, err)
+			}
+		}
+	}
+	return nil
 }
 
 // tagEditsAsUserSource stamps Edit.Source = "user" on every edit in place so
