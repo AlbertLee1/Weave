@@ -24,6 +24,9 @@ func (m *mockOmsRepo) DeleteAutomationRule(_ context.Context, _ string) error { 
 func (m *mockOmsRepo) InsertExecution(_ context.Context, _ *oms.AutomationExecution) error {
 	return nil
 }
+func (m *mockOmsRepo) UpdateExecution(_ context.Context, _ *oms.AutomationExecution) error {
+	return nil
+}
 func (m *mockOmsRepo) ListExecutions(_ context.Context, _ string) ([]oms.AutomationExecution, error) {
 	return nil, nil
 }

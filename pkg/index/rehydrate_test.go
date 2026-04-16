@@ -323,6 +323,9 @@ func (s *stubRehydrateRepo) DeleteAutomationRule(context.Context, string) error 
 func (s *stubRehydrateRepo) InsertExecution(context.Context, *oms.AutomationExecution) error {
 	return nil
 }
+func (s *stubRehydrateRepo) UpdateExecution(context.Context, *oms.AutomationExecution) error {
+	return nil
+}
 func (s *stubRehydrateRepo) ListExecutions(context.Context, string) ([]oms.AutomationExecution, error) {
 	return nil, nil
 }

@@ -58,6 +58,18 @@ func (m *mockExecutionRecorder) InsertExecution(ctx context.Context, exec *oms.A
 	return nil
 }
 
+func (m *mockExecutionRecorder) UpdateExecution(ctx context.Context, exec *oms.AutomationExecution) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.executions {
+		if m.executions[i].ID == exec.ID {
+			m.executions[i] = *exec
+			return nil
+		}
+	}
+	return fmt.Errorf("execution not found: %s", exec.ID)
+}
+
 func (m *mockExecutionRecorder) getExecutions() []oms.AutomationExecution {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -679,6 +691,197 @@ func TestSchedulerInvalidCronExpression(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid cron expression")
 	}
+}
+
+func TestScheduler_RetryOnFailure_ExhaustsRetries(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{err: fmt.Errorf("always fails")}
+
+	retryPolicy := json.RawMessage(`{"maxRetries":3,"backoffMs":50}`)
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"badAction","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-retry-exhaust",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Retry Exhaust",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+		RetryPolicy:   retryPolicy,
+	})
+
+	s := New(loader, recorder)
+	s.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for all retries to complete: initial + 3 retries
+	// backoff: 50ms, 100ms, 200ms → total ~350ms + execution time
+	deadline := time.After(10 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			// Find the execution for our rule
+			exec := execs[0]
+			if exec.Status == "error" && exec.RetryCount == 3 {
+				// Verify all retries exhausted
+				if exec.Error == "" {
+					t.Fatal("expected non-empty error message")
+				}
+				// Verify the action was called 4 times (initial + 3 retries)
+				calls := applier.getCalls()
+				if len(calls) < 4 {
+					t.Fatalf("expected at least 4 action calls (1 initial + 3 retries), got %d", len(calls))
+				}
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			execs := recorder.getExecutions()
+			t.Fatalf("timed out waiting for retry exhaustion; executions: %+v; applier calls: %d", execs, len(applier.getCalls()))
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func TestScheduler_RetrySucceeds(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+
+	// Applier that fails first 2 calls then succeeds
+	failCount := 0
+	applier := &countingActionApplier{
+		failUntil: 2,
+		failCount: &failCount,
+	}
+
+	retryPolicy := json.RawMessage(`{"maxRetries":3,"backoffMs":50}`)
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"eventuallyWorks","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-retry-success",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Retry Success",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+		RetryPolicy:   retryPolicy,
+	})
+
+	s := New(loader, recorder)
+	s.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for eventual success
+	deadline := time.After(10 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			exec := execs[0]
+			if exec.Status == "success" {
+				if exec.RetryCount != 2 {
+					t.Fatalf("expected retryCount=2 (succeeded on 3rd attempt), got %d", exec.RetryCount)
+				}
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			execs := recorder.getExecutions()
+			t.Fatalf("timed out waiting for retry success; executions: %+v", execs)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func TestScheduler_NoRetryPolicy_ImmediateError(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{err: fmt.Errorf("instant fail")}
+
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"badAction","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-no-retry",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "No Retry",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+		// No RetryPolicy
+	})
+
+	s := New(loader, recorder)
+	s.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Should get immediate error, no retries
+	deadline := time.After(5 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			exec := execs[0]
+			if exec.Status != "error" {
+				t.Fatalf("expected status 'error', got %q", exec.Status)
+			}
+			if exec.RetryCount != 0 {
+				t.Fatalf("expected retryCount=0 (no retries), got %d", exec.RetryCount)
+			}
+			// Only 1 action call (no retries)
+			calls := applier.getCalls()
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 action call, got %d", len(calls))
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// countingActionApplier fails the first N calls then succeeds.
+type countingActionApplier struct {
+	mu        sync.Mutex
+	failUntil int  // number of initial calls that should fail
+	failCount *int // shared counter
+}
+
+func (c *countingActionApplier) ApplyAction(ctx context.Context, ontologyRID, actionType string, parameters map[string]interface{}) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	*c.failCount++
+	if *c.failCount <= c.failUntil {
+		return fmt.Errorf("transient error (call %d)", *c.failCount)
+	}
+	return nil
 }
 
 func TestSchedulerInvalidTriggerConfig(t *testing.T) {

@@ -68,6 +68,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", omsHandler.DeleteAutomationRule)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/pause", omsHandler.PauseAutomationRule)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", omsHandler.ResumeAutomationRule)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", omsHandler.ListExecutions)
 
 	// Notifications (US-130)
 	r.Get("/api/v2/notifications", omsHandler.ListNotifications)

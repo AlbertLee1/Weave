@@ -67,9 +67,29 @@ func (m *mockRepo) DeleteAutomationRule(_ context.Context, id string) error {
 	return oms.ErrNotFound
 }
 
-func (m *mockRepo) InsertExecution(_ context.Context, _ *oms.AutomationExecution) error { return nil }
-func (m *mockRepo) ListExecutions(_ context.Context, _ string) ([]oms.AutomationExecution, error) {
-	return nil, nil
+func (m *mockRepo) InsertExecution(_ context.Context, exec *oms.AutomationExecution) error {
+	m.executions = append(m.executions, *exec)
+	return nil
+}
+
+func (m *mockRepo) UpdateExecution(_ context.Context, exec *oms.AutomationExecution) error {
+	for i := range m.executions {
+		if m.executions[i].ID == exec.ID {
+			m.executions[i] = *exec
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+func (m *mockRepo) ListExecutions(_ context.Context, ruleID string) ([]oms.AutomationExecution, error) {
+	var result []oms.AutomationExecution
+	for _, e := range m.executions {
+		if e.RuleID == ruleID {
+			result = append(result, e)
+		}
+	}
+	return result, nil
 }
 
 // Automation stubs on noopRepo to satisfy oms.Repository.
@@ -84,6 +104,7 @@ func (n *noopRepo) ListAutomationRules(_ context.Context, _ string) ([]oms.Autom
 func (n *noopRepo) UpdateAutomationRule(_ context.Context, _ *oms.AutomationRule) error { return nil }
 func (n *noopRepo) DeleteAutomationRule(_ context.Context, _ string) error              { return nil }
 func (n *noopRepo) InsertExecution(_ context.Context, _ *oms.AutomationExecution) error { return nil }
+func (n *noopRepo) UpdateExecution(_ context.Context, _ *oms.AutomationExecution) error { return nil }
 func (n *noopRepo) ListExecutions(_ context.Context, _ string) ([]oms.AutomationExecution, error) {
 	return nil, nil
 }

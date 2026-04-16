@@ -731,6 +731,13 @@ components:
           type: array
           items:
             type: object
+        retryPolicy:
+          type: object
+          properties:
+            maxRetries:
+              type: integer
+            backoffMs:
+              type: integer
         createdBy:
           type: string
         createdAt:
@@ -739,6 +746,33 @@ components:
         updatedAt:
           type: string
           format: date-time
+    AutomationExecution:
+      type: object
+      required: [id, ruleId, status, startedAt]
+      properties:
+        id:
+          type: string
+        ruleId:
+          type: string
+        triggerEvent:
+          type: object
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [running, success, error, retrying]
+        error:
+          type: string
+        retryCount:
+          type: integer
+        result:
+          type: array
+          items:
+            type: object
     CreateAutomationRuleRequest:
       type: object
       required: [name, triggerType]
@@ -756,6 +790,13 @@ components:
           type: array
           items:
             type: object
+        retryPolicy:
+          type: object
+          properties:
+            maxRetries:
+              type: integer
+            backoffMs:
+              type: integer
         createdBy:
           type: string
     UpdateAutomationRuleRequest:
@@ -774,6 +815,13 @@ components:
           type: array
           items:
             type: object
+        retryPolicy:
+          type: object
+          properties:
+            maxRetries:
+              type: integer
+            backoffMs:
+              type: integer
     Notification:
       type: object
       required: [id, userId, title, body, type, read, createdAt]
@@ -3244,6 +3292,59 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "409":
           $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions:
+    get:
+      operationId: listExecutions
+      summary: List execution history for an automation rule
+      description: Returns execution history with optional status filter and pagination.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [running, success, error, retrying]
+          description: Filter executions by status
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+          description: Page size
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+          description: Offset for pagination
+      responses:
+        "200":
+          description: List of executions with pagination metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AutomationExecution"
+                  total:
+                    type: integer
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/notifications:
     get:
       operationId: listNotifications

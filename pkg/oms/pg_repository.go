@@ -2252,10 +2252,10 @@ func (r *PGRepository) ListProposalReviews(ctx context.Context, proposalID strin
 
 func (r *PGRepository) CreateAutomationRule(ctx context.Context, rule *AutomationRule) error {
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO automation_rules (id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO automation_rules (id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, retry_policy, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING created_at, updated_at`,
-		rule.ID, rule.OntologyRID, rule.Name, rule.Description, rule.Status, rule.TriggerType, rule.TriggerConfig, rule.Effects, rule.CreatedBy).
+		rule.ID, rule.OntologyRID, rule.Name, rule.Description, rule.Status, rule.TriggerType, rule.TriggerConfig, rule.Effects, rule.RetryPolicy, rule.CreatedBy).
 		Scan(&rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
 		return wrapPGError(err)
@@ -2266,9 +2266,9 @@ func (r *PGRepository) CreateAutomationRule(ctx context.Context, rule *Automatio
 func (r *PGRepository) GetAutomationRule(ctx context.Context, id string) (*AutomationRule, error) {
 	rule := &AutomationRule{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, created_by, created_at, updated_at
+		`SELECT id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, retry_policy, created_by, created_at, updated_at
 		 FROM automation_rules WHERE id = $1`, id).
-		Scan(&rule.ID, &rule.OntologyRID, &rule.Name, &rule.Description, &rule.Status, &rule.TriggerType, &rule.TriggerConfig, &rule.Effects, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt)
+		Scan(&rule.ID, &rule.OntologyRID, &rule.Name, &rule.Description, &rule.Status, &rule.TriggerType, &rule.TriggerConfig, &rule.Effects, &rule.RetryPolicy, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -2280,7 +2280,7 @@ func (r *PGRepository) GetAutomationRule(ctx context.Context, id string) (*Autom
 
 func (r *PGRepository) ListAutomationRules(ctx context.Context, ontologyRID string) ([]AutomationRule, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, created_by, created_at, updated_at
+		`SELECT id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, retry_policy, created_by, created_at, updated_at
 		 FROM automation_rules WHERE ontology_rid = $1 ORDER BY created_at`, ontologyRID)
 	if err != nil {
 		return nil, err
@@ -2290,7 +2290,7 @@ func (r *PGRepository) ListAutomationRules(ctx context.Context, ontologyRID stri
 	var result []AutomationRule
 	for rows.Next() {
 		var rule AutomationRule
-		if err := rows.Scan(&rule.ID, &rule.OntologyRID, &rule.Name, &rule.Description, &rule.Status, &rule.TriggerType, &rule.TriggerConfig, &rule.Effects, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
+		if err := rows.Scan(&rule.ID, &rule.OntologyRID, &rule.Name, &rule.Description, &rule.Status, &rule.TriggerType, &rule.TriggerConfig, &rule.Effects, &rule.RetryPolicy, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, rule)
@@ -2300,9 +2300,9 @@ func (r *PGRepository) ListAutomationRules(ctx context.Context, ontologyRID stri
 
 func (r *PGRepository) UpdateAutomationRule(ctx context.Context, rule *AutomationRule) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE automation_rules SET name = $2, description = $3, status = $4, trigger_type = $5, trigger_config = $6, effects = $7, updated_at = NOW()
+		`UPDATE automation_rules SET name = $2, description = $3, status = $4, trigger_type = $5, trigger_config = $6, effects = $7, retry_policy = $8, updated_at = NOW()
 		 WHERE id = $1`,
-		rule.ID, rule.Name, rule.Description, rule.Status, rule.TriggerType, rule.TriggerConfig, rule.Effects)
+		rule.ID, rule.Name, rule.Description, rule.Status, rule.TriggerType, rule.TriggerConfig, rule.Effects, rule.RetryPolicy)
 	if err != nil {
 		return err
 	}
@@ -2333,6 +2333,20 @@ func (r *PGRepository) InsertExecution(ctx context.Context, exec *AutomationExec
 		exec.ID, exec.RuleID, exec.TriggerEvent, exec.StartedAt, exec.CompletedAt, exec.Status, exec.Error, exec.RetryCount, exec.Result)
 	if err != nil {
 		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) UpdateExecution(ctx context.Context, exec *AutomationExecution) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE automation_executions SET completed_at = $2, status = $3, error = $4, retry_count = $5, result = $6
+		 WHERE id = $1`,
+		exec.ID, exec.CompletedAt, exec.Status, exec.Error, exec.RetryCount, exec.Result)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

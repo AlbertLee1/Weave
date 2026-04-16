@@ -1157,6 +1157,135 @@ func TestWatcher_ExecuteFunctionEffect(t *testing.T) {
 	}
 }
 
+func TestWatcher_RetryOnFailure_ExhaustsRetries(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	applier := &mockActionApplier{err: fmt.Errorf("always fails")}
+
+	retryPolicy := json.RawMessage(`{"maxRetries":3,"backoffMs":50}`)
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"badAction","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-watcher-retry",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Watcher Retry",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+		RetryPolicy:   retryPolicy,
+	})
+
+	w := NewWatcher(loader, recorder)
+	w.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	// Trigger the event
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-1",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	// Wait for all retries: 50ms + 100ms + 200ms = 350ms
+	deadline := time.After(5 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			exec := execs[0]
+			if exec.Status == "error" && exec.RetryCount == 3 {
+				if exec.Error == "" {
+					t.Fatal("expected non-empty error message")
+				}
+				// Verify 4 calls total (initial + 3 retries)
+				calls := applier.getCalls()
+				if len(calls) < 4 {
+					t.Fatalf("expected at least 4 action calls, got %d", len(calls))
+				}
+				// Verify single execution record (updated, not duplicated)
+				if len(execs) != 1 {
+					t.Fatalf("expected 1 execution record (updated), got %d", len(execs))
+				}
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			execs := recorder.getExecutions()
+			t.Fatalf("timed out; executions: %+v; calls: %d", execs, len(applier.getCalls()))
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func TestWatcher_RetrySucceeds(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+
+	failCount := 0
+	applier := &countingActionApplier{
+		failUntil: 1,
+		failCount: &failCount,
+	}
+
+	retryPolicy := json.RawMessage(`{"maxRetries":3,"backoffMs":50}`)
+	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"eventuallyWorks","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-watcher-retry-ok",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Watcher Retry Success",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+		RetryPolicy:   retryPolicy,
+	})
+
+	w := NewWatcher(loader, recorder)
+	w.SetActionApplier(applier)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-2",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	// Wait for retry to succeed
+	deadline := time.After(5 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			exec := execs[0]
+			if exec.Status == "success" {
+				if exec.RetryCount != 1 {
+					t.Fatalf("expected retryCount=1, got %d", exec.RetryCount)
+				}
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			execs := recorder.getExecutions()
+			t.Fatalf("timed out; executions: %+v", execs)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 func TestWatcherLinkEditTypesIgnored(t *testing.T) {
 	loader := &mockDataChangeRuleLoader{}
 	recorder := &mockExecutionRecorder{}

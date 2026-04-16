@@ -24,6 +24,9 @@ func (r *inMemoryOmsRepo) DeleteAutomationRule(_ context.Context, _ string) erro
 func (r *inMemoryOmsRepo) InsertExecution(_ context.Context, _ *oms.AutomationExecution) error {
 	return nil
 }
+func (r *inMemoryOmsRepo) UpdateExecution(_ context.Context, _ *oms.AutomationExecution) error {
+	return nil
+}
 func (r *inMemoryOmsRepo) ListExecutions(_ context.Context, _ string) ([]oms.AutomationExecution, error) {
 	return nil, nil
 }

@@ -3,9 +3,11 @@ package oms_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/oms"
@@ -607,5 +609,173 @@ func TestAutomationRule_FullLifecycle(t *testing.T) {
 	data2 := listResp2["data"].([]interface{})
 	if len(data2) != 0 {
 		t.Errorf("list after delete: expected 0 rules, got %d", len(data2))
+	}
+}
+
+// --- ListExecutions Tests ---
+
+func TestListExecutions_Success(t *testing.T) {
+	now := time.Now()
+	completedAt := now.Add(time.Second)
+	repo := &mockRepo{
+		automationRules: []oms.AutomationRule{
+			{ID: "rule-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "test", Status: "active", TriggerType: "schedule"},
+		},
+		executions: []oms.AutomationExecution{
+			{ID: "exec-1", RuleID: "rule-1", Status: "success", StartedAt: now, CompletedAt: &completedAt},
+			{ID: "exec-2", RuleID: "rule-1", Status: "error", Error: "failed", StartedAt: now, CompletedAt: &completedAt, RetryCount: 3},
+			{ID: "exec-3", RuleID: "other-rule", Status: "success", StartedAt: now, CompletedAt: &completedAt},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", handler.ListExecutions)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/automationRules/rule-1/executions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data := resp["data"].([]interface{})
+	if len(data) != 2 {
+		t.Fatalf("expected 2 executions for rule-1, got %d", len(data))
+	}
+
+	total := resp["total"].(float64)
+	if int(total) != 2 {
+		t.Fatalf("expected total=2, got %v", total)
+	}
+}
+
+func TestListExecutions_StatusFilter(t *testing.T) {
+	now := time.Now()
+	completedAt := now.Add(time.Second)
+	repo := &mockRepo{
+		automationRules: []oms.AutomationRule{
+			{ID: "rule-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "test", Status: "active", TriggerType: "schedule"},
+		},
+		executions: []oms.AutomationExecution{
+			{ID: "exec-1", RuleID: "rule-1", Status: "success", StartedAt: now, CompletedAt: &completedAt},
+			{ID: "exec-2", RuleID: "rule-1", Status: "error", Error: "failed", StartedAt: now, CompletedAt: &completedAt},
+			{ID: "exec-3", RuleID: "rule-1", Status: "success", StartedAt: now, CompletedAt: &completedAt},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", handler.ListExecutions)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/automationRules/rule-1/executions?status=error", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data := resp["data"].([]interface{})
+	if len(data) != 1 {
+		t.Fatalf("expected 1 execution with status=error, got %d", len(data))
+	}
+	exec := data[0].(map[string]interface{})
+	if exec["status"] != "error" {
+		t.Fatalf("expected status 'error', got %v", exec["status"])
+	}
+}
+
+func TestListExecutions_Pagination(t *testing.T) {
+	now := time.Now()
+	completedAt := now.Add(time.Second)
+	repo := &mockRepo{
+		automationRules: []oms.AutomationRule{
+			{ID: "rule-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "test", Status: "active", TriggerType: "schedule"},
+		},
+	}
+	for i := 0; i < 10; i++ {
+		repo.executions = append(repo.executions, oms.AutomationExecution{
+			ID: fmt.Sprintf("exec-%d", i), RuleID: "rule-1", Status: "success", StartedAt: now, CompletedAt: &completedAt,
+		})
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", handler.ListExecutions)
+
+	// Get first page (limit=3, offset=0)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/automationRules/rule-1/executions?limit=3&offset=0", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data := resp["data"].([]interface{})
+	if len(data) != 3 {
+		t.Fatalf("expected 3 executions in page, got %d", len(data))
+	}
+	total := resp["total"].(float64)
+	if int(total) != 10 {
+		t.Fatalf("expected total=10, got %v", total)
+	}
+
+	// Get second page
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/automationRules/rule-1/executions?limit=3&offset=3", nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	resp2 := parseJSON(t, w2.Body.Bytes())
+	data2 := resp2["data"].([]interface{})
+	if len(data2) != 3 {
+		t.Fatalf("expected 3 executions in page 2, got %d", len(data2))
+	}
+}
+
+func TestListExecutions_Empty(t *testing.T) {
+	repo := &mockRepo{
+		automationRules: []oms.AutomationRule{
+			{ID: "rule-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "test", Status: "active", TriggerType: "schedule"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", handler.ListExecutions)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/automationRules/rule-1/executions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data := resp["data"].([]interface{})
+	if len(data) != 0 {
+		t.Fatalf("expected empty list, got %d", len(data))
+	}
+}
+
+func TestListExecutions_RuleNotFound(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", handler.ListExecutions)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/automationRules/nonexistent/executions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d; body: %s", w.Code, w.Body.String())
 	}
 }

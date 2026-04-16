@@ -163,6 +163,7 @@ type Repository interface {
 	UpdateAutomationRule(ctx context.Context, rule *AutomationRule) error
 	DeleteAutomationRule(ctx context.Context, id string) error
 	InsertExecution(ctx context.Context, exec *AutomationExecution) error
+	UpdateExecution(ctx context.Context, exec *AutomationExecution) error
 	ListExecutions(ctx context.Context, ruleID string) ([]AutomationExecution, error)
 
 	// Notification (US-130)

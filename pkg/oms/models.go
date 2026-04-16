@@ -504,6 +504,7 @@ type AutomationRule struct {
 	TriggerType   string          `json:"triggerType"`    // schedule, dataChange, manual
 	TriggerConfig json.RawMessage `json:"triggerConfig"`
 	Effects       json.RawMessage `json:"effects"`
+	RetryPolicy   json.RawMessage `json:"retryPolicy,omitempty"`
 	CreatedBy     string          `json:"createdBy"`
 	CreatedAt     time.Time       `json:"createdAt"`
 	UpdatedAt     time.Time       `json:"updatedAt"`

@@ -241,8 +241,10 @@ func (w *Watcher) matchRule(wr *watcherRule, event funnel.ChangeEvent) bool {
 
 // triggerRule fires or debounces execution for a matched rule.
 func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
+	retryPolicy := ParseRetryPolicy(wr.rule.RetryPolicy)
+
 	if wr.config.DebounceMs <= 0 {
-		w.executeRule(wr.rule.ID, wr.rule.OntologyRID, event, wr.rule.Effects)
+		w.executeAttempt(wr.rule.ID, wr.rule.OntologyRID, event, wr.rule.Effects, retryPolicy, "", 0)
 		return
 	}
 
@@ -264,7 +266,7 @@ func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
 			delete(w.debounceTimers, ruleID)
 			w.mu.Unlock()
 			if e != nil {
-				w.executeRule(ruleID, ontologyRID, e.event, effects)
+				w.executeAttempt(ruleID, ontologyRID, e.event, effects, retryPolicy, "", 0)
 			}
 		})
 	} else {
@@ -275,14 +277,14 @@ func (w *Watcher) triggerRule(wr *watcherRule, event funnel.ChangeEvent) {
 			delete(w.debounceTimers, ruleID)
 			w.mu.Unlock()
 			if e != nil {
-				w.executeRule(ruleID, ontologyRID, e.event, effects)
+				w.executeAttempt(ruleID, ontologyRID, e.event, effects, retryPolicy, "", 0)
 			}
 		})
 		w.debounceTimers[ruleID] = entry
 	}
 }
 
-func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEvent, effects json.RawMessage) {
+func (w *Watcher) executeAttempt(ruleID, ontologyRID string, event funnel.ChangeEvent, effects json.RawMessage, retryPolicy *RetryPolicy, execID string, attempt int) {
 	startedAt := time.Now()
 
 	triggerEvent, _ := json.Marshal(map[string]interface{}{
@@ -293,7 +295,7 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 		"ruleId":     ruleID,
 	})
 
-	log.Printf("[automate] data change trigger fired for rule %s: %s %s %s", ruleID, event.EditType, event.ObjectType, event.PrimaryKey)
+	log.Printf("[automate] data change trigger fired for rule %s (attempt %d): %s %s %s", ruleID, attempt, event.EditType, event.ObjectType, event.PrimaryKey)
 
 	ctx := w.ctx
 	if ctx == nil {
@@ -323,6 +325,49 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 	}
 
 	completedAt := time.Now()
+
+	// Serialize effect results for storage
+	var resultJSON json.RawMessage
+	if len(effectResults) > 0 {
+		resultJSON, _ = json.Marshal(effectResults)
+	}
+
+	// Check if retry is possible
+	if execErr != nil && retryPolicy != nil && attempt < retryPolicy.MaxRetries {
+		log.Printf("[automate] effect execution failed for rule %s (attempt %d), scheduling retry: %v", ruleID, attempt, execErr)
+
+		exec := &oms.AutomationExecution{
+			RuleID:       ruleID,
+			TriggerEvent: triggerEvent,
+			StartedAt:    startedAt,
+			CompletedAt:  &completedAt,
+			Status:       "retrying",
+			Error:        execErr.Error(),
+			RetryCount:   attempt,
+			Result:       resultJSON,
+		}
+
+		if execID == "" {
+			exec.ID = rid.NewAutomationExecutionRID()
+			if err := w.recorder.InsertExecution(ctx, exec); err != nil {
+				log.Printf("[automate] failed to record execution for rule %s: %v", ruleID, err)
+			}
+			execID = exec.ID
+		} else {
+			exec.ID = execID
+			if err := w.recorder.UpdateExecution(ctx, exec); err != nil {
+				log.Printf("[automate] failed to update execution for rule %s: %v", ruleID, err)
+			}
+		}
+
+		backoff := retryPolicy.BackoffDuration(attempt)
+		time.AfterFunc(backoff, func() {
+			w.executeAttempt(ruleID, ontologyRID, event, effects, retryPolicy, execID, attempt+1)
+		})
+		return
+	}
+
+	// Final result (success or error with no more retries)
 	status := "success"
 	errMsg := ""
 	if execErr != nil {
@@ -331,25 +376,27 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 		log.Printf("[automate] effect execution failed for rule %s: %v", ruleID, execErr)
 	}
 
-	// Serialize effect results for storage
-	var resultJSON json.RawMessage
-	if len(effectResults) > 0 {
-		resultJSON, _ = json.Marshal(effectResults)
-	}
-
 	exec := &oms.AutomationExecution{
-		ID:           rid.NewAutomationExecutionRID(),
 		RuleID:       ruleID,
 		TriggerEvent: triggerEvent,
 		StartedAt:    startedAt,
 		CompletedAt:  &completedAt,
 		Status:       status,
 		Error:        errMsg,
+		RetryCount:   attempt,
 		Result:       resultJSON,
 	}
 
-	if err := w.recorder.InsertExecution(ctx, exec); err != nil {
-		log.Printf("[automate] failed to record execution for rule %s: %v", ruleID, err)
+	if execID == "" {
+		exec.ID = rid.NewAutomationExecutionRID()
+		if err := w.recorder.InsertExecution(ctx, exec); err != nil {
+			log.Printf("[automate] failed to record execution for rule %s: %v", ruleID, err)
+		}
+	} else {
+		exec.ID = execID
+		if err := w.recorder.UpdateExecution(ctx, exec); err != nil {
+			log.Printf("[automate] failed to update execution for rule %s: %v", ruleID, err)
+		}
 	}
 }
 

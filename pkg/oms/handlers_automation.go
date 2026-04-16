@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -18,6 +19,7 @@ type CreateAutomationRuleRequest struct {
 	TriggerType   string          `json:"triggerType"`
 	TriggerConfig json.RawMessage `json:"triggerConfig,omitempty"`
 	Effects       json.RawMessage `json:"effects,omitempty"`
+	RetryPolicy   json.RawMessage `json:"retryPolicy,omitempty"`
 	CreatedBy     string          `json:"createdBy,omitempty"`
 }
 
@@ -28,6 +30,7 @@ type UpdateAutomationRuleRequest struct {
 	TriggerType   string          `json:"triggerType,omitempty"`
 	TriggerConfig json.RawMessage `json:"triggerConfig,omitempty"`
 	Effects       json.RawMessage `json:"effects,omitempty"`
+	RetryPolicy   json.RawMessage `json:"retryPolicy,omitempty"`
 }
 
 var validTriggerTypes = map[string]bool{
@@ -91,6 +94,7 @@ func (h *OMSHandler) CreateAutomationRule(w http.ResponseWriter, r *http.Request
 		TriggerType:   req.TriggerType,
 		TriggerConfig: req.TriggerConfig,
 		Effects:       req.Effects,
+		RetryPolicy:   req.RetryPolicy,
 		CreatedBy:     req.CreatedBy,
 	}
 
@@ -191,6 +195,9 @@ func (h *OMSHandler) UpdateAutomationRule(w http.ResponseWriter, r *http.Request
 	if req.Effects != nil {
 		existing.Effects = req.Effects
 	}
+	if req.RetryPolicy != nil {
+		existing.RetryPolicy = req.RetryPolicy
+	}
 
 	if err := h.repo.UpdateAutomationRule(r.Context(), existing); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -288,4 +295,75 @@ func (h *OMSHandler) ResumeAutomationRule(w http.ResponseWriter, r *http.Request
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, existing)
+}
+
+// ListExecutions handles GET /api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions.
+func (h *OMSHandler) ListExecutions(w http.ResponseWriter, r *http.Request) {
+	ruleID := chi.URLParam(r, "ruleId")
+
+	// Verify rule exists
+	_, err := h.repo.GetAutomationRule(r.Context(), ruleID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("AutomationRuleNotFound", map[string]string{
+				"ruleId": ruleID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetAutomationRuleFailed", nil))
+		return
+	}
+
+	list, err := h.repo.ListExecutions(r.Context(), ruleID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListExecutionsFailed", nil))
+		return
+	}
+
+	// Apply optional ?status= filter
+	statusFilter := r.URL.Query().Get("status")
+	if statusFilter != "" {
+		var filtered []AutomationExecution
+		for _, exec := range list {
+			if exec.Status == statusFilter {
+				filtered = append(filtered, exec)
+			}
+		}
+		list = filtered
+	}
+
+	// Apply pagination: ?limit= and ?offset=
+	offset := 0
+	limit := 50 // default page size
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	total := len(list)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	list = list[offset:end]
+
+	if list == nil {
+		list = []AutomationExecution{}
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data":   list,
+		"total":  total,
+		"offset": offset,
+		"limit":  limit,
+	})
 }

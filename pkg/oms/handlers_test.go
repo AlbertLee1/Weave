@@ -34,6 +34,7 @@ type mockRepo struct {
 	proposals       []oms.OntologyProposal
 	proposalReviews []oms.ProposalReview
 	automationRules []oms.AutomationRule
+	executions      []oms.AutomationExecution
 	notifications   []oms.Notification
 
 	// Error controls

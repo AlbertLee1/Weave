@@ -30,7 +30,7 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000028, next is 000029
+- Migrations in migrations/ — sequential 000001-000029, next is 000030
 - AutomationRule/AutomationExecution models in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_automation_test.go per package
 - Automation mock stubs pattern: same as branches/proposals — mock_automation_test.go per package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook) + inline in pkg/index/rehydrate_test.go
 - Scheduler pattern: pkg/automate/scheduler.go — RuleLoader + ExecutionRecorder interfaces; robfig/cron/v3 for cron scheduling; entries map[string]cron.EntryID tracks active rules
@@ -52,6 +52,10 @@
 - Notification model in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_notifications_test.go per package
 - pkg/oms cannot import pkg/auth (circular: auth→oms via policy_evaluator.go); use ActorFunc pattern for user ID extraction
 - OMSHandler.actorFn: injected function for extracting user ID from request context; nil→"dev-user" fallback
+- RetryPolicy pattern: pkg/automate/retry.go — RetryPolicy struct (MaxRetries, BackoffMs); ParseRetryPolicy from json.RawMessage; BackoffDuration exponential (backoffMs * 2^attempt)
+- Retry in Scheduler/Watcher: executeAttempt recursive method; first attempt → InsertExecution, subsequent → UpdateExecution; time.AfterFunc for async retry
+- ExecutionRecorder interface: InsertExecution + UpdateExecution; both Scheduler and Watcher use this
+- ListExecutions handler: in-process filter (?status=) + pagination (?limit=, ?offset=); response includes total/offset/limit metadata
 - processEffects signature: 7 params (ctx, effects, ontologyRID, data, applier, funcDispatcher, notifier)
 - Effect failure: processEffects returns error → execution recorded with status="error" and error message
 - Scheduler dynamic updates: AddRule, RemoveRule, PauseRule (alias for RemoveRule), ResumeRule (alias for AddRule)
@@ -667,4 +671,36 @@
   - Notification template uses the same resolveTemplateStringWithChain as other effects — chain references (${effects[N].result}) work in notification body
   - Mock test file package names must match the test package (e.g., `package links_test` not `package links`) — check existing mock files in each directory
   - Adding 3 Repository methods requires updating 8 mock files across the codebase + 1 inline (rehydrate_test.go)
+---
+
+## 2026-04-16 - US-131
+- Implemented Automate — retry and monitoring (retry policy, execution history endpoint)
+- Files changed:
+  - migrations/000029_automation_retry_policy.up.sql — ALTER TABLE adds retry_policy JSONB column to automation_rules
+  - migrations/000029_automation_retry_policy.down.sql — DROP COLUMN rollback
+  - pkg/oms/models.go — Added RetryPolicy (json.RawMessage) field to AutomationRule struct
+  - pkg/oms/repository.go — Added UpdateExecution(ctx, exec) method to Repository interface
+  - pkg/oms/pg_repository.go — Updated all automation rule CRUD (Create/Get/List/Update) to include retry_policy column; added UpdateExecution implementation
+  - pkg/automate/retry.go — New file: RetryPolicy struct (MaxRetries, BackoffMs), ParseRetryPolicy (returns nil for invalid/empty/zero), BackoffDuration (exponential: backoffMs * 2^attempt)
+  - pkg/automate/retry_test.go — New file: 10 tests: ParseRetryPolicy valid/nil/null/invalid/zero/negative, BackoffDuration at attempts 0/1/2, default backoff, custom backoff
+  - pkg/automate/scheduler.go — Added UpdateExecution to ExecutionRecorder interface; refactored executeRule → executeAttempt (recursive with retry support); addRuleInternal parses RetryPolicy and passes to executeAttempt; on failure with retries remaining → insert/update execution with status="retrying", schedule retry via time.AfterFunc with exponential backoff; on final failure → status="error" with retry_count
+  - pkg/automate/scheduler_test.go — Updated mockExecutionRecorder with UpdateExecution; added countingActionApplier (fails first N calls); 3 new tests: RetryOnFailure_ExhaustsRetries (3 retries → error), RetrySucceeds (fails twice, succeeds on 3rd attempt), NoRetryPolicy_ImmediateError
+  - pkg/automate/watcher.go — Refactored triggerRule/executeRule → executeAttempt with identical retry pattern; parses RetryPolicy from rule.RetryPolicy
+  - pkg/automate/watcher_test.go — 2 new tests: RetryOnFailure_ExhaustsRetries (data change trigger, 3 retries → error, single execution record), RetrySucceeds (1 failure then success)
+  - pkg/oms/handlers_automation.go — Added RetryPolicy to Create/Update request structs; added ListExecutions handler (GET /automationRules/{id}/executions) with ?status= filter, ?limit= and ?offset= pagination, total count in response
+  - pkg/oms/handlers_automation_test.go — 5 new tests: ListExecutions Success/StatusFilter/Pagination/Empty/RuleNotFound
+  - pkg/oms/handlers_test.go — Added executions field to mockRepo struct
+  - pkg/oms/mock_automation_test.go — Upgraded InsertExecution/ListExecutions from stubs to functional implementations; added UpdateExecution functional implementation
+  - cmd/server/routes.go — Registered GET /api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added AutomationExecution schema, retryPolicy on AutomationRule/Create/Update schemas, listExecutions endpoint spec with pagination params
+  - 7 mock files updated with UpdateExecution stubs (pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go)
+- **Learnings for future iterations:**
+  - Retry uses recursive executeAttempt pattern: first attempt inserts execution, subsequent retries update the same record; single execution record per trigger event
+  - RetryPolicy parsed from AutomationRule.RetryPolicy (json.RawMessage → *RetryPolicy); nil means no retry
+  - BackoffDuration is exponential: backoffMs * 2^attempt (e.g., 1000 → 2000 → 4000ms); default backoffMs=1000 when <=0
+  - time.AfterFunc used for async retry scheduling (doesn't block cron goroutine or watcher callback)
+  - ExecutionRecorder interface expanded with UpdateExecution — both Scheduler and Watcher share this interface
+  - ListExecutions handler uses in-process filtering (status) and pagination (limit/offset) — consistent with ListBranches, ListProposals pattern
+  - countingActionApplier test helper: tracks call count, fails first N calls then succeeds �� useful for testing transient failure recovery
+  - Pagination response includes total (pre-filter count), offset, limit alongside data array
 ---
