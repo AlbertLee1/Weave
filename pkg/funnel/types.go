@@ -10,6 +10,7 @@ const (
 	EditTypeModify     EditType = "MODIFY"
 	EditTypeDelete     EditType = "DELETE"
 	EditTypeLinkCreate EditType = "LINK_CREATE"
+	EditTypeLinkDelete EditType = "LINK_DELETE"
 )
 
 // Edit source discriminators used by the user-edit-wins conflict resolver in

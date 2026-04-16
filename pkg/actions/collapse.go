@@ -33,13 +33,23 @@ func CollapseEdits(edits []funnel.Edit) []funnel.Edit {
 
 	for _, edit := range edits {
 		// Route link edits to the separate tracker.
-		if edit.Type == funnel.EditTypeLinkCreate {
+		if edit.Type == funnel.EditTypeLinkCreate || edit.Type == funnel.EditTypeLinkDelete {
 			lk := linkKey{edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey}
-			if _, exists := linkTracked[lk]; !exists {
+			existing, exists := linkTracked[lk]
+			if !exists {
 				linkTracked[lk] = &trackedLinkEdit{edit: edit}
 				linkOrder = append(linkOrder, lk)
+			} else {
+				switch {
+				case existing.edit.Type == funnel.EditTypeLinkCreate && edit.Type == funnel.EditTypeLinkDelete:
+					// LINK_CREATE + LINK_DELETE = cancel both
+					existing.removed = true
+				case existing.edit.Type == funnel.EditTypeLinkDelete && edit.Type == funnel.EditTypeLinkCreate:
+					// LINK_DELETE + LINK_CREATE = last one wins (recreate)
+					existing.edit = edit
+				// Duplicate LINK_CREATE or LINK_DELETE on same triple → keep first (idempotent).
+				}
 			}
-			// Duplicate LINK_CREATE on same triple → keep first (idempotent).
 			continue
 		}
 

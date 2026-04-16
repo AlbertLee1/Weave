@@ -1727,3 +1727,197 @@ func TestCountEdits_IncludesLinks(t *testing.T) {
 		t.Fatalf("expected addedLinksCount=1, got %d", r.AddedLinksCount)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// deleteLink Rule Tests (US-101)
+// ---------------------------------------------------------------------------
+
+func TestParseRules_DeleteLink(t *testing.T) {
+	data := mustJSON([]Rule{
+		{
+			Type:                   "deleteLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	})
+	rules, err := ParseRules(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Type != "deleteLink" {
+		t.Fatalf("unexpected rules: %+v", rules)
+	}
+	if rules[0].LinkTypeAPIName != "employeeDepartment" {
+		t.Fatalf("expected LinkTypeAPIName employeeDepartment, got %s", rules[0].LinkTypeAPIName)
+	}
+}
+
+func TestExecuteRules_DeleteLink(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:                   "deleteLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"employeeId":   "emp-1",
+		"departmentId": "dept-1",
+	}
+	edits, err := ExecuteRules(rules, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	if edits[0].Type != funnel.EditTypeLinkDelete {
+		t.Fatalf("expected LINK_DELETE, got %s", edits[0].Type)
+	}
+	if edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", edits[0].PrimaryKey)
+	}
+	if edits[0].TargetPrimaryKey != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", edits[0].TargetPrimaryKey)
+	}
+	if edits[0].LinkTypeRID != "employeeDepartment" {
+		t.Fatalf("expected LinkTypeRID employeeDepartment (api name, pre-resolve), got %s", edits[0].LinkTypeRID)
+	}
+}
+
+func TestExecuteRules_DeleteLink_MissingSourcePK(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:                   "deleteLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"departmentId": "dept-1",
+	}
+	_, err := ExecuteRules(rules, params)
+	if err == nil {
+		t.Fatal("expected error for missing source PK")
+	}
+}
+
+func TestExecuteRules_DeleteLink_MissingTargetPK(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:                   "deleteLink",
+			LinkTypeAPIName:        "employeeDepartment",
+			SourceObjectPrimaryKey: "employeeId",
+			TargetObjectPrimaryKey: "departmentId",
+		},
+	}
+	params := map[string]interface{}{
+		"employeeId": "emp-1",
+	}
+	_, err := ExecuteRules(rules, params)
+	if err == nil {
+		t.Fatal("expected error for missing target PK")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CollapseEdits LINK_DELETE Tests (US-101)
+// ---------------------------------------------------------------------------
+
+func TestCollapseEdits_LinkCreateThenDelete_Cancels(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeLinkCreate, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 edits (LINK_CREATE+LINK_DELETE cancel), got %d", len(result))
+	}
+}
+
+func TestCollapseEdits_LinkDelete_NoDuplicate(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 link delete (deduped), got %d", len(result))
+	}
+	if result[0].Type != funnel.EditTypeLinkDelete {
+		t.Fatalf("expected LINK_DELETE, got %s", result[0].Type)
+	}
+}
+
+func TestCollapseEdits_LinkDelete_DifferentTargets(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-1"},
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "emp-1", LinkTypeRID: "lt-1", TargetPrimaryKey: "dept-2"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 link deletes (different targets), got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor deleteLink Tests (US-101)
+// ---------------------------------------------------------------------------
+
+func TestExecutor_Apply_DeleteLink(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("unlinkEmployeeDept", []ParameterDef{
+				{ID: "employeeId", Type: "string", Required: true},
+				{ID: "departmentId", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:                   "deleteLink",
+					LinkTypeAPIName:        "employeeDepartment",
+					SourceObjectPrimaryKey: "employeeId",
+					TargetObjectPrimaryKey: "departmentId",
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "unlinkEmployeeDept",
+		Parameters: map[string]interface{}{
+			"employeeId":   "emp-1",
+			"departmentId": "dept-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeLinkDelete {
+		t.Fatalf("expected LINK_DELETE, got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", result.Edits[0].PrimaryKey)
+	}
+	if result.Edits[0].TargetPrimaryKey != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", result.Edits[0].TargetPrimaryKey)
+	}
+}
+
+func TestCountEdits_IncludesDeletedLinks(t *testing.T) {
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeDelete, ObjectType: "A", PrimaryKey: "1"},
+		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "1", LinkTypeRID: "lt-1", TargetPrimaryKey: "2"},
+	}
+	r := countEdits(edits)
+	if r.DeletedObjectCount != 1 {
+		t.Fatalf("expected deletedObjectCount=1, got %d", r.DeletedObjectCount)
+	}
+	if r.DeletedLinksCount != 1 {
+		t.Fatalf("expected deletedLinksCount=1, got %d", r.DeletedLinksCount)
+	}
+}

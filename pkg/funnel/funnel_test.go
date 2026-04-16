@@ -1106,6 +1106,126 @@ func TestEditTypeLinkCreate_Constant(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// LINK_DELETE Consumer Tests (US-101)
+// ---------------------------------------------------------------------------
+
+// fakeLinkEdgeDeleter records DeleteLinkEdge calls for assertion.
+type fakeLinkEdgeDeleter struct {
+	mu      sync.Mutex
+	deleted []struct{ LinkTypeRID, SourcePK, TargetPK string }
+}
+
+func (f *fakeLinkEdgeDeleter) DeleteLinkEdge(_ context.Context, linkTypeRID, sourcePK, targetPK string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, struct{ LinkTypeRID, SourcePK, TargetPK string }{linkTypeRID, sourcePK, targetPK})
+	return nil
+}
+
+func (f *fakeLinkEdgeDeleter) snapshot() []struct{ LinkTypeRID, SourcePK, TargetPK string } {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]struct{ LinkTypeRID, SourcePK, TargetPK string }, len(f.deleted))
+	copy(out, f.deleted)
+	return out
+}
+
+func TestApplyEdit_LinkDelete(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	deleter := &fakeLinkEdgeDeleter{}
+	consumer.SetLinkEdgeDeleter(deleter)
+
+	edit := Edit{
+		Type:             EditTypeLinkDelete,
+		PrimaryKey:       "emp-1",
+		LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+		TargetPrimaryKey: "dept-1",
+	}
+	if err := consumer.applyEdit(testOntology, edit); err != nil {
+		t.Fatalf("applyEdit LINK_DELETE: %v", err)
+	}
+
+	dels := deleter.snapshot()
+	if len(dels) != 1 {
+		t.Fatalf("expected 1 delete call, got %d", len(dels))
+	}
+	if dels[0].LinkTypeRID != "ri.ontology.main.link-type.emp-dept" {
+		t.Fatalf("expected link type RID, got %s", dels[0].LinkTypeRID)
+	}
+	if dels[0].SourcePK != "emp-1" {
+		t.Fatalf("expected source PK emp-1, got %s", dels[0].SourcePK)
+	}
+	if dels[0].TargetPK != "dept-1" {
+		t.Fatalf("expected target PK dept-1, got %s", dels[0].TargetPK)
+	}
+}
+
+func TestApplyEdit_LinkDelete_NoDeleter(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	// No LinkEdgeDeleter set — should succeed (log + skip).
+
+	edit := Edit{
+		Type:             EditTypeLinkDelete,
+		PrimaryKey:       "emp-1",
+		LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+		TargetPrimaryKey: "dept-1",
+	}
+	if err := consumer.applyEdit(testOntology, edit); err != nil {
+		t.Fatalf("expected no error when deleter is nil, got: %v", err)
+	}
+}
+
+func TestApplyBatch_LinkDelete(t *testing.T) {
+	consumer, _ := setupTestConsumer(t)
+	writer := &fakeLinkEdgeWriter{}
+	consumer.SetLinkEdgeWriter(writer)
+	deleter := &fakeLinkEdgeDeleter{}
+	consumer.SetLinkEdgeDeleter(deleter)
+	consumer.objectTypeRIDs = map[string]string{}
+	consumer.versionCounters = map[string]int64{}
+
+	batch := EditBatch{
+		ID:              "batch-link-del-1",
+		OntologyAPIName: testOntology,
+		UserID:          "user-1",
+		Timestamp:       time.Now(),
+		Edits: []Edit{
+			{
+				Type:             EditTypeLinkCreate,
+				PrimaryKey:       "emp-1",
+				LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+				TargetPrimaryKey: "dept-1",
+			},
+			{
+				Type:             EditTypeLinkDelete,
+				PrimaryKey:       "emp-1",
+				LinkTypeRID:      "ri.ontology.main.link-type.emp-dept",
+				TargetPrimaryKey: "dept-1",
+			},
+		},
+	}
+
+	if err := consumer.ApplyBatch(context.Background(), batch); err != nil {
+		t.Fatalf("ApplyBatch: %v", err)
+	}
+
+	edges := writer.snapshot()
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 link create, got %d", len(edges))
+	}
+	dels := deleter.snapshot()
+	if len(dels) != 1 {
+		t.Fatalf("expected 1 link delete, got %d", len(dels))
+	}
+}
+
+func TestEditTypeLinkDelete_Constant(t *testing.T) {
+	if EditTypeLinkDelete != "LINK_DELETE" {
+		t.Fatalf("expected LINK_DELETE, got %q", EditTypeLinkDelete)
+	}
+}
+
 func TestEditBatch_LinkCreate_JSON(t *testing.T) {
 	batch := EditBatch{
 		ID:              "batch-1",

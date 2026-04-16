@@ -50,6 +50,12 @@ type LinkEdgeWriter interface {
 	UpsertLinkEdge(ctx context.Context, edge *oms.LinkEdge) error
 }
 
+// LinkEdgeDeleter is the minimal interface for deleting M2M link edges.
+// Satisfied by *oms.PGRepository. Tests can supply a fake.
+type LinkEdgeDeleter interface {
+	DeleteLinkEdge(ctx context.Context, linkTypeRID, sourcePK, targetPK string) error
+}
+
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
 type Consumer struct {
 	js            nats.JetStreamContext
@@ -105,6 +111,10 @@ type Consumer struct {
 	// processed. Nil = link edits are logged and skipped.
 	linkEdgeWriter LinkEdgeWriter
 
+	// linkEdgeDeleter deletes M2M link edges when LINK_DELETE edits are
+	// processed. Nil = link delete edits are logged and skipped.
+	linkEdgeDeleter LinkEdgeDeleter
+
 	// embedFields holds the optional embedding side-channel state. See
 	// embeddings.go for the wiring methods and the per-batch hook.
 	embedFields
@@ -144,6 +154,13 @@ func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
 // before Start().
 func (c *Consumer) SetLinkEdgeWriter(w LinkEdgeWriter) {
 	c.linkEdgeWriter = w
+}
+
+// SetLinkEdgeDeleter enables M2M link-edge deletion for LINK_DELETE edits.
+// Pass nil to disable (link delete edits will be logged and skipped). Safe to
+// call before Start().
+func (c *Consumer) SetLinkEdgeDeleter(d LinkEdgeDeleter) {
+	c.linkEdgeDeleter = d
 }
 
 // SetAlwaysApplyField wires the US-021 always-apply hook. When set, ingest
@@ -312,6 +329,8 @@ func (c *Consumer) applyEdit(ontologyAPIName string, edit Edit) error {
 		return c.indexMgr.DeleteDocument(scopedKey, edit.PrimaryKey)
 	case EditTypeLinkCreate:
 		return c.applyLinkCreate(edit)
+	case EditTypeLinkDelete:
+		return c.applyLinkDelete(edit)
 	default:
 		return fmt.Errorf("unknown edit type: %q", edit.Type)
 	}
@@ -330,6 +349,16 @@ func (c *Consumer) applyLinkCreate(edit Edit) error {
 		TargetObjectPK: edit.TargetPrimaryKey,
 	}
 	return c.linkEdgeWriter.UpsertLinkEdge(context.Background(), edge)
+}
+
+// applyLinkDelete removes a M2M link edge via the configured LinkEdgeDeleter.
+func (c *Consumer) applyLinkDelete(edit Edit) error {
+	if c.linkEdgeDeleter == nil {
+		log.Printf("funnel: LINK_DELETE skipped (no link edge deleter): %s %s→%s",
+			edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey)
+		return nil
+	}
+	return c.linkEdgeDeleter.DeleteLinkEdge(context.Background(), edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey)
 }
 
 // buildIndexDoc copies edit.Properties into a fresh map and merges Markings
@@ -370,11 +399,11 @@ func (c *Consumer) applyBatchEdits(ontologyAPIName string, edits []Edit) error {
 	}
 
 	// Separate link edits from object edits — link edits go to the edge
-	// writer, not to Bleve.
+	// writer/deleter, not to Bleve.
 	var objectEdits []Edit
 	var linkEdits []Edit
 	for _, edit := range edits {
-		if edit.Type == EditTypeLinkCreate {
+		if edit.Type == EditTypeLinkCreate || edit.Type == EditTypeLinkDelete {
 			linkEdits = append(linkEdits, edit)
 		} else {
 			objectEdits = append(objectEdits, edit)
@@ -415,10 +444,17 @@ func (c *Consumer) applyBatchEdits(ontologyAPIName string, edits []Edit) error {
 		}
 	}
 
-	// Apply link edits via the edge writer.
+	// Apply link edits via the edge writer/deleter.
 	for _, edit := range linkEdits {
-		if err := c.applyLinkCreate(edit); err != nil {
-			return fmt.Errorf("apply link create: %w", err)
+		switch edit.Type {
+		case EditTypeLinkCreate:
+			if err := c.applyLinkCreate(edit); err != nil {
+				return fmt.Errorf("apply link create: %w", err)
+			}
+		case EditTypeLinkDelete:
+			if err := c.applyLinkDelete(edit); err != nil {
+				return fmt.Errorf("apply link delete: %w", err)
+			}
 		}
 	}
 
@@ -696,7 +732,7 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	prevStates := make([]json.RawMessage, len(batch.Edits))
 	if c.historyRepo != nil {
 		for i, e := range batch.Edits {
-			if e.Type == EditTypeCreate || e.Type == EditTypeLinkCreate {
+			if e.Type == EditTypeCreate || e.Type == EditTypeLinkCreate || e.Type == EditTypeLinkDelete {
 				continue
 			}
 			doc := c.fetchDocument(batch.OntologyAPIName, e.ObjectType, e.PrimaryKey)
@@ -723,7 +759,7 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 
 	for i, edit := range batch.Edits {
 		// Link edits have no object-level history — skip.
-		if edit.Type == EditTypeLinkCreate {
+		if edit.Type == EditTypeLinkCreate || edit.Type == EditTypeLinkDelete {
 			continue
 		}
 

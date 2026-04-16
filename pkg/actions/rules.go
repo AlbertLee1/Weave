@@ -10,7 +10,7 @@ import (
 
 // Rule defines an action rule.
 type Rule struct {
-	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink"
+	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink"
 	ObjectType string `json:"objectType"`
 	// For createObject/modifyObject — property bindings
 	PropertyBindings map[string]PropertyBinding `json:"propertyBindings,omitempty"`
@@ -102,6 +102,22 @@ func executeRule(rule Rule, params map[string]interface{}) (funnel.Edit, error) 
 		}
 		return funnel.Edit{
 			Type:             funnel.EditTypeLinkCreate,
+			PrimaryKey:       sourcePK,
+			LinkTypeRID:      rule.LinkTypeAPIName, // resolved to RID in Executor.Prepare
+			TargetPrimaryKey: targetPK,
+		}, nil
+
+	case "deleteLink":
+		sourcePK := resolveStringParam(rule.SourceObjectPrimaryKey, params)
+		if sourcePK == "" {
+			return funnel.Edit{}, fmt.Errorf("deleteLink: source primary key not found in parameters for %q", rule.SourceObjectPrimaryKey)
+		}
+		targetPK := resolveStringParam(rule.TargetObjectPrimaryKey, params)
+		if targetPK == "" {
+			return funnel.Edit{}, fmt.Errorf("deleteLink: target primary key not found in parameters for %q", rule.TargetObjectPrimaryKey)
+		}
+		return funnel.Edit{
+			Type:             funnel.EditTypeLinkDelete,
 			PrimaryKey:       sourcePK,
 			LinkTypeRID:      rule.LinkTypeAPIName, // resolved to RID in Executor.Prepare
 			TargetPrimaryKey: targetPK,
