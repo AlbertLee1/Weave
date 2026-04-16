@@ -461,7 +461,7 @@
         "Typecheck passes"
       ],
       "priority": 27,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-125"
     },
     {

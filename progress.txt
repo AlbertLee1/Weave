@@ -33,6 +33,9 @@
 - Migrations in migrations/ — sequential 000001-000026, next is 000027
 - AutomationRule/AutomationExecution models in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_automation_test.go per package
 - Automation mock stubs pattern: same as branches/proposals — mock_automation_test.go per package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook) + inline in pkg/index/rehydrate_test.go
+- Scheduler pattern: pkg/automate/scheduler.go — RuleLoader + ExecutionRecorder interfaces; robfig/cron/v3 for cron scheduling; entries map[string]cron.EntryID tracks active rules
+- ScheduleTriggerConfig: { "cron": "*/5 * * * *" } — supports standard cron + robfig extensions (@every, @hourly, etc.)
+- Scheduler dynamic updates: AddRule, RemoveRule, PauseRule (alias for RemoveRule), ResumeRule (alias for AddRule)
 - OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
 - Branch mock stubs pattern: create mock_branches_test.go in each package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go inline)
 - Proposal mock stubs pattern: same as branches — mock_proposals_test.go per package; proposal models have branch_id FK
@@ -539,4 +542,19 @@
   - ListAutomationRules passes ontologyApiName directly to repo (like ListFunctions) — mock filters by ontologyRID field
   - Status filter is applied in handler (not SQL) for simplicity, consistent with ListBranches and ListProposals pattern
   - Mock upgrade: changing from no-op stubs to functional implementations is safe because existing tests don't rely on the no-op behavior for automation methods
+---
+
+## 2026-04-16 - US-126
+- Implemented Automate — Schedule Trigger (cron) using github.com/robfig/cron/v3
+- Files changed:
+  - pkg/automate/scheduler.go — New file: Scheduler struct with RuleLoader + ExecutionRecorder interfaces; Start (loads active schedule rules, starts cron), Stop, AddRule, RemoveRule, PauseRule, ResumeRule methods; ScheduleTriggerConfig (Cron field), ParseScheduleTriggerConfig; executeRule records AutomationExecution with trigger event metadata
+  - pkg/automate/scheduler_test.go — New file: 11 tests: ParseTriggerConfig (valid/empty/invalid JSON), New, StartStop (idempotent), LoadsActiveRulesOnStart (filters active+schedule only), CronFiresExecution (verifies execution record with correct fields), AddRule (dynamic add + execution), RemoveRule, RemoveNonExistent, PauseResume (pause removes, resume re-adds), InvalidCronExpression, InvalidTriggerConfig
+  - go.mod/go.sum — Added github.com/robfig/cron/v3 v3.0.1 dependency
+- **Learnings for future iterations:**
+  - robfig/cron/v3 supports standard 5-field cron AND predefined schedules (@every, @hourly, @daily) — use @every for fast test triggers
+  - Scheduler uses context from Start for execution recording; falls back to context.Background() if nil
+  - Cron entry tracking: map[string]cron.EntryID allows O(1) lookup for dynamic add/remove; cron.Remove(entryID) removes from scheduler
+  - Effects processing is deferred to US-128/US-129 — currently just logs the execution
+  - PauseRule/ResumeRule are thin wrappers around RemoveRule/AddRule — keeps API semantic while implementation is simple
+  - RuleLoader.ListActiveScheduleRules abstracts the filtering (active + schedule) — decouples scheduler from OMS Repository interface
 ---
