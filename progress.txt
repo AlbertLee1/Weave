@@ -30,7 +30,9 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000023, next is 000024
+- Migrations in migrations/ — sequential 000001-000024, next is 000025
+- OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
+- Branch mock stubs pattern: create mock_branches_test.go in each package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go inline)
 - ObjectFetcher interface on Executor: injected like ObjectExistenceChecker, nil→graceful degradation (PrevEdits omitted)
 - PrevEdits is a parallel slice to Edits in PreparedAction; serialized to ActionLog.PrevEdits JSONB (null entries for CREATE/LINK edits)
 - Frontend routes in web/src/App.tsx
@@ -243,4 +245,29 @@
   - ValidateConstraints passes nil values unconditionally (nullability is enforced by existing types.Validate, not constraints)
   - The valueTypeAwareMockRepo pattern follows the interfaceAwareMockRepo pattern: embed mockOmsRepo, add typed maps, override specific methods
   - Rules require PropertyBindings (map[string]PropertyBinding) to generate edit properties — tests must include bindings, not just parameter definitions
+---
+
+## 2026-04-16 - US-112
+- Implemented ontology branches migration and model (Phase 2: Ontology Branching)
+- Files changed:
+  - migrations/000024_ontology_branches.up.sql — CREATE TABLE ontology_branches (id TEXT PK, ontology_rid FK, name, base_version, status CHECK open/merged/closed, created_by, timestamps) + UNIQUE(ontology_rid, name); CREATE TABLE ontology_branch_changes (id TEXT PK, branch_id FK, change_type CHECK ADDED/MODIFIED/DELETED, entity_type, entity_rid, before_state JSONB, after_state JSONB, created_at)
+  - migrations/000024_ontology_branches.down.sql — DROP TABLE rollback
+  - pkg/oms/models.go — Added OntologyBranch struct (ID, OntologyRID, Name, BaseVersion, Status, CreatedBy, timestamps) and BranchChange struct (ID, BranchID, ChangeType, EntityType, EntityRID, BeforeState, AfterState, CreatedAt)
+  - pkg/oms/repository.go — Added 6 methods: CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges
+  - pkg/oms/pg_repository.go — PG implementations for all 6 branch/change methods with proper error handling (ErrNotFound, wrapPGError, nilIfNoBytes for nullable JSONB)
+  - pkg/oms/branch_test.go — 10 integration tests: Create, Get, Get_NotFound, ListBranches, CloseBranch, CloseBranch_NotFound, UniqueConstraint, BranchChange_Create, BranchChange_ListChanges, BranchChange_BeforeAfterState, BranchChange_NullBeforeState_ForAdded
+  - pkg/oms/mock_branches_test.go — Branch stubs for mockRepo + noopRepo
+  - pkg/actions/mock_branches_test.go — Branch stubs for mockOmsRepo
+  - pkg/oss/mock_branches_test.go — Branch stubs for mockOmsRepo
+  - pkg/links/mock_branches_test.go — Branch stubs for mockRepo
+  - test/e2e/mock_branches_test.go — Branch stubs for inMemoryOmsRepo
+  - test/northwind/mock_branches_test.go — Branch stubs for inMemoryOmsRepo
+  - test/chinook/mock_branches_test.go — Branch stubs for inMemoryOmsRepo
+  - pkg/index/rehydrate_test.go — Branch stubs added inline for stubRehydrateRepo
+- **Learnings for future iterations:**
+  - Adding Repository interface methods requires updating ~9 mock implementations across the codebase; use separate mock_branches_test.go files per package
+  - Mocks that embed oms.Repository interface (fakeOmsRepo, us006StubOmsRepo, pr02StubOMSRepo, contractOmsRepo) don't need explicit stubs
+  - Mocks that embed another concrete mock (interfaceAwareMockRepo, valueTypeAwareMockRepo, linkAwareMockRepo) inherit from parent — no stubs needed
+  - Branch tables use TEXT primary keys (not UUID) — consistent with other tables using RID-style keys
+  - UNIQUE(ontology_rid, name) prevents duplicate branch names per ontology; wrapPGError converts PG unique violation to ErrDuplicate
 ---
