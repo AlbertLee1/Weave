@@ -383,9 +383,23 @@ func (m *mockRepo) ListObjectTypeInterfaces(_ context.Context, _ string) ([]oms.
 	return nil, nil
 }
 
-// SharedProperty stubs
-func (m *mockRepo) CreateSharedProperty(_ context.Context, _ *oms.SharedProperty) error { return nil }
-func (m *mockRepo) GetSharedProperty(_ context.Context, _ string) (*oms.SharedProperty, error) {
+// SharedProperty methods
+func (m *mockRepo) CreateSharedProperty(_ context.Context, sp *oms.SharedProperty) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.sharedProperties = append(m.sharedProperties, *sp)
+	return nil
+}
+func (m *mockRepo) GetSharedProperty(_ context.Context, rid string) (*oms.SharedProperty, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.sharedProperties {
+		if m.sharedProperties[i].RID == rid {
+			return &m.sharedProperties[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
 func (m *mockRepo) ListSharedProperties(_ context.Context, ontologyRID string) ([]oms.SharedProperty, error) {
@@ -400,12 +414,48 @@ func (m *mockRepo) ListSharedProperties(_ context.Context, ontologyRID string) (
 	}
 	return result, nil
 }
-func (m *mockRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedProperty) error { return nil }
-func (m *mockRepo) DeleteSharedProperty(_ context.Context, _ string) error              { return nil }
+func (m *mockRepo) UpdateSharedProperty(_ context.Context, sp *oms.SharedProperty) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.sharedProperties {
+		if m.sharedProperties[i].RID == sp.RID {
+			m.sharedProperties[i] = *sp
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+func (m *mockRepo) DeleteSharedProperty(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.sharedProperties {
+		if m.sharedProperties[i].RID == rid {
+			m.sharedProperties = append(m.sharedProperties[:i], m.sharedProperties[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
 
-// TypeGroup stubs
-func (m *mockRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
-func (m *mockRepo) GetTypeGroup(_ context.Context, _ string) (*oms.TypeGroup, error) {
+// TypeGroup methods
+func (m *mockRepo) CreateTypeGroup(_ context.Context, tg *oms.TypeGroup) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.typeGroups = append(m.typeGroups, *tg)
+	return nil
+}
+func (m *mockRepo) GetTypeGroup(_ context.Context, rid string) (*oms.TypeGroup, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.typeGroups {
+		if m.typeGroups[i].RID == rid {
+			return &m.typeGroups[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
 func (m *mockRepo) ListTypeGroups(_ context.Context, ontologyRID string) ([]oms.TypeGroup, error) {
@@ -420,8 +470,30 @@ func (m *mockRepo) ListTypeGroups(_ context.Context, ontologyRID string) ([]oms.
 	}
 	return result, nil
 }
-func (m *mockRepo) UpdateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
-func (m *mockRepo) DeleteTypeGroup(_ context.Context, _ string) error         { return nil }
+func (m *mockRepo) UpdateTypeGroup(_ context.Context, tg *oms.TypeGroup) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.typeGroups {
+		if m.typeGroups[i].RID == tg.RID {
+			m.typeGroups[i] = *tg
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+func (m *mockRepo) DeleteTypeGroup(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.typeGroups {
+		if m.typeGroups[i].RID == rid {
+			m.typeGroups = append(m.typeGroups[:i], m.typeGroups[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
 func (m *mockRepo) AssignTypeGroup(_ context.Context, _, _ string) error      { return nil }
 func (m *mockRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
 func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
@@ -429,7 +501,13 @@ func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]o
 }
 
 // ValueType methods
-func (m *mockRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
+func (m *mockRepo) CreateValueType(_ context.Context, vt *oms.ValueType) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.valueTypes = append(m.valueTypes, *vt)
+	return nil
+}
 func (m *mockRepo) GetValueType(_ context.Context, rid string) (*oms.ValueType, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
@@ -458,8 +536,30 @@ func (m *mockRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, error) {
 	}
 	return m.valueTypes, nil
 }
-func (m *mockRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
-func (m *mockRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
+func (m *mockRepo) UpdateValueType(_ context.Context, vt *oms.ValueType) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.valueTypes {
+		if m.valueTypes[i].RID == vt.RID {
+			m.valueTypes[i] = *vt
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+func (m *mockRepo) DeleteValueType(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.valueTypes {
+		if m.valueTypes[i].RID == rid {
+			m.valueTypes = append(m.valueTypes[:i], m.valueTypes[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
 
 // DatasourceBinding stubs
 func (m *mockRepo) CreateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
@@ -476,8 +576,14 @@ func (m *mockRepo) UpdateDatasourceBinding(_ context.Context, _ *oms.DatasourceB
 }
 func (m *mockRepo) DeleteDatasourceBinding(_ context.Context, _ string) error { return nil }
 
-// QueryType stubs
-func (m *mockRepo) CreateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
+// QueryType methods
+func (m *mockRepo) CreateQueryType(_ context.Context, qt *oms.QueryType) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.queryTypes = append(m.queryTypes, *qt)
+	return nil
+}
 func (m *mockRepo) GetQueryType(_ context.Context, rid string) (*oms.QueryType, error) {
 	for i := range m.queryTypes {
 		if m.queryTypes[i].RID == rid {
@@ -505,8 +611,30 @@ func (m *mockRepo) ListQueryTypes(_ context.Context, ontologyIdentifier string) 
 	}
 	return out, nil
 }
-func (m *mockRepo) UpdateQueryType(_ context.Context, _ *oms.QueryType) error { return nil }
-func (m *mockRepo) DeleteQueryType(_ context.Context, _ string) error         { return nil }
+func (m *mockRepo) UpdateQueryType(_ context.Context, qt *oms.QueryType) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.queryTypes {
+		if m.queryTypes[i].RID == qt.RID {
+			m.queryTypes[i] = *qt
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+func (m *mockRepo) DeleteQueryType(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.queryTypes {
+		if m.queryTypes[i].RID == rid {
+			m.queryTypes = append(m.queryTypes[:i], m.queryTypes[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
 
 // ActionLog stubs
 func (m *mockRepo) InsertActionLog(_ context.Context, _ *oms.ActionLog) error { return nil }

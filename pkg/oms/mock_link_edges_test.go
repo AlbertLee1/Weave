@@ -20,7 +20,13 @@ func (m *mockRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ string) e
 	return nil
 }
 
-func (m *mockRepo) GetLinkTypeByAPIName(_ context.Context, _, _ string) (*oms.LinkType, error) {
+func (m *mockRepo) GetLinkTypeByAPIName(_ context.Context, ontologyRID, apiName string) (*oms.LinkType, error) {
+	for i := range m.linkTypes {
+		ontologyMatch := m.linkTypes[i].OntologyRID == ontologyRID || m.matchOntologyByApiName(ontologyRID, m.linkTypes[i].OntologyRID)
+		if ontologyMatch && (m.linkTypes[i].APIName == apiName || m.linkTypes[i].RID == apiName) {
+			return &m.linkTypes[i], nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
 

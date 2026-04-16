@@ -73,6 +73,8 @@
 - applyBranchChanges dispatches by (changeType, entityType) → CRUD operations on main tables; ADDED→Create, MODIFIED→Update, DELETED→Delete
 - Rebase reuses detectConflicts from merge; on success updates base_version + before_state of MODIFIED/DELETED changes
 - UpdateBranchBaseVersion and UpdateBranchChangeBeforeState — new Repository methods for rebase support
+- OntologyExport model in pkg/oms/models.go — full export struct with 10 entity types; used by V2 export endpoint, admin export, GetFullMetadata, and snapshot serialization
+- ExportOntologyV2 handler in pkg/oms/handlers.go — fetches all entities by ontologyRID; ListValueTypes is global (no ontologyRID param)
 
 ---
 
@@ -194,6 +196,7 @@
   - Bleve NewGeoShapeQuery expects [][][][]float64; for a single polygon, wrap as [][][][]float64{polygonRings}
 - Custom Bleve query types: implement query.Query interface (Searcher method) using internal searcher package (NewMultiPhraseSearcher, NewTermPrefixSearcher, etc.)
 - PhrasePrefixQuery pattern: expand prefix via IndexReader.FieldDictPrefix, build [][]string for NewMultiPhraseSearcher with alternatives at last position
+- Import handler in pkg/oms/handlers_import.go — ImportOntologyV2 with merge/replace modes; entity import ordering for RID remapping; remapRID helper for cross-references
 ---
 
 ## 2026-04-16 - US-107
@@ -439,4 +442,40 @@
   - If already up-to-date (currentVersion <= baseVersion) → return branch as-is (200), no changes made
   - Only open branches can be rebased (closed/merged → 409 BranchNotOpen)
   - Rebase conflict uses "REBASE_CONFLICT" errorCode (vs "MERGE_CONFLICT" for merge) to distinguish the two flows
+---
+
+## 2026-04-16 - US-121
+- Implemented Ontology Export API — GET /api/v2/ontologies/{ontology}/export returns complete JSON with all metadata
+- Files changed:
+  - pkg/oms/models.go — Extended OntologyExport struct with SharedProperties, ValueTypes, TypeGroups, Functions, QueryTypes fields
+  - pkg/oms/handlers.go — Added ExportOntologyV2 handler: fetches all 10 entity types (ontology, objectTypes with properties, linkTypes, actionTypes, interfaces, sharedProperties, valueTypes, typeGroups, functions, queryTypes); ensures all arrays are non-nil for consistent JSON serialization
+  - pkg/oms/handlers_export_test.go — New file: 4 tests: Success (all 10 entity types populated), OntologyNotFound (404), EmptyOntology (all arrays empty not null), PropertiesLoadedPerObjectType (2 object types with distinct properties)
+  - pkg/oms/handlers_test.go — Updated mockRepo: added sharedProperties/typeGroups fields; made ListSharedProperties and ListTypeGroups return data-driven results
+  - cmd/server/routes.go — Registered GET /api/v2/ontologies/{ontologyApiName}/export
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added OntologyExport schema + exportOntology endpoint spec
+- **Learnings for future iterations:**
+  - OntologyExport struct is also used by admin ExportOntology, GetFullMetadata, and snapshot serialization — adding fields is backward compatible (nil → null in JSON)
+  - ListValueTypes takes no ontologyRID param (returns all value types globally); all other List methods are scoped by ontologyRID
+  - Mock tests for V2 handlers must use the full RID in URL paths (e.g., /api/v2/ontologies/ri.ontology.main.ontology.1/export) because mockRepo.ListObjectTypes filters by OntologyRID, not APIName
+  - OpenAPI spec requires both api/openapi.yaml AND cmd/server/openapi_spec.yaml to be identical — contract test enforces this
+---
+
+## 2026-04-16 - US-122
+- Implemented Ontology Import API — POST /api/v2/ontologies/import with merge and replace modes
+- Files changed:
+  - pkg/oms/handlers_import.go — New file: ImportOntologyV2 handler with ImportOntologyV2Request/ImportResult/ImportCounts types; resolveImportOntology (find or create target ontology); deleteOntologyEntities (replace mode cleanup); 9 import helper methods per entity type; remapRID helper for cross-reference resolution; findSharedPropertyByAPIName/findTypeGroupByAPIName for entities without GetByAPIName
+  - pkg/oms/handlers_import_test.go — New file: 10 tests: MergeMode_NewOntology (all entities created with new RIDs), MergeMode_ExistingOntology (creates missing, updates existing, keeps existing RIDs), ReplaceMode_ExistingOntology (deletes old entities, recreates from import), ReplaceMode_NewOntology, InvalidMode (400), MissingAPIName (400), InvalidJSON (400), RIDRemapping_FunctionRID (ActionType/QueryType FunctionRID + Interface ExtendsRID correctly remapped), ExportImportRoundtrip (export → import to new ontology → data matches), AllEntityTypes (all 9 entity types imported with correct counts)
+  - pkg/oms/handlers_test.go — Enhanced mock methods for SharedProperty (CRUD), TypeGroup (CRUD), ValueType (CUD), QueryType (CUD) from no-op stubs to functional data-driven implementations
+  - pkg/oms/mock_link_edges_test.go — Enhanced GetLinkTypeByAPIName from stub to functional search by ontology+apiName
+  - cmd/server/routes.go — Registered POST /api/v2/ontologies/import
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added ImportOntologyRequest and ImportResult schemas + importOntology endpoint spec
+- **Learnings for future iterations:**
+  - Import entity ordering matters for RID remapping: SharedProperties → Functions → ObjectTypes (with Properties) → Interfaces → LinkTypes → ActionTypes → QueryTypes → TypeGroups → ValueTypes
+  - LinkType.SourceObjectType/TargetObjectType are API names in JSON export (json tag "objectTypeApiName"), not RIDs — no remapping needed
+  - Cross-references that need RID remapping: ActionType.FunctionRID, QueryType.FunctionRID, Interface.ExtendsRID, Property.SharedPropertyRID
+  - ValueTypes are global (not ontology-scoped) — ListValueTypes takes no ontologyRID param; import skips existing ValueTypes by APIName
+  - For merge mode: GetByAPIName methods used where available (ObjectType, ActionType, Interface, LinkType, Function, QueryType, ValueType); list + filter for SharedProperty and TypeGroup (no GetByAPIName)
+  - Mock methods for SharedProperty, TypeGroup, ValueType, QueryType upgraded from no-op stubs to data-driven implementations — safe because existing tests don't rely on no-op behavior
+  - remapRID helper: returns empty string for empty input, mapped value if found, original value as fallback — safe for cascading references
+  - Interface ExtendsRID remapping assumes parent interfaces appear before children in the import array (export preserves DB insertion order)
 ---

@@ -661,6 +661,82 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryType"
+    ImportOntologyRequest:
+      type: object
+      required: [mode, ontology]
+      properties:
+        mode:
+          type: string
+          enum: [merge, replace]
+          description: "Import mode: merge creates missing and updates existing; replace drops all and recreates."
+        ontology:
+          $ref: "#/components/schemas/Ontology"
+        objectTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectType"
+        linkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkType"
+        actionTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionType"
+        interfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/Interface"
+        sharedProperties:
+          type: array
+          items:
+            type: object
+        valueTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValueType"
+        typeGroups:
+          type: array
+          items:
+            type: object
+        functions:
+          type: array
+          items:
+            type: object
+        queryTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryType"
+    ImportResult:
+      type: object
+      properties:
+        ontology:
+          $ref: "#/components/schemas/Ontology"
+        imported:
+          type: object
+          properties:
+            objectTypes:
+              type: integer
+            properties:
+              type: integer
+            linkTypes:
+              type: integer
+            actionTypes:
+              type: integer
+            interfaces:
+              type: integer
+            sharedProperties:
+              type: integer
+            valueTypes:
+              type: integer
+            typeGroups:
+              type: integer
+            functions:
+              type: integer
+            queryTypes:
+              type: integer
+        message:
+          type: string
     OntologyExport:
       type: object
       required: [ontology, objectTypes, linkTypes, actionTypes, interfaces, sharedProperties, valueTypes, typeGroups, functions, queryTypes]
@@ -2850,6 +2926,29 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/import:
+    post:
+      operationId: importOntology
+      summary: Import ontology definitions from JSON
+      description: Imports ontology definitions from JSON with merge or replace mode. Merge mode creates missing entities and updates existing ones. Replace mode drops all existing entities for the ontology and recreates from import. New RIDs are generated for imported entities and cross-references are remapped.
+      tags: [Metadata]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportOntologyRequest"
+      responses:
+        "201":
+          description: Import successful.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/metadata:
     post:
       operationId: loadOntologyMetadata

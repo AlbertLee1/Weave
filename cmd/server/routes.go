@@ -34,6 +34,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}", omsHandler.GetQueryTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/fullMetadata", omsHandler.GetFullMetadata)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/export", omsHandler.ExportOntologyV2)
+	r.Post("/api/v2/ontologies/import", omsHandler.ImportOntologyV2)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/metadata", omsHandler.LoadMetadataV2)
 
 	// Function CRUD (US-089)
