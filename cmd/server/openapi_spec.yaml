@@ -82,6 +82,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    ConflictError:
+      description: The request conflicts with the current state of the resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PermissionDeniedError:
+      description: The caller does not have permission to perform this action.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     InternalError:
       description: An unexpected server error occurred.
       content:
@@ -532,6 +544,16 @@ components:
         createdAt:
           type: string
           format: date-time
+    ReviewRequest:
+      type: object
+      required: [reviewer]
+      properties:
+        reviewer:
+          type: string
+          description: ID of the reviewer. Must not be the proposal author.
+        reason:
+          type: string
+          description: Reason for the decision (required for reject, optional for approve).
     ValueType:
       type: object
       required: [rid, apiName, displayName, baseType, version]
@@ -2558,6 +2580,78 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve:
+    post:
+      operationId: approveProposal
+      summary: Approve a proposal
+      description: Adds an approval review to the proposal. Self-review is forbidden (returns 403).
+      tags: [Proposals]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: proposalId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewRequest"
+      responses:
+        "200":
+          description: Proposal with updated status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyProposal"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/PermissionDeniedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject:
+    post:
+      operationId: rejectProposal
+      summary: Reject a proposal
+      description: Adds a rejection review to the proposal with a reason. Self-review is forbidden (returns 403).
+      tags: [Proposals]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: proposalId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewRequest"
+      responses:
+        "200":
+          description: Proposal with updated status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyProposal"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/PermissionDeniedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
   /api/v2/ontologies/{ontologyApiName}/fullMetadata:
     get:
       operationId: getFullMetadata

@@ -144,6 +144,122 @@ func (h *OMSHandler) ListProposals(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ReviewRequest is the request body for approving or rejecting a proposal.
+type ReviewRequest struct {
+	Reviewer string `json:"reviewer"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// ApproveProposal handles POST /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve.
+func (h *OMSHandler) ApproveProposal(w http.ResponseWriter, r *http.Request) {
+	h.reviewProposal(w, r, "approve")
+}
+
+// RejectProposal handles POST /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject.
+func (h *OMSHandler) RejectProposal(w http.ResponseWriter, r *http.Request) {
+	h.reviewProposal(w, r, "reject")
+}
+
+// reviewProposal is the shared implementation for approve and reject.
+func (h *OMSHandler) reviewProposal(w http.ResponseWriter, r *http.Request, decision string) {
+	proposalID := chi.URLParam(r, "proposalId")
+
+	var req ReviewRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "invalid JSON",
+		}))
+		return
+	}
+
+	if req.Reviewer == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:reviewer", map[string]string{
+			"parameter": "reviewer",
+			"reason":    "reviewer is required",
+		}))
+		return
+	}
+
+	// Load proposal
+	proposal, err := h.repo.GetProposal(r.Context(), proposalID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ProposalNotFound", map[string]string{
+				"proposalId": proposalID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetProposalFailed", nil))
+		return
+	}
+
+	// Only pending or approved proposals can be reviewed
+	if proposal.Status != "pending" && proposal.Status != "approved" {
+		apierror.WriteJSON(w, apierror.NewConflict("ProposalNotReviewable", map[string]string{
+			"proposalId": proposalID,
+			"status":     proposal.Status,
+		}))
+		return
+	}
+
+	// Self-review check
+	if req.Reviewer == proposal.Author {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("SelfReviewNotAllowed", map[string]string{
+			"reason": "proposal author cannot review their own proposal",
+		}))
+		return
+	}
+
+	// Create the review
+	review := &ProposalReview{
+		ID:         rid.NewProposalReviewRID(),
+		ProposalID: proposalID,
+		Reviewer:   req.Reviewer,
+		Decision:   decision,
+		Reason:     req.Reason,
+	}
+	if err := h.repo.CreateProposalReview(r.Context(), review); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("CreateReviewFailed", nil))
+		return
+	}
+
+	// Recalculate proposal status from all reviews
+	reviews, err := h.repo.ListProposalReviews(r.Context(), proposalID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListReviewsFailed", nil))
+		return
+	}
+
+	newStatus := computeProposalStatus(reviews)
+	if newStatus != proposal.Status {
+		if err := h.repo.UpdateProposalStatus(r.Context(), proposalID, newStatus); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("UpdateProposalStatusFailed", nil))
+			return
+		}
+		proposal.Status = newStatus
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, proposal)
+}
+
+// computeProposalStatus determines the proposal status from its reviews.
+// Any rejection → rejected; at least 1 approval and no rejections → approved.
+func computeProposalStatus(reviews []ProposalReview) string {
+	approvals := 0
+	for _, r := range reviews {
+		if r.Decision == "reject" {
+			return "rejected"
+		}
+		if r.Decision == "approve" {
+			approvals++
+		}
+	}
+	if approvals > 0 {
+		return "approved"
+	}
+	return "pending"
+}
+
 // GetProposal handles GET /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}.
 func (h *OMSHandler) GetProposal(w http.ResponseWriter, r *http.Request) {
 	proposalID := chi.URLParam(r, "proposalId")

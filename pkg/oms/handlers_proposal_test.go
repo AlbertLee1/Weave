@@ -386,3 +386,368 @@ func TestProposal_FullLifecycle(t *testing.T) {
 		t.Errorf("get: expected 0 reviews, got %d", len(reviews))
 	}
 }
+
+// --- US-118: Proposal Review Workflow ---
+
+func TestApproveProposal_Success(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "pending", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+
+	body := `{"reviewer":"bob"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/approve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	if resp["status"] != "approved" {
+		t.Errorf("expected status 'approved', got %v", resp["status"])
+	}
+
+	// Verify review was created
+	if len(repo.proposalReviews) != 1 {
+		t.Fatalf("expected 1 review, got %d", len(repo.proposalReviews))
+	}
+	if repo.proposalReviews[0].Decision != "approve" {
+		t.Errorf("expected decision 'approve', got %v", repo.proposalReviews[0].Decision)
+	}
+	if repo.proposalReviews[0].Reviewer != "bob" {
+		t.Errorf("expected reviewer 'bob', got %v", repo.proposalReviews[0].Reviewer)
+	}
+
+	// Verify proposal status was updated
+	if repo.proposals[0].Status != "approved" {
+		t.Errorf("expected proposal status 'approved', got %v", repo.proposals[0].Status)
+	}
+}
+
+func TestRejectProposal_Success(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "pending", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", handler.RejectProposal)
+
+	body := `{"reviewer":"bob","reason":"needs more work on property types"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/reject", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	if resp["status"] != "rejected" {
+		t.Errorf("expected status 'rejected', got %v", resp["status"])
+	}
+
+	// Verify review was created with reason
+	if len(repo.proposalReviews) != 1 {
+		t.Fatalf("expected 1 review, got %d", len(repo.proposalReviews))
+	}
+	if repo.proposalReviews[0].Decision != "reject" {
+		t.Errorf("expected decision 'reject', got %v", repo.proposalReviews[0].Decision)
+	}
+	if repo.proposalReviews[0].Reason != "needs more work on property types" {
+		t.Errorf("expected reason, got %v", repo.proposalReviews[0].Reason)
+	}
+
+	// Verify proposal status was updated
+	if repo.proposals[0].Status != "rejected" {
+		t.Errorf("expected proposal status 'rejected', got %v", repo.proposals[0].Status)
+	}
+}
+
+func TestApproveProposal_SelfReview_Returns403(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "pending", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+
+	body := `{"reviewer":"alice"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/approve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	if resp["errorCode"] != "PERMISSION_DENIED" {
+		t.Errorf("expected errorCode PERMISSION_DENIED, got %v", resp["errorCode"])
+	}
+
+	// Verify no review was created
+	if len(repo.proposalReviews) != 0 {
+		t.Errorf("expected 0 reviews, got %d", len(repo.proposalReviews))
+	}
+}
+
+func TestRejectProposal_SelfReview_Returns403(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "pending", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", handler.RejectProposal)
+
+	body := `{"reviewer":"alice","reason":"some reason"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/reject", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify no review was created
+	if len(repo.proposalReviews) != 0 {
+		t.Errorf("expected 0 reviews, got %d", len(repo.proposalReviews))
+	}
+}
+
+func TestApproveProposal_NotFound(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+
+	body := `{"reviewer":"bob"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/nonexistent/approve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRejectProposal_NotFound(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", handler.RejectProposal)
+
+	body := `{"reviewer":"bob","reason":"bad"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/nonexistent/reject", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestApproveProposal_AlreadyRejected_Returns409(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "rejected", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+
+	body := `{"reviewer":"bob"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/approve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRejectProposal_AlreadyMerged_Returns409(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "merged", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", handler.RejectProposal)
+
+	body := `{"reviewer":"bob","reason":"too late"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/reject", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestApproveProposal_RejectionOverridesApproval(t *testing.T) {
+	// Scenario: approve first, then reject → status should be "rejected"
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "pending", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	router := chi.NewRouter()
+	router.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+	router.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", handler.RejectProposal)
+
+	// Step 1: Bob approves
+	approveBody := `{"reviewer":"bob"}`
+	approveReq := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/approve", strings.NewReader(approveBody))
+	approveReq.Header.Set("Content-Type", "application/json")
+	approveW := httptest.NewRecorder()
+	router.ServeHTTP(approveW, approveReq)
+
+	if approveW.Code != http.StatusOK {
+		t.Fatalf("approve: expected 200, got %d; body: %s", approveW.Code, approveW.Body.String())
+	}
+	if repo.proposals[0].Status != "approved" {
+		t.Fatalf("after approve: expected status 'approved', got %v", repo.proposals[0].Status)
+	}
+
+	// Step 2: Carol rejects — rejection overrides approval
+	rejectBody := `{"reviewer":"carol","reason":"security concern"}`
+	rejectReq := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/reject", strings.NewReader(rejectBody))
+	rejectReq.Header.Set("Content-Type", "application/json")
+	rejectW := httptest.NewRecorder()
+	router.ServeHTTP(rejectW, rejectReq)
+
+	if rejectW.Code != http.StatusOK {
+		t.Fatalf("reject: expected 200, got %d; body: %s", rejectW.Code, rejectW.Body.String())
+	}
+	if repo.proposals[0].Status != "rejected" {
+		t.Errorf("after reject: expected status 'rejected', got %v", repo.proposals[0].Status)
+	}
+
+	// Verify 2 reviews exist
+	if len(repo.proposalReviews) != 2 {
+		t.Errorf("expected 2 reviews, got %d", len(repo.proposalReviews))
+	}
+}
+
+func TestApproveProposal_MissingReviewer(t *testing.T) {
+	repo := &mockRepo{
+		proposals: []oms.OntologyProposal{
+			{ID: "p1", OntologyRID: "ri.ontology.main.ontology.1", BranchID: "b1", Title: "Add Buildings", Status: "pending", Author: "alice"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+
+	body := `{}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/p1/approve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProposal_FullReviewLifecycle(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test"},
+		},
+		branches: []oms.OntologyBranch{
+			{ID: "ri.ontology.main.branch.1", OntologyRID: "ri.ontology.main.ontology.1", Name: "feature/x", Status: "open"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	router := chi.NewRouter()
+	router.Post("/api/v2/ontologies/{ontologyApiName}/proposals", handler.CreateProposal)
+	router.Get("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}", handler.GetProposal)
+	router.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", handler.ApproveProposal)
+
+	// Step 1: Create proposal
+	createBody := `{"branchId":"ri.ontology.main.branch.1","title":"Add Buildings","author":"alice"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals", strings.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	router.ServeHTTP(createW, createReq)
+
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d; body: %s", createW.Code, createW.Body.String())
+	}
+	createResp := parseJSON(t, createW.Body.Bytes())
+	proposalID := createResp["id"].(string)
+
+	// Step 2: Approve
+	approveBody := `{"reviewer":"bob"}`
+	approveReq := httptest.NewRequest(http.MethodPost, "/api/v2/ontologies/test/proposals/"+proposalID+"/approve", strings.NewReader(approveBody))
+	approveReq.Header.Set("Content-Type", "application/json")
+	approveW := httptest.NewRecorder()
+	router.ServeHTTP(approveW, approveReq)
+
+	if approveW.Code != http.StatusOK {
+		t.Fatalf("approve: expected 200, got %d; body: %s", approveW.Code, approveW.Body.String())
+	}
+	approveResp := parseJSON(t, approveW.Body.Bytes())
+	if approveResp["status"] != "approved" {
+		t.Errorf("approve: expected status 'approved', got %v", approveResp["status"])
+	}
+
+	// Step 3: Get proposal — should have review
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/proposals/"+proposalID, nil)
+	getW := httptest.NewRecorder()
+	router.ServeHTTP(getW, getReq)
+
+	if getW.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d; body: %s", getW.Code, getW.Body.String())
+	}
+	getResp := parseJSON(t, getW.Body.Bytes())
+	if getResp["status"] != "approved" {
+		t.Errorf("get: expected status 'approved', got %v", getResp["status"])
+	}
+	reviews := getResp["reviews"].([]interface{})
+	if len(reviews) != 1 {
+		t.Fatalf("get: expected 1 review, got %d", len(reviews))
+	}
+	review := reviews[0].(map[string]interface{})
+	if review["reviewer"] != "bob" {
+		t.Errorf("get: expected reviewer 'bob', got %v", review["reviewer"])
+	}
+	if review["decision"] != "approve" {
+		t.Errorf("get: expected decision 'approve', got %v", review["decision"])
+	}
+}
