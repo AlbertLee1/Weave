@@ -35,6 +35,9 @@
 - Automation mock stubs pattern: same as branches/proposals — mock_automation_test.go per package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook) + inline in pkg/index/rehydrate_test.go
 - Scheduler pattern: pkg/automate/scheduler.go — RuleLoader + ExecutionRecorder interfaces; robfig/cron/v3 for cron scheduling; entries map[string]cron.EntryID tracks active rules
 - ScheduleTriggerConfig: { "cron": "*/5 * * * *" } — supports standard cron + robfig extensions (@every, @hourly, etc.)
+- Watcher pattern: pkg/automate/watcher.go — DataChangeRuleLoader + ExecutionRecorder + optional ObjectPropertyFetcher; HandleChangeEvent callback for funnel.ChangeEvent
+- DataChangeTriggerConfig: { "objectType": "Employee", "editTypes": ["CREATE","MODIFY"], "where": {...}, "debounceMs": 0 }
+- Watcher debounce: per-ruleID time.AfterFunc timer; DebounceMs=0 → immediate; >0 → resets on each matching event, fires with last event
 - Scheduler dynamic updates: AddRule, RemoveRule, PauseRule (alias for RemoveRule), ResumeRule (alias for AddRule)
 - OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
 - Branch mock stubs pattern: create mock_branches_test.go in each package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go inline)
@@ -557,4 +560,22 @@
   - Effects processing is deferred to US-128/US-129 — currently just logs the execution
   - PauseRule/ResumeRule are thin wrappers around RemoveRule/AddRule — keeps API semantic while implementation is simple
   - RuleLoader.ListActiveScheduleRules abstracts the filtering (active + schedule) — decouples scheduler from OMS Repository interface
+---
+
+## 2026-04-16 - US-127
+- Implemented Automate — Data Change Trigger (Watcher subscribing to NATS ChangeEvent callbacks)
+- Files changed:
+  - pkg/automate/watcher.go — New file: Watcher struct with DataChangeRuleLoader + ExecutionRecorder + optional ObjectPropertyFetcher interfaces; DataChangeTriggerConfig (ObjectType, EditTypes, Where, DebounceMs); ParseDataChangeTriggerConfig; Start (loads active dataChange rules), Stop, AddRule, RemoveRule, PauseRule, ResumeRule; HandleChangeEvent (main callback); matchRule (objectType + editType + optional where clause); triggerRule with debounce support; executeRule records AutomationExecution with dataChange trigger event metadata
+  - pkg/automate/watcher_test.go — New file: 19 tests: ParseDataChangeTriggerConfig (valid/whereClause/debounce/emptyObjectType/invalidJSON), WatcherNew, StartStop, LoadsActiveRulesOnStart (filters active+dataChange only), HandleChangeEvent_ObjectTypeMatch (trigger event metadata verified), NoMatchObjectType, NoMatchEditType, WhereClauseMatch (with mock property fetcher), WhereClauseNoMatch, NoWhereClauseMatchesAll, MultipleRules (2 of 3 match), AddRule (dynamic add + fires), RemoveRule (no longer fires), PauseResume, Debounce (3 rapid events → 1 execution with last event), DebounceZeroMeansImmediate (3 events → 3 executions), WhereClauseNoFetcherSkipsWhere, InvalidTriggerConfig, RemoveNonExistent, LinkEditTypesIgnored
+- **Learnings for future iterations:**
+  - Watcher follows Scheduler pattern: loader/recorder interfaces, Start/Stop lifecycle, dynamic Add/Remove/Pause/Resume
+  - DataChangeRuleLoader.ListActiveDataChangeRules filters by active + dataChange — parallel to RuleLoader.ListActiveScheduleRules
+  - ChangeEvent only has ObjectType/PrimaryKey/EditType/Offset — no properties; ObjectPropertyFetcher required for where clause evaluation
+  - ObjectPropertyFetcher is optional (nil → skip where clause evaluation, treat as match); for DELETE events where properties can't be fetched, also treats as match
+  - where.MatchClause reused for in-memory where clause evaluation against fetched properties
+  - Debounce per ruleID using time.AfterFunc: each matching event resets timer; only the LAST event executes after debounce window expires
+  - DebounceMs=0 (default) means immediate execution — no timer created
+  - watcherRule caches parsed DataChangeTriggerConfig and WhereClause to avoid re-parsing on every event
+  - WhereClause JSON values must be valid JSON tokens: string "Engineering" → `"Engineering"` (with JSON quotes), not `"\"Engineering\""` (extra escaped quotes)
+  - HandleChangeEvent takes a snapshot of rules under lock, then evaluates outside lock to avoid holding lock during I/O
 ---
