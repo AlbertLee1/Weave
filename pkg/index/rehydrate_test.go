@@ -306,6 +306,27 @@ func (s *stubRehydrateRepo) ListProposalReviews(context.Context, string) ([]oms.
 	return nil, nil
 }
 
+// Automation stubs
+func (s *stubRehydrateRepo) CreateAutomationRule(context.Context, *oms.AutomationRule) error {
+	return nil
+}
+func (s *stubRehydrateRepo) GetAutomationRule(context.Context, string) (*oms.AutomationRule, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) ListAutomationRules(context.Context, string) ([]oms.AutomationRule, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) UpdateAutomationRule(context.Context, *oms.AutomationRule) error {
+	return nil
+}
+func (s *stubRehydrateRepo) DeleteAutomationRule(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) InsertExecution(context.Context, *oms.AutomationExecution) error {
+	return nil
+}
+func (s *stubRehydrateRepo) ListExecutions(context.Context, string) ([]oms.AutomationExecution, error) {
+	return nil, nil
+}
+
 // --- Tests ---
 
 func newRehydrateRepo() *stubRehydrateRepo {

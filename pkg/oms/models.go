@@ -494,6 +494,33 @@ type ProposalReview struct {
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
+// AutomationRule defines an automation rule for scheduled or event-driven execution.
+type AutomationRule struct {
+	ID            string          `json:"id"`
+	OntologyRID   string          `json:"ontologyRid"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description,omitempty"`
+	Status        string          `json:"status"`        // active, paused, disabled
+	TriggerType   string          `json:"triggerType"`    // schedule, dataChange, manual
+	TriggerConfig json.RawMessage `json:"triggerConfig"`
+	Effects       json.RawMessage `json:"effects"`
+	CreatedBy     string          `json:"createdBy"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+}
+
+// AutomationExecution records a single execution of an automation rule.
+type AutomationExecution struct {
+	ID           string          `json:"id"`
+	RuleID       string          `json:"ruleId"`
+	TriggerEvent json.RawMessage `json:"triggerEvent"`
+	StartedAt    time.Time       `json:"startedAt"`
+	CompletedAt  *time.Time      `json:"completedAt,omitempty"`
+	Status       string          `json:"status"` // running, success, error, retrying
+	Error        string          `json:"error,omitempty"`
+	RetryCount   int             `json:"retryCount"`
+}
+
 // TypeGroup organizes object types into categories.
 type TypeGroup struct {
 	RID         string    `json:"rid"`

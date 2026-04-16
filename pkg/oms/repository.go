@@ -156,6 +156,15 @@ type Repository interface {
 	ListBranchChanges(ctx context.Context, branchID string) ([]BranchChange, error)
 	UpdateBranchChangeBeforeState(ctx context.Context, id string, beforeState json.RawMessage) error
 
+	// AutomationRule (US-124: Automate Engine)
+	CreateAutomationRule(ctx context.Context, rule *AutomationRule) error
+	GetAutomationRule(ctx context.Context, id string) (*AutomationRule, error)
+	ListAutomationRules(ctx context.Context, ontologyRID string) ([]AutomationRule, error)
+	UpdateAutomationRule(ctx context.Context, rule *AutomationRule) error
+	DeleteAutomationRule(ctx context.Context, id string) error
+	InsertExecution(ctx context.Context, exec *AutomationExecution) error
+	ListExecutions(ctx context.Context, ruleID string) ([]AutomationExecution, error)
+
 	// OntologyProposal (US-117)
 	CreateProposal(ctx context.Context, p *OntologyProposal) error
 	GetProposal(ctx context.Context, id string) (*OntologyProposal, error)

@@ -30,7 +30,9 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000025, next is 000026
+- Migrations in migrations/ — sequential 000001-000026, next is 000027
+- AutomationRule/AutomationExecution models in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_automation_test.go per package
+- Automation mock stubs pattern: same as branches/proposals — mock_automation_test.go per package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook) + inline in pkg/index/rehydrate_test.go
 - OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
 - Branch mock stubs pattern: create mock_branches_test.go in each package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go inline)
 - Proposal mock stubs pattern: same as branches — mock_proposals_test.go per package; proposal models have branch_id FK
@@ -197,6 +199,9 @@
 - Custom Bleve query types: implement query.Query interface (Searcher method) using internal searcher package (NewMultiPhraseSearcher, NewTermPrefixSearcher, etc.)
 - PhrasePrefixQuery pattern: expand prefix via IndexReader.FieldDictPrefix, build [][]string for NewMultiPhraseSearcher with alternatives at last position
 - Import handler in pkg/oms/handlers_import.go — ImportOntologyV2 with merge/replace modes; entity import ordering for RID remapping; remapRID helper for cross-references
+- Frontend route ordering: specific paths (e.g. /explorer/:ontology/branches/:branch/diff) must come before catch-all params (e.g. /explorer/:ontology/:objectType) in App.tsx
+- Frontend API hook pattern: useQuery with queryKey=[featureName, ...params], queryFn=apiFunction, enabled=!!requiredParam
+- Frontend API function pattern: request<{ data: T[] }>('GET', path) then return resp.data to unwrap envelope
 ---
 
 ## 2026-04-16 - US-107
@@ -478,4 +483,41 @@
   - Mock methods for SharedProperty, TypeGroup, ValueType, QueryType upgraded from no-op stubs to data-driven implementations — safe because existing tests don't rely on no-op behavior
   - remapRID helper: returns empty string for empty input, mapped value if found, original value as fallback — safe for cascading references
   - Interface ExtendsRID remapping assumes parent interfaces appear before children in the import array (export preserves DB insertion order)
+---
+
+## 2026-04-16 - US-123
+- Implemented branch diff frontend view — /explorer/:ontology/branches/:branch/diff page
+- Files changed:
+  - web/src/api/types.ts — Added BranchDiffEntry interface (entityType, entityRid, changeType, before, after)
+  - web/src/api/ontologies.ts — Added getBranchDiff(ontologyApiName, branchId) API function fetching from /api/v2/ontologies/{ontology}/branches/{branch}/diff
+  - web/src/hooks/useBranches.ts — New file: useBranchDiff hook using TanStack Query
+  - web/src/components/explorer/BranchDiffPage.tsx — New file: Full diff page with grouped entity display, color-coded change badges (green=ADDED, yellow=MODIFIED, red=DELETED), entity type filter tabs, expandable cards with side-by-side JSON comparison for MODIFIED entries, summary badges in header
+  - web/src/App.tsx — Added route for /explorer/:ontology/branches/:branch/diff (positioned before /:objectType catch-all)
+- **Learnings for future iterations:**
+  - Route ordering matters: /explorer/:ontology/branches/:branch/diff must come before /explorer/:ontology/:objectType to avoid the catch-all matching "branches" as objectType
+  - Frontend API response pattern: backend wraps data in { "data": [...] }, so API functions unwrap with resp.data
+  - For side-by-side JSON diff: collect all keys from both objects, sort, then compare per-key with red/green highlighting for changed values
+  - TanStack Query hook pattern: queryKey includes all params, enabled guards on required params being truthy
+  - The diff endpoint returns entries pre-sorted by entity_type then change_type; frontend groups by entity_type for display sections
+---
+
+## 2026-04-16 - US-124
+- Implemented Automate — migration and rule model (Phase 3: Automate Engine)
+- Files changed:
+  - migrations/000026_automation.up.sql — CREATE TABLE automation_rules (id TEXT PK, ontology_rid FK, name, description, status CHECK active/paused/disabled, trigger_type CHECK schedule/dataChange/manual, trigger_config JSONB, effects JSONB, created_by, timestamps); CREATE TABLE automation_executions (id TEXT PK, rule_id FK→automation_rules ON DELETE CASCADE, trigger_event JSONB, started_at, completed_at nullable, status CHECK running/success/error/retrying, error TEXT, retry_count INT DEFAULT 0)
+  - migrations/000026_automation.down.sql — DROP TABLE rollback
+  - pkg/oms/models.go — Added AutomationRule struct (ID, OntologyRID, Name, Description, Status, TriggerType, TriggerConfig, Effects, CreatedBy, timestamps) and AutomationExecution struct (ID, RuleID, TriggerEvent, StartedAt, CompletedAt *time.Time, Status, Error, RetryCount)
+  - pkg/oms/repository.go — Added 7 methods: CreateAutomationRule, GetAutomationRule, ListAutomationRules, UpdateAutomationRule, DeleteAutomationRule, InsertExecution, ListExecutions
+  - pkg/oms/pg_repository.go — PG implementations for all 7 automation CRUD methods with proper error handling (ErrNotFound, wrapPGError)
+  - pkg/rid/rid.go — Added NewAutomationRuleRID() and NewAutomationExecutionRID()
+  - pkg/oms/automation_test.go — 10 integration tests: CreateRule, GetRule, GetRule_NotFound, ListRules, UpdateRule, DeleteRule, DeleteRule_NotFound, InsertExecution, ListExecutions (with error/retry details), ListExecutions_Empty
+  - 7 mock_automation_test.go files across packages (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook)
+  - pkg/index/rehydrate_test.go — Automation stubs added inline for stubRehydrateRepo
+- **Learnings for future iterations:**
+  - AutomationRule uses TEXT PKs (consistent with all other Weave tables)
+  - automation_executions has ON DELETE CASCADE on rule_id FK — deleting a rule deletes all its executions
+  - AutomationExecution.CompletedAt uses *time.Time (nullable) for running executions
+  - InsertExecution does not use RETURNING (no server-generated fields) — simpler Exec instead of QueryRow
+  - ListExecutions returns all executions for a rule ordered by started_at — pagination can be added later in US-131
+  - Adding 7 Repository methods requires updating 8 mock files across the codebase + 1 inline (rehydrate_test.go)
 ---

@@ -2247,3 +2247,112 @@ func (r *PGRepository) ListProposalReviews(ctx context.Context, proposalID strin
 	}
 	return result, nil
 }
+
+// --- AutomationRule ---
+
+func (r *PGRepository) CreateAutomationRule(ctx context.Context, rule *AutomationRule) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO automation_rules (id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 RETURNING created_at, updated_at`,
+		rule.ID, rule.OntologyRID, rule.Name, rule.Description, rule.Status, rule.TriggerType, rule.TriggerConfig, rule.Effects, rule.CreatedBy).
+		Scan(&rule.CreatedAt, &rule.UpdatedAt)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) GetAutomationRule(ctx context.Context, id string) (*AutomationRule, error) {
+	rule := &AutomationRule{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, created_by, created_at, updated_at
+		 FROM automation_rules WHERE id = $1`, id).
+		Scan(&rule.ID, &rule.OntologyRID, &rule.Name, &rule.Description, &rule.Status, &rule.TriggerType, &rule.TriggerConfig, &rule.Effects, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return rule, nil
+}
+
+func (r *PGRepository) ListAutomationRules(ctx context.Context, ontologyRID string) ([]AutomationRule, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, ontology_rid, name, description, status, trigger_type, trigger_config, effects, created_by, created_at, updated_at
+		 FROM automation_rules WHERE ontology_rid = $1 ORDER BY created_at`, ontologyRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AutomationRule
+	for rows.Next() {
+		var rule AutomationRule
+		if err := rows.Scan(&rule.ID, &rule.OntologyRID, &rule.Name, &rule.Description, &rule.Status, &rule.TriggerType, &rule.TriggerConfig, &rule.Effects, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, rule)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) UpdateAutomationRule(ctx context.Context, rule *AutomationRule) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE automation_rules SET name = $2, description = $3, status = $4, trigger_type = $5, trigger_config = $6, effects = $7, updated_at = NOW()
+		 WHERE id = $1`,
+		rule.ID, rule.Name, rule.Description, rule.Status, rule.TriggerType, rule.TriggerConfig, rule.Effects)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PGRepository) DeleteAutomationRule(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM automation_rules WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// --- AutomationExecution ---
+
+func (r *PGRepository) InsertExecution(ctx context.Context, exec *AutomationExecution) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO automation_executions (id, rule_id, trigger_event, started_at, completed_at, status, error, retry_count)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		exec.ID, exec.RuleID, exec.TriggerEvent, exec.StartedAt, exec.CompletedAt, exec.Status, exec.Error, exec.RetryCount)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) ListExecutions(ctx context.Context, ruleID string) ([]AutomationExecution, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, rule_id, trigger_event, started_at, completed_at, status, error, retry_count
+		 FROM automation_executions WHERE rule_id = $1 ORDER BY started_at`, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AutomationExecution
+	for rows.Next() {
+		var exec AutomationExecution
+		if err := rows.Scan(&exec.ID, &exec.RuleID, &exec.TriggerEvent, &exec.StartedAt, &exec.CompletedAt, &exec.Status, &exec.Error, &exec.RetryCount); err != nil {
+			return nil, err
+		}
+		result = append(result, exec)
+	}
+	return result, nil
+}

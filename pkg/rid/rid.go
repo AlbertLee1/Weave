@@ -105,6 +105,16 @@ func NewProposalReviewRID() string {
 	return New("ontology", "main", "proposal-review")
 }
 
+// NewAutomationRuleRID generates a new RID for an automation rule.
+func NewAutomationRuleRID() string {
+	return New("ontology", "main", "automation-rule")
+}
+
+// NewAutomationExecutionRID generates a new RID for an automation execution.
+func NewAutomationExecutionRID() string {
+	return New("ontology", "main", "automation-execution")
+}
+
 // IsRID reports whether s looks like a Resource Identifier (starts with "ri.").
 func IsRID(s string) bool {
 	return strings.HasPrefix(s, "ri.")
