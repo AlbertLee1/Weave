@@ -299,6 +299,11 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	// Step 10: Resolve UPSERT edits to CREATE or MODIFY based on object existence.
 	e.resolveUpsertEdits(ctx, edits)
 
+	// Step 11: Validate interface-backed rules — target ObjectType must implement the Interface.
+	if err := e.validateInterfaceRules(ctx, ontologyRID, rules, edits); err != nil {
+		return nil, fmt.Errorf("interface validation: %w", err)
+	}
+
 	return &PreparedAction{
 		ActionType: actionType,
 		UserID:     userID,
@@ -341,6 +346,50 @@ func (e *Executor) resolveUpsertEdits(ctx context.Context, edits []funnel.Edit) 
 			edits[i].Type = funnel.EditTypeCreate
 		}
 	}
+}
+
+// validateInterfaceRules checks that for each interface-backed rule, the
+// resolved ObjectType actually implements the specified Interface. Rules and
+// edits are parallel slices (1:1 correspondence from ExecuteRules).
+func (e *Executor) validateInterfaceRules(ctx context.Context, ontologyRID string, rules []Rule, edits []funnel.Edit) error {
+	for i, rule := range rules {
+		if !isInterfaceRule(rule.Type) {
+			continue
+		}
+		if rule.InterfaceAPIName == "" {
+			return fmt.Errorf("rule %d (%s): interfaceApiName is required", i, rule.Type)
+		}
+		objectType := edits[i].ObjectType
+
+		// Look up the Interface by API name.
+		iface, err := e.omsRepo.GetInterfaceByAPIName(ctx, ontologyRID, rule.InterfaceAPIName)
+		if err != nil || iface == nil {
+			return fmt.Errorf("rule %d (%s): interface %q not found", i, rule.Type, rule.InterfaceAPIName)
+		}
+
+		// Look up the ObjectType by API name.
+		ot, err := e.omsRepo.GetObjectTypeByAPIName(ctx, ontologyRID, objectType)
+		if err != nil || ot == nil {
+			return fmt.Errorf("rule %d (%s): objectType %q not found", i, rule.Type, objectType)
+		}
+
+		// Check that the ObjectType implements the Interface.
+		otInterfaces, err := e.omsRepo.ListObjectTypeInterfaces(ctx, ot.RID)
+		if err != nil {
+			return fmt.Errorf("rule %d (%s): list interfaces for %q: %w", i, rule.Type, objectType, err)
+		}
+		found := false
+		for _, oti := range otInterfaces {
+			if oti.InterfaceRID == iface.RID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("objectType %q does not implement interface %q", objectType, rule.InterfaceAPIName)
+		}
+	}
+	return nil
 }
 
 // tagEditsAsUserSource stamps Edit.Source = "user" on every edit in place so

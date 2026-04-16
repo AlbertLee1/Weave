@@ -14,7 +14,7 @@ const editTypeUpsert funnel.EditType = "UPSERT"
 
 // Rule defines an action rule.
 type Rule struct {
-	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink", "createOrModifyObject"
+	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink", "createOrModifyObject", "createInterfaceObject", "modifyInterfaceObject", "deleteInterfaceObject"
 	ObjectType string `json:"objectType"`
 	// For createObject/modifyObject — property bindings
 	PropertyBindings map[string]PropertyBinding `json:"propertyBindings,omitempty"`
@@ -22,6 +22,8 @@ type Rule struct {
 	LinkTypeAPIName        string `json:"linkTypeApiName,omitempty"`
 	SourceObjectPrimaryKey string `json:"sourceObjectPrimaryKey,omitempty"` // parameter ID for source PK
 	TargetObjectPrimaryKey string `json:"targetObjectPrimaryKey,omitempty"` // parameter ID for target PK
+	// Interface rule fields — objectType resolved from parameters at runtime
+	InterfaceAPIName string `json:"interfaceApiName,omitempty"`
 }
 
 // PropertyBinding binds a property to a value source.
@@ -140,6 +142,52 @@ func executeRule(rule Rule, params map[string]interface{}) (funnel.Edit, error) 
 			Properties: props,
 		}, nil
 
+	case "createInterfaceObject":
+		objectType := resolveObjectTypeParam(params)
+		if objectType == "" {
+			return funnel.Edit{}, fmt.Errorf("createInterfaceObject: objectType not found in parameters")
+		}
+		props := resolveBindings(rule.PropertyBindings, params)
+		pk := rid.NewObjectRID()
+		return funnel.Edit{
+			Type:       funnel.EditTypeCreate,
+			ObjectType: objectType,
+			PrimaryKey: pk,
+			Properties: props,
+		}, nil
+
+	case "modifyInterfaceObject":
+		objectType := resolveObjectTypeParam(params)
+		if objectType == "" {
+			return funnel.Edit{}, fmt.Errorf("modifyInterfaceObject: objectType not found in parameters")
+		}
+		pk := findPrimaryKey(objectType, params)
+		if pk == "" {
+			return funnel.Edit{}, fmt.Errorf("modifyInterfaceObject: primary key not found in parameters")
+		}
+		props := resolveBindings(rule.PropertyBindings, params)
+		return funnel.Edit{
+			Type:       funnel.EditTypeModify,
+			ObjectType: objectType,
+			PrimaryKey: pk,
+			Properties: props,
+		}, nil
+
+	case "deleteInterfaceObject":
+		objectType := resolveObjectTypeParam(params)
+		if objectType == "" {
+			return funnel.Edit{}, fmt.Errorf("deleteInterfaceObject: objectType not found in parameters")
+		}
+		pk := findPrimaryKey(objectType, params)
+		if pk == "" {
+			return funnel.Edit{}, fmt.Errorf("deleteInterfaceObject: primary key not found in parameters")
+		}
+		return funnel.Edit{
+			Type:       funnel.EditTypeDelete,
+			ObjectType: objectType,
+			PrimaryKey: pk,
+		}, nil
+
 	default:
 		return funnel.Edit{}, fmt.Errorf("unknown rule type: %q", rule.Type)
 	}
@@ -169,6 +217,28 @@ func resolveStringParam(key string, params map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+// resolveObjectTypeParam extracts the concrete objectType API name from params.
+// Used by interface-backed rules where objectType is determined at runtime.
+func resolveObjectTypeParam(params map[string]interface{}) string {
+	for _, key := range []string{"objectType", "objectTypeApiName"} {
+		if v, ok := params[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// isInterfaceRule returns true if the rule type is an interface-backed variant.
+func isInterfaceRule(ruleType string) bool {
+	switch ruleType {
+	case "createInterfaceObject", "modifyInterfaceObject", "deleteInterfaceObject":
+		return true
+	}
+	return false
 }
 
 func findPrimaryKey(objectType string, params map[string]interface{}) string {

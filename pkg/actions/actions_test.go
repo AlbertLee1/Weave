@@ -2205,3 +2205,264 @@ func TestCollapseEdits_UpsertResolvedToCreate_ThenDelete(t *testing.T) {
 		t.Fatalf("expected 0 edits (CREATE+DELETE cancel), got %d", len(result))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Interface-backed Action Rules (US-103)
+// ---------------------------------------------------------------------------
+
+func TestParseRules_InterfaceRuleTypes(t *testing.T) {
+	raw := mustJSON([]Rule{
+		{Type: "createInterfaceObject", InterfaceAPIName: "GeoEntity"},
+		{Type: "modifyInterfaceObject", InterfaceAPIName: "GeoEntity"},
+		{Type: "deleteInterfaceObject", InterfaceAPIName: "GeoEntity"},
+	})
+	rules, err := ParseRules(raw)
+	if err != nil {
+		t.Fatalf("ParseRules: %v", err)
+	}
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 rules, got %d", len(rules))
+	}
+	for i, expected := range []string{"createInterfaceObject", "modifyInterfaceObject", "deleteInterfaceObject"} {
+		if rules[i].Type != expected {
+			t.Fatalf("rule[%d]: expected type %q, got %q", i, expected, rules[i].Type)
+		}
+		if rules[i].InterfaceAPIName != "GeoEntity" {
+			t.Fatalf("rule[%d]: expected interfaceApiName GeoEntity, got %q", i, rules[i].InterfaceAPIName)
+		}
+	}
+}
+
+func TestExecuteRule_CreateInterfaceObject(t *testing.T) {
+	rule := Rule{
+		Type:             "createInterfaceObject",
+		InterfaceAPIName: "GeoEntity",
+		PropertyBindings: map[string]PropertyBinding{
+			"name": {Type: "parameter", Value: "name"},
+		},
+	}
+	params := map[string]interface{}{
+		"objectType": "Building",
+		"name":       "HQ",
+	}
+	edits, err := ExecuteRules([]Rule{rule}, params)
+	if err != nil {
+		t.Fatalf("ExecuteRules: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	if edits[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected CREATE, got %s", edits[0].Type)
+	}
+	if edits[0].ObjectType != "Building" {
+		t.Fatalf("expected objectType=Building, got %s", edits[0].ObjectType)
+	}
+	if edits[0].Properties["name"] != "HQ" {
+		t.Fatalf("expected name=HQ, got %v", edits[0].Properties["name"])
+	}
+}
+
+func TestExecuteRule_ModifyInterfaceObject(t *testing.T) {
+	rule := Rule{
+		Type:             "modifyInterfaceObject",
+		InterfaceAPIName: "GeoEntity",
+		PropertyBindings: map[string]PropertyBinding{
+			"name": {Type: "parameter", Value: "name"},
+		},
+	}
+	params := map[string]interface{}{
+		"objectType": "Building",
+		"primaryKey": "bld-1",
+		"name":       "HQ Updated",
+	}
+	edits, err := ExecuteRules([]Rule{rule}, params)
+	if err != nil {
+		t.Fatalf("ExecuteRules: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	if edits[0].Type != funnel.EditTypeModify {
+		t.Fatalf("expected MODIFY, got %s", edits[0].Type)
+	}
+	if edits[0].ObjectType != "Building" {
+		t.Fatalf("expected objectType=Building, got %s", edits[0].ObjectType)
+	}
+	if edits[0].PrimaryKey != "bld-1" {
+		t.Fatalf("expected primaryKey=bld-1, got %s", edits[0].PrimaryKey)
+	}
+}
+
+func TestExecuteRule_DeleteInterfaceObject(t *testing.T) {
+	rule := Rule{
+		Type:             "deleteInterfaceObject",
+		InterfaceAPIName: "GeoEntity",
+	}
+	params := map[string]interface{}{
+		"objectType": "Building",
+		"primaryKey": "bld-1",
+	}
+	edits, err := ExecuteRules([]Rule{rule}, params)
+	if err != nil {
+		t.Fatalf("ExecuteRules: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	if edits[0].Type != funnel.EditTypeDelete {
+		t.Fatalf("expected DELETE, got %s", edits[0].Type)
+	}
+	if edits[0].ObjectType != "Building" {
+		t.Fatalf("expected objectType=Building, got %s", edits[0].ObjectType)
+	}
+}
+
+func TestExecuteRule_InterfaceObject_MissingObjectType(t *testing.T) {
+	for _, ruleType := range []string{"createInterfaceObject", "modifyInterfaceObject", "deleteInterfaceObject"} {
+		t.Run(ruleType, func(t *testing.T) {
+			rule := Rule{Type: ruleType, InterfaceAPIName: "GeoEntity"}
+			// No objectType in params
+			_, err := ExecuteRules([]Rule{rule}, map[string]interface{}{"name": "test"})
+			if err == nil {
+				t.Fatal("expected error for missing objectType, got nil")
+			}
+		})
+	}
+}
+
+func TestExecutor_InterfaceRule_ValidatesInterfaceMembership(t *testing.T) {
+	repo := &interfaceAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createGeoEntity", []ParameterDef{
+					{ID: "objectType", Type: "string", Required: true},
+					{ID: "name", Type: "string", Required: true},
+				}, []Rule{
+					{
+						Type:             "createInterfaceObject",
+						InterfaceAPIName: "GeoEntity",
+						PropertyBindings: map[string]PropertyBinding{
+							"name": {Type: "parameter", Value: "name"},
+						},
+					},
+				}),
+			},
+		},
+		interfaces: map[string]*oms.Interface{
+			"GeoEntity": {
+				RID:     "ri.ontology.main.interface.geo-entity",
+				APIName: "GeoEntity",
+			},
+		},
+		objectTypesByName: map[string]*oms.ObjectType{
+			"Building": {
+				RID:     "ri.ontology.main.object-type.Building",
+				APIName: "Building",
+			},
+		},
+		// Building implements GeoEntity
+		objectTypeInterfaces: map[string][]oms.ObjectTypeInterface{
+			"ri.ontology.main.object-type.Building": {
+				{ObjectTypeRID: "ri.ontology.main.object-type.Building", InterfaceRID: "ri.ontology.main.interface.geo-entity"},
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Apply(context.Background(), "test-ont", &ApplyRequest{
+		ActionType: "createGeoEntity",
+		Parameters: map[string]interface{}{
+			"objectType": "Building",
+			"name":       "HQ",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply should succeed for implementing type: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].ObjectType != "Building" {
+		t.Fatalf("expected objectType=Building, got %s", result.Edits[0].ObjectType)
+	}
+}
+
+func TestExecutor_InterfaceRule_RejectsNonImplementingType(t *testing.T) {
+	repo := &interfaceAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createGeoEntity", []ParameterDef{
+					{ID: "objectType", Type: "string", Required: true},
+					{ID: "name", Type: "string", Required: true},
+				}, []Rule{
+					{
+						Type:             "createInterfaceObject",
+						InterfaceAPIName: "GeoEntity",
+						PropertyBindings: map[string]PropertyBinding{
+							"name": {Type: "parameter", Value: "name"},
+						},
+					},
+				}),
+			},
+		},
+		interfaces: map[string]*oms.Interface{
+			"GeoEntity": {
+				RID:     "ri.ontology.main.interface.geo-entity",
+				APIName: "GeoEntity",
+			},
+		},
+		objectTypesByName: map[string]*oms.ObjectType{
+			"Vehicle": {
+				RID:     "ri.ontology.main.object-type.Vehicle",
+				APIName: "Vehicle",
+			},
+		},
+		// Vehicle does NOT implement GeoEntity
+		objectTypeInterfaces: map[string][]oms.ObjectTypeInterface{},
+	}
+
+	exec := NewExecutor(repo, nil)
+	_, err := exec.Apply(context.Background(), "test-ont", &ApplyRequest{
+		ActionType: "createGeoEntity",
+		Parameters: map[string]interface{}{
+			"objectType": "Vehicle",
+			"name":       "Car",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-implementing type, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not implement interface") {
+		t.Fatalf("expected 'does not implement interface' error, got: %v", err)
+	}
+}
+
+// interfaceAwareMockRepo extends mockOmsRepo with interface resolution.
+type interfaceAwareMockRepo struct {
+	mockOmsRepo
+	interfaces           map[string]*oms.Interface         // apiName → Interface
+	objectTypesByName    map[string]*oms.ObjectType        // apiName → ObjectType
+	objectTypeInterfaces map[string][]oms.ObjectTypeInterface // objectTypeRID → interfaces
+}
+
+func (m *interfaceAwareMockRepo) GetInterfaceByAPIName(_ context.Context, _, apiName string) (*oms.Interface, error) {
+	if iface, ok := m.interfaces[apiName]; ok {
+		return iface, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *interfaceAwareMockRepo) GetObjectTypeByAPIName(_ context.Context, _, apiName string) (*oms.ObjectType, error) {
+	if ot, ok := m.objectTypesByName[apiName]; ok {
+		return ot, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *interfaceAwareMockRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
+	if otis, ok := m.objectTypeInterfaces[objectTypeRID]; ok {
+		return otis, nil
+	}
+	return nil, nil
+}

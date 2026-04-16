@@ -596,6 +596,159 @@ func TestIntegration_CreateOrModify_UpsertNonExistent_ThenExisting(t *testing.T)
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Integration Test: interface-backed rule creates correct concrete type (US-103)
+// ---------------------------------------------------------------------------
+
+// interfaceAwareIntegrationRepo extends linkAwareMockRepo with interface support.
+type interfaceAwareIntegrationRepo struct {
+	mockOmsRepo
+	interfaces           map[string]*oms.Interface
+	objectTypesByName    map[string]*oms.ObjectType
+	objectTypeInterfaces map[string][]oms.ObjectTypeInterface
+}
+
+func (m *interfaceAwareIntegrationRepo) GetInterfaceByAPIName(_ context.Context, _, apiName string) (*oms.Interface, error) {
+	if iface, ok := m.interfaces[apiName]; ok {
+		return iface, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *interfaceAwareIntegrationRepo) GetObjectTypeByAPIName(_ context.Context, _, apiName string) (*oms.ObjectType, error) {
+	if ot, ok := m.objectTypesByName[apiName]; ok {
+		return ot, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (m *interfaceAwareIntegrationRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
+	if otis, ok := m.objectTypeInterfaces[objectTypeRID]; ok {
+		return otis, nil
+	}
+	return nil, nil
+}
+
+func TestIntegration_CreateInterfaceObject_CorrectConcreteType(t *testing.T) {
+	const ontology = "test-ont"
+
+	// 1. Define interface and implementing object types.
+	geoInterface := &oms.Interface{
+		RID:     "ri.ontology.main.interface.geo-entity",
+		APIName: "GeoEntity",
+	}
+	buildingOT := &oms.ObjectType{
+		RID:     "ri.ontology.main.object-type.Building",
+		APIName: "Building",
+	}
+
+	// 2. Build mock OMS repo with interface-backed action.
+	repo := &interfaceAwareIntegrationRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createGeoEntity", []ParameterDef{
+					{ID: "objectType", Type: "string", Required: true},
+					{ID: "name", Type: "string", Required: true},
+					{ID: "latitude", Type: "double", Required: false},
+				}, []Rule{
+					{
+						Type:             "createInterfaceObject",
+						InterfaceAPIName: "GeoEntity",
+						PropertyBindings: map[string]PropertyBinding{
+							"name":     {Type: "parameter", Value: "name"},
+							"latitude": {Type: "parameter", Value: "latitude"},
+						},
+					},
+				}),
+			},
+		},
+		interfaces: map[string]*oms.Interface{
+			"GeoEntity": geoInterface,
+		},
+		objectTypesByName: map[string]*oms.ObjectType{
+			"Building": buildingOT,
+		},
+		objectTypeInterfaces: map[string][]oms.ObjectTypeInterface{
+			buildingOT.RID: {
+				{ObjectTypeRID: buildingOT.RID, InterfaceRID: geoInterface.RID},
+			},
+		},
+	}
+
+	// 3. Set up Bleve index + consumer.
+	tmpDir := t.TempDir()
+	indexMgr := index.NewManager(tmpDir)
+	t.Cleanup(func() { indexMgr.Close() })
+
+	buildingProps := []index.Property{
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+		{APIName: "latitude", BaseType: "double", IsSearchable: false},
+	}
+	if _, err := indexMgr.EnsureIndex(index.ScopedKey(ontology, "Building"), buildingProps); err != nil {
+		t.Fatalf("EnsureIndex Building: %v", err)
+	}
+
+	consumer := funnel.NewConsumer(nil, indexMgr)
+
+	// 4. Execute action with createInterfaceObject rule — concrete type is "Building".
+	exec := NewExecutor(repo, nil)
+	result, err := exec.Apply(context.Background(), ontology, &ApplyRequest{
+		ActionType: "createGeoEntity",
+		Parameters: map[string]interface{}{
+			"objectType": "Building",
+			"name":       "Headquarters",
+			"latitude":   37.7749,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply createInterfaceObject: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected CREATE, got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].ObjectType != "Building" {
+		t.Fatalf("expected objectType=Building, got %s", result.Edits[0].ObjectType)
+	}
+
+	// 5. Process the create through consumer so it appears in Bleve.
+	createBatch := funnel.EditBatch{
+		ID:              "interface-create-1",
+		OntologyAPIName: ontology,
+		UserID:          "test",
+		Timestamp:       time.Now(),
+		Edits:           result.Edits,
+	}
+	if err := consumer.ApplyBatch(context.Background(), createBatch); err != nil {
+		t.Fatalf("apply create batch: %v", err)
+	}
+
+	// 6. Verify the object exists in the Building index with correct properties.
+	scopedKey := index.ScopedKey(ontology, "Building")
+	idx := indexMgr.GetIndex(scopedKey)
+	if idx == nil {
+		t.Fatal("Building index not found")
+	}
+	doc, err := idx.Document(result.Edits[0].PrimaryKey)
+	if err != nil || doc == nil {
+		t.Fatalf("expected object in Building index, got err=%v doc=%v", err, doc)
+	}
+
+	// 7. Verify a non-implementing type is rejected.
+	_, err = exec.Apply(context.Background(), ontology, &ApplyRequest{
+		ActionType: "createGeoEntity",
+		Parameters: map[string]interface{}{
+			"objectType": "NonExistent",
+			"name":       "Should Fail",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-implementing type, got nil")
+	}
+}
+
 // TestIntegration_CreateLink_ActionResponse_HasLinkCount verifies the response
 // envelope correctly reports addedLinksCount for createLink actions.
 func TestIntegration_CreateLink_ActionResponse_HasLinkCount(t *testing.T) {
