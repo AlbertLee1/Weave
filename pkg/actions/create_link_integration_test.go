@@ -463,6 +463,139 @@ func TestIntegration_DeleteLink_SearchAround(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// bleveObjectChecker adapts index.Manager for ObjectExistenceChecker (US-102)
+// ---------------------------------------------------------------------------
+
+// bleveObjectChecker checks object existence against a Bleve index.
+// ontologyAPIName is used to compute the scoped key.
+type bleveObjectChecker struct {
+	indexMgr        *index.Manager
+	ontologyAPIName string
+}
+
+func (c *bleveObjectChecker) ObjectExists(_ context.Context, objectType, primaryKey string) bool {
+	scopedKey := index.ScopedKey(c.ontologyAPIName, objectType)
+	idx := c.indexMgr.GetIndex(scopedKey)
+	if idx == nil {
+		return false
+	}
+	doc, err := idx.Document(primaryKey)
+	return err == nil && doc != nil
+}
+
+// ---------------------------------------------------------------------------
+// Integration Test: createOrModifyObject upsert (US-102)
+// ---------------------------------------------------------------------------
+
+func TestIntegration_CreateOrModify_UpsertNonExistent_ThenExisting(t *testing.T) {
+	const ontology = "test-ont"
+
+	// 1. Set up Bleve index manager + consumer.
+	tmpDir := t.TempDir()
+	indexMgr := index.NewManager(tmpDir)
+	t.Cleanup(func() { indexMgr.Close() })
+
+	empProps := []index.Property{
+		{APIName: "name", BaseType: "string", IsSearchable: true},
+		{APIName: "department", BaseType: "string", IsSearchable: true},
+	}
+	if _, err := indexMgr.EnsureIndex(index.ScopedKey(ontology, "Employee"), empProps); err != nil {
+		t.Fatalf("EnsureIndex Employee: %v", err)
+	}
+
+	consumer := funnel.NewConsumer(nil, indexMgr)
+
+	// 2. Build mock OMS repo with createOrModifyObject action.
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("upsertEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "name", Type: "string", Required: true},
+				{ID: "department", Type: "string", Required: false},
+			}, []Rule{
+				{
+					Type:       "createOrModifyObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name":       {Type: "parameter", Value: "name"},
+						"department": {Type: "parameter", Value: "department"},
+					},
+				},
+			}),
+		},
+	}
+
+	// 3. Create executor with Bleve-backed existence checker.
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectExistenceChecker(&bleveObjectChecker{
+		indexMgr:        indexMgr,
+		ontologyAPIName: ontology,
+	})
+
+	// 4. Upsert a non-existent object → should produce CREATE.
+	result1, err := exec.Apply(context.Background(), ontology, &ApplyRequest{
+		ActionType: "upsertEmployee",
+		Parameters: map[string]interface{}{
+			"primaryKey": "emp-1",
+			"name":       "Alice",
+			"department": "Engineering",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply upsert (non-existent): %v", err)
+	}
+	if len(result1.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result1.Edits))
+	}
+	if result1.Edits[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected CREATE for non-existent object, got %s", result1.Edits[0].Type)
+	}
+	if result1.Edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected primaryKey emp-1, got %s", result1.Edits[0].PrimaryKey)
+	}
+
+	// 5. Process the CREATE through the consumer so the object exists in Bleve.
+	createBatch := funnel.EditBatch{
+		ID:              "create-batch-1",
+		OntologyAPIName: ontology,
+		UserID:          "test",
+		Timestamp:       time.Now(),
+		Edits:           result1.Edits,
+	}
+	if err := consumer.ApplyBatch(context.Background(), createBatch); err != nil {
+		t.Fatalf("apply create batch: %v", err)
+	}
+
+	// 6. Upsert the same object again → should produce MODIFY (object now exists).
+	result2, err := exec.Apply(context.Background(), ontology, &ApplyRequest{
+		ActionType: "upsertEmployee",
+		Parameters: map[string]interface{}{
+			"primaryKey": "emp-1",
+			"name":       "Alice Updated",
+			"department": "Product",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply upsert (existing): %v", err)
+	}
+	if len(result2.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result2.Edits))
+	}
+	if result2.Edits[0].Type != funnel.EditTypeModify {
+		t.Fatalf("expected MODIFY for existing object, got %s", result2.Edits[0].Type)
+	}
+	if result2.Edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected primaryKey emp-1, got %s", result2.Edits[0].PrimaryKey)
+	}
+	if result2.Edits[0].Properties["name"] != "Alice Updated" {
+		t.Fatalf("expected name='Alice Updated', got %v", result2.Edits[0].Properties["name"])
+	}
+	if result2.Edits[0].Properties["department"] != "Product" {
+		t.Fatalf("expected department='Product', got %v", result2.Edits[0].Properties["department"])
+	}
+}
+
 // TestIntegration_CreateLink_ActionResponse_HasLinkCount verifies the response
 // envelope correctly reports addedLinksCount for createLink actions.
 func TestIntegration_CreateLink_ActionResponse_HasLinkCount(t *testing.T) {

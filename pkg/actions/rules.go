@@ -8,9 +8,13 @@ import (
 	"github.com/liyang/weave/pkg/rid"
 )
 
+// editTypeUpsert is an internal-only edit type for createOrModifyObject rules.
+// It is resolved to CREATE or MODIFY by Executor.Prepare before publishing.
+const editTypeUpsert funnel.EditType = "UPSERT"
+
 // Rule defines an action rule.
 type Rule struct {
-	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink"
+	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink", "createOrModifyObject"
 	ObjectType string `json:"objectType"`
 	// For createObject/modifyObject — property bindings
 	PropertyBindings map[string]PropertyBinding `json:"propertyBindings,omitempty"`
@@ -121,6 +125,19 @@ func executeRule(rule Rule, params map[string]interface{}) (funnel.Edit, error) 
 			PrimaryKey:       sourcePK,
 			LinkTypeRID:      rule.LinkTypeAPIName, // resolved to RID in Executor.Prepare
 			TargetPrimaryKey: targetPK,
+		}, nil
+
+	case "createOrModifyObject":
+		pk := findPrimaryKey(rule.ObjectType, params)
+		if pk == "" {
+			pk = rid.NewObjectRID() // no PK → always create (new object)
+		}
+		props := resolveBindings(rule.PropertyBindings, params)
+		return funnel.Edit{
+			Type:       editTypeUpsert, // resolved to CREATE or MODIFY in Executor.Prepare
+			ObjectType: rule.ObjectType,
+			PrimaryKey: pk,
+			Properties: props,
 		}, nil
 
 	default:

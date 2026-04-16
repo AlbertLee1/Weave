@@ -1921,3 +1921,287 @@ func TestCountEdits_IncludesDeletedLinks(t *testing.T) {
 		t.Fatalf("expected deletedLinksCount=1, got %d", r.DeletedLinksCount)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// createOrModifyObject Rule Tests (US-102)
+// ---------------------------------------------------------------------------
+
+func TestParseRules_CreateOrModifyObject(t *testing.T) {
+	data := mustJSON([]Rule{
+		{
+			Type:       "createOrModifyObject",
+			ObjectType: "Employee",
+			PropertyBindings: map[string]PropertyBinding{
+				"name": {Type: "parameter", Value: "name"},
+			},
+		},
+	})
+	rules, err := ParseRules(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Type != "createOrModifyObject" {
+		t.Fatalf("unexpected rules: %+v", rules)
+	}
+}
+
+func TestExecuteRules_CreateOrModifyObject_WithPK(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:       "createOrModifyObject",
+			ObjectType: "Employee",
+			PropertyBindings: map[string]PropertyBinding{
+				"name": {Type: "parameter", Value: "name"},
+			},
+		},
+	}
+	params := map[string]interface{}{
+		"primaryKey": "emp-1",
+		"name":       "Alice",
+	}
+	edits, err := ExecuteRules(rules, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	if edits[0].Type != editTypeUpsert {
+		t.Fatalf("expected UPSERT, got %s", edits[0].Type)
+	}
+	if edits[0].ObjectType != "Employee" {
+		t.Fatalf("expected Employee, got %s", edits[0].ObjectType)
+	}
+	if edits[0].PrimaryKey != "emp-1" {
+		t.Fatalf("expected primaryKey emp-1, got %s", edits[0].PrimaryKey)
+	}
+	if edits[0].Properties["name"] != "Alice" {
+		t.Fatalf("expected name=Alice, got %v", edits[0].Properties["name"])
+	}
+}
+
+func TestExecuteRules_CreateOrModifyObject_NoPK(t *testing.T) {
+	rules := []Rule{
+		{
+			Type:       "createOrModifyObject",
+			ObjectType: "Employee",
+			PropertyBindings: map[string]PropertyBinding{
+				"name": {Type: "parameter", Value: "name"},
+			},
+		},
+	}
+	params := map[string]interface{}{
+		"name": "Alice",
+	}
+	edits, err := ExecuteRules(rules, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(edits))
+	}
+	// No PK in params → auto-generate, always create
+	if edits[0].Type != editTypeUpsert {
+		t.Fatalf("expected UPSERT, got %s", edits[0].Type)
+	}
+	if edits[0].PrimaryKey == "" {
+		t.Fatal("expected auto-generated primary key, got empty")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor createOrModifyObject Tests (US-102)
+// ---------------------------------------------------------------------------
+
+// mockObjectExistenceChecker allows tests to control which objects "exist".
+type mockObjectExistenceChecker struct {
+	existing map[string]bool // key: "objectType|primaryKey"
+}
+
+func (m *mockObjectExistenceChecker) ObjectExists(_ context.Context, objectType, primaryKey string) bool {
+	if m.existing == nil {
+		return false
+	}
+	return m.existing[objectType+"|"+primaryKey]
+}
+
+func TestExecutor_Apply_CreateOrModify_ObjectNotExists(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("upsertEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createOrModifyObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectExistenceChecker(&mockObjectExistenceChecker{
+		existing: map[string]bool{}, // empty → nothing exists
+	})
+
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "upsertEmployee",
+		Parameters: map[string]interface{}{
+			"primaryKey": "emp-new",
+			"name":       "Alice",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected CREATE (object not exists), got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].PrimaryKey != "emp-new" {
+		t.Fatalf("expected primaryKey emp-new, got %s", result.Edits[0].PrimaryKey)
+	}
+	if result.Edits[0].Properties["name"] != "Alice" {
+		t.Fatalf("expected name=Alice, got %v", result.Edits[0].Properties["name"])
+	}
+}
+
+func TestExecutor_Apply_CreateOrModify_ObjectExists(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("upsertEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createOrModifyObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectExistenceChecker(&mockObjectExistenceChecker{
+		existing: map[string]bool{
+			"Employee|emp-existing": true,
+		},
+	})
+
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "upsertEmployee",
+		Parameters: map[string]interface{}{
+			"primaryKey": "emp-existing",
+			"name":       "Bob Updated",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeModify {
+		t.Fatalf("expected MODIFY (object exists), got %s", result.Edits[0].Type)
+	}
+	if result.Edits[0].PrimaryKey != "emp-existing" {
+		t.Fatalf("expected primaryKey emp-existing, got %s", result.Edits[0].PrimaryKey)
+	}
+	if result.Edits[0].Properties["name"] != "Bob Updated" {
+		t.Fatalf("expected name='Bob Updated', got %v", result.Edits[0].Properties["name"])
+	}
+}
+
+func TestExecutor_Apply_CreateOrModify_NoChecker_DefaultsToCreate(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("upsertEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createOrModifyObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	// No SetObjectExistenceChecker → nil checker → defaults to CREATE
+
+	result, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "upsertEmployee",
+		Parameters: map[string]interface{}{
+			"primaryKey": "emp-1",
+			"name":       "Alice",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Edits) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result.Edits))
+	}
+	if result.Edits[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected CREATE (no checker → default), got %s", result.Edits[0].Type)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CollapseEdits with resolved createOrModifyObject Tests (US-102)
+// ---------------------------------------------------------------------------
+
+func TestCollapseEdits_UpsertResolvedToCreate_ThenModify(t *testing.T) {
+	// Simulates: createOrModifyObject resolved to CREATE, followed by modifyObject
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "A", PrimaryKey: "1", Properties: map[string]interface{}{"x": 1}},
+		{Type: funnel.EditTypeModify, ObjectType: "A", PrimaryKey: "1", Properties: map[string]interface{}{"y": 2}},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result))
+	}
+	if result[0].Type != funnel.EditTypeCreate {
+		t.Fatalf("expected CREATE with merged props, got %s", result[0].Type)
+	}
+	if result[0].Properties["x"] != 1 || result[0].Properties["y"] != 2 {
+		t.Fatalf("expected merged {x:1, y:2}, got %v", result[0].Properties)
+	}
+}
+
+func TestCollapseEdits_UpsertResolvedToModify_ThenDelete(t *testing.T) {
+	// Simulates: createOrModifyObject resolved to MODIFY, followed by deleteObject
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeModify, ObjectType: "A", PrimaryKey: "1", Properties: map[string]interface{}{"x": 1}},
+		{Type: funnel.EditTypeDelete, ObjectType: "A", PrimaryKey: "1"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 edit, got %d", len(result))
+	}
+	if result[0].Type != funnel.EditTypeDelete {
+		t.Fatalf("expected DELETE (MODIFY+DELETE→DELETE), got %s", result[0].Type)
+	}
+}
+
+func TestCollapseEdits_UpsertResolvedToCreate_ThenDelete(t *testing.T) {
+	// Simulates: createOrModifyObject resolved to CREATE, followed by deleteObject
+	edits := []funnel.Edit{
+		{Type: funnel.EditTypeCreate, ObjectType: "A", PrimaryKey: "1", Properties: map[string]interface{}{"x": 1}},
+		{Type: funnel.EditTypeDelete, ObjectType: "A", PrimaryKey: "1"},
+	}
+	result := CollapseEdits(edits)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 edits (CREATE+DELETE cancel), got %d", len(result))
+	}
+}

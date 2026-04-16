@@ -126,11 +126,19 @@ type Publisher interface {
 	Publish(batch *funnel.EditBatch) (uint64, error)
 }
 
+// ObjectExistenceChecker checks whether an object exists in the data layer
+// (e.g. Bleve index). Used by createOrModifyObject rules to decide between
+// CREATE and MODIFY at runtime.
+type ObjectExistenceChecker interface {
+	ObjectExists(ctx context.Context, objectType string, primaryKey string) bool
+}
+
 // Executor executes actions.
 type Executor struct {
 	omsRepo            oms.Repository
 	publisher          Publisher
 	functionDispatcher FunctionDispatcher
+	objectChecker      ObjectExistenceChecker
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit
@@ -150,6 +158,13 @@ func NewExecutor(omsRepo oms.Repository, publisher Publisher) *Executor {
 // call once at boot before the executor is shared with handlers.
 func (e *Executor) SetFunctionDispatcher(d FunctionDispatcher) {
 	e.functionDispatcher = d
+}
+
+// SetObjectExistenceChecker attaches a checker used by createOrModifyObject
+// rules to determine whether an object exists (→ MODIFY) or not (→ CREATE).
+// When nil, all upsert edits default to CREATE. Safe to call once at boot.
+func (e *Executor) SetObjectExistenceChecker(c ObjectExistenceChecker) {
+	e.objectChecker = c
 }
 
 // PreparedAction is the output of Executor.Prepare: everything computable for
@@ -281,6 +296,9 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	// Step 9: Resolve link type API names to RIDs for LINK_CREATE/LINK_DELETE edits.
 	e.resolveLinkEdits(ctx, ontologyRID, edits)
 
+	// Step 10: Resolve UPSERT edits to CREATE or MODIFY based on object existence.
+	e.resolveUpsertEdits(ctx, edits)
+
 	return &PreparedAction{
 		ActionType: actionType,
 		UserID:     userID,
@@ -305,6 +323,22 @@ func (e *Executor) resolveLinkEdits(ctx context.Context, ontologyRID string, edi
 		lt, err := e.omsRepo.GetLinkTypeByAPIName(ctx, ontologyRID, apiName)
 		if err == nil && lt != nil {
 			edits[i].LinkTypeRID = lt.RID
+		}
+	}
+}
+
+// resolveUpsertEdits converts internal UPSERT edits to CREATE or MODIFY based
+// on object existence. When no ObjectExistenceChecker is configured, all UPSERT
+// edits default to CREATE (graceful degradation).
+func (e *Executor) resolveUpsertEdits(ctx context.Context, edits []funnel.Edit) {
+	for i := range edits {
+		if edits[i].Type != editTypeUpsert {
+			continue
+		}
+		if e.objectChecker != nil && e.objectChecker.ObjectExists(ctx, edits[i].ObjectType, edits[i].PrimaryKey) {
+			edits[i].Type = funnel.EditTypeModify
+		} else {
+			edits[i].Type = funnel.EditTypeCreate
 		}
 	}
 }

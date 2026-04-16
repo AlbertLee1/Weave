@@ -20,6 +20,9 @@
 ### Codebase Patterns
 - Action rules in pkg/actions/rules.go — ExecuteRules() dispatches by rule type
 - CollapseEdits in pkg/actions/collapse.go — dedup per (objectType, primaryKey); link edits keyed by (linkTypeRID, sourcePK, targetPK)
+- Internal edit type pattern: editTypeUpsert (UPSERT) is internal to actions pkg, resolved in Executor.Prepare before publishing
+- ObjectExistenceChecker interface on Executor: injected like FunctionDispatcher, nil→graceful default to CREATE
+- bleveObjectChecker (in integration tests) wraps index.Manager + ontologyAPIName for existence checks via idx.Document(pk)
 - Where operators in pkg/oss/where/converter.go — ConvertToBleveQuery switch on type
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
@@ -70,4 +73,19 @@
   - CollapseEdits cancellation is directional: CREATE+DELETE→cancel, DELETE+CREATE→last wins (recreate)
   - resolveLinkEdits now handles both LINK_CREATE and LINK_DELETE (unified filter)
   - Consumer skips LINK_DELETE for Bleve indexing, history recording, and embedding generation (same as LINK_CREATE)
+---
+
+## 2026-04-16 - US-102
+- Implemented createOrModifyObject rule type (upsert behavior) for Actions
+- Files changed:
+  - pkg/actions/rules.go — Added editTypeUpsert internal constant + createOrModifyObject case in executeRule dispatch
+  - pkg/actions/executor.go — Added ObjectExistenceChecker interface, SetObjectExistenceChecker method, resolveUpsertEdits (converts UPSERT→CREATE/MODIFY based on existence)
+  - pkg/actions/actions_test.go — 9 new tests: parse, execute (with/without PK), executor (exists/not-exists/no-checker), collapse (resolved upsert then modify/delete)
+  - pkg/actions/create_link_integration_test.go — Added bleveObjectChecker adapter + integration test: upsert non-existent→CREATE, process through consumer, upsert existing→MODIFY
+- **Learnings for future iterations:**
+  - Internal edit types (editTypeUpsert) should be package-level constants resolved in Executor.Prepare, not exported through funnel
+  - ObjectExistenceChecker follows the same injection pattern as FunctionDispatcher: nil→graceful degradation (defaults to CREATE)
+  - Bleve's idx.Document(pk) returns a doc if it exists — the simplest way to check object existence without a search query
+  - When no PK is found in params, createOrModifyObject auto-generates one (same as createObject), making it always a CREATE
+  - resolveUpsertEdits runs after resolveLinkEdits but before tagEditsAsUserSource, keeping the Prepare pipeline sequential
 ---
