@@ -381,3 +381,213 @@ func TestBranch_FullLifecycle(t *testing.T) {
 		t.Errorf("list after close: expected 0 open branches, got %d", len(data2))
 	}
 }
+
+// --- GetBranchDiff Tests ---
+
+func TestGetBranchDiff_Success(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test"},
+		},
+		branches: []oms.OntologyBranch{
+			{ID: "br-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "feature/diff", Status: "open"},
+		},
+		branchChanges: []oms.BranchChange{
+			{ID: "chg-1", BranchID: "br-1", ChangeType: "ADDED", EntityType: "objectType", EntityRID: "ri.ontology.main.objectType.new1", AfterState: json.RawMessage(`{"apiName":"NewType"}`)},
+			{ID: "chg-2", BranchID: "br-1", ChangeType: "MODIFIED", EntityType: "property", EntityRID: "ri.ontology.main.property.p1", BeforeState: json.RawMessage(`{"displayName":"Old"}`), AfterState: json.RawMessage(`{"displayName":"New"}`)},
+			{ID: "chg-3", BranchID: "br-1", ChangeType: "DELETED", EntityType: "linkType", EntityRID: "ri.ontology.main.linkType.lt1", BeforeState: json.RawMessage(`{"apiName":"OldLink"}`)},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", handler.GetBranchDiff)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/branches/br-1/diff", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		t.Fatal("expected data to be an array")
+	}
+	if len(data) != 3 {
+		t.Fatalf("expected 3 changes, got %d", len(data))
+	}
+
+	// Verify each change has the expected fields
+	first := data[0].(map[string]interface{})
+	if first["entityRid"] == nil {
+		t.Error("expected entityRid on change")
+	}
+	if first["changeType"] == nil {
+		t.Error("expected changeType on change")
+	}
+	if first["entityType"] == nil {
+		t.Error("expected entityType on change")
+	}
+}
+
+func TestGetBranchDiff_SortedByEntityTypeThenChangeType(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test"},
+		},
+		branches: []oms.OntologyBranch{
+			{ID: "br-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "feature/sort", Status: "open"},
+		},
+		branchChanges: []oms.BranchChange{
+			// Intentionally unordered to verify sorting
+			{ID: "chg-1", BranchID: "br-1", ChangeType: "MODIFIED", EntityType: "property", EntityRID: "p1"},
+			{ID: "chg-2", BranchID: "br-1", ChangeType: "ADDED", EntityType: "objectType", EntityRID: "ot1"},
+			{ID: "chg-3", BranchID: "br-1", ChangeType: "DELETED", EntityType: "objectType", EntityRID: "ot2"},
+			{ID: "chg-4", BranchID: "br-1", ChangeType: "ADDED", EntityType: "linkType", EntityRID: "lt1"},
+			{ID: "chg-5", BranchID: "br-1", ChangeType: "ADDED", EntityType: "property", EntityRID: "p2"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", handler.GetBranchDiff)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/branches/br-1/diff", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data := resp["data"].([]interface{})
+	if len(data) != 5 {
+		t.Fatalf("expected 5 changes, got %d", len(data))
+	}
+
+	// Expected order: linkType/ADDED, objectType/ADDED, objectType/DELETED, property/ADDED, property/MODIFIED
+	expected := []struct {
+		entityType string
+		changeType string
+	}{
+		{"linkType", "ADDED"},
+		{"objectType", "ADDED"},
+		{"objectType", "DELETED"},
+		{"property", "ADDED"},
+		{"property", "MODIFIED"},
+	}
+
+	for i, exp := range expected {
+		change := data[i].(map[string]interface{})
+		if change["entityType"] != exp.entityType {
+			t.Errorf("data[%d].entityType = %v, want %q", i, change["entityType"], exp.entityType)
+		}
+		if change["changeType"] != exp.changeType {
+			t.Errorf("data[%d].changeType = %v, want %q", i, change["changeType"], exp.changeType)
+		}
+	}
+}
+
+func TestGetBranchDiff_BeforeAfterNulls(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test"},
+		},
+		branches: []oms.OntologyBranch{
+			{ID: "br-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "feature/nulls", Status: "open"},
+		},
+		branchChanges: []oms.BranchChange{
+			{ID: "chg-1", BranchID: "br-1", ChangeType: "ADDED", EntityType: "objectType", EntityRID: "ot1", AfterState: json.RawMessage(`{"apiName":"New"}`)},
+			{ID: "chg-2", BranchID: "br-1", ChangeType: "DELETED", EntityType: "objectType", EntityRID: "ot2", BeforeState: json.RawMessage(`{"apiName":"Old"}`)},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", handler.GetBranchDiff)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/branches/br-1/diff", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data := resp["data"].([]interface{})
+
+	// ADDED: before is null, after is populated
+	added := data[0].(map[string]interface{})
+	if added["before"] != nil {
+		t.Errorf("ADDED change should have null before, got %v", added["before"])
+	}
+	if added["after"] == nil {
+		t.Error("ADDED change should have non-null after")
+	}
+
+	// DELETED: before is populated, after is null
+	deleted := data[1].(map[string]interface{})
+	if deleted["before"] == nil {
+		t.Error("DELETED change should have non-null before")
+	}
+	if deleted["after"] != nil {
+		t.Errorf("DELETED change should have null after, got %v", deleted["after"])
+	}
+}
+
+func TestGetBranchDiff_BranchNotFound(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", handler.GetBranchDiff)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/branches/nonexistent/diff", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetBranchDiff_EmptyDiff(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test"},
+		},
+		branches: []oms.OntologyBranch{
+			{ID: "br-1", OntologyRID: "ri.ontology.main.ontology.1", Name: "feature/empty", Status: "open"},
+		},
+	}
+	handler := oms.NewOMSHandler(repo)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", handler.GetBranchDiff)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ontologies/test/branches/br-1/diff", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	resp := parseJSON(t, w.Body.Bytes())
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		t.Fatal("expected data to be an array")
+	}
+	if len(data) != 0 {
+		t.Errorf("expected empty diff, got %d changes", len(data))
+	}
+}

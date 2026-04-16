@@ -59,6 +59,7 @@
 - resolveRepo(w, r) helper on OMSHandler: returns base repo or BranchedRepository based on ?branch= query param; validates branch exists (any status allowed for reads)
 - Generic overlay helpers: applyListOverlay[T] and applyGetOverlay[T] with Go generics for type-safe overlay logic
 - json:"-" fields (OntologyRID, ObjectTypeRID) are lost during branch change JSON serialization — ADDED entities from branch may have empty parent references; don't filter ADDED entities by parent ID in overlay
+- Branch diff endpoint: BranchDiffEntry maps BranchChange → {entityType, entityRid, changeType, before, after}; sorted in handler via sort.Slice (entity_type asc, change_type asc)
 
 ---
 
@@ -326,4 +327,18 @@
   - resolveRepo allows any branch status (open/closed/merged) for reads — branch reads are historical, not restricted to open branches
   - V2 read handlers pass chi URL param directly to repo methods (no OntologyRID resolution) — tests must use full RID in URLs
   - Generic overlay helpers (applyListOverlay, applyGetOverlay) take function params for RID extraction, apiName extraction, and unmarshal — reusable for all entity types
+---
+
+## 2026-04-16 - US-116
+- Implemented ontology branch diff API endpoint
+- Files changed:
+  - pkg/oms/handlers_branch.go — Added BranchDiffEntry struct and GetBranchDiff handler (GET /branches/{branchId}/diff); validates branch exists, loads changes, maps to diff entries with before/after, sorts by entity_type then change_type
+  - pkg/oms/handlers_branch_test.go — 5 new tests: Success (3 changes returned with correct fields), SortedByEntityTypeThenChangeType (5 unsorted changes → verified sort order), BeforeAfterNulls (ADDED→null before, DELETED→null after), BranchNotFound (404), EmptyDiff (empty array)
+  - cmd/server/routes.go — Registered GET /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added getBranchDiff endpoint spec + BranchDiffEntry schema
+- **Learnings for future iterations:**
+  - Branch diff handler follows GetBranch pattern: resolve branch by ID (not ontology), then load changes — no need for resolveOntologyRID
+  - BranchDiffEntry maps BeforeState→Before, AfterState→After using json.RawMessage for zero-copy JSON passthrough
+  - Sorting in handler (sort.Slice) rather than relying on SQL ORDER BY keeps the repo interface simple and decoupled
+  - BranchChange model's BeforeState/AfterState are json.RawMessage with omitempty — they naturally serialize to null in JSON when empty/nil
 ---

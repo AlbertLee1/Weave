@@ -1,8 +1,10 @@
 package oms
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -163,4 +165,57 @@ func (h *OMSHandler) CloseBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// BranchDiffEntry represents a single change in a branch diff.
+type BranchDiffEntry struct {
+	EntityType string          `json:"entityType"`
+	EntityRID  string          `json:"entityRid"`
+	ChangeType string          `json:"changeType"`
+	Before     json.RawMessage `json:"before"`
+	After      json.RawMessage `json:"after"`
+}
+
+// GetBranchDiff handles GET /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff.
+func (h *OMSHandler) GetBranchDiff(w http.ResponseWriter, r *http.Request) {
+	branchID := chi.URLParam(r, "branchId")
+
+	if _, err := h.repo.GetBranch(r.Context(), branchID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("BranchNotFound", map[string]string{
+				"branchId": branchID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetBranchFailed", nil))
+		return
+	}
+
+	changes, err := h.repo.ListBranchChanges(r.Context(), branchID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListBranchChangesFailed", nil))
+		return
+	}
+
+	entries := make([]BranchDiffEntry, len(changes))
+	for i, c := range changes {
+		entries[i] = BranchDiffEntry{
+			EntityType: c.EntityType,
+			EntityRID:  c.EntityRID,
+			ChangeType: c.ChangeType,
+			Before:     c.BeforeState,
+			After:      c.AfterState,
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].EntityType != entries[j].EntityType {
+			return entries[i].EntityType < entries[j].EntityType
+		}
+		return entries[i].ChangeType < entries[j].ChangeType
+	})
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": entries,
+	})
 }

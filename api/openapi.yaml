@@ -459,6 +459,27 @@ components:
             changeCount:
               type: integer
               description: Number of changes recorded on this branch.
+    BranchDiffEntry:
+      type: object
+      required: [entityType, entityRid, changeType]
+      properties:
+        entityType:
+          type: string
+          description: The type of entity changed (objectType, property, linkType, actionType).
+        entityRid:
+          type: string
+          description: The RID of the changed entity.
+        changeType:
+          type: string
+          enum: [ADDED, MODIFIED, DELETED]
+        before:
+          type: object
+          nullable: true
+          description: State before the change (null for ADDED).
+        after:
+          type: object
+          nullable: true
+          description: State after the change (null for DELETED).
     ValueType:
       type: object
       required: [rid, apiName, displayName, baseType, version]
@@ -2365,6 +2386,34 @@ paths:
       responses:
         "204":
           description: Branch closed.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff:
+    get:
+      operationId: getBranchDiff
+      summary: Get the diff between a branch and main
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of branch changes sorted by entity_type then change_type.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BranchDiffEntry"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

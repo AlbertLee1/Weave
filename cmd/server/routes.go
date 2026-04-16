@@ -42,11 +42,12 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Put("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.UpdateFunction)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.DeleteFunction)
 
-	// Ontology Branches (US-113)
+	// Ontology Branches (US-113, US-116)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.CreateBranch)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.ListBranches)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.GetBranch)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.CloseBranch)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", omsHandler.GetBranchDiff)
 
 	// QueryType execute route
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
