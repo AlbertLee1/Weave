@@ -30,7 +30,7 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000027, next is 000028
+- Migrations in migrations/ — sequential 000001-000028, next is 000029
 - AutomationRule/AutomationExecution models in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_automation_test.go per package
 - Automation mock stubs pattern: same as branches/proposals — mock_automation_test.go per package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook) + inline in pkg/index/rehydrate_test.go
 - Scheduler pattern: pkg/automate/scheduler.go — RuleLoader + ExecutionRecorder interfaces; robfig/cron/v3 for cron scheduling; entries map[string]cron.EntryID tracks active rules
@@ -44,10 +44,15 @@
 - Chain template variables: ${effects[N].result} — resolved via resolveTemplateStringWithChain; allows later effects to reference earlier effect results
 - ActionApplier interface: ApplyAction(ctx, ontologyRID, actionType, parameters) error — wrap actions.Executor.Apply for use with automation
 - AutomateFunctionDispatcher interface: DispatchFunction(ctx, functionRid, parameters) (interface{}, error) — delegates to GojaDispatcher or HTTPDispatcher
-- Both Scheduler and Watcher have SetActionApplier and SetFunctionDispatcher methods; nil → effects silently skipped
+- Both Scheduler and Watcher have SetActionApplier, SetFunctionDispatcher, and SetNotificationCreator methods; nil → effects silently skipped
 - EffectResult struct: holds result from each effect execution; processEffects returns []EffectResult for chain support and storage
 - Function results stored in automation_executions.result JSONB column (migration 000027); serialized as []EffectResult JSON array
 - executeRule now passes ontologyRID (from AutomationRule) through closure to processEffects
+- NotificationCreator interface: CreateNotificationForUser(ctx, userID, title, body, nType, link) error — implemented by OMSHandler; delegates to repo.CreateNotification
+- Notification model in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_notifications_test.go per package
+- pkg/oms cannot import pkg/auth (circular: auth→oms via policy_evaluator.go); use ActorFunc pattern for user ID extraction
+- OMSHandler.actorFn: injected function for extracting user ID from request context; nil→"dev-user" fallback
+- processEffects signature: 7 params (ctx, effects, ontologyRID, data, applier, funcDispatcher, notifier)
 - Effect failure: processEffects returns error → execution recorded with status="error" and error message
 - Scheduler dynamic updates: AddRule, RemoveRule, PauseRule (alias for RemoveRule), ResumeRule (alias for AddRule)
 - OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
@@ -629,4 +634,37 @@
   - Result storage: []EffectResult serialized to json.RawMessage and stored in automation_executions.result JSONB; nil/empty results produce nil resultJSON (no storage)
   - processEffects still uses resolveParametersWithChain (not resolveParameters) for all effect types — this ensures chain references work in executeAction params too
   - The existing mockActionApplier and mockFunctionDispatcher follow the same thread-safe pattern (mu + getCalls)
+---
+
+## 2026-04-16 - US-130
+- Implemented Automate — Notification Effect (backend) with platform channel and API endpoints
+- Files changed:
+  - migrations/000028_notifications.up.sql — CREATE TABLE notifications (id TEXT PK, user_id, title, body, type, link, read BOOLEAN, created_at); indexes on user_id and user_id+unread
+  - migrations/000028_notifications.down.sql — DROP TABLE rollback
+  - pkg/oms/models.go — Added Notification struct (ID, UserID, Title, Body, Type, Link, Read, CreatedAt)
+  - pkg/oms/repository.go — Added 3 methods: CreateNotification, ListNotifications (with unreadOnly filter), MarkNotificationRead
+  - pkg/oms/pg_repository.go — PG implementations for all 3 notification methods
+  - pkg/rid/rid.go — Added NewNotificationRID()
+  - pkg/automate/effects.go — Added Channel, Template, Recipients fields to Effect struct; NotificationCreator interface; "notification" case in processEffects (platform channel → CreateNotificationForUser per recipient, email → graceful skip); updated processEffects signature to include NotificationCreator param
+  - pkg/automate/effects_test.go — 8 new tests: ParseEffects_Notification, ProcessEffects_Notification_Platform (2 recipients → 2 calls), NilCreator (graceful skip), Failure (error propagation), EmailSkipsGracefully, TemplateResolution (${event.*} variables), NoRecipients (empty list → 0 calls); updated all existing processEffects calls for new 7-arg signature + mockNotificationCreator
+  - pkg/automate/scheduler.go — Added notifier field, SetNotificationCreator method; passes notifier to processEffects
+  - pkg/automate/watcher.go — Added notifier field, SetNotificationCreator method; passes notifier to processEffects
+  - pkg/oms/handlers.go — Added actorFn field to OMSHandler, SetActorFunc method
+  - pkg/oms/handlers_notification.go — New file: ListNotifications (GET, uses actorFn for user ID, ?unread=true filter), MarkNotificationRead (POST, 404 on not found), CreateNotificationForUser (implements automate.NotificationCreator interface)
+  - pkg/oms/handlers_notification_test.go — 8 tests: ListNotifications success/unreadFilter/empty/devUser, MarkNotificationRead success/notFound, CreateNotificationForUser, FullNotificationLifecycle (create→list→filter→mark-read→filter-empty)
+  - pkg/oms/handlers_test.go — Added notifications field to mockRepo struct
+  - pkg/oms/mock_notifications_test.go — Functional mock implementations for mockRepo + noopRepo
+  - cmd/server/routes.go — Registered GET /api/v2/notifications and POST /api/v2/notifications/{notificationId}/read
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added Notification schema + 2 notification endpoint specs
+  - 7 mock_notifications_test.go files across packages (pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook)
+  - pkg/index/rehydrate_test.go — Notification stubs added inline for stubRehydrateRepo
+- **Learnings for future iterations:**
+  - pkg/oms cannot import pkg/auth (circular dependency via auth → oms through policy_evaluator.go); use ActorFunc pattern instead
+  - OMSHandler.actorFn extracts user ID from context; injected at wiring time in cmd/server/main.go; nil → falls back to "dev-user"
+  - NotificationCreator interface (CreateNotificationForUser) on OMSHandler allows automate to create notifications without importing oms
+  - processEffects signature now includes NotificationCreator as 7th param — all callers (scheduler.go, watcher.go, tests) must be updated simultaneously
+  - Email channel is a graceful no-op (silently skipped) when SMTP is not configured — no error, no platform notification fallback
+  - Notification template uses the same resolveTemplateStringWithChain as other effects — chain references (${effects[N].result}) work in notification body
+  - Mock test file package names must match the test package (e.g., `package links_test` not `package links`) — check existing mock files in each directory
+  - Adding 3 Repository methods requires updating 8 mock files across the codebase + 1 inline (rehydrate_test.go)
 ---
