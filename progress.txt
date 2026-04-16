@@ -25,7 +25,8 @@
 - Interface-backed rules: objectType resolved from params via resolveObjectTypeParam ("objectType" or "objectTypeApiName"); validated in Executor.Prepare after ExecuteRules
 - Validation requiring OMS repo (interface membership, link type resolution) happens in Executor.Prepare, not in ExecuteRules (keeps ExecuteRules pure)
 - bleveObjectChecker (in integration tests) wraps index.Manager + ontologyAPIName for existence checks via idx.Document(pk)
-- Where operators in pkg/oss/where/converter.go — ConvertToBleveQuery switch on type
+- Where operators in pkg/oss/where/converter.go — ConvertToBleveQuery switch on type; ConvertToBleveQueryWithOpts for fuzzy-enabled conversion
+- Fuzzy search: MatchQuery.SetFuzziness(n) on text operators; options threaded via ConvertOptions through logical operators
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
@@ -209,4 +210,20 @@
   - MaxItems uses *int pointer pattern (nil=use default 100), consistent with MaxGroups on GroupBySpec
   - computeCollectList initializes empty slice (not nil) when no values found, ensuring JSON serializes as [] not null
   - The truncated flag from collectList reflects scanSize truncation (total > scanned), not maxItems truncation
+---
+
+## 2026-04-16 - US-110
+- Implemented fuzzy search with configurable Levenshtein edit distance for SearchObjects
+- Files changed:
+  - pkg/oss/where/types.go — Added FuzzyConfig struct (MaxEdits int) and ConvertOptions struct (Fuzzy *FuzzyConfig)
+  - pkg/oss/where/converter.go — Added ConvertToBleveQueryWithOpts function; resolveFuzziness helper (defaults to 1 when Fuzzy present but MaxEdits omitted); fuzzy-aware variants: convertEqFuzzy, convertContainsAllTermsFuzzy, convertContainsAnyTermFuzzy; opts-threading variants: convertAndWithOpts, convertOrWithOpts, convertNotWithOpts; existing ConvertToBleveQuery delegates to WithOpts(nil)
+  - pkg/oss/service.go — Added Fuzzy *where.FuzzyConfig field to SearchObjectsRequest
+  - pkg/oss/handlers.go — Added Fuzzy *where.FuzzyConfig to searchRequestBody; passes through to SearchObjectsRequest
+  - pkg/oss/service_impl.go — Uses ConvertToBleveQueryWithOpts with fuzzy config from request
+  - pkg/oss/where/converter_test.go — 6 new tests: containsAllTerms match/no-match, containsAnyTerm fuzzy, eq fuzzy, default maxEdits, fuzzy through and clause; added searchWithWhereOpts helper + setupFuzzyTestIndex
+- **Learnings for future iterations:**
+  - Bleve MatchQuery.SetFuzziness(n) applies analyzer first then does fuzzy matching with Levenshtein distance — simplest way to add fuzzy to text queries
+  - Fuzzy options must thread through logical operators (and/or/not) via recursive ConvertToBleveQueryWithOpts calls
+  - resolveFuzziness centralizes default logic: nil→0 (disabled), Fuzzy present but MaxEdits=0→1 (default), otherwise use MaxEdits
+  - Non-text operators (numeric, boolean, geo, prefix, wildcard) are unaffected by fuzzy — only MatchQuery-based operators get SetFuzziness
 ---
