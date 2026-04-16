@@ -2084,6 +2084,18 @@ func (r *PGRepository) CloseBranch(ctx context.Context, id string) error {
 	return nil
 }
 
+func (r *PGRepository) UpdateBranchStatus(ctx context.Context, id, status string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ontology_branches SET status = $2, updated_at = NOW() WHERE id = $1`, id, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PGRepository) CreateBranchChange(ctx context.Context, c *BranchChange) error {
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO ontology_branch_changes (id, branch_id, change_type, entity_type, entity_rid, before_state, after_state)

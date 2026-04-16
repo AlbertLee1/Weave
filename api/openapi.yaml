@@ -554,6 +554,25 @@ components:
         reason:
           type: string
           description: Reason for the decision (required for reject, optional for approve).
+    MergeConflict:
+      type: object
+      properties:
+        entityType:
+          type: string
+          description: Type of conflicting entity (objectType, property, linkType, actionType).
+        entityRid:
+          type: string
+          description: RID of the conflicting entity.
+        changeType:
+          type: string
+          enum: [MODIFIED, DELETED]
+          description: Type of change that conflicts.
+        branchState:
+          type: object
+          description: The branch's recorded before-state of the entity.
+        mainState:
+          type: object
+          description: The current state of the entity on main.
     ValueType:
       type: object
       required: [rid, apiName, displayName, baseType, version]
@@ -2652,6 +2671,44 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "409":
           $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/merge:
+    post:
+      operationId: mergeProposal
+      summary: Merge an approved proposal into main
+      description: Applies all branch changes to main tables. Only approved proposals can be merged. Returns 409 with conflict list if entities were modified on both main and branch.
+      tags: [Proposals]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: proposalId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proposal merged successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyProposal"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: Proposal not approved or merge conflict detected.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode:
+                    type: string
+                    enum: [MERGE_CONFLICT, CONFLICT]
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MergeConflict"
   /api/v2/ontologies/{ontologyApiName}/fullMetadata:
     get:
       operationId: getFullMetadata

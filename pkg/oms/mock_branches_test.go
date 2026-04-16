@@ -63,6 +63,17 @@ func (m *mockRepo) CloseBranch(_ context.Context, id string) error {
 	return oms.ErrNotFound
 }
 
+func (m *mockRepo) UpdateBranchStatus(_ context.Context, id, status string) error {
+	for i := range m.branches {
+		if m.branches[i].ID == id {
+			m.branches[i].Status = status
+			m.branches[i].UpdatedAt = time.Now()
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
 func (m *mockRepo) CreateBranchChange(_ context.Context, c *oms.BranchChange) error {
 	c.CreatedAt = time.Now()
 	m.branchChanges = append(m.branchChanges, *c)
@@ -91,6 +102,9 @@ func (n *noopRepo) ListBranches(_ context.Context, _ string) ([]oms.OntologyBran
 	return nil, nil
 }
 func (n *noopRepo) CloseBranch(_ context.Context, _ string) error {
+	return nil
+}
+func (n *noopRepo) UpdateBranchStatus(_ context.Context, _, _ string) error {
 	return nil
 }
 func (n *noopRepo) CreateBranchChange(_ context.Context, _ *oms.BranchChange) error {

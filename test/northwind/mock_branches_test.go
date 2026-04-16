@@ -20,6 +20,9 @@ func (r *inMemoryOmsRepo) ListBranches(_ context.Context, _ string) ([]oms.Ontol
 func (r *inMemoryOmsRepo) CloseBranch(_ context.Context, _ string) error {
 	return nil
 }
+func (r *inMemoryOmsRepo) UpdateBranchStatus(_ context.Context, _, _ string) error {
+	return nil
+}
 func (r *inMemoryOmsRepo) CreateBranchChange(_ context.Context, _ *oms.BranchChange) error {
 	return nil
 }

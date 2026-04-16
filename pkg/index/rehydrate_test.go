@@ -272,7 +272,8 @@ func (s *stubRehydrateRepo) GetBranch(context.Context, string) (*oms.OntologyBra
 func (s *stubRehydrateRepo) ListBranches(context.Context, string) ([]oms.OntologyBranch, error) {
 	return nil, nil
 }
-func (s *stubRehydrateRepo) CloseBranch(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) CloseBranch(context.Context, string) error              { return nil }
+func (s *stubRehydrateRepo) UpdateBranchStatus(context.Context, string, string) error { return nil }
 func (s *stubRehydrateRepo) CreateBranchChange(context.Context, *oms.BranchChange) error {
 	return nil
 }

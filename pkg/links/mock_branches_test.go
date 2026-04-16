@@ -20,6 +20,9 @@ func (m *mockRepo) ListBranches(_ context.Context, _ string) ([]oms.OntologyBran
 func (m *mockRepo) CloseBranch(_ context.Context, _ string) error {
 	return nil
 }
+func (m *mockRepo) UpdateBranchStatus(_ context.Context, _, _ string) error {
+	return nil
+}
 func (m *mockRepo) CreateBranchChange(_ context.Context, _ *oms.BranchChange) error {
 	return nil
 }

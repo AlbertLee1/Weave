@@ -62,6 +62,15 @@
 - Generic overlay helpers: applyListOverlay[T] and applyGetOverlay[T] with Go generics for type-safe overlay logic
 - json:"-" fields (OntologyRID, ObjectTypeRID) are lost during branch change JSON serialization — ADDED entities from branch may have empty parent references; don't filter ADDED entities by parent ID in overlay
 - Branch diff endpoint: BranchDiffEntry maps BranchChange → {entityType, entityRid, changeType, before, after}; sorted in handler via sort.Slice (entity_type asc, change_type asc)
+- Proposal review: reviewProposal(w,r,decision) shared handler for approve/reject; computeProposalStatus recalculates from all reviews after each new review
+- OpenAPI responses: ConflictError (409) and PermissionDeniedError (403) defined in components/responses
+- Branch merge: MergeProposal handler in handlers_proposal.go; detectConflicts compares branch beforeState with current main entity JSON (semantic equality via reflect.DeepEqual on unmarshaled maps)
+- UpdateBranchStatus(ctx, id, status) — generic status update for branches; CloseBranch only sets "closed", UpdateBranchStatus can set any status
+- json:"-" fields (OntologyRID) must be restored when applying ADDED/MODIFIED branch changes to main — applyAdd/applyModify set ontologyRID explicitly
+- jsonEqual helper: unmarshal both sides to interface{} and reflect.DeepEqual for order-independent JSON comparison
+- Conflict detection only triggers when ontologyVersion > branch.BaseVersion; entity-level comparison via fetchEntityJSON (GetObjectType/GetProperty/GetLinkType/GetActionType by RID → marshal → compare)
+- MergeConflict response: {errorCode: "MERGE_CONFLICT", conflicts: [{entityType, entityRid, changeType, branchState, mainState}]}
+- applyBranchChanges dispatches by (changeType, entityType) → CRUD operations on main tables; ADDED→Create, MODIFIED→Update, DELETED→Delete
 
 ---
 
@@ -371,4 +380,40 @@
   - UpdateProposalStatus is a separate repo method (not a full Update) — cleaner for status transitions
   - Mock stubs pattern continues: create mock_proposals_test.go per package mirroring mock_branches_test.go
   - Adding 6 Repository methods requires updating ~8 mock files across the codebase
+---
+
+## 2026-04-16 - US-118
+- Implemented proposal review workflow (approve/reject endpoints with status recalculation)
+- Files changed:
+  - pkg/oms/handlers_proposal.go — Added ReviewRequest struct, ApproveProposal and RejectProposal handlers (delegate to shared reviewProposal method), computeProposalStatus function (any rejection → rejected; ≥1 approval + no rejections → approved)
+  - pkg/oms/handlers_proposal_test.go — 11 new tests: ApproveProposal success, RejectProposal success (with reason), SelfReview returns 403 (approve + reject), NotFound (approve + reject), AlreadyRejected returns 409, AlreadyMerged returns 409, RejectionOverridesApproval (approve then reject → rejected), MissingReviewer returns 400, FullReviewLifecycle (create → approve → get with review)
+  - cmd/server/routes.go — Registered POST .../proposals/{proposalId}/approve and .../reject routes
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added approveProposal and rejectProposal endpoints, ReviewRequest schema, ConflictError and PermissionDeniedError response types
+- **Learnings for future iterations:**
+  - Review endpoints use shared reviewProposal(w, r, decision) to avoid code duplication between approve and reject
+  - computeProposalStatus is a pure function over all reviews — called after each new review to recalculate
+  - Reviews are allowed on "pending" and "approved" proposals but not "rejected" or "merged" — allows late rejection to override earlier approval
+  - Self-review check compares req.Reviewer == proposal.Author and returns 403 (NewPermissionDenied)
+  - OpenAPI spec needed ConflictError and PermissionDeniedError response types added to components/responses
+---
+
+## 2026-04-16 - US-119
+- Implemented branch merge with conflict detection
+- Files changed:
+  - pkg/oms/repository.go — Added UpdateBranchStatus(ctx, id, status) to Repository interface
+  - pkg/oms/pg_repository.go — PG implementation for UpdateBranchStatus (generic status update)
+  - pkg/oms/handlers_proposal.go — Added MergeConflict struct, MergeProposal handler, detectConflicts, fetchEntityJSON, applyBranchChanges, applyAdd, applyModify, applyDelete, jsonEqual helpers
+  - pkg/oms/handlers_proposal_test.go — 9 new tests: Success (ADDED OT → main), NotApproved 409, AlreadyMerged 409, NotFound 404, Conflict (modified on both branches), NoConflict_SameVersion, FullLifecycle (create→approve→merge→verify), DeleteChange, MultipleChanges (property+linkType)
+  - cmd/server/routes.go — Registered POST .../proposals/{proposalId}/merge route
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added mergeProposal endpoint spec + MergeConflict schema
+  - 8 mock files updated with UpdateBranchStatus stubs (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go)
+  - pkg/oms/handlers_test.go — Added ontologyVersion field to mockRepo; made GetOntologyVersion/IncrementOntologyVersion configurable
+- **Learnings for future iterations:**
+  - json:"-" fields (OntologyRID) are lost during branch change JSON serialization — must restore them explicitly when applying ADDED/MODIFIED changes to main via applyAdd/applyModify
+  - Conflict detection compares beforeState with current entity JSON using semantic equality (unmarshal to interface{} + reflect.DeepEqual) to avoid byte-order issues
+  - Conflict detection only fires when currentVersion > baseVersion — if they're equal, no main changes happened, skip entity-level checks
+  - Merge handler uses separate detectConflicts + applyBranchChanges phases: detect first, apply only if no conflicts (all-or-nothing)
+  - fetchEntityJSON dispatches by entityType to the appropriate Get method (GetObjectType/GetProperty/GetLinkType/GetActionType) then marshals to JSON
+  - UpdateBranchStatus is more flexible than CloseBranch — can set any status string (used for "merged" in merge flow)
+  - V2 read handlers pass raw chi URL param to repo (not resolved RID) — ListObjectTypes("test") won't match OntologyRID "ri.ontology.main.ontology.1" in mocks; verify merge results via repo state, not via list endpoints
 ---

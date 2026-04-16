@@ -147,6 +147,7 @@ type Repository interface {
 	GetBranch(ctx context.Context, id string) (*OntologyBranch, error)
 	ListBranches(ctx context.Context, ontologyRID string) ([]OntologyBranch, error)
 	CloseBranch(ctx context.Context, id string) error
+	UpdateBranchStatus(ctx context.Context, id, status string) error
 	CreateBranchChange(ctx context.Context, c *BranchChange) error
 	ListBranchChanges(ctx context.Context, branchID string) ([]BranchChange, error)
 

@@ -38,6 +38,9 @@ type mockRepo struct {
 	listErr   error
 	updateErr error
 	deleteErr error
+
+	// Version tracking
+	ontologyVersion int
 }
 
 func (m *mockRepo) CreateOntology(_ context.Context, o *oms.Ontology) error {
@@ -531,8 +534,13 @@ func (m *mockRepo) ListSnapshots(_ context.Context, _ string) ([]oms.OntologySna
 func (m *mockRepo) GetSnapshot(_ context.Context, _ string, _ int) (*oms.OntologySnapshot, error) {
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) GetOntologyVersion(_ context.Context, _ string) (int, error)       { return 0, nil }
-func (m *mockRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) { return 1, nil }
+func (m *mockRepo) GetOntologyVersion(_ context.Context, _ string) (int, error) {
+	return m.ontologyVersion, nil
+}
+func (m *mockRepo) IncrementOntologyVersion(_ context.Context, _ string) (int, error) {
+	m.ontologyVersion++
+	return m.ontologyVersion, nil
+}
 
 func (m *mockRepo) UpdateOntology(_ context.Context, o *oms.Ontology) error {
 	if m.updateErr != nil {

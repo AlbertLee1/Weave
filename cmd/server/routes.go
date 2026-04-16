@@ -55,6 +55,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}", omsHandler.GetProposal)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/approve", omsHandler.ApproveProposal)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", omsHandler.RejectProposal)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/merge", omsHandler.MergeProposal)
 
 	// QueryType execute route
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)

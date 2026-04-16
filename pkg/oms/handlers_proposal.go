@@ -1,8 +1,11 @@
 package oms
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -258,6 +261,304 @@ func computeProposalStatus(reviews []ProposalReview) string {
 		return "approved"
 	}
 	return "pending"
+}
+
+// MergeConflict represents a conflict detected during branch merge.
+type MergeConflict struct {
+	EntityType  string          `json:"entityType"`
+	EntityRID   string          `json:"entityRid"`
+	ChangeType  string          `json:"changeType"`
+	BranchState json.RawMessage `json:"branchState,omitempty"`
+	MainState   json.RawMessage `json:"mainState,omitempty"`
+}
+
+// MergeProposal handles POST /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/merge.
+func (h *OMSHandler) MergeProposal(w http.ResponseWriter, r *http.Request) {
+	proposalID := chi.URLParam(r, "proposalId")
+
+	// Load proposal
+	proposal, err := h.repo.GetProposal(r.Context(), proposalID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ProposalNotFound", map[string]string{
+				"proposalId": proposalID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetProposalFailed", nil))
+		return
+	}
+
+	// Only approved proposals can be merged
+	if proposal.Status != "approved" {
+		apierror.WriteJSON(w, apierror.NewConflict("ProposalNotApproved", map[string]string{
+			"proposalId": proposalID,
+			"status":     proposal.Status,
+		}))
+		return
+	}
+
+	// Load branch
+	branch, err := h.repo.GetBranch(r.Context(), proposal.BranchID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GetBranchFailed", nil))
+		return
+	}
+
+	// Load branch changes
+	changes, err := h.repo.ListBranchChanges(r.Context(), branch.ID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListBranchChangesFailed", nil))
+		return
+	}
+
+	// Conflict detection: if main was modified since branch was created
+	currentVersion, err := h.repo.GetOntologyVersion(r.Context(), proposal.OntologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GetOntologyVersionFailed", nil))
+		return
+	}
+
+	if int64(currentVersion) > branch.BaseVersion {
+		conflicts, err := h.detectConflicts(r.Context(), changes)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("DetectConflictsFailed", nil))
+			return
+		}
+		if len(conflicts) > 0 {
+			httputil.WriteJSON(w, http.StatusConflict, map[string]interface{}{
+				"errorCode": "MERGE_CONFLICT",
+				"conflicts": conflicts,
+			})
+			return
+		}
+	}
+
+	// Apply branch changes to main tables
+	if err := h.applyBranchChanges(r.Context(), proposal.OntologyRID, changes); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ApplyBranchChangesFailed", nil))
+		return
+	}
+
+	// Increment ontology version
+	newVersion, err := h.repo.IncrementOntologyVersion(r.Context(), proposal.OntologyRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("IncrementVersionFailed", nil))
+		return
+	}
+
+	// Create snapshot recording the merge
+	snapshotData, _ := json.Marshal(map[string]interface{}{
+		"mergedProposalId": proposal.ID,
+		"mergedBranchId":   branch.ID,
+		"changesCount":     len(changes),
+	})
+	_ = h.repo.CreateSnapshot(r.Context(), &OntologySnapshot{
+		OntologyRID: proposal.OntologyRID,
+		Version:     newVersion,
+		Label:       "merge:" + proposal.Title,
+		Snapshot:    snapshotData,
+		CreatedBy:   "system",
+	})
+
+	// Mark proposal and branch as merged
+	if err := h.repo.UpdateProposalStatus(r.Context(), proposalID, "merged"); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("UpdateProposalStatusFailed", nil))
+		return
+	}
+	if err := h.repo.UpdateBranchStatus(r.Context(), branch.ID, "merged"); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("UpdateBranchStatusFailed", nil))
+		return
+	}
+
+	proposal.Status = "merged"
+	httputil.WriteJSON(w, http.StatusOK, proposal)
+}
+
+// detectConflicts checks if any MODIFIED or DELETED branch changes conflict
+// with the current main state. A conflict exists when the entity's current
+// state on main differs from the branch change's before_state.
+func (h *OMSHandler) detectConflicts(ctx context.Context, changes []BranchChange) ([]MergeConflict, error) {
+	var conflicts []MergeConflict
+
+	for _, c := range changes {
+		if c.ChangeType == "ADDED" {
+			continue // ADDED entities can't conflict with main
+		}
+
+		// Fetch current entity from main
+		currentJSON, err := h.fetchEntityJSON(ctx, c.EntityType, c.EntityRID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				// Entity was deleted on main — conflict for MODIFIED, not for DELETED
+				if c.ChangeType == "MODIFIED" {
+					conflicts = append(conflicts, MergeConflict{
+						EntityType:  c.EntityType,
+						EntityRID:   c.EntityRID,
+						ChangeType:  c.ChangeType,
+						BranchState: c.BeforeState,
+					})
+				}
+				continue
+			}
+			return nil, err
+		}
+
+		// Compare current main state with the branch's recorded before_state
+		if !jsonEqual(c.BeforeState, currentJSON) {
+			conflicts = append(conflicts, MergeConflict{
+				EntityType:  c.EntityType,
+				EntityRID:   c.EntityRID,
+				ChangeType:  c.ChangeType,
+				BranchState: c.BeforeState,
+				MainState:   currentJSON,
+			})
+		}
+	}
+
+	return conflicts, nil
+}
+
+// fetchEntityJSON retrieves the current entity from main and marshals to JSON.
+func (h *OMSHandler) fetchEntityJSON(ctx context.Context, entityType, entityRID string) (json.RawMessage, error) {
+	var entity interface{}
+	var err error
+
+	switch entityType {
+	case "objectType":
+		entity, err = h.repo.GetObjectType(ctx, entityRID)
+	case "property":
+		entity, err = h.repo.GetProperty(ctx, entityRID)
+	case "linkType":
+		entity, err = h.repo.GetLinkType(ctx, entityRID)
+	case "actionType":
+		entity, err = h.repo.GetActionType(ctx, entityRID)
+	default:
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(entity)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// applyBranchChanges applies each branch change to the main tables.
+// ontologyRID is used to restore json:"-" fields lost during serialization.
+func (h *OMSHandler) applyBranchChanges(ctx context.Context, ontologyRID string, changes []BranchChange) error {
+	for _, c := range changes {
+		switch c.ChangeType {
+		case "ADDED":
+			if err := h.applyAdd(ctx, ontologyRID, c.EntityType, c.AfterState); err != nil {
+				return err
+			}
+		case "MODIFIED":
+			if err := h.applyModify(ctx, ontologyRID, c.EntityType, c.AfterState); err != nil {
+				return err
+			}
+		case "DELETED":
+			if err := h.applyDelete(ctx, c.EntityType, c.EntityRID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (h *OMSHandler) applyAdd(ctx context.Context, ontologyRID, entityType string, afterState json.RawMessage) error {
+	switch entityType {
+	case "objectType":
+		var ot ObjectType
+		if err := json.Unmarshal(afterState, &ot); err != nil {
+			return err
+		}
+		ot.OntologyRID = ontologyRID // restore json:"-" field
+		return h.repo.CreateObjectType(ctx, &ot)
+	case "property":
+		var p Property
+		if err := json.Unmarshal(afterState, &p); err != nil {
+			return err
+		}
+		return h.repo.CreateProperty(ctx, &p)
+	case "linkType":
+		var lt LinkType
+		if err := json.Unmarshal(afterState, &lt); err != nil {
+			return err
+		}
+		lt.OntologyRID = ontologyRID // restore json:"-" field
+		return h.repo.CreateLinkType(ctx, &lt)
+	case "actionType":
+		var at ActionType
+		if err := json.Unmarshal(afterState, &at); err != nil {
+			return err
+		}
+		at.OntologyRID = ontologyRID // restore json:"-" field
+		return h.repo.CreateActionType(ctx, &at)
+	}
+	return nil
+}
+
+func (h *OMSHandler) applyModify(ctx context.Context, ontologyRID, entityType string, afterState json.RawMessage) error {
+	switch entityType {
+	case "objectType":
+		var ot ObjectType
+		if err := json.Unmarshal(afterState, &ot); err != nil {
+			return err
+		}
+		ot.OntologyRID = ontologyRID // restore json:"-" field
+		return h.repo.UpdateObjectType(ctx, &ot)
+	case "property":
+		var p Property
+		if err := json.Unmarshal(afterState, &p); err != nil {
+			return err
+		}
+		return h.repo.UpdateProperty(ctx, &p)
+	case "linkType":
+		var lt LinkType
+		if err := json.Unmarshal(afterState, &lt); err != nil {
+			return err
+		}
+		lt.OntologyRID = ontologyRID // restore json:"-" field
+		return h.repo.UpdateLinkType(ctx, &lt)
+	case "actionType":
+		var at ActionType
+		if err := json.Unmarshal(afterState, &at); err != nil {
+			return err
+		}
+		at.OntologyRID = ontologyRID // restore json:"-" field
+		return h.repo.UpdateActionType(ctx, &at)
+	}
+	return nil
+}
+
+func (h *OMSHandler) applyDelete(ctx context.Context, entityType, entityRID string) error {
+	switch entityType {
+	case "objectType":
+		return h.repo.DeleteObjectType(ctx, entityRID)
+	case "property":
+		return h.repo.DeleteProperty(ctx, entityRID)
+	case "linkType":
+		return h.repo.DeleteLinkType(ctx, entityRID)
+	case "actionType":
+		return h.repo.DeleteActionType(ctx, entityRID)
+	}
+	return nil
+}
+
+// jsonEqual compares two JSON payloads semantically (order-independent).
+func jsonEqual(a, b json.RawMessage) bool {
+	var av, bv interface{}
+	if err := json.Unmarshal(a, &av); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(av, bv)
 }
 
 // GetProposal handles GET /api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}.
