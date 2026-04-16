@@ -22,6 +22,8 @@
 - CollapseEdits in pkg/actions/collapse.go — dedup per (objectType, primaryKey); link edits keyed by (linkTypeRID, sourcePK, targetPK)
 - Internal edit type pattern: editTypeUpsert (UPSERT) is internal to actions pkg, resolved in Executor.Prepare before publishing
 - ObjectExistenceChecker interface on Executor: injected like FunctionDispatcher, nil→graceful default to CREATE
+- Interface-backed rules: objectType resolved from params via resolveObjectTypeParam ("objectType" or "objectTypeApiName"); validated in Executor.Prepare after ExecuteRules
+- Validation requiring OMS repo (interface membership, link type resolution) happens in Executor.Prepare, not in ExecuteRules (keeps ExecuteRules pure)
 - bleveObjectChecker (in integration tests) wraps index.Manager + ontologyAPIName for existence checks via idx.Document(pk)
 - Where operators in pkg/oss/where/converter.go — ConvertToBleveQuery switch on type
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
@@ -88,4 +90,18 @@
   - Bleve's idx.Document(pk) returns a doc if it exists — the simplest way to check object existence without a search query
   - When no PK is found in params, createOrModifyObject auto-generates one (same as createObject), making it always a CREATE
   - resolveUpsertEdits runs after resolveLinkEdits but before tagEditsAsUserSource, keeping the Prepare pipeline sequential
+---
+
+## 2026-04-16 - US-103
+- Implemented interface-backed action rule types (createInterfaceObject, modifyInterfaceObject, deleteInterfaceObject)
+- Files changed:
+  - pkg/actions/rules.go — Added InterfaceAPIName field to Rule struct + 3 new rule cases + resolveObjectTypeParam and isInterfaceRule helpers
+  - pkg/actions/executor.go — Added validateInterfaceRules step in Prepare pipeline: resolves Interface and ObjectType by API name, checks ListObjectTypeInterfaces for membership
+  - pkg/actions/actions_test.go — 7 new tests: parse interface rules, execute create/modify/delete interface rules, missing objectType error, executor validates implementing type, executor rejects non-implementing type + interfaceAwareMockRepo
+  - pkg/actions/create_link_integration_test.go — Integration test: createInterfaceObject with Building implementing GeoEntity → object created in Bleve + non-implementing type rejected
+- **Learnings for future iterations:**
+  - Interface-backed rules resolve objectType from params ("objectType" or "objectTypeApiName"), not from the Rule config
+  - Validation requiring OMS repo access (interface membership) is done in Executor.Prepare post-ExecuteRules, keeping ExecuteRules pure
+  - Rules and edits maintain 1:1 correspondence — this allows Executor.Prepare to cross-reference rule metadata with generated edits for validation
+  - The extended mock pattern (interfaceAwareMockRepo embeds mockOmsRepo) works cleanly for adding interface resolution without touching other method stubs
 ---
