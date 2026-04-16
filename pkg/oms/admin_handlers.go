@@ -9,10 +9,74 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
 )
+
+// --- Branch overlay helpers ---
+
+// validateBranch checks if the ?branch= query parameter references a valid, open branch.
+// Returns the branch if valid, nil if no branch parameter, or writes an error response and returns nil.
+func (h *OMSHandler) validateBranch(w http.ResponseWriter, r *http.Request) (*OntologyBranch, bool) {
+	branchID := r.URL.Query().Get("branch")
+	if branchID == "" {
+		return nil, true // no branch, continue with normal flow
+	}
+
+	branch, err := h.repo.GetBranch(r.Context(), branchID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("BranchNotFound", map[string]string{
+				"branchId": branchID,
+			}))
+			return nil, false
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetBranchFailed", nil))
+		return nil, false
+	}
+
+	if branch.Status != "open" {
+		apierror.WriteJSON(w, apierror.NewConflict("BranchNotOpen", map[string]string{
+			"branchId": branchID,
+			"status":   branch.Status,
+		}))
+		return nil, false
+	}
+
+	return branch, true
+}
+
+// writeBranchChange records a change to the branch overlay instead of writing to main tables.
+func (h *OMSHandler) writeBranchChange(ctx context.Context, branchID, changeType, entityType, entityRID string, beforeState, afterState interface{}) error {
+	var beforeJSON, afterJSON json.RawMessage
+	if beforeState != nil {
+		b, err := json.Marshal(beforeState)
+		if err != nil {
+			return err
+		}
+		beforeJSON = b
+	}
+	if afterState != nil {
+		b, err := json.Marshal(afterState)
+		if err != nil {
+			return err
+		}
+		afterJSON = b
+	}
+
+	c := &BranchChange{
+		ID:          uuid.New().String(),
+		BranchID:    branchID,
+		ChangeType:  changeType,
+		EntityType:  entityType,
+		EntityRID:   entityRID,
+		BeforeState: beforeJSON,
+		AfterState:  afterJSON,
+	}
+	return h.repo.CreateBranchChange(ctx, c)
+}
 
 // --- Request structs ---
 
@@ -245,6 +309,20 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		Visibility:        visibility,
 	}
 
+	// Branch overlay: if ?branch= is set, record as branch change instead of writing to main
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "ADDED", "objectType", ot.RID, nil, ot); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusCreated, ot)
+		return
+	}
+
 	if err := h.repo.CreateObjectType(r.Context(), ot); err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			apierror.WriteJSON(w, apierror.NewConflict("ObjectTypeAlreadyExists", map[string]string{
@@ -284,15 +362,17 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing.DisplayName = req.DisplayName
-	existing.PluralDisplayName = req.PluralDisplayName
-	existing.Description = req.Description
-	existing.TitleProperty = req.TitleProperty
-	existing.Status = req.Status
-	existing.Visibility = req.Visibility
-	existing.IconName = req.IconName
-	existing.Color = req.Color
-	existing.DeprecatedReason = req.DeprecatedReason
+	// Build updated copy (leave existing intact for branch before-state)
+	updated := *existing
+	updated.DisplayName = req.DisplayName
+	updated.PluralDisplayName = req.PluralDisplayName
+	updated.Description = req.Description
+	updated.TitleProperty = req.TitleProperty
+	updated.Status = req.Status
+	updated.Visibility = req.Visibility
+	updated.IconName = req.IconName
+	updated.Color = req.Color
+	updated.DeprecatedReason = req.DeprecatedReason
 	if req.DeprecatedDeadline != nil && *req.DeprecatedDeadline != "" {
 		t, err := time.Parse(time.RFC3339, *req.DeprecatedDeadline)
 		if err != nil {
@@ -302,12 +382,26 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		existing.DeprecatedDeadline = &t
+		updated.DeprecatedDeadline = &t
 	} else {
-		existing.DeprecatedDeadline = nil
+		updated.DeprecatedDeadline = nil
 	}
 
-	if err := h.repo.UpdateObjectType(r.Context(), existing); err != nil {
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "MODIFIED", "objectType", existing.RID, existing, &updated); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, &updated)
+		return
+	}
+
+	if err := h.repo.UpdateObjectType(r.Context(), &updated); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
 				"objectTypeRid": objectTypeRID,
@@ -318,7 +412,7 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, existing)
+	httputil.WriteJSON(w, http.StatusOK, &updated)
 }
 
 // DeleteObjectType handles DELETE /api/admin/objectTypes/{objectTypeRid}.
@@ -337,6 +431,20 @@ func (h *OMSHandler) DeleteObjectType(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
+	// Branch overlay: on branch, skip status check (branch is for schema experimentation)
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "DELETED", "objectType", existing.RID, existing, nil); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if existing.Status == "ACTIVE" || existing.Status == "PROMOTED" {
 		apierror.WriteJSON(w, apierror.NewConflict("ObjectTypeNotDeletable", map[string]string{
 			"objectTypeRid": objectTypeRID,
@@ -402,6 +510,20 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		IsEditOnly:    req.EditOnly,
 	}
 
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "ADDED", "property", p.RID, nil, p); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusCreated, p)
+		return
+	}
+
 	if err := h.repo.CreateProperty(r.Context(), p); err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			apierror.WriteJSON(w, apierror.NewConflict("PropertyAlreadyExists", map[string]string{
@@ -419,6 +541,31 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 // DeleteProperty handles DELETE /api/admin/properties/{propertyRid}.
 func (h *OMSHandler) DeleteProperty(w http.ResponseWriter, r *http.Request) {
 	propertyRID := chi.URLParam(r, "propertyRid")
+
+	// Branch overlay: fetch before state and record change
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		existing, err := h.repo.GetProperty(r.Context(), propertyRID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				apierror.WriteJSON(w, apierror.NewNotFound("PropertyNotFound", map[string]string{
+					"propertyRid": propertyRID,
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("GetPropertyFailed", nil))
+			return
+		}
+		if err := h.writeBranchChange(r.Context(), branch.ID, "DELETED", "property", existing.RID, existing, nil); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	if err := h.repo.DeleteProperty(r.Context(), propertyRID); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -483,6 +630,20 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 		ForeignKeyConfig: req.ForeignKeyConfig,
 		JoinTableConfig:  req.JoinTableConfig,
 		IsRequired:       req.IsRequired,
+	}
+
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "ADDED", "linkType", lt.RID, nil, lt); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusCreated, lt)
+		return
 	}
 
 	if err := h.repo.CreateLinkType(r.Context(), lt); err != nil {
@@ -552,6 +713,20 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 		Rules:       req.Rules,
 	}
 
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "ADDED", "actionType", at.RID, nil, at); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusCreated, at)
+		return
+	}
+
 	if err := h.repo.CreateActionType(r.Context(), at); err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			apierror.WriteJSON(w, apierror.NewConflict("ActionTypeAlreadyExists", map[string]string{
@@ -590,19 +765,35 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing.DisplayName = req.DisplayName
-	existing.Description = req.Description
-	existing.Status = req.Status
-	existing.Parameters = req.Parameters
-	existing.Rules = req.Rules
+	// Build updated copy (leave existing intact for branch before-state)
+	updated := *existing
+	updated.DisplayName = req.DisplayName
+	updated.Description = req.Description
+	updated.Status = req.Status
+	updated.Parameters = req.Parameters
+	updated.Rules = req.Rules
 	if len(req.SubmissionCriteria) > 0 {
-		existing.SubmissionCriteria = req.SubmissionCriteria
+		updated.SubmissionCriteria = req.SubmissionCriteria
 	}
 	if len(req.SideEffects) > 0 {
-		existing.SideEffects = req.SideEffects
+		updated.SideEffects = req.SideEffects
 	}
 
-	if err := h.repo.UpdateActionType(r.Context(), existing); err != nil {
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "MODIFIED", "actionType", existing.RID, existing, &updated); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, &updated)
+		return
+	}
+
+	if err := h.repo.UpdateActionType(r.Context(), &updated); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ActionTypeNotFound", map[string]string{
 				"actionTypeRid": actionTypeRID,
@@ -613,7 +804,7 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, existing)
+	httputil.WriteJSON(w, http.StatusOK, &updated)
 }
 
 // UpdateOntology handles PUT /api/admin/ontologies/{ontologyRid}.
@@ -683,32 +874,48 @@ func (h *OMSHandler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build updated copy (leave existing intact for branch before-state)
+	updated := *existing
 	if req.DisplayName != "" {
-		existing.DisplayName = req.DisplayName
+		updated.DisplayName = req.DisplayName
 	}
 	if req.Description != "" {
-		existing.Description = req.Description
+		updated.Description = req.Description
 	}
 	if req.IsSearchable != nil {
-		existing.IsSearchable = *req.IsSearchable
+		updated.IsSearchable = *req.IsSearchable
 	}
 	if req.IsSortable != nil {
-		existing.IsSortable = *req.IsSortable
+		updated.IsSortable = *req.IsSortable
 	}
 	if req.IsNullable != nil {
-		existing.IsNullable = *req.IsNullable
+		updated.IsNullable = *req.IsNullable
 	}
 	if req.Status != "" {
-		existing.Status = req.Status
+		updated.Status = req.Status
 	}
 	if req.DeprecatedReason != "" {
-		existing.DeprecatedReason = req.DeprecatedReason
+		updated.DeprecatedReason = req.DeprecatedReason
 	}
 	if req.EditOnly != nil {
-		existing.IsEditOnly = *req.EditOnly
+		updated.IsEditOnly = *req.EditOnly
 	}
 
-	if err := h.repo.UpdateProperty(r.Context(), existing); err != nil {
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "MODIFIED", "property", existing.RID, existing, &updated); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, &updated)
+		return
+	}
+
+	if err := h.repo.UpdateProperty(r.Context(), &updated); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("PropertyNotFound", map[string]string{
 				"propertyRid": propertyRID,
@@ -719,7 +926,7 @@ func (h *OMSHandler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, existing)
+	httputil.WriteJSON(w, http.StatusOK, &updated)
 }
 
 // UpdateLinkType handles PUT /api/admin/linkTypes/{linkTypeRid}.
@@ -746,15 +953,31 @@ func (h *OMSHandler) UpdateLinkType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build updated copy (leave existing intact for branch before-state)
+	updated := *existing
 	if req.DisplayName != "" {
-		existing.DisplayName = req.DisplayName
+		updated.DisplayName = req.DisplayName
 	}
-	existing.Description = req.Description
+	updated.Description = req.Description
 	if req.IsRequired != nil {
-		existing.IsRequired = *req.IsRequired
+		updated.IsRequired = *req.IsRequired
 	}
 
-	if err := h.repo.UpdateLinkType(r.Context(), existing); err != nil {
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		if err := h.writeBranchChange(r.Context(), branch.ID, "MODIFIED", "linkType", existing.RID, existing, &updated); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, &updated)
+		return
+	}
+
+	if err := h.repo.UpdateLinkType(r.Context(), &updated); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("LinkTypeNotFound", map[string]string{
 				"linkTypeRid": linkTypeRID,
@@ -765,12 +988,37 @@ func (h *OMSHandler) UpdateLinkType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, existing)
+	httputil.WriteJSON(w, http.StatusOK, &updated)
 }
 
 // DeleteLinkType handles DELETE /api/admin/linkTypes/{linkTypeRid}.
 func (h *OMSHandler) DeleteLinkType(w http.ResponseWriter, r *http.Request) {
 	linkTypeRID := chi.URLParam(r, "linkTypeRid")
+
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		existing, err := h.repo.GetLinkType(r.Context(), linkTypeRID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				apierror.WriteJSON(w, apierror.NewNotFound("LinkTypeNotFound", map[string]string{
+					"linkTypeRid": linkTypeRID,
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("GetLinkTypeFailed", nil))
+			return
+		}
+		if err := h.writeBranchChange(r.Context(), branch.ID, "DELETED", "linkType", existing.RID, existing, nil); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	if err := h.repo.DeleteLinkType(r.Context(), linkTypeRID); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -789,6 +1037,31 @@ func (h *OMSHandler) DeleteLinkType(w http.ResponseWriter, r *http.Request) {
 // DeleteActionType handles DELETE /api/admin/actionTypes/{actionTypeRid}.
 func (h *OMSHandler) DeleteActionType(w http.ResponseWriter, r *http.Request) {
 	actionTypeRID := chi.URLParam(r, "actionTypeRid")
+
+	// Branch overlay
+	branch, ok := h.validateBranch(w, r)
+	if !ok {
+		return
+	}
+	if branch != nil {
+		existing, err := h.repo.GetActionType(r.Context(), actionTypeRID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				apierror.WriteJSON(w, apierror.NewNotFound("ActionTypeNotFound", map[string]string{
+					"actionTypeRid": actionTypeRID,
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("GetActionTypeFailed", nil))
+			return
+		}
+		if err := h.writeBranchChange(r.Context(), branch.ID, "DELETED", "actionType", existing.RID, existing, nil); err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("WriteBranchChangeFailed", nil))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	if err := h.repo.DeleteActionType(r.Context(), actionTypeRID); err != nil {
 		if errors.Is(err, ErrNotFound) {

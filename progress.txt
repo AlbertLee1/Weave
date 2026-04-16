@@ -54,6 +54,7 @@
 - Geo tests use setupGeoIndex() with NewGeoShapeFieldMapping() to index GeoJSON Point features for polygon query testing
 - doesNotIntersect* operators: negate via BooleanQuery(MatchAll + MustNot(inner)); for BoundingBox use GeoShapeQuery("polygon","intersects") over GeoBoundingBoxQuery for GeoShape field compat
 - PolygonQuery input format: {"polygon": [[[lon,lat],...]] } — GeoJSON Polygon coordinates; converted to [][][][]float64 for Bleve
+- Branch overlay pattern: validateBranch(w,r) checks ?branch= param; writeBranchChange(ctx, branchID, changeType, entityType, entityRID, before, after) serializes and records; Update handlers use copy-then-modify (updated := *existing) to preserve before_state
 
 ---
 
@@ -293,4 +294,17 @@
   - CreateBranch snapshots ontology version via GetOntologyVersion; graceful fallback to 0 if version fetch fails
   - Contract tests enforce OpenAPI ↔ route parity; always update api/openapi.yaml AND copy to cmd/server/openapi_spec.yaml
   - execute_query_goja_test.go references undefined functions (NewGojaQueryExecutor) — gated with //go:build goja to unblock pkg/oms tests
+---
+
+## 2026-04-16 - US-114
+- Implemented ontology branches — write operations with ?branch= overlay
+- Files changed:
+  - pkg/oms/admin_handlers.go — Added validateBranch() and writeBranchChange() helper methods; modified all 12 write handlers (Create/Update/Delete for ObjectType, Property, LinkType, ActionType) to check ?branch= query param and route writes to ontology_branch_changes instead of main tables; Update handlers refactored to use copy-then-modify pattern (updated := *existing) to preserve original for before_state
+  - pkg/oms/admin_handlers_branch_test.go — New file: 15 tests covering all CRUD+branch combinations: create→ADDED, update→MODIFIED (with before/after state), delete→DELETED (with before_state), branch not found→404, closed branch→409, no branch param→normal flow
+- **Learnings for future iterations:**
+  - Update handlers must work on a copy (updated := *existing) not mutate existing in place, because mock repos return pointers into internal slices — mutating the pointer corrupts mock state
+  - validateBranch returns (*OntologyBranch, bool): nil+true = no branch param (normal flow), non-nil+true = valid open branch, nil+false = error already written to response
+  - writeBranchChange uses uuid.New().String() for BranchChange IDs (no specific RID generator for changes)
+  - Branch overlay skips status checks on delete (e.g. ACTIVE ObjectType can be deleted on a branch since it's just a schema experiment)
+  - Pattern: branch validation + early return inserted between entity construction/mutation and repo.Create/Update/Delete calls
 ---
