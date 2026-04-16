@@ -90,6 +90,11 @@ func NewQueryTypeRID() string {
 	return New("ontology", "main", "query-type")
 }
 
+// NewBranchRID generates a new RID for an ontology branch.
+func NewBranchRID() string {
+	return New("ontology", "main", "branch")
+}
+
 // IsRID reports whether s looks like a Resource Identifier (starts with "ri.").
 func IsRID(s string) bool {
 	return strings.HasPrefix(s, "ri.")

@@ -17,16 +17,18 @@ import (
 // --- Mock Repository ---
 
 type mockRepo struct {
-	ontologies  []oms.Ontology
-	objectTypes []oms.ObjectType
-	linkTypes   []oms.LinkType
-	actionTypes []oms.ActionType
-	properties  []oms.Property
-	interfaces  []oms.Interface
-	valueTypes  []oms.ValueType
-	queryTypes  []oms.QueryType
-	actionLogs  []oms.ActionLog
-	functions   []oms.Function
+	ontologies    []oms.Ontology
+	objectTypes   []oms.ObjectType
+	linkTypes     []oms.LinkType
+	actionTypes   []oms.ActionType
+	properties    []oms.Property
+	interfaces    []oms.Interface
+	valueTypes    []oms.ValueType
+	queryTypes    []oms.QueryType
+	actionLogs    []oms.ActionLog
+	functions     []oms.Function
+	branches      []oms.OntologyBranch
+	branchChanges []oms.BranchChange
 
 	// Error controls
 	createErr error

@@ -1,3 +1,5 @@
+//go:build goja
+
 package oms_test
 
 import (

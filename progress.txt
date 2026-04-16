@@ -42,7 +42,10 @@
 - Consumer has separate LinkEdgeWriter (SetLinkEdgeWriter) and LinkEdgeDeleter (SetLinkEdgeDeleter) interfaces for M2M edge writes/deletes
 - Executor.Prepare resolves link type API names to RIDs via GetLinkTypeByAPIName before publishing
 - ValueType constraints: Constraints struct in pkg/types/constraints.go; Property → ValueType via TypeConfig {"valueTypeApiName": "..."} (no migration); validated in executor.go step 12 (validateValueTypeConstraints)
-- Pre-existing build errors in pkg/oms/admin_handlers.go and execute_query_goja_test.go — not blocking tests in other packages
+- Pre-existing build errors in pkg/oms/admin_handlers.go and execute_query_goja_test.go — goja test now gated with //go:build goja tag
+- Branch handler pattern: handlers_branch.go follows handlers_function.go pattern; BranchDetailResponse embeds OntologyBranch + ChangeCount
+- Branch list endpoint filters for status=="open" in handler (PG ListBranches returns all statuses)
+- Branch creation snapshots current ontology version via GetOntologyVersion as base_version
 - Revert logic in pkg/actions/revert.go — generateReverseEdits maps CREATE→DELETE, MODIFY→MODIFY(prevState), DELETE→CREATE(prevState), LINK_CREATE→LINK_DELETE, LINK_DELETE→LINK_CREATE
 - AlreadyRevertedError sentinel type for 409 Conflict on double-revert
 - Repository additions: GetActionLog(id) and UpdateActionLogStatus(id, status) — added to oms.Repository interface + PG impl + all mocks
@@ -270,4 +273,24 @@
   - Mocks that embed another concrete mock (interfaceAwareMockRepo, valueTypeAwareMockRepo, linkAwareMockRepo) inherit from parent — no stubs needed
   - Branch tables use TEXT primary keys (not UUID) — consistent with other tables using RID-style keys
   - UNIQUE(ontology_rid, name) prevents duplicate branch names per ontology; wrapPGError converts PG unique violation to ErrDuplicate
+---
+
+## 2026-04-16 - US-113
+- Implemented ontology branches CRUD API endpoints
+- Files changed:
+  - pkg/oms/handlers_branch.go — New file: CreateBranch (POST), ListBranches (GET, filters open-only), GetBranch (GET with changeCount), CloseBranch (DELETE → soft close); CreateBranchRequest and BranchDetailResponse types
+  - pkg/oms/handlers_branch_test.go — New file: 11 tests covering CreateBranch success/missing-name/duplicate/ontology-not-found, ListBranches open-only/empty, GetBranch success/not-found with changeCount, CloseBranch success/not-found, full lifecycle (create→list→get→close→list-empty)
+  - pkg/oms/mock_branches_test.go — Updated mock stubs to functional implementations (store branches/changes, enforce uniqueness, filter by ontology)
+  - pkg/oms/handlers_test.go — Added branches/branchChanges fields to mockRepo struct
+  - pkg/rid/rid.go — Added NewBranchRID() for generating ri.ontology.main.branch.{uuid}
+  - cmd/server/routes.go — Registered 4 branch endpoints (POST/GET collection, GET/DELETE single)
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added OntologyBranch/OntologyBranchDetail schemas + 4 endpoint specs
+  - pkg/oms/execute_query_goja_test.go — Added //go:build goja tag to fix pre-existing build error
+- **Learnings for future iterations:**
+  - Handler pattern: follow handlers_function.go as template (resolveOntologyRID → validate → CRUD → response)
+  - ListBranches: PG returns all statuses; handler filters status=="open" in-process (simple, avoids extra repo method)
+  - BranchDetailResponse embeds OntologyBranch + adds ChangeCount (computed from ListBranchChanges in handler)
+  - CreateBranch snapshots ontology version via GetOntologyVersion; graceful fallback to 0 if version fetch fails
+  - Contract tests enforce OpenAPI ↔ route parity; always update api/openapi.yaml AND copy to cmd/server/openapi_spec.yaml
+  - execute_query_goja_test.go references undefined functions (NewGojaQueryExecutor) — gated with //go:build goja to unblock pkg/oms tests
 ---

@@ -427,6 +427,38 @@ components:
         createdAt:
           type: string
           format: date-time
+    OntologyBranch:
+      type: object
+      required: [id, ontologyRid, name, baseVersion, status, createdBy, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        ontologyRid:
+          type: string
+        name:
+          type: string
+        baseVersion:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [open, merged, closed]
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    OntologyBranchDetail:
+      allOf:
+        - $ref: "#/components/schemas/OntologyBranch"
+        - type: object
+          properties:
+            changeCount:
+              type: integer
+              description: Number of changes recorded on this branch.
     ValueType:
       type: object
       required: [rid, apiName, displayName, baseType, version]
@@ -2240,6 +2272,99 @@ paths:
       responses:
         "204":
           description: Function deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/branches:
+    post:
+      operationId: createBranch
+      summary: Create a new ontology branch
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                createdBy:
+                  type: string
+      responses:
+        "201":
+          description: Branch created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyBranch"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+    get:
+      operationId: listBranches
+      summary: List open ontology branches
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: List of open branches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OntologyBranch"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/branches/{branchId}:
+    get:
+      operationId: getBranch
+      summary: Get a branch with change count
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Branch details with change count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OntologyBranchDetail"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: closeBranch
+      summary: Close (soft-delete) a branch
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Branch closed.
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
