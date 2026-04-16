@@ -28,8 +28,8 @@
 - Frontend routes in web/src/App.tsx
 - API hooks in web/src/hooks/
 - Sidebar nav in web/src/components/layout/Sidebar.tsx
-- Link edits (LINK_CREATE) flow: Rule → Edit → NATS → Consumer.applyLinkCreate → UpsertLinkEdge
-- Consumer has separate LinkEdgeWriter interface (SetLinkEdgeWriter) for M2M edge writes
+- Link edits (LINK_CREATE/LINK_DELETE) flow: Rule → Edit → NATS → Consumer.applyLinkCreate/applyLinkDelete → UpsertLinkEdge/DeleteLinkEdge
+- Consumer has separate LinkEdgeWriter (SetLinkEdgeWriter) and LinkEdgeDeleter (SetLinkEdgeDeleter) interfaces for M2M edge writes/deletes
 - Executor.Prepare resolves link type API names to RIDs via GetLinkTypeByAPIName before publishing
 - Pre-existing build errors in pkg/oms/admin_handlers.go and execute_query_goja_test.go — not blocking tests in other packages
 
@@ -52,4 +52,22 @@
   - The consumer skips link edits for Bleve indexing, history recording, and embedding generation
   - Rule.LinkTypeAPIName is resolved to LinkTypeRID in Executor.Prepare, not in ExecuteRules (keeps ExecuteRules pure)
   - Integration tests can wire in-memory EdgeStore that implements both LinkEdgeWriter and links.EdgeRepository
+---
+
+## 2026-04-16 - US-101
+- Implemented deleteLink rule type for M2M link deletion through Actions
+- Files changed:
+  - pkg/funnel/types.go — Added EditTypeLinkDelete constant
+  - pkg/actions/rules.go — Added deleteLink case to executeRule dispatch
+  - pkg/actions/collapse.go — CollapseEdits handles LINK_DELETE dedup + LINK_CREATE+LINK_DELETE cancellation
+  - pkg/actions/executor.go — resolveLinkEdits resolves LINK_DELETE edits; countEdits counts deletedLinksCount
+  - pkg/funnel/consumer.go — LinkEdgeDeleter interface + SetLinkEdgeDeleter + applyLinkDelete + LINK_DELETE routing in batch/single paths + history skip
+  - pkg/actions/actions_test.go — 9 new unit tests for deleteLink rules, collapse cancellation, executor, countEdits
+  - pkg/funnel/funnel_test.go — 4 new tests for consumer LINK_DELETE handling
+  - pkg/actions/create_link_integration_test.go — Added DeleteLinkEdge to inMemoryEdgeStore + integration test: createLink → deleteLink → searchAround returns empty
+- **Learnings for future iterations:**
+  - LINK_DELETE mirrors LINK_CREATE symmetrically: same fields (LinkTypeRID, PrimaryKey as source, TargetPrimaryKey)
+  - CollapseEdits cancellation is directional: CREATE+DELETE→cancel, DELETE+CREATE→last wins (recreate)
+  - resolveLinkEdits now handles both LINK_CREATE and LINK_DELETE (unified filter)
+  - Consumer skips LINK_DELETE for Bleve indexing, history recording, and embedding generation (same as LINK_CREATE)
 ---
