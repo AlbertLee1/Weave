@@ -38,6 +38,13 @@
 - Watcher pattern: pkg/automate/watcher.go — DataChangeRuleLoader + ExecutionRecorder + optional ObjectPropertyFetcher; HandleChangeEvent callback for funnel.ChangeEvent
 - DataChangeTriggerConfig: { "objectType": "Employee", "editTypes": ["CREATE","MODIFY"], "where": {...}, "debounceMs": 0 }
 - Watcher debounce: per-ruleID time.AfterFunc timer; DebounceMs=0 → immediate; >0 → resets on each matching event, fires with last event
+- Effects pattern: pkg/automate/effects.go — Effect struct (type, actionTypeApiName, parameters), ActionApplier interface, TriggerEventData for template resolution
+- Effect types: "executeAction" (US-128), "executeFunction" (US-129), "notification" (US-130) — processEffects dispatches by type
+- Template variables: ${event.primaryKey}, ${event.editType}, ${event.objectType}, ${event.properties.fieldName} — resolved via resolveTemplateString before passing to ActionApplier
+- ActionApplier interface: ApplyAction(ctx, ontologyRID, actionType, parameters) error — wrap actions.Executor.Apply for use with automation
+- Both Scheduler and Watcher have SetActionApplier method; nil applier → executeAction effects silently skipped
+- executeRule now passes ontologyRID (from AutomationRule) through closure to processEffects
+- Effect failure: processEffects returns error → execution recorded with status="error" and error message
 - Scheduler dynamic updates: AddRule, RemoveRule, PauseRule (alias for RemoveRule), ResumeRule (alias for AddRule)
 - OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
 - Branch mock stubs pattern: create mock_branches_test.go in each package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go inline)
@@ -578,4 +585,22 @@
   - watcherRule caches parsed DataChangeTriggerConfig and WhereClause to avoid re-parsing on every event
   - WhereClause JSON values must be valid JSON tokens: string "Engineering" → `"Engineering"` (with JSON quotes), not `"\"Engineering\""` (extra escaped quotes)
   - HandleChangeEvent takes a snapshot of rules under lock, then evaluates outside lock to avoid holding lock during I/O
+---
+
+## 2026-04-16 - US-128
+- Implemented Automate — Action Effect (executeAction effect type for automation rules)
+- Files changed:
+  - pkg/automate/effects.go — New file: Effect struct (type, actionTypeApiName, parameters), ActionApplier interface, TriggerEventData struct, ParseEffects, resolveTemplateString (${event.primaryKey}, ${event.editType}, ${event.objectType}, ${event.properties.*}), resolveParameters, processEffects dispatcher
+  - pkg/automate/effects_test.go — New file: 20 tests: ParseEffects (valid/multiple/empty/null/invalid), resolveTemplateString (primaryKey/editType/objectType/properties/noTemplates/multipleVars/nilData), resolveParameters (full/nil), processEffects (executeAction/failure/nilApplier/unknownType/empty/stopsOnFirstError) + mockActionApplier
+  - pkg/automate/scheduler.go — Added actionApplier field, SetActionApplier method; addRuleInternal captures ontologyRID in closure; executeRule processes effects via processEffects, records error status on failure
+  - pkg/automate/scheduler_test.go — 2 new tests: ExecuteActionEffect (cron fires → action applied with correct params), ExecuteActionEffect_Failure (error → status=error)
+  - pkg/automate/watcher.go — Added actionApplier field, SetActionApplier method; triggerRule/debounce closures capture ontologyRID; executeRule builds TriggerEventData from ChangeEvent + fetched properties, processes effects, records error status on failure
+  - pkg/automate/watcher_test.go — 4 new tests: ExecuteActionEffect (data change → action applied with template resolution), TemplateWithProperties (${event.properties.*} resolved from fetcher), Failure (error → status=error with message), NoApplier (graceful skip)
+- **Learnings for future iterations:**
+  - Effect processing is centralized in processEffects() — adding new effect types (executeFunction, notification) only requires a new case in the switch
+  - ActionApplier interface decouples automate from actions package — callers wrap actions.Executor.Apply into this interface
+  - Template resolution uses simple string replacement; nested properties accessed via ${event.properties.fieldName} with fmt.Sprint for non-string values
+  - Both Scheduler and Watcher need ontologyRID passed through closures to executeRule — it comes from AutomationRule.OntologyRID
+  - Watcher fetches properties in executeRule (not matchRule) for template resolution — separate from where clause evaluation in matchRule
+  - processEffects stops on first error (fail-fast) — retry logic will be added in US-131
 ---
