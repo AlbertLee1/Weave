@@ -65,6 +65,9 @@
 - OntologyProposal/ProposalReview models in pkg/oms/models.go; PG CRUD in pg_repository.go; handlers in handlers_proposal.go
 - ObjectFetcher interface on Executor: injected like ObjectExistenceChecker, nil→graceful degradation (PrevEdits omitted)
 - PrevEdits is a parallel slice to Edits in PreparedAction; serialized to ActionLog.PrevEdits JSONB (null entries for CREATE/LINK edits)
+- WebSocket Hub pattern: pkg/subscriptions/hub.go — Hub manages connections map; per-connection context derived from Hub context; readPump cancel triggers writePump exit; Hub.Close cancels context + closes all connections
+- WebSocket auth pattern: pkg/subscriptions/handler.go — TokenValidator func(token)(userID, error); nil validator = dev mode (accept all); ?token= query param validated before websocket.Accept upgrade
+- WebSocket route registered directly in NewFullRouter (not RegisterRoutes) because it's outside the auth middleware group
 - Frontend routes in web/src/App.tsx
 - API hooks in web/src/hooks/
 - Sidebar nav in web/src/components/layout/Sidebar.tsx
@@ -703,4 +706,26 @@
   - ListExecutions handler uses in-process filtering (status) and pagination (limit/offset) — consistent with ListBranches, ListProposals pattern
   - countingActionApplier test helper: tracks call count, fails first N calls then succeeds �� useful for testing transient failure recovery
   - Pagination response includes total (pre-filter count), offset, limit alongside data array
+---
+
+## 2026-04-16 - US-132
+- Implemented WebSocket — server infrastructure (Phase 4: WebSocket Subscriptions)
+- Files changed:
+  - go.mod + go.sum — Added nhooyr.io/websocket v1.8.17 dependency
+  - pkg/subscriptions/hub.go — New file: Hub struct (manages connections map, per-connection context, read/write goroutines), Connection struct (wraps websocket.Conn with send channel), Message envelope type; NewHub, HandleWS, SendToConnection, Broadcast, Close, ConnectionCount methods
+  - pkg/subscriptions/handler.go — New file: Handler http.Handler with TokenValidator function; validates ?token= query param before websocket.Accept upgrade; ErrInvalidToken sentinel; nil validator = dev mode (accept all)
+  - pkg/subscriptions/hub_test.go — 7 tests: NewHub, ConnectAndReceiveWelcome, MultipleConnections (unique IDs), DisconnectRemovesConnection, Close_DrainsAllConnections, SendToConnection, Message_JSON
+  - pkg/subscriptions/handler_test.go — 6 tests: DevMode_NoToken, DevMode_WithToken, WithValidator_ValidToken, WithValidator_InvalidToken (401), WithValidator_MissingToken (401), NonWebSocket_Returns400
+  - cmd/server/main.go — Added WebSocketHub to ServerDeps; Hub created in main(); TokenValidator wiring (JWT verify in jwt mode, raw token in dev mode); WebSocket route mounted outside auth middleware group; Hub.Close in graceful shutdown
+  - cmd/server/contract_test.go — Added subscriptions.NewHub() to contract test deps
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added websocketSubscribe endpoint spec (GET /api/v2/ontologies/{ontologyApiName}/subscriptions/ws)
+- **Learnings for future iterations:**
+  - WebSocket connections cannot use HTTP Authorization headers during upgrade — must use ?token= query parameter
+  - Per-connection context pattern: derive from Hub context, cancel when readPump exits → writePump sees ctx.Done() and exits → HandleWS unregisters
+  - WebSocket route must be outside the auth middleware group (r.Group) because auth is handled pre-upgrade via TokenValidator
+  - nhooyr.io/websocket v1.8.17 API: Accept(w,r,opts), conn.Read(ctx) → (MessageType, []byte, error), conn.Write(ctx, typ, data), conn.Close(code, reason)
+  - wsjson.Read/Write provide convenience JSON encoding/decoding over websocket.Conn
+  - websocket.Dial(ctx, url, opts) for client-side test connections; httptest.NewServer + URL rewrite "http" → "ws"
+  - Hub.Close sends StatusGoingAway to all connections, then waits for goroutines to exit (5s timeout per connection)
+  - contract_test.go walks chi router and checks all routes have OpenAPI entries — WebSocket Hub must be non-nil in test deps
 ---
