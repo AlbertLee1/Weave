@@ -89,6 +89,20 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
+		case "collectList":
+			maxItems := 100
+			if spec.MaxItems != nil {
+				maxItems = *spec.MaxItems
+			}
+			val, t, err := computeCollectList(idx, baseQuery, spec.Field, scanSize, maxItems)
+			if err != nil {
+				return nil, false, err
+			}
+			if t {
+				truncated = true
+			}
+			metrics = append(metrics, MetricValue{Name: name, Value: val})
+
 		case "approximatePercentile":
 			if len(spec.Percentiles) > 0 {
 				val, t, err := approxPercentilesFromIndex(idx, baseQuery, spec.Field, spec.Percentiles, scanSize)
@@ -227,6 +241,40 @@ func computeExactDistinct(idx bleve.Index, q query.Query, field string, scanSize
 	}
 
 	return len(seen), truncated, nil
+}
+
+// computeCollectList collects field values into a list.
+// Returns ([]interface{}, truncated, error) where truncated is true when the match
+// total exceeds scanSize.
+func computeCollectList(idx bleve.Index, q query.Query, field string, scanSize int, maxItems int) ([]interface{}, bool, error) {
+	searchReq := bleve.NewSearchRequest(q)
+	searchReq.Size = scanSize
+	searchReq.Fields = []string{field}
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, err
+	}
+
+	truncated := result.Total > uint64(len(result.Hits))
+
+	var values []interface{}
+	for _, hit := range result.Hits {
+		if len(values) >= maxItems {
+			break
+		}
+		val, ok := hit.Fields[field]
+		if !ok {
+			continue
+		}
+		values = append(values, val)
+	}
+
+	if values == nil {
+		values = []interface{}{}
+	}
+
+	return values, truncated, nil
 }
 
 // computeStdDevOrVariance computes the standard deviation or variance of a numeric field.

@@ -1314,6 +1314,138 @@ func TestAggregate_ExactDistinct_FiveUniqueValues(t *testing.T) {
 	}
 }
 
+// --- collectList metric ---
+
+func TestAggregate_CollectList_GroupByCategory(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "collectList", Field: "salary"},
+		},
+		GroupBy: []GroupBySpec{
+			{Type: "exact", Field: "department"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	// 3 departments: engineering(2 salaries), sales(2 salaries), hr(1 salary)
+	if len(resp.Data) != 3 {
+		t.Fatalf("got %d groups, want 3", len(resp.Data))
+	}
+
+	groupLists := make(map[string][]interface{})
+	for _, row := range resp.Data {
+		dept := row.Group["department"].(string)
+		val, ok := findMetric(row.Metrics, "salary.collectList")
+		if !ok {
+			t.Fatalf("missing salary.collectList metric for group %v", row.Group)
+		}
+		list, ok := val.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{} for collectList, got %T", val)
+		}
+		groupLists[dept] = list
+	}
+
+	// engineering: salaries 100000, 120000
+	if len(groupLists["engineering"]) != 2 {
+		t.Errorf("engineering collectList length = %d, want 2", len(groupLists["engineering"]))
+	}
+	// sales: salaries 80000, 90000
+	if len(groupLists["sales"]) != 2 {
+		t.Errorf("sales collectList length = %d, want 2", len(groupLists["sales"]))
+	}
+	// hr: salary 75000
+	if len(groupLists["hr"]) != 1 {
+		t.Errorf("hr collectList length = %d, want 1", len(groupLists["hr"]))
+	}
+}
+
+func TestAggregate_CollectList_MaxItems(t *testing.T) {
+	idx := setupAggIndex(t) // 5 docs total
+	eng := NewEngine()
+
+	maxItems := 3
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "collectList", Field: "salary", MaxItems: &maxItems},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	val, ok := findMetric(resp.Data[0].Metrics, "salary.collectList")
+	if !ok {
+		t.Fatal("expected metric key 'salary.collectList'")
+	}
+	list, ok := val.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{} for collectList, got %T", val)
+	}
+	if len(list) != 3 {
+		t.Errorf("got collectList length %d, want 3 (maxItems=3)", len(list))
+	}
+}
+
+func TestAggregate_CollectList_DefaultMaxItems(t *testing.T) {
+	idx := setupAggIndex(t) // 5 docs
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "collectList", Field: "salary"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	val, ok := findMetric(resp.Data[0].Metrics, "salary.collectList")
+	if !ok {
+		t.Fatal("expected metric key 'salary.collectList'")
+	}
+	list, ok := val.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{} for collectList, got %T", val)
+	}
+	// Default maxItems=100, only 5 docs, so all 5 should be collected
+	if len(list) != 5 {
+		t.Errorf("got collectList length %d, want 5", len(list))
+	}
+}
+
+func TestAggregate_CollectList_StringField(t *testing.T) {
+	idx := setupAggIndex(t)
+	eng := NewEngine()
+
+	resp, err := eng.Aggregate(idx, &AggregationRequest{
+		Aggregations: []AggregationSpec{
+			{Type: "collectList", Field: "department"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	val, ok := findMetric(resp.Data[0].Metrics, "department.collectList")
+	if !ok {
+		t.Fatal("expected metric key 'department.collectList'")
+	}
+	list, ok := val.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{} for collectList, got %T", val)
+	}
+	// 5 docs, all have department field
+	if len(list) != 5 {
+		t.Errorf("got collectList length %d, want 5", len(list))
+	}
+}
+
 func TestAggregate_ExactDistinct_VsApproximateDistinct(t *testing.T) {
 	idx := setupAggIndex(t) // 3 unique departments
 	eng := NewEngine()

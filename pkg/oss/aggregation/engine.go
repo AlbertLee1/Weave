@@ -20,11 +20,12 @@ type AggregationRequest struct {
 
 // AggregationSpec defines what to aggregate.
 type AggregationSpec struct {
-	Type        string    `json:"type"`                  // "count", "min", "max", "sum", "avg", "approximateDistinct", "exactDistinct", "standardDeviation", "variance", "approximatePercentile"
+	Type        string    `json:"type"`                  // "count", "min", "max", "sum", "avg", "approximateDistinct", "exactDistinct", "standardDeviation", "variance", "approximatePercentile", "collectList"
 	Field       string    `json:"field,omitempty"`       // required for min/max/sum/avg
 	Name        string    `json:"name,omitempty"`        // output name
 	Percentile  *float64  `json:"percentile,omitempty"`  // for approximatePercentile (0-100), scalar result
 	Percentiles []float64 `json:"percentiles,omitempty"` // for approximatePercentile batch: single HdrHistogram pass, map[string]float64 result
+	MaxItems    *int      `json:"maxItems,omitempty"`    // for collectList: max values to collect (default 100)
 }
 
 // GroupBySpec defines how to group results.
