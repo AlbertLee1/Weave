@@ -197,3 +197,16 @@
   - Unlike approximateDistinct (facet-based, limited to N terms), exactDistinct scans all docs up to MaxDocScanSize and returns truncated=true when exceeding the scan limit
   - Adding a new metric type: add case to computeMetrics switch in bleve_agg.go, implement compute function, update AggregationSpec.Type comment in engine.go
 ---
+
+## 2026-04-16 - US-109
+- Implemented collectList aggregation metric type that collects field values into a list per group
+- Files changed:
+  - pkg/oss/aggregation/engine.go — Added MaxItems field (*int, default 100) to AggregationSpec; updated Type comment to include "collectList"
+  - pkg/oss/aggregation/bleve_agg.go — Added computeCollectList function (scans docs, collects field values up to maxItems limit, returns []interface{}); added "collectList" case to computeMetrics switch
+  - pkg/oss/aggregation/aggregation_test.go — 4 new tests: groupBy category + collectList returns value arrays per group, maxItems truncation, default maxItems (all values returned), string field collection
+- **Learnings for future iterations:**
+  - collectList returns []interface{} (not []float64) because it supports any field type (string, numeric, boolean)
+  - MaxItems uses *int pointer pattern (nil=use default 100), consistent with MaxGroups on GroupBySpec
+  - computeCollectList initializes empty slice (not nil) when no values found, ensuring JSON serializes as [] not null
+  - The truncated flag from collectList reflects scanSize truncation (total > scanned), not maxItems truncation
+---
