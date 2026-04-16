@@ -27,8 +27,10 @@ type mockRepo struct {
 	queryTypes    []oms.QueryType
 	actionLogs    []oms.ActionLog
 	functions     []oms.Function
-	branches      []oms.OntologyBranch
-	branchChanges []oms.BranchChange
+	branches        []oms.OntologyBranch
+	branchChanges   []oms.BranchChange
+	proposals       []oms.OntologyProposal
+	proposalReviews []oms.ProposalReview
 
 	// Error controls
 	createErr error

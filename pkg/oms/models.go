@@ -466,6 +466,29 @@ type BranchChange struct {
 	CreatedAt   time.Time       `json:"createdAt"`
 }
 
+// OntologyProposal represents a merge proposal from a branch.
+type OntologyProposal struct {
+	ID          string    `json:"id"`
+	BranchID    string    `json:"branchId"`
+	OntologyRID string    `json:"ontologyRid"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	Status      string    `json:"status"` // pending, approved, rejected, merged
+	Author      string    `json:"author"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// ProposalReview records a reviewer's decision on a proposal.
+type ProposalReview struct {
+	ID         string    `json:"id"`
+	ProposalID string    `json:"proposalId"`
+	Reviewer   string    `json:"reviewer"`
+	Decision   string    `json:"decision"` // approve, reject
+	Reason     string    `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
 // TypeGroup organizes object types into categories.
 type TypeGroup struct {
 	RID         string    `json:"rid"`

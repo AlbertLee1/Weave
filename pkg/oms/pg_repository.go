@@ -2116,3 +2116,98 @@ func (r *PGRepository) ListBranchChanges(ctx context.Context, branchID string) (
 	}
 	return result, nil
 }
+
+// --- OntologyProposal (US-117) ---
+
+func (r *PGRepository) CreateProposal(ctx context.Context, p *OntologyProposal) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO ontology_proposals (id, branch_id, ontology_rid, title, description, status, author)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING created_at, updated_at`,
+		p.ID, p.BranchID, p.OntologyRID, p.Title, p.Description, p.Status, p.Author).
+		Scan(&p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) GetProposal(ctx context.Context, id string) (*OntologyProposal, error) {
+	p := &OntologyProposal{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, branch_id, ontology_rid, title, description, status, author, created_at, updated_at
+		 FROM ontology_proposals WHERE id = $1`, id).
+		Scan(&p.ID, &p.BranchID, &p.OntologyRID, &p.Title, &p.Description, &p.Status, &p.Author, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return p, nil
+}
+
+func (r *PGRepository) ListProposals(ctx context.Context, ontologyRID string) ([]OntologyProposal, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, branch_id, ontology_rid, title, description, status, author, created_at, updated_at
+		 FROM ontology_proposals WHERE ontology_rid = $1 ORDER BY created_at`, ontologyRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []OntologyProposal
+	for rows.Next() {
+		var p OntologyProposal
+		if err := rows.Scan(&p.ID, &p.BranchID, &p.OntologyRID, &p.Title, &p.Description, &p.Status, &p.Author, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) UpdateProposalStatus(ctx context.Context, id, status string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ontology_proposals SET status = $2, updated_at = NOW() WHERE id = $1`, id, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PGRepository) CreateProposalReview(ctx context.Context, rv *ProposalReview) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO proposal_reviews (id, proposal_id, reviewer, decision, reason)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING created_at`,
+		rv.ID, rv.ProposalID, rv.Reviewer, rv.Decision, rv.Reason).
+		Scan(&rv.CreatedAt)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) ListProposalReviews(ctx context.Context, proposalID string) ([]ProposalReview, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, proposal_id, reviewer, decision, reason, created_at
+		 FROM proposal_reviews WHERE proposal_id = $1 ORDER BY created_at`, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []ProposalReview
+	for rows.Next() {
+		var rv ProposalReview
+		if err := rows.Scan(&rv.ID, &rv.ProposalID, &rv.Reviewer, &rv.Decision, &rv.Reason, &rv.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, rv)
+	}
+	return result, nil
+}

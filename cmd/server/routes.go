@@ -49,6 +49,11 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.CloseBranch)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", omsHandler.GetBranchDiff)
 
+	// Ontology Proposals (US-117)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals", omsHandler.CreateProposal)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/proposals", omsHandler.ListProposals)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}", omsHandler.GetProposal)
+
 	// QueryType execute route
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
 }

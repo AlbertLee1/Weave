@@ -149,4 +149,12 @@ type Repository interface {
 	CloseBranch(ctx context.Context, id string) error
 	CreateBranchChange(ctx context.Context, c *BranchChange) error
 	ListBranchChanges(ctx context.Context, branchID string) ([]BranchChange, error)
+
+	// OntologyProposal (US-117)
+	CreateProposal(ctx context.Context, p *OntologyProposal) error
+	GetProposal(ctx context.Context, id string) (*OntologyProposal, error)
+	ListProposals(ctx context.Context, ontologyRID string) ([]OntologyProposal, error)
+	UpdateProposalStatus(ctx context.Context, id, status string) error
+	CreateProposalReview(ctx context.Context, r *ProposalReview) error
+	ListProposalReviews(ctx context.Context, proposalID string) ([]ProposalReview, error)
 }

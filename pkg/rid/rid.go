@@ -95,6 +95,16 @@ func NewBranchRID() string {
 	return New("ontology", "main", "branch")
 }
 
+// NewProposalRID generates a new RID for an ontology proposal.
+func NewProposalRID() string {
+	return New("ontology", "main", "proposal")
+}
+
+// NewProposalReviewRID generates a new RID for a proposal review.
+func NewProposalReviewRID() string {
+	return New("ontology", "main", "proposal-review")
+}
+
 // IsRID reports whether s looks like a Resource Identifier (starts with "ri.").
 func IsRID(s string) bool {
 	return strings.HasPrefix(s, "ri.")

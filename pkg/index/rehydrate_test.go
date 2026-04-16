@@ -280,6 +280,24 @@ func (s *stubRehydrateRepo) ListBranchChanges(context.Context, string) ([]oms.Br
 	return nil, nil
 }
 
+// Proposal stubs
+func (s *stubRehydrateRepo) CreateProposal(context.Context, *oms.OntologyProposal) error {
+	return nil
+}
+func (s *stubRehydrateRepo) GetProposal(context.Context, string) (*oms.OntologyProposal, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) ListProposals(context.Context, string) ([]oms.OntologyProposal, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) UpdateProposalStatus(context.Context, string, string) error { return nil }
+func (s *stubRehydrateRepo) CreateProposalReview(context.Context, *oms.ProposalReview) error {
+	return nil
+}
+func (s *stubRehydrateRepo) ListProposalReviews(context.Context, string) ([]oms.ProposalReview, error) {
+	return nil, nil
+}
+
 // --- Tests ---
 
 func newRehydrateRepo() *stubRehydrateRepo {

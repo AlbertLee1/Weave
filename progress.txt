@@ -30,9 +30,11 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000024, next is 000025
+- Migrations in migrations/ — sequential 000001-000025, next is 000026
 - OntologyBranch/BranchChange models in pkg/oms/models.go; PG CRUD in pg_repository.go (CreateBranch, GetBranch, ListBranches, CloseBranch, CreateBranchChange, ListBranchChanges)
 - Branch mock stubs pattern: create mock_branches_test.go in each package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook, pkg/index/rehydrate_test.go inline)
+- Proposal mock stubs pattern: same as branches — mock_proposals_test.go per package; proposal models have branch_id FK
+- OntologyProposal/ProposalReview models in pkg/oms/models.go; PG CRUD in pg_repository.go; handlers in handlers_proposal.go
 - ObjectFetcher interface on Executor: injected like ObjectExistenceChecker, nil→graceful degradation (PrevEdits omitted)
 - PrevEdits is a parallel slice to Edits in PreparedAction; serialized to ActionLog.PrevEdits JSONB (null entries for CREATE/LINK edits)
 - Frontend routes in web/src/App.tsx
@@ -341,4 +343,32 @@
   - BranchDiffEntry maps BeforeState→Before, AfterState→After using json.RawMessage for zero-copy JSON passthrough
   - Sorting in handler (sort.Slice) rather than relying on SQL ORDER BY keeps the repo interface simple and decoupled
   - BranchChange model's BeforeState/AfterState are json.RawMessage with omitempty — they naturally serialize to null in JSON when empty/nil
+---
+
+## 2026-04-16 - US-117
+- Implemented ontology proposals — migration and CRUD (Phase 2: Ontology Branching)
+- Files changed:
+  - migrations/000025_ontology_proposals.up.sql — CREATE TABLE ontology_proposals (id TEXT PK, branch_id FK→ontology_branches, ontology_rid FK→ontologies, title, description, status CHECK pending/approved/rejected/merged, author, timestamps); CREATE TABLE proposal_reviews (id TEXT PK, proposal_id FK→ontology_proposals, reviewer, decision CHECK approve/reject, reason, created_at)
+  - migrations/000025_ontology_proposals.down.sql — DROP TABLE rollback
+  - pkg/oms/models.go — Added OntologyProposal struct (ID, BranchID, OntologyRID, Title, Description, Status, Author, timestamps) and ProposalReview struct (ID, ProposalID, Reviewer, Decision, Reason, CreatedAt)
+  - pkg/oms/repository.go — Added 6 methods: CreateProposal, GetProposal, ListProposals, UpdateProposalStatus, CreateProposalReview, ListProposalReviews
+  - pkg/oms/pg_repository.go — PG implementations for all 6 proposal/review methods with proper error handling
+  - pkg/rid/rid.go — Added NewProposalRID() and NewProposalReviewRID()
+  - pkg/oms/handlers_proposal.go — New file: CreateProposal (POST, validates branch is open), ListProposals (GET, with ?status= filter), GetProposal (GET, with review list); CreateProposalRequest and ProposalDetailResponse types
+  - pkg/oms/handlers_proposal_test.go — New file: 12 tests: CreateProposal success/missingTitle/missingBranchId/branchNotFound/branchNotOpen/ontologyNotFound, ListProposals success/withStatusFilter/empty, GetProposal success/notFound, FullLifecycle (create→list→get)
+  - pkg/oms/mock_proposals_test.go — New file: mock implementations for mockRepo + noopRepo
+  - cmd/server/routes.go — Registered 3 proposal endpoints (POST/GET collection, GET single)
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added OntologyProposal/OntologyProposalDetail/ProposalReview schemas + 3 endpoint specs
+  - 6 mock_proposals_test.go files across packages (pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook)
+  - pkg/index/rehydrate_test.go — Proposal stubs added inline for stubRehydrateRepo
+  - pkg/oms/handlers_test.go — Added proposals/proposalReviews fields to mockRepo struct
+- **Learnings for future iterations:**
+  - Proposal model has branch_id FK — proposals are merge requests for branches, not independent entities
+  - Proposal status lifecycle: pending → approved/rejected → merged (approved proposals can be merged via US-119)
+  - CreateProposal validates branch is open (status=="open") before creating; closed/merged branches return 409 Conflict
+  - ListProposals supports optional ?status= query param for filtering; handler filters in-process (not in SQL) for simplicity
+  - GetProposal returns ProposalDetailResponse embedding OntologyProposal + Reviews array (always non-nil, empty [] not null)
+  - UpdateProposalStatus is a separate repo method (not a full Update) — cleaner for status transitions
+  - Mock stubs pattern continues: create mock_proposals_test.go per package mirroring mock_branches_test.go
+  - Adding 6 Repository methods requires updating ~8 mock files across the codebase
 ---
