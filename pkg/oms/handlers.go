@@ -28,6 +28,29 @@ func (h *OMSHandler) SetQueryExecutor(qe QueryExecutor) {
 	h.queryExecutor = qe
 }
 
+// resolveRepo returns a Repository for the request. If ?branch= is set, it
+// wraps h.repo with a BranchedRepository that overlays branch changes on reads.
+// Returns (repo, true) on success or (nil, false) if an error was written.
+func (h *OMSHandler) resolveRepo(w http.ResponseWriter, r *http.Request) (Repository, bool) {
+	branchID := r.URL.Query().Get("branch")
+	if branchID == "" {
+		return h.repo, true
+	}
+	branch, err := h.repo.GetBranch(r.Context(), branchID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("BranchNotFound", map[string]string{
+				"branchId": branchID,
+			}))
+			return nil, false
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetBranchFailed", nil))
+		return nil, false
+	}
+	_ = branch // existence check sufficient; branch may be in any status for reads
+	return NewBranchedRepository(h.repo, branchID), true
+}
+
 // ListOntologies handles GET /api/v2/ontologies.
 func (h *OMSHandler) ListOntologies(w http.ResponseWriter, r *http.Request) {
 	list, err := h.repo.ListOntologies(r.Context())
@@ -58,8 +81,12 @@ func (h *OMSHandler) GetOntology(w http.ResponseWriter, r *http.Request) {
 
 // ListObjectTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes.
 func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
-	list, err := h.repo.ListObjectTypes(r.Context(), ontologyRID)
+	list, err := repo.ListObjectTypes(r.Context(), ontologyRID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("ListObjectTypesFailed", nil))
 		return
@@ -72,10 +99,14 @@ func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
 
 // GetObjectType handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}.
 func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "objectTypeApiName")
 
-	ot, err := h.repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
@@ -101,11 +132,15 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 
 // ListOutgoingLinkTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes.
 func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "objectTypeApiName")
 
 	// Resolve apiName to objectType RID
-	ot, err := h.repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
@@ -117,7 +152,7 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	list, err := h.repo.ListOutgoingLinkTypes(r.Context(), ot.RID)
+	list, err := repo.ListOutgoingLinkTypes(r.Context(), ot.RID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("ListOutgoingLinkTypesFailed", nil))
 		return
@@ -139,8 +174,12 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 
 // ListActionTypes handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes.
 func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
-	list, err := h.repo.ListActionTypes(r.Context(), ontologyRID)
+	list, err := repo.ListActionTypes(r.Context(), ontologyRID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewNotFound("ListActionTypesFailed", nil))
 		return
@@ -165,6 +204,10 @@ func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
 	if !requirePreview(w, r) {
 		return
 	}
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 
 	ontology, err := h.repo.GetOntology(r.Context(), ontologyRID)
@@ -179,13 +222,13 @@ func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	objectTypes, err := h.repo.ListObjectTypes(r.Context(), ontologyRID)
+	objectTypes, err := repo.ListObjectTypes(r.Context(), ontologyRID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListObjectTypesFailed", nil))
 		return
 	}
 	for i := range objectTypes {
-		props, err := h.repo.ListProperties(r.Context(), objectTypes[i].RID)
+		props, err := repo.ListProperties(r.Context(), objectTypes[i].RID)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInternal("ListPropertiesFailed", nil))
 			return
@@ -193,19 +236,19 @@ func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
 		objectTypes[i].Properties = props
 	}
 
-	linkTypes, err := h.repo.ListLinkTypes(r.Context(), ontologyRID)
+	linkTypes, err := repo.ListLinkTypes(r.Context(), ontologyRID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListLinkTypesFailed", nil))
 		return
 	}
 
-	actionTypes, err := h.repo.ListActionTypes(r.Context(), ontologyRID)
+	actionTypes, err := repo.ListActionTypes(r.Context(), ontologyRID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
 		return
 	}
 
-	interfaces, err := h.repo.ListInterfaces(r.Context(), ontologyRID)
+	interfaces, err := repo.ListInterfaces(r.Context(), ontologyRID)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListInterfacesFailed", nil))
 		return
@@ -236,9 +279,13 @@ func (h *OMSHandler) GetFullMetadata(w http.ResponseWriter, r *http.Request) {
 // GetActionType handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}.
 // The {actionTypeRid} path param accepts either an apiName or a full RID.
 func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	actionIdentifier := chi.URLParam(r, "actionTypeRid")
-	at, err := h.repo.GetActionTypeByAPIName(r.Context(), ontologyRID, actionIdentifier)
+	at, err := repo.GetActionTypeByAPIName(r.Context(), ontologyRID, actionIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ActionTypeNotFound", map[string]string{
