@@ -48,13 +48,14 @@ type schedulerEntry struct {
 
 // Scheduler manages cron-based automation rule execution.
 type Scheduler struct {
-	loader        RuleLoader
-	recorder      ExecutionRecorder
-	actionApplier ActionApplier
-	cron          *cron.Cron
-	mu            sync.Mutex
-	entries       map[string]cron.EntryID // ruleID → cron entryID
-	ctx           context.Context
+	loader             RuleLoader
+	recorder           ExecutionRecorder
+	actionApplier      ActionApplier
+	functionDispatcher AutomateFunctionDispatcher
+	cron               *cron.Cron
+	mu                 sync.Mutex
+	entries            map[string]cron.EntryID // ruleID → cron entryID
+	ctx                context.Context
 }
 
 // New creates a new Scheduler.
@@ -69,6 +70,11 @@ func New(loader RuleLoader, recorder ExecutionRecorder) *Scheduler {
 // SetActionApplier sets the action applier for executeAction effects.
 func (s *Scheduler) SetActionApplier(applier ActionApplier) {
 	s.actionApplier = applier
+}
+
+// SetFunctionDispatcher sets the function dispatcher for executeFunction effects.
+func (s *Scheduler) SetFunctionDispatcher(dispatcher AutomateFunctionDispatcher) {
+	s.functionDispatcher = dispatcher
 }
 
 // Start initializes the scheduler, loads active schedule rules, and begins cron execution.
@@ -172,9 +178,10 @@ func (s *Scheduler) executeRule(ruleID, ontologyRID string, effects json.RawMess
 	eventData := &TriggerEventData{}
 
 	// Process effects
+	var effectResults []EffectResult
 	var execErr error
 	if len(effects) > 0 {
-		execErr = processEffects(ctx, effects, ontologyRID, eventData, s.actionApplier)
+		effectResults, execErr = processEffects(ctx, effects, ontologyRID, eventData, s.actionApplier, s.functionDispatcher)
 	}
 
 	completedAt := time.Now()
@@ -186,6 +193,12 @@ func (s *Scheduler) executeRule(ruleID, ontologyRID string, effects json.RawMess
 		log.Printf("[automate] effect execution failed for rule %s: %v", ruleID, execErr)
 	}
 
+	// Serialize effect results for storage
+	var resultJSON json.RawMessage
+	if len(effectResults) > 0 {
+		resultJSON, _ = json.Marshal(effectResults)
+	}
+
 	exec := &oms.AutomationExecution{
 		ID:           rid.NewAutomationExecutionRID(),
 		RuleID:       ruleID,
@@ -194,6 +207,7 @@ func (s *Scheduler) executeRule(ruleID, ontologyRID string, effects json.RawMess
 		CompletedAt:  &completedAt,
 		Status:       status,
 		Error:        errMsg,
+		Result:       resultJSON,
 	}
 
 	if err := s.recorder.InsertExecution(ctx, exec); err != nil {

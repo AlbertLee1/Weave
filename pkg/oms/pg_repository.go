@@ -2328,9 +2328,9 @@ func (r *PGRepository) DeleteAutomationRule(ctx context.Context, id string) erro
 
 func (r *PGRepository) InsertExecution(ctx context.Context, exec *AutomationExecution) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO automation_executions (id, rule_id, trigger_event, started_at, completed_at, status, error, retry_count)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		exec.ID, exec.RuleID, exec.TriggerEvent, exec.StartedAt, exec.CompletedAt, exec.Status, exec.Error, exec.RetryCount)
+		`INSERT INTO automation_executions (id, rule_id, trigger_event, started_at, completed_at, status, error, retry_count, result)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		exec.ID, exec.RuleID, exec.TriggerEvent, exec.StartedAt, exec.CompletedAt, exec.Status, exec.Error, exec.RetryCount, exec.Result)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -2339,7 +2339,7 @@ func (r *PGRepository) InsertExecution(ctx context.Context, exec *AutomationExec
 
 func (r *PGRepository) ListExecutions(ctx context.Context, ruleID string) ([]AutomationExecution, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, rule_id, trigger_event, started_at, completed_at, status, error, retry_count
+		`SELECT id, rule_id, trigger_event, started_at, completed_at, status, error, retry_count, result
 		 FROM automation_executions WHERE rule_id = $1 ORDER BY started_at`, ruleID)
 	if err != nil {
 		return nil, err
@@ -2349,7 +2349,7 @@ func (r *PGRepository) ListExecutions(ctx context.Context, ruleID string) ([]Aut
 	var result []AutomationExecution
 	for rows.Next() {
 		var exec AutomationExecution
-		if err := rows.Scan(&exec.ID, &exec.RuleID, &exec.TriggerEvent, &exec.StartedAt, &exec.CompletedAt, &exec.Status, &exec.Error, &exec.RetryCount); err != nil {
+		if err := rows.Scan(&exec.ID, &exec.RuleID, &exec.TriggerEvent, &exec.StartedAt, &exec.CompletedAt, &exec.Status, &exec.Error, &exec.RetryCount, &exec.Result); err != nil {
 			return nil, err
 		}
 		result = append(result, exec)

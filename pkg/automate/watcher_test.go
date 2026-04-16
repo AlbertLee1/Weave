@@ -1098,6 +1098,65 @@ func TestWatcher_ExecuteActionEffect_NoApplier(t *testing.T) {
 	}
 }
 
+func TestWatcher_ExecuteFunctionEffect(t *testing.T) {
+	loader := &mockDataChangeRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	dispatcher := &mockFunctionDispatcher{result: map[string]interface{}{"score": float64(95)}}
+
+	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.score","parameters":{"pk":"${event.primaryKey}"}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-func-dc",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Function on DataChange",
+		Status:        "active",
+		TriggerType:   "dataChange",
+		TriggerConfig: makeDataChangeTriggerConfig("Employee", []string{"CREATE"}, nil, 0),
+		Effects:       effects,
+	})
+
+	w := NewWatcher(loader, recorder)
+	w.SetFunctionDispatcher(dispatcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+
+	w.HandleChangeEvent(funnel.ChangeEvent{
+		ObjectType: "Employee",
+		PrimaryKey: "emp-1",
+		EditType:   funnel.EditTypeCreate,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	calls := dispatcher.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 function call, got %d", len(calls))
+	}
+	if calls[0].functionRid != "ri.function.main.function.score" {
+		t.Fatalf("expected functionRid, got %q", calls[0].functionRid)
+	}
+	if calls[0].parameters["pk"] != "emp-1" {
+		t.Fatalf("expected pk 'emp-1', got %v", calls[0].parameters["pk"])
+	}
+
+	// Verify execution with result stored
+	execs := recorder.getExecutions()
+	if len(execs) != 1 {
+		t.Fatalf("expected 1 execution, got %d", len(execs))
+	}
+	if execs[0].Status != "success" {
+		t.Fatalf("expected status 'success', got %q", execs[0].Status)
+	}
+	if execs[0].Result == nil {
+		t.Fatal("expected result to be stored in execution")
+	}
+}
+
 func TestWatcherLinkEditTypesIgnored(t *testing.T) {
 	loader := &mockDataChangeRuleLoader{}
 	recorder := &mockExecutionRecorder{}

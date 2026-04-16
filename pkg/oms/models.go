@@ -519,6 +519,7 @@ type AutomationExecution struct {
 	Status       string          `json:"status"` // running, success, error, retrying
 	Error        string          `json:"error,omitempty"`
 	RetryCount   int             `json:"retryCount"`
+	Result       json.RawMessage `json:"result,omitempty"`
 }
 
 // TypeGroup organizes object types into categories.

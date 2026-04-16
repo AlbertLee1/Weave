@@ -59,15 +59,16 @@ type debounceEntry struct {
 
 // Watcher evaluates incoming data change events against active automation rules.
 type Watcher struct {
-	loader          DataChangeRuleLoader
-	recorder        ExecutionRecorder
-	propertyFetcher ObjectPropertyFetcher
-	actionApplier   ActionApplier
-	mu              sync.Mutex
-	rules           []watcherRule
-	debounceTimers  map[string]*debounceEntry // ruleID → pending debounce
-	ctx             context.Context
-	cancel          context.CancelFunc
+	loader             DataChangeRuleLoader
+	recorder           ExecutionRecorder
+	propertyFetcher    ObjectPropertyFetcher
+	actionApplier      ActionApplier
+	functionDispatcher AutomateFunctionDispatcher
+	mu                 sync.Mutex
+	rules              []watcherRule
+	debounceTimers     map[string]*debounceEntry // ruleID → pending debounce
+	ctx                context.Context
+	cancel             context.CancelFunc
 }
 
 // NewWatcher creates a new Watcher.
@@ -88,6 +89,11 @@ func (w *Watcher) SetPropertyFetcher(fetcher ObjectPropertyFetcher) {
 // SetActionApplier sets the action applier for executeAction effects.
 func (w *Watcher) SetActionApplier(applier ActionApplier) {
 	w.actionApplier = applier
+}
+
+// SetFunctionDispatcher sets the function dispatcher for executeFunction effects.
+func (w *Watcher) SetFunctionDispatcher(dispatcher AutomateFunctionDispatcher) {
+	w.functionDispatcher = dispatcher
 }
 
 // Start loads active data-change rules and prepares the watcher for event processing.
@@ -304,9 +310,10 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 	}
 
 	// Process effects
+	var effectResults []EffectResult
 	var execErr error
 	if len(effects) > 0 {
-		execErr = processEffects(ctx, effects, ontologyRID, eventData, w.actionApplier)
+		effectResults, execErr = processEffects(ctx, effects, ontologyRID, eventData, w.actionApplier, w.functionDispatcher)
 	}
 
 	completedAt := time.Now()
@@ -318,6 +325,12 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 		log.Printf("[automate] effect execution failed for rule %s: %v", ruleID, execErr)
 	}
 
+	// Serialize effect results for storage
+	var resultJSON json.RawMessage
+	if len(effectResults) > 0 {
+		resultJSON, _ = json.Marshal(effectResults)
+	}
+
 	exec := &oms.AutomationExecution{
 		ID:           rid.NewAutomationExecutionRID(),
 		RuleID:       ruleID,
@@ -326,6 +339,7 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 		CompletedAt:  &completedAt,
 		Status:       status,
 		Error:        errMsg,
+		Result:       resultJSON,
 	}
 
 	if err := w.recorder.InsertExecution(ctx, exec); err != nil {

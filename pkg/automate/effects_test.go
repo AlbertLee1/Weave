@@ -219,7 +219,7 @@ func TestProcessEffects_ExecuteAction(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"createReport","parameters":{"pk":"${event.primaryKey}"}}]`)
 
-	err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestProcessEffects_Failure(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"nonExistent","parameters":{}}]`)
 
-	err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
 	if err == nil {
 		t.Fatal("expected error from failing action")
 	}
@@ -259,7 +259,7 @@ func TestProcessEffects_NilApplier(t *testing.T) {
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"skip","parameters":{}}]`)
 
 	// Should not panic or error when applier is nil
-	err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestProcessEffects_UnknownEffectType(t *testing.T) {
 	effects := json.RawMessage(`[{"type":"unknownFuture","parameters":{}}]`)
 
 	// Unknown types should be silently skipped
-	err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestProcessEffects_EmptyEffects(t *testing.T) {
 	applier := &mockActionApplier{}
 	data := &TriggerEventData{}
 
-	err := processEffects(context.Background(), json.RawMessage(`[]`), "ri.ontology.main.ontology.1", data, applier)
+	_, err := processEffects(context.Background(), json.RawMessage(`[]`), "ri.ontology.main.ontology.1", data, applier, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -296,13 +296,204 @@ func TestProcessEffects_MultipleActions_StopsOnFirstError(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"a1","parameters":{}},{"type":"executeAction","actionTypeApiName":"a2","parameters":{}}]`)
 
-	err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	// Should stop after first failure — only 1 call
 	if len(applier.getCalls()) != 1 {
 		t.Fatalf("expected 1 call (stop on first error), got %d", len(applier.getCalls()))
+	}
+}
+
+// mockFunctionDispatcher implements AutomateFunctionDispatcher for testing.
+type mockFunctionDispatcher struct {
+	mu     sync.Mutex
+	calls  []functionDispatcherCall
+	result interface{} // returned by DispatchFunction
+	err    error       // if non-nil, DispatchFunction returns this error
+}
+
+type functionDispatcherCall struct {
+	functionRid string
+	parameters  map[string]interface{}
+}
+
+func (m *mockFunctionDispatcher) DispatchFunction(ctx context.Context, functionRid string, parameters map[string]interface{}) (interface{}, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, functionDispatcherCall{
+		functionRid: functionRid,
+		parameters:  parameters,
+	})
+	return m.result, m.err
+}
+
+func (m *mockFunctionDispatcher) getCalls() []functionDispatcherCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]functionDispatcherCall, len(m.calls))
+	copy(result, m.calls)
+	return result
+}
+
+// --- ParseEffects tests for executeFunction ---
+
+func TestParseEffects_ExecuteFunction(t *testing.T) {
+	raw := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.calc","parameters":{"x":10,"y":20}}]`)
+	effects, err := ParseEffects(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(effects) != 1 {
+		t.Fatalf("expected 1 effect, got %d", len(effects))
+	}
+	if effects[0].Type != "executeFunction" {
+		t.Fatalf("expected type 'executeFunction', got %q", effects[0].Type)
+	}
+	if effects[0].FunctionRid != "ri.function.main.function.calc" {
+		t.Fatalf("expected functionRid 'ri.function.main.function.calc', got %q", effects[0].FunctionRid)
+	}
+	if effects[0].Parameters["x"] != float64(10) {
+		t.Fatalf("expected parameter x=10, got %v", effects[0].Parameters["x"])
+	}
+}
+
+// --- processEffects tests for executeFunction ---
+
+func TestProcessEffects_ExecuteFunction(t *testing.T) {
+	dispatcher := &mockFunctionDispatcher{result: map[string]interface{}{"total": float64(42)}}
+	data := &TriggerEventData{PrimaryKey: "obj-1"}
+
+	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.calc","parameters":{"pk":"${event.primaryKey}"}}]`)
+
+	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, dispatcher)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	calls := dispatcher.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].functionRid != "ri.function.main.function.calc" {
+		t.Fatalf("expected functionRid, got %q", calls[0].functionRid)
+	}
+	if calls[0].parameters["pk"] != "obj-1" {
+		t.Fatalf("expected pk 'obj-1', got %v", calls[0].parameters["pk"])
+	}
+
+	// Check result captured
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	resultMap, ok := results[0].Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map result, got %T", results[0].Result)
+	}
+	if resultMap["total"] != float64(42) {
+		t.Fatalf("expected total=42, got %v", resultMap["total"])
+	}
+}
+
+func TestProcessEffects_ExecuteFunction_Failure(t *testing.T) {
+	dispatcher := &mockFunctionDispatcher{err: fmt.Errorf("function not found")}
+	data := &TriggerEventData{}
+
+	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.bad","parameters":{}}]`)
+
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, dispatcher)
+	if err == nil {
+		t.Fatal("expected error from failing function")
+	}
+	if !contains(err.Error(), "function not found") {
+		t.Fatalf("expected error to contain 'function not found', got %q", err.Error())
+	}
+}
+
+func TestProcessEffects_ExecuteFunction_NilDispatcher(t *testing.T) {
+	data := &TriggerEventData{}
+	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.skip","parameters":{}}]`)
+
+	// Should not panic or error when dispatcher is nil
+	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (empty), got %d", len(results))
+	}
+}
+
+// --- Chain support tests ---
+
+func TestProcessEffects_ChainReference(t *testing.T) {
+	// First effect: executeFunction returns result
+	// Second effect: executeAction references ${effects[0].result}
+	dispatcher := &mockFunctionDispatcher{result: "computed-value-123"}
+	applier := &mockActionApplier{}
+	data := &TriggerEventData{}
+
+	effects := json.RawMessage(`[
+		{"type":"executeFunction","functionRid":"ri.function.main.function.calc","parameters":{"input":"test"}},
+		{"type":"executeAction","actionTypeApiName":"useResult","parameters":{"value":"${effects[0].result}"}}
+	]`)
+
+	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, dispatcher)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify chain resolution
+	calls := applier.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 action call, got %d", len(calls))
+	}
+	if calls[0].parameters["value"] != "computed-value-123" {
+		t.Fatalf("expected chain-resolved value 'computed-value-123', got %v", calls[0].parameters["value"])
+	}
+
+	// Verify both results tracked
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Result != "computed-value-123" {
+		t.Fatalf("expected first result 'computed-value-123', got %v", results[0].Result)
+	}
+}
+
+func TestResolveTemplateStringWithChain(t *testing.T) {
+	results := []EffectResult{
+		{Result: "value-from-func"},
+		{Result: float64(42)},
+	}
+	data := &TriggerEventData{PrimaryKey: "pk-1"}
+
+	result := resolveTemplateStringWithChain("pk=${event.primaryKey} r0=${effects[0].result} r1=${effects[1].result}", data, results)
+	expected := "pk=pk-1 r0=value-from-func r1=42"
+	if result != expected {
+		t.Fatalf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestResolveTemplateStringWithChain_NilResult(t *testing.T) {
+	results := []EffectResult{
+		{Result: nil},
+	}
+	data := &TriggerEventData{}
+
+	result := resolveTemplateStringWithChain("r=${effects[0].result}", data, results)
+	expected := "r=<nil>"
+	if result != expected {
+		t.Fatalf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestResolveTemplateStringWithChain_NoChainRefs(t *testing.T) {
+	data := &TriggerEventData{PrimaryKey: "pk-1"}
+	result := resolveTemplateStringWithChain("pk=${event.primaryKey}", data, nil)
+	if result != "pk=pk-1" {
+		t.Fatalf("expected 'pk=pk-1', got %q", result)
 	}
 }
 

@@ -30,7 +30,7 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000026, next is 000027
+- Migrations in migrations/ — sequential 000001-000027, next is 000028
 - AutomationRule/AutomationExecution models in pkg/oms/models.go; PG CRUD in pg_repository.go; mock stubs in mock_automation_test.go per package
 - Automation mock stubs pattern: same as branches/proposals — mock_automation_test.go per package (pkg/oms, pkg/actions, pkg/oss, pkg/links, test/e2e, test/northwind, test/chinook) + inline in pkg/index/rehydrate_test.go
 - Scheduler pattern: pkg/automate/scheduler.go — RuleLoader + ExecutionRecorder interfaces; robfig/cron/v3 for cron scheduling; entries map[string]cron.EntryID tracks active rules
@@ -38,11 +38,15 @@
 - Watcher pattern: pkg/automate/watcher.go — DataChangeRuleLoader + ExecutionRecorder + optional ObjectPropertyFetcher; HandleChangeEvent callback for funnel.ChangeEvent
 - DataChangeTriggerConfig: { "objectType": "Employee", "editTypes": ["CREATE","MODIFY"], "where": {...}, "debounceMs": 0 }
 - Watcher debounce: per-ruleID time.AfterFunc timer; DebounceMs=0 → immediate; >0 → resets on each matching event, fires with last event
-- Effects pattern: pkg/automate/effects.go — Effect struct (type, actionTypeApiName, parameters), ActionApplier interface, TriggerEventData for template resolution
+- Effects pattern: pkg/automate/effects.go — Effect struct (type, actionTypeApiName, functionRid, parameters), ActionApplier + AutomateFunctionDispatcher interfaces, TriggerEventData for template resolution
 - Effect types: "executeAction" (US-128), "executeFunction" (US-129), "notification" (US-130) — processEffects dispatches by type
 - Template variables: ${event.primaryKey}, ${event.editType}, ${event.objectType}, ${event.properties.fieldName} — resolved via resolveTemplateString before passing to ActionApplier
+- Chain template variables: ${effects[N].result} — resolved via resolveTemplateStringWithChain; allows later effects to reference earlier effect results
 - ActionApplier interface: ApplyAction(ctx, ontologyRID, actionType, parameters) error — wrap actions.Executor.Apply for use with automation
-- Both Scheduler and Watcher have SetActionApplier method; nil applier → executeAction effects silently skipped
+- AutomateFunctionDispatcher interface: DispatchFunction(ctx, functionRid, parameters) (interface{}, error) — delegates to GojaDispatcher or HTTPDispatcher
+- Both Scheduler and Watcher have SetActionApplier and SetFunctionDispatcher methods; nil → effects silently skipped
+- EffectResult struct: holds result from each effect execution; processEffects returns []EffectResult for chain support and storage
+- Function results stored in automation_executions.result JSONB column (migration 000027); serialized as []EffectResult JSON array
 - executeRule now passes ontologyRID (from AutomationRule) through closure to processEffects
 - Effect failure: processEffects returns error → execution recorded with status="error" and error message
 - Scheduler dynamic updates: AddRule, RemoveRule, PauseRule (alias for RemoveRule), ResumeRule (alias for AddRule)
@@ -603,4 +607,26 @@
   - Both Scheduler and Watcher need ontologyRID passed through closures to executeRule — it comes from AutomationRule.OntologyRID
   - Watcher fetches properties in executeRule (not matchRule) for template resolution — separate from where clause evaluation in matchRule
   - processEffects stops on first error (fail-fast) — retry logic will be added in US-131
+---
+
+## 2026-04-16 - US-129
+- Implemented Automate — Function Effect (executeFunction effect type with chain support)
+- Files changed:
+  - migrations/000027_automation_result.up.sql — ALTER TABLE adds result JSONB column to automation_executions
+  - migrations/000027_automation_result.down.sql — DROP COLUMN rollback
+  - pkg/oms/models.go — Added Result (json.RawMessage) field to AutomationExecution struct
+  - pkg/oms/pg_repository.go — Updated InsertExecution ($9 for result) and ListExecutions (SELECT + Scan includes result)
+  - pkg/automate/effects.go — Added FunctionRid field to Effect struct; AutomateFunctionDispatcher interface (DispatchFunction returns result); EffectResult struct; resolveTemplateStringWithChain + resolveParametersWithChain for ${effects[N].result} chain references; processEffects signature updated to (ctx, effects, ontologyRID, data, applier, funcDispatcher) → ([]EffectResult, error); executeFunction case dispatches to funcDispatcher, captures result
+  - pkg/automate/effects_test.go — 10 new tests: ParseEffects_ExecuteFunction, ProcessEffects_ExecuteFunction (dispatches + captures result), ExecuteFunction_Failure, ExecuteFunction_NilDispatcher, ChainReference (func result → action param via ${effects[0].result}), ResolveTemplateStringWithChain (multiple results), NilResult, NoChainRefs + mockFunctionDispatcher; updated 6 existing processEffects tests for new signature
+  - pkg/automate/scheduler.go — Added functionDispatcher field, SetFunctionDispatcher method; executeRule passes dispatcher to processEffects, captures []EffectResult, serializes to execution.Result
+  - pkg/automate/scheduler_test.go — 2 new tests: ExecuteFunctionEffect (cron fires → function dispatched → result stored in execution), ExecuteFunctionEffect_Failure (error → status=error)
+  - pkg/automate/watcher.go — Added functionDispatcher field, SetFunctionDispatcher method; executeRule passes dispatcher to processEffects, captures []EffectResult, serializes to execution.Result
+  - pkg/automate/watcher_test.go — 1 new test: ExecuteFunctionEffect (data change → function dispatched → result stored)
+- **Learnings for future iterations:**
+  - AutomateFunctionDispatcher is separate from actions.FunctionDispatcher — automation functions return interface{} results, not []funnel.Edit
+  - processEffects signature change (added funcDispatcher param, returns []EffectResult) is a breaking change to all callers — update scheduler.go and watcher.go simultaneously
+  - Chain support tracks EffectResult per effect in order; ${effects[N].result} uses fmt.Sprint for serialization — nil result renders as "<nil>"
+  - Result storage: []EffectResult serialized to json.RawMessage and stored in automation_executions.result JSONB; nil/empty results produce nil resultJSON (no storage)
+  - processEffects still uses resolveParametersWithChain (not resolveParameters) for all effect types — this ensures chain references work in executeAction params too
+  - The existing mockActionApplier and mockFunctionDispatcher follow the same thread-safe pattern (mu + getCalls)
 ---

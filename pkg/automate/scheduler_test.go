@@ -533,6 +533,124 @@ func TestScheduler_ExecuteActionEffect_Failure(t *testing.T) {
 	}
 }
 
+func TestScheduler_ExecuteFunctionEffect(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	dispatcher := &mockFunctionDispatcher{result: map[string]interface{}{"answer": float64(42)}}
+
+	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.calc","parameters":{"input":"scheduled"}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-sched-func",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Scheduled Function",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+	})
+
+	s := New(loader, recorder)
+	s.SetFunctionDispatcher(dispatcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for cron to fire
+	deadline := time.After(5 * time.Second)
+	for {
+		calls := dispatcher.getCalls()
+		if len(calls) > 0 {
+			if calls[0].functionRid != "ri.function.main.function.calc" {
+				t.Fatalf("expected functionRid, got %q", calls[0].functionRid)
+			}
+			if calls[0].parameters["input"] != "scheduled" {
+				t.Fatalf("expected input 'scheduled', got %v", calls[0].parameters["input"])
+			}
+
+			// Verify execution recorded as success with result
+			execs := recorder.getExecutions()
+			if len(execs) == 0 {
+				t.Fatal("expected at least 1 execution")
+			}
+			if execs[0].Status != "success" {
+				t.Fatalf("expected status 'success', got %q", execs[0].Status)
+			}
+			// Verify result stored in execution
+			if execs[0].Result == nil {
+				t.Fatal("expected result to be stored in execution")
+			}
+			var resultList []EffectResult
+			if err := json.Unmarshal(execs[0].Result, &resultList); err != nil {
+				t.Fatalf("failed to unmarshal result: %v", err)
+			}
+			if len(resultList) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(resultList))
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for scheduled function effect")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func TestScheduler_ExecuteFunctionEffect_Failure(t *testing.T) {
+	loader := &mockRuleLoader{}
+	recorder := &mockExecutionRecorder{}
+	dispatcher := &mockFunctionDispatcher{err: fmt.Errorf("function dispatch failed")}
+
+	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.bad","parameters":{}}]`)
+
+	loader.addRule(oms.AutomationRule{
+		ID:            "rule-sched-func-fail",
+		OntologyRID:   "ri.ontology.main.ontology.1",
+		Name:          "Failing Function",
+		Status:        "active",
+		TriggerType:   "schedule",
+		TriggerConfig: makeTriggerConfig("@every 1s"),
+		Effects:       effects,
+	})
+
+	s := New(loader, recorder)
+	s.SetFunctionDispatcher(dispatcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for cron to fire
+	deadline := time.After(5 * time.Second)
+	for {
+		execs := recorder.getExecutions()
+		if len(execs) > 0 {
+			if execs[0].Status != "error" {
+				t.Fatalf("expected status 'error', got %q", execs[0].Status)
+			}
+			if execs[0].Error == "" {
+				t.Fatal("expected non-empty error message")
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for scheduled execution")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 func TestSchedulerInvalidCronExpression(t *testing.T) {
 	loader := &mockRuleLoader{}
 	recorder := &mockExecutionRecorder{}
