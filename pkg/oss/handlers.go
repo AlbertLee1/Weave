@@ -210,6 +210,7 @@ type OrderByField struct {
 // searchRequestBody is the JSON body for search requests.
 type searchRequestBody struct {
 	Where     *where.WhereClause `json:"where"`
+	Fuzzy     *where.FuzzyConfig `json:"fuzzy,omitempty"`
 	Select    []string           `json:"select,omitempty"`
 	PageSize  int                `json:"pageSize,omitempty"`
 	PageToken string             `json:"pageToken,omitempty"`
@@ -258,6 +259,7 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
 		Where:       body.Where,
+		Fuzzy:       body.Fuzzy,
 		PageSize:    pageSize,
 		PageToken:   pageToken,
 		OrderBy:     orderBy,

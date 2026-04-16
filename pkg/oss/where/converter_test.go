@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 )
 
 // setupTestIndex creates a Bleve index in a temp dir with test documents.
@@ -51,8 +52,20 @@ func setupTestIndex(t *testing.T) bleve.Index {
 // searchWithWhere converts a WhereClause to a Bleve query, executes it, and returns sorted doc IDs.
 func searchWithWhere(t *testing.T, idx bleve.Index, clause *WhereClause) []string {
 	t.Helper()
+	return searchWithWhereOpts(t, idx, clause, nil)
+}
 
-	q, err := ConvertToBleveQuery(clause)
+// searchWithWhereOpts converts a WhereClause with options to a Bleve query, executes it, and returns sorted doc IDs.
+func searchWithWhereOpts(t *testing.T, idx bleve.Index, clause *WhereClause, opts *ConvertOptions) []string {
+	t.Helper()
+
+	var q query.Query
+	var err error
+	if opts != nil {
+		q, err = ConvertToBleveQueryWithOpts(clause, opts)
+	} else {
+		q, err = ConvertToBleveQuery(clause)
+	}
 	if err != nil {
 		t.Fatalf("convert: %v", err)
 	}
@@ -934,5 +947,119 @@ func TestWhereClause_ComplexNested(t *testing.T) {
 	// or: alice OR bob => 1, 2
 	// not active=false => 1, 3
 	// and: intersection => 1 (alice)
+	assertIDs(t, ids, []string{"1"})
+}
+
+// --- Fuzzy Search tests ---
+
+// setupFuzzyTestIndex creates a Bleve index with names suitable for fuzzy matching tests.
+func setupFuzzyTestIndex(t *testing.T) bleve.Index {
+	t.Helper()
+
+	indexMapping := bleve.NewIndexMapping()
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("name", bleve.NewTextFieldMapping())
+	docMapping.AddFieldMappingsAt("city", bleve.NewTextFieldMapping())
+	indexMapping.DefaultMapping = docMapping
+
+	dir := t.TempDir()
+	idx, err := bleve.New(filepath.Join(dir, "fuzzy"), indexMapping)
+	if err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+
+	docs := []struct {
+		id  string
+		doc map[string]interface{}
+	}{
+		{"1", map[string]interface{}{"name": "John Smith", "city": "New York"}},
+		{"2", map[string]interface{}{"name": "Jane Doe", "city": "Los Angeles"}},
+		{"3", map[string]interface{}{"name": "James Brown", "city": "Chicago"}},
+	}
+	for _, d := range docs {
+		if err := idx.Index(d.id, d.doc); err != nil {
+			t.Fatalf("index doc %s: %v", d.id, err)
+		}
+	}
+	return idx
+}
+
+func TestFuzzy_ContainsAllTerms_MatchWithMaxEdits1(t *testing.T) {
+	// "Jonh" (transposition typo) should match "John" with fuzzy maxEdits=1
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "containsAllTerms",
+		Field: "name",
+		Value: json.RawMessage(`"Jonh"`),
+	}
+	opts := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 1}}
+	ids := searchWithWhereOpts(t, idx, clause, opts)
+	assertIDs(t, ids, []string{"1"})
+}
+
+func TestFuzzy_ContainsAllTerms_NoMatchWithoutFuzzy(t *testing.T) {
+	// "Jonh" (typo) should NOT match "John" without fuzzy
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "containsAllTerms",
+		Field: "name",
+		Value: json.RawMessage(`"Jonh"`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{})
+}
+
+func TestFuzzy_ContainsAnyTerm_MatchWithMaxEdits1(t *testing.T) {
+	// "Jonh" should match "John" with fuzzy via containsAnyTerm
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "containsAnyTerm",
+		Field: "name",
+		Value: json.RawMessage(`"Jonh"`),
+	}
+	opts := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 1}}
+	ids := searchWithWhereOpts(t, idx, clause, opts)
+	assertIDs(t, ids, []string{"1"})
+}
+
+func TestFuzzy_Eq_MatchWithMaxEdits1(t *testing.T) {
+	// "jonh" should match "john" (analyzed) with fuzzy via eq
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "eq",
+		Field: "name",
+		Value: json.RawMessage(`"Jonh"`),
+	}
+	opts := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 1}}
+	ids := searchWithWhereOpts(t, idx, clause, opts)
+	assertIDs(t, ids, []string{"1"})
+}
+
+func TestFuzzy_DefaultMaxEdits(t *testing.T) {
+	// When fuzzy is present but MaxEdits is 0 (omitted), default to 1
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "containsAllTerms",
+		Field: "name",
+		Value: json.RawMessage(`"Jonh"`),
+	}
+	opts := &ConvertOptions{Fuzzy: &FuzzyConfig{}} // MaxEdits omitted (zero value)
+	ids := searchWithWhereOpts(t, idx, clause, opts)
+	assertIDs(t, ids, []string{"1"})
+}
+
+func TestFuzzy_ThroughAndClause(t *testing.T) {
+	// Fuzzy should propagate through logical operators (and)
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type: "and",
+		Value: json.RawMessage(`[
+			{"type": "containsAllTerms", "field": "name", "value": "Jonh"},
+			{"type": "containsAllTerms", "field": "name", "value": "Smtih"}
+		]`),
+	}
+	opts := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 1}}
+	ids := searchWithWhereOpts(t, idx, clause, opts)
 	assertIDs(t, ids, []string{"1"})
 }

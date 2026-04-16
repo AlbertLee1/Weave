@@ -366,7 +366,8 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 
 	var bleveQuery query.Query
 	if req.Where != nil {
-		bleveQuery, err = where.ConvertToBleveQuery(req.Where)
+		opts := &where.ConvertOptions{Fuzzy: req.Fuzzy}
+		bleveQuery, err = where.ConvertToBleveQueryWithOpts(req.Where, opts)
 		if err != nil {
 			return nil, err
 		}

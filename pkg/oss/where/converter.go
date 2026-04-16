@@ -9,15 +9,21 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 )
 
-// ConvertToBleveQuery translates a Palantir V2 WhereClause into a Bleve query.
-func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
+// ConvertToBleveQueryWithOpts translates a WhereClause into a Bleve query with
+// optional settings such as fuzzy matching.
+func ConvertToBleveQueryWithOpts(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
 	if clause == nil {
 		return nil, fmt.Errorf("where clause is nil")
 	}
+	if opts == nil {
+		opts = &ConvertOptions{}
+	}
+
+	fuzz := resolveFuzziness(opts)
 
 	switch clause.Type {
 	case "eq":
-		return convertEq(clause)
+		return convertEqFuzzy(clause, fuzz)
 	case "gt":
 		return convertRange(clause, false, true, false, false)
 	case "gte":
@@ -31,9 +37,9 @@ func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
 	case "contains":
 		return convertContains(clause)
 	case "containsAllTerms":
-		return convertContainsAllTerms(clause)
+		return convertContainsAllTermsFuzzy(clause, fuzz)
 	case "containsAnyTerm":
-		return convertContainsAnyTerm(clause)
+		return convertContainsAnyTermFuzzy(clause, fuzz)
 	case "containsAllTermsInOrder":
 		return convertContainsAllTermsInOrder(clause)
 	case "containsAllTermsInOrderPrefixLastTerm":
@@ -43,15 +49,15 @@ func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
 	case "wildcard":
 		return convertWildcard(clause)
 	case "and":
-		return convertAnd(clause)
+		return convertAndWithOpts(clause, opts)
 	case "or":
-		return convertOr(clause)
+		return convertOrWithOpts(clause, opts)
 	case "not":
-		return convertNot(clause)
+		return convertNotWithOpts(clause, opts)
 	case "withinBoundingBox":
 		return convertWithinBoundingBox(clause)
 	case "intersectsBoundingBox":
-		return convertWithinBoundingBox(clause) // same as within for point data
+		return convertWithinBoundingBox(clause)
 	case "withinPolygon":
 		return convertWithinPolygon(clause)
 	case "intersectsPolygon":
@@ -67,9 +73,31 @@ func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
 	}
 }
 
-// convertEq handles the "eq" operator.
-// For strings: TermQuery. For numbers: NumericRangeQuery with min==max. For booleans: BoolFieldQuery.
+// ConvertToBleveQuery translates a Palantir V2 WhereClause into a Bleve query.
+func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
+	return ConvertToBleveQueryWithOpts(clause, nil)
+}
+
+// resolveFuzziness returns the effective fuzziness from ConvertOptions.
+// Returns 0 when fuzzy is disabled; defaults to 1 when FuzzyConfig is present but MaxEdits is 0.
+func resolveFuzziness(opts *ConvertOptions) int {
+	if opts == nil || opts.Fuzzy == nil {
+		return 0
+	}
+	if opts.Fuzzy.MaxEdits <= 0 {
+		return 1 // default
+	}
+	return opts.Fuzzy.MaxEdits
+}
+
+// convertEq handles the "eq" operator (non-fuzzy, for backward compatibility).
 func convertEq(clause *WhereClause) (query.Query, error) {
+	return convertEqFuzzy(clause, 0)
+}
+
+// convertEqFuzzy handles the "eq" operator with optional fuzzy matching.
+// For strings: MatchQuery with optional fuzziness. For numbers/booleans: unchanged.
+func convertEqFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
 	// Try number first.
 	var numVal float64
 	if err := json.Unmarshal(clause.Value, &numVal); err == nil {
@@ -93,6 +121,9 @@ func convertEq(clause *WhereClause) (query.Query, error) {
 	if err := json.Unmarshal(clause.Value, &strVal); err == nil {
 		q := bleve.NewMatchQuery(strVal)
 		q.SetField(clause.Field)
+		if fuzz > 0 {
+			q.SetFuzziness(fuzz)
+		}
 		return q, nil
 	}
 
@@ -174,9 +205,14 @@ func convertContains(clause *WhereClause) (query.Query, error) {
 	return q, nil
 }
 
-// convertContainsAllTerms handles the "containsAllTerms" operator.
-// Splits the value into terms and requires ALL to match (BooleanQuery with Must for each).
+// convertContainsAllTerms handles the "containsAllTerms" operator (non-fuzzy).
 func convertContainsAllTerms(clause *WhereClause) (query.Query, error) {
+	return convertContainsAllTermsFuzzy(clause, 0)
+}
+
+// convertContainsAllTermsFuzzy handles "containsAllTerms" with optional fuzzy matching.
+// Splits the value into terms and requires ALL to match (BooleanQuery with Must for each).
+func convertContainsAllTermsFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
 	var strVal string
 	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
 		return nil, fmt.Errorf("containsAllTerms value must be a string: %w", err)
@@ -191,14 +227,22 @@ func convertContainsAllTerms(clause *WhereClause) (query.Query, error) {
 	for _, term := range terms {
 		mq := bleve.NewMatchQuery(term)
 		mq.SetField(clause.Field)
+		if fuzz > 0 {
+			mq.SetFuzziness(fuzz)
+		}
 		bq.AddMust(mq)
 	}
 	return bq, nil
 }
 
-// convertContainsAnyTerm handles the "containsAnyTerm" operator.
-// Uses a MatchQuery which ORs terms by default.
+// convertContainsAnyTerm handles the "containsAnyTerm" operator (non-fuzzy).
 func convertContainsAnyTerm(clause *WhereClause) (query.Query, error) {
+	return convertContainsAnyTermFuzzy(clause, 0)
+}
+
+// convertContainsAnyTermFuzzy handles "containsAnyTerm" with optional fuzzy matching.
+// Uses a MatchQuery which ORs terms by default.
+func convertContainsAnyTermFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
 	var strVal string
 	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
 		return nil, fmt.Errorf("containsAnyTerm value must be a string: %w", err)
@@ -206,6 +250,9 @@ func convertContainsAnyTerm(clause *WhereClause) (query.Query, error) {
 
 	q := bleve.NewMatchQuery(strVal)
 	q.SetField(clause.Field)
+	if fuzz > 0 {
+		q.SetFuzziness(fuzz)
+	}
 	return q, nil
 }
 
@@ -274,9 +321,13 @@ func convertWildcard(clause *WhereClause) (query.Query, error) {
 	return q, nil
 }
 
-// convertAnd handles the "and" logical operator.
-// Each sub-clause becomes a Must in a BooleanQuery.
+// convertAnd handles the "and" logical operator (non-opts).
 func convertAnd(clause *WhereClause) (query.Query, error) {
+	return convertAndWithOpts(clause, nil)
+}
+
+// convertAndWithOpts handles "and" with options threading.
+func convertAndWithOpts(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
 	var subClauses []WhereClause
 	if err := json.Unmarshal(clause.Value, &subClauses); err != nil {
 		return nil, fmt.Errorf("and value must be an array of where clauses: %w", err)
@@ -284,7 +335,7 @@ func convertAnd(clause *WhereClause) (query.Query, error) {
 
 	bq := bleve.NewBooleanQuery()
 	for i := range subClauses {
-		sub, err := ConvertToBleveQuery(&subClauses[i])
+		sub, err := ConvertToBleveQueryWithOpts(&subClauses[i], opts)
 		if err != nil {
 			return nil, fmt.Errorf("and sub-clause %d: %w", i, err)
 		}
@@ -293,9 +344,13 @@ func convertAnd(clause *WhereClause) (query.Query, error) {
 	return bq, nil
 }
 
-// convertOr handles the "or" logical operator.
-// Each sub-clause becomes a Should in a BooleanQuery with MinShould=1.
+// convertOr handles the "or" logical operator (non-opts).
 func convertOr(clause *WhereClause) (query.Query, error) {
+	return convertOrWithOpts(clause, nil)
+}
+
+// convertOrWithOpts handles "or" with options threading.
+func convertOrWithOpts(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
 	var subClauses []WhereClause
 	if err := json.Unmarshal(clause.Value, &subClauses); err != nil {
 		return nil, fmt.Errorf("or value must be an array of where clauses: %w", err)
@@ -307,7 +362,7 @@ func convertOr(clause *WhereClause) (query.Query, error) {
 
 	bq := bleve.NewBooleanQuery()
 	for i := range subClauses {
-		sub, err := ConvertToBleveQuery(&subClauses[i])
+		sub, err := ConvertToBleveQueryWithOpts(&subClauses[i], opts)
 		if err != nil {
 			return nil, fmt.Errorf("or sub-clause %d: %w", i, err)
 		}
@@ -455,14 +510,18 @@ func convertDoesNotIntersectBoundingBox(clause *WhereClause) (query.Query, error
 	return bq, nil
 }
 
-// convertNot handles the "not" logical operator.
-// Supports both Palantir V2 array format: {"type":"not","value":[{"type":"eq",...}]}
-// and single object format: {"type":"not","value":{"type":"eq",...}}
+// convertNot handles the "not" logical operator (non-opts).
 func convertNot(clause *WhereClause) (query.Query, error) {
+	return convertNotWithOpts(clause, nil)
+}
+
+// convertNotWithOpts handles "not" with options threading.
+// Supports both Palantir V2 array format and single object format.
+func convertNotWithOpts(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
 	// Try array format first (Palantir V2)
 	var subClauses []WhereClause
 	if err := json.Unmarshal(clause.Value, &subClauses); err == nil && len(subClauses) > 0 {
-		sub, err := ConvertToBleveQuery(&subClauses[0])
+		sub, err := ConvertToBleveQueryWithOpts(&subClauses[0], opts)
 		if err != nil {
 			return nil, fmt.Errorf("not sub-clause: %w", err)
 		}
@@ -478,7 +537,7 @@ func convertNot(clause *WhereClause) (query.Query, error) {
 		return nil, fmt.Errorf("not value must be a where clause or array: %w", err)
 	}
 
-	sub, err := ConvertToBleveQuery(&subClause)
+	sub, err := ConvertToBleveQueryWithOpts(&subClause, opts)
 	if err != nil {
 		return nil, fmt.Errorf("not sub-clause: %w", err)
 	}

@@ -27,6 +27,7 @@ type SearchObjectsRequest struct {
 	OntologyRID string
 	ObjectType  string
 	Where       *where.WhereClause
+	Fuzzy       *where.FuzzyConfig
 	PageSize    int
 	PageToken   string
 	OrderBy     string
