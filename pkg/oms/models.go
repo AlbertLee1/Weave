@@ -399,6 +399,7 @@ type ActionLog struct {
 	UserID        string          `json:"userId"`
 	Parameters    json.RawMessage `json:"parameters"`
 	Edits         json.RawMessage `json:"edits"`
+	PrevEdits     json.RawMessage `json:"prevEdits,omitempty"` // US-104: pre-edit state for undo (parallel to Edits)
 	Status        string          `json:"status"`
 	ErrorMessage  string          `json:"errorMessage,omitempty"`
 	CreatedAt     time.Time       `json:"createdAt"`

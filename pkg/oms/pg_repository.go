@@ -1554,10 +1554,10 @@ func (r *PGRepository) CountActionLogs(ctx context.Context, actionTypeRID string
 
 func (r *PGRepository) InsertActionLog(ctx context.Context, al *ActionLog) error {
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO action_logs (action_type_rid, user_id, parameters, edits, status, error_message)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO action_logs (action_type_rid, user_id, parameters, edits, status, error_message, prev_edits)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, created_at`,
-		al.ActionTypeRID, al.UserID, al.Parameters, al.Edits, al.Status, nilIfEmpty(al.ErrorMessage)).
+		al.ActionTypeRID, al.UserID, al.Parameters, al.Edits, al.Status, nilIfEmpty(al.ErrorMessage), al.PrevEdits).
 		Scan(&al.ID, &al.CreatedAt)
 	if err != nil {
 		return err

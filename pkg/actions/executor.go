@@ -133,12 +133,20 @@ type ObjectExistenceChecker interface {
 	ObjectExists(ctx context.Context, objectType string, primaryKey string) bool
 }
 
+// ObjectFetcher retrieves the current properties of an object from the data
+// layer (e.g. Bleve index). Used by US-104 to record PrevState in ActionLog
+// for undo support. The ontologyAPIName is needed to scope the Bleve index lookup.
+type ObjectFetcher interface {
+	FetchObject(ctx context.Context, ontologyAPIName, objectType, primaryKey string) (map[string]interface{}, error)
+}
+
 // Executor executes actions.
 type Executor struct {
 	omsRepo            oms.Repository
 	publisher          Publisher
 	functionDispatcher FunctionDispatcher
 	objectChecker      ObjectExistenceChecker
+	objectFetcher      ObjectFetcher
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit
@@ -167,6 +175,14 @@ func (e *Executor) SetObjectExistenceChecker(c ObjectExistenceChecker) {
 	e.objectChecker = c
 }
 
+// SetObjectFetcher attaches a fetcher used to record PrevState of objects
+// before they are modified or deleted (US-104 undo support). When nil,
+// PrevEdits is omitted from ActionLog (backward compatible). Safe to call
+// once at boot.
+func (e *Executor) SetObjectFetcher(f ObjectFetcher) {
+	e.objectFetcher = f
+}
+
 // PreparedAction is the output of Executor.Prepare: everything computable for
 // an action without touching NATS, the action log, or side effects. Prepared
 // actions are safe to discard when any sibling action in a batch fails
@@ -178,6 +194,11 @@ type PreparedAction struct {
 	// Edits are pre-collapse, per-action. Cross-action collapse happens in
 	// CommitBatch over the flattened slice of all prepared actions.
 	Edits []funnel.Edit
+	// PrevEdits is a parallel slice to Edits recording the pre-edit state of
+	// each object for undo (US-104). CREATE and LINK edits have nil entries;
+	// MODIFY/DELETE entries contain the full previous properties map. Nil when
+	// no ObjectFetcher is configured (backward compatible).
+	PrevEdits []map[string]interface{}
 }
 
 // BatchResult is the response payload for ApplyBatchAtomic / ApplyBatchBestEffort.
@@ -304,11 +325,15 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		return nil, fmt.Errorf("interface validation: %w", err)
 	}
 
+	// Step 12 (US-104): Fetch previous object state for MODIFY/DELETE edits.
+	prevEdits := e.fetchPrevEdits(ctx, ontologyRID, edits)
+
 	return &PreparedAction{
 		ActionType: actionType,
 		UserID:     userID,
 		Request:    req,
 		Edits:      edits,
+		PrevEdits:  prevEdits,
 	}, nil
 }
 
@@ -390,6 +415,29 @@ func (e *Executor) validateInterfaceRules(ctx context.Context, ontologyRID strin
 		}
 	}
 	return nil
+}
+
+// fetchPrevEdits builds a parallel slice to edits containing the pre-edit
+// object state for each MODIFY/DELETE edit. CREATE and LINK edits get nil
+// entries. Returns nil when no ObjectFetcher is configured (backward compatible).
+func (e *Executor) fetchPrevEdits(ctx context.Context, ontologyAPIName string, edits []funnel.Edit) []map[string]interface{} {
+	if e.objectFetcher == nil {
+		return nil
+	}
+	prev := make([]map[string]interface{}, len(edits))
+	for i, edit := range edits {
+		switch edit.Type {
+		case funnel.EditTypeModify, funnel.EditTypeDelete:
+			props, err := e.objectFetcher.FetchObject(ctx, ontologyAPIName, edit.ObjectType, edit.PrimaryKey)
+			if err != nil {
+				log.Printf("actions: failed to fetch prev state for %s/%s: %v", edit.ObjectType, edit.PrimaryKey, err)
+				continue
+			}
+			prev[i] = props
+		}
+		// CREATE, LINK_CREATE, LINK_DELETE → prev[i] stays nil
+	}
+	return prev
 }
 
 // tagEditsAsUserSource stamps Edit.Source = "user" on every edit in place so
@@ -483,6 +531,11 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 			Parameters:    paramsJSON,
 			Edits:         editsJSON,
 			Status:        "SUCCESS",
+		}
+		// US-104: serialize PrevEdits when available.
+		if p.PrevEdits != nil {
+			prevEditsJSON, _ := json.Marshal(p.PrevEdits)
+			logRow.PrevEdits = prevEditsJSON
 		}
 		if logErr := e.omsRepo.InsertActionLog(ctx, logRow); logErr != nil {
 			log.Printf("actions: failed to write action log for action %d: %v", i, logErr)

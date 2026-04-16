@@ -2438,6 +2438,369 @@ func TestExecutor_InterfaceRule_RejectsNonImplementingType(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// PrevEdits / Undo Tests (US-104)
+// ---------------------------------------------------------------------------
+
+// mockObjectFetcher returns pre-configured object states for testing PrevEdits.
+type mockObjectFetcher struct {
+	objects map[string]map[string]interface{} // "objectType|primaryKey" → properties
+}
+
+func (m *mockObjectFetcher) FetchObject(_ context.Context, _, objectType, primaryKey string) (map[string]interface{}, error) {
+	key := objectType + "|" + primaryKey
+	if props, ok := m.objects[key]; ok {
+		return props, nil
+	}
+	return nil, nil
+}
+
+func TestExecutor_PrevEdits_CreateHasNullEntry(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectFetcher(&mockObjectFetcher{objects: map[string]map[string]interface{}{}})
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{"name": "Alice"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	if log.PrevEdits == nil {
+		t.Fatal("expected PrevEdits to be non-nil (should be JSON array with null entry)")
+	}
+
+	var prevEdits []json.RawMessage
+	if err := json.Unmarshal(log.PrevEdits, &prevEdits); err != nil {
+		t.Fatalf("failed to unmarshal PrevEdits: %v", err)
+	}
+	if len(prevEdits) != 1 {
+		t.Fatalf("expected 1 PrevEdits entry, got %d", len(prevEdits))
+	}
+	// CREATE edits should have null PrevEdits entry
+	if string(prevEdits[0]) != "null" {
+		t.Fatalf("expected null for CREATE PrevEdits entry, got %s", prevEdits[0])
+	}
+}
+
+func TestExecutor_PrevEdits_ModifyHasPreviousProperties(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("updateEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "modifyObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	fetcher := &mockObjectFetcher{
+		objects: map[string]map[string]interface{}{
+			"Employee|emp-1": {"name": "OldAlice", "age": float64(30)},
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectFetcher(fetcher)
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "updateEmployee",
+		Parameters: map[string]interface{}{"primaryKey": "emp-1", "name": "NewAlice"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	if log.PrevEdits == nil {
+		t.Fatal("expected PrevEdits to be non-nil for MODIFY action")
+	}
+
+	var prevEdits []json.RawMessage
+	if err := json.Unmarshal(log.PrevEdits, &prevEdits); err != nil {
+		t.Fatalf("failed to unmarshal PrevEdits: %v", err)
+	}
+	if len(prevEdits) != 1 {
+		t.Fatalf("expected 1 PrevEdits entry, got %d", len(prevEdits))
+	}
+
+	var prevProps map[string]interface{}
+	if err := json.Unmarshal(prevEdits[0], &prevProps); err != nil {
+		t.Fatalf("failed to unmarshal MODIFY PrevEdits entry: %v", err)
+	}
+	if prevProps["name"] != "OldAlice" {
+		t.Fatalf("expected previous name 'OldAlice', got %v", prevProps["name"])
+	}
+	if prevProps["age"] != float64(30) {
+		t.Fatalf("expected previous age 30, got %v", prevProps["age"])
+	}
+}
+
+func TestExecutor_PrevEdits_DeleteHasFullPreviousObject(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("deleteEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "deleteObject",
+					ObjectType: "Employee",
+				},
+			}),
+		},
+	}
+	fetcher := &mockObjectFetcher{
+		objects: map[string]map[string]interface{}{
+			"Employee|emp-1": {"name": "Alice", "age": float64(30), "dept": "Engineering"},
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectFetcher(fetcher)
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "deleteEmployee",
+		Parameters: map[string]interface{}{"primaryKey": "emp-1"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	if log.PrevEdits == nil {
+		t.Fatal("expected PrevEdits to be non-nil for DELETE action")
+	}
+
+	var prevEdits []json.RawMessage
+	if err := json.Unmarshal(log.PrevEdits, &prevEdits); err != nil {
+		t.Fatalf("failed to unmarshal PrevEdits: %v", err)
+	}
+	if len(prevEdits) != 1 {
+		t.Fatalf("expected 1 PrevEdits entry, got %d", len(prevEdits))
+	}
+
+	var prevProps map[string]interface{}
+	if err := json.Unmarshal(prevEdits[0], &prevProps); err != nil {
+		t.Fatalf("failed to unmarshal DELETE PrevEdits entry: %v", err)
+	}
+	if prevProps["name"] != "Alice" {
+		t.Fatalf("expected previous name 'Alice', got %v", prevProps["name"])
+	}
+	if prevProps["dept"] != "Engineering" {
+		t.Fatalf("expected previous dept 'Engineering', got %v", prevProps["dept"])
+	}
+}
+
+func TestExecutor_PrevEdits_NoFetcherPrevEditsNil(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("updateEmployee", []ParameterDef{
+				{ID: "primaryKey", Type: "string", Required: true},
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "modifyObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					},
+				},
+			}),
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	// No SetObjectFetcher call — graceful degradation
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "updateEmployee",
+		Parameters: map[string]interface{}{"primaryKey": "emp-1", "name": "NewAlice"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	// When no ObjectFetcher is set, PrevEdits should be nil (backward compatible)
+	if log.PrevEdits != nil {
+		t.Fatalf("expected nil PrevEdits when no fetcher is set, got %s", string(log.PrevEdits))
+	}
+}
+
+func TestExecutor_PrevEdits_MixedEditsParallelSlice(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("complexAction", []ParameterDef{
+				{ID: "newName", Type: "string", Required: true},
+				{ID: "TaskId", Type: "string", Required: true},
+				{ID: "ProjectId", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:       "createObject",
+					ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "newName"},
+					},
+				},
+				{
+					Type:       "modifyObject",
+					ObjectType: "Task",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "static", Value: "Updated"},
+					},
+				},
+				{
+					Type:       "deleteObject",
+					ObjectType: "Project",
+				},
+			}),
+		},
+	}
+	fetcher := &mockObjectFetcher{
+		objects: map[string]map[string]interface{}{
+			"Task|task-1":    {"name": "BeforeUpdate"},
+			"Project|proj-1": {"name": "BeforeDelete", "role": "Manager"},
+		},
+	}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectFetcher(fetcher)
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "complexAction",
+		Parameters: map[string]interface{}{
+			"newName":   "NewPerson",
+			"TaskId":    "task-1",
+			"ProjectId": "proj-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	if log.PrevEdits == nil {
+		t.Fatal("expected PrevEdits to be non-nil")
+	}
+
+	var prevEdits []json.RawMessage
+	if err := json.Unmarshal(log.PrevEdits, &prevEdits); err != nil {
+		t.Fatalf("failed to unmarshal PrevEdits: %v", err)
+	}
+	if len(prevEdits) != 3 {
+		t.Fatalf("expected 3 PrevEdits entries (parallel to 3 edits), got %d", len(prevEdits))
+	}
+
+	// Entry 0: CREATE → null
+	if string(prevEdits[0]) != "null" {
+		t.Fatalf("expected null for CREATE entry, got %s", prevEdits[0])
+	}
+
+	// Entry 1: MODIFY Task → previous properties
+	var modifyPrev map[string]interface{}
+	if err := json.Unmarshal(prevEdits[1], &modifyPrev); err != nil {
+		t.Fatalf("failed to unmarshal MODIFY PrevEdits: %v", err)
+	}
+	if modifyPrev["name"] != "BeforeUpdate" {
+		t.Fatalf("expected MODIFY prev name 'BeforeUpdate', got %v", modifyPrev["name"])
+	}
+
+	// Entry 2: DELETE Project → full previous object
+	var deletePrev map[string]interface{}
+	if err := json.Unmarshal(prevEdits[2], &deletePrev); err != nil {
+		t.Fatalf("failed to unmarshal DELETE PrevEdits: %v", err)
+	}
+	if deletePrev["name"] != "BeforeDelete" {
+		t.Fatalf("expected DELETE prev name 'BeforeDelete', got %v", deletePrev["name"])
+	}
+	if deletePrev["role"] != "Manager" {
+		t.Fatalf("expected DELETE prev role 'Manager', got %v", deletePrev["role"])
+	}
+}
+
+func TestExecutor_PrevEdits_LinkEditsHaveNullEntry(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("linkAction", []ParameterDef{
+				{ID: "sourceId", Type: "string", Required: true},
+				{ID: "targetId", Type: "string", Required: true},
+			}, []Rule{
+				{
+					Type:                   "createLink",
+					LinkTypeAPIName:        "employeeToProject",
+					SourceObjectPrimaryKey: "sourceId",
+					TargetObjectPrimaryKey: "targetId",
+				},
+			}),
+		},
+	}
+	fetcher := &mockObjectFetcher{objects: map[string]map[string]interface{}{}}
+	exec := NewExecutor(repo, nil)
+	exec.SetObjectFetcher(fetcher)
+
+	_, err := exec.Apply(context.Background(), "ont-1", &ApplyRequest{
+		ActionType: "linkAction",
+		Parameters: map[string]interface{}{"sourceId": "emp-1", "targetId": "proj-1"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.insertedLogs) != 1 {
+		t.Fatalf("expected 1 action log, got %d", len(repo.insertedLogs))
+	}
+	log := repo.insertedLogs[0]
+	if log.PrevEdits == nil {
+		t.Fatal("expected PrevEdits to be non-nil for link action")
+	}
+
+	var prevEdits []json.RawMessage
+	if err := json.Unmarshal(log.PrevEdits, &prevEdits); err != nil {
+		t.Fatalf("failed to unmarshal PrevEdits: %v", err)
+	}
+	if len(prevEdits) != 1 {
+		t.Fatalf("expected 1 PrevEdits entry, got %d", len(prevEdits))
+	}
+	// LINK_CREATE edits have null PrevEdits (like CREATE)
+	if string(prevEdits[0]) != "null" {
+		t.Fatalf("expected null for LINK_CREATE PrevEdits entry, got %s", prevEdits[0])
+	}
+}
+
 // interfaceAwareMockRepo extends mockOmsRepo with interface resolution.
 type interfaceAwareMockRepo struct {
 	mockOmsRepo

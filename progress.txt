@@ -29,7 +29,9 @@
 - Aggregation metrics in pkg/oss/aggregation/engine.go — switch on AggregationSpec.Type
 - OMS models in pkg/oms/models.go — all entity structs
 - OMS repository interface in pkg/oms/repository.go — ~60 methods
-- Migrations in migrations/ — sequential 000001-000022, next is 000023
+- Migrations in migrations/ — sequential 000001-000023, next is 000024
+- ObjectFetcher interface on Executor: injected like ObjectExistenceChecker, nil→graceful degradation (PrevEdits omitted)
+- PrevEdits is a parallel slice to Edits in PreparedAction; serialized to ActionLog.PrevEdits JSONB (null entries for CREATE/LINK edits)
 - Frontend routes in web/src/App.tsx
 - API hooks in web/src/hooks/
 - Sidebar nav in web/src/components/layout/Sidebar.tsx
@@ -104,4 +106,21 @@
   - Validation requiring OMS repo access (interface membership) is done in Executor.Prepare post-ExecuteRules, keeping ExecuteRules pure
   - Rules and edits maintain 1:1 correspondence — this allows Executor.Prepare to cross-reference rule metadata with generated edits for validation
   - The extended mock pattern (interfaceAwareMockRepo embeds mockOmsRepo) works cleanly for adding interface resolution without touching other method stubs
+---
+
+## 2026-04-16 - US-104
+- Implemented PrevState recording in ActionLog for undo support
+- Files changed:
+  - pkg/oms/models.go — Added PrevEdits field (json.RawMessage, JSONB) to ActionLog struct
+  - migrations/000023_action_log_prev_edits.up.sql — ALTER TABLE adds prev_edits JSONB column
+  - migrations/000023_action_log_prev_edits.down.sql — DROP COLUMN rollback
+  - pkg/actions/executor.go — Added ObjectFetcher interface, SetObjectFetcher method, fetchPrevEdits step in Prepare pipeline (step 12), PrevEdits field on PreparedAction, PrevEdits serialization in CommitBatch
+  - pkg/oms/pg_repository.go — InsertActionLog includes prev_edits column ($7)
+  - pkg/actions/actions_test.go — 6 new tests: CREATE→null entry, MODIFY→previous properties, DELETE→full previous object, no fetcher→nil (backward compat), mixed edits parallel slice, link edits→null entry + mockObjectFetcher helper
+- **Learnings for future iterations:**
+  - PrevEdits is a parallel slice to Edits (1:1 index correspondence); CREATE and LINK edits get nil, MODIFY/DELETE get previous properties map
+  - ObjectFetcher follows the same injection pattern as ObjectExistenceChecker: nil→graceful degradation (PrevEdits omitted from ActionLog)
+  - The Bleve-based ObjectFetcher implementation (for integration tests) should use indexMgr.Search with DocIDQuery + Fields=["*"], not idx.Document() which returns internal types
+  - findPrimaryKey uses convention: "primaryKey", "{objectType}Id", or "id" — test params must match these patterns
+  - When testing multi-rule actions, all parameters must be declared in ParameterDef (validation rejects unknown params)
 ---
