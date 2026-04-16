@@ -774,6 +774,27 @@ components:
           type: array
           items:
             type: object
+    Notification:
+      type: object
+      required: [id, userId, title, body, type, read, createdAt]
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        type:
+          type: string
+        link:
+          type: string
+        read:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
     ImportResult:
       type: object
       properties:
@@ -3223,6 +3244,50 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "409":
           $ref: "#/components/responses/ConflictError"
+  /api/v2/notifications:
+    get:
+      operationId: listNotifications
+      summary: List notifications for the authenticated user
+      tags: [Notifications]
+      parameters:
+        - name: unread
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+          description: Filter for unread notifications only
+      responses:
+        "200":
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v2/notifications/{notificationId}/read:
+    post:
+      operationId: markNotificationRead
+      summary: Mark a notification as read
+      tags: [Notifications]
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Notification marked as read
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute:
     post:
       operationId: executeQueryType

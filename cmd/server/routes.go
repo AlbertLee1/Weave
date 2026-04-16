@@ -69,6 +69,10 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/pause", omsHandler.PauseAutomationRule)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", omsHandler.ResumeAutomationRule)
 
+	// Notifications (US-130)
+	r.Get("/api/v2/notifications", omsHandler.ListNotifications)
+	r.Post("/api/v2/notifications/{notificationId}/read", omsHandler.MarkNotificationRead)
+
 	// QueryType execute route
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
 }

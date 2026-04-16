@@ -165,6 +165,11 @@ type Repository interface {
 	InsertExecution(ctx context.Context, exec *AutomationExecution) error
 	ListExecutions(ctx context.Context, ruleID string) ([]AutomationExecution, error)
 
+	// Notification (US-130)
+	CreateNotification(ctx context.Context, n *Notification) error
+	ListNotifications(ctx context.Context, userID string, unreadOnly bool) ([]Notification, error)
+	MarkNotificationRead(ctx context.Context, id string) error
+
 	// OntologyProposal (US-117)
 	CreateProposal(ctx context.Context, p *OntologyProposal) error
 	GetProposal(ctx context.Context, id string) (*OntologyProposal, error)

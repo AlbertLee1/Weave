@@ -115,6 +115,11 @@ func NewAutomationExecutionRID() string {
 	return New("ontology", "main", "automation-execution")
 }
 
+// NewNotificationRID generates a new RID for a notification.
+func NewNotificationRID() string {
+	return New("ontology", "main", "notification")
+}
+
 // IsRID reports whether s looks like a Resource Identifier (starts with "ri.").
 func IsRID(s string) bool {
 	return strings.HasPrefix(s, "ri.")

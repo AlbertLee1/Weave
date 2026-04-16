@@ -219,7 +219,7 @@ func TestProcessEffects_ExecuteAction(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"createReport","parameters":{"pk":"${event.primaryKey}"}}]`)
 
-	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestProcessEffects_Failure(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"nonExistent","parameters":{}}]`)
 
-	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil, nil)
 	if err == nil {
 		t.Fatal("expected error from failing action")
 	}
@@ -259,7 +259,7 @@ func TestProcessEffects_NilApplier(t *testing.T) {
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"skip","parameters":{}}]`)
 
 	// Should not panic or error when applier is nil
-	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestProcessEffects_UnknownEffectType(t *testing.T) {
 	effects := json.RawMessage(`[{"type":"unknownFuture","parameters":{}}]`)
 
 	// Unknown types should be silently skipped
-	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestProcessEffects_EmptyEffects(t *testing.T) {
 	applier := &mockActionApplier{}
 	data := &TriggerEventData{}
 
-	_, err := processEffects(context.Background(), json.RawMessage(`[]`), "ri.ontology.main.ontology.1", data, applier, nil)
+	_, err := processEffects(context.Background(), json.RawMessage(`[]`), "ri.ontology.main.ontology.1", data, applier, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestProcessEffects_MultipleActions_StopsOnFirstError(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeAction","actionTypeApiName":"a1","parameters":{}},{"type":"executeAction","actionTypeApiName":"a2","parameters":{}}]`)
 
-	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -367,7 +367,7 @@ func TestProcessEffects_ExecuteFunction(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.calc","parameters":{"pk":"${event.primaryKey}"}}]`)
 
-	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, dispatcher)
+	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, dispatcher, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestProcessEffects_ExecuteFunction_Failure(t *testing.T) {
 
 	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.bad","parameters":{}}]`)
 
-	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, dispatcher)
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, dispatcher, nil)
 	if err == nil {
 		t.Fatal("expected error from failing function")
 	}
@@ -416,7 +416,7 @@ func TestProcessEffects_ExecuteFunction_NilDispatcher(t *testing.T) {
 	effects := json.RawMessage(`[{"type":"executeFunction","functionRid":"ri.function.main.function.skip","parameters":{}}]`)
 
 	// Should not panic or error when dispatcher is nil
-	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil)
+	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestProcessEffects_ChainReference(t *testing.T) {
 		{"type":"executeAction","actionTypeApiName":"useResult","parameters":{"value":"${effects[0].result}"}}
 	]`)
 
-	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, dispatcher)
+	results, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, applier, dispatcher, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -494,6 +494,180 @@ func TestResolveTemplateStringWithChain_NoChainRefs(t *testing.T) {
 	result := resolveTemplateStringWithChain("pk=${event.primaryKey}", data, nil)
 	if result != "pk=pk-1" {
 		t.Fatalf("expected 'pk=pk-1', got %q", result)
+	}
+}
+
+// --- Notification effect tests ---
+
+// mockNotificationCreator implements NotificationCreator for testing.
+type mockNotificationCreator struct {
+	mu    sync.Mutex
+	calls []notificationCreatorCall
+	err   error
+}
+
+type notificationCreatorCall struct {
+	userID   string
+	title    string
+	body     string
+	nType    string
+	link     string
+}
+
+func (m *mockNotificationCreator) CreateNotificationForUser(ctx context.Context, userID, title, body, nType, link string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, notificationCreatorCall{
+		userID: userID,
+		title:  title,
+		body:   body,
+		nType:  nType,
+		link:   link,
+	})
+	return m.err
+}
+
+func (m *mockNotificationCreator) getCalls() []notificationCreatorCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]notificationCreatorCall, len(m.calls))
+	copy(result, m.calls)
+	return result
+}
+
+func TestParseEffects_Notification(t *testing.T) {
+	raw := json.RawMessage(`[{"type":"notification","channel":"platform","template":"Object ${event.primaryKey} created","recipients":["user1","user2"]}]`)
+	effects, err := ParseEffects(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(effects) != 1 {
+		t.Fatalf("expected 1 effect, got %d", len(effects))
+	}
+	if effects[0].Type != "notification" {
+		t.Fatalf("expected type 'notification', got %q", effects[0].Type)
+	}
+	if effects[0].Channel != "platform" {
+		t.Fatalf("expected channel 'platform', got %q", effects[0].Channel)
+	}
+	if effects[0].Template != "Object ${event.primaryKey} created" {
+		t.Fatalf("expected template, got %q", effects[0].Template)
+	}
+	if len(effects[0].Recipients) != 2 {
+		t.Fatalf("expected 2 recipients, got %d", len(effects[0].Recipients))
+	}
+}
+
+func TestProcessEffects_Notification_Platform(t *testing.T) {
+	creator := &mockNotificationCreator{}
+	data := &TriggerEventData{PrimaryKey: "emp-1", ObjectType: "Employee", EditType: "CREATE"}
+
+	effects := json.RawMessage(`[{"type":"notification","channel":"platform","template":"New ${event.objectType}: ${event.primaryKey}","recipients":["alice","bob"]}]`)
+
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, creator)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	calls := creator.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 notification calls (one per recipient), got %d", len(calls))
+	}
+	if calls[0].userID != "alice" {
+		t.Fatalf("expected userID 'alice', got %q", calls[0].userID)
+	}
+	if calls[0].body != "New Employee: emp-1" {
+		t.Fatalf("expected resolved body 'New Employee: emp-1', got %q", calls[0].body)
+	}
+	if calls[1].userID != "bob" {
+		t.Fatalf("expected userID 'bob', got %q", calls[1].userID)
+	}
+}
+
+func TestProcessEffects_Notification_NilCreator(t *testing.T) {
+	data := &TriggerEventData{}
+	effects := json.RawMessage(`[{"type":"notification","channel":"platform","template":"test","recipients":["user1"]}]`)
+
+	// Should not panic or error when creator is nil — graceful skip
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestProcessEffects_Notification_Failure(t *testing.T) {
+	creator := &mockNotificationCreator{err: fmt.Errorf("db error")}
+	data := &TriggerEventData{}
+
+	effects := json.RawMessage(`[{"type":"notification","channel":"platform","template":"test","recipients":["user1"]}]`)
+
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, creator)
+	if err == nil {
+		t.Fatal("expected error from failing notification")
+	}
+	if !contains(err.Error(), "db error") {
+		t.Fatalf("expected error to contain 'db error', got %q", err.Error())
+	}
+}
+
+func TestProcessEffects_Notification_EmailSkipsGracefully(t *testing.T) {
+	// Email channel with no SMTP configured → graceful skip (no error)
+	creator := &mockNotificationCreator{}
+	data := &TriggerEventData{}
+
+	effects := json.RawMessage(`[{"type":"notification","channel":"email","template":"hello","recipients":["user1"]}]`)
+
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, creator)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Email channel should not create platform notifications
+	calls := creator.getCalls()
+	if len(calls) != 0 {
+		t.Fatalf("expected 0 platform calls for email channel, got %d", len(calls))
+	}
+}
+
+func TestProcessEffects_Notification_TemplateResolution(t *testing.T) {
+	creator := &mockNotificationCreator{}
+	data := &TriggerEventData{
+		PrimaryKey: "emp-42",
+		EditType:   "MODIFY",
+		ObjectType: "Employee",
+		Properties: map[string]interface{}{
+			"name": "Alice",
+		},
+	}
+
+	effects := json.RawMessage(`[{"type":"notification","channel":"platform","template":"${event.properties.name} was updated (${event.editType})","recipients":["admin"]}]`)
+
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, creator)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	calls := creator.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].body != "Alice was updated (MODIFY)" {
+		t.Fatalf("expected resolved template, got %q", calls[0].body)
+	}
+}
+
+func TestProcessEffects_Notification_NoRecipients(t *testing.T) {
+	creator := &mockNotificationCreator{}
+	data := &TriggerEventData{}
+
+	effects := json.RawMessage(`[{"type":"notification","channel":"platform","template":"test","recipients":[]}]`)
+
+	_, err := processEffects(context.Background(), effects, "ri.ontology.main.ontology.1", data, nil, nil, creator)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No recipients → no calls
+	if len(creator.getCalls()) != 0 {
+		t.Fatal("expected 0 calls for empty recipients")
 	}
 }
 

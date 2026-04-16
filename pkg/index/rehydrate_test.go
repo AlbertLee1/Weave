@@ -327,6 +327,15 @@ func (s *stubRehydrateRepo) ListExecutions(context.Context, string) ([]oms.Autom
 	return nil, nil
 }
 
+// Notification stubs
+func (s *stubRehydrateRepo) CreateNotification(context.Context, *oms.Notification) error {
+	return nil
+}
+func (s *stubRehydrateRepo) ListNotifications(context.Context, string, bool) ([]oms.Notification, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) MarkNotificationRead(context.Context, string) error { return nil }
+
 // --- Tests ---
 
 func newRehydrateRepo() *stubRehydrateRepo {

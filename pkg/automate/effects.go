@@ -13,6 +13,9 @@ type Effect struct {
 	ActionTypeApiName string                 `json:"actionTypeApiName,omitempty"`
 	FunctionRid       string                 `json:"functionRid,omitempty"`
 	Parameters        map[string]interface{} `json:"parameters,omitempty"`
+	Channel           string                 `json:"channel,omitempty"`    // "platform" or "email"
+	Template          string                 `json:"template,omitempty"`   // notification body template
+	Recipients        []string               `json:"recipients,omitempty"` // user IDs to notify
 }
 
 // ActionApplier executes actions. Implemented by wrapping actions.Executor.Apply.
@@ -24,6 +27,11 @@ type ActionApplier interface {
 // Delegates to GojaDispatcher or HTTPDispatcher based on functionRid prefix.
 type AutomateFunctionDispatcher interface {
 	DispatchFunction(ctx context.Context, functionRid string, parameters map[string]interface{}) (interface{}, error)
+}
+
+// NotificationCreator creates platform notifications for users.
+type NotificationCreator interface {
+	CreateNotificationForUser(ctx context.Context, userID, title, body, nType, link string) error
 }
 
 // TriggerEventData carries event data for template variable resolution.
@@ -125,7 +133,7 @@ func resolveParametersWithChain(params map[string]interface{}, data *TriggerEven
 
 // processEffects executes the effects for an automation rule.
 // Returns effect results for storage (e.g., function return values) and any error.
-func processEffects(ctx context.Context, effects json.RawMessage, ontologyRID string, data *TriggerEventData, applier ActionApplier, funcDispatcher AutomateFunctionDispatcher) ([]EffectResult, error) {
+func processEffects(ctx context.Context, effects json.RawMessage, ontologyRID string, data *TriggerEventData, applier ActionApplier, funcDispatcher AutomateFunctionDispatcher, notifier NotificationCreator) ([]EffectResult, error) {
 	parsed, err := ParseEffects(effects)
 	if err != nil {
 		return nil, err
@@ -157,6 +165,21 @@ func processEffects(ctx context.Context, effects json.RawMessage, ontologyRID st
 				return results, fmt.Errorf("executeFunction %q failed: %w", effect.FunctionRid, err)
 			}
 			results = append(results, EffectResult{Result: result})
+
+		case "notification":
+			if notifier == nil || effect.Channel != "platform" {
+				// Email channel or no notifier: graceful skip
+				results = append(results, EffectResult{})
+				continue
+			}
+			resolvedBody := resolveTemplateStringWithChain(effect.Template, data, results)
+			title := "Automation Notification"
+			for _, recipient := range effect.Recipients {
+				if err := notifier.CreateNotificationForUser(ctx, recipient, title, resolvedBody, "automation", ""); err != nil {
+					return results, fmt.Errorf("notification to %q failed: %w", recipient, err)
+				}
+			}
+			results = append(results, EffectResult{})
 
 		default:
 			results = append(results, EffectResult{})

@@ -52,6 +52,7 @@ type Scheduler struct {
 	recorder           ExecutionRecorder
 	actionApplier      ActionApplier
 	functionDispatcher AutomateFunctionDispatcher
+	notifier           NotificationCreator
 	cron               *cron.Cron
 	mu                 sync.Mutex
 	entries            map[string]cron.EntryID // ruleID → cron entryID
@@ -75,6 +76,11 @@ func (s *Scheduler) SetActionApplier(applier ActionApplier) {
 // SetFunctionDispatcher sets the function dispatcher for executeFunction effects.
 func (s *Scheduler) SetFunctionDispatcher(dispatcher AutomateFunctionDispatcher) {
 	s.functionDispatcher = dispatcher
+}
+
+// SetNotificationCreator sets the notification creator for notification effects.
+func (s *Scheduler) SetNotificationCreator(notifier NotificationCreator) {
+	s.notifier = notifier
 }
 
 // Start initializes the scheduler, loads active schedule rules, and begins cron execution.
@@ -181,7 +187,7 @@ func (s *Scheduler) executeRule(ruleID, ontologyRID string, effects json.RawMess
 	var effectResults []EffectResult
 	var execErr error
 	if len(effects) > 0 {
-		effectResults, execErr = processEffects(ctx, effects, ontologyRID, eventData, s.actionApplier, s.functionDispatcher)
+		effectResults, execErr = processEffects(ctx, effects, ontologyRID, eventData, s.actionApplier, s.functionDispatcher, s.notifier)
 	}
 
 	completedAt := time.Now()

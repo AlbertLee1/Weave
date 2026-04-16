@@ -14,6 +14,7 @@ import (
 type OMSHandler struct {
 	repo          Repository
 	queryExecutor QueryExecutor
+	actorFn       ActorFunc
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
@@ -26,6 +27,12 @@ func NewOMSHandler(repo Repository) *OMSHandler {
 // FunctionRID through this executor instead of returning raw metadata.
 func (h *OMSHandler) SetQueryExecutor(qe QueryExecutor) {
 	h.queryExecutor = qe
+}
+
+// SetActorFunc sets a function that extracts the user ID from request context.
+// Used by notification handlers to determine the current user.
+func (h *OMSHandler) SetActorFunc(fn ActorFunc) {
+	h.actorFn = fn
 }
 
 // resolveRepo returns a Repository for the request. If ?branch= is set, it

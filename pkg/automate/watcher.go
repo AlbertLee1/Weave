@@ -64,6 +64,7 @@ type Watcher struct {
 	propertyFetcher    ObjectPropertyFetcher
 	actionApplier      ActionApplier
 	functionDispatcher AutomateFunctionDispatcher
+	notifier           NotificationCreator
 	mu                 sync.Mutex
 	rules              []watcherRule
 	debounceTimers     map[string]*debounceEntry // ruleID → pending debounce
@@ -94,6 +95,11 @@ func (w *Watcher) SetActionApplier(applier ActionApplier) {
 // SetFunctionDispatcher sets the function dispatcher for executeFunction effects.
 func (w *Watcher) SetFunctionDispatcher(dispatcher AutomateFunctionDispatcher) {
 	w.functionDispatcher = dispatcher
+}
+
+// SetNotificationCreator sets the notification creator for notification effects.
+func (w *Watcher) SetNotificationCreator(notifier NotificationCreator) {
+	w.notifier = notifier
 }
 
 // Start loads active data-change rules and prepares the watcher for event processing.
@@ -313,7 +319,7 @@ func (w *Watcher) executeRule(ruleID, ontologyRID string, event funnel.ChangeEve
 	var effectResults []EffectResult
 	var execErr error
 	if len(effects) > 0 {
-		effectResults, execErr = processEffects(ctx, effects, ontologyRID, eventData, w.actionApplier, w.functionDispatcher)
+		effectResults, execErr = processEffects(ctx, effects, ontologyRID, eventData, w.actionApplier, w.functionDispatcher, w.notifier)
 	}
 
 	completedAt := time.Now()

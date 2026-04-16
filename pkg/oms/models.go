@@ -522,6 +522,18 @@ type AutomationExecution struct {
 	Result       json.RawMessage `json:"result,omitempty"`
 }
 
+// Notification represents a user notification (US-130).
+type Notification struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"userId"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Type      string    `json:"type"`
+	Link      string    `json:"link,omitempty"`
+	Read      bool      `json:"read"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // TypeGroup organizes object types into categories.
 type TypeGroup struct {
 	RID         string    `json:"rid"`

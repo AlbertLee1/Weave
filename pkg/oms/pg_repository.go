@@ -2356,3 +2356,53 @@ func (r *PGRepository) ListExecutions(ctx context.Context, ruleID string) ([]Aut
 	}
 	return result, nil
 }
+
+// --- Notification (US-130) ---
+
+func (r *PGRepository) CreateNotification(ctx context.Context, n *Notification) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO notifications (id, user_id, title, body, type, link, read, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		n.ID, n.UserID, n.Title, n.Body, n.Type, n.Link, n.Read, n.CreatedAt)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) ListNotifications(ctx context.Context, userID string, unreadOnly bool) ([]Notification, error) {
+	query := `SELECT id, user_id, title, body, type, link, read, created_at
+	          FROM notifications WHERE user_id = $1`
+	if unreadOnly {
+		query += ` AND read = false`
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := r.pool.Query(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []Notification
+	for rows.Next() {
+		var n Notification
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Title, &n.Body, &n.Type, &n.Link, &n.Read, &n.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, n)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) MarkNotificationRead(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE notifications SET read = true WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
