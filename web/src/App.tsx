@@ -10,6 +10,7 @@ import { BrowserPage } from './components/browser/BrowserPage';
 import { ActionConsolePage } from './components/actions/ActionConsolePage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
 import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
+import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,6 +37,7 @@ export default function App() {
             >
               <Route index element={<DashboardPage />} />
               <Route path="explorer/:ontology" element={<ExplorerPage />} />
+              <Route path="explorer/:ontology/branches/:branch/diff" element={<BranchDiffPage />} />
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
 <Route path="actions/:ontology" element={<ActionConsolePage />} />

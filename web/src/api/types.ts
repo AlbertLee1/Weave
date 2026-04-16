@@ -419,3 +419,13 @@ export interface LoadObjectSetResponse {
 export interface CreateTemporaryResponse {
   objectSetRid: string;
 }
+
+// --- Branch Diff (mirrors pkg/oms/handlers_branch.go BranchDiffEntry) ---
+
+export interface BranchDiffEntry {
+  entityType: string;
+  entityRid: string;
+  changeType: 'ADDED' | 'MODIFIED' | 'DELETED';
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+}

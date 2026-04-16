@@ -7,6 +7,7 @@ import type {
   OntologyInterface,
   ValueType,
   QueryType,
+  BranchDiffEntry,
 } from './types';
 
 // --- Ontology endpoints ---
@@ -219,6 +220,19 @@ export function getQueryType(
     'GET',
     `/api/v2/ontologies/${ontologyApiName}/queryTypes/${queryType}`,
   );
+}
+
+// --- Branch endpoints ---
+
+export async function getBranchDiff(
+  ontologyApiName: string,
+  branchId: string,
+): Promise<BranchDiffEntry[]> {
+  const resp = await request<{ data: BranchDiffEntry[] }>(
+    'GET',
+    `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}/diff`,
+  );
+  return resp.data;
 }
 
 // --- Query execution ---
