@@ -3389,6 +3389,28 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/ontologies/{ontologyApiName}/subscriptions/ws:
+    get:
+      operationId: websocketSubscribe
+      summary: Upgrade to WebSocket for real-time object change subscriptions
+      description: |
+        Upgrades the HTTP connection to a WebSocket connection. Authentication
+        is performed via the ?token= query parameter (Bearer token) before the
+        upgrade. On success, the server sends a welcome message with the
+        connection ID.
+      tags: [Subscriptions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - name: token
+          in: query
+          description: Bearer token for authentication (required in jwt mode, optional in dev mode)
+          schema:
+            type: string
+      responses:
+        "101":
+          description: WebSocket connection established. Welcome message sent as first frame.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute:
     post:
       operationId: executeQueryType

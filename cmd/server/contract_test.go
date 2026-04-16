@@ -23,6 +23,7 @@ import (
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
+	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/timeseries"
@@ -188,6 +189,7 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		TransactionStore: transactions.NewMemoryStore(),
 		FunnelBroadcast:  funnel.NewBroadcast(),
 		FunnelPublisher:  stubIngestPublisher{},
+		WebSocketHub:     subscriptions.NewHub(),
 	}
 	return NewFullRouter(deps)
 }

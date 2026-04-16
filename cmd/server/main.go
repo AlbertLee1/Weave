@@ -32,6 +32,7 @@ import (
 	"github.com/liyang/weave/pkg/mcp"
 	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
@@ -80,6 +81,7 @@ type ServerDeps struct {
 	IndexDocSource    index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
 	AuditStore        audit.Store                // US-067: audit event store (nil = endpoint returns 503)
 	IngestRateLimiter oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
+	WebSocketHub      *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	CORSOrigins       []string                   // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -208,6 +210,37 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		r.Method(http.MethodPost, "/api/auth/login", loginHandler)
 		r.Method(http.MethodPost, "/api/auth/refresh", refreshHandler)
 		r.Method(http.MethodPost, "/api/auth/logout", logoutHandler)
+	}
+
+	// US-132: WebSocket subscription endpoint. Mounted OUTSIDE the auth
+	// middleware group because WebSocket clients cannot set HTTP headers
+	// during the upgrade handshake; auth is performed via the ?token=
+	// query parameter in the Handler before upgrade.
+	if deps.WebSocketHub != nil {
+		var validator subscriptions.TokenValidator
+		if deps.JWTSigner != nil {
+			signer := deps.JWTSigner
+			validator = func(token string) (string, error) {
+				if token == "" {
+					// Dev mode: allow empty token
+					if os.Getenv("AUTH_MODE") == "" || os.Getenv("AUTH_MODE") == "dev" {
+						return "dev-user", nil
+					}
+					return "", subscriptions.ErrInvalidToken
+				}
+				claims, err := signer.Verify(token)
+				if err != nil {
+					// Dev mode: accept raw token as user ID
+					if os.Getenv("AUTH_MODE") == "" || os.Getenv("AUTH_MODE") == "dev" {
+						return token, nil
+					}
+					return "", subscriptions.ErrInvalidToken
+				}
+				return claims.Subject, nil
+			}
+		}
+		wsHandler := subscriptions.NewHandler(deps.WebSocketHub, validator)
+		r.Get("/api/v2/ontologies/{ontologyApiName}/subscriptions/ws", wsHandler.ServeHTTP)
 	}
 
 	// Auth-protected API routes
@@ -758,6 +791,9 @@ func main() {
 		}
 	}
 
+	// 7b. WebSocket subscription hub (US-132).
+	deps.WebSocketHub = subscriptions.NewHub()
+
 	// 8. Action Executor
 	if deps.OmsRepo != nil {
 		deps.ActionExecutor = actions.NewExecutor(deps.OmsRepo, publisher)
@@ -783,6 +819,10 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		log.Println("shutting down...")
+		// US-132: close WebSocket hub before stopping HTTP server
+		if deps.WebSocketHub != nil {
+			deps.WebSocketHub.Close()
+		}
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		if err := gracefulShutdown(shutdownCtx, srv, deps.FunnelConsumer); err != nil {
