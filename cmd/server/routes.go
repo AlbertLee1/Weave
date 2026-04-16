@@ -60,6 +60,15 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/reject", omsHandler.RejectProposal)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals/{proposalId}/merge", omsHandler.MergeProposal)
 
+	// Automation Rules (US-125)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules", omsHandler.CreateAutomationRule)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules", omsHandler.ListAutomationRules)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", omsHandler.GetAutomationRule)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", omsHandler.UpdateAutomationRule)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", omsHandler.DeleteAutomationRule)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/pause", omsHandler.PauseAutomationRule)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", omsHandler.ResumeAutomationRule)
+
 	// QueryType execute route
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", omsHandler.ExecuteQueryType)
 }

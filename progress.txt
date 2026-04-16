@@ -521,3 +521,22 @@
   - ListExecutions returns all executions for a rule ordered by started_at — pagination can be added later in US-131
   - Adding 7 Repository methods requires updating 8 mock files across the codebase + 1 inline (rehydrate_test.go)
 ---
+
+## 2026-04-16 - US-125
+- Implemented Automate — CRUD API endpoints (7 endpoints for automation rule management)
+- Files changed:
+  - pkg/oms/handlers_automation.go — New file: CreateAutomationRule (POST, validates name+triggerType+validTriggerTypes), ListAutomationRules (GET, with ?status= filter), GetAutomationRule (GET by ID), UpdateAutomationRule (PUT, partial update), DeleteAutomationRule (DELETE), PauseAutomationRule (POST, 409 if already paused), ResumeAutomationRule (POST, 409 if already active)
+  - pkg/oms/handlers_automation_test.go — New file: 21 tests: CreateAutomationRule success/missingName/missingTriggerType/invalidTriggerType/ontologyNotFound, ListAutomationRules success/withStatusFilter/empty, GetAutomationRule success/notFound, UpdateAutomationRule success/notFound, DeleteAutomationRule success/notFound, PauseAutomationRule success/notFound/alreadyPaused, ResumeAutomationRule success/notFound/alreadyActive, FullLifecycle (create→list→get→update→pause→resume→delete→list-empty)
+  - pkg/oms/mock_automation_test.go — Upgraded from no-op stubs to functional data-driven implementations (CreateAutomationRule stores, GetAutomationRule searches by ID, ListAutomationRules filters by ontologyRID, UpdateAutomationRule finds+replaces, DeleteAutomationRule finds+removes)
+  - pkg/oms/handlers_test.go — Added automationRules field to mockRepo struct
+  - cmd/server/routes.go — Registered 7 automation rule endpoints (POST/GET collection, GET/PUT/DELETE single, POST pause, POST resume)
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — Added AutomationRule, CreateAutomationRuleRequest, UpdateAutomationRuleRequest schemas + 7 endpoint specs
+- **Learnings for future iterations:**
+  - Automation rule handlers follow handlers_function.go CRUD pattern for basic ops + handlers_branch.go pattern for pause/resume (status transition with conflict detection)
+  - New rules default to status="active" on creation (not "paused" or "disabled")
+  - Pause/Resume use 409 Conflict (not 400) when rule is already in the target status — consistent with branch merge/proposal conflict pattern
+  - validTriggerTypes map for quick validation: "schedule", "dataChange", "manual"
+  - ListAutomationRules passes ontologyApiName directly to repo (like ListFunctions) — mock filters by ontologyRID field
+  - Status filter is applied in handler (not SQL) for simplicity, consistent with ListBranches and ListProposals pattern
+  - Mock upgrade: changing from no-op stubs to functional implementations is safe because existing tests don't rely on the no-op behavior for automation methods
+---

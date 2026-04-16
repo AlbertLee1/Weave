@@ -707,6 +707,73 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryType"
+    AutomationRule:
+      type: object
+      required: [id, ontologyRid, name, status, triggerType]
+      properties:
+        id:
+          type: string
+        ontologyRid:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [active, paused, disabled]
+        triggerType:
+          type: string
+          enum: [schedule, dataChange, manual]
+        triggerConfig:
+          type: object
+        effects:
+          type: array
+          items:
+            type: object
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateAutomationRuleRequest:
+      type: object
+      required: [name, triggerType]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        triggerType:
+          type: string
+          enum: [schedule, dataChange, manual]
+        triggerConfig:
+          type: object
+        effects:
+          type: array
+          items:
+            type: object
+        createdBy:
+          type: string
+    UpdateAutomationRuleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        triggerType:
+          type: string
+          enum: [schedule, dataChange, manual]
+        triggerConfig:
+          type: object
+        effects:
+          type: array
+          items:
+            type: object
     ImportResult:
       type: object
       properties:
@@ -2976,6 +3043,186 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/automationRules:
+    post:
+      operationId: createAutomationRule
+      summary: Create an automation rule
+      description: Creates a new automation rule for the specified ontology with status=active.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAutomationRuleRequest"
+      responses:
+        "201":
+          description: Automation rule created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomationRule"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    get:
+      operationId: listAutomationRules
+      summary: List automation rules
+      description: Lists automation rules for the specified ontology, with optional status filter.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, paused, disabled]
+          description: Filter by rule status.
+      responses:
+        "200":
+          description: Automation rules list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AutomationRule"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}:
+    get:
+      operationId: getAutomationRule
+      summary: Get an automation rule
+      description: Returns an automation rule by ID.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Automation rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomationRule"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateAutomationRule
+      summary: Update an automation rule
+      description: Updates an existing automation rule. Only provided fields are updated.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAutomationRuleRequest"
+      responses:
+        "200":
+          description: Updated automation rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomationRule"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteAutomationRule
+      summary: Delete an automation rule
+      description: Deletes an automation rule and all its executions.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Automation rule deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/pause:
+    post:
+      operationId: pauseAutomationRule
+      summary: Pause an automation rule
+      description: Sets the automation rule status to paused. Returns 409 if already paused.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Automation rule paused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomationRule"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume:
+    post:
+      operationId: resumeAutomationRule
+      summary: Resume an automation rule
+      description: Sets the automation rule status to active. Returns 409 if already active.
+      tags: [Automation]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Automation rule resumed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomationRule"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
   /api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute:
     post:
       operationId: executeQueryType

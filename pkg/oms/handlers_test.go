@@ -33,6 +33,7 @@ type mockRepo struct {
 	branchChanges   []oms.BranchChange
 	proposals       []oms.OntologyProposal
 	proposalReviews []oms.ProposalReview
+	automationRules []oms.AutomationRule
 
 	// Error controls
 	createErr error

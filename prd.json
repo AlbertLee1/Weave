@@ -442,7 +442,7 @@
         "Typecheck passes"
       ],
       "priority": 26,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-124"
     },
     {
