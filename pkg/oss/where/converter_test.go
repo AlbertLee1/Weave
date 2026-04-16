@@ -784,6 +784,128 @@ func TestMatchClause_DoesNotIntersectPolygon(t *testing.T) {
 	}
 }
 
+// --- containsAllTermsInOrderPrefixLastTerm tests ---
+
+func setupAutocompleteIndex(t *testing.T) bleve.Index {
+	t.Helper()
+
+	indexMapping := bleve.NewIndexMapping()
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("name", bleve.NewTextFieldMapping())
+	indexMapping.DefaultMapping = docMapping
+
+	dir := t.TempDir()
+	idx, err := bleve.New(filepath.Join(dir, "autocomplete_test"), indexMapping)
+	if err != nil {
+		t.Fatalf("create index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+
+	docs := []struct {
+		id  string
+		doc map[string]interface{}
+	}{
+		{"js", map[string]interface{}{"name": "John Smith"}},
+		{"sj", map[string]interface{}{"name": "Smith John"}},
+		{"john", map[string]interface{}{"name": "John"}},
+		{"jane", map[string]interface{}{"name": "Jane"}},
+		{"james", map[string]interface{}{"name": "James"}},
+		{"bob", map[string]interface{}{"name": "Bob"}},
+	}
+	for _, d := range docs {
+		if err := idx.Index(d.id, d.doc); err != nil {
+			t.Fatalf("index doc %s: %v", d.id, err)
+		}
+	}
+
+	return idx
+}
+
+func TestContainsAllTermsInOrderPrefixLastTerm_MultiTerm(t *testing.T) {
+	idx := setupAutocompleteIndex(t)
+	// 'John S' should match 'John Smith' but not 'Smith John'
+	clause := &WhereClause{
+		Type:  "containsAllTermsInOrderPrefixLastTerm",
+		Field: "name",
+		Value: json.RawMessage(`"John S"`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"js"})
+}
+
+func TestContainsAllTermsInOrderPrefixLastTerm_SingleTerm(t *testing.T) {
+	idx := setupAutocompleteIndex(t)
+	// 'J' should match all docs with a term starting with 'j': John, Jane, James, John Smith, Smith John
+	clause := &WhereClause{
+		Type:  "containsAllTermsInOrderPrefixLastTerm",
+		Field: "name",
+		Value: json.RawMessage(`"J"`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"james", "jane", "john", "js", "sj"})
+}
+
+func TestContainsAllTermsInOrderPrefixLastTerm_Empty(t *testing.T) {
+	idx := setupAutocompleteIndex(t)
+	clause := &WhereClause{
+		Type:  "containsAllTermsInOrderPrefixLastTerm",
+		Field: "name",
+		Value: json.RawMessage(`""`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{})
+}
+
+func TestContainsAllTermsInOrderPrefixLastTerm_ExactMatch(t *testing.T) {
+	idx := setupAutocompleteIndex(t)
+	// 'John Smith' (complete terms) should still match via phrase prefix
+	clause := &WhereClause{
+		Type:  "containsAllTermsInOrderPrefixLastTerm",
+		Field: "name",
+		Value: json.RawMessage(`"John Smith"`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"js"})
+}
+
+// --- MatchClause containsAllTermsInOrderPrefixLastTerm tests (in-memory) ---
+
+func TestMatchClause_ContainsAllTermsInOrderPrefixLastTerm_Order(t *testing.T) {
+	clause := &WhereClause{
+		Type:  "containsAllTermsInOrderPrefixLastTerm",
+		Field: "name",
+		Value: json.RawMessage(`"John S"`),
+	}
+	// "John Smith" → match (john followed by word starting with s)
+	if !MatchClause(clause, map[string]interface{}{"name": "John Smith"}) {
+		t.Fatal("expected 'John S' to match 'John Smith'")
+	}
+	// "Smith John" → no match (wrong order)
+	if MatchClause(clause, map[string]interface{}{"name": "Smith John"}) {
+		t.Fatal("expected 'John S' to NOT match 'Smith John'")
+	}
+}
+
+func TestMatchClause_ContainsAllTermsInOrderPrefixLastTerm_SingleTerm(t *testing.T) {
+	clause := &WhereClause{
+		Type:  "containsAllTermsInOrderPrefixLastTerm",
+		Field: "name",
+		Value: json.RawMessage(`"J"`),
+	}
+	if !MatchClause(clause, map[string]interface{}{"name": "John"}) {
+		t.Fatal("expected 'J' to match 'John'")
+	}
+	if !MatchClause(clause, map[string]interface{}{"name": "Jane"}) {
+		t.Fatal("expected 'J' to match 'Jane'")
+	}
+	if !MatchClause(clause, map[string]interface{}{"name": "James"}) {
+		t.Fatal("expected 'J' to match 'James'")
+	}
+	if MatchClause(clause, map[string]interface{}{"name": "Bob"}) {
+		t.Fatal("expected 'J' to NOT match 'Bob'")
+	}
+}
+
 func TestWhereClause_ComplexNested(t *testing.T) {
 	raw := `{
 		"type": "and",

@@ -48,6 +48,8 @@ func MatchClause(clause *WhereClause, row map[string]interface{}) bool {
 		return matchContains(clause, row)
 	case "startsWith":
 		return matchStartsWith(clause, row)
+	case "containsAllTermsInOrderPrefixLastTerm":
+		return matchContainsAllTermsInOrderPrefixLastTerm(clause, row)
 	case "and":
 		return matchAnd(clause, row)
 	case "or":
@@ -305,6 +307,51 @@ func matchBoundingBox(clause *WhereClause, row map[string]interface{}) bool {
 
 	return lat >= bb.BottomRight.Latitude && lat <= bb.TopLeft.Latitude &&
 		lon >= bb.TopLeft.Longitude && lon <= bb.BottomRight.Longitude
+}
+
+// matchContainsAllTermsInOrderPrefixLastTerm evaluates the autocomplete
+// operator in-memory. All terms must appear adjacent and in order, with
+// the last term treated as a prefix match.
+func matchContainsAllTermsInOrderPrefixLastTerm(clause *WhereClause, row map[string]interface{}) bool {
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
+		return false
+	}
+
+	terms := SplitTerms(strVal)
+	if len(terms) == 0 {
+		return false
+	}
+
+	rowVal, ok := row[clause.Field].(string)
+	if !ok {
+		return false
+	}
+
+	// Tokenize row value the same way as Bleve's standard analyzer.
+	rowTokens := strings.Fields(strings.ToLower(rowVal))
+	numTerms := len(terms)
+
+	lowerTerms := make([]string, numTerms)
+	for i, t := range terms {
+		lowerTerms[i] = strings.ToLower(t)
+	}
+
+	// Slide a window of size numTerms across rowTokens.
+	for start := 0; start <= len(rowTokens)-numTerms; start++ {
+		match := true
+		for i := 0; i < numTerms-1; i++ {
+			if rowTokens[start+i] != lowerTerms[i] {
+				match = false
+				break
+			}
+		}
+		if match && strings.HasPrefix(rowTokens[start+numTerms-1], lowerTerms[numTerms-1]) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // coerceNumber tolerates the handful of Go numeric shapes that can land in a

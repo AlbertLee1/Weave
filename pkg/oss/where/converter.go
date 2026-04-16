@@ -36,6 +36,8 @@ func ConvertToBleveQuery(clause *WhereClause) (query.Query, error) {
 		return convertContainsAnyTerm(clause)
 	case "containsAllTermsInOrder":
 		return convertContainsAllTermsInOrder(clause)
+	case "containsAllTermsInOrderPrefixLastTerm":
+		return convertContainsAllTermsInOrderPrefixLastTerm(clause)
 	case "startsWith":
 		return convertStartsWith(clause)
 	case "wildcard":
@@ -218,6 +220,35 @@ func convertContainsAllTermsInOrder(clause *WhereClause) (query.Query, error) {
 	q := bleve.NewMatchPhraseQuery(strVal)
 	q.SetField(clause.Field)
 	return q, nil
+}
+
+// convertContainsAllTermsInOrderPrefixLastTerm handles the autocomplete operator.
+// First N-1 terms must appear in order (phrase match), last term is a prefix match.
+// Single-term input uses PrefixQuery only.
+func convertContainsAllTermsInOrderPrefixLastTerm(clause *WhereClause) (query.Query, error) {
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
+		return nil, fmt.Errorf("containsAllTermsInOrderPrefixLastTerm value must be a string: %w", err)
+	}
+
+	terms := SplitTerms(strVal)
+	if len(terms) == 0 {
+		return bleve.NewMatchNoneQuery(), nil
+	}
+
+	// Lowercase all terms to match Bleve's standard analyzer behavior.
+	lowerTerms := make([]string, len(terms))
+	for i, t := range terms {
+		lowerTerms[i] = strings.ToLower(t)
+	}
+
+	if len(lowerTerms) == 1 {
+		q := bleve.NewPrefixQuery(lowerTerms[0])
+		q.SetField(clause.Field)
+		return q, nil
+	}
+
+	return NewPhrasePrefixQuery(lowerTerms, clause.Field), nil
 }
 
 // convertStartsWith handles the "startsWith" operator using a PrefixQuery.
