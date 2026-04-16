@@ -2021,3 +2021,98 @@ func (r *PGRepository) FindNearestNeighbors(ctx context.Context, objectTypeRID s
 	}
 	return results, nil
 }
+
+// --- OntologyBranch (Phase 2) ---
+
+func (r *PGRepository) CreateBranch(ctx context.Context, b *OntologyBranch) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO ontology_branches (id, ontology_rid, name, base_version, status, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING created_at, updated_at`,
+		b.ID, b.OntologyRID, b.Name, b.BaseVersion, b.Status, b.CreatedBy).
+		Scan(&b.CreatedAt, &b.UpdatedAt)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) GetBranch(ctx context.Context, id string) (*OntologyBranch, error) {
+	b := &OntologyBranch{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, ontology_rid, name, base_version, status, created_by, created_at, updated_at
+		 FROM ontology_branches WHERE id = $1`, id).
+		Scan(&b.ID, &b.OntologyRID, &b.Name, &b.BaseVersion, &b.Status, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return b, nil
+}
+
+func (r *PGRepository) ListBranches(ctx context.Context, ontologyRID string) ([]OntologyBranch, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, ontology_rid, name, base_version, status, created_by, created_at, updated_at
+		 FROM ontology_branches WHERE ontology_rid = $1 ORDER BY created_at`, ontologyRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []OntologyBranch
+	for rows.Next() {
+		var b OntologyBranch
+		if err := rows.Scan(&b.ID, &b.OntologyRID, &b.Name, &b.BaseVersion, &b.Status, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, nil
+}
+
+func (r *PGRepository) CloseBranch(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ontology_branches SET status = 'closed', updated_at = NOW() WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PGRepository) CreateBranchChange(ctx context.Context, c *BranchChange) error {
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO ontology_branch_changes (id, branch_id, change_type, entity_type, entity_rid, before_state, after_state)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING created_at`,
+		c.ID, c.BranchID, c.ChangeType, c.EntityType, c.EntityRID, nilIfNoBytes(c.BeforeState), nilIfNoBytes(c.AfterState)).
+		Scan(&c.CreatedAt)
+	if err != nil {
+		return wrapPGError(err)
+	}
+	return nil
+}
+
+func (r *PGRepository) ListBranchChanges(ctx context.Context, branchID string) ([]BranchChange, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, branch_id, change_type, entity_type, entity_rid, before_state, after_state, created_at
+		 FROM ontology_branch_changes WHERE branch_id = $1 ORDER BY created_at`, branchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []BranchChange
+	for rows.Next() {
+		var c BranchChange
+		if err := rows.Scan(&c.ID, &c.BranchID, &c.ChangeType, &c.EntityType, &c.EntityRID, &c.BeforeState, &c.AfterState, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, c)
+	}
+	return result, nil
+}

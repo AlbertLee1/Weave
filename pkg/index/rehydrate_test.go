@@ -262,6 +262,24 @@ func (s *stubRehydrateRepo) ListFunctions(context.Context, string) ([]oms.Functi
 func (s *stubRehydrateRepo) UpdateFunction(context.Context, *oms.Function) error { return nil }
 func (s *stubRehydrateRepo) DeleteFunction(context.Context, string) error        { return nil }
 
+// Branch stubs
+func (s *stubRehydrateRepo) CreateBranch(context.Context, *oms.OntologyBranch) error {
+	return nil
+}
+func (s *stubRehydrateRepo) GetBranch(context.Context, string) (*oms.OntologyBranch, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) ListBranches(context.Context, string) ([]oms.OntologyBranch, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) CloseBranch(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) CreateBranchChange(context.Context, *oms.BranchChange) error {
+	return nil
+}
+func (s *stubRehydrateRepo) ListBranchChanges(context.Context, string) ([]oms.BranchChange, error) {
+	return nil, nil
+}
+
 // --- Tests ---
 
 func newRehydrateRepo() *stubRehydrateRepo {

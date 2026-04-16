@@ -442,6 +442,30 @@ type Function struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// OntologyBranch represents a branch for isolated ontology schema changes.
+type OntologyBranch struct {
+	ID          string    `json:"id"`
+	OntologyRID string    `json:"ontologyRid"`
+	Name        string    `json:"name"`
+	BaseVersion int64     `json:"baseVersion"`
+	Status      string    `json:"status"` // open, merged, closed
+	CreatedBy   string    `json:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// BranchChange records a single change made on a branch.
+type BranchChange struct {
+	ID          string          `json:"id"`
+	BranchID    string          `json:"branchId"`
+	ChangeType  string          `json:"changeType"` // ADDED, MODIFIED, DELETED
+	EntityType  string          `json:"entityType"`
+	EntityRID   string          `json:"entityRid"`
+	BeforeState json.RawMessage `json:"beforeState,omitempty"`
+	AfterState  json.RawMessage `json:"afterState,omitempty"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
 // TypeGroup organizes object types into categories.
 type TypeGroup struct {
 	RID         string    `json:"rid"`

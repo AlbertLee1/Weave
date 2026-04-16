@@ -141,4 +141,12 @@ type Repository interface {
 	UpsertObjectEmbedding(ctx context.Context, e *ObjectEmbedding) error
 	GetObjectEmbedding(ctx context.Context, objectTypeRID, primaryKey, model string) (*ObjectEmbedding, error)
 	FindNearestNeighbors(ctx context.Context, objectTypeRID string, queryVector []float32, k int, model string) ([]NearestNeighborResult, error)
+
+	// OntologyBranch (Phase 2: Ontology Branching)
+	CreateBranch(ctx context.Context, b *OntologyBranch) error
+	GetBranch(ctx context.Context, id string) (*OntologyBranch, error)
+	ListBranches(ctx context.Context, ontologyRID string) ([]OntologyBranch, error)
+	CloseBranch(ctx context.Context, id string) error
+	CreateBranchChange(ctx context.Context, c *BranchChange) error
+	ListBranchChanges(ctx context.Context, branchID string) ([]BranchChange, error)
 }
