@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { formatBaseType, formatStatus, truncate, formatCount } from '../formatters';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  formatBaseType,
+  formatStatus,
+  truncate,
+  formatCount,
+  formatRelativeTime,
+} from '../formatters';
 
 describe('formatBaseType', () => {
   it('capitalizes known types', () => {
@@ -51,5 +57,58 @@ describe('formatCount', () => {
 
   it('returns dash for NaN', () => {
     expect(formatCount('not-a-number')).toBe('-');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  const NOW = new Date('2026-04-18T12:00:00Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns "just now" for seconds-old timestamps', () => {
+    expect(formatRelativeTime(new Date(NOW.getTime() - 10_000).toISOString())).toBe(
+      'just now',
+    );
+  });
+
+  it('returns minutes for sub-hour timestamps', () => {
+    expect(formatRelativeTime(new Date(NOW.getTime() - 5 * 60_000).toISOString())).toBe(
+      '5m ago',
+    );
+  });
+
+  it('returns hours for sub-day timestamps', () => {
+    expect(
+      formatRelativeTime(new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString()),
+    ).toBe('3h ago');
+  });
+
+  it('returns days for sub-week timestamps', () => {
+    expect(
+      formatRelativeTime(
+        new Date(NOW.getTime() - 4 * 24 * 60 * 60_000).toISOString(),
+      ),
+    ).toBe('4d ago');
+  });
+
+  it('falls back to locale date for older timestamps', () => {
+    const date = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000);
+    expect(formatRelativeTime(date.toISOString())).toBe(date.toLocaleDateString());
+  });
+
+  it('returns empty string for missing input', () => {
+    expect(formatRelativeTime(undefined)).toBe('');
+    expect(formatRelativeTime('')).toBe('');
+  });
+
+  it('returns empty string for invalid date strings', () => {
+    expect(formatRelativeTime('not-a-date')).toBe('');
   });
 });
