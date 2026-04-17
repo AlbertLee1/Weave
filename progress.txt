@@ -173,7 +173,30 @@
 - Interface admin routes (US-150): GET `/api/v2/ontologies/{ontologyApiName}/interfacesAdmin` (list) + POST `/api/v2/ontologies/{ontologyApiName}/interfaces` (create) + PUT/DELETE `/api/v2/ontologies/{ontologyApiName}/interfaces/byRid/{interfaceRid}` + POST/DELETE `/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces[/{interfaceRid}]` for attach/detach. Backend `CreateInterfaceRequest`/`UpdateInterfaceRequest` accept `sharedProperties` + `outgoingLinkTypes` as `json.RawMessage` — stores raw bytes without schema validation; the frontend ships typed `InterfaceSharedProperty[]`/`InterfaceOutgoingLinkType[]` arrays that match the V2 read format
 - Interface outgoing link types use `cardinality: 'ONE' | 'MANY'` (one or many per instance, not the `ONE_TO_ONE/ONE_TO_MANY/MANY_TO_MANY` shape used by LinkType). Keep the two shapes separate: LinkTypes model pairs of object types, Interfaces model edges from one ObjectType instance out
 - `useAttachmentsByInterface` fans out one `listObjectTypeInterfaces(ontology, objectTypeRid)` call per ObjectType in the ontology and filters client-side for the target `interfaceRid`. There is no `/interfaces/{rid}/objectTypes` reverse-lookup endpoint — if the ontology has many object types, this becomes N+1 but is acceptable for admin UIs
+- d3-force layout cache pattern (US-151): compute a string "graph signature" like `nodes.map(n=>n.id).sort().join(',') + '||' + edges.map(e=>\`${e.id}:${src}>${tgt}\`).sort().join(',')` and feed it as the ONLY dep of a `useMemo` that runs the simulation. useEffect+useState caused infinite-loop worker timeouts because `useQueries` returns a fresh array each render; the signature is a primitive and compared by value, so the simulation only re-runs on real topology changes
+- d3-force in vitest (jsdom): call `forceSimulation(nodes).force(...).stop()` immediately, then `for (let i = 0; i < 300; i++) sim.tick()` synchronously — never let the simulation's internal timer run or tests will hang indefinitely (we saw a 15-minute worker timeout before adding `.stop()` + manual tick)
+- React-Query `useQueries` returns a fresh outer array on every render even when no query state changed — NEVER use the result as a `useMemo` dep directly. Always hash the data into a stable primitive (e.g. a joined string) and depend on that
 
+---
+
+## 2026-04-18 - US-151
+- Implemented Ontology Manager — force-directed schema graph (Phase 7)
+- Files changed:
+  - web/src/components/admin/SchemaGraphPage.tsx — new page: d3-force layout over ObjectType nodes (icon initial + metadata color) and LinkType edges (arrow + cardinality badge "1:1"/"1:N"/"N:N"); wheel-zoom + drag-pan on SVG background + Reset view button; interface-filter dropdown fed by `useInterfacesAdmin` and per-ObjectType `listObjectTypeInterfaces` fan-out through `useQueries` (only enabled when filter ≠ ALL); click a node → navigate to `/admin/:ontology/objectTypes`
+  - web/src/components/admin/__tests__/SchemaGraphPage.test.tsx — new: 7 vitest cases covering heading+counter, node count, cardinality labels, Reset view button, interface filter (Locatable → 1 node, Addressable → 2 nodes), node-click navigation
+  - web/src/App.tsx — imports SchemaGraphPage from its own file (was re-exported from AdminPlaceholderPage)
+  - web/src/components/admin/AdminPlaceholderPage.tsx — dropped the SchemaGraphPage placeholder export
+  - web/src/components/admin/__tests__/AdminPlaceholderPage.test.tsx — removed the SchemaGraphPage test case, only AuditHistoryPage remains
+  - web/package.json — added d3-force 3.0.0 + @types/d3-force 3.0.10
+  - prd.json — US-151 passes: true
+- Verification: `npx tsc -b --noEmit` clean, `npx vitest run` 329 passing across 55 files, `npm run build` clean (207 modules, 568 KB bundle)
+- **Learnings for future iterations:**
+  - The d3-force simulation is CPU-only and synchronous once you `.stop()` and manually `.tick()` — safe to run during render via `useMemo`, no need for `useEffect` + `useState`. Keep the dep a primitive signature string so re-renders don't trigger re-simulation
+  - `useQueries` instability: its return array is a new object each render, breaking `useMemo` deps. Convert the piece of data you care about into a stable string hash (e.g. sorted interfaceRids joined by commas) and depend on THAT
+  - There is no TypeGroup endpoint exposed to the frontend (US-006 removed `/api/admin/*` TypeGroup routes), so US-151's "Filter by TypeGroup or Interface" is implemented as Interface-only for now; if a future story re-adds TypeGroup routes, the dropdown can gain a second "Type group: X" section without refactoring
+  - Click-on-node navigates to `/admin/:ontology/objectTypes` rather than a non-existent `/admin/:ontology/objectTypes/:apiName/edit` route — the admin listing is the closest equivalent to "ObjectType edit page" in the current UI
+  - SVG pan/drag implementation: on `onMouseDown` check `event.target.tagName === 'svg'` OR `data-pan="true"` attr to distinguish background drags from node clicks. Without that guard, dragging on a node starts a pan AND fires the click
+  - Arrow markers on SVG lines: use `<defs><marker id="..." orient="auto" refX={NODE_RADIUS + 8} .../></defs>` and `markerEnd="url(#id)"` on the line — the refX offset keeps the arrowhead from being hidden inside the target circle
 ---
 
 ## 2026-04-18 - US-150

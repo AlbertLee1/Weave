@@ -38,15 +38,6 @@ export function AdminPlaceholderPage({
   );
 }
 
-export function SchemaGraphPage() {
-  return (
-    <AdminPlaceholderPage
-      section="Schema Graph"
-      description="A force-directed schema graph will be available here — visualize all object types and link relationships with zoom, pan, and filtering."
-    />
-  );
-}
-
 export function AuditHistoryPage() {
   return (
     <AdminPlaceholderPage

@@ -18,10 +18,8 @@ import { ObjectTypeAdminPage } from './components/admin/ObjectTypeAdminPage';
 import { LinkTypeAdminPage } from './components/admin/LinkTypeAdminPage';
 import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
-import {
-  SchemaGraphPage,
-  AuditHistoryPage,
-} from './components/admin/AdminPlaceholderPage';
+import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
+import { AuditHistoryPage } from './components/admin/AdminPlaceholderPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
