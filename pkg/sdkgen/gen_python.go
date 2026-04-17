@@ -37,6 +37,9 @@ func (g *pythonGenerator) Generate(_ context.Context, schema OntologySchema) ([]
 	proj := g.generatePyproject(schema)
 	files = append(files, GeneratedFile{Path: "pyproject.toml", Content: proj})
 
+	// py.typed — PEP 561 marker so downstream mypy picks up inline type hints
+	files = append(files, GeneratedFile{Path: "weave_sdk/py.typed", Content: []byte("# PEP 561 marker\n")})
+
 	return files, nil
 }
 

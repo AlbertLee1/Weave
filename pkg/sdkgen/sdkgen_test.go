@@ -485,3 +485,140 @@ func TestTSGenerator_IndexReExports(t *testing.T) {
 		}
 	}
 }
+
+// --- Python SDK structure tests (US-138) ---
+
+func TestPythonGenerator_PyprojectName(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	proj, ok := by["pyproject.toml"]
+	if !ok {
+		t.Fatal("expected pyproject.toml in output")
+	}
+	for _, want := range []string{
+		`name = "weave-myOntology-sdk"`,
+		`"httpx`,
+		`"pydantic`,
+	} {
+		if !strings.Contains(proj, want) {
+			t.Errorf("pyproject.toml missing %q", want)
+		}
+	}
+}
+
+func TestPythonGenerator_PydanticModels(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	models, ok := by["weave_sdk/models.py"]
+	if !ok {
+		t.Fatal("expected weave_sdk/models.py in output")
+	}
+	for _, want := range []string{
+		"from pydantic import BaseModel",
+		"class Employee(BaseModel):",
+		"employeeId: str",
+		"firstName: str",
+		"age: int",
+		"salary: float",
+		"active: bool",
+		"hireDate: datetime.date",
+		"tags: list[str]",
+		"class Department(BaseModel):",
+		"departmentId: str",
+	} {
+		if !strings.Contains(models, want) {
+			t.Errorf("models.py missing %q", want)
+		}
+	}
+}
+
+func TestPythonGenerator_ActionParamModel(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	models := by["weave_sdk/models.py"]
+
+	for _, want := range []string{
+		"class CreateEmployeeParams(BaseModel):",
+		"firstName: str",
+		"age: Optional[int]",
+	} {
+		if !strings.Contains(models, want) {
+			t.Errorf("models.py missing %q\n%s", want, models)
+		}
+	}
+}
+
+func TestPythonGenerator_ClientMethods(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	client, ok := by["weave_sdk/client.py"]
+	if !ok {
+		t.Fatal("expected weave_sdk/client.py in output")
+	}
+	for _, want := range []string{
+		"import httpx",
+		"class WeaveClient:",
+		"def get_employee(self, pk: str) -> Employee:",
+		"def list_employee(",
+		"def search_employee(",
+		"def get_department(self, pk: str) -> Department:",
+		"def apply_create_employee(self, params: CreateEmployeeParams)",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.py missing %q", want)
+		}
+	}
+}
+
+func TestPythonGenerator_InitExports(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	init, ok := by["weave_sdk/__init__.py"]
+	if !ok {
+		t.Fatal("expected weave_sdk/__init__.py in output")
+	}
+	for _, want := range []string{
+		"from .client import WeaveClient",
+		"from .models import (",
+		"Employee,",
+		"Department,",
+		"CreateEmployeeParams,",
+		"__all__",
+	} {
+		if !strings.Contains(init, want) {
+			t.Errorf("__init__.py missing %q", want)
+		}
+	}
+}
+
+func TestPythonGenerator_PyTypedMarker(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	if _, ok := by["weave_sdk/py.typed"]; !ok {
+		t.Error("expected weave_sdk/py.typed marker file for PEP 561 compliance")
+	}
+}

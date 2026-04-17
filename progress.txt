@@ -114,7 +114,8 @@
 - OntologyExport model in pkg/oms/models.go — full export struct with 10 entity types; used by V2 export endpoint, admin export, GetFullMetadata, and snapshot serialization
 - ExportOntologyV2 handler in pkg/oms/handlers.go — fetches all entities by ontologyRID; ListValueTypes is global (no ontologyRID param)
 - TypeScript SDK shape (pkg/sdkgen/gen_ts.go): WeaveClient exposes `readonly {ObjectType}: {ObjectType}Repository` per type; each Repository has get/list/search and `readonly linkedObjects: {ObjectType}LinkedObjects`; LinkedObjects has one method per outbound LinkType returning `{data: TargetType[]}`; Action methods stay on WeaveClient as `apply{ActionName}`
-- SDK generator integration tests use `//go:build integration` tag; tsc resolved from web/node_modules/typescript/bin/tsc with PATH fallback (skip if missing)
+- SDK generator integration tests use `//go:build integration` tag; tsc resolved from web/node_modules/typescript/bin/tsc with PATH fallback (skip if missing); mypy resolved from PATH (install via `pip install --user mypy pydantic httpx`)
+- Python SDK ships `weave_sdk/py.typed` PEP 561 marker; uses `from __future__ import annotations` to allow PEP 585/604 syntax on Python 3.10; generic "non-empty content" sdkgen test requires marker to include at least one byte (use a short comment)
 
 ---
 
@@ -840,4 +841,20 @@
   - Use `go test -tags integration ./pkg/sdkgen/...` to run the tsc check; `make test` (no tag) skips it
   - encodeURIComponent on path PKs to support keys containing "/" or non-ASCII characters
   - Deterministic import order matters: use a sorted slice rather than map iteration to keep generated output diff-stable across runs
+---
+
+## 2026-04-18 - US-138
+- Added Python SDK structural tests + PEP 561 py.typed marker + mypy integration test
+- Files changed:
+  - pkg/sdkgen/gen_python.go — Emit `weave_sdk/py.typed` marker so downstream mypy picks up inline type hints
+  - pkg/sdkgen/sdkgen_test.go — 6 new structural tests: PyprojectName, PydanticModels, ActionParamModel, ClientMethods, InitExports, PyTypedMarker
+  - pkg/sdkgen/gen_python_integration_test.go — New file (build tag `integration`): TestPythonSDK_Mypy runs `mypy --ignore-missing-imports weave_sdk` against generated SDK; skips when mypy not on PATH
+  - prd.json — US-138 passes: true
+- **Learnings for future iterations:**
+  - PEP 561: `py.typed` marker must be shipped in the package directory so type checkers recognize inline annotations; content is conventionally empty but the generic "non-empty content" test in sdkgen_test.go forced a one-line comment
+  - Pre-existing pythonGenerator already produced Pydantic models, httpx-based WeaveClient, typed action param classes, and pyproject.toml — only py.typed was missing for mypy compliance
+  - Generated SDK uses `from __future__ import annotations` so PEP 604/585 syntax (`dict[str, Any]`, `list[str]`) type-checks cleanly under Python 3.10 and mypy
+  - `Employee(**r.json())` pattern works for both runtime and mypy because httpx's `response.json()` returns `Any` which satisfies `**kwargs` expansion into BaseModel
+  - Integration test pattern mirrors TS: `//go:build integration` tag, `t.TempDir()` scaffold, `exec.LookPath` for tool binary with graceful skip
+  - Install mypy locally via `python3 -m pip install --user mypy pydantic httpx`; binary lands in `~/.local/bin/mypy` on macOS
 ---
