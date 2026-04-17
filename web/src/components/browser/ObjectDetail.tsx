@@ -1,7 +1,13 @@
-import type { ObjectType, WireObject } from '../../api/types';
+import type { DataType, ObjectType, WireObject } from '../../api/types';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { LinkedObjectsTab } from './LinkedObjectsTab';
+import { TimeSeriesChart } from '../common/TimeSeriesChart';
+
+function baseTypeOf(dt: DataType): string {
+  if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
+  return dt.type;
+}
 
 interface ObjectDetailProps {
   object: WireObject | null;
@@ -47,10 +53,11 @@ export function ObjectDetail({
                 </dd>
               </div>
 
-              {/* Remaining properties */}
+              {/* Remaining properties (non-timeseries) */}
               {objectType.properties &&
                 Object.entries(objectType.properties)
                   .filter(([name]) => name !== objectType.primaryKey)
+                  .filter(([, prop]) => baseTypeOf(prop.dataType) !== 'timeseries')
                   .map(([name]) => {
                     const val = object[name];
                     let display: string;
@@ -74,6 +81,25 @@ export function ObjectDetail({
                   })}
             </dl>
           </section>
+
+          {/* Time-series properties: one chart per property */}
+          {objectType.properties &&
+            Object.entries(objectType.properties)
+              .filter(([, prop]) => baseTypeOf(prop.dataType) === 'timeseries')
+              .map(([name]) => (
+                <section key={`ts-${name}`}>
+                  <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
+                    {name}
+                  </h3>
+                  <TimeSeriesChart
+                    ontologyApiName={ontologyApiName}
+                    objectType={objectType.apiName}
+                    primaryKey={String(object.__primaryKey)}
+                    property={name}
+                    label={name}
+                  />
+                </section>
+              ))}
 
           {/* Linked objects section */}
           {linkTypes && linkTypes.length > 0 && (

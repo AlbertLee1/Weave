@@ -185,6 +185,12 @@
 - Bulk delete parameter resolution: prefer a param name matching `/primaryKey|primary_key|pk/i`, else fall back to the first parameter. ApplyBatch body = `{ requests: [{parameters: {[pkParam]: row.__primaryKey}}, ...] }` — uses the existing `useApplyBatch` hook; onSuccess invalidates `['objects']` so the table refreshes
 - Bulk export reuses `toCsv` / `toJsonEnvelope` / `triggerDownload` from `web/src/lib/exportObjects.ts` directly on the in-memory selected rows — NO re-fetch. Filename suffix is `-selected.csv/json` (vs `-export.csv/json` for full export) so downloads don't collide in a user's downloads folder
 - Selection state shape: keep a `Map<primaryKey, WireObject>` in BrowserPage (not just a `Set<string>`) so bulk export has the full row bodies without re-fetching. Derive `Set<string>` for the ObjectTable selection prop via `new Set(map.keys())` in a `useMemo`
+- TimeSeries endpoint shape (US-155): POST `/api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/streamPoints` with empty `{}` body returns `[{time: ISO8601, value: unknown}]` ordered by time. `?format=JSON` is the default; ARROW is rejected 400. Empty series returns `[]`. Handler: `pkg/oss/handlers_timeseries.go:streamTimeSeries`
+- TimeSeries base-type detection on the frontend: ObjectType wire shape uses `properties[apiName].dataType.type` for the base type (array types use `.itemType.type`). Compare against the string `'timeseries'` — same lowercase string used in pkg/types/basetype.go and PropertiesEditor's BASE_TYPES list
+- uplot integration gotcha: uplot calls `window.matchMedia` at module-top-level load, which jsdom does NOT implement — use `import type uPlotCtor from 'uplot'` + dynamic `await import('uplot')` inside the effect; guard on `typeof window.matchMedia === 'function'` so tests that don't need the real chart still render surrounding UI. Import CSS eagerly via `import 'uplot/dist/uPlot.min.css'` (the vite CSS handler is fine). Vite emits uplot as its own chunk (~52KB gzipped ~23KB)
+- uplot data shape: "AlignedData" = `[xs, ys]` where xs is a Unix timestamp array in SECONDS (not ms). Convert ISO strings via `Math.floor(Date.parse(s) / 1000)`. `scales.x.time = true` makes uplot format the X axis as dates
+- TimeSeriesChart pattern (web/src/components/common/TimeSeriesChart.tsx): renders 4 range buttons (1h/24h/7d/30d) + chart div. Filter happens client-side via `filterPointsByRange(points, range)` over the full stream — no server-side range param yet. Empty/no-data → show message instead of empty canvas. Numeric coercion via `toNumericValue` handles string-as-number values
+- ObjectDetail integrates TimeSeriesChart as a separate section after Properties — filters properties by `baseTypeOf(dt)` and renders one chart per timeseries-typed property. Non-timeseries properties skip via `.filter(([, prop]) => baseTypeOf(prop.dataType) !== 'timeseries')` so the property's RID value isn't shown as a raw string
 
 ---
 
@@ -1324,4 +1330,25 @@
   - For "find delete action for this objectType" scans, walk the rules JSON recursively — don't try to pre-type it. `pkg/actions/rules.go` has 9 rule shapes and the stored JSONB shape is lossy compared to the `ActionTypeRuleType` union; the robust approach is `obj.type === 'deleteObject' && obj.objectType === <target>` with a tree walk
   - Selection state as `Map<primaryKey, WireObject>` beats `Set<string>`: bulk export needs the full row bodies, not just the keys. Deriving a `Set<string>` via `useMemo` keeps the ObjectTable prop shape stable while BrowserPage retains the row data
   - `<input type="checkbox" ref={el => { if (el) el.indeterminate = …}} />` is the only way to set indeterminate — it's not a React prop. Set via ref callback, not an effect, to stay in sync with renders
+---
+
+## 2026-04-18 - US-155
+- Implemented time-series chart in ObjectDetail (Phase 8)
+- Files changed:
+  - web/package.json — added uplot 1.6.32 dependency
+  - web/src/api/timeseries.ts — new: `streamTimeSeriesPoints({ontologyApiName,objectType,primaryKey,property})` POSTs to `/api/v2/ontologies/{o}/objects/{t}/{pk}/timeseries/{prop}/streamPoints` with `{}` body, returns `TimeSeriesPoint[]` (`{time, value}`); path segments are `encodeURIComponent`'d
+  - web/src/hooks/useTimeSeries.ts — new: `useTimeSeriesPoints()` React Query hook keyed on `['timeseries', ontology, objectType, pk, property]` (gated by all 4 values present + `enabled` flag); `filterPointsByRange(points, '1h'|'24h'|'7d'|'30d', now)` client-side time-window filter; `TimeSeriesRange` type
+  - web/src/components/common/TimeSeriesChart.tsx — new: uplot-backed interactive chart with 4 range buttons + ResizeObserver width tracking; dynamic-imports `uplot` inside the effect because jsdom doesn't implement `window.matchMedia` (uplot calls it at module load); converts ISO timestamps to Unix seconds for uplot's AlignedData; numeric-only Y axis with `toNumericValue` coercion; shows Loading / Error / "No data" fallbacks; label defaults to the property name
+  - web/src/components/browser/ObjectDetail.tsx — added `baseTypeOf(dt)` helper (follows PropertiesTable's parseDataType pattern: array→itemType.type else dt.type); filters the standard Properties section to skip `baseType === 'timeseries'` entries so the raw series RID isn't shown; renders one `<TimeSeriesChart>` section per TimeSeries property, passing `ontologyApiName`+`objectType.apiName`+`String(object.__primaryKey)`+`property`
+  - web/src/api/__tests__/timeseries.test.ts — new: 3 tests (streamPoints POST shape with `{}` body, `encodeURIComponent` path segments, empty-series `[]` response) via msw
+  - web/src/hooks/__tests__/useTimeSeries.test.ts — new: 7 tests — 4 for `filterPointsByRange` (1h/24h/30d windows + unparseable-time drop), 3 for `useTimeSeriesPoints` (fetches with all params, disabled when pk empty, respects enabled=false)
+  - web/src/components/common/__tests__/TimeSeriesChart.test.tsx — new: 5 tests — renders 4 range buttons (24h default aria-pressed), "No data" message on empty response, range-switch updates aria-pressed, "Failed to load" on API error, range filtering keeps chart visible when in-window points exist
+  - prd.json — US-155 passes: true
+- Verification: `npx tsc -b --noEmit` clean; `npx vitest run` 383 tests passing across 62 files (+15 new); `npm run build` clean (218 modules, 592 KB bundle + 52 KB uplot chunk)
+- **Learnings for future iterations:**
+  - uplot's `window.matchMedia` top-level call breaks static imports in jsdom — always `await import('uplot')` inside an effect and gate on `typeof window.matchMedia === 'function'`. Bonus: vite code-splits the dynamic import into its own chunk (~23KB gzipped)
+  - uplot's X data is in Unix SECONDS (not milliseconds) when `scales.x.time = true`. Divide Date.parse() by 1000
+  - The TimeSeries property's stored value on the object is a series RID string (e.g. `"ri.timeseries.main.series.s1-cpu"`), NOT an inlined array of points — the chart always fetches via streamPoints; don't try to parse the property value from the WireObject
+  - `baseTypeOf(dt)` = if `dt.type === 'array' && dt.itemType` return `dt.itemType.type`, else `dt.type` — this is the same pattern PropertiesTable uses to unwrap array types; refactor opportunity to move it to a shared util if any other component needs it
+  - When integrating a third-party charting library, prefer one that ships its own `.d.ts` (uplot does) — no `@types/uplot` needed. Import as `import type uPlotCtor from 'uplot'` for the TYPE and `await import('uplot').then(m => m.default)` for the runtime constructor
 ---
