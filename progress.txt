@@ -791,4 +791,33 @@
   - For hooks that use browser WebSocket API, Vite proxy needs `ws: true` on the matching path prefix
   - The WebSocket URL must be absolute (ws://host/path); construct from window.location.protocol/host for portability
   - BrowserPage realtime indicator now shows immediately on toggle (not waiting for objectSetRid) since WebSocket doesn't need a temporary ObjectSet
+- SDK Generator in pkg/sdkgen/ — Generator interface returns []GeneratedFile; GetGenerator(lang) registry for ts/python/go; OntologySchema is cycle-free (no oms import)
+- Type mappings in pkg/sdkgen/typemap.go — TypeMap per language (ts/python/go) covering all 18 scalar BaseTypes
+- sdkgen package MUST NOT import pkg/oms (breaks import cycle); conversion from oms.OntologyExport to sdkgen.OntologySchema happens in the handler (buildOntologySchema)
+- ParseActionParameters(json.RawMessage) in sdkgen converts stored []{id,type,required} array to []ActionParamSchema
+- Handler pattern for zip response: set Content-Type application/zip + Content-Disposition + archive/zip.NewWriter(w)
+- Contract test: every new route in routes.go must be added to both api/openapi.yaml AND cmd/server/openapi_spec.yaml (copy after edit)
+---
+
+## 2026-04-18 - US-136
+- Implemented SDK Generator framework and CLI
+- Files changed:
+  - pkg/sdkgen/schema.go — OntologySchema, PropertySchema, LinkTypeSchema, ActionTypeSchema, InterfaceSchema types; ParseActionParameters
+  - pkg/sdkgen/typemap.go — TypeMap type + ts/python/go BaseType→language-type mapping tables
+  - pkg/sdkgen/generator.go — Generator interface, GetGenerator registry, GeneratedFile struct
+  - pkg/sdkgen/gen_ts.go — TypeScript generator: models.ts, client.ts, index.ts, package.json, tsconfig.json
+  - pkg/sdkgen/gen_python.go — Python generator: models.py (Pydantic), client.py (httpx), __init__.py, pyproject.toml
+  - pkg/sdkgen/gen_go.go — Go generator: models.go, client.go, go.mod
+  - pkg/sdkgen/sdkgen_test.go — 12 tests: schema structure, ParseActionParameters, TypeMap coverage, Generator registry, file generation
+  - pkg/oms/handlers_sdkgen.go — GenerateSDK handler (POST, returns zip); buildOntologySchema conversion; fetchOntologyExport helper
+  - pkg/oms/handlers_sdkgen_test.go — 6 handler tests: TS/Python/Go zip generation, unsupported lang, missing lang, ontology not found
+  - cmd/server/routes.go — Registered POST /api/v2/ontologies/{ontologyApiName}/sdkgen route
+  - cmd/sdkgen/main.go — CLI entrypoint: --ontology, --lang, --output, --server-url flags; fetches export from API
+  - api/openapi.yaml — Added /sdkgen endpoint spec
+  - cmd/server/openapi_spec.yaml — Synced with api/openapi.yaml
+  - prd.json — US-136 passes: true
+- **Learnings for future iterations:**
+  - pkg/sdkgen must not import pkg/oms to avoid import cycle; conversion happens at the handler boundary
+  - Both openapi.yaml files must be kept in sync — contract tests enforce this
+  - Go text/template with template.Must at package init level will panic if funcs are missing — parse lazily or register funcs first
 ---

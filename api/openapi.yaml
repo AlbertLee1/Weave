@@ -3062,6 +3062,35 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/sdkgen:
+    post:
+      operationId: generateSDK
+      summary: Generate a typed SDK from ontology metadata
+      description: Generates SDK source files for the specified language (ts, python, go) and returns them as a zip archive.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - name: lang
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [ts, python, go]
+          description: Target language for SDK generation.
+      responses:
+        "200":
+          description: Zip archive containing generated SDK files.
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/import:
     post:
       operationId: importOntology

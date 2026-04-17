@@ -37,6 +37,9 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/import", omsHandler.ImportOntologyV2)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/metadata", omsHandler.LoadMetadataV2)
 
+	// SDK Generation (US-136)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/sdkgen", omsHandler.GenerateSDK)
+
 	// Function CRUD (US-089)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions", omsHandler.CreateFunction)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions", omsHandler.ListFunctions)
