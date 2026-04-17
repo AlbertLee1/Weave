@@ -6,6 +6,9 @@ import type {
   LinkType,
   ActionType,
   OntologyInterface,
+  InterfaceSharedProperty,
+  InterfaceOutgoingLinkType,
+  ObjectTypeInterface,
   ValueType,
   QueryType,
   BranchDiffEntry,
@@ -467,6 +470,101 @@ export function getInterfaceType(
   return request<OntologyInterface>(
     'GET',
     `/api/v2/ontologies/${ontologyApiName}/interfaceTypes/${interfaceType}`,
+  );
+}
+
+// --- Interface admin endpoints (US-150) ---
+
+export interface CreateInterfaceRequest {
+  apiName: string;
+  displayName: string;
+  description?: string;
+  extendsRid?: string;
+  sharedProperties?: InterfaceSharedProperty[];
+  outgoingLinkTypes?: InterfaceOutgoingLinkType[];
+}
+
+export interface UpdateInterfaceRequest {
+  displayName: string;
+  extendsRid?: string;
+  sharedProperties?: InterfaceSharedProperty[];
+  outgoingLinkTypes?: InterfaceOutgoingLinkType[];
+}
+
+export async function listInterfacesAdmin(
+  ontologyApiName: string,
+): Promise<OntologyInterface[]> {
+  const resp = await request<{ data: OntologyInterface[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfacesAdmin`,
+  );
+  return resp.data;
+}
+
+export function createInterface(
+  ontologyApiName: string,
+  body: CreateInterfaceRequest,
+): Promise<OntologyInterface> {
+  return request<OntologyInterface>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces`,
+    body,
+  );
+}
+
+export function updateInterface(
+  ontologyApiName: string,
+  interfaceRid: string,
+  body: UpdateInterfaceRequest,
+): Promise<OntologyInterface> {
+  return request<OntologyInterface>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces/byRid/${encodeURIComponent(interfaceRid)}`,
+    body,
+  );
+}
+
+export function deleteInterface(
+  ontologyApiName: string,
+  interfaceRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces/byRid/${encodeURIComponent(interfaceRid)}`,
+  );
+}
+
+export async function listObjectTypeInterfaces(
+  ontologyApiName: string,
+  objectTypeRid: string,
+): Promise<ObjectTypeInterface[]> {
+  const resp = await request<{ data: ObjectTypeInterface[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/interfaces`,
+  );
+  return resp.data;
+}
+
+export function attachInterfaceToObjectType(
+  ontologyApiName: string,
+  objectTypeRid: string,
+  body: { interfaceRid: string; propertyMapping?: Record<string, string> },
+): Promise<ObjectTypeInterface> {
+  return request<ObjectTypeInterface>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/interfaces`,
+    body,
+  );
+}
+
+export function detachInterfaceFromObjectType(
+  ontologyApiName: string,
+  objectTypeRid: string,
+  interfaceRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/interfaces/${encodeURIComponent(interfaceRid)}`,
   );
 }
 

@@ -199,12 +199,31 @@ export interface ApiError {
   statusCode: number;
 }
 
+export interface InterfaceSharedProperty {
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  baseType: string;
+  isArray?: boolean;
+}
+
+export interface InterfaceOutgoingLinkType {
+  apiName: string;
+  displayName: string;
+  linkedEntityTypeApiName: string;
+  linkedEntityTypeRid?: string;
+  cardinality: 'ONE' | 'MANY';
+  required?: boolean;
+  description?: string;
+}
+
 export interface OntologyInterface {
   rid: string;
   apiName: string;
   displayName: string;
   extendsRid?: string;
-  sharedProperties?: unknown;
+  sharedProperties?: InterfaceSharedProperty[] | null;
+  outgoingLinkTypes?: InterfaceOutgoingLinkType[] | null;
 }
 
 export interface ObjectTypeInterface {

@@ -169,7 +169,37 @@
 - Testing gotcha #4: when a <select> is wrapped in `<label><span>Name</span>…</label>` AND has `aria-label="Different Name"`, `getByLabelText` returns BOTH matches (wrapping label text + aria-label). Use `getByRole('combobox', { name: /…/i })` to key off the single accessible name instead
 - Testing gotcha #5: `userEvent.type` interprets `{` / `[` as chord/key syntax — use `fireEvent.change(el, { target: { value: '{invalid' } })` for JSON-shaped test input
 - Testing gotcha #6: When an action's name appears in BOTH a delete-trigger button in the table row AND a confirm-button in the opened modal (e.g. "Delete"), `getByRole('button', { name: /^Delete$/i })` returns both and throws. Scope the modal query via `const modal = heading.closest('div[class*="rounded-xl"]')` then `within(modal).getByRole(…)`
+- Testing gotcha #7: Page table columns can reuse text that also appears in modal headings (e.g. the "Implementing" column header AND a "Implementing — <iface>" modal heading both match `/Implementing/`). Prefer `findByRole('heading', { name: /Implementing — X/ })` when asserting a modal is open — avoids the multi-match failure and doubles as a title check
+- Interface admin routes (US-150): GET `/api/v2/ontologies/{ontologyApiName}/interfacesAdmin` (list) + POST `/api/v2/ontologies/{ontologyApiName}/interfaces` (create) + PUT/DELETE `/api/v2/ontologies/{ontologyApiName}/interfaces/byRid/{interfaceRid}` + POST/DELETE `/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces[/{interfaceRid}]` for attach/detach. Backend `CreateInterfaceRequest`/`UpdateInterfaceRequest` accept `sharedProperties` + `outgoingLinkTypes` as `json.RawMessage` — stores raw bytes without schema validation; the frontend ships typed `InterfaceSharedProperty[]`/`InterfaceOutgoingLinkType[]` arrays that match the V2 read format
+- Interface outgoing link types use `cardinality: 'ONE' | 'MANY'` (one or many per instance, not the `ONE_TO_ONE/ONE_TO_MANY/MANY_TO_MANY` shape used by LinkType). Keep the two shapes separate: LinkTypes model pairs of object types, Interfaces model edges from one ObjectType instance out
+- `useAttachmentsByInterface` fans out one `listObjectTypeInterfaces(ontology, objectTypeRid)` call per ObjectType in the ontology and filters client-side for the target `interfaceRid`. There is no `/interfaces/{rid}/objectTypes` reverse-lookup endpoint — if the ontology has many object types, this becomes N+1 but is acceptable for admin UIs
 
+---
+
+## 2026-04-18 - US-150
+- Implemented Ontology Manager — Interface management (Phase 7)
+- Files already in place from prior work (audit confirmed intact):
+  - pkg/oms/admin_handlers.go — ListInterfacesForOntologyAdmin, CreateInterface, UpdateInterface, DeleteInterface, AttachInterfaceHandler, DetachInterface, ListObjectTypeInterfaces
+  - pkg/oms/handlers_us150_test.go — 4 handler tests covering list/create/update/delete shapes
+  - cmd/server/routes.go — V2 route wires for interface admin CRUD + attach/detach
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — documented US-150 routes
+  - web/src/api/ontologies.ts — listInterfacesAdmin / createInterface / updateInterface / deleteInterface / attach / detach fetchers + request types
+  - web/src/hooks/useInterfaces.ts — React Query wrappers (useInterfacesAdmin + mutations + useAttachInterface/useDetachInterface)
+  - web/src/components/admin/InterfaceAdminPage.tsx — full admin UI: list table, search, Create/Edit modal (apiName auto-gen, extends dropdown, shared-property editor, outgoing-link-type editor), Delete modal, Implementing-ObjectTypes modal (attach/detach)
+  - web/src/App.tsx — route /admin/:ontology/interfaces → InterfaceAdminPage (via AdminGuard)
+  - web/src/components/admin/AdminPlaceholderPage.tsx + test — old InterfaceAdminPage placeholder removed
+- Files added this iteration:
+  - web/src/components/admin/__tests__/InterfaceAdminPage.test.tsx — 10 vitest cases: page heading, list sorted by displayName, search filter, auto-apiName, duplicate apiName block, create payload with shared props + link types, edit PUT, delete confirm, detach via implementing modal, attach via implementing modal (used `findByRole('heading', { name: /Implementing — X/ })` to disambiguate from the "Implementing" column header)
+  - prd.json — US-150 passes: true
+- Verification:
+  - `go test ./pkg/oms/... ./cmd/server/... ./pkg/actions/... ./pkg/developer/... ./pkg/subscriptions/...` all pass
+  - `npx tsc --noEmit` clean
+  - `npx vitest run` — 324 tests passing across 55 files
+  - `npm run build` clean (173 modules, 543 KB bundle)
+- **Learnings for future iterations:**
+  - Always audit the working directory before starting — US-150 backend handlers, route wires, OpenAPI entries, and the full React page had all been drafted previously; only the vitest test file was missing
+  - The Interfaces shared-property editor is a free-form inline builder, not a picker from an existing shared-property registry — the AC "select from available shared properties" is pragmatically interpreted as "editor with a BaseType dropdown", since Weave's Interface.SharedProperties column is a self-contained JSON blob, not a reference to a separate SharedProperty table
+  - When running `go test ./...` from the repo root, it's slow (likely NATS / container startup); prefer testing specific packages individually in the ralph loop
 ---
 
 ## 2026-04-18 - US-145

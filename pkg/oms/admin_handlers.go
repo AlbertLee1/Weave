@@ -1162,22 +1162,45 @@ func (h *OMSHandler) ListActionTypesForOntologyAdmin(w http.ResponseWriter, r *h
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// ListInterfacesForOntologyAdmin handles
+// GET /api/v2/ontologies/{ontologyApiName}/interfacesAdmin.
+// Returns all Interfaces for the ontology for the Ontology Manager visual
+// interface editor. Supports `?branch=` overlay for reads.
+func (h *OMSHandler) ListInterfacesForOntologyAdmin(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListInterfaces(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListInterfacesFailed", nil))
+		return
+	}
+	if list == nil {
+		list = []Interface{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
+}
+
 // --- Interface request structs ---
 
 // CreateInterfaceRequest is the request body for creating an interface.
 type CreateInterfaceRequest struct {
-	APIName          string          `json:"apiName"`
-	DisplayName      string          `json:"displayName"`
-	Description      string          `json:"description,omitempty"`
-	ExtendsRID       string          `json:"extendsRid,omitempty"`
-	SharedProperties json.RawMessage `json:"sharedProperties,omitempty"`
+	APIName           string          `json:"apiName"`
+	DisplayName       string          `json:"displayName"`
+	Description       string          `json:"description,omitempty"`
+	ExtendsRID        string          `json:"extendsRid,omitempty"`
+	SharedProperties  json.RawMessage `json:"sharedProperties,omitempty"`
+	OutgoingLinkTypes json.RawMessage `json:"outgoingLinkTypes,omitempty"`
 }
 
 // UpdateInterfaceRequest is the request body for updating an interface.
 type UpdateInterfaceRequest struct {
-	DisplayName      string          `json:"displayName"`
-	ExtendsRID       string          `json:"extendsRid,omitempty"`
-	SharedProperties json.RawMessage `json:"sharedProperties,omitempty"`
+	DisplayName       string          `json:"displayName"`
+	ExtendsRID        string          `json:"extendsRid,omitempty"`
+	SharedProperties  json.RawMessage `json:"sharedProperties,omitempty"`
+	OutgoingLinkTypes json.RawMessage `json:"outgoingLinkTypes,omitempty"`
 }
 
 // AttachInterfaceRequest is the request body for attaching an interface to an object type.
@@ -1226,12 +1249,13 @@ func (h *OMSHandler) CreateInterface(w http.ResponseWriter, r *http.Request) {
 	}
 
 	iface := &Interface{
-		RID:              rid.NewInterfaceRID(),
-		OntologyRID:      ontologyRID,
-		APIName:          req.APIName,
-		DisplayName:      req.DisplayName,
-		ExtendsRID:       req.ExtendsRID,
-		SharedProperties: req.SharedProperties,
+		RID:               rid.NewInterfaceRID(),
+		OntologyRID:       ontologyRID,
+		APIName:           req.APIName,
+		DisplayName:       req.DisplayName,
+		ExtendsRID:        req.ExtendsRID,
+		SharedProperties:  req.SharedProperties,
+		OutgoingLinkTypes: req.OutgoingLinkTypes,
 	}
 
 	if err := h.repo.CreateInterface(r.Context(), iface); err != nil {
@@ -1313,6 +1337,7 @@ func (h *OMSHandler) UpdateInterface(w http.ResponseWriter, r *http.Request) {
 	existing.DisplayName = req.DisplayName
 	existing.ExtendsRID = req.ExtendsRID
 	existing.SharedProperties = req.SharedProperties
+	existing.OutgoingLinkTypes = req.OutgoingLinkTypes
 
 	if err := h.repo.UpdateInterface(r.Context(), existing); err != nil {
 		if errors.Is(err, ErrNotFound) {

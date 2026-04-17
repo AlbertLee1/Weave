@@ -38,15 +38,6 @@ export function AdminPlaceholderPage({
   );
 }
 
-export function InterfaceAdminPage() {
-  return (
-    <AdminPlaceholderPage
-      section="Interfaces"
-      description="Interface management will be available here — define shared properties, outgoing link types, and attach implementing object types."
-    />
-  );
-}
-
 export function SchemaGraphPage() {
   return (
     <AdminPlaceholderPage

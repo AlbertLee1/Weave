@@ -592,6 +592,66 @@ components:
           type: boolean
         description:
           type: string
+    CreateInterfaceRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        extendsRid:
+          type: string
+        sharedProperties:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        outgoingLinkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceLinkType"
+    UpdateInterfaceRequest:
+      type: object
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+        extendsRid:
+          type: string
+        sharedProperties:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        outgoingLinkTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceLinkType"
+    AttachInterfaceRequest:
+      type: object
+      required: [interfaceRid]
+      properties:
+        interfaceRid:
+          type: string
+        propertyMapping:
+          type: object
+          additionalProperties:
+            type: string
+    ObjectTypeInterface:
+      type: object
+      required: [objectTypeRid, interfaceRid]
+      properties:
+        objectTypeRid:
+          type: string
+        interfaceRid:
+          type: string
+        propertyMapping:
+          type: object
+          additionalProperties:
+            type: string
     QueryType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -3325,6 +3385,196 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InterfaceLinkType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfacesAdmin:
+    get:
+      operationId: listInterfacesForOntologyAdmin
+      summary: List all interfaces in an ontology (admin)
+      description: |
+        Returns Interface rows including sharedProperties and
+        outgoingLinkTypes, used by the Ontology Manager visual
+        interface editor. If `?branch=` is supplied, the response reflects
+        the branch overlay.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Interface list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Interface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces:
+    post:
+      operationId: createInterface
+      summary: Create a new interface
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInterfaceRequest"
+      responses:
+        "201":
+          description: Created interface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Interface"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/byRid/{interfaceRid}:
+    put:
+      operationId: updateInterface
+      summary: Update an existing interface
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: interfaceRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInterfaceRequest"
+      responses:
+        "200":
+          description: Updated interface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Interface"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteInterface
+      summary: Delete an interface
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: interfaceRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces:
+    get:
+      operationId: listObjectTypeInterfaces
+      summary: List interfaces attached to an object type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object-type ↔ interface attachment list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ObjectTypeInterface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+    post:
+      operationId: attachInterfaceToObjectType
+      summary: Attach an interface to an object type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachInterfaceRequest"
+      responses:
+        "201":
+          description: Attachment record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectTypeInterface"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces/{interfaceRid}:
+    delete:
+      operationId: detachInterfaceFromObjectType
+      summary: Detach an interface from an object type
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: interfaceRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Detached.
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
