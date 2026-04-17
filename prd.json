@@ -610,7 +610,7 @@
         "Typecheck passes"
       ],
       "priority": 35,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-133"
     },
     {
@@ -628,7 +628,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 36,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-134"
     },
     {

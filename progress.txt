@@ -74,7 +74,9 @@
 - HandleObjectChange(objectType, primaryKey, editType, properties): snapshots connections under lock, evaluates subs outside lock, pushes ObjectChangeEvent to matching connections
 - ObjectChangeEvent: { state: "ADDED_OR_UPDATED"|"DELETED", object: {...} } — CREATE/MODIFY→ADDED_OR_UPDATED, DELETE→DELETED
 - Frontend routes in web/src/App.tsx
-- API hooks in web/src/hooks/
+- API hooks in web/src/hooks/ — useWebSocketSubscription for WS real-time; useObjectSetSubscription for SSE fallback
+- Frontend WebSocket hook pattern: useWebSocketSubscription(ontology, { objectType, where?, select?, enabled, onEvent }) — auto-reconnect with exponential backoff; subscribes after welcome; dispatches objectChanged data
+- BrowserPage realtime mode: realtimeMode state ('off'|'ws'|'sse'); WebSocket primary, SSE fallback; "Live" toggle label
 - Sidebar nav in web/src/components/layout/Sidebar.tsx
 - Link edits (LINK_CREATE/LINK_DELETE) flow: Rule → Edit → NATS → Consumer.applyLinkCreate/applyLinkDelete → UpsertLinkEdge/DeleteLinkEdge
 - Consumer has separate LinkEdgeWriter (SetLinkEdgeWriter) and LinkEdgeDeleter (SetLinkEdgeDeleter) interfaces for M2M edge writes/deletes
@@ -749,4 +751,44 @@
   - Disconnect auto-cleans subscriptions because the Connection (and its subscriptions map) is garbage collected when unregistered from Hub.conns
   - MaxSubscriptionsPerConnection=10 enforced in handleSubscribe before creating the Subscription
   - ObjectChangeEvent.State maps CREATE/MODIFY→ADDED_OR_UPDATED, DELETE→DELETED (Palantir convention)
+- NATS→WebSocket routing: funnel.Consumer.SetOnChange callback calls Hub.HandleObjectChange; ChangeEvent.Properties must be populated for where clause evaluation
+- HubConfig pattern: NewHubWithConfig(HubConfig{}) for configurable heartbeat/buffer; NewHub() uses defaults (30s/60s/64)
+- Heartbeat: heartbeatPump goroutine per connection; conn.Ping with timeout context; failure closes with StatusPolicyViolation
+- Overflow tracking: per-Connection overflowSubs map; markOverflow on send buffer full; drainOverflow sends onOutOfDate after successful writePump write
+- WebSocketHub must be created BEFORE NATS consumer starts — SetOnChange closure captures deps pointer; if Hub is nil when callback fires → panic
+---
+
+## 2026-04-17 - US-134
+- Implemented WebSocket — NATS event routing and lifecycle (Phase 4: WebSocket Subscriptions)
+- Files changed:
+  - pkg/funnel/types.go — Added Properties field to ChangeEvent struct so WebSocket subscriptions can evaluate where clauses on change event data
+  - pkg/funnel/consumer.go — Populated Properties in ChangeEvent emission (handleMessage) so downstream consumers receive object data
+  - pkg/subscriptions/hub.go — Added HubConfig (HeartbeatInterval/HeartbeatTimeout/SendBufferSize); NewHubWithConfig; heartbeatPump goroutine (ping/pong with configurable intervals); Connection overflow tracking (markOverflow/drainOverflow for onOutOfDate events); wg.Add(3) for heartbeat goroutine
+  - pkg/subscriptions/subscription.go — Updated HandleObjectChange buffer-full handling: markOverflow instead of silent drop
+  - pkg/subscriptions/subscription_test.go — Added 4 US-134 tests: TestThreeSubscriptions_ChangeMatchesTwo_TwoEventsSent, TestHeartbeat_KeepsConnectionAlive, TestHeartbeat_TimeoutClosesConnection, TestBufferOverflow_OnOutOfDate
+  - cmd/server/main.go — Moved WebSocketHub creation before NATS consumer setup (prevents nil pointer race); added HandleObjectChange call in SetOnChange callback for NATS→WebSocket routing
+- **Learnings for future iterations:**
+  - WebSocketHub must be created before NATS consumer starts — SetOnChange closure captures deps pointer; if Hub is nil when callback fires, nil pointer panic
+  - ChangeEvent.Properties was previously empty — needed to add it to both the type and the emission site (handleMessage) for downstream WebSocket where clause evaluation
+  - HubConfig with applyDefaults() pattern allows tests to use short intervals (100ms heartbeat, 200ms timeout) without affecting production defaults
+  - heartbeatPump uses conn.Ping(ctx) which blocks until pong received or context deadline; timeout context wraps each ping independently
+  - Overflow tracking uses separate overflowMu lock (not subMu) to avoid lock ordering issues between subscription evaluation and overflow marking
+  - drainOverflow runs after each successful write in writePump — piggybacks on the existing write loop rather than needing its own goroutine
+  - 37 total tests in pkg/subscriptions (13 hub + 20 subscription + 4 US-134 lifecycle tests) — all passing
+---
+
+## 2026-04-18 - US-135
+- Implemented WebSocket frontend integration for real-time object updates
+- Files changed:
+  - web/src/hooks/useWebSocketSubscription.ts — New React hook: connects to WS endpoint, sends subscribe after welcome, dispatches objectChanged events, auto-reconnect with exponential backoff (1s→2s→4s→max 30s)
+  - web/src/hooks/__tests__/useWebSocketSubscription.test.ts — 13 unit tests: connect, subscribe, events, reconnect backoff, cleanup, re-subscribe after reconnect
+  - web/src/components/browser/BrowserPage.tsx — Toggle label changed from "Realtime" to "Live"; WebSocket is primary mode, SSE fallback via realtimeMode state ('off'|'ws'|'sse')
+  - web/src/components/browser/__tests__/BrowserPage.test.tsx — Updated tests: mock useWebSocketSubscription to avoid MSW/WebSocket conflict; 5 tests verify Live toggle, indicator, WS enable/disable, cache invalidation
+  - web/vite.config.ts — Added ws: true to /api proxy for WebSocket upgrade support
+  - prd.json — US-135 passes: true
+- **Learnings for future iterations:**
+  - MSW 2.x intercepts WebSocket globally — in component tests that use MSW for HTTP mocking, mock the WebSocket hook at module level rather than stubbing global WebSocket
+  - For hooks that use browser WebSocket API, Vite proxy needs `ws: true` on the matching path prefix
+  - The WebSocket URL must be absolute (ws://host/path); construct from window.location.protocol/host for portability
+  - BrowserPage realtime indicator now shows immediately on toggle (not waiting for objectSetRid) since WebSocket doesn't need a temporary ObjectSet
 ---

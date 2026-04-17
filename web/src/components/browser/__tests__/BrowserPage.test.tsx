@@ -7,7 +7,7 @@ import { setupServer } from 'msw/node';
 import { BrowserPage } from '../BrowserPage';
 
 // ---------------------------------------------------------------------------
-// Mock EventSource
+// Mock EventSource (for SSE fallback path)
 // ---------------------------------------------------------------------------
 
 type EventSourceListener = (evt: MessageEvent) => void;
@@ -51,6 +51,27 @@ class MockEventSource {
 (MockEventSource as unknown as Record<string, number>).CONNECTING = 0;
 (MockEventSource as unknown as Record<string, number>).OPEN = 1;
 (MockEventSource as unknown as Record<string, number>).CLOSED = 2;
+
+// ---------------------------------------------------------------------------
+// Mock useWebSocketSubscription — the hook is unit-tested separately;
+// here we only verify BrowserPage integration via the captured onEvent.
+// ---------------------------------------------------------------------------
+
+let capturedWsOptions: {
+  objectType: string;
+  enabled: boolean;
+  onEvent: (evt: unknown) => void;
+} | null = null;
+
+vi.mock('../../../hooks/useWebSocketSubscription', () => ({
+  useWebSocketSubscription: (_ontology: string, options: {
+    objectType: string;
+    enabled: boolean;
+    onEvent: (evt: unknown) => void;
+  }) => {
+    capturedWsOptions = options;
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -116,6 +137,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   MockEventSource.instances = [];
+  capturedWsOptions = null;
   server.resetHandlers();
 });
 afterAll(() => {
@@ -156,25 +178,25 @@ function renderBrowserPage(
 // ---------------------------------------------------------------------------
 
 describe('BrowserPage realtime mode', () => {
-  it('renders a Realtime toggle in the header', async () => {
+  it('renders a Live toggle in the header', async () => {
     renderBrowserPage();
 
     await waitFor(() => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    // Toggle should be present
-    expect(screen.getByLabelText(/realtime/i)).toBeInTheDocument();
+    // Toggle should be present with "Live" label
+    expect(screen.getByLabelText(/live/i)).toBeInTheDocument();
   });
 
-  it('shows a pulsing green indicator when realtime mode is enabled', async () => {
+  it('shows a pulsing green indicator when Live mode is enabled', async () => {
     renderBrowserPage();
 
     await waitFor(() => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    const toggle = screen.getByLabelText(/realtime/i);
+    const toggle = screen.getByLabelText(/live/i);
 
     // Before toggle — no green dot
     expect(screen.queryByTestId('realtime-indicator')).not.toBeInTheDocument();
@@ -189,26 +211,26 @@ describe('BrowserPage realtime mode', () => {
     });
   });
 
-  it('creates a temporary ObjectSet and subscribes via SSE when toggled on', async () => {
+  it('enables WebSocket subscription when toggled on', async () => {
     renderBrowserPage();
 
     await waitFor(() => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByLabelText(/realtime/i));
+    // Before toggle — WS disabled
+    expect(capturedWsOptions?.enabled).toBe(false);
 
-    // Wait for EventSource to be created (after createTemporary resolves)
+    fireEvent.click(screen.getByLabelText(/live/i));
+
+    // After toggle — WS enabled with correct objectType
     await waitFor(() => {
-      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(capturedWsOptions?.enabled).toBe(true);
     });
-
-    const es = MockEventSource.instances[0];
-    expect(es.url).toContain('/subscribe');
-    expect(es.url).toContain('ri.objectset.main.test-rid');
+    expect(capturedWsOptions?.objectType).toBe('Employee');
   });
 
-  it('invalidates TanStack Query cache on SSE event', async () => {
+  it('invalidates TanStack Query cache on WebSocket objectChanged event', async () => {
     const { queryClient } = renderBrowserPage();
 
     await waitFor(() => {
@@ -217,21 +239,17 @@ describe('BrowserPage realtime mode', () => {
 
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    fireEvent.click(screen.getByLabelText(/realtime/i));
+    fireEvent.click(screen.getByLabelText(/live/i));
 
     await waitFor(() => {
-      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(capturedWsOptions?.enabled).toBe(true);
     });
 
-    const es = MockEventSource.instances[0];
-    es.simulateOpen();
-    es.simulateMessage(
-      JSON.stringify({
-        eventType: 'ADDED_OR_UPDATED',
-        object: { __primaryKey: '3', __apiName: 'Employee', id: '3', name: 'Charlie' },
-      }),
-      '1',
-    );
+    // Simulate a WebSocket objectChanged event via the captured onEvent callback
+    capturedWsOptions!.onEvent({
+      state: 'ADDED_OR_UPDATED',
+      object: { __primaryKey: '3', __apiName: 'Employee', id: '3', name: 'Charlie' },
+    });
 
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith(
@@ -242,23 +260,20 @@ describe('BrowserPage realtime mode', () => {
     invalidateSpy.mockRestore();
   });
 
-  it('closes EventSource when realtime mode is toggled off', async () => {
+  it('disables WebSocket subscription when toggled off', async () => {
     renderBrowserPage();
 
     await waitFor(() => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    const toggle = screen.getByLabelText(/realtime/i);
+    const toggle = screen.getByLabelText(/live/i);
 
     // Toggle on
     fireEvent.click(toggle);
     await waitFor(() => {
-      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(capturedWsOptions?.enabled).toBe(true);
     });
-
-    const es = MockEventSource.instances[0];
-    expect(es.closed).toBe(false);
 
     // Toggle off
     fireEvent.click(toggle);
@@ -266,5 +281,7 @@ describe('BrowserPage realtime mode', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('realtime-indicator')).not.toBeInTheDocument();
     });
+
+    expect(capturedWsOptions?.enabled).toBe(false);
   });
 });

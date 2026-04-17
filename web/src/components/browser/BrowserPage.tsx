@@ -5,6 +5,7 @@ import { useObjectType } from '../../hooks/useObjectTypes';
 import { useListObjects, useSearchObjects } from '../../hooks/useObjects';
 import { useCreateTemporaryObjectSet } from '../../hooks/useObjectSets';
 import { useObjectSetSubscription } from '../../hooks/useObjectSetSubscription';
+import { useWebSocketSubscription } from '../../hooks/useWebSocketSubscription';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
@@ -45,15 +46,23 @@ export function BrowserPage() {
   const [selectedObject, setSelectedObject] = useState<WireObject | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
-  // Realtime mode state
-  const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
+  const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
   const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const createObjectSet = useCreateTemporaryObjectSet(ontology);
 
+  const realtimeEnabled = realtimeMode !== 'off';
+
+  const invalidateObjects = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['objects'] });
+  }, [queryClient]);
+
   const handleRealtimeToggle = useCallback(() => {
     if (!realtimeEnabled) {
-      // Turning on: create a temporary ObjectSet for this objectType
+      // Use WebSocket as primary; SSE fallback available via setRealtimeMode('sse')
+      setRealtimeMode('ws');
+      // Also create ObjectSet for SSE fallback readiness
       createObjectSet.mutate(
         { type: 'base', objectType: objectTypeParam },
         {
@@ -62,20 +71,28 @@ export function BrowserPage() {
           },
         },
       );
-      setRealtimeEnabled(true);
     } else {
       // Turning off
-      setRealtimeEnabled(false);
+      setRealtimeMode('off');
       setObjectSetRid(null);
     }
   }, [realtimeEnabled, createObjectSet, objectTypeParam]);
 
-  // SSE subscription
-  useObjectSetSubscription(ontology, objectSetRid ?? '', {
-    enabled: realtimeEnabled && !!objectSetRid,
+  // WebSocket subscription (primary)
+  useWebSocketSubscription(ontology, {
+    objectType: objectTypeParam,
+    enabled: realtimeMode === 'ws',
     onEvent: useCallback(() => {
-      queryClient.invalidateQueries({ queryKey: ['objects'] });
-    }, [queryClient]),
+      invalidateObjects();
+    }, [invalidateObjects]),
+  });
+
+  // SSE subscription (fallback when WebSocket is unavailable)
+  useObjectSetSubscription(ontology, objectSetRid ?? '', {
+    enabled: realtimeMode === 'sse' && !!objectSetRid,
+    onEvent: useCallback(() => {
+      invalidateObjects();
+    }, [invalidateObjects]),
   });
 
   // Determine whether we need to use search or list
@@ -223,16 +240,16 @@ export function BrowserPage() {
             </span>
           )}
           <label className="flex items-center gap-2 cursor-pointer select-none">
-            {realtimeEnabled && objectSetRid && (
+            {realtimeEnabled && (
               <span
                 data-testid="realtime-indicator"
                 className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"
               />
             )}
-            <span className="text-xs font-mono text-text-secondary">Realtime</span>
+            <span className="text-xs font-mono text-text-secondary">Live</span>
             <input
               type="checkbox"
-              aria-label="Realtime"
+              aria-label="Live"
               checked={realtimeEnabled}
               onChange={handleRealtimeToggle}
               className="sr-only peer"
