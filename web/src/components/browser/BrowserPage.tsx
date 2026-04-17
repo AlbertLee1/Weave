@@ -10,6 +10,7 @@ import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
 import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
+import { MapView } from './MapView';
 import { ObjectDetail } from './ObjectDetail';
 import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
@@ -52,6 +53,9 @@ export function BrowserPage() {
   const [selectedRowMap, setSelectedRowMap] = useState<Map<string, WireObject>>(
     () => new Map(),
   );
+
+  // View mode: table | map
+  const [viewMode, setViewMode] = useState<'table' | 'map'>('table');
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -304,6 +308,40 @@ export function BrowserPage() {
               {page.totalCount} total
             </span>
           )}
+          <div
+            role="group"
+            aria-label="View mode"
+            className="inline-flex rounded border border-border overflow-hidden"
+          >
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              aria-pressed={viewMode === 'table'}
+              data-testid="view-mode-table"
+              className={[
+                'px-2 py-1 text-xs font-mono transition-colors',
+                viewMode === 'table'
+                  ? 'bg-accent-cyan/10 text-accent-cyan'
+                  : 'text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('map')}
+              aria-pressed={viewMode === 'map'}
+              data-testid="view-mode-map"
+              className={[
+                'px-2 py-1 text-xs font-mono transition-colors border-l border-border',
+                viewMode === 'map'
+                  ? 'bg-accent-cyan/10 text-accent-cyan'
+                  : 'text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              Map
+            </button>
+          </div>
           <ExportButton
             objectType={objectType}
             query={{
@@ -367,7 +405,7 @@ export function BrowserPage() {
       )}
 
       {/* Table */}
-      {!isLoading && page && page.data.length > 0 && (
+      {!isLoading && page && page.data.length > 0 && viewMode === 'table' && (
         <ObjectTable
           ontologyApiName={ontology}
           objectType={objectType}
@@ -382,6 +420,15 @@ export function BrowserPage() {
           onPrevPage={handlePrevPage}
           currentPage={currentPage}
           selection={tableSelection}
+        />
+      )}
+
+      {/* Map */}
+      {!isLoading && page && viewMode === 'map' && (
+        <MapView
+          objectType={objectType}
+          data={page.data}
+          onRowClick={handleRowClick}
         />
       )}
 

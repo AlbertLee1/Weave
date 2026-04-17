@@ -285,3 +285,33 @@ describe('BrowserPage realtime mode', () => {
     expect(capturedWsOptions?.enabled).toBe(false);
   });
 });
+
+describe('BrowserPage view-mode toggle', () => {
+  it('defaults to table view and hides the map', async () => {
+    renderBrowserPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+    const tableBtn = screen.getByTestId('view-mode-table');
+    const mapBtn = screen.getByTestId('view-mode-map');
+    expect(tableBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(mapBtn.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByTestId('map-view')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('map-view-empty')).not.toBeInTheDocument();
+  });
+
+  it('swaps to the map view when the Map button is clicked', async () => {
+    renderBrowserPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('view-mode-map'));
+    // The mock ObjectType exposes only string properties → no geo available.
+    await waitFor(() => {
+      expect(screen.getByTestId('map-view-empty')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('view-mode-map').getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+  });
+});
