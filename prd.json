@@ -809,7 +809,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 46,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-144"
     },
     {

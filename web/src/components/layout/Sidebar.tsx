@@ -48,6 +48,7 @@ export function Sidebar() {
       icon: 'layers',
     },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
+    { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];
 
   return (

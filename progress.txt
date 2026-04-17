@@ -141,7 +141,31 @@
 - UsageMiddleware pattern (pkg/metrics/usage.go): mounts inside the auth group AFTER auth.MiddlewareFull + auth.OntologyScopeMiddleware so User.Attributes[OAuthClientIDAttributeKey] is populated; non-OAuth callers (dev/JWT/API-key) fall back to label app_id="anonymous"
 - UsageSampleStore: in-memory bounded-per-app ring (retention default 30d, maxPerApp default 10k) that serves the /api/v2/developer/applications/{id}/usage windows without a TSDB; lazy eviction on Record(); Snapshot(appID, window) returns a defensive copy
 - Reusing statusCapturingResponseWriter across middleware (http.go + usage.go) — do NOT redefine; it's a package-private struct
+- Developer API hooks/types live in `web/src/api/developer.ts` (types + fetchers) + `web/src/hooks/useDeveloper.ts` (React Query); GET /usage has NO window query param — the response always carries the 24h/7d/30d array and the frontend picks one via UI tab
+- Frontend bar charts for metrics/aggregation are built with plain flex+div (horizontal bars) or SVG — no chart library is installed in web/; reuse `components/aggregation/SimpleChart.tsx` or roll a minimal BarChart inline in the page
 
+---
+
+## 2026-04-18 - US-145
+- Implemented Developer Console Metrics dashboard frontend (Phase 6)
+- Files changed:
+  - web/src/api/developer.ts — new: ApplicationSummary, RouteStat, UsageSummary, UsageResponse types + listApplications / getApplicationUsage fetchers (path id is encodeURIComponent'd)
+  - web/src/hooks/useDeveloper.ts — new: useApplications, useApplicationUsage(id) React Query hooks; usage hook has refetchInterval: 30s for near-real-time feel
+  - web/src/components/developer/MetricsPage.tsx — new: dashboard page with app dropdown + 24h/7d/30d tabs (role=tab / aria-selected) + 6 KPI cards (total/errors/error rate/P50/P95/P99) + 3 horizontal BarCharts (request volume by method, response status distribution, top endpoints by errors) + endpoint latency table (method pill, endpoint, count, errors, error %, P95); KPIs flip to amber tone when errors > 0 or rate > 5%
+  - web/src/components/developer/__tests__/MetricsPage.test.tsx — new: 9 vitest cases — heading, dropdown load, window tabs default, KPI values render, endpoint table rows, tab switch updates totals, bar chart sections render, empty-app state, usage error state
+  - web/src/App.tsx — new route `developer/metrics` → MetricsPage
+  - web/src/components/layout/Sidebar.tsx — added "API Metrics" nav item → `bar-chart` icon (already defined)
+  - prd.json — US-145 passes: true
+- Verification: `npx tsc --noEmit` clean, `npx vitest run` 258 passing across 46 files, `npm run build` clean (161 modules, 446 KB bundle)
+- **Learnings for future iterations:**
+  - The backend `/usage` endpoint returns all 3 windows (24h/7d/30d) in one payload — there is NO `?window=` query param. The frontend picks a window in JS; don't refetch on tab change
+  - P50/P95/P99 are pre-computed server-side per window AND per route (RouteStat.p95Ms for the top-routes table). No client-side percentile math
+  - `RouteStat` lacks p50/p99 per route — only p95. If the PRD ever demands full P50/P99 columns per endpoint, the backend `usage_summary.go` has to add them to RouteStat first
+  - The `listApplications` response envelope is `{ applications: [...] }` (NOT `{ data: [...] }` like OMS endpoints) — keep that in mind when adding future developer endpoints
+  - `@testing-library/user-event` is installed (LoginPage.test.tsx already uses it) — prefer it over fireEvent for click-then-wait flows in this repo
+  - "Errors" appears twice in the rendered DOM (KPI card label + table column header) — tests that look up "Errors" must use `getAllByText` or a more specific query. Same pattern for HTTP method tokens like "GET" that appear in both charts and the table
+  - Pre-existing `SimpleChart` is tightly coupled to `AggregationBucket` from the aggregation API; for non-aggregation domains (metrics, etc.) it's cleaner to roll a tiny flex-based horizontal BarChart than retrofit SimpleChart
+  - Sidebar iconPaths already has `'bar-chart': 'M12 20V10M18 20V4M6 20v-4'` — no icon addition needed
 ---
 
 ## 2026-04-18 - US-143

@@ -12,6 +12,7 @@ import { AggregationPage } from './components/aggregation/AggregationPage';
 import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 import { PlaygroundPage } from './components/developer/PlaygroundPage';
+import { MetricsPage } from './components/developer/MetricsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="developer/playground" element={<PlaygroundPage />} />
+              <Route path="developer/metrics" element={<MetricsPage />} />
             </Route>
           </Routes>
         </AuthProvider>
