@@ -722,6 +722,10 @@ func main() {
 		}
 	}
 
+	// 7b. WebSocket subscription hub (US-132). Created before the NATS
+	// consumer so the SetOnChange callback can safely reference it.
+	deps.WebSocketHub = subscriptions.NewHub()
+
 	// 7. NATS
 	var publisher *funnel.Publisher
 	if cfg.NATSURL != "" {
@@ -768,6 +772,11 @@ func main() {
 				PrimaryKey: e.PrimaryKey,
 				Sequence:   e.Offset,
 			})
+
+			// US-134: route change events to WebSocket subscribers.
+			deps.WebSocketHub.HandleObjectChange(
+				e.ObjectType, e.PrimaryKey, string(e.EditType), e.Properties,
+			)
 		})
 
 		// US-046: optional embedding side-channel. Each CREATE/MODIFY edit
@@ -790,9 +799,6 @@ func main() {
 			log.Printf("warning: funnel consumer start: %v", err)
 		}
 	}
-
-	// 7b. WebSocket subscription hub (US-132).
-	deps.WebSocketHub = subscriptions.NewHub()
 
 	// 8. Action Executor
 	if deps.OmsRepo != nil {

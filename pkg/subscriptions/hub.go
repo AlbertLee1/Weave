@@ -25,6 +25,25 @@ type Message struct {
 	Error          string          `json:"error,omitempty"`
 }
 
+// HubConfig holds configurable parameters for the Hub.
+type HubConfig struct {
+	HeartbeatInterval time.Duration // ping interval; default 30s
+	HeartbeatTimeout  time.Duration // pong deadline; default 60s
+	SendBufferSize    int           // per-connection outbound buffer; default 64
+}
+
+func (cfg *HubConfig) applyDefaults() {
+	if cfg.HeartbeatInterval == 0 {
+		cfg.HeartbeatInterval = 30 * time.Second
+	}
+	if cfg.HeartbeatTimeout == 0 {
+		cfg.HeartbeatTimeout = 60 * time.Second
+	}
+	if cfg.SendBufferSize == 0 {
+		cfg.SendBufferSize = 64
+	}
+}
+
 // Connection wraps a single WebSocket connection with its metadata and a
 // buffered outbound message channel. The read and write goroutines are
 // managed by the Hub.
@@ -38,24 +57,67 @@ type Connection struct {
 	subMu         sync.Mutex
 	subscriptions map[string]*Subscription
 	hub           *Hub // back-pointer for message dispatching
+
+	// Overflow tracking (US-134). Protected by overflowMu.
+	overflowMu   sync.Mutex
+	overflowSubs map[string]bool
+}
+
+// markOverflow records that a subscription missed events due to buffer overflow.
+func (c *Connection) markOverflow(subID string) {
+	c.overflowMu.Lock()
+	c.overflowSubs[subID] = true
+	c.overflowMu.Unlock()
+}
+
+// drainOverflow sends onOutOfDate messages for any subscriptions that missed
+// events. Called from writePump after each successful write.
+func (c *Connection) drainOverflow(ctx context.Context) {
+	c.overflowMu.Lock()
+	if len(c.overflowSubs) == 0 {
+		c.overflowMu.Unlock()
+		return
+	}
+	subs := c.overflowSubs
+	c.overflowSubs = make(map[string]bool)
+	c.overflowMu.Unlock()
+
+	for subID := range subs {
+		msg := Message{
+			Type:           "onOutOfDate",
+			SubscriptionID: subID,
+		}
+		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_ = wsjson.Write(writeCtx, c.conn, msg)
+		cancel()
+	}
 }
 
 // Hub manages active WebSocket connections and routes messages to them.
 // It is safe for concurrent use.
 type Hub struct {
-	mu    sync.Mutex
-	conns map[string]*Connection
-	ctx   context.Context
-	stop  context.CancelFunc
+	mu     sync.Mutex
+	conns  map[string]*Connection
+	ctx    context.Context
+	stop   context.CancelFunc
+	config HubConfig
 }
 
-// NewHub creates a new Hub ready to accept WebSocket connections.
+// NewHub creates a new Hub ready to accept WebSocket connections with
+// default configuration.
 func NewHub() *Hub {
+	return NewHubWithConfig(HubConfig{})
+}
+
+// NewHubWithConfig creates a new Hub with the given configuration.
+func NewHubWithConfig(cfg HubConfig) *Hub {
+	cfg.applyDefaults()
 	ctx, stop := context.WithCancel(context.Background())
 	return &Hub{
-		conns: make(map[string]*Connection),
-		ctx:   ctx,
-		stop:  stop,
+		conns:  make(map[string]*Connection),
+		ctx:    ctx,
+		stop:   stop,
+		config: cfg,
 	}
 }
 
@@ -87,9 +149,10 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	c := &Connection{
 		id:            connID,
 		conn:          wsConn,
-		send:          make(chan Message, 64),
+		send:          make(chan Message, h.config.SendBufferSize),
 		done:          make(chan struct{}),
 		subscriptions: make(map[string]*Subscription),
+		overflowSubs:  make(map[string]bool),
 		hub:           h,
 	}
 
@@ -102,9 +165,9 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	c.send <- welcome
 
-	// Start read and write goroutines
+	// Start read, write, and heartbeat goroutines
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -114,7 +177,12 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		c.readPump(connCtx)
-		connCancel() // signal writePump to exit on client disconnect
+		connCancel() // signal writePump and heartbeat to exit on client disconnect
+	}()
+
+	go func() {
+		defer wg.Done()
+		c.heartbeatPump(connCtx, h.config.HeartbeatInterval, h.config.HeartbeatTimeout)
 	}()
 
 	wg.Wait()
@@ -222,6 +290,8 @@ func (c *Connection) writePump(ctx context.Context) {
 			if err != nil {
 				return
 			}
+			// After successful write, drain any overflow notifications
+			c.drainOverflow(ctx)
 		case <-ctx.Done():
 			return
 		}
@@ -258,6 +328,27 @@ func (c *Connection) readPump(ctx context.Context) {
 		select {
 		case c.send <- resp:
 		default:
+		}
+	}
+}
+
+// heartbeatPump sends periodic pings to detect dead connections.
+// If a pong is not received within the timeout, the connection is closed.
+func (c *Connection) heartbeatPump(ctx context.Context, interval, timeout time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, timeout)
+			err := c.conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				c.conn.Close(websocket.StatusPolicyViolation, "heartbeat timeout")
+				return
+			}
+		case <-ctx.Done():
+			return
 		}
 	}
 }

@@ -308,6 +308,7 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 					PrimaryKey: edit.PrimaryKey,
 					EditType:   edit.Type,
 					Offset:     meta.Sequence.Stream,
+					Properties: edit.Properties,
 				})
 			}
 		}

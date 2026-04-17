@@ -746,6 +746,243 @@ func TestUnknownMessageType(t *testing.T) {
 	}
 }
 
+// ---------- US-134 tests ----------
+
+func TestThreeSubscriptions_ChangeMatchesTwo_TwoEventsSent(t *testing.T) {
+	h := NewHub()
+	defer h.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(h.HandleWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, _ := dialAndWelcome(t, ctx, srv.URL)
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	// Subscribe to 3 subscriptions:
+	// Sub1: Employee (no where) — matches all Employee changes
+	// Sub2: Employee where department=Engineering — matches Engineering only
+	// Sub3: Department — doesn't match Employee changes
+	subIDs := make([]string, 3)
+
+	// Sub1: Employee (all)
+	wsjson.Write(ctx, c, Message{Type: "subscribe", Data: json.RawMessage(`{"objectType":"Employee"}`)})
+	var resp1 Message
+	wsjson.Read(ctx, c, &resp1)
+	subIDs[0] = resp1.SubscriptionID
+
+	// Sub2: Employee where department=Engineering
+	wsjson.Write(ctx, c, Message{
+		Type: "subscribe",
+		Data: json.RawMessage(`{"objectType":"Employee","where":{"type":"eq","field":"department","value":"Engineering"}}`),
+	})
+	var resp2 Message
+	wsjson.Read(ctx, c, &resp2)
+	subIDs[1] = resp2.SubscriptionID
+
+	// Sub3: Department
+	wsjson.Write(ctx, c, Message{Type: "subscribe", Data: json.RawMessage(`{"objectType":"Department"}`)})
+	var resp3 Message
+	wsjson.Read(ctx, c, &resp3)
+	subIDs[2] = resp3.SubscriptionID
+
+	// Fire Employee change with department=Engineering → matches Sub1 and Sub2
+	h.HandleObjectChange("Employee", "emp-1", "CREATE", map[string]interface{}{
+		"name":       "Alice",
+		"department": "Engineering",
+	})
+
+	// Read first event
+	var evt1 Message
+	if err := wsjson.Read(ctx, c, &evt1); err != nil {
+		t.Fatalf("read event 1: %v", err)
+	}
+	if evt1.Type != "objectChanged" {
+		t.Fatalf("expected objectChanged, got %q", evt1.Type)
+	}
+
+	// Read second event
+	var evt2 Message
+	if err := wsjson.Read(ctx, c, &evt2); err != nil {
+		t.Fatalf("read event 2: %v", err)
+	}
+	if evt2.Type != "objectChanged" {
+		t.Fatalf("expected objectChanged, got %q", evt2.Type)
+	}
+
+	// Verify both events have correct subscription IDs (Sub1 and Sub2, not Sub3)
+	receivedSubIDs := map[string]bool{
+		evt1.SubscriptionID: true,
+		evt2.SubscriptionID: true,
+	}
+	if !receivedSubIDs[subIDs[0]] {
+		t.Errorf("expected event for Sub1 (Employee all), subID=%s", subIDs[0])
+	}
+	if !receivedSubIDs[subIDs[1]] {
+		t.Errorf("expected event for Sub2 (Employee Engineering), subID=%s", subIDs[1])
+	}
+	if receivedSubIDs[subIDs[2]] {
+		t.Error("should NOT have received event for Sub3 (Department)")
+	}
+
+	// Verify no 3rd event (Department sub should not match)
+	noMoreCtx, noMoreCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer noMoreCancel()
+	var extra Message
+	err := wsjson.Read(noMoreCtx, c, &extra)
+	if err == nil {
+		t.Errorf("expected no more events, but got type=%q subID=%s", extra.Type, extra.SubscriptionID)
+	}
+}
+
+func TestHeartbeat_KeepsConnectionAlive(t *testing.T) {
+	// Use short heartbeat intervals for testing
+	h := NewHubWithConfig(HubConfig{
+		HeartbeatInterval: 100 * time.Millisecond,
+		HeartbeatTimeout:  500 * time.Millisecond,
+	})
+	defer h.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(h.HandleWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, _ := dialAndWelcome(t, ctx, srv.URL)
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	// Keep reading in background (pongs are sent automatically when reader is active)
+	go func() {
+		for {
+			_, _, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Wait for several heartbeat cycles
+	time.Sleep(400 * time.Millisecond)
+
+	// Connection should still be alive
+	if h.ConnectionCount() != 1 {
+		t.Errorf("expected connection to be alive after heartbeats, got %d connections", h.ConnectionCount())
+	}
+}
+
+func TestHeartbeat_TimeoutClosesConnection(t *testing.T) {
+	// Use short heartbeat intervals for testing
+	h := NewHubWithConfig(HubConfig{
+		HeartbeatInterval: 100 * time.Millisecond,
+		HeartbeatTimeout:  200 * time.Millisecond,
+	})
+	defer h.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(h.HandleWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	// Read welcome so the connection is fully established
+	var welcome Message
+	if err := wsjson.Read(ctx, c, &welcome); err != nil {
+		t.Fatalf("read welcome: %v", err)
+	}
+
+	if h.ConnectionCount() != 1 {
+		t.Fatalf("expected 1 connection, got %d", h.ConnectionCount())
+	}
+
+	// Close the client's underlying TCP connection abruptly
+	// to simulate a network failure. This prevents pong responses.
+	c.Close(websocket.StatusGoingAway, "simulated network failure")
+
+	// Wait for the heartbeat to detect the dead connection and clean up
+	deadline := time.After(3 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if h.ConnectionCount() == 0 {
+				return // success
+			}
+		case <-deadline:
+			t.Errorf("expected 0 connections after heartbeat timeout, got %d", h.ConnectionCount())
+			return
+		}
+	}
+}
+
+func TestBufferOverflow_OnOutOfDate(t *testing.T) {
+	// Use minimal buffer to trigger overflow easily
+	h := NewHubWithConfig(HubConfig{SendBufferSize: 2})
+	defer h.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(h.HandleWS))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	c, _ := dialAndWelcome(t, ctx, srv.URL)
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	// Subscribe to Employee
+	wsjson.Write(ctx, c, Message{Type: "subscribe", Data: json.RawMessage(`{"objectType":"Employee"}`)})
+	var subResp Message
+	wsjson.Read(ctx, c, &subResp)
+
+	// Fire many events rapidly — with buffer=2, overflow should occur
+	// because HandleObjectChange runs faster than writePump can drain
+	for i := 0; i < 200; i++ {
+		h.HandleObjectChange("Employee", "e"+string(rune('0'+i%10)), "CREATE",
+			map[string]interface{}{"name": "Emp"})
+	}
+
+	// Read all messages and look for onOutOfDate
+	var gotOutOfDate bool
+	var objectChangedCount int
+	for {
+		readCtx, readCancel := context.WithTimeout(ctx, 1*time.Second)
+		var msg Message
+		err := wsjson.Read(readCtx, c, &msg)
+		readCancel()
+		if err != nil {
+			break
+		}
+		switch msg.Type {
+		case "objectChanged":
+			objectChangedCount++
+		case "onOutOfDate":
+			gotOutOfDate = true
+			if msg.SubscriptionID != subResp.SubscriptionID {
+				t.Errorf("onOutOfDate subscriptionId mismatch: got %s, want %s",
+					msg.SubscriptionID, subResp.SubscriptionID)
+			}
+		}
+	}
+
+	if !gotOutOfDate {
+		t.Errorf("expected at least one onOutOfDate event (received %d objectChanged events out of 200)", objectChangedCount)
+	}
+	// With buffer=2, we should have far fewer objectChanged events than 200
+	if objectChangedCount >= 200 {
+		t.Errorf("expected some events to be dropped (got all %d)", objectChangedCount)
+	}
+}
+
 func TestDisconnect_CleansSubscriptions(t *testing.T) {
 	h := NewHub()
 	defer h.Close()

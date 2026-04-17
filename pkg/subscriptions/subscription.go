@@ -131,7 +131,8 @@ func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, proper
 			select {
 			case cs.conn.send <- msg:
 			default:
-				// Buffer full — drop for this connection.
+				// Buffer full — mark subscription as out of date
+				cs.conn.markOverflow(sub.ID)
 			}
 		}
 	}
