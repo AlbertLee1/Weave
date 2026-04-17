@@ -178,7 +178,28 @@
 - React-Query `useQueries` returns a fresh outer array on every render even when no query state changed — NEVER use the result as a `useMemo` dep directly. Always hash the data into a stable primitive (e.g. a joined string) and depend on that
 - TanStack Query v5 `useInfiniteQuery` REQUIRES `initialPageParam` (was optional in v4). Use `initialPageParam: ''` for opaque-token cursor pagination, coerce `''` to `undefined` in the queryFn so the first call omits the `pageToken` query param. `getNextPageParam: last => last.nextPageToken || undefined` is the standard exit signal
 - Admin audit endpoint is `GET /api/v2/admin/auditEvents` — GLOBAL (not per-ontology), gated by `auth.PermUserManage`. `AuditEvent.diff_json` is free-form `unknown`; UIs should sniff for `{before, after}` shape and fall back to a raw JSON dump
+- Object export pattern (US-153): pagination through `listObjects`/`searchObjects` using a hard cap (EXPORT_HARD_CAP) plus PAGE_SIZE of 200 per call; CSV uses CRLF separators + standard quoting rules (`"` escaped to `""`, wrap when `,`/`"`/`\r`/`\n` present); JSON envelope shape is `{data, metadata:{objectType, exportedAt, count}}`; download via Blob + `URL.createObjectURL` + `<a download>` click + `URL.revokeObjectURL`
+- Frontend export columns: `resolveExportColumns(objectType)` returns `Object.keys(objectType.properties)` — excludes wire-only keys (__rid/__primaryKey/__apiName); use those property apiNames as the `select` array for paginated fetches too
 
+---
+
+## 2026-04-18 - US-153
+- Implemented Browser CSV / JSON data export (Phase 8)
+- Files changed:
+  - web/src/lib/exportObjects.ts — new: `fetchAllForExport` paginates via listObjects or searchObjects (PAGE_SIZE 200, hard cap 100k) respecting current where/orderBy/select; `escapeCsvField`, `toCsv`, `toJsonEnvelope`, `resolveExportColumns`, `triggerDownload`, `exportObjects(format, query, objectType, onProgress)` — dispatches to CSV or JSON, downloads `{apiName}-export.{csv|json}`
+  - web/src/components/browser/ExportButton.tsx — new: dropdown button with "Export as CSV" / "Export as JSON" menu items; click-outside-to-close; shows busy label with running row count; red alert on failure
+  - web/src/components/browser/BrowserPage.tsx — mounted `<ExportButton>` in header toolbar between the "N total" count and the Live toggle; passes current ontology/objectType/where/orderBy/select + hasActiveSearch flag so export mirrors the visible filter set
+  - web/src/lib/__tests__/exportObjects.test.ts — new: 12 tests covering CSV escaping (quote/newline/object stringify), CSV shape with CRLF, JSON envelope with ISO timestamp, column resolution, pagination across 3 pages, search-vs-list dispatch, full CSV/JSON export with blob URL creation and anchor click, triggerDownload revokeObjectURL call
+  - web/src/components/browser/__tests__/ExportButton.test.tsx — new: 4 tests: dropdown opens on click, CSV/JSON menuitems dispatch exportObjects with the right format, error banner renders on failure
+  - prd.json — US-153 passes: true
+- Verification: `npx tsc -b --noEmit` clean; `npx vitest run` 355 tests passing across 57 files; `npm run build` clean (211 modules, 580 KB bundle)
+- **Learnings for future iterations:**
+  - jsdom doesn't fully implement `URL.createObjectURL` — stub the whole `URL` global via `vi.stubGlobal('URL', {createObjectURL, revokeObjectURL})` instead of monkey-patching properties on the real constructor (jsdom's URL throws when you reassign)
+  - `document.createElement('a')` in jsdom DOES produce a real HTMLAnchorElement, but `.click()` is a no-op; spy on `document.createElement` and replace `.click` with `vi.fn()` so tests can assert it was called
+  - Export pagination uses the unified `listObjects`/`searchObjects` fetchers — NO dedicated `/export` endpoint exists. Respecting the UI's active filter is automatic because we re-pass the same `where`/`orderBy`/`select` the Browser page already uses
+  - CSV escaping: Excel / Google Sheets tolerate `\n` but CRLF is the RFC 4180 line ending; always use `\r\n` to survive the widest set of consumers. Quoting rule: wrap when the field contains `,`, `"`, CR, or LF, then double internal `"` to `""`
+  - For object-valued fields (struct / vector), JSON-stringify inside the cell rather than dropping them — a round-trip JSON import can still parse them back
+  - Passing the "hasActiveSearch" flag through to the export query lets a single exportObjects call branch between the two fetchers without duplicating filter-building logic; the Browser page already computes this for its own result switch
 ---
 
 ## 2026-04-18 - US-151

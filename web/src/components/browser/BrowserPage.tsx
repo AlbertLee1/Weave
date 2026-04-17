@@ -11,6 +11,7 @@ import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
 import { ObjectTable } from './ObjectTable';
 import { ObjectDetail } from './ObjectDetail';
+import { ExportButton } from './ExportButton';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import type { WireObject } from '../../api/types';
@@ -239,6 +240,19 @@ export function BrowserPage() {
               {page.totalCount} total
             </span>
           )}
+          <ExportButton
+            objectType={objectType}
+            query={{
+              ontologyApiName: ontology,
+              objectType: objectTypeParam,
+              where: whereClause,
+              orderBy: sortField
+                ? { field: sortField, direction: sortDirection }
+                : undefined,
+              select: selectFields,
+              hasActiveSearch,
+            }}
+          />
           <label className="flex items-center gap-2 cursor-pointer select-none">
             {realtimeEnabled && (
               <span
