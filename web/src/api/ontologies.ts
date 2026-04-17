@@ -2,6 +2,7 @@ import { request } from './client';
 import type {
   Ontology,
   ObjectType,
+  Property,
   LinkType,
   ActionType,
   OntologyInterface,
@@ -148,6 +149,77 @@ export function deleteObjectType(
   return request<void>(
     'DELETE',
     `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}`,
+  );
+}
+
+// --- Property admin endpoints (US-147) ---
+
+export interface CreatePropertyRequest {
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  baseType: string;
+  typeConfig?: unknown;
+  isArray?: boolean;
+  isNullable?: boolean;
+  isSearchable?: boolean;
+  isSortable?: boolean;
+  editOnly?: boolean;
+}
+
+export interface UpdatePropertyRequest {
+  displayName?: string;
+  description?: string;
+  isSearchable?: boolean;
+  isSortable?: boolean;
+  isNullable?: boolean;
+  status?: string;
+  deprecatedReason?: string;
+  editOnly?: boolean;
+}
+
+export async function listProperties(
+  ontologyApiName: string,
+  objectTypeRid: string,
+): Promise<Property[]> {
+  const resp = await request<{ data: Property[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/properties`,
+  );
+  return resp.data;
+}
+
+export function createProperty(
+  ontologyApiName: string,
+  objectTypeRid: string,
+  body: CreatePropertyRequest,
+): Promise<Property> {
+  return request<Property>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/properties`,
+    body,
+  );
+}
+
+export function updateProperty(
+  ontologyApiName: string,
+  propertyRid: string,
+  body: UpdatePropertyRequest,
+): Promise<Property> {
+  return request<Property>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/properties/byRid/${encodeURIComponent(propertyRid)}`,
+    body,
+  );
+}
+
+export function deleteProperty(
+  ontologyApiName: string,
+  propertyRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/properties/byRid/${encodeURIComponent(propertyRid)}`,
   );
 }
 

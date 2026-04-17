@@ -5,9 +5,16 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  size?: 'md' | 'lg' | 'xl';
 }
 
-export function Modal({ open, onClose, title, children }: ModalProps) {
+const SIZE_CLASS: Record<NonNullable<ModalProps['size']>, string> = {
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl',
+};
+
+export function Modal({ open, onClose, title, children, size = 'md' }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,7 +42,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       data-testid="modal-overlay"
     >
       <div
-        className="w-full max-w-lg mx-4 rounded-xl border border-border/50 overflow-hidden"
+        className={`w-full ${SIZE_CLASS[size]} mx-4 rounded-xl border border-border/50 overflow-hidden`}
         style={{
           background: 'rgba(30,36,51,0.92)',
           backdropFilter: 'blur(24px)',

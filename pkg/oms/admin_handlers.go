@@ -468,6 +468,27 @@ func (h *OMSHandler) DeleteObjectType(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListPropertiesForObjectTypeAdmin handles
+// GET /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/properties.
+// It returns the raw Property rows for the given ObjectType (with ?branch= overlay
+// when present), used by the Ontology Manager visual property editor.
+func (h *OMSHandler) ListPropertiesForObjectTypeAdmin(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	objectTypeRID := chi.URLParam(r, "objectTypeRid")
+	props, err := repo.ListProperties(r.Context(), objectTypeRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListPropertiesFailed", nil))
+		return
+	}
+	if props == nil {
+		props = []Property{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": props})
+}
+
 // CreateProperty handles POST /api/admin/objectTypes/{objectTypeRid}/properties.
 func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 	objectTypeRID := chi.URLParam(r, "objectTypeRid")

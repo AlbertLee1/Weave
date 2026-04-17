@@ -337,6 +337,58 @@ components:
             ingest edits regardless of the active conflict-resolution strategy.
             Added in US-025 / US-026 and consumed by the funnel consumer's
             always-apply path (US-027).
+    PropertyListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Property"
+    CreatePropertyRequest:
+      type: object
+      required: [apiName, baseType]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
+        isNullable:
+          type: boolean
+        isSearchable:
+          type: boolean
+        isSortable:
+          type: boolean
+        editOnly:
+          type: boolean
+    UpdatePropertyRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        description:
+          type: string
+        isSearchable:
+          type: boolean
+        isSortable:
+          type: boolean
+        isNullable:
+          type: boolean
+        status:
+          type: string
+        deprecatedReason:
+          type: string
+        editOnly:
+          type: boolean
     LinkType:
       type: object
       required: [rid, apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality, required]
@@ -2480,6 +2532,145 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "409":
           $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/properties:
+    get:
+      operationId: listPropertiesForObjectTypeAdmin
+      summary: List raw Property rows for an object type (admin)
+      description: |
+        Returns the raw Property rows for the given ObjectType, used by the
+        Ontology Manager visual property editor. If `?branch=` is supplied,
+        the response reflects the branch overlay.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Property list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    post:
+      operationId: createProperty
+      summary: Create a property on an object type
+      description: |
+        Creates a Property on the given ObjectType. If `?branch=` is supplied
+        the create is recorded as an ADDED branch change instead of being
+        written to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePropertyRequest"
+      responses:
+        "201":
+          description: Created property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/properties/byRid/{propertyRid}:
+    put:
+      operationId: updateProperty
+      summary: Update a property
+      description: |
+        Updates a Property by RID. Only non-null fields are applied. If
+        `?branch=` is supplied the update is recorded as a MODIFIED branch
+        change instead of being written to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: propertyRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertyRequest"
+      responses:
+        "200":
+          description: Updated property.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteProperty
+      summary: Delete a property
+      description: |
+        Deletes a Property by RID. If `?branch=` is supplied the delete is
+        recorded as a DELETED branch change.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: propertyRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/getByRidBatch:
     post:
       operationId: getObjectTypesByRidBatch

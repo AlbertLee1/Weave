@@ -18,6 +18,7 @@ import { toApiName, toPluralName } from '../../utils/naming';
 import { Modal } from '../common/Modal';
 import { Badge, statusVariant } from '../common/Badge';
 import { LoadingSpinner } from '../common/LoadingSpinner';
+import { PropertiesEditor } from './PropertiesEditor';
 
 type StatusFilter =
   | 'ALL'
@@ -532,6 +533,7 @@ function EditObjectTypeModal({
   onClose: () => void;
 }) {
   const update = useUpdateObjectType(ontologyApiName);
+  const [tab, setTab] = useState<'details' | 'properties'>('details');
   const [form, setForm] = useState<EditFormState>({
     displayName: objectType.displayName,
     pluralDisplayName: objectType.pluralDisplayName ?? '',
@@ -566,7 +568,41 @@ function EditObjectTypeModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={`Edit: ${objectType.displayName}`}>
+    <Modal open onClose={onClose} title={`Edit: ${objectType.displayName}`} size="xl">
+      <div className="flex gap-2 border-b mb-4" style={{ borderColor: 'rgba(31,41,55,0.5)' }} role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'details'}
+          onClick={() => setTab('details')}
+          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+            tab === 'details'
+              ? 'border-accent-cyan text-accent-cyan'
+              : 'border-transparent text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          Details
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'properties'}
+          onClick={() => setTab('properties')}
+          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+            tab === 'properties'
+              ? 'border-accent-cyan text-accent-cyan'
+              : 'border-transparent text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          Properties
+        </button>
+      </div>
+      {tab === 'properties' ? (
+        <PropertiesEditor
+          ontologyApiName={ontologyApiName}
+          objectType={objectType}
+        />
+      ) : (
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
         <div className="text-xs text-text-secondary font-mono">
           {objectType.apiName}
@@ -692,6 +728,7 @@ function EditObjectTypeModal({
           </button>
         </div>
       </form>
+      )}
     </Modal>
   );
 }

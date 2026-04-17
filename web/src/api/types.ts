@@ -40,6 +40,7 @@ export interface Property {
   isSortable: boolean;
   status?: string;
   deprecatedReason?: string;
+  editOnly?: boolean;
 }
 
 export interface LinkType {
