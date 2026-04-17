@@ -9,9 +9,10 @@ import { useWebSocketSubscription } from '../../hooks/useWebSocketSubscription';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
-import { ObjectTable } from './ObjectTable';
+import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
 import { ObjectDetail } from './ObjectDetail';
 import { ExportButton } from './ExportButton';
+import { BulkActionToolbar } from './BulkActionToolbar';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import type { WireObject } from '../../api/types';
@@ -46,6 +47,11 @@ export function BrowserPage() {
   // Detail panel state
   const [selectedObject, setSelectedObject] = useState<WireObject | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+
+  // Bulk selection state (primary-key → full row so we can export without re-fetch)
+  const [selectedRowMap, setSelectedRowMap] = useState<Map<string, WireObject>>(
+    () => new Map(),
+  );
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -204,6 +210,64 @@ export function BrowserPage() {
     setDetailOpen(false);
   }, []);
 
+  // Selection handlers
+  const selectedKeys = useMemo(
+    () => new Set(selectedRowMap.keys()),
+    [selectedRowMap],
+  );
+
+  const handleToggleSelection = useCallback((primaryKey: string) => {
+    setSelectedRowMap((prev) => {
+      const next = new Map(prev);
+      if (next.has(primaryKey)) {
+        next.delete(primaryKey);
+      } else {
+        const row = page?.data.find(
+          (r) => String(r.__primaryKey ?? '') === primaryKey,
+        );
+        if (row) next.set(primaryKey, row);
+      }
+      return next;
+    });
+  }, [page]);
+
+  const handleToggleAllOnPage = useCallback(
+    (select: boolean) => {
+      setSelectedRowMap((prev) => {
+        const next = new Map(prev);
+        for (const row of page?.data ?? []) {
+          const pk = String(row.__primaryKey ?? '');
+          if (!pk) continue;
+          if (select) {
+            next.set(pk, row);
+          } else {
+            next.delete(pk);
+          }
+        }
+        return next;
+      });
+    },
+    [page],
+  );
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedRowMap(new Map());
+  }, []);
+
+  const tableSelection = useMemo<ObjectTableSelection>(
+    () => ({
+      selectedKeys,
+      onToggle: handleToggleSelection,
+      onToggleAll: handleToggleAllOnPage,
+    }),
+    [selectedKeys, handleToggleSelection, handleToggleAllOnPage],
+  );
+
+  const selectedRows = useMemo(
+    () => Array.from(selectedRowMap.values()),
+    [selectedRowMap],
+  );
+
   // Loading state for object type
   if (isLoadingType) {
     return (
@@ -317,8 +381,17 @@ export function BrowserPage() {
           onNextPage={handleNextPage}
           onPrevPage={handlePrevPage}
           currentPage={currentPage}
+          selection={tableSelection}
         />
       )}
+
+      {/* Bulk-action floating toolbar (rendered only when selection is non-empty) */}
+      <BulkActionToolbar
+        ontologyApiName={ontology}
+        objectType={objectType}
+        selectedRows={selectedRows}
+        onClear={handleClearSelection}
+      />
 
       {/* Empty state */}
       {!isLoading && page && page.data.length === 0 && (

@@ -3,6 +3,12 @@ import type { ObjectType, WireObject } from '../../api/types';
 import { DataTable, type Column } from '../common/DataTable';
 import { truncate } from '../../lib/formatters';
 
+export interface ObjectTableSelection {
+  selectedKeys: Set<string>;
+  onToggle: (primaryKey: string) => void;
+  onToggleAll: (select: boolean) => void;
+}
+
 interface ObjectTableProps {
   ontologyApiName: string;
   objectType: ObjectType;
@@ -21,6 +27,7 @@ interface ObjectTableProps {
   // DerivedPropertyDef outputs). They render after the schema columns and are
   // tagged `data-derived-column` so Playwright specs can target them.
   derivedColumns?: string[];
+  selection?: ObjectTableSelection;
 }
 
 export function ObjectTable({
@@ -36,9 +43,45 @@ export function ObjectTable({
   hasPrevPage,
   currentPage,
   derivedColumns,
+  selection,
 }: ObjectTableProps) {
+  const pageKeys = useMemo(
+    () => data.map((row) => String(row.__primaryKey ?? '')).filter(Boolean),
+    [data],
+  );
+  const allOnPageSelected =
+    !!selection &&
+    pageKeys.length > 0 &&
+    pageKeys.every((k) => selection.selectedKeys.has(k));
+  const someOnPageSelected =
+    !!selection && pageKeys.some((k) => selection.selectedKeys.has(k));
+
   const columns = useMemo<Column<WireObject>[]>(() => {
     const cols: Column<WireObject>[] = [];
+
+    if (selection) {
+      cols.push({
+        key: '__select',
+        header: '',
+        frozen: true,
+        width: '36px',
+        render: (row) => {
+          const pk = String(row.__primaryKey ?? '');
+          const checked = selection.selectedKeys.has(pk);
+          return (
+            <input
+              type="checkbox"
+              aria-label={`Select ${pk}`}
+              data-testid={`select-row-${pk}`}
+              checked={checked}
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => selection.onToggle(pk)}
+              className="cursor-pointer"
+            />
+          );
+        },
+      });
+    }
 
     // Primary key column is always first and frozen
     cols.push({
@@ -100,21 +143,39 @@ export function ObjectTable({
     }
 
     return cols;
-  }, [objectType, derivedColumns]);
+  }, [objectType, derivedColumns, selection]);
 
   return (
-    <DataTable<WireObject>
-      columns={columns}
-      data={data}
-      onRowClick={onRowClick}
-      onSort={onSort}
-      pageSize={pageSize}
-      totalCount={totalCount}
-      onNextPage={onNextPage}
-      onPrevPage={onPrevPage}
-      hasNextPage={hasNextPage}
-      hasPrevPage={hasPrevPage}
-      currentPage={currentPage}
-    />
+    <div>
+      {selection && (
+        <div className="flex items-center gap-2 px-2 pb-2 text-xs font-mono text-text-secondary">
+          <input
+            type="checkbox"
+            aria-label="Select all on page"
+            data-testid="select-all"
+            checked={allOnPageSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = !allOnPageSelected && someOnPageSelected;
+            }}
+            onChange={(e) => selection.onToggleAll(e.target.checked)}
+            className="cursor-pointer"
+          />
+          <span>Select all on page</span>
+        </div>
+      )}
+      <DataTable<WireObject>
+        columns={columns}
+        data={data}
+        onRowClick={onRowClick}
+        onSort={onSort}
+        pageSize={pageSize}
+        totalCount={totalCount}
+        onNextPage={onNextPage}
+        onPrevPage={onPrevPage}
+        hasNextPage={hasNextPage}
+        hasPrevPage={hasPrevPage}
+        currentPage={currentPage}
+      />
+    </div>
   );
 }
