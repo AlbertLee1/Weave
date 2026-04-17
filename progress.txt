@@ -132,7 +132,37 @@
 - OAuth scope enforcement: User.Attributes[auth.OAuthScopesAttributeKey] carries granted scopes; auth.RequireOAuthScope("scope") middleware enforces per-route intersection; non-OAuth callers (dev/JWT/api-key) pass through unscoped
 - OAuth consent screen: minimal html/template rendered inline in pkg/developer/oauth_handlers.go (consentPageTemplate string); POST /oauth/authorize consumes the submitted form params + decision ("approve"|"deny"); approve mints a code + 302 to redirect_uri?code=...&state=..., deny 302s with ?error=access_denied&state=...
 - PKCE verifier shape check: 43..128 chars from [A-Za-z0-9-._~] per RFC 7636 §4.1; S256 challenge = base64url(sha256(verifier)) with no padding; only S256 accepted (plain rejected)
+- Frontend YAML parsing: js-yaml is the only YAML dep in web/; import as `import yaml from 'js-yaml'` then `yaml.load(text)` returns plain JS object suitable for OpenAPI spec traversal
+- Playground pattern (web/src/components/developer/): openapiParser.ts for spec → Endpoint[], snippets.ts for curl/TS/Python/Go code-gen, history.ts for localStorage history (max 50), PlaygroundPage.tsx composes left endpoint list + right runner with tabs
+- Tailwind v4 theme tokens live in web/src/styles/index.css under `@theme { --color-* }`; only `accent-cyan`/`accent-teal`/`accent-success`/`accent-warning`/`accent-error` exist — there is NO `accent-primary`; use `focus:border-accent-cyan/40` for amber focus rings
+- React 19 lint rule "Cannot access refs during render" + "Calling setState synchronously within an effect" → derived-value pattern (`const effectiveSelected = selected ?? endpoints[0] ?? null`) is the go-to replacement for "useEffect to initialize default state from async data"
+- vitest global fetch stub: use `vi.stubGlobal('fetch', vi.fn(...))` + `vi.unstubAllGlobals()` in afterEach — `global.fetch =` fails TS build because `@types/node` in web/ does not expose the NodeJS `global` namespace
 
+---
+
+## 2026-04-18 - US-143
+- Implemented Developer Console API Playground frontend (Phase 6)
+- Files changed:
+  - web/src/components/developer/openapiParser.ts — parseOpenApiYaml, extractEndpoints (flattens paths × methods), groupByTag, buildRequestUrl (path param substitution + query string), resolveRef, exampleForSchema (follows $ref/allOf/oneOf/anyOf + primitive defaults)
+  - web/src/components/developer/snippets.ts — buildSnippets(req) → {curl, typescript, python, go}; strips body for GET/HEAD; shell-escapes URL/body for curl; uses backtick raw strings for Go
+  - web/src/components/developer/history.ts — loadHistory/pushHistory/clearHistory backed by localStorage key `weave.playground.history`; HISTORY_LIMIT=50, most-recent-first
+  - web/src/components/developer/PlaygroundPage.tsx — main page: left panel (tag-grouped endpoint list + search filter) + right panel (endpoint header + auto-generated param form + body textarea seeded from schema example + Send button + response viewer + snippet tabs curl/typescript/python/go + history list)
+  - web/src/components/developer/__tests__/openapiParser.test.ts — 8 tests: YAML parse, endpoint extraction, parameters + body detection, group-by-tag (incl. "Other" default), URL building (path substitution, query omit-empty, encoding), $ref resolution, schema example generation
+  - web/src/components/developer/__tests__/snippets.test.ts — 6 tests: curl shape, omit-auth-when-no-token, TS shape, omit-body-for-GET, Python shape, Go shape
+  - web/src/components/developer/__tests__/history.test.ts — 4 tests: round-trip, cap at HISTORY_LIMIT, corrupt-storage safety, clear
+  - web/src/components/developer/__tests__/PlaygroundPage.test.tsx — 3 tests: renders heading, endpoint list loads, tag group header rendered (fetch stubbed via vi.stubGlobal)
+  - web/src/App.tsx — new route `developer/playground` → PlaygroundPage
+  - web/src/components/layout/Sidebar.tsx — added "API Playground" nav link + `code` icon path
+  - web/package.json — added js-yaml 4.1.1 + @types/js-yaml 4.0.9
+  - prd.json — US-143 passes: true
+- **Learnings for future iterations:**
+  - The OpenAPI spec is served at `/api/openapi.yaml` (YAML, NOT JSON) — Vite's `/api` proxy forwards it to the Go server. Don't hit `/swagger/` expecting parseable content; `/swagger/` is the Swagger UI HTML page
+  - `vi.stubGlobal('fetch', vi.fn(...))` is the right way to mock fetch in jsdom tests — direct `global.fetch = ...` won't compile in this repo because `@types/node` doesn't publish the `global` identifier into the frontend tsconfig
+  - Schema example generation needs cycle protection: `seen: Set<string>` tracks visited $ref paths so recursive schemas (e.g. a type that references itself) produce a null instead of blowing the stack
+  - The React-19 eslint-plugin-react-hooks rule rejects `useEffect + setState` patterns that initialize a "default selected" — replace with `effectiveSelected = userSelected ?? firstItem`. Cleaner, and avoids an extra render
+  - Path params with special characters (`/`, ` `, etc.) MUST be encodeURIComponent'd per-segment; we can't rely on fetch to encode `{placeholder}` substitutions
+  - The existing Tailwind theme tokens do NOT include `accent-primary` — use `accent-cyan` (amber) for warm focus rings. Grepping `web/src/styles/index.css` for the list before typing classes saves a round-trip through the lint suite
+  - Browser verification: dev-browser MCP was NOT available in this iteration; `npm run build` + full vitest (249 passing) serves as the verification proxy until a browser tool is plumbed in
 ---
 
 ## 2026-04-18 - US-142

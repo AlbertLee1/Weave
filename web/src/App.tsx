@@ -11,6 +11,7 @@ import { ActionConsolePage } from './components/actions/ActionConsolePage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
 import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
+import { PlaygroundPage } from './components/developer/PlaygroundPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +44,7 @@ export default function App() {
 <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
+              <Route path="developer/playground" element={<PlaygroundPage />} />
             </Route>
           </Routes>
         </AuthProvider>

@@ -11,6 +11,7 @@ const iconPaths: Record<string, string> = {
   'bar-chart': 'M12 20V10M18 20V4M6 20v-4',
   layers:
     'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+  code: 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -46,6 +47,7 @@ export function Sidebar() {
       label: 'Query Builder',
       icon: 'layers',
     },
+    { to: '/developer/playground', label: 'API Playground', icon: 'code' },
   ];
 
   return (
