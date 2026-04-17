@@ -127,7 +127,45 @@
 - Optional deps on ServerDeps are gated by nil-check at route registration time; contract tests need a stub repo to register the route so the OpenAPI ↔ chi parity check doesn't fail
 - Per-user ownership pattern for personal resources (api keys, applications): Create uses UserFromContext for created_by; List filters by created_by; Get/Delete fetch → compare UserID → 403 on mismatch
 - Migration numbering is STRICTLY sequential — PRD-declared numbers like "Migration 000028" may collide; always pick next available (currently 000030 as of US-141)
+- OAuth 2.0 flow (pkg/developer oauth_*.go): authorization_code + PKCE S256 + client_credentials grants; access-token marker `wvoa_`, refresh-token marker `wvor_`, authorization-code prefix `oac_`; raw bearers never persisted, only SHA-256 hash + 8-char base32 lookup prefix (same shape as wvk_ API keys)
+- OAuth middleware hook: pkg/auth.MiddlewareFull(signer, apiKeys, users, resolver, oauth) — adds wvoa_ bearer path on top of MiddlewareWithAPIKeys; auth.OAuthTokenValidator interface is implemented by developer.OAuthAuthenticator (avoids circular import — pkg/developer already depends on pkg/auth)
+- OAuth scope enforcement: User.Attributes[auth.OAuthScopesAttributeKey] carries granted scopes; auth.RequireOAuthScope("scope") middleware enforces per-route intersection; non-OAuth callers (dev/JWT/api-key) pass through unscoped
+- OAuth consent screen: minimal html/template rendered inline in pkg/developer/oauth_handlers.go (consentPageTemplate string); POST /oauth/authorize consumes the submitted form params + decision ("approve"|"deny"); approve mints a code + 302 to redirect_uri?code=...&state=..., deny 302s with ?error=access_denied&state=...
+- PKCE verifier shape check: 43..128 chars from [A-Za-z0-9-._~] per RFC 7636 §4.1; S256 challenge = base64url(sha256(verifier)) with no padding; only S256 accepted (plain rejected)
 
+---
+
+## 2026-04-18 - US-142
+- Implemented OAuth 2.0 authorization_code flow with PKCE + client_credentials grant for the Developer Console (Phase 6)
+- Files changed:
+  - migrations/000031_oauth.up.sql — oauth_authorization_codes (code UNIQUE, client_id, user_id, redirect_uri, scopes JSONB, code_challenge, code_challenge_method, expires_at, consumed_at) + oauth_tokens (token_hash BYTEA, token_prefix, token_type CHECK access/refresh, client_id, nullable user_id, scopes JSONB, expires_at, revoked_at); indexes on expires_at, prefix, client_id
+  - migrations/000031_oauth.down.sql — drop indexes + tables
+  - pkg/developer/oauth_code.go — AuthorizationCode model + PKCE helpers (ComputePKCEChallenge, VerifyPKCE with RFC 7636 §4.1 verifier shape check, ValidateRedirectURI exact match); AuthorizationCodeRepository interface
+  - pkg/developer/oauth_token.go — OAuthToken model + GenerateAccessToken/GenerateRefreshToken (wvoa_/wvor_ + 8-char base32 prefix + 52-char random), HashOAuthToken, IsOAuthAccessToken, ParseOAuthToken, ScopeIntersects; OAuthTokenRepository interface
+  - pkg/developer/oauth_repository.go — PGAuthorizationCodeRepository (Create/GetByCode/MarkConsumed) + PGOAuthTokenRepository (Create/GetByPrefix/Revoke) with JSONB scope serialization
+  - pkg/developer/oauth_repository_fake_test.go — in-memory fake repos for handler + flow tests
+  - pkg/developer/oauth_handlers.go — OAuthHandler with GET /oauth/authorize (consent HTML via html/template), POST /oauth/authorize (approve→code redirect; deny→error redirect), POST /oauth/token (authorization_code with PKCE verification + single-use + redirect_uri match; client_credentials with Basic-auth OR body-form client_secret + scope narrowing); NewOAuthHandlerWithOptions for test-controllable clock/TTLs
+  - pkg/developer/oauth_authenticator.go — OAuthAuthenticator implements auth.OAuthTokenValidator: parse prefix → lookup → constant-time hash compare → IsUsable check → returns auth.OAuthPrincipal{UserID, ClientID, Scopes}
+  - pkg/developer/oauth_code_test.go — 9 unit tests: RFC7636 example vector, success path, mismatch→ErrPKCEChallengeMismatch, plain method→ErrUnsupportedPKCEMethod, short verifier→ErrInvalidPKCEVerifier, disallowed chars→ErrInvalidPKCEVerifier, code uniqueness, IsUsable fresh/expired/consumed, ValidateRedirectURI exact/unknown/trailing-slash
+  - pkg/developer/oauth_token_test.go — 6 unit tests: access/refresh token shape, marker distinction, parse-roundtrip, malformed rejection, constant-time hash compare, IsUsable states, ScopeIntersects table cases
+  - pkg/developer/oauth_handlers_test.go — 14 handler tests: consent render, unknown client, mismatched redirect_uri, missing PKCE challenge, approve→302 with code+state, deny→302 with error=access_denied, token exchange returns access+refresh, single-use enforcement, wrong verifier→invalid_grant, redirect_uri mismatch→invalid_grant, client_credentials returns access only + scope narrowing, bad secret→401, unsupported grant_type→400, RegisterRoutes
+  - pkg/developer/oauth_flow_test.go — 3 integration tests through real chi router + auth.MiddlewareFull + auth.RequireOAuthScope: full authorize→token→scoped API; insufficient scope→403 InsufficientScope; revoked token rejected
+  - pkg/auth/oauth.go — OAuthTokenValidator interface, OAuthPrincipal struct, OAuthAccessTokenMarker const, OAuthScopesAttributeKey/OAuthClientIDAttributeKey, IsOAuthAccessToken, MiddlewareFull (superset of MiddlewareWithAPIKeys), handleOAuth, OAuthScopes(ctx) helper, RequireOAuthScope(scope...) middleware
+  - cmd/server/main.go — added ServerDeps.AuthCodeRepo + OAuthTokenRepo; wired developer.NewPGAuthorizationCodeRepository + NewPGOAuthTokenRepository; registered /oauth/* handler at router root (outside auth group); MiddlewareFull replaces MiddlewareWithAPIKeys, threading the OAuth authenticator when repos present
+  - cmd/server/contract_test.go — stubAuthCodeRepo + stubOAuthTokenRepo satisfying new interfaces; deps wired in newContractTestRouter
+  - api/openapi.yaml — /oauth/authorize (GET, POST) + /oauth/token (POST) paths with parameters/requestBody; OAuthTokenResponse + OAuthTokenError schemas
+  - cmd/server/openapi_spec.yaml — synced with api/openapi.yaml
+  - prd.json — US-142 passes: true
+- **Learnings for future iterations:**
+  - MiddlewareFull is a **superset** of MiddlewareWithAPIKeys — when `oauth` is nil it returns the old middleware verbatim, so every existing call site can migrate without behaviour change by passing `nil` for the 5th arg
+  - RequireOAuthScope is a **pass-through for non-OAuth callers** by design: JWT/API-key/dev users don't have User.Attributes[oauth_scopes] set, so they ignore the scope gate. This preserves existing RBAC surfaces and keeps OAuth scoping layered ON TOP, not replacing what's already there
+  - PKCE verifier shape (43..128 chars, [A-Za-z0-9-._~]) is enforced in VerifyPKCE even when the hash would coincidentally match — short verifiers are brute-forceable against a captured challenge, so rejecting them at the API boundary is the right default
+  - Authorization codes are made single-use by stamping consumed_at **before** issuing the access token. If MarkConsumed fails (race / already consumed) the token is never minted; if the later Create fails the code stays consumed (prefer losing one exchange to letting two access tokens out)
+  - OAuth token lookup uses **GetByPrefix** returning a **slice** (not a single row) because two prefixes can collide in theory — the caller still does a constant-time hash compare on each candidate. Same pattern as pkg/auth APIKeyRepository.GetByPrefix wouldn't have worked because it takes the first match, which leaks a timing signal
+  - oauth_tokens.user_id is NULLABLE: client_credentials grants have no end-user, so the middleware builds a synthetic `app:<client_id>` User.ID for logging / audit; per-user handlers (application ownership) continue to work because the test-suite never issues client_credentials against them
+  - OAuth error envelope is RFC 6749 §5.2 (`{error, error_description}`), NOT Weave's usual apierror shape — a conforming OAuth client will parse the error code to decide retry vs. re-auth, so we can't reuse apierror here
+  - Consent HTML is rendered inline (single template string in oauth_handlers.go) rather than via //go:embed. Single-file templates don't justify the build-tag friction, and operators can tweak the text without touching the embed graph
+  - Contract tests need a stub repo for EVERY optional ServerDeps interface — otherwise TestContract_NoOrphanedSpecPaths fails when the spec advertises a route the nil-gated wire code didn't register
 ---
 
 ## 2026-04-18 - US-141

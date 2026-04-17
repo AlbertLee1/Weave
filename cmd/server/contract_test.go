@@ -193,6 +193,8 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		FunnelPublisher:  stubIngestPublisher{},
 		WebSocketHub:     subscriptions.NewHub(),
 		ApplicationRepo:  stubApplicationRepo{},
+		AuthCodeRepo:     stubAuthCodeRepo{},
+		OAuthTokenRepo:   stubOAuthTokenRepo{},
 	}
 	return NewFullRouter(deps)
 }
@@ -321,3 +323,24 @@ func (stubApplicationRepo) ListByUser(context.Context, string) ([]*developer.App
 	return nil, nil
 }
 func (stubApplicationRepo) Delete(context.Context, string) error { return nil }
+
+// stubAuthCodeRepo satisfies developer.AuthorizationCodeRepository for
+// contract tests. The handlers never actually execute during chi.Walk so
+// every method is allowed to return a trivial error/value.
+type stubAuthCodeRepo struct{}
+
+func (stubAuthCodeRepo) Create(context.Context, *developer.AuthorizationCode) error { return nil }
+func (stubAuthCodeRepo) GetByCode(context.Context, string) (*developer.AuthorizationCode, error) {
+	return nil, developer.ErrAuthorizationCodeNotFound
+}
+func (stubAuthCodeRepo) MarkConsumed(context.Context, string, time.Time) error { return nil }
+
+// stubOAuthTokenRepo satisfies developer.OAuthTokenRepository for contract
+// tests.
+type stubOAuthTokenRepo struct{}
+
+func (stubOAuthTokenRepo) Create(context.Context, *developer.OAuthToken) error { return nil }
+func (stubOAuthTokenRepo) GetByPrefix(context.Context, string, string) ([]*developer.OAuthToken, error) {
+	return nil, nil
+}
+func (stubOAuthTokenRepo) Revoke(context.Context, string, time.Time) error { return nil }

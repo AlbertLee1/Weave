@@ -41,16 +41,16 @@ var ErrInvalidClientSecretFormat = errors.New("invalid client secret format")
 // can never be retrieved afterwards. Callers who need to verify a submitted
 // secret call VerifyClientSecret(submitted, row.ClientSecretHash).
 type Application struct {
-	ID                string
-	Name              string
-	Description       string
-	ClientID          string
-	ClientSecretHash  []byte
-	RedirectURIs      []string
-	Scopes            []string
-	CreatedBy         string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID               string
+	Name             string
+	Description      string
+	ClientID         string
+	ClientSecretHash []byte
+	RedirectURIs     []string
+	Scopes           []string
+	CreatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // GenerateClientID returns a fresh, opaque public identifier for an

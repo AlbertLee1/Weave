@@ -33,12 +33,12 @@ import (
 	"github.com/liyang/weave/pkg/mcp"
 	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
-	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/sqlqueries"
+	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/transactions"
 	"github.com/nats-io/nats.go"
@@ -86,7 +86,13 @@ type ServerDeps struct {
 	// US-141: Developer Console application registry. When nil the
 	// /api/v2/developer/applications routes are not registered.
 	ApplicationRepo developer.ApplicationRepository
-	CORSOrigins     []string // Allowed CORS origins (empty = disabled)
+	// US-142: Developer Console OAuth 2.0 authorization_code + PKCE flow.
+	// When both AuthCodeRepo and OAuthTokenRepo are non-nil the /oauth/*
+	// endpoints and OAuth bearer token validation are wired; nil leaves
+	// them off and the auth middleware degrades to JWT / API-key only.
+	AuthCodeRepo   developer.AuthorizationCodeRepository
+	OAuthTokenRepo developer.OAuthTokenRepository
+	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -247,18 +253,30 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		r.Get("/api/v2/ontologies/{ontologyApiName}/subscriptions/ws", wsHandler.ServeHTTP)
 	}
 
+	// US-142: OAuth 2.0 endpoints — /oauth/authorize (GET+POST) and
+	// /oauth/token (POST). Mounted at the ROOT, not under /api/v2/, to
+	// match OAuth conventions third-party clients expect. The consent
+	// screen itself does not require an authenticated user in dev mode;
+	// in production the router will layer the auth middleware on it.
+	var oauthValidator auth.OAuthTokenValidator
+	if deps.ApplicationRepo != nil && deps.AuthCodeRepo != nil && deps.OAuthTokenRepo != nil {
+		oauthHandler := developer.NewOAuthHandler(deps.ApplicationRepo, deps.AuthCodeRepo, deps.OAuthTokenRepo)
+		oauthHandler.RegisterRoutes(r)
+		oauthValidator = developer.NewOAuthAuthenticator(deps.OAuthTokenRepo)
+	}
+
 	// Auth-protected API routes
 	r.Group(func(api chi.Router) {
-		// MiddlewareWithAPIKeys unifies JWT and wvk_ api-key bearer auth.
-		// When any of the api-key dependencies is nil (dev / minimal test
-		// harness) it degrades gracefully to JWT-only — byte-identical to
-		// the old auth.Middleware(signer) behaviour because Middleware is
-		// a thin wrapper over MiddlewareWithAPIKeys(signer, nil, nil, nil).
-		api.Use(auth.MiddlewareWithAPIKeys(
+		// MiddlewareFull unifies JWT, wvk_ api-key, and wvoa_ OAuth bearer
+		// auth. Any optional dependency can be nil (dev / minimal test
+		// harness): the middleware degrades gracefully. A nil
+		// oauthValidator falls through to MiddlewareWithAPIKeys.
+		api.Use(auth.MiddlewareFull(
 			deps.JWTSigner,
 			deps.APIKeyRepo,
 			deps.UserRepo,
 			deps.RoleResolver,
+			oauthValidator,
 		))
 
 		// US-044: enforce per-ontology scope on every route that carries an
@@ -520,6 +538,8 @@ func main() {
 		deps.UserRepo = auth.NewPGUserRepository(pool)
 		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
+		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
+		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),
