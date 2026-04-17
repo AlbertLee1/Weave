@@ -150,6 +150,8 @@ func allCollectors() []prometheus.Collector {
 		bleveIndexDocs,
 		actionsAppliedTotal,
 		actionsDuration,
+		apiRequestsTotal,
+		apiRequestDuration,
 		buildInfo,
 	}
 }

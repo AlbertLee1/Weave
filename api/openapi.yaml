@@ -1892,6 +1892,70 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApplicationSummary"
+    ApplicationUsageResponse:
+      type: object
+      description: Aggregated per-window API usage summary for an OAuth application.
+      required: [applicationId, clientId, windows]
+      properties:
+        applicationId:
+          type: string
+        clientId:
+          type: string
+        windows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplicationUsageWindow"
+    ApplicationUsageWindow:
+      type: object
+      required: [window, since, until, total, errors, byStatus, byMethod, topRoutes, p50Ms, p95Ms, p99Ms]
+      properties:
+        window:
+          type: string
+          description: Human-readable window label (24h, 7d, 30d).
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        total:
+          type: integer
+        errors:
+          type: integer
+          description: Requests with status >= 400.
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Status-code family buckets (2xx, 3xx, 4xx, 5xx, other).
+        byMethod:
+          type: object
+          additionalProperties:
+            type: integer
+        topRoutes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplicationUsageRouteStat"
+        p50Ms:
+          type: number
+        p95Ms:
+          type: number
+        p99Ms:
+          type: number
+    ApplicationUsageRouteStat:
+      type: object
+      required: [endpoint, method, count, errors, p95Ms]
+      properties:
+        endpoint:
+          type: string
+        method:
+          type: string
+        count:
+          type: integer
+        errors:
+          type: integer
+        p95Ms:
+          type: number
     OAuthTokenResponse:
       type: object
       description: |
@@ -5334,6 +5398,37 @@ paths:
       responses:
         "204":
           description: Application removed.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/developer/applications/{id}/usage:
+    get:
+      operationId: getApplicationUsage
+      summary: Aggregated API usage metrics for an OAuth application
+      description: |
+        Returns per-window counters (24h / 7d / 30d) for requests made with
+        access tokens issued against this application's client_id. The
+        summary is computed in-process from a bounded sample log; the
+        underlying Prometheus counters are always available on /metrics.
+        Only the owning user can read these metrics; other callers get 403.
+      tags: [Developer]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application UUID.
+      responses:
+        "200":
+          description: Aggregated usage for the caller's application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationUsageResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "403":

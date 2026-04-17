@@ -137,6 +137,10 @@
 - Tailwind v4 theme tokens live in web/src/styles/index.css under `@theme { --color-* }`; only `accent-cyan`/`accent-teal`/`accent-success`/`accent-warning`/`accent-error` exist — there is NO `accent-primary`; use `focus:border-accent-cyan/40` for amber focus rings
 - React 19 lint rule "Cannot access refs during render" + "Calling setState synchronously within an effect" → derived-value pattern (`const effectiveSelected = selected ?? endpoints[0] ?? null`) is the go-to replacement for "useEffect to initialize default state from async data"
 - vitest global fetch stub: use `vi.stubGlobal('fetch', vi.fn(...))` + `vi.unstubAllGlobals()` in afterEach — `global.fetch =` fails TS build because `@types/node` in web/ does not expose the NodeJS `global` namespace
+- Prometheus metrics in pkg/metrics/metrics.go — all collectors registered via allCollectors(); new collectors MUST be appended to that slice or Register() silently skips them on /metrics
+- UsageMiddleware pattern (pkg/metrics/usage.go): mounts inside the auth group AFTER auth.MiddlewareFull + auth.OntologyScopeMiddleware so User.Attributes[OAuthClientIDAttributeKey] is populated; non-OAuth callers (dev/JWT/API-key) fall back to label app_id="anonymous"
+- UsageSampleStore: in-memory bounded-per-app ring (retention default 30d, maxPerApp default 10k) that serves the /api/v2/developer/applications/{id}/usage windows without a TSDB; lazy eviction on Record(); Snapshot(appID, window) returns a defensive copy
+- Reusing statusCapturingResponseWriter across middleware (http.go + usage.go) — do NOT redefine; it's a package-private struct
 
 ---
 
@@ -1001,4 +1005,26 @@
   - For CLI comparison flows, load the prior metadata with `os.ReadFile + json.Unmarshal` — `filepath.Join` resolves cross-platform; silently treat missing/corrupt metadata as "initial" rather than hard-failing so `--diff` is safe on a fresh output dir
   - When testing `Generate` output across multiple languages, a single table-driven test (`for _, lang := range []string{"ts","python","go"}`) is cheaper than duplicating three nearly-identical assertion blocks
   - Test assertions against generated JSON can safely depend on a deterministic version token (`"ontologyVersion": 5`), but never on timestamps or names ordered by map iteration — sort name lists in BuildMetadata for stable output
+---
+
+## 2026-04-18 - US-144
+- Implemented Developer Console Usage Metrics middleware + /usage endpoint (Phase 6)
+- Files changed:
+  - pkg/metrics/usage.go — new: UsageMiddleware(store) chi middleware that wraps every authed request; emits Prometheus `weave_api_requests_total{endpoint,method,status,app_id}` counter + `weave_api_request_duration_seconds{endpoint,method,app_id}` histogram; app_id resolved from User.Attributes[auth.OAuthClientIDAttributeKey] with AnonymousAppID fallback; UsageSampleStore (in-memory, retention-capped + per-app cap, lazy eviction on Record) for the /usage endpoint to read from without a TSDB; ClientIDFromContext helper
+  - pkg/metrics/usage_summary.go — new: UsageSummary / RouteStat / UsageWindows (24h, 7d, 30d); Summarize/SummarizeAll aggregate samples into per-window counts, error counts, status/method breakdowns, top-10 routes (sorted by count), and P50/P95/P99 latency (nearest-rank percentile); statusBucket maps raw codes → "2xx"/"3xx"/"4xx"/"5xx"/"other"
+  - pkg/metrics/metrics.go — registered apiRequestsTotal + apiRequestDuration in allCollectors()
+  - pkg/metrics/usage_test.go — new: 10 tests — counter increments with app_id, anonymous fallback, 500 capture, per-app sample isolation, retention eviction, per-app cap, Snapshot(window) filtering, Summarize percentiles + error counts, window exclusion, SummarizeAll returns three windows, ClientIDFromContext cases, statusBucket table
+  - pkg/developer/usage_handlers.go — new: UsageHandler with Get/GetFor reusing ApplicationRepository ownership check (401 no user, 400 missing id, 404 app not found, 403 not owner, 200 with UsageResponse envelope); RegisterRoutes wires GET /api/v2/developer/applications/{id}/usage
+  - pkg/developer/usage_handlers_test.go — new: 6 tests — three-window response shape with seeded samples across 24h/7d/30d boundaries, 401 without user, 403 non-owner, 404 missing app, 400 missing id, nil-store degraded mode returns 3 empty windows
+  - cmd/server/main.go — ServerDeps gains UsageSamples *metrics.UsageSampleStore; api.Use(metrics.UsageMiddleware(deps.UsageSamples)) inserted directly after auth.OntologyScopeMiddleware; UsageHandler registered alongside ApplicationHandler inside the `if deps.ApplicationRepo != nil` block; production bootstrap (PG path) initializes store with (30*24h, 10000)
+  - api/openapi.yaml — new path /api/v2/developer/applications/{id}/usage (GET) + ApplicationUsageResponse / ApplicationUsageWindow / ApplicationUsageRouteStat schemas
+  - cmd/server/openapi_spec.yaml — synced with api/openapi.yaml
+  - prd.json — US-144 passes: true
+- **Learnings for future iterations:**
+  - Adding a new Prometheus CounterVec/HistogramVec means two edits: declare it in metrics.go, AND append it to allCollectors(). Skipping the second edit silently drops the metric from /metrics — the collector exists in memory but is never registered on the shared registry
+  - Middleware insertion order matters: the usage middleware MUST run AFTER auth.MiddlewareFull because it reads User.Attributes[OAuthClientIDAttributeKey]. If you put it before, every request shows up as "anonymous". OntologyScopeMiddleware is a good landmark — the usage line goes directly after it
+  - PromQL-free design: the per-app /usage endpoint reads from an in-memory UsageSampleStore rather than running queries against a TSDB, because Weave ships as a single-machine appliance and requiring a Prometheus server to answer a per-app usage query is the wrong tradeoff. The Prometheus counters are still emitted on /metrics for anyone who DOES scrape
+  - The sample store caps per-app memory at maxPerApp samples (default 10_000) and lazily evicts past-retention samples on every Record(). This keeps the append path O(n) in the per-app buffer, not the full store — 10k req/day per app is ~300k entries in memory at steady state, which is fine
+  - UsageHandler accepts a nil sample store (degraded mode): SummarizeAll(nil, now) returns three empty windows, so the endpoint never 500s just because the operator didn't wire a store. This mirrors the rest of cmd/server/main.go's "optional deps never cause hard failures" contract
+  - Contract test stub: stubApplicationRepo already exists from US-141 and works unchanged — the UsageHandler reuses the same repo interface, so no new stub needed in cmd/server/contract_test.go
 ---

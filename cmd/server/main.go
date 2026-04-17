@@ -86,6 +86,12 @@ type ServerDeps struct {
 	// US-141: Developer Console application registry. When nil the
 	// /api/v2/developer/applications routes are not registered.
 	ApplicationRepo developer.ApplicationRepository
+	// US-144: Per-application API usage sample store (in-memory). Populated
+	// by metrics.UsageMiddleware on every authenticated request and read by
+	// GET /api/v2/developer/applications/{id}/usage. When nil the
+	// middleware is still registered (Prometheus counters are always
+	// emitted) but the /usage endpoint returns empty windows.
+	UsageSamples *metrics.UsageSampleStore
 	// US-142: Developer Console OAuth 2.0 authorization_code + PKCE flow.
 	// When both AuthCodeRepo and OAuthTokenRepo are non-nil the /oauth/*
 	// endpoints and OAuth bearer token validation are wired; nil leaves
@@ -288,6 +294,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// scope to.
 		api.Use(auth.OntologyScopeMiddleware(auth.PermObjectRead))
 
+		// US-144: per-app API usage metrics. Mounted INSIDE the auth group
+		// so the OAuth client_id on User.Attributes is populated when the
+		// middleware reads it; dev / JWT / API-key callers fall back to the
+		// "anonymous" app_id label.
+		api.Use(metrics.UsageMiddleware(deps.UsageSamples))
+
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
 
@@ -437,6 +449,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.ApplicationRepo != nil {
 			appHandler := developer.NewApplicationHandler(deps.ApplicationRepo)
 			appHandler.RegisterRoutes(api)
+
+			// US-144: per-app usage metrics endpoint sits alongside the
+			// registration CRUD and reuses the same ownership check. The
+			// sample store may be nil (degraded mode) — the handler returns
+			// empty windows in that case.
+			usageHandler := developer.NewUsageHandler(deps.ApplicationRepo, deps.UsageSamples)
+			usageHandler.RegisterRoutes(api)
 		}
 	})
 
@@ -540,6 +559,10 @@ func main() {
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)
+		// US-144: 30d retention is the widest window the /usage endpoint
+		// serves; the per-app cap keeps memory bounded even if a single app
+		// bursts above the steady-state rate.
+		deps.UsageSamples = metrics.NewUsageSampleStore(30*24*time.Hour, 10000)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),
