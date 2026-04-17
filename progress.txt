@@ -116,6 +116,9 @@
 - TypeScript SDK shape (pkg/sdkgen/gen_ts.go): WeaveClient exposes `readonly {ObjectType}: {ObjectType}Repository` per type; each Repository has get/list/search and `readonly linkedObjects: {ObjectType}LinkedObjects`; LinkedObjects has one method per outbound LinkType returning `{data: TargetType[]}`; Action methods stay on WeaveClient as `apply{ActionName}`
 - SDK generator integration tests use `//go:build integration` tag; tsc resolved from web/node_modules/typescript/bin/tsc with PATH fallback (skip if missing); mypy resolved from PATH (install via `pip install --user mypy pydantic httpx`)
 - Python SDK ships `weave_sdk/py.typed` PEP 561 marker; uses `from __future__ import annotations` to allow PEP 585/604 syntax on Python 3.10; generic "non-empty content" sdkgen test requires marker to include at least one byte (use a short comment)
+- Go SDK generator (pkg/sdkgen/gen_go.go): builds output into a bytes.Buffer then pipes through `go/format.Source` before returning; guarantees gofmt-clean output and doubles as a compile-time syntax check (format.Source parses the file)
+- Go SDK shape: Client struct (BaseURL/Ontology/Token/HTTP) with typed Get{T}/List{T}/Search{T} methods; `ListResult[T any]` generic envelope; ListOptions{PageSize,PageToken}; `url.PathEscape` on path params; ListOptions appended as query string for GETs and as JSON body fields for Search
+- Go SDK integration test: TestGoSDK_GoVet (build tag `integration`) writes generated files to t.TempDir() then runs `go vet ./...`; skips only if `go` binary missing on PATH
 
 ---
 
@@ -857,4 +860,20 @@
   - `Employee(**r.json())` pattern works for both runtime and mypy because httpx's `response.json()` returns `Any` which satisfies `**kwargs` expansion into BaseModel
   - Integration test pattern mirrors TS: `//go:build integration` tag, `t.TempDir()` scaffold, `exec.LookPath` for tool binary with graceful skip
   - Install mypy locally via `python3 -m pip install --user mypy pydantic httpx`; binary lands in `~/.local/bin/mypy` on macOS
+---
+
+## 2026-04-18 - US-139
+- Refactored Go SDK generator to emit gofmt-clean output with typed Get/List/Search methods, pagination helpers, and a `ListResult[T]` generic envelope; added structural + `go vet` integration tests
+- Files changed:
+  - pkg/sdkgen/gen_go.go — Pipe models.go/client.go through `go/format.Source`; introduced ListOptions/ListResult[T]/NewClient; per-ObjectType Get{T}/List{T}/Search{T} with `url.PathEscape` on path params; Search posts body with where/pageSize/pageToken; `exportedFieldName` now only rewrites trailing "Id" → "ID" (avoids mangling middle-of-name substrings)
+  - pkg/sdkgen/sdkgen_test.go — 6 new structural tests: GoModName, ObjectStructs, ActionParamStruct, ClientMethods (asserts SearchEmployee signature), ApplyActionMethod, IsGofmtFormatted (round-trips every .go file through `go/format.Source` and compares)
+  - pkg/sdkgen/gen_go_integration_test.go — New file (build tag `integration`): TestGoSDK_GoVet writes generated SDK to t.TempDir() and runs `go vet ./...` via `exec.LookPath("go")`; skips gracefully if Go toolchain missing
+  - prd.json — US-139 passes: true
+- **Learnings for future iterations:**
+  - `go/format.Source` on a generator's buffered output is the cheapest way to guarantee gofmt compliance AND catch syntax errors early — format.Source returns a parse error if the buffer isn't valid Go, turning a silent-bad-output failure into a test failure
+  - Go generic envelope `ListResult[T any]` requires `go 1.18+`; our generated go.mod declares `go 1.21` which is fine, but keep that constraint in sync if bumping
+  - `url.PathEscape` on BOTH the ontology and primary key path segments is required for SDK robustness — PKs can legitimately contain `/` or unicode
+  - Search endpoints take the where clause in the JSON body (not a query string) per OSS API conventions; pageSize/pageToken go in the body too when Search uses POST
+  - `exportedFieldName("Id")` would turn the *whole* field name into "ID" — the trailing-suffix-only replacement matters (previous version used `strings.ReplaceAll(s, "Id", "ID")` which also mangled things like `Sidecar` → `SIDecar`)
+  - Running `go vet ./...` inside t.TempDir() is a self-contained integration check: no module path pollution, cleaned up automatically, and fails loudly if the generator emits anything that doesn't compile
 ---

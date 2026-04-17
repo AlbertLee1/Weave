@@ -3,6 +3,7 @@ package sdkgen_test
 import (
 	"context"
 	"encoding/json"
+	"go/format"
 	"strings"
 	"testing"
 
@@ -620,5 +621,140 @@ func TestPythonGenerator_PyTypedMarker(t *testing.T) {
 	by := filesByPath(files)
 	if _, ok := by["weave_sdk/py.typed"]; !ok {
 		t.Error("expected weave_sdk/py.typed marker file for PEP 561 compliance")
+	}
+}
+
+// --- Go SDK structure tests (US-139) ---
+
+func TestGoGenerator_GoModName(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	mod, ok := by["go.mod"]
+	if !ok {
+		t.Fatal("expected go.mod in output")
+	}
+	if !strings.Contains(mod, "module weave-sdk/myOntology") {
+		t.Errorf("go.mod missing module declaration, got:\n%s", mod)
+	}
+}
+
+func TestGoGenerator_ObjectStructs(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	models, ok := filesByPath(files)["models.go"]
+	if !ok {
+		t.Fatal("expected models.go in output")
+	}
+
+	// Package declaration must be present.
+	if !strings.Contains(models, "package sdk") {
+		t.Errorf("models.go missing package declaration\n%s", models)
+	}
+
+	// Must contain a struct per ObjectType with exported field names + json tags.
+	wants := []string{
+		"type Employee struct {",
+		`EmployeeID string `,
+		`json:"employeeId"`,
+		`FirstName  string `,
+		`Age        int32 `,
+		`Salary     float64 `,
+		`Active     bool `,
+		`HireDate   string `,
+		`Tags       []string `,
+		"type Department struct {",
+		`DepartmentID string `,
+		`Name         string `,
+	}
+	for _, want := range wants {
+		if !strings.Contains(models, want) {
+			t.Errorf("models.go missing %q\n%s", want, models)
+		}
+	}
+}
+
+func TestGoGenerator_ActionParamStruct(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	models := filesByPath(files)["models.go"]
+
+	for _, want := range []string{
+		"type CreateEmployeeParams struct {",
+		`FirstName string `,
+		`Age       *int32 `, // optional params → pointer
+	} {
+		if !strings.Contains(models, want) {
+			t.Errorf("models.go missing %q\n%s", want, models)
+		}
+	}
+}
+
+func TestGoGenerator_ClientMethods(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client, ok := filesByPath(files)["client.go"]
+	if !ok {
+		t.Fatal("expected client.go in output")
+	}
+
+	// Per AC: typed methods per ObjectType using net/http.
+	for _, want := range []string{
+		`"net/http"`,
+		"type Client struct {",
+		"func (c *Client) GetEmployee(ctx context.Context, pk string) (*Employee, error)",
+		"func (c *Client) ListEmployee(ctx context.Context",
+		"func (c *Client) SearchEmployee(ctx context.Context, where map[string]interface{}",
+		"func (c *Client) GetDepartment(ctx context.Context, pk string) (*Department, error)",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.go missing %q\n%s", want, client)
+		}
+	}
+}
+
+func TestGoGenerator_ApplyActionMethod(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["client.go"]
+
+	if !strings.Contains(client, "func (c *Client) ApplyCreateEmployee(ctx context.Context, params CreateEmployeeParams) error") {
+		t.Errorf("client.go missing typed action method\n%s", client)
+	}
+}
+
+func TestGoGenerator_IsGofmtFormatted(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	for _, f := range files {
+		if !strings.HasSuffix(f.Path, ".go") {
+			continue
+		}
+		formatted, err := format.Source(f.Content)
+		if err != nil {
+			t.Errorf("%s failed to parse: %v\n%s", f.Path, err, string(f.Content))
+			continue
+		}
+		if string(formatted) != string(f.Content) {
+			t.Errorf("%s is not gofmt-formatted", f.Path)
+		}
 	}
 }
