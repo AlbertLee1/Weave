@@ -18,6 +18,7 @@ const iconPaths: Record<string, string> = {
   share: 'M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v14',
   graph: 'M18 5a2 2 0 11-4 0 2 2 0 014 0zM10 19a2 2 0 11-4 0 2 2 0 014 0zM22 19a2 2 0 11-4 0 2 2 0 014 0zM8.5 17.5L14 7M15.5 7.5L20 18',
   clock: 'M12 8v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  upload: 'M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -111,6 +112,14 @@ export function Sidebar() {
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];
+
+  if (activeOntology) {
+    navItems.push({
+      to: `/import/${activeOntology}`,
+      label: 'Import Data',
+      icon: 'upload',
+    });
+  }
 
   const adminItems: NavItem[] = activeOntology
     ? [

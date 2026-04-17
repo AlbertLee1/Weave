@@ -198,6 +198,9 @@
 - `formatRelativeTime` (web/src/lib/formatters.ts): returns `just now` / `<n>m ago` / `<n>h ago` / `<n>d ago` (up to 7 days), then falls back to `toLocaleDateString()`. Accepts ISO string | Date | undefined | null and returns `''` for missing/invalid input. Use this helper any time you render a timestamp in a compact list (notifications, activity feed) rather than rolling a one-off
 - Topbar now owns a `panelOpen` useState + bell button (aria-label="Notifications") with a badge that caps at `9+` when unread > 9. The bell uses `useNotifications({ unreadOnly: true })` so the unread count stays fresh even when the SlidePanel is closed. Avoid mounting NotificationCenter multiple times (Topbar is the single owner)
 - NotificationCenter (web/src/components/common/NotificationCenter.tsx): wraps SlidePanel, sets `enabled: open` on the notifications query so a closed panel does not fire network requests. Rows with a non-empty `link` render as `<Link to={link}>` and auto-close the panel on click; row without a link renders as a keyboard-accessible `role="button"` div. `data-unread="true|false"` + `data-testid="notification-item-{id}"` are the stable hooks for tests
+- CSV parser (web/src/lib/csvParser.ts) is a hand-rolled RFC 4180 parser (quote/comma/CRLF/LF handling, escaped `""` inside quoted fields) — no new deps added. `parseCsv(text)` returns `{headers, rows: Record<string,string>[]}`; `autoMapColumns(headers, propertyNames)` matches by normalized key (lowercased, strip `_-` / whitespace); `convertCellValue(raw, baseType)` coerces to JS value or returns `{error}` (empty string → `{value: null}` regardless of type)
+- ImportWizardPage pattern: 4-step wizard state machine (`WizardStep = 1|2|3|4`) with next/back buttons disabled by `canGoStep*` guards; parse-once in step 1, auto-map in step 2, row-by-row `applyAction` sequential execution in step 4 (NO `applyBatch` — failures can interleave with successes, so sequential apply is simpler for per-row error reporting)
+- Create-action discovery (same recursive-walk pattern as BulkActionToolbar.findDeleteAction): scan `listActionTypes(ontology)` for an ActionType whose `rules` JSON contains `{type:'createObject', objectType:'<apiName>'}` or `{type:'createOrModifyObject', objectType:'<apiName>'}`. Parameter-id resolution matches property apiName exactly, falling back to normalized-key compare (same normalizer as autoMapColumns)
 
 ---
 
@@ -1402,5 +1405,38 @@
   - `<CircleMarker>` is the cheap choice for large lists — uses SVG primitives, no image assets, no default-marker-icon webpack/vite resolution pain. If we later want pin-style markers, the standard fix is to import `leaflet/dist/images/marker-icon.png` (etc.) and `L.Icon.Default.mergeOptions` — but that's unnecessary for US-156
   - Popup's "Open details →" button re-uses BrowserPage's `onRowClick` wiring: user gets a consistent navigation target (the same SlidePanel opens from Table row-click and from Map popup), which matches the AC "Click popup link opens ObjectDetail panel" without any new panel variant
   - Leaflet bundle is not lazy-loaded yet. Main bundle grew from 587KB (US-155) → 753KB. If the next phase cares about TTI, `React.lazy(() => import('./components/browser/BrowserPage'))` at the route level will isolate leaflet + react-leaflet into their own chunk; the existing uplot chunk is a working reference for how vite handles dynamic imports
+
+---
+
+## 2026-04-18 - US-158
+- Implemented Frontend CSV data import wizard (Phase 8, final story)
+- Files changed:
+  - web/src/lib/csvParser.ts — new: hand-rolled RFC 4180 CSV parser (no new deps). `parseCsv(text)` handles quoted fields, escaped `""`, CRLF + LF line endings, pads missing fields to header length. `autoMapColumns(headers, propertyNames)` maps CSV headers → property apiNames by normalized key (lowercase, strip whitespace/underscore/dash). `convertCellValue(raw, baseType)` coerces to JS value per 21-way BaseType enum; returns `{value}` or `{error}`; empty string → `{value: null}`. `validateCell(raw, baseType)` returns the error string or null (used by the preview table to render per-cell warnings)
+  - web/src/lib/__tests__/csvParser.test.ts — new: 23 vitest cases covering all 4 exported functions (parse edge cases, auto-map normalization, type coercion per base type, warning extraction)
+  - web/src/components/import/ImportWizardPage.tsx — new: 4-step wizard page at `/import/:ontology`. Step 1 drag-and-drop + browse file picker (FileReader via `file.text()`); Step 2 ObjectType dropdown + CSV-header-to-Property mapping table with per-row `<select>`; Step 3 preview of first 10 rows with per-cell yellow warning badges for unconvertible values; Step 4 sequential apply-per-row with progress bar + running processed/success/failure counters + expandable failure summary listing row number and error message
+  - web/src/components/import/__tests__/ImportWizardPage.test.tsx — new: 6 vitest cases covering heading + step-indicator, CSV parse + Next enablement, auto-map after ObjectType selection, warning badge for unconvertible cell, happy-path 2-row import with payload assertion, failure reporting when apply returns 400
+  - web/src/App.tsx — imports ImportWizardPage, mounts `/import/:ontology` route inside the Shell-protected tree
+  - web/src/components/layout/Sidebar.tsx — adds "Import Data" nav item (icon `upload`, new path in iconPaths) visible when an ontology is selected (same `activeOntology` gate as the admin section)
+  - prd.json — US-158 passes: true (60/60 stories complete)
+- Verification:
+  - `npx tsc -b --noEmit` clean
+  - `npx vitest run` — 463 tests passing across 69 files (+29 new: 23 csvParser + 6 wizard)
+  - `npm run build` clean (270 modules, 771 KB main bundle; ~18 KB growth from US-157 for the wizard page)
+- Browser verification: dev-browser MCP not available this iteration. Manual browser verification still needed — open `/import/:ontology` on any ontology that has an ObjectType AND a `createObject` ActionType (Northwind: Employee + createEmployee). Wizard exposes clear error states when neither is present
+- **Learnings for future iterations:**
+  - Sequential `applyAction` per row (not `applyBatch`) is the right shape for an import wizard: each failure stays localized so the UI can show "Row N: <error>", the progress bar ticks smoothly, and partial imports succeed even when some rows fail. `applyBatch` would force an all-or-nothing write semantic AND bury per-row errors in a batched response
+  - Auto-mapping is the single biggest UX win for CSV import — users almost never want to map columns manually when the CSV headers already align with property names. Reusing the same normalizer (`.toLowerCase().replace(/[\s_-]+/g, '')`) across `autoMapColumns` and `findParamIdForProperty` keeps the "why does this column map to that param?" mental model consistent end-to-end
+  - Parsing CSV in the browser has no need for a library (papaparse, csv-parse) when you only need RFC 4180 semantics — a ~80-line hand-rolled parser covers quoted fields with commas / newlines / escaped quotes and is easy to unit-test. Skip the dep
+  - `<input type="file">` in jsdom accepts `userEvent.upload(el, file)` directly — no need for dataTransfer gymnastics. `File` constructor `new File([content], name, {type})` works in jsdom for synthetic CSV fixtures
+  - `file.text()` (the modern async File API) is available in jsdom and avoids the older `FileReader` callback pattern — reads as UTF-8 by default, which is what a CSV import wizard should do anyway
+  - Progress bar as `width: {pct}%` div inside `overflow-hidden` container is the cheapest possible implementation — no library, no animation hooks, just a tailwind transition. Same pattern works for any step-based ratio display
+  - Sidebar `navItems` is mutated in-place when an ontology is selected (`activeOntology`) to add the "Import Data" link — same pattern as admin-items but in the main nav, because importing is per-ontology work but doesn't require `ontology.write` (apply-action is already gated server-side by action permissions)
+
+---
+
+## 2026-04-18 — ALL STORIES COMPLETE
+- 60/60 user stories (US-100 through US-159) passing
+- Final verification: `npx tsc -b --noEmit` clean · `npx vitest run` 463 passing · `npm run build` clean
+- Ontology Layer engine reaches OSv2 full parity across OMS, OSS, Actions, Automate, WebSockets, OSDK, Developer Console, Ontology Manager UI, and Frontend enhancements
 
 ---

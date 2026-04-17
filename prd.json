@@ -1,7 +1,7 @@
 {
   "project": "Weave",
   "branchName": "ralph/osv2-full-parity",
-  "description": "Palantir OSv2 Full Parity — 补齐核心功能缺口、本体分支治理、自动化引擎、WebSocket 订阅、OSDK 代码生成、Developer Console、Ontology Manager UI、前端增强",
+  "description": "Palantir OSv2 Full Parity \u2014 \u8865\u9f50\u6838\u5fc3\u529f\u80fd\u7f3a\u53e3\u3001\u672c\u4f53\u5206\u652f\u6cbb\u7406\u3001\u81ea\u52a8\u5316\u5f15\u64ce\u3001WebSocket \u8ba2\u9605\u3001OSDK \u4ee3\u7801\u751f\u6210\u3001Developer Console\u3001Ontology Manager UI\u3001\u524d\u7aef\u589e\u5f3a",
   "userStories": [
     {
       "id": "US-100",
@@ -12,7 +12,7 @@
         "ExecuteRules generates LinkEdge upsert operation when createLink rule is encountered",
         "funnel.Edit supports LINK_CREATE edit type; Consumer.applyBatch handles it by calling UpsertLinkEdge",
         "CollapseEdits handles LINK_CREATE correctly (no duplicate links)",
-        "Integration test: action with createLink rule → searchAround finds linked object",
+        "Integration test: action with createLink rule \u2192 searchAround finds linked object",
         "go test ./pkg/actions/... passes",
         "go test ./pkg/funnel/... passes",
         "Typecheck passes"
@@ -30,7 +30,7 @@
         "ExecuteRules generates LinkEdge deletion operation",
         "funnel.Edit supports LINK_DELETE edit type; Consumer handles it by calling DeleteLinkEdge",
         "CollapseEdits handles LINK_CREATE + LINK_DELETE cancellation on same link",
-        "Integration test: create link → delete link → searchAround returns empty",
+        "Integration test: create link \u2192 delete link \u2192 searchAround returns empty",
         "go test ./pkg/actions/... passes",
         "Typecheck passes"
       ],
@@ -44,9 +44,9 @@
       "description": "As a developer, I want a createOrModify rule type so that I can implement upsert behavior in Actions.",
       "acceptanceCriteria": [
         "rules.go adds createOrModifyObject rule type",
-        "At runtime: check if object exists in Bleve index; if exists → MODIFY edit, if not → CREATE edit",
+        "At runtime: check if object exists in Bleve index; if exists \u2192 MODIFY edit, if not \u2192 CREATE edit",
         "CollapseEdits merges createOrModify with subsequent edits correctly",
-        "Integration test: upsert non-existent → CREATE; upsert existing → MODIFY",
+        "Integration test: upsert non-existent \u2192 CREATE; upsert existing \u2192 MODIFY",
         "go test ./pkg/actions/... passes",
         "Typecheck passes"
       ],
@@ -72,7 +72,7 @@
     },
     {
       "id": "US-104",
-      "title": "Action Undo — PrevState recording in ActionLog",
+      "title": "Action Undo \u2014 PrevState recording in ActionLog",
       "description": "As a developer, I need ActionLog to record PrevState of modified/deleted objects so that undo is possible.",
       "acceptanceCriteria": [
         "ActionLog model adds PrevEdits field (JSONB) storing pre-edit object state for each edit",
@@ -90,14 +90,14 @@
     },
     {
       "id": "US-105",
-      "title": "Action Undo — Revert endpoint",
+      "title": "Action Undo \u2014 Revert endpoint",
       "description": "As a user, I want to undo a previously executed Action so that I can recover from mistakes.",
       "acceptanceCriteria": [
         "POST /api/v2/ontologies/{ontology}/actions/revert endpoint accepts { actionLogId }",
         "Handler loads ActionLog by ID, reads PrevEdits, generates reverse EditBatch",
-        "Reverse logic: CREATE → DELETE, MODIFY → restore PrevState, DELETE → CREATE with PrevState",
+        "Reverse logic: CREATE \u2192 DELETE, MODIFY \u2192 restore PrevState, DELETE \u2192 CREATE with PrevState",
         "Reverted ActionLog marked with status=reverted; double-revert returns 409 Conflict",
-        "Integration test: create object → revert → object no longer in index",
+        "Integration test: create object \u2192 revert \u2192 object no longer in index",
         "go test ./pkg/actions/... passes",
         "Typecheck passes"
       ],
@@ -107,13 +107,13 @@
     },
     {
       "id": "US-106",
-      "title": "Where clause — withinPolygon and intersectsPolygon operators",
+      "title": "Where clause \u2014 withinPolygon and intersectsPolygon operators",
       "description": "As a developer, I want polygon-based geospatial query operators so that I can support complex spatial analysis.",
       "acceptanceCriteria": [
         "where/converter.go adds withinPolygon, intersectsPolygon, doesNotIntersectPolygon, doesNotIntersectBoundingBox operators",
         "Polygon operators accept GeoJSON Polygon coordinates array",
         "Implementation uses Bleve GeoShape query or point-in-polygon in-memory fallback",
-        "Unit tests: point inside polygon → match; point outside → no match; polygon intersection → match",
+        "Unit tests: point inside polygon \u2192 match; point outside \u2192 no match; polygon intersection \u2192 match",
         "go test ./pkg/oss/where/... passes",
         "Typecheck passes"
       ],
@@ -123,7 +123,7 @@
     },
     {
       "id": "US-107",
-      "title": "Where clause — containsAllTermsInOrderPrefixLastTerm (autocomplete)",
+      "title": "Where clause \u2014 containsAllTermsInOrderPrefixLastTerm (autocomplete)",
       "description": "As a developer, I want prefix-match on the last search term so that I can implement autocomplete/typeahead search.",
       "acceptanceCriteria": [
         "where/converter.go adds containsAllTermsInOrderPrefixLastTerm operator",
@@ -140,13 +140,13 @@
     },
     {
       "id": "US-108",
-      "title": "Aggregation — exactDistinct metric",
+      "title": "Aggregation \u2014 exactDistinct metric",
       "description": "As a developer, I want exact distinct count aggregation so that I can get precise unique value counts.",
       "acceptanceCriteria": [
         "aggregation/engine.go adds exactDistinct metric type",
         "Uses map-based deduplication for exact count (not HyperLogLog approximation)",
         "Unit test: exactDistinct on field with 5 unique values returns exactly 5",
-        "Unit test: compare exactDistinct vs approximateDistinct — exact is always precise",
+        "Unit test: compare exactDistinct vs approximateDistinct \u2014 exact is always precise",
         "go test ./pkg/oss/aggregation/... passes",
         "Typecheck passes"
       ],
@@ -156,13 +156,13 @@
     },
     {
       "id": "US-109",
-      "title": "Aggregation — collectList metric",
+      "title": "Aggregation \u2014 collectList metric",
       "description": "As a developer, I want to collect field values into a list during aggregation so that I can retrieve grouped raw values.",
       "acceptanceCriteria": [
         "aggregation/engine.go adds collectList metric type",
         "Returns []interface{} of collected values per group",
         "Supports maxItems config (default 100) to limit list length",
-        "Unit test: groupBy category + collectList names → returns name arrays per category",
+        "Unit test: groupBy category + collectList names \u2192 returns name arrays per category",
         "go test ./pkg/oss/aggregation/... passes",
         "Typecheck passes"
       ],
@@ -207,7 +207,7 @@
     },
     {
       "id": "US-112",
-      "title": "Ontology branches — migration and model",
+      "title": "Ontology branches \u2014 migration and model",
       "description": "As a developer, I need database tables for ontology branches and branch changes so that schema branching is possible.",
       "acceptanceCriteria": [
         "Migration 000024 creates ontology_branches table: id UUID PK, ontology_rid FK, name TEXT, base_version BIGINT, status TEXT CHECK (open/merged/closed), created_by TEXT, created_at/updated_at",
@@ -224,7 +224,7 @@
     },
     {
       "id": "US-113",
-      "title": "Ontology branches — CRUD API endpoints",
+      "title": "Ontology branches \u2014 CRUD API endpoints",
       "description": "As an ontology owner, I want to create and manage ontology branches via API.",
       "acceptanceCriteria": [
         "POST /api/v2/ontologies/{ontology}/branches creates branch (snapshots current version as base_version)",
@@ -232,7 +232,7 @@
         "GET /api/v2/ontologies/{ontology}/branches/{branch} gets branch details including change count",
         "DELETE /api/v2/ontologies/{ontology}/branches/{branch} closes a branch (sets status=closed)",
         "PG repository implements all branch CRUD methods",
-        "Integration test: create → list → get → close lifecycle",
+        "Integration test: create \u2192 list \u2192 get \u2192 close lifecycle",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -242,14 +242,14 @@
     },
     {
       "id": "US-114",
-      "title": "Ontology branches — write operations with ?branch= overlay",
+      "title": "Ontology branches \u2014 write operations with ?branch= overlay",
       "description": "As an ontology owner, I want OMS write operations to accept a branch parameter so that changes are isolated.",
       "acceptanceCriteria": [
         "All OMS write handlers (Create/Update/Delete ObjectType, Property, LinkType, ActionType) accept optional ?branch= query parameter",
         "When branch is specified: write goes to ontology_branch_changes table (not main tables)",
         "BranchChange records before_state (fetched from main) and after_state",
         "Delete operations on branch record change_type=DELETED with before_state",
-        "Unit test: create ObjectType on branch → not visible on main",
+        "Unit test: create ObjectType on branch \u2192 not visible on main",
         "go test ./pkg/oms/... passes",
         "Typecheck passes"
       ],
@@ -259,14 +259,14 @@
     },
     {
       "id": "US-115",
-      "title": "Ontology branches — read operations merge main + overlay",
+      "title": "Ontology branches \u2014 read operations merge main + overlay",
       "description": "As an ontology owner, I want read operations on a branch to return merged view of main + branch changes.",
       "acceptanceCriteria": [
         "All OMS read handlers accept optional ?branch= query parameter",
         "When branch is specified: fetch main data, then apply branch overlay (ADDED entries added, MODIFIED entries replaced, DELETED entries removed)",
         "BranchedRepository decorator wraps base Repository to provide merged views",
-        "Unit test: create ObjectType on branch → read on branch returns it; read on main does not",
-        "Unit test: modify property on branch → branch read returns modified version; main read returns original",
+        "Unit test: create ObjectType on branch \u2192 read on branch returns it; read on main does not",
+        "Unit test: modify property on branch \u2192 branch read returns modified version; main read returns original",
         "go test ./pkg/oms/... passes",
         "Typecheck passes"
       ],
@@ -282,7 +282,7 @@
         "GET /api/v2/ontologies/{ontology}/branches/{branch}/diff returns list of changes",
         "Each change includes: entity_type, entity_rid, change_type (ADDED/MODIFIED/DELETED), before (null for ADDED), after (null for DELETED)",
         "Changes sorted by entity_type then change_type",
-        "Integration test: make 3 changes on branch → diff returns all 3 with correct types",
+        "Integration test: make 3 changes on branch \u2192 diff returns all 3 with correct types",
         "go test ./pkg/oms/... passes",
         "Typecheck passes"
       ],
@@ -292,7 +292,7 @@
     },
     {
       "id": "US-117",
-      "title": "Ontology proposals — migration and CRUD",
+      "title": "Ontology proposals \u2014 migration and CRUD",
       "description": "As an ontology owner, I want to create merge proposals from branches so that schema changes are governed.",
       "acceptanceCriteria": [
         "Migration 000025 creates ontology_proposals table: id UUID PK, branch_id FK, ontology_rid FK, title, description, status CHECK (pending/approved/rejected/merged), author, created_at/updated_at",
@@ -300,7 +300,7 @@
         "POST /api/v2/ontologies/{ontology}/proposals creates proposal from branch (validates branch is open)",
         "GET /api/v2/ontologies/{ontology}/proposals lists proposals with status filter",
         "GET /api/v2/ontologies/{ontology}/proposals/{id} gets proposal with review list",
-        "Integration test: create proposal from branch → list returns it",
+        "Integration test: create proposal from branch \u2192 list returns it",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -315,10 +315,10 @@
       "acceptanceCriteria": [
         "POST /api/v2/ontologies/{ontology}/proposals/{id}/approve adds approval review",
         "POST /api/v2/ontologies/{ontology}/proposals/{id}/reject adds rejection review with reason",
-        "Proposal status updated: any rejection → rejected; at least 1 approval and no rejections → approved",
+        "Proposal status updated: any rejection \u2192 rejected; at least 1 approval and no rejections \u2192 approved",
         "Only non-author users can review (self-review returns 403)",
-        "Integration test: create proposal → approve → status is approved",
-        "Integration test: create proposal → reject → status is rejected",
+        "Integration test: create proposal \u2192 approve \u2192 status is approved",
+        "Integration test: create proposal \u2192 reject \u2192 status is rejected",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -333,10 +333,10 @@
       "acceptanceCriteria": [
         "POST /api/v2/ontologies/{ontology}/proposals/{id}/merge applies branch changes to main tables",
         "Only approved proposals can be merged (returns 409 otherwise)",
-        "Conflict detection: if entity was modified on both main (since base_version) and branch → return conflict list",
+        "Conflict detection: if entity was modified on both main (since base_version) and branch \u2192 return conflict list",
         "On success: apply all branch changes to main, increment ontology version, create snapshot, mark branch as merged",
-        "Integration test: create branch → add ObjectType → approve → merge → ObjectType visible on main",
-        "Integration test: concurrent main edit → merge returns conflict",
+        "Integration test: create branch \u2192 add ObjectType \u2192 approve \u2192 merge \u2192 ObjectType visible on main",
+        "Integration test: concurrent main edit \u2192 merge returns conflict",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -352,7 +352,7 @@
         "POST /api/v2/ontologies/{ontology}/branches/{branch}/rebase updates branch base_version to current main version",
         "Non-conflicting main changes are transparently incorporated (branch before_state updated)",
         "Conflicting changes returned as conflict list for manual resolution",
-        "Integration test: main adds ObjectType after branch created → rebase succeeds → branch sees new type",
+        "Integration test: main adds ObjectType after branch created \u2192 rebase succeeds \u2192 branch sees new type",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -368,7 +368,7 @@
         "GET /api/v2/ontologies/{ontology}/export returns complete JSON with all metadata",
         "Export includes: ontology, objectTypes (with properties), linkTypes, actionTypes, interfaces, sharedProperties, valueTypes, typeGroups, functions, queryTypes",
         "Export format matches existing OntologyExport model structure",
-        "Integration test: populate ontology → export → JSON contains all entities",
+        "Integration test: populate ontology \u2192 export \u2192 JSON contains all entities",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -385,7 +385,7 @@
         "merge mode: create missing entities, update existing, skip conflicts",
         "replace mode: drop all existing entities for ontology, recreate from import",
         "RID conflict handling: generate new RIDs for imported entities, remap references",
-        "Integration test: export → import to new ontology → data matches original",
+        "Integration test: export \u2192 import to new ontology \u2192 data matches original",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -411,7 +411,7 @@
     },
     {
       "id": "US-124",
-      "title": "Automate — migration and rule model",
+      "title": "Automate \u2014 migration and rule model",
       "description": "As a developer, I need database tables for automation rules and executions so that the Automate engine has persistence.",
       "acceptanceCriteria": [
         "Migration 000026 creates automation_rules table: id UUID PK, ontology_rid FK, name, description, status CHECK (active/paused/disabled), trigger_type CHECK (schedule/dataChange/manual), trigger_config JSONB, effects JSONB, created_by, created_at/updated_at",
@@ -427,7 +427,7 @@
     },
     {
       "id": "US-125",
-      "title": "Automate — CRUD API endpoints",
+      "title": "Automate \u2014 CRUD API endpoints",
       "description": "As a user, I want to create and manage automation rules via API.",
       "acceptanceCriteria": [
         "POST /api/v2/ontologies/{ontology}/automationRules creates rule",
@@ -447,16 +447,16 @@
     },
     {
       "id": "US-126",
-      "title": "Automate — Schedule Trigger (cron)",
+      "title": "Automate \u2014 Schedule Trigger (cron)",
       "description": "As a user, I want automation rules to run on cron schedules so that routine tasks are automated.",
       "acceptanceCriteria": [
         "New pkg/automate/scheduler.go using github.com/robfig/cron/v3",
         "Scheduler loads all active schedule rules at startup",
         "trigger_config format: { cron: '0 */6 * * *' }",
-        "Cron fires → look up rule effects → execute them (initially just log execution)",
+        "Cron fires \u2192 look up rule effects \u2192 execute them (initially just log execution)",
         "Execution record written to automation_executions with status and timing",
         "Rule status changes (pause/resume/delete) update scheduler dynamically",
-        "Unit test: mock cron tick → execution record created",
+        "Unit test: mock cron tick \u2192 execution record created",
         "go test ./pkg/automate/... passes",
         "Typecheck passes"
       ],
@@ -466,7 +466,7 @@
     },
     {
       "id": "US-127",
-      "title": "Automate — Data Change Trigger",
+      "title": "Automate \u2014 Data Change Trigger",
       "description": "As a user, I want automation rules to trigger on object data changes so that I can react to real-time events.",
       "acceptanceCriteria": [
         "New pkg/automate/watcher.go subscribing to NATS ChangeEvent callback",
@@ -474,7 +474,7 @@
         "Watcher evaluates each ChangeEvent against active dataChange rules",
         "Match = objectType matches AND editType in editTypes AND (where clause matches OR no where clause)",
         "Debounce support: trigger_config.debounceMs (default 0, no debounce)",
-        "Integration test: create object matching rule trigger → execution recorded",
+        "Integration test: create object matching rule trigger \u2192 execution recorded",
         "go test ./pkg/automate/... passes",
         "Typecheck passes"
       ],
@@ -484,7 +484,7 @@
     },
     {
       "id": "US-128",
-      "title": "Automate — Action Effect",
+      "title": "Automate \u2014 Action Effect",
       "description": "As a user, I want automation rules to execute Actions automatically so that routine operations are hands-free.",
       "acceptanceCriteria": [
         "Effect type executeAction: { type: 'executeAction', actionTypeApiName, parameters: {...} }",
@@ -492,7 +492,7 @@
         "Template resolution from trigger event data before passing to ActionExecutor",
         "Execution delegates to existing actions.Executor.Apply, records ActionLog",
         "On failure: execution marked as error with error message",
-        "Unit test: data change trigger → executeAction effect → ActionLog created",
+        "Unit test: data change trigger \u2192 executeAction effect \u2192 ActionLog created",
         "go test ./pkg/automate/... passes",
         "Typecheck passes"
       ],
@@ -502,14 +502,14 @@
     },
     {
       "id": "US-129",
-      "title": "Automate — Function Effect",
+      "title": "Automate \u2014 Function Effect",
       "description": "As a user, I want automation rules to execute Functions so that custom logic runs automatically.",
       "acceptanceCriteria": [
         "Effect type executeFunction: { type: 'executeFunction', functionRid, parameters: {...} }",
         "Delegates to GojaDispatcher or HTTPDispatcher based on functionRid prefix",
         "Function result stored in automation_executions.result JSONB",
         "Chain support: effect can reference previous effect output via ${effects[0].result}",
-        "Unit test: schedule trigger → executeFunction → result recorded",
+        "Unit test: schedule trigger \u2192 executeFunction \u2192 result recorded",
         "go test ./pkg/automate/... passes",
         "Typecheck passes"
       ],
@@ -519,7 +519,7 @@
     },
     {
       "id": "US-130",
-      "title": "Automate — Notification Effect (backend)",
+      "title": "Automate \u2014 Notification Effect (backend)",
       "description": "As a user, I want automation rules to send notifications so that I'm alerted about important events.",
       "acceptanceCriteria": [
         "Migration 000027 creates notifications table: id UUID PK, user_id TEXT, title, body, type TEXT, link TEXT, read BOOLEAN DEFAULT false, created_at",
@@ -538,15 +538,15 @@
     },
     {
       "id": "US-131",
-      "title": "Automate — retry and monitoring",
+      "title": "Automate \u2014 retry and monitoring",
       "description": "As an admin, I want automation execution history with retry support so that failures are recoverable.",
       "acceptanceCriteria": [
         "AutomationRule config adds retry policy: { maxRetries: 3, backoffMs: 1000 }",
-        "On effect failure: if retries remaining → schedule retry with exponential backoff; update execution status=retrying",
+        "On effect failure: if retries remaining \u2192 schedule retry with exponential backoff; update execution status=retrying",
         "After max retries exhausted: status=error with final error message",
         "GET /api/v2/ontologies/{ontology}/automationRules/{id}/executions returns execution history",
         "Execution list supports pagination and ?status= filter",
-        "Unit test: effect fails → retried 3 times → final status=error",
+        "Unit test: effect fails \u2192 retried 3 times \u2192 final status=error",
         "go test ./pkg/automate/... passes",
         "Typecheck passes"
       ],
@@ -556,7 +556,7 @@
     },
     {
       "id": "US-132",
-      "title": "WebSocket — server infrastructure",
+      "title": "WebSocket \u2014 server infrastructure",
       "description": "As a developer, I need a WebSocket server so that clients can subscribe to real-time object changes.",
       "acceptanceCriteria": [
         "New pkg/subscriptions/ package with Hub and Connection types",
@@ -566,7 +566,7 @@
         "Route: GET /api/v2/ontologies/{ontology}/subscriptions/ws upgrades to WebSocket",
         "Auth: Bearer token in ?token= query parameter validated before upgrade",
         "Graceful shutdown: Hub.Close() drains all connections",
-        "Unit test: connect → receive welcome message → disconnect",
+        "Unit test: connect \u2192 receive welcome message \u2192 disconnect",
         "go test ./pkg/subscriptions/... passes",
         "Typecheck passes"
       ],
@@ -576,7 +576,7 @@
     },
     {
       "id": "US-133",
-      "title": "WebSocket — object change subscription",
+      "title": "WebSocket \u2014 object change subscription",
       "description": "As a client, I want to subscribe to object changes on a specific ObjectType so that I receive real-time updates.",
       "acceptanceCriteria": [
         "Subscribe message: { type: 'subscribe', objectType: '...', where?: {...}, select?: [...] }",
@@ -585,7 +585,7 @@
         "Where clause filtering: only push events matching the filter",
         "Select clause: only include specified properties in pushed object",
         "Max 10 subscriptions per connection (returns error on 11th)",
-        "Unit test: subscribe → trigger object change → receive event with correct format",
+        "Unit test: subscribe \u2192 trigger object change \u2192 receive event with correct format",
         "go test ./pkg/subscriptions/... passes",
         "Typecheck passes"
       ],
@@ -595,7 +595,7 @@
     },
     {
       "id": "US-134",
-      "title": "WebSocket — NATS event routing and lifecycle",
+      "title": "WebSocket \u2014 NATS event routing and lifecycle",
       "description": "As a system, I need to route NATS ChangeEvents to matching WebSocket subscriptions efficiently.",
       "acceptanceCriteria": [
         "Hub subscribes to funnel.Consumer ChangeEvent callback",
@@ -603,9 +603,9 @@
         "Where clause evaluated per subscription (reuse where/converter logic)",
         "Unsubscribe: { type: 'unsubscribe', subscriptionId } removes subscription",
         "Connection disconnect auto-cleans all subscriptions",
-        "Heartbeat: 30s ping/pong; no pong within 60s → close connection",
+        "Heartbeat: 30s ping/pong; no pong within 60s \u2192 close connection",
         "onOutOfDate event sent when subscription buffer overflows",
-        "Unit test: 3 subscriptions on same connection, change matches 2 → 2 events sent",
+        "Unit test: 3 subscriptions on same connection, change matches 2 \u2192 2 events sent",
         "go test ./pkg/subscriptions/... passes",
         "Typecheck passes"
       ],
@@ -615,14 +615,14 @@
     },
     {
       "id": "US-135",
-      "title": "WebSocket — frontend integration",
+      "title": "WebSocket \u2014 frontend integration",
       "description": "As a frontend user, I want the Browser page to use WebSocket for real-time updates.",
       "acceptanceCriteria": [
         "New web/src/hooks/useWebSocketSubscription.ts hook",
         "Connects to /api/v2/ontologies/{ontology}/subscriptions/ws",
         "Sends subscribe message with objectType and optional where/select",
         "On objectChanged event: invalidates TanStack Query cache for affected object",
-        "Auto-reconnect with exponential backoff (1s → 2s → 4s → max 30s)",
+        "Auto-reconnect with exponential backoff (1s \u2192 2s \u2192 4s \u2192 max 30s)",
         "Browser page toggle: 'Live' button uses WebSocket when available, SSE as fallback",
         "npx tsc --noEmit passes",
         "Verify in browser using dev-browser skill"
@@ -633,15 +633,15 @@
     },
     {
       "id": "US-136",
-      "title": "SDK Generator — framework and CLI",
+      "title": "SDK Generator \u2014 framework and CLI",
       "description": "As a developer, I need a code generation framework so that SDKs can be generated from ontology metadata.",
       "acceptanceCriteria": [
         "New pkg/sdkgen/ package with Generator interface: Generate(schema OntologySchema, lang string, outputDir string) error",
         "OntologySchema struct loads full metadata from OMS: ObjectTypes with Properties, LinkTypes, ActionTypes, Interfaces",
         "CLI entrypoint: cmd/sdkgen/main.go with flags --ontology, --lang (ts|python|go), --output, --server-url",
         "API endpoint: POST /api/v2/ontologies/{ontology}/sdkgen?lang=ts returns zip file",
-        "BaseType → language type mapping tables defined per language",
-        "Unit test: load test ontology → verify OntologySchema populated correctly",
+        "BaseType \u2192 language type mapping tables defined per language",
+        "Unit test: load test ontology \u2192 verify OntologySchema populated correctly",
         "go test ./pkg/sdkgen/... passes",
         "Typecheck passes"
       ],
@@ -654,12 +654,12 @@
       "title": "TypeScript SDK generation",
       "description": "As a TypeScript developer, I want an auto-generated SDK so that I can interact with ontology objects type-safely.",
       "acceptanceCriteria": [
-        "Each ObjectType → TypeScript interface with property types mapped (String→string, Integer→number, Boolean→boolean, Date→string, etc.)",
+        "Each ObjectType \u2192 TypeScript interface with property types mapped (String\u2192string, Integer\u2192number, Boolean\u2192boolean, Date\u2192string, etc.)",
         "Generated client class with methods: get(pk), list(opts), search(where, opts), for each ObjectType",
         "Action methods: apply{ActionName}(params) with typed parameter interface",
         "Link traversal: {objectType}.linkedObjects.{linkType}(pk) methods",
         "Output includes package.json (name: @weave/{ontology}-sdk) and tsconfig.json",
-        "Integration test: generate SDK → npx tsc --noEmit → passes",
+        "Integration test: generate SDK \u2192 npx tsc --noEmit \u2192 passes",
         "go test ./pkg/sdkgen/... passes",
         "Typecheck passes"
       ],
@@ -672,12 +672,12 @@
       "title": "Python SDK generation",
       "description": "As a Python developer, I want an auto-generated SDK so that I can interact with ontology objects with type hints.",
       "acceptanceCriteria": [
-        "Each ObjectType → Pydantic BaseModel with field types (String→str, Integer→int, Boolean→bool, Date→datetime.date, etc.)",
+        "Each ObjectType \u2192 Pydantic BaseModel with field types (String\u2192str, Integer\u2192int, Boolean\u2192bool, Date\u2192datetime.date, etc.)",
         "Generated WeaveClient class (based on httpx) with methods per ObjectType",
         "Action methods with typed parameter dataclass",
         "Output includes pyproject.toml with dependencies (httpx, pydantic)",
         "Generated __init__.py exports all models and client",
-        "Integration test: generate SDK → python -m mypy → passes",
+        "Integration test: generate SDK \u2192 python -m mypy \u2192 passes",
         "go test ./pkg/sdkgen/... passes",
         "Typecheck passes"
       ],
@@ -690,12 +690,12 @@
       "title": "Go SDK generation",
       "description": "As a Go developer, I want an auto-generated SDK so that I can interact with ontology objects idiomatically.",
       "acceptanceCriteria": [
-        "Each ObjectType → Go struct with json tags and correct types (String→string, Integer→int32, Long→int64, etc.)",
+        "Each ObjectType \u2192 Go struct with json tags and correct types (String\u2192string, Integer\u2192int32, Long\u2192int64, etc.)",
         "Generated Client struct (based on net/http) with typed methods per ObjectType",
         "Action methods with typed parameter structs",
         "Output includes go.mod (module weave-sdk/{ontology})",
         "Generated code formatted with gofmt",
-        "Integration test: generate SDK → go vet → passes",
+        "Integration test: generate SDK \u2192 go vet \u2192 passes",
         "go test ./pkg/sdkgen/... passes",
         "Typecheck passes"
       ],
@@ -712,7 +712,7 @@
         "CLI --diff mode: compare current ontology version with last generated version, print changed types",
         "Generated CHANGELOG.md lists added/modified/deleted ObjectTypes and Properties",
         "API response includes X-Ontology-Version header on sdkgen endpoint",
-        "Unit test: generate → modify ontology → diff shows changes",
+        "Unit test: generate \u2192 modify ontology \u2192 diff shows changes",
         "go test ./pkg/sdkgen/... passes",
         "Typecheck passes"
       ],
@@ -722,7 +722,7 @@
     },
     {
       "id": "US-141",
-      "title": "Developer Console — Application registration",
+      "title": "Developer Console \u2014 Application registration",
       "description": "As a developer, I want to register applications and get OAuth credentials.",
       "acceptanceCriteria": [
         "Migration 000028 creates applications table: id UUID PK, name, description, client_id TEXT UNIQUE, client_secret_hash TEXT, redirect_uris TEXT[], scopes JSONB, created_by, created_at/updated_at",
@@ -730,7 +730,7 @@
         "GET /api/v2/developer/applications lists caller's applications",
         "GET /api/v2/developer/applications/{id} gets app details (without secret)",
         "DELETE /api/v2/developer/applications/{id} deletes app",
-        "Integration test: create app → list → get → delete",
+        "Integration test: create app \u2192 list \u2192 get \u2192 delete",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -745,12 +745,12 @@
       "acceptanceCriteria": [
         "Migration 000029 creates oauth_authorization_codes and oauth_tokens tables",
         "GET /oauth/authorize renders consent screen (HTML page showing app name, requested scopes)",
-        "POST /oauth/authorize approves → redirects with authorization code",
-        "POST /oauth/token grant_type=authorization_code → returns access_token + refresh_token",
-        "POST /oauth/token grant_type=client_credentials → returns access_token (app-level)",
+        "POST /oauth/authorize approves \u2192 redirects with authorization code",
+        "POST /oauth/token grant_type=authorization_code \u2192 returns access_token + refresh_token",
+        "POST /oauth/token grant_type=client_credentials \u2192 returns access_token (app-level)",
         "PKCE: code_challenge + code_verifier validation (S256 method)",
         "Access tokens include scopes claim; auth middleware checks scope intersection",
-        "Integration test: full authorization_code flow → valid token → scoped API access",
+        "Integration test: full authorization_code flow \u2192 valid token \u2192 scoped API access",
         "go test ./... passes",
         "Typecheck passes"
       ],
@@ -760,7 +760,7 @@
     },
     {
       "id": "US-143",
-      "title": "Developer Console — API Playground frontend",
+      "title": "Developer Console \u2014 API Playground frontend",
       "description": "As a developer, I want an interactive API playground to test API calls without writing code.",
       "acceptanceCriteria": [
         "Frontend route /developer/playground page",
@@ -778,7 +778,7 @@
     },
     {
       "id": "US-144",
-      "title": "Developer Console — Usage Metrics middleware",
+      "title": "Developer Console \u2014 Usage Metrics middleware",
       "description": "As a developer, I want API usage metrics tracked per application so that I can monitor performance.",
       "acceptanceCriteria": [
         "New pkg/metrics/usage.go: UsageMiddleware records per-request metrics",
@@ -796,7 +796,7 @@
     },
     {
       "id": "US-145",
-      "title": "Developer Console — Metrics dashboard frontend",
+      "title": "Developer Console \u2014 Metrics dashboard frontend",
       "description": "As a developer, I want to see API usage metrics in a visual dashboard.",
       "acceptanceCriteria": [
         "Frontend route /developer/metrics page",
@@ -814,12 +814,12 @@
     },
     {
       "id": "US-146",
-      "title": "Ontology Manager — ObjectType CRUD page",
+      "title": "Ontology Manager \u2014 ObjectType CRUD page",
       "description": "As an ontology owner, I want a visual interface to create and edit Object Types.",
       "acceptanceCriteria": [
         "Frontend route /admin/:ontology/objectTypes page",
         "ObjectType list with search, status filter, sort by name",
-        "Create form: displayName input → auto-generates apiName (camelCase) and pluralDisplayName",
+        "Create form: displayName input \u2192 auto-generates apiName (camelCase) and pluralDisplayName",
         "Edit form: all fields editable (displayName, description, icon, color, status, visibility)",
         "Delete button with confirmation modal showing impacted LinkTypes and ActionTypes count",
         "Uses existing OMS API endpoints for CRUD operations",
@@ -832,7 +832,7 @@
     },
     {
       "id": "US-147",
-      "title": "Ontology Manager — Property visual editor",
+      "title": "Ontology Manager \u2014 Property visual editor",
       "description": "As an ontology owner, I want a visual property editor so that I can define properties without JSON.",
       "acceptanceCriteria": [
         "Embedded in ObjectType edit page as Properties tab",
@@ -849,11 +849,11 @@
     },
     {
       "id": "US-148",
-      "title": "Ontology Manager — LinkType visual management",
+      "title": "Ontology Manager \u2014 LinkType visual management",
       "description": "As an ontology owner, I want to create and manage link types visually.",
       "acceptanceCriteria": [
         "Frontend route /admin/:ontology/linkTypes page",
-        "List view: source → target with cardinality badge",
+        "List view: source \u2192 target with cardinality badge",
         "Create form: select source ObjectType, target ObjectType, cardinality dropdown (ONE_TO_ONE/ONE_TO_MANY/MANY_TO_MANY)",
         "Foreign key config form for ONE_TO_* cardinality",
         "Delete with confirmation showing impacted Actions and searchAround queries",
@@ -866,7 +866,7 @@
     },
     {
       "id": "US-149",
-      "title": "Ontology Manager — ActionType visual builder",
+      "title": "Ontology Manager \u2014 ActionType visual builder",
       "description": "As an ontology owner, I want a visual action builder to define parameters and rules without JSON.",
       "acceptanceCriteria": [
         "Frontend route /admin/:ontology/actionTypes page",
@@ -883,7 +883,7 @@
     },
     {
       "id": "US-150",
-      "title": "Ontology Manager — Interface management",
+      "title": "Ontology Manager \u2014 Interface management",
       "description": "As an ontology owner, I want to manage interfaces visually.",
       "acceptanceCriteria": [
         "Frontend route /admin/:ontology/interfaces page",
@@ -900,14 +900,14 @@
     },
     {
       "id": "US-151",
-      "title": "Ontology Manager — force-directed schema graph",
+      "title": "Ontology Manager \u2014 force-directed schema graph",
       "description": "As an ontology owner, I want a full schema graph view to see all types and relationships.",
       "acceptanceCriteria": [
         "Frontend route /admin/:ontology/graph page",
         "Force-directed graph layout using d3-force (npm install d3-force @types/d3-force)",
         "Nodes = ObjectTypes with icon and color from metadata",
         "Edges = LinkTypes with cardinality labels on edges",
-        "Click node → navigate to ObjectType edit page",
+        "Click node \u2192 navigate to ObjectType edit page",
         "Zoom (scroll wheel), pan (drag background), reset view button",
         "Filter by TypeGroup or Interface dropdown",
         "npx tsc --noEmit passes",
@@ -919,7 +919,7 @@
     },
     {
       "id": "US-152",
-      "title": "Ontology Manager — audit history page",
+      "title": "Ontology Manager \u2014 audit history page",
       "description": "As an admin, I want to see a timeline of all ontology metadata changes.",
       "acceptanceCriteria": [
         "Frontend route /admin/:ontology/history page",
@@ -937,7 +937,7 @@
     },
     {
       "id": "US-153",
-      "title": "Frontend — CSV / JSON data export",
+      "title": "Frontend \u2014 CSV / JSON data export",
       "description": "As a user, I want to export object data as CSV or JSON from the Browser page.",
       "acceptanceCriteria": [
         "Browser page adds Export dropdown button (CSV | JSON) in header toolbar",
@@ -954,13 +954,13 @@
     },
     {
       "id": "US-154",
-      "title": "Frontend — bulk operations UI",
+      "title": "Frontend \u2014 bulk operations UI",
       "description": "As a user, I want to select multiple objects for batch operations.",
       "acceptanceCriteria": [
         "Browser ObjectTable adds checkbox column (per-row + select-all header checkbox)",
         "Selection state managed in component (selectedPrimaryKeys set)",
         "Floating toolbar appears when items selected: shows count + Delete + Export Selected buttons",
-        "Delete Selected: confirmation modal → calls ApplyBatch with delete actions",
+        "Delete Selected: confirmation modal \u2192 calls ApplyBatch with delete actions",
         "Export Selected: downloads CSV/JSON of selected rows only",
         "Clear selection button",
         "npx tsc --noEmit passes",
@@ -972,7 +972,7 @@
     },
     {
       "id": "US-155",
-      "title": "Frontend — time-series chart in ObjectDetail",
+      "title": "Frontend \u2014 time-series chart in ObjectDetail",
       "description": "As a user, I want to see time-series properties as interactive line charts.",
       "acceptanceCriteria": [
         "ObjectDetail panel detects TimeSeries type properties and renders chart instead of raw value",
@@ -990,7 +990,7 @@
     },
     {
       "id": "US-156",
-      "title": "Frontend — map view for geospatial data",
+      "title": "Frontend \u2014 map view for geospatial data",
       "description": "As a user, I want to see Geopoint/Geoshape properties on a map.",
       "acceptanceCriteria": [
         "npm install leaflet react-leaflet @types/leaflet",
@@ -1009,7 +1009,7 @@
     },
     {
       "id": "US-157",
-      "title": "Frontend — notification center",
+      "title": "Frontend \u2014 notification center",
       "description": "As a user, I want a notification center to see alerts from Automate and system events.",
       "acceptanceCriteria": [
         "Topbar adds bell icon with unread count badge (fetches from GET /api/v2/notifications?unread=true)",
@@ -1026,7 +1026,7 @@
     },
     {
       "id": "US-158",
-      "title": "Frontend — CSV data import wizard",
+      "title": "Frontend \u2014 CSV data import wizard",
       "description": "As a user, I want to import data from CSV files to quickly populate object types.",
       "acceptanceCriteria": [
         "Frontend route /import/:ontology page with 4-step wizard",
@@ -1039,12 +1039,12 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 59,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
       "id": "US-159",
-      "title": "Admin navigation — sidebar and routing",
+      "title": "Admin navigation \u2014 sidebar and routing",
       "description": "As an ontology owner, I want admin pages integrated into the main navigation so that I can access management tools.",
       "acceptanceCriteria": [
         "Sidebar adds 'Admin' section (visible only to ontology-owner and admin roles)",

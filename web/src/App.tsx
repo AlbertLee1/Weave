@@ -20,6 +20,7 @@ import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
+import { ImportWizardPage } from './components/import/ImportWizardPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +61,7 @@ export default function App() {
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
+              <Route path="import/:ontology" element={<ImportWizardPage />} />
               <Route path="developer/playground" element={<PlaygroundPage />} />
               <Route path="developer/metrics" element={<MetricsPage />} />
               <Route
