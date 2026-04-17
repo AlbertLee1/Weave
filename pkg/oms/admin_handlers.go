@@ -1113,6 +1113,27 @@ func (h *OMSHandler) ListAllLinkTypes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListLinkTypesForOntologyAdmin handles
+// GET /api/v2/ontologies/{ontologyApiName}/linkTypes.
+// Returns all LinkTypes for the ontology, used by the Ontology Manager visual
+// link-type editor. Supports `?branch=` overlay for reads.
+func (h *OMSHandler) ListLinkTypesForOntologyAdmin(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListLinkTypes(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListLinkTypesFailed", nil))
+		return
+	}
+	if list == nil {
+		list = []LinkType{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
+}
+
 // --- Interface request structs ---
 
 // CreateInterfaceRequest is the request body for creating an interface.

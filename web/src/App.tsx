@@ -15,8 +15,8 @@ import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 import { PlaygroundPage } from './components/developer/PlaygroundPage';
 import { MetricsPage } from './components/developer/MetricsPage';
 import { ObjectTypeAdminPage } from './components/admin/ObjectTypeAdminPage';
+import { LinkTypeAdminPage } from './components/admin/LinkTypeAdminPage';
 import {
-  LinkTypeAdminPage,
   ActionTypeAdminPage,
   InterfaceAdminPage,
   SchemaGraphPage,

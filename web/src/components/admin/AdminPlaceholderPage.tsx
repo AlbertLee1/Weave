@@ -38,15 +38,6 @@ export function AdminPlaceholderPage({
   );
 }
 
-export function LinkTypeAdminPage() {
-  return (
-    <AdminPlaceholderPage
-      section="Link Types"
-      description="Visual link type management will be available here — create and edit source→target relationships with cardinality and foreign-key configuration."
-    />
-  );
-}
-
 export function ActionTypeAdminPage() {
   return (
     <AdminPlaceholderPage

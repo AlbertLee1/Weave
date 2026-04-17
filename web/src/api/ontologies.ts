@@ -95,6 +95,71 @@ export async function listOutgoingLinkTypes(
   return resp.data;
 }
 
+// --- LinkType admin endpoints (US-148) ---
+
+export type Cardinality = 'ONE_TO_ONE' | 'ONE_TO_MANY' | 'MANY_TO_MANY';
+
+export interface CreateLinkTypeRequest {
+  apiName: string;
+  displayName: string;
+  description?: string;
+  objectTypeApiName: string;
+  linkedObjectTypeApiName: string;
+  cardinality: Cardinality;
+  foreignKeyConfig?: unknown;
+  joinTableConfig?: unknown;
+  required?: boolean;
+}
+
+export interface UpdateLinkTypeRequest {
+  displayName: string;
+  description?: string;
+  required?: boolean;
+}
+
+export async function listLinkTypes(
+  ontologyApiName: string,
+): Promise<LinkType[]> {
+  const resp = await request<{ data: LinkType[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/linkTypes`,
+  );
+  return resp.data;
+}
+
+export function createLinkType(
+  ontologyApiName: string,
+  body: CreateLinkTypeRequest,
+): Promise<LinkType> {
+  return request<LinkType>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/linkTypes`,
+    body,
+  );
+}
+
+export function updateLinkType(
+  ontologyApiName: string,
+  linkTypeRid: string,
+  body: UpdateLinkTypeRequest,
+): Promise<LinkType> {
+  return request<LinkType>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/linkTypes/byRid/${encodeURIComponent(linkTypeRid)}`,
+    body,
+  );
+}
+
+export function deleteLinkType(
+  ontologyApiName: string,
+  linkTypeRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/linkTypes/byRid/${encodeURIComponent(linkTypeRid)}`,
+  );
+}
+
 export interface CreateObjectTypeRequest {
   apiName: string;
   displayName: string;

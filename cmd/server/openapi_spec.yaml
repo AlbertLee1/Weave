@@ -415,6 +415,45 @@ components:
           additionalProperties: true
         required:
           type: boolean
+    CreateLinkTypeRequest:
+      type: object
+      required: [apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        objectTypeApiName:
+          type: string
+          description: apiName of the source ObjectType.
+        linkedObjectTypeApiName:
+          type: string
+          description: apiName of the target ObjectType.
+        cardinality:
+          type: string
+          enum: [ONE_TO_ONE, ONE_TO_MANY, MANY_TO_MANY]
+        foreignKeyConfig:
+          type: object
+          additionalProperties: true
+          description: Foreign key configuration, relevant for ONE_TO_* cardinalities.
+        joinTableConfig:
+          type: object
+          additionalProperties: true
+          description: Join table configuration, relevant for MANY_TO_MANY cardinality.
+        required:
+          type: boolean
+    UpdateLinkTypeRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        description:
+          type: string
+        required:
+          type: boolean
+          nullable: true
     ActionType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -2656,6 +2695,135 @@ paths:
         - $ref: "#/components/parameters/OntologyApiName"
         - in: path
           name: propertyRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/linkTypes:
+    get:
+      operationId: listLinkTypesForOntologyAdmin
+      summary: List all link types in an ontology (admin)
+      description: |
+        Returns the raw LinkType rows for the given ontology, used by the
+        Ontology Manager visual link-type editor. If `?branch=` is supplied,
+        the response reflects the branch overlay.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Link type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    post:
+      operationId: createLinkType
+      summary: Create a new link type
+      description: |
+        Creates a LinkType in the given ontology. If `?branch=` is
+        supplied the create is recorded as an ADDED branch change instead
+        of being written to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLinkTypeRequest"
+      responses:
+        "201":
+          description: Link type created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}:
+    put:
+      operationId: updateLinkType
+      summary: Update an existing link type
+      description: |
+        Updates a LinkType by RID. If `?branch=` is supplied the update
+        is recorded as a MODIFIED branch change instead of being written
+        to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLinkTypeRequest"
+      responses:
+        "200":
+          description: Updated link type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteLinkType
+      summary: Delete a link type
+      description: |
+        Deletes a LinkType by RID. If `?branch=` is supplied the delete
+        is recorded as a DELETED branch change.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeRid
           required: true
           schema:
             type: string
