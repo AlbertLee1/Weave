@@ -37,12 +37,3 @@ export function AdminPlaceholderPage({
     </div>
   );
 }
-
-export function AuditHistoryPage() {
-  return (
-    <AdminPlaceholderPage
-      section="Audit History"
-      description="A timeline of ontology metadata changes will be available here — actor, action, before/after diff, and filtering by entity type or date range."
-    />
-  );
-}
