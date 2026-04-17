@@ -37,7 +37,7 @@ var tsTypeMap = TypeMap{
 	types.Timestamp:      "string",
 	types.Decimal:        "string",
 	types.Geopoint:       "{ lat: number; lon: number }",
-	types.Geoshape:       "GeoJSON.Geometry",
+	types.Geoshape:       "Record<string, unknown>",
 	types.Attachment:     "string",
 	types.TimeSeries:     "string",
 	types.MediaReference: "string",

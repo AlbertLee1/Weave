@@ -3,6 +3,7 @@ package sdkgen_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/liyang/weave/pkg/sdkgen"
@@ -297,5 +298,190 @@ func TestGenerator_GenerateReturnsFiles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// --- TypeScript SDK structure tests (US-137) ---
+
+func filesByPath(files []sdkgen.GeneratedFile) map[string]string {
+	out := make(map[string]string, len(files))
+	for _, f := range files {
+		out[f.Path] = string(f.Content)
+	}
+	return out
+}
+
+func TestTSGenerator_PackageJSONName(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	pkg, ok := by["package.json"]
+	if !ok {
+		t.Fatal("expected package.json in output")
+	}
+	if !strings.Contains(pkg, `"name": "@weave/myOntology-sdk"`) {
+		t.Errorf("package.json missing expected name: %s", pkg)
+	}
+}
+
+func TestTSGenerator_TSConfig(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	if _, ok := by["tsconfig.json"]; !ok {
+		t.Fatal("expected tsconfig.json in output")
+	}
+}
+
+func TestTSGenerator_ObjectInterfaces(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	models, ok := by["src/models.ts"]
+	if !ok {
+		t.Fatal("expected src/models.ts in output")
+	}
+
+	wantSubstrings := []string{
+		"export interface Employee {",
+		"employeeId: string;",
+		"firstName: string;",
+		"age: number;",
+		"salary: number;",
+		"active: boolean;",
+		"hireDate: string;",
+		"tags: string[];",
+		"export interface Department {",
+		"departmentId: string;",
+	}
+	for _, s := range wantSubstrings {
+		if !strings.Contains(models, s) {
+			t.Errorf("models.ts missing %q", s)
+		}
+	}
+}
+
+func TestTSGenerator_ActionParamInterface(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	models := by["src/models.ts"]
+
+	if !strings.Contains(models, "export interface CreateEmployeeParams {") {
+		t.Errorf("expected CreateEmployeeParams interface, got: %s", models)
+	}
+	if !strings.Contains(models, "firstName: string;") {
+		t.Errorf("expected required param firstName: string;")
+	}
+	if !strings.Contains(models, "age?: number;") {
+		t.Errorf("expected optional param age?: number;")
+	}
+}
+
+func TestTSGenerator_ClientPerObjectTypeRepository(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	client, ok := by["src/client.ts"]
+	if !ok {
+		t.Fatal("expected src/client.ts in output")
+	}
+
+	// Must declare a Repository class for each ObjectType.
+	for _, want := range []string{
+		"export class EmployeeRepository",
+		"export class DepartmentRepository",
+		"export class WeaveClient",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q\n%s", want, client)
+		}
+	}
+
+	// Each repository exposes get/list/search methods (not name-suffixed).
+	for _, want := range []string{
+		"async get(pk: string): Promise<Employee>",
+		"async list(opts?: ListOptions): Promise<ListResult<Employee>>",
+		"async search(where: Record<string, unknown>, opts?: ListOptions): Promise<ListResult<Employee>>",
+		"async get(pk: string): Promise<Department>",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q", want)
+		}
+	}
+
+	// WeaveClient exposes per-type repos as readonly properties.
+	for _, want := range []string{
+		"readonly Employee: EmployeeRepository",
+		"readonly Department: DepartmentRepository",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q", want)
+		}
+	}
+}
+
+func TestTSGenerator_LinkedObjectsTraversal(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/client.ts"]
+
+	// Per AC: {objectType}.linkedObjects.{linkType}(pk) — Employee → Department
+	for _, want := range []string{
+		"export class EmployeeLinkedObjects",
+		"readonly linkedObjects: EmployeeLinkedObjects",
+		"async employeeDepartment(pk: string): Promise<{ data: Department[] }>",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q\n%s", want, client)
+		}
+	}
+}
+
+func TestTSGenerator_ApplyActionMethod(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/client.ts"]
+
+	if !strings.Contains(client, "async applyCreateEmployee(params: CreateEmployeeParams)") {
+		t.Errorf("client.ts missing apply method for createEmployee\n%s", client)
+	}
+}
+
+func TestTSGenerator_IndexReExports(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	idx, ok := filesByPath(files)["src/index.ts"]
+	if !ok {
+		t.Fatal("expected src/index.ts in output")
+	}
+	for _, want := range []string{"export * from './models';", "export * from './client';"} {
+		if !strings.Contains(idx, want) {
+			t.Errorf("index.ts missing %q", want)
+		}
 	}
 }

@@ -113,6 +113,8 @@
 - UpdateBranchBaseVersion and UpdateBranchChangeBeforeState — new Repository methods for rebase support
 - OntologyExport model in pkg/oms/models.go — full export struct with 10 entity types; used by V2 export endpoint, admin export, GetFullMetadata, and snapshot serialization
 - ExportOntologyV2 handler in pkg/oms/handlers.go — fetches all entities by ontologyRID; ListValueTypes is global (no ontologyRID param)
+- TypeScript SDK shape (pkg/sdkgen/gen_ts.go): WeaveClient exposes `readonly {ObjectType}: {ObjectType}Repository` per type; each Repository has get/list/search and `readonly linkedObjects: {ObjectType}LinkedObjects`; LinkedObjects has one method per outbound LinkType returning `{data: TargetType[]}`; Action methods stay on WeaveClient as `apply{ActionName}`
+- SDK generator integration tests use `//go:build integration` tag; tsc resolved from web/node_modules/typescript/bin/tsc with PATH fallback (skip if missing)
 
 ---
 
@@ -820,4 +822,22 @@
   - pkg/sdkgen must not import pkg/oms to avoid import cycle; conversion happens at the handler boundary
   - Both openapi.yaml files must be kept in sync — contract tests enforce this
   - Go text/template with template.Must at package init level will panic if funcs are missing — parse lazily or register funcs first
+---
+
+## 2026-04-18 - US-137
+- Refactored TypeScript SDK generator to emit per-ObjectType repository classes with linkedObjects namespace; added tsc --noEmit integration test
+- Files changed:
+  - pkg/sdkgen/gen_ts.go — Replaced flat client methods with: HttpClient class, {ObjectType}Repository (get/list/search), {ObjectType}LinkedObjects (linkType→Target[] methods), WeaveClient exposing each repo as readonly property; ListResult<T> generic; deterministic import sort; encodeURIComponent on PKs; lib: ["ES2020","DOM"] in tsconfig
+  - pkg/sdkgen/typemap.go — Geoshape TS type changed from "GeoJSON.Geometry" (external @types/geojson dep) to "Record<string, unknown>" so generated SDK is self-contained
+  - pkg/sdkgen/sdkgen_test.go — 8 new structural tests: PackageJSONName, TSConfig, ObjectInterfaces, ActionParamInterface, ClientPerObjectTypeRepository, LinkedObjectsTraversal, ApplyActionMethod, IndexReExports
+  - pkg/sdkgen/gen_ts_integration_test.go — New file (build tag `integration`): TestTypescriptSDK_TSCNoEmit generates SDK to t.TempDir, runs `tsc --noEmit --project` on it; uses web/node_modules/typescript/bin/tsc when present, falls back to PATH lookup, skips if no tsc
+- **Learnings for future iterations:**
+  - Per Palantir OSv2 OSDK convention: `client.{ObjectType}.linkedObjects.{linkType}(pk)` for link traversal, `client.{ObjectType}.get/list/search` for object access — generate per-type Repository classes, not flat methods
+  - LinkedObjects target types must be added to the models import set; missing links = "cannot find name 'Department'" tsc errors
+  - Generated TS SDK should have no external @types deps; map exotic BaseTypes (Geoshape, Geopoint, MediaReference) to self-contained TS structures
+  - tsconfig must include `"lib": ["ES2020", "DOM"]` so `fetch`, `URLSearchParams`, etc. resolve under strict mode
+  - For integration tests requiring tsc: prefer locally installed `web/node_modules/typescript/bin/tsc` (no network) over `npx --yes` (slow, cache-dependent); skip gracefully when not found
+  - Use `go test -tags integration ./pkg/sdkgen/...` to run the tsc check; `make test` (no tag) skips it
+  - encodeURIComponent on path PKs to support keys containing "/" or non-ASCII characters
+  - Deterministic import order matters: use a sorted slice rather than map iteration to keep generated output diff-stable across runs
 ---
