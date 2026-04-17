@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthContext';
 import { LoginPage } from './auth/LoginPage';
 import { ProtectedRoute } from './auth/ProtectedRoute';
+import { PermissionRoute } from './auth/PermissionRoute';
 import { Shell } from './components/layout/Shell';
 import { DashboardPage } from './components/dashboard/DashboardPage';
 import { ExplorerPage } from './components/explorer/ExplorerPage';
@@ -14,6 +15,13 @@ import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 import { PlaygroundPage } from './components/developer/PlaygroundPage';
 import { MetricsPage } from './components/developer/MetricsPage';
 import { ObjectTypeAdminPage } from './components/admin/ObjectTypeAdminPage';
+import {
+  LinkTypeAdminPage,
+  ActionTypeAdminPage,
+  InterfaceAdminPage,
+  SchemaGraphPage,
+  AuditHistoryPage,
+} from './components/admin/AdminPlaceholderPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,6 +31,14 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  return (
+    <PermissionRoute permission="ontology.write" scopeToOntologyParam>
+      {children}
+    </PermissionRoute>
+  );
+}
 
 export default function App() {
   return (
@@ -43,14 +59,58 @@ export default function App() {
               <Route path="explorer/:ontology/branches/:branch/diff" element={<BranchDiffPage />} />
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
-<Route path="actions/:ontology" element={<ActionConsolePage />} />
+              <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="developer/playground" element={<PlaygroundPage />} />
               <Route path="developer/metrics" element={<MetricsPage />} />
               <Route
                 path="admin/:ontology/objectTypes"
-                element={<ObjectTypeAdminPage />}
+                element={
+                  <AdminGuard>
+                    <ObjectTypeAdminPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/:ontology/linkTypes"
+                element={
+                  <AdminGuard>
+                    <LinkTypeAdminPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/:ontology/actionTypes"
+                element={
+                  <AdminGuard>
+                    <ActionTypeAdminPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/:ontology/interfaces"
+                element={
+                  <AdminGuard>
+                    <InterfaceAdminPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/:ontology/graph"
+                element={
+                  <AdminGuard>
+                    <SchemaGraphPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/:ontology/history"
+                element={
+                  <AdminGuard>
+                    <AuditHistoryPage />
+                  </AdminGuard>
+                }
               />
             </Route>
           </Routes>

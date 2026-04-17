@@ -1,5 +1,6 @@
 import { NavLink, useParams } from 'react-router';
 import { useOntologyStore } from '../../stores/ontologyStore';
+import { useAuth } from '../../auth/useAuth';
 
 const iconPaths: Record<string, string> = {
   grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
@@ -12,6 +13,11 @@ const iconPaths: Record<string, string> = {
   layers:
     'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
   code: 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16',
+  link: 'M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71',
+  bolt: 'M13 2L3 14h9l-1 10 10-12h-9l1-10z',
+  share: 'M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v14',
+  graph: 'M18 5a2 2 0 11-4 0 2 2 0 014 0zM10 19a2 2 0 11-4 0 2 2 0 014 0zM22 19a2 2 0 11-4 0 2 2 0 014 0zM8.5 17.5L14 7M15.5 7.5L20 18',
+  clock: 'M12 8v5l3 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -32,29 +38,114 @@ function SvgIcon({ name }: { name: string }) {
   );
 }
 
+interface NavItem {
+  to: string;
+  label: string;
+  icon: string;
+}
+
+function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === '/'}
+      className={({ isActive }) =>
+        `relative flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200 ${
+          isActive
+            ? 'text-text-primary bg-bg-tertiary'
+            : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+        }`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <span
+            className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r transition-all duration-200"
+            style={{
+              background: isActive ? '#F59E0B' : 'transparent',
+              boxShadow: isActive ? '0 0 8px rgba(245,158,11,0.6)' : 'none',
+            }}
+          />
+          <span
+            className="transition-transform duration-200"
+            style={{
+              transform: isActive ? 'scale(1.1)' : 'scale(1)',
+              filter: isActive
+                ? 'drop-shadow(0 0 4px rgba(245,158,11,0.5))'
+                : 'none',
+            }}
+          >
+            <SvgIcon name={item.icon} />
+          </span>
+          {!collapsed && <span>{item.label}</span>}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
 export function Sidebar() {
   const collapsed = useOntologyStore((s) => s.sidebarCollapsed);
   const toggle = useOntologyStore((s) => s.toggleSidebar);
   const selectedOntology = useOntologyStore((s) => s.selectedOntology);
   const params = useParams();
+  const { user, can } = useAuth();
   const activeOntology =
     (params.ontology as string | undefined) ?? selectedOntology ?? null;
 
-  const navItems = [
+  const showAdminSection =
+    user !== null &&
+    (user.roles.some((r) => r === 'admin' || r === 'ontology-owner') ||
+      Object.values(user.ontologyRoles ?? {}).some(
+        (r) => r === 'admin' || r === 'ontology-owner',
+      ) ||
+      can('ontology.write'));
+
+  const navItems: NavItem[] = [
     { to: '/', label: 'Dashboard', icon: 'grid' },
     {
       to: activeOntology ? `/objectsets/${activeOntology}` : '/',
       label: 'Query Builder',
       icon: 'layers',
     },
-    {
-      to: activeOntology ? `/admin/${activeOntology}/objectTypes` : '/',
-      label: 'Ontology Manager',
-      icon: 'settings',
-    },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];
+
+  const adminItems: NavItem[] = activeOntology
+    ? [
+        {
+          to: `/admin/${activeOntology}/objectTypes`,
+          label: 'Object Types',
+          icon: 'settings',
+        },
+        {
+          to: `/admin/${activeOntology}/linkTypes`,
+          label: 'Link Types',
+          icon: 'link',
+        },
+        {
+          to: `/admin/${activeOntology}/actionTypes`,
+          label: 'Action Types',
+          icon: 'bolt',
+        },
+        {
+          to: `/admin/${activeOntology}/interfaces`,
+          label: 'Interfaces',
+          icon: 'share',
+        },
+        {
+          to: `/admin/${activeOntology}/graph`,
+          label: 'Schema Graph',
+          icon: 'graph',
+        },
+        {
+          to: `/admin/${activeOntology}/history`,
+          label: 'History',
+          icon: 'clock',
+        },
+      ]
+    : [];
 
   return (
     <aside
@@ -88,46 +179,28 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 py-2">
+      <nav className="flex-1 py-2 overflow-y-auto">
         {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) =>
-              `relative flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200 ${
-                isActive
-                  ? 'text-text-primary bg-bg-tertiary'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
-              }`
-            }
-          >
-            {({ isActive }) => (
-              <>
-                {/* Active left-border indicator */}
-                <span
-                  className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r transition-all duration-200"
-                  style={{
-                    background: isActive ? '#F59E0B' : 'transparent',
-                    boxShadow: isActive ? '0 0 8px rgba(245,158,11,0.6)' : 'none',
-                  }}
-                />
-                <span
-                  className="transition-transform duration-200"
-                  style={{
-                    transform: isActive ? 'scale(1.1)' : 'scale(1)',
-                    filter: isActive
-                      ? 'drop-shadow(0 0 4px rgba(245,158,11,0.5))'
-                      : 'none',
-                  }}
-                >
-                  <SvgIcon name={item.icon} />
-                </span>
-                {!collapsed && <span>{item.label}</span>}
-              </>
-            )}
-          </NavLink>
+          <SidebarLink key={item.to} item={item} collapsed={collapsed} />
         ))}
+
+        {showAdminSection && adminItems.length > 0 && (
+          <div
+            data-testid="sidebar-admin-section"
+            aria-label="Admin"
+            className="mt-4 pt-3 border-t"
+            style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+          >
+            {!collapsed && (
+              <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-text-secondary">
+                Admin
+              </div>
+            )}
+            {adminItems.map((item) => (
+              <SidebarLink key={item.to} item={item} collapsed={collapsed} />
+            ))}
+          </div>
+        )}
       </nav>
 
       {/* Bottom fade */}

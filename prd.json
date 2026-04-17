@@ -1056,7 +1056,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 46,
-      "passes": false,
+      "passes": true,
       "notes": "Must be implemented before other admin pages (US-146+). Re-prioritized to run before admin pages."
     }
   ]
