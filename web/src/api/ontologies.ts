@@ -94,6 +94,63 @@ export async function listOutgoingLinkTypes(
   return resp.data;
 }
 
+export interface CreateObjectTypeRequest {
+  apiName: string;
+  displayName: string;
+  pluralDisplayName?: string;
+  description?: string;
+  primaryKey: string;
+  titleProperty?: string;
+  status?: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
+  visibility?: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
+}
+
+export interface UpdateObjectTypeRequest {
+  displayName: string;
+  pluralDisplayName?: string;
+  description?: string;
+  titleProperty?: string;
+  status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
+  visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
+  iconName?: string;
+  color?: string;
+  deprecatedReason?: string;
+  deprecatedDeadline?: string | null;
+}
+
+export function createObjectType(
+  ontologyApiName: string,
+  body: CreateObjectTypeRequest,
+): Promise<ObjectType> {
+  return request<ObjectType>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes`,
+    body,
+  );
+}
+
+export function updateObjectType(
+  ontologyApiName: string,
+  objectTypeRid: string,
+  body: UpdateObjectTypeRequest,
+): Promise<ObjectType> {
+  return request<ObjectType>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}`,
+    body,
+  );
+}
+
+export function deleteObjectType(
+  ontologyApiName: string,
+  objectTypeRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}`,
+  );
+}
+
 // --- ActionType endpoints ---
 
 export async function listActionTypes(ontologyApiName: string): Promise<ActionType[]> {

@@ -47,6 +47,11 @@ export function Sidebar() {
       label: 'Query Builder',
       icon: 'layers',
     },
+    {
+      to: activeOntology ? `/admin/${activeOntology}/objectTypes` : '/',
+      label: 'Ontology Manager',
+      icon: 'settings',
+    },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];

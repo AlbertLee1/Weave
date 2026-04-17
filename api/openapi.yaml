@@ -242,6 +242,55 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/PropertyDataType"
+    CreateObjectTypeRequest:
+      type: object
+      required: [apiName, displayName, primaryKey]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        pluralDisplayName:
+          type: string
+        description:
+          type: string
+        primaryKey:
+          type: string
+        titleProperty:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED]
+        visibility:
+          type: string
+          enum: [PROMINENT, NORMAL, HIDDEN]
+    UpdateObjectTypeRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        pluralDisplayName:
+          type: string
+        description:
+          type: string
+        titleProperty:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ENDORSED, EXPERIMENTAL, DEPRECATED]
+        visibility:
+          type: string
+          enum: [PROMINENT, NORMAL, HIDDEN]
+        iconName:
+          type: string
+        color:
+          type: string
+        deprecatedReason:
+          type: string
+        deprecatedDeadline:
+          type: string
+          format: date-time
+          nullable: true
     PropertyDataType:
       type: object
       properties:
@@ -2305,6 +2354,43 @@ paths:
                 $ref: "#/components/schemas/ObjectTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+    post:
+      operationId: createObjectType
+      summary: Create a new object type
+      description: |
+        Creates an ObjectType in the given ontology. If `?branch=` is
+        supplied the create is recorded as an ADDED branch change instead
+        of being written to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+          description: Optional branch ID to route the write through.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateObjectTypeRequest"
+      responses:
+        "201":
+          description: Object type created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}:
     get:
       operationId: getObjectType
@@ -2324,6 +2410,76 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}:
+    put:
+      operationId: updateObjectType
+      summary: Update an existing object type
+      description: |
+        Updates an ObjectType by RID. If `?branch=` is supplied the update
+        is recorded as a MODIFIED branch change instead of being written
+        to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+          description: RID of the ObjectType to update.
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateObjectTypeRequest"
+      responses:
+        "200":
+          description: Updated object type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteObjectType
+      summary: Delete an object type
+      description: |
+        Deletes an ObjectType by RID. ACTIVE / PROMOTED object types on
+        main are rejected with 409; deprecate them first. If `?branch=`
+        is supplied the delete is recorded as a DELETED branch change.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/getByRidBatch:
     post:
       operationId: getObjectTypesByRidBatch

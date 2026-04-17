@@ -13,6 +13,7 @@ import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 import { PlaygroundPage } from './components/developer/PlaygroundPage';
 import { MetricsPage } from './components/developer/MetricsPage';
+import { ObjectTypeAdminPage } from './components/admin/ObjectTypeAdminPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +48,10 @@ export default function App() {
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="developer/playground" element={<PlaygroundPage />} />
               <Route path="developer/metrics" element={<MetricsPage />} />
+              <Route
+                path="admin/:ontology/objectTypes"
+                element={<ObjectTypeAdminPage />}
+              />
             </Route>
           </Routes>
         </AuthProvider>
