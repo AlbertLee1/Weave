@@ -735,7 +735,7 @@
         "Typecheck passes"
       ],
       "priority": 42,
-      "passes": false,
+      "passes": true,
       "notes": "Phase 6: Developer Console"
     },
     {

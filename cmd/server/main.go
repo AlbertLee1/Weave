@@ -25,6 +25,7 @@ import (
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cipher"
+	"github.com/liyang/weave/pkg/developer"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
@@ -82,7 +83,10 @@ type ServerDeps struct {
 	AuditStore        audit.Store                // US-067: audit event store (nil = endpoint returns 503)
 	IngestRateLimiter oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
 	WebSocketHub      *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
-	CORSOrigins       []string                   // Allowed CORS origins (empty = disabled)
+	// US-141: Developer Console application registry. When nil the
+	// /api/v2/developer/applications routes are not registered.
+	ApplicationRepo developer.ApplicationRepository
+	CORSOrigins     []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -408,6 +412,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// AuditStore is nil (no PG pool / degraded mode).
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodGet, "/api/v2/admin/auditEvents", NewAdminAuditEventsHandler(deps.AuditStore))
+
+		// Developer Console: OAuth application registration (US-141). Any
+		// authenticated user can register apps; the handler enforces per-row
+		// ownership so callers only see / mutate their own rows.
+		if deps.ApplicationRepo != nil {
+			appHandler := developer.NewApplicationHandler(deps.ApplicationRepo)
+			appHandler.RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -507,6 +519,7 @@ func main() {
 		deps.IndexDocSource = newPGIndexDocSource(pgRepo)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
 		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
+		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.RoleResolver = auth.NewRoleResolver(deps.UserRepo, 5*time.Minute)
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),

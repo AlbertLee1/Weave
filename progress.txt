@@ -123,7 +123,38 @@
 - OntologySchema has three json:"-" runtime fields — ServerURL, GeneratedAt, Previous — populated by the handler/CLI before Generate; each generator's Generate method must call appendVersionFiles(files, schema, g.Language()) as its last step
 - Handler sets X-Ontology-Version header on sdkgen response (value = schema.Ontology.Version); server URL is derived from r.Host (+ X-Forwarded-{Proto,Host} when present) via requestBaseURL
 - CLI --diff reads <output>/.weave-sdk.json, fetches current ontology version, prints added/removed/modified types (property-level); CLI regen auto-threads Previous from the old metadata's Schema snapshot so CHANGELOG.md reflects real diffs
+- Developer Console (pkg/developer): OAuth application registry independent from pkg/auth — Application struct, ApplicationRepository, ApplicationHandler; client_id prefix "wapp_", client_secret prefix "wsec_" — secret returned ONCE on create, stored only as SHA-256 hash
+- Optional deps on ServerDeps are gated by nil-check at route registration time; contract tests need a stub repo to register the route so the OpenAPI ↔ chi parity check doesn't fail
+- Per-user ownership pattern for personal resources (api keys, applications): Create uses UserFromContext for created_by; List filters by created_by; Get/Delete fetch → compare UserID → 403 on mismatch
+- Migration numbering is STRICTLY sequential — PRD-declared numbers like "Migration 000028" may collide; always pick next available (currently 000030 as of US-141)
 
+---
+
+## 2026-04-18 - US-141
+- Implemented OAuth application registration for the Developer Console (Phase 6)
+- Files changed:
+  - migrations/000030_applications.up.sql — applications table: id UUID PK, name, description, client_id TEXT UNIQUE, client_secret_hash BYTEA, redirect_uris TEXT[], scopes JSONB, created_by, created_at/updated_at; idx_applications_created_by
+  - migrations/000030_applications.down.sql — drop index + table
+  - pkg/developer/application.go — new package; Application struct, GenerateClientID/GenerateClientSecret/HashClientSecret/ValidateClientSecretShape; "wapp_" / "wsec_" prefixes
+  - pkg/developer/application_repository.go — ApplicationRepository interface + PGApplicationRepository with Create/GetByID/GetByClientID/ListByUser/Delete
+  - pkg/developer/application_handlers.go — ApplicationHandler: Create (returns clientSecret ONCE), List (redacted), Get (owner-only), Delete (owner-only); RegisterRoutes helper
+  - pkg/developer/application_repository_fake_test.go — in-memory ApplicationRepository for handler tests
+  - pkg/developer/application_test.go — 5 credential-gen tests
+  - pkg/developer/application_handlers_test.go — 10 handler tests: create 201, requires auth, rejects empty name, list owner-only + no secret leak, get owner/403/404, delete remove/403/404, create→list→get→delete round-trip
+  - pkg/developer/application_repository_integration_test.go — `//go:build integration`: CreateListGetDelete + ClientIDUnique PG tests via testcontainers
+  - cmd/server/main.go — added ServerDeps.ApplicationRepo; wired developer.NewPGApplicationRepository(pool); registered routes under the auth group when repo non-nil
+  - cmd/server/contract_test.go — stubApplicationRepo + context import; deps.ApplicationRepo wired so contract tests keep matching the spec
+  - api/openapi.yaml — /api/v2/developer/applications (POST, GET) + /api/v2/developer/applications/{id} (GET, DELETE); CreateApplicationRequest/Response, ApplicationSummary, ListApplicationsResponse schemas
+  - cmd/server/openapi_spec.yaml — synced with api/openapi.yaml
+  - prd.json — US-141 passes: true
+- **Learnings for future iterations:**
+  - `pkg/developer` is a deliberately new package (not squatting in pkg/auth) so US-142 OAuth flows and US-144 usage metrics can grow alongside Application without bloating pkg/auth
+  - Per-row ownership enforcement lives in the handler (GetFor/DeleteFor compare CreatedBy == UserID); returning 403 on non-owner (not 404) is OK here because the id is not a secret — parity with pkg/auth api_key_handlers.go
+  - DELETE is hard-delete (not soft like api_keys.revoked_at) because application tokens will be verified via GetByClientID in US-142 and a hard delete is the cleanest "tokens immediately unusable" signal
+  - ValidateClientSecretShape returns ErrInvalidClientSecretFormat rather than exposing the prefix check as a boolean — lets the future token endpoint treat shape failure and hash mismatch as the SAME 401 and not leak the shape
+  - Contract test for new optional routes: add stub repo in cmd/server/contract_test.go, otherwise TestContract_NoOrphanedSpecPaths fails because the OpenAPI spec advertises a route that nil-gated wire code didn't register
+  - scopes stored as JSONB (jsonb column) vs redirect_uris as TEXT[] — scopes are expected to gain structure later (scope_metadata, granted_at), while redirect_uris is always a flat string list; json.Marshal + []byte for jsonb round-trip
+  - PR note: lefthook.yml hooks were NOT skipped on commit; if pre-commit ever blocks, diagnose rather than adding --no-verify
 ---
 
 ## 2026-04-16 - US-100

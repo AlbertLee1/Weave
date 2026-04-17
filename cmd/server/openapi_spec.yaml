@@ -1801,6 +1801,97 @@ components:
         nextPageToken:
           type: string
           description: Opaque cursor for the next page. Empty when no more pages remain.
+    CreateApplicationRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Human-friendly display name.
+        description:
+          type: string
+          description: Optional free-form description shown on the developer console.
+        redirectUris:
+          type: array
+          items:
+            type: string
+          description: Allowed OAuth redirect URIs for authorization-code flows.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Requested OAuth scopes.
+    CreateApplicationResponse:
+      type: object
+      required: [id, name, clientId, clientSecret, createdBy, createdAt, updatedAt]
+      description: |
+        Created application record. `clientSecret` is the plaintext OAuth
+        secret; it is returned ONLY on creation and MUST be persisted by the
+        caller — it is never retrievable again.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+        redirectUris:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ApplicationSummary:
+      type: object
+      required: [id, name, clientId, createdBy, createdAt, updatedAt]
+      description: Redacted application record. `clientSecret` is intentionally absent.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        clientId:
+          type: string
+        redirectUris:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ListApplicationsResponse:
+      type: object
+      required: [applications]
+      properties:
+        applications:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplicationSummary"
 security:
   - bearerAuth: []
 paths:
@@ -5112,6 +5203,104 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           description: Audit store is not configured (no PostgreSQL pool).
+  /api/v2/developer/applications:
+    post:
+      operationId: createApplication
+      summary: Register a new OAuth application
+      description: |
+        Registers a new OAuth application owned by the authenticated user.
+        The response body contains the generated `clientId` and `clientSecret`;
+        the plaintext secret is returned EXACTLY once at creation and is never
+        retrievable afterwards. Callers MUST persist it at this point.
+      tags: [Developer]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApplicationRequest"
+      responses:
+        "201":
+          description: Application created; `clientSecret` is included in the body ONCE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApplicationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: listApplications
+      summary: List the authenticated user's OAuth applications
+      description: |
+        Returns the calling user's applications in redacted form. The
+        `clientSecret` is NEVER present in this response.
+      tags: [Developer]
+      responses:
+        "200":
+          description: Applications owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListApplicationsResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v2/developer/applications/{id}:
+    get:
+      operationId: getApplication
+      summary: Get a single OAuth application by id
+      description: |
+        Returns the redacted application record. Only the owning user can
+        read the row; other callers receive 403.
+      tags: [Developer]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application UUID.
+      responses:
+        "200":
+          description: Application details (redacted — no `clientSecret`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationSummary"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteApplication
+      summary: Delete an OAuth application
+      description: |
+        Hard-deletes the application. Any tokens previously issued against
+        its client_id become unusable the moment the row is removed.
+      tags: [Developer]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application UUID.
+      responses:
+        "204":
+          description: Application removed.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/admin/indexes/rebuild:
     post:
       operationId: adminIndexRebuild

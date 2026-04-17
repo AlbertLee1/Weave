@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cipher"
+	"github.com/liyang/weave/pkg/developer"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
@@ -190,6 +192,7 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		FunnelBroadcast:  funnel.NewBroadcast(),
 		FunnelPublisher:  stubIngestPublisher{},
 		WebSocketHub:     subscriptions.NewHub(),
+		ApplicationRepo:  stubApplicationRepo{},
 	}
 	return NewFullRouter(deps)
 }
@@ -301,3 +304,20 @@ type contractOmsRepo struct{ oms.Repository }
 type stubIngestPublisher struct{}
 
 func (stubIngestPublisher) Publish(batch *funnel.EditBatch) (uint64, error) { return 0, nil }
+
+// stubApplicationRepo satisfies developer.ApplicationRepository for contract
+// tests. chi.Walk only inspects route metadata, so every method is allowed
+// to return a trivial error/empty value — the handlers never run here.
+type stubApplicationRepo struct{}
+
+func (stubApplicationRepo) Create(context.Context, *developer.Application) error { return nil }
+func (stubApplicationRepo) GetByID(context.Context, string) (*developer.Application, error) {
+	return nil, developer.ErrApplicationNotFound
+}
+func (stubApplicationRepo) GetByClientID(context.Context, string) (*developer.Application, error) {
+	return nil, developer.ErrApplicationNotFound
+}
+func (stubApplicationRepo) ListByUser(context.Context, string) ([]*developer.Application, error) {
+	return nil, nil
+}
+func (stubApplicationRepo) Delete(context.Context, string) error { return nil }
