@@ -350,6 +350,104 @@ export async function listActionTypesFullMetadata(
   return resp.data;
 }
 
+// --- ActionType admin endpoints (US-149) ---
+
+// Internal (stored) parameter definition: array element shape the backend
+// persists in ActionType.Parameters JSONB. The admin builder emits this
+// shape directly (the V2 wire format is read-only).
+export interface ActionTypeParamDef {
+  id: string;
+  type: string;
+  required?: boolean;
+  description?: string;
+}
+
+// Union of rule shapes supported by pkg/actions/rules.go. Each rule is
+// identified by its `type` and carries type-specific fields.
+export type ActionTypeRuleType =
+  | 'createObject'
+  | 'modifyObject'
+  | 'deleteObject'
+  | 'createLink'
+  | 'deleteLink'
+  | 'createOrModifyObject'
+  | 'createInterfaceObject'
+  | 'modifyInterfaceObject'
+  | 'deleteInterfaceObject';
+
+export interface ActionTypeRule {
+  type: ActionTypeRuleType;
+  objectType?: string;
+  interfaceApiName?: string;
+  linkTypeApiName?: string;
+  primaryKey?: string;
+  sourceObjectPrimaryKey?: string;
+  targetObjectPrimaryKey?: string;
+  propertyBindings?: Record<string, unknown>;
+}
+
+export interface CreateActionTypeRequest {
+  apiName: string;
+  displayName: string;
+  description?: string;
+  status?: string;
+  parameters: ActionTypeParamDef[];
+  rules: ActionTypeRule[];
+}
+
+export interface UpdateActionTypeRequest {
+  displayName: string;
+  description?: string;
+  status: string;
+  parameters: ActionTypeParamDef[];
+  rules: ActionTypeRule[];
+  submissionCriteria?: unknown;
+  sideEffects?: unknown;
+}
+
+export async function listActionTypesAdmin(
+  ontologyApiName: string,
+): Promise<ActionType[]> {
+  const resp = await request<{ data: ActionType[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actionTypesAdmin`,
+  );
+  return resp.data;
+}
+
+export function createActionType(
+  ontologyApiName: string,
+  body: CreateActionTypeRequest,
+): Promise<ActionType> {
+  return request<ActionType>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actionTypes`,
+    body,
+  );
+}
+
+export function updateActionType(
+  ontologyApiName: string,
+  actionTypeRid: string,
+  body: UpdateActionTypeRequest,
+): Promise<ActionType> {
+  return request<ActionType>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actionTypes/byRid/${encodeURIComponent(actionTypeRid)}`,
+    body,
+  );
+}
+
+export function deleteActionType(
+  ontologyApiName: string,
+  actionTypeRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actionTypes/byRid/${encodeURIComponent(actionTypeRid)}`,
+  );
+}
+
 // --- InterfaceType endpoints ---
 
 export async function listInterfaceTypes(

@@ -38,15 +38,6 @@ export function AdminPlaceholderPage({
   );
 }
 
-export function ActionTypeAdminPage() {
-  return (
-    <AdminPlaceholderPage
-      section="Action Types"
-      description="Visual action builder will be available here — define parameters, rules, and property bindings without hand-writing JSON."
-    />
-  );
-}
-
 export function InterfaceAdminPage() {
   return (
     <AdminPlaceholderPage

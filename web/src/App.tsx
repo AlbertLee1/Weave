@@ -16,8 +16,8 @@ import { PlaygroundPage } from './components/developer/PlaygroundPage';
 import { MetricsPage } from './components/developer/MetricsPage';
 import { ObjectTypeAdminPage } from './components/admin/ObjectTypeAdminPage';
 import { LinkTypeAdminPage } from './components/admin/LinkTypeAdminPage';
+import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import {
-  ActionTypeAdminPage,
   InterfaceAdminPage,
   SchemaGraphPage,
   AuditHistoryPage,

@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import {
-  ActionTypeAdminPage,
   InterfaceAdminPage,
   SchemaGraphPage,
   AuditHistoryPage,
@@ -19,11 +18,6 @@ function renderAt(path: string, Component: React.ComponentType) {
 }
 
 describe('Admin placeholder pages', () => {
-  it('ActionTypeAdminPage renders the Action Types section', () => {
-    renderAt('/admin/northwind/actionTypes', ActionTypeAdminPage);
-    expect(screen.getByText(/Action Types/)).toBeInTheDocument();
-  });
-
   it('InterfaceAdminPage renders the Interfaces section', () => {
     renderAt('/admin/northwind/interfaces', InterfaceAdminPage);
     expect(screen.getByText(/Interfaces/)).toBeInTheDocument();

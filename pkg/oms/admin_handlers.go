@@ -1134,6 +1134,34 @@ func (h *OMSHandler) ListLinkTypesForOntologyAdmin(w http.ResponseWriter, r *htt
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
 }
 
+// ListActionTypesForOntologyAdmin handles
+// GET /api/v2/ontologies/{ontologyApiName}/actionTypesAdmin.
+// Returns all ActionTypes for the ontology including the internal rules /
+// submissionCriteria / sideEffects payloads, for the Ontology Manager visual
+// action-type builder. Supports `?branch=` overlay for reads.
+func (h *OMSHandler) ListActionTypesForOntologyAdmin(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListActionTypes(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
+		return
+	}
+	wireList := make([]json.RawMessage, 0, len(list))
+	for i := range list {
+		data, err := list[i].ToFullMetadataJSON()
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
+			return
+		}
+		wireList = append(wireList, json.RawMessage(data))
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
+}
+
 // --- Interface request structs ---
 
 // CreateInterfaceRequest is the request body for creating an interface.

@@ -454,6 +454,59 @@ components:
         required:
           type: boolean
           nullable: true
+    CreateActionTypeRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        parameters:
+          description: "Internal stored format: array of {id, type, required, description}. Passed through as JSON."
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        rules:
+          description: "Array of rule objects. Each rule has a `type` field (createObject, modifyObject, deleteObject, createLink, deleteLink, createOrModifyObject, createInterfaceObject, modifyInterfaceObject, deleteInterfaceObject) plus type-specific fields."
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    UpdateActionTypeRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        parameters:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        rules:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        submissionCriteria:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        sideEffects:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
     ActionType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -2956,6 +3009,70 @@ paths:
                 $ref: "#/components/schemas/ActionTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+    post:
+      operationId: createActionType
+      summary: Create a new action type
+      description: |
+        Creates an ActionType in the given ontology. If `?branch=` is
+        supplied the create is recorded as an ADDED branch change instead
+        of being written to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateActionTypeRequest"
+      responses:
+        "201":
+          description: Action type created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/actionTypesAdmin:
+    get:
+      operationId: listActionTypesForOntologyAdmin
+      summary: List all action types in an ontology (admin)
+      description: |
+        Returns ActionType rows including rules, submissionCriteria and
+        sideEffects, used by the Ontology Manager visual action-type
+        builder. If `?branch=` is supplied, the response reflects the
+        branch overlay.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Action type list with full metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/byRid/{actionTypeRid}:
     get:
       operationId: getActionTypeByRid
@@ -2971,6 +3088,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActionType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateActionType
+      summary: Update an existing action type
+      description: |
+        Updates an ActionType by RID. If `?branch=` is supplied the update
+        is recorded as a MODIFIED branch change instead of being written
+        to main.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ActionTypeRid"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateActionTypeRequest"
+      responses:
+        "200":
+          description: Updated action type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteActionType
+      summary: Delete an action type
+      description: |
+        Deletes an ActionType by RID. If `?branch=` is supplied the delete
+        is recorded as a DELETED branch change.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ActionTypeRid"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

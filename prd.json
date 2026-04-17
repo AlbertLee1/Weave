@@ -878,7 +878,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 50,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-146"
     },
     {
