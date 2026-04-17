@@ -34,3 +34,21 @@ func GetGenerator(lang string) (Generator, error) {
 		return nil, fmt.Errorf("unsupported language: %q", lang)
 	}
 }
+
+// appendVersionFiles appends the .weave-sdk.json metadata and CHANGELOG.md
+// diff to a generator's file list. Each generator calls this at the end of
+// its Generate method so the emitted SDK package is self-describing.
+func appendVersionFiles(files []GeneratedFile, schema OntologySchema, language string) []GeneratedFile {
+	metadata := BuildMetadata(schema, schema.ServerURL, language, schema.GeneratedAt)
+	files = append(files, GeneratedFile{
+		Path:    MetadataFilename,
+		Content: MarshalMetadata(metadata),
+	})
+
+	diff := DiffSchemas(schema.Previous, schema)
+	files = append(files, GeneratedFile{
+		Path:    ChangelogFilename,
+		Content: FormatChangelog(diff, schema.GeneratedAt),
+	})
+	return files
+}

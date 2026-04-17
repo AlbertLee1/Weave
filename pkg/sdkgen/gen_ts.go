@@ -33,6 +33,7 @@ func (g *tsGenerator) Generate(_ context.Context, schema OntologySchema) ([]Gene
 	files = append(files, GeneratedFile{Path: "package.json", Content: g.generatePackageJSON(schema)})
 	files = append(files, GeneratedFile{Path: "tsconfig.json", Content: g.generateTSConfig()})
 
+	files = appendVersionFiles(files, schema, g.Language())
 	return files, nil
 }
 

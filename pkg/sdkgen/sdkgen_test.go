@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"go/format"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liyang/weave/pkg/sdkgen"
 	"github.com/liyang/weave/pkg/types"
@@ -757,4 +759,260 @@ func TestGoGenerator_IsGofmtFormatted(t *testing.T) {
 			t.Errorf("%s is not gofmt-formatted", f.Path)
 		}
 	}
+}
+
+// --- Version tracking / metadata / changelog tests (US-140) ---
+
+func TestBuildMetadata_Fields(t *testing.T) {
+	schema := testSchema()
+	schema.ServerURL = "http://example:9117"
+	generated := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
+
+	m := sdkgen.BuildMetadata(schema, schema.ServerURL, "ts", generated)
+	if m.OntologyAPIName != "myOntology" {
+		t.Errorf("expected ontology apiName 'myOntology', got %q", m.OntologyAPIName)
+	}
+	if m.OntologyVersion != 3 {
+		t.Errorf("expected version 3, got %d", m.OntologyVersion)
+	}
+	if m.ServerURL != "http://example:9117" {
+		t.Errorf("unexpected server url: %q", m.ServerURL)
+	}
+	if m.Language != "ts" {
+		t.Errorf("expected language 'ts', got %q", m.Language)
+	}
+	if !m.GeneratedAt.Equal(generated) {
+		t.Errorf("generatedAt mismatch: got %v want %v", m.GeneratedAt, generated)
+	}
+	wantObjects := []string{"Department", "Employee"}
+	if !reflect.DeepEqual(m.ObjectTypes, wantObjects) {
+		t.Errorf("ObjectTypes: got %v want %v", m.ObjectTypes, wantObjects)
+	}
+	wantLinks := []string{"employeeDepartment"}
+	if !reflect.DeepEqual(m.LinkTypes, wantLinks) {
+		t.Errorf("LinkTypes: got %v want %v", m.LinkTypes, wantLinks)
+	}
+	if m.Schema == nil {
+		t.Fatal("expected embedded schema snapshot")
+	}
+	if m.Schema.Previous != nil {
+		t.Error("embedded schema snapshot should not carry Previous chain")
+	}
+}
+
+func TestMarshalMetadata_JSONRoundtrip(t *testing.T) {
+	schema := testSchema()
+	m := sdkgen.BuildMetadata(schema, "http://srv", "go", time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	raw := sdkgen.MarshalMetadata(m)
+
+	var got sdkgen.SDKMetadata
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("metadata is not valid JSON: %v\n%s", err, raw)
+	}
+	if got.OntologyVersion != m.OntologyVersion {
+		t.Errorf("version roundtrip mismatch: got %d want %d", got.OntologyVersion, m.OntologyVersion)
+	}
+	if got.Schema == nil || len(got.Schema.ObjectTypes) != 2 {
+		t.Errorf("schema snapshot not preserved through JSON roundtrip")
+	}
+}
+
+func TestDiffSchemas_Initial(t *testing.T) {
+	schema := testSchema()
+	diff := sdkgen.DiffSchemas(nil, schema)
+	if !diff.HasChanges() {
+		t.Fatal("expected diff from nil to have changes")
+	}
+	if len(diff.AddedObjects) != 2 {
+		t.Errorf("expected 2 added objects, got %d", len(diff.AddedObjects))
+	}
+	if len(diff.RemovedObjects) != 0 {
+		t.Errorf("expected no removed objects")
+	}
+	if len(diff.AddedLinks) != 1 {
+		t.Errorf("expected 1 added link")
+	}
+	if len(diff.AddedActions) != 1 {
+		t.Errorf("expected 1 added action")
+	}
+	if diff.OldVersion != 0 {
+		t.Errorf("expected OldVersion 0, got %d", diff.OldVersion)
+	}
+}
+
+func TestDiffSchemas_AddRemoveAndModifyProperty(t *testing.T) {
+	old := testSchema()
+	old.Ontology.Version = 3
+
+	newSchema := testSchema()
+	newSchema.Ontology.Version = 4
+
+	// Add a new property to Employee, remove Department, remove 'tags' property.
+	newSchema.ObjectTypes[0].Properties = append(newSchema.ObjectTypes[0].Properties,
+		sdkgen.PropertySchema{APIName: "email", BaseType: "string"})
+	// Change age's base type (modified property).
+	newSchema.ObjectTypes[0].Properties[2].BaseType = "long"
+	// Drop last property (tags).
+	empProps := newSchema.ObjectTypes[0].Properties
+	newSchema.ObjectTypes[0].Properties = append([]sdkgen.PropertySchema{}, empProps[:len(empProps)-2]...)
+	newSchema.ObjectTypes[0].Properties = append(newSchema.ObjectTypes[0].Properties, empProps[len(empProps)-1])
+	// Remove Department entirely.
+	newSchema.ObjectTypes = newSchema.ObjectTypes[:1]
+	// Remove the lone link type (depends on Department).
+	newSchema.LinkTypes = nil
+	// Add a brand-new ActionType.
+	newSchema.ActionTypes = append(newSchema.ActionTypes, sdkgen.ActionTypeSchema{
+		APIName:     "archiveEmployee",
+		DisplayName: "Archive Employee",
+	})
+
+	diff := sdkgen.DiffSchemas(&old, newSchema)
+	if !diff.HasChanges() {
+		t.Fatal("expected changes in diff")
+	}
+	if diff.OldVersion != 3 || diff.NewVersion != 4 {
+		t.Errorf("version mismatch: old=%d new=%d", diff.OldVersion, diff.NewVersion)
+	}
+	if len(diff.RemovedObjects) != 1 || diff.RemovedObjects[0].APIName != "Department" {
+		t.Errorf("expected Department removed, got %+v", diff.RemovedObjects)
+	}
+	if len(diff.ModifiedObjects) != 1 || diff.ModifiedObjects[0].APIName != "Employee" {
+		t.Errorf("expected Employee modified, got %+v", diff.ModifiedObjects)
+	}
+	modEmp := diff.ModifiedObjects[0]
+	if !containsString(modEmp.AddedProperties, "email") {
+		t.Errorf("expected added property 'email', got %v", modEmp.AddedProperties)
+	}
+	if !containsString(modEmp.RemovedProperties, "tags") {
+		t.Errorf("expected removed property 'tags', got %v", modEmp.RemovedProperties)
+	}
+	if !containsString(modEmp.ModifiedProperties, "age") {
+		t.Errorf("expected modified property 'age', got %v", modEmp.ModifiedProperties)
+	}
+	if len(diff.RemovedLinks) != 1 {
+		t.Errorf("expected 1 removed link, got %d", len(diff.RemovedLinks))
+	}
+	if len(diff.AddedActions) != 1 || diff.AddedActions[0].APIName != "archiveEmployee" {
+		t.Errorf("expected archiveEmployee added, got %+v", diff.AddedActions)
+	}
+}
+
+func TestFormatChangelog_Initial(t *testing.T) {
+	diff := sdkgen.DiffSchemas(nil, testSchema())
+	md := string(sdkgen.FormatChangelog(diff, time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)))
+
+	for _, want := range []string{
+		"# Changelog",
+		"initial release",
+		"### Added ObjectTypes",
+		"ObjectType **Employee**",
+		"ObjectType **Department**",
+		"### Added LinkTypes",
+		"### Added ActionTypes",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("initial changelog missing %q:\n%s", want, md)
+		}
+	}
+}
+
+func TestFormatChangelog_Modified(t *testing.T) {
+	old := testSchema()
+	old.Ontology.Version = 3
+
+	newSchema := testSchema()
+	newSchema.Ontology.Version = 4
+	newSchema.ObjectTypes[0].Properties = append(newSchema.ObjectTypes[0].Properties,
+		sdkgen.PropertySchema{APIName: "email", BaseType: "string"})
+
+	diff := sdkgen.DiffSchemas(&old, newSchema)
+	md := string(sdkgen.FormatChangelog(diff, time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)))
+
+	for _, want := range []string{
+		"## Version 4",
+		"from version 3",
+		"### Modified ObjectTypes",
+		"**Employee**",
+		"added property `email`",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("modified changelog missing %q:\n%s", want, md)
+		}
+	}
+}
+
+func TestGenerate_EmitsMetadataAndChangelog(t *testing.T) {
+	for _, lang := range []string{"ts", "python", "go"} {
+		t.Run(lang, func(t *testing.T) {
+			schema := testSchema()
+			schema.ServerURL = "http://srv"
+			schema.GeneratedAt = time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)
+
+			g, _ := sdkgen.GetGenerator(lang)
+			files, err := g.Generate(context.Background(), schema)
+			if err != nil {
+				t.Fatalf("Generate failed: %v", err)
+			}
+			by := filesByPath(files)
+
+			metaRaw, ok := by[sdkgen.MetadataFilename]
+			if !ok {
+				t.Fatalf("expected %s in output", sdkgen.MetadataFilename)
+			}
+			var meta sdkgen.SDKMetadata
+			if err := json.Unmarshal([]byte(metaRaw), &meta); err != nil {
+				t.Fatalf("%s is not valid JSON: %v", sdkgen.MetadataFilename, err)
+			}
+			if meta.OntologyVersion != 3 || meta.OntologyAPIName != "myOntology" {
+				t.Errorf("metadata contents wrong: %+v", meta)
+			}
+			if meta.Language != lang {
+				t.Errorf("language mismatch: %q vs %q", meta.Language, lang)
+			}
+			if meta.ServerURL != "http://srv" {
+				t.Errorf("serverUrl mismatch: %q", meta.ServerURL)
+			}
+
+			changelog, ok := by[sdkgen.ChangelogFilename]
+			if !ok {
+				t.Fatalf("expected %s in output", sdkgen.ChangelogFilename)
+			}
+			if !strings.Contains(changelog, "# Changelog") {
+				t.Errorf("%s missing header:\n%s", sdkgen.ChangelogFilename, changelog)
+			}
+		})
+	}
+}
+
+func TestGenerate_ChangelogReflectsDiff(t *testing.T) {
+	old := testSchema()
+	old.Ontology.Version = 3
+
+	newSchema := testSchema()
+	newSchema.Ontology.Version = 4
+	newSchema.ObjectTypes[0].Properties = append(newSchema.ObjectTypes[0].Properties,
+		sdkgen.PropertySchema{APIName: "email", BaseType: "string"})
+	newSchema.Previous = &old
+
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), newSchema)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	cl := filesByPath(files)[sdkgen.ChangelogFilename]
+	if !strings.Contains(cl, "from version 3") {
+		t.Errorf("changelog did not reference prior version:\n%s", cl)
+	}
+	if !strings.Contains(cl, "added property `email`") {
+		t.Errorf("changelog did not list new property:\n%s", cl)
+	}
+}
+
+func containsString(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

@@ -33,6 +33,7 @@ func (g *goGenerator) Generate(_ context.Context, schema OntologySchema) ([]Gene
 
 	files = append(files, GeneratedFile{Path: "go.mod", Content: g.generateGoMod(modName)})
 
+	files = appendVersionFiles(files, schema, g.Language())
 	return files, nil
 }
 

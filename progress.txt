@@ -119,6 +119,10 @@
 - Go SDK generator (pkg/sdkgen/gen_go.go): builds output into a bytes.Buffer then pipes through `go/format.Source` before returning; guarantees gofmt-clean output and doubles as a compile-time syntax check (format.Source parses the file)
 - Go SDK shape: Client struct (BaseURL/Ontology/Token/HTTP) with typed Get{T}/List{T}/Search{T} methods; `ListResult[T any]` generic envelope; ListOptions{PageSize,PageToken}; `url.PathEscape` on path params; ListOptions appended as query string for GETs and as JSON body fields for Search
 - Go SDK integration test: TestGoSDK_GoVet (build tag `integration`) writes generated files to t.TempDir() then runs `go vet ./...`; skips only if `go` binary missing on PATH
+- SDK version tracking (pkg/sdkgen/metadata.go): BuildMetadata/MarshalMetadata, DiffSchemas(old,new), FormatChangelog(diff,ts); metadata path = .weave-sdk.json, changelog = CHANGELOG.md; metadata embeds the full schema snapshot (json:"schema") so CLI --diff can do property-level comparison after regen
+- OntologySchema has three json:"-" runtime fields — ServerURL, GeneratedAt, Previous — populated by the handler/CLI before Generate; each generator's Generate method must call appendVersionFiles(files, schema, g.Language()) as its last step
+- Handler sets X-Ontology-Version header on sdkgen response (value = schema.Ontology.Version); server URL is derived from r.Host (+ X-Forwarded-{Proto,Host} when present) via requestBaseURL
+- CLI --diff reads <output>/.weave-sdk.json, fetches current ontology version, prints added/removed/modified types (property-level); CLI regen auto-threads Previous from the old metadata's Schema snapshot so CHANGELOG.md reflects real diffs
 
 ---
 
@@ -876,4 +880,26 @@
   - Search endpoints take the where clause in the JSON body (not a query string) per OSS API conventions; pageSize/pageToken go in the body too when Search uses POST
   - `exportedFieldName("Id")` would turn the *whole* field name into "ID" — the trailing-suffix-only replacement matters (previous version used `strings.ReplaceAll(s, "Id", "ID")` which also mangled things like `Sidecar` → `SIDecar`)
   - Running `go vet ./...` inside t.TempDir() is a self-contained integration check: no module path pollution, cleaned up automatically, and fails loudly if the generator emits anything that doesn't compile
+---
+
+## 2026-04-18 - US-140
+- Implemented SDK version tracking: every generated SDK now ships .weave-sdk.json + CHANGELOG.md, the sdkgen response advertises X-Ontology-Version, and the CLI grew a --diff mode for comparing against the previously generated SDK.
+- Files changed:
+  - pkg/sdkgen/metadata.go — New: SDKMetadata struct (with embedded Schema snapshot), BuildMetadata/MarshalMetadata, SchemaDiff type, DiffSchemas(oldPtr, new), FormatChangelog(diff, generatedAt); constants MetadataFilename (.weave-sdk.json) and ChangelogFilename (CHANGELOG.md)
+  - pkg/sdkgen/schema.go — Added json:"-" runtime fields to OntologySchema: ServerURL, GeneratedAt, Previous (all populated before Generate, stripped from metadata snapshots to bound cycles)
+  - pkg/sdkgen/generator.go — Added appendVersionFiles(files, schema, lang) helper; each Generator calls it as the last step of Generate
+  - pkg/sdkgen/gen_ts.go, gen_python.go, gen_go.go — Each generator now appends the metadata + CHANGELOG files via appendVersionFiles
+  - pkg/sdkgen/sdkgen_test.go — 7 new tests: BuildMetadata_Fields, MarshalMetadata_JSONRoundtrip, DiffSchemas_Initial, DiffSchemas_AddRemoveAndModifyProperty, FormatChangelog_Initial, FormatChangelog_Modified, Generate_EmitsMetadataAndChangelog (all langs), Generate_ChangelogReflectsDiff
+  - pkg/oms/handlers_sdkgen.go — GenerateSDK sets X-Ontology-Version response header; schema is fed ServerURL (from r.Host / X-Forwarded-* headers via new requestBaseURL) and GeneratedAt; handler adds `strconv`+`time` imports
+  - pkg/oms/handlers_sdkgen_test.go — 2 new tests: TestGenerateSDK_XOntologyVersionHeader, TestGenerateSDK_IncludesMetadataFile (verifies .weave-sdk.json + CHANGELOG.md land in zip and metadata records the correct ontology version)
+  - cmd/sdkgen/main.go — Refactored into helpers (fetchOntologyExport, buildSchema, loadPreviousMetadata, runDiff); --diff flag compares <output>/.weave-sdk.json against live ontology and prints added/removed/modified types at property granularity; normal regen auto-threads the previous metadata's Schema snapshot into OntologySchema.Previous so CHANGELOG.md reflects the real diff
+  - prd.json — US-140 passes: true
+- **Learnings for future iterations:**
+  - Storing a full `*OntologySchema` snapshot inside the metadata file (`"schema":{...}`) is what unlocks property-level diffs across runs — name-list metadata alone is too coarse to satisfy "CHANGELOG lists added/modified/deleted Properties"
+  - Runtime-only fields on a serializable struct: `json:"-"` is mandatory; without it, re-marshaling metadata would write ServerURL/GeneratedAt twice and a cycle via Previous
+  - Because BuildMetadata snapshots the schema, it must defensively clear the snapshot's own ServerURL/GeneratedAt/Previous to avoid infinite recursion when a caller later serializes the snapshot back out
+  - `r.TLS != nil` + X-Forwarded-{Proto,Host} is the minimal "behind a reverse proxy or not" derivation for a server URL inside an HTTP handler; `httptest.NewRequest` yields a valid `r.Host` which makes header tests easy
+  - For CLI comparison flows, load the prior metadata with `os.ReadFile + json.Unmarshal` — `filepath.Join` resolves cross-platform; silently treat missing/corrupt metadata as "initial" rather than hard-failing so `--diff` is safe on a fresh output dir
+  - When testing `Generate` output across multiple languages, a single table-driven test (`for _, lang := range []string{"ts","python","go"}`) is cheaper than duplicating three nearly-identical assertion blocks
+  - Test assertions against generated JSON can safely depend on a deterministic version token (`"ontologyVersion": 5`), but never on timestamps or names ordered by map iteration — sort name lists in BuildMetadata for stable output
 ---

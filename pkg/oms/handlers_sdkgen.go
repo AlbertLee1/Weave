@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -45,6 +47,8 @@ func (h *OMSHandler) GenerateSDK(w http.ResponseWriter, r *http.Request) {
 	}
 
 	schema := buildOntologySchema(export)
+	schema.ServerURL = requestBaseURL(r)
+	schema.GeneratedAt = time.Now().UTC()
 
 	files, err := gen.Generate(r.Context(), schema)
 	if err != nil {
@@ -55,6 +59,7 @@ func (h *OMSHandler) GenerateSDK(w http.ResponseWriter, r *http.Request) {
 	// Write zip to response
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"sdk.zip\"")
+	w.Header().Set("X-Ontology-Version", strconv.Itoa(schema.Ontology.Version))
 	w.WriteHeader(http.StatusOK)
 
 	zw := zip.NewWriter(w)
@@ -67,6 +72,28 @@ func (h *OMSHandler) GenerateSDK(w http.ResponseWriter, r *http.Request) {
 		}
 		fw.Write(f.Content)
 	}
+}
+
+// requestBaseURL derives a best-effort server URL (scheme://host) from the
+// incoming request so the generated SDK metadata can point back at this
+// server. Falls back to an empty string when neither headers nor r.Host is
+// populated (e.g. in tests driven via httptest default host).
+func requestBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+	host := r.Host
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+		host = fwd
+	}
+	if host == "" {
+		return ""
+	}
+	return scheme + "://" + host
 }
 
 // buildOntologySchema converts an OntologyExport to an sdkgen.OntologySchema.

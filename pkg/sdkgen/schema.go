@@ -1,14 +1,26 @@
 package sdkgen
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // OntologySchema is the resolved schema used for code generation.
+//
+// ServerURL / GeneratedAt / Previous are runtime-only (json:"-") fields the
+// handler or CLI populates before calling Generator.Generate to drive the
+// emitted .weave-sdk.json metadata file and CHANGELOG.md. They are stripped
+// from metadata snapshots to keep serialization cycles bounded.
 type OntologySchema struct {
 	Ontology    OntologyMeta       `json:"ontology"`
 	ObjectTypes []ObjectTypeSchema `json:"objectTypes"`
 	LinkTypes   []LinkTypeSchema   `json:"linkTypes"`
 	ActionTypes []ActionTypeSchema `json:"actionTypes"`
 	Interfaces  []InterfaceSchema  `json:"interfaces"`
+
+	ServerURL   string          `json:"-"`
+	GeneratedAt time.Time       `json:"-"`
+	Previous    *OntologySchema `json:"-"`
 }
 
 // OntologyMeta holds basic ontology identifiers.

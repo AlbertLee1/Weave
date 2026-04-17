@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -193,6 +194,85 @@ func TestGenerateSDK_MissingLang(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGenerateSDK_XOntologyVersionHeader(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test", DisplayName: "Test", CurrentVersion: 7},
+		},
+		objectTypes: []oms.ObjectType{
+			{RID: "ot1", OntologyRID: "ri.ontology.main.ontology.1", APIName: "Employee"},
+		},
+	}
+
+	handler := oms.NewOMSHandler(repo)
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/sdkgen", handler.GenerateSDK)
+
+	req := httptest.NewRequest("POST", "/api/v2/ontologies/test/sdkgen?lang=ts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Ontology-Version"); got != "7" {
+		t.Errorf("expected X-Ontology-Version '7', got %q", got)
+	}
+}
+
+func TestGenerateSDK_IncludesMetadataFile(t *testing.T) {
+	repo := &mockRepo{
+		ontologies: []oms.Ontology{
+			{RID: "ri.ontology.main.ontology.1", APIName: "test", DisplayName: "Test", CurrentVersion: 5},
+		},
+		objectTypes: []oms.ObjectType{
+			{RID: "ot1", OntologyRID: "ri.ontology.main.ontology.1", APIName: "Employee"},
+		},
+	}
+
+	handler := oms.NewOMSHandler(repo)
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/sdkgen", handler.GenerateSDK)
+
+	req := httptest.NewRequest("POST", "/api/v2/ontologies/test/sdkgen?lang=ts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
+	if err != nil {
+		t.Fatalf("invalid zip: %v", err)
+	}
+
+	var metaFound, changelogFound bool
+	for _, f := range zr.File {
+		switch f.Name {
+		case ".weave-sdk.json":
+			metaFound = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open metadata: %v", err)
+			}
+			raw, _ := io.ReadAll(rc)
+			rc.Close()
+			if !bytes.Contains(raw, []byte(`"ontologyVersion": 5`)) {
+				t.Errorf("metadata did not include ontologyVersion 5: %s", raw)
+			}
+		case "CHANGELOG.md":
+			changelogFound = true
+		}
+	}
+	if !metaFound {
+		t.Error("expected .weave-sdk.json in zip")
+	}
+	if !changelogFound {
+		t.Error("expected CHANGELOG.md in zip")
 	}
 }
 
