@@ -38,6 +38,7 @@ type AggregationSpec struct {
 	Percentile  *float64  `json:"percentile,omitempty"`  // for approximatePercentile (0-100), scalar result
 	Percentiles []float64 `json:"percentiles,omitempty"` // for approximatePercentile batch: single HdrHistogram pass, map[string]float64 result
 	MaxItems    *int      `json:"maxItems,omitempty"`    // for collectList: max values to collect (default 100)
+	Precision   *int      `json:"precision,omitempty"`   // for approximateDistinct: HyperLogLog precision, 4..18 (default 14 — ~0.81% standard error)
 }
 
 // GroupBySpec defines how to group results.

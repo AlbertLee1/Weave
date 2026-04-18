@@ -4,8 +4,24 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/axiomhq/hyperloglog"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
+)
+
+// DefaultHLLPrecision is the HyperLogLog precision used for approximateDistinct
+// when a caller does not specify one. At p=14 the standard error is
+// 1.04/sqrt(2^14) ≈ 0.81%, comfortably under the PRD's <=1% ceiling while
+// keeping the sketch at 16 KiB per aggregator.
+const DefaultHLLPrecision = 14
+
+// MinHLLPrecision / MaxHLLPrecision bound the HyperLogLog precision parameter
+// exposed to callers. axiomhq/hyperloglog accepts p in [4, 18]; we surface
+// the same range and reject out-of-range values at validation time so the
+// caller gets a clean 400 rather than a panic from deep inside the sketch.
+const (
+	MinHLLPrecision = 4
+	MaxHLLPrecision = 18
 )
 
 // computeMetrics computes aggregation metrics from search results.
@@ -53,9 +69,19 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "approximateDistinct":
-			val, err := computeDistinct(idx, baseQuery, spec.Field)
+			precision := DefaultHLLPrecision
+			if spec.Precision != nil {
+				precision = *spec.Precision
+			}
+			if precision < MinHLLPrecision || precision > MaxHLLPrecision {
+				return nil, false, fmt.Errorf("approximateDistinct: precision %d out of range [%d,%d]", precision, MinHLLPrecision, MaxHLLPrecision)
+			}
+			val, t, err := computeApproximateDistinct(idx, baseQuery, spec.Field, uint8(precision), scanSize)
 			if err != nil {
 				return nil, false, err
+			}
+			if t {
+				truncated = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
@@ -193,27 +219,52 @@ func computeNumericAgg(idx bleve.Index, query query.Query, field string, aggType
 	return nil, truncated, nil
 }
 
-// computeDistinct counts approximate distinct values for a field.
-func computeDistinct(idx bleve.Index, query query.Query, field string) (int, error) {
-	searchReq := bleve.NewSearchRequest(query)
-	searchReq.Size = 0
-	facet := bleve.NewFacetRequest(field, 10000)
-	searchReq.AddFacet(field+"_distinct", facet)
+// computeApproximateDistinct estimates the cardinality of a field using a
+// HyperLogLog sketch seeded per-call. Values are scanned from the documents
+// matching the query (up to scanSize), fed to the sketch as their byte
+// representation, and the sketch's Estimate() is returned as an int. The
+// second return value is true when the match total exceeds scanSize — the
+// caller surfaces that as APPROXIMATE accuracy.
+//
+// The sketch's sparse representation gives EXACT counts for low cardinalities
+// (typically under ~2^(precision-3) entries), so small datasets that used to
+// round-trip through Bleve facets still return the exact value the pre-HLL
+// implementation did.
+func computeApproximateDistinct(idx bleve.Index, q query.Query, field string, precision uint8, scanSize int) (int, bool, error) {
+	searchReq := bleve.NewSearchRequest(q)
+	searchReq.Size = scanSize
+	searchReq.Fields = []string{field}
 
 	result, err := idx.Search(searchReq)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
-	facetResult, ok := result.Facets[field+"_distinct"]
-	if !ok {
-		return 0, nil
+	truncated := result.Total > uint64(len(result.Hits))
+
+	sketch, err := hyperloglog.NewSketch(precision, true)
+	if err != nil {
+		return 0, false, fmt.Errorf("new hll sketch (precision=%d): %w", precision, err)
 	}
 
-	if facetResult.Terms == nil {
-		return 0, nil
+	for _, hit := range result.Hits {
+		val, ok := hit.Fields[field]
+		if !ok {
+			continue
+		}
+		switch v := val.(type) {
+		case string:
+			sketch.Insert([]byte(v))
+		case []interface{}:
+			for _, item := range v {
+				sketch.Insert([]byte(fmt.Sprint(item)))
+			}
+		default:
+			sketch.Insert([]byte(fmt.Sprint(v)))
+		}
 	}
-	return len(facetResult.Terms.Terms()), nil
+
+	return int(sketch.Estimate()), truncated, nil
 }
 
 // computeExactDistinct counts exact distinct values for a field using map-based deduplication.

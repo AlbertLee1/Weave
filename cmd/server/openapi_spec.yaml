@@ -1685,13 +1685,21 @@ components:
       properties:
         type:
           type: string
-          enum: [count, min, max, sum, avg, approximateDistinct, standardDeviation, variance, approximatePercentile]
+          enum: [count, min, max, sum, avg, approximateDistinct, exactDistinct, standardDeviation, variance, approximatePercentile, collectList]
         field:
           type: string
         name:
           type: string
         percentile:
           type: number
+        precision:
+          type: integer
+          minimum: 4
+          maximum: 18
+          description: |
+            HyperLogLog precision for `approximateDistinct` (4..18). Defaults
+            to 14 (~0.81% standard error). Higher precision reduces error but
+            grows the in-memory sketch: a size-of-sketch ≈ 2^precision bytes.
     GroupBySpec:
       type: object
       required: [type, field]

@@ -427,8 +427,8 @@
         "Tests pass"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "axiomhq/hyperloglog replaces Bleve-facet computeDistinct; AggregationSpec.Precision *int (default 14, range 4..18); sparse mode keeps small-cardinality exact; high-cardinality error verified <1% on 5k-distinct dataset; OpenAPI exposes precision with 4..18 bounds."
     },
     {
       "id": "US-229",
