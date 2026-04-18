@@ -135,11 +135,19 @@ type ServerDeps struct {
 	// registered; any misconfig (unreachable issuer, missing client ID)
 	// leaves Handler nil and the routes are not mounted.
 	OIDCHandler *auth.OIDCHandler
+	// US-255: OIDC back-channel logout. Reuses the OIDC discovery /
+	// verifier wired alongside the login handler; nil when the OIDC
+	// front-door isn't mounted.
+	OIDCLogoutHandler *auth.OIDCBackChannelLogoutHandler
 	// US-248: SAML 2.0 SSO front-door. When non-nil the
 	// /api/auth/saml/{metadata,login,acs} endpoints are registered;
 	// any misconfig (missing IdP cert, unparseable PEM) leaves Handler
 	// nil and the routes are not mounted.
 	SAMLHandler *auth.SAMLHandler
+	// US-255: SAML Single Logout (SLO). Reuses the gosaml2 SP wired
+	// alongside the SAML login handler; nil when the SAML front-door
+	// isn't mounted.
+	SAMLSLOHandler *auth.SAMLSLOHandler
 	// US-249: Service account admin CRUD. Populated from the uncached
 	// *PGRepository-style wrapper in the PG bootstrap block; nil in
 	// degraded mode so the /api/admin/service-accounts routes are not
@@ -311,12 +319,24 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.OIDCHandler != nil {
 			deps.OIDCHandler.RegisterRoutes(r)
 		}
+		// US-255: OIDC back-channel logout. Mounted only when the OIDC
+		// front-door is up AND the session/refresh stores exist — bulk
+		// revocation has no observable effect without them.
+		if deps.OIDCLogoutHandler != nil {
+			deps.OIDCLogoutHandler.RegisterRoutes(r)
+		}
 
 		// US-248: SAML SSO front-door. Mounted alongside password login /
 		// OIDC so operators can mix and match; nil means the IdP cert was
 		// missing or unparseable at boot and the endpoints are skipped.
 		if deps.SAMLHandler != nil {
 			deps.SAMLHandler.RegisterRoutes(r)
+		}
+		// US-255: SAML Single Logout. Mounted only when the SAML
+		// front-door is up; reuses the same gosaml2 SP for signature
+		// verification + LogoutResponse construction.
+		if deps.SAMLSLOHandler != nil {
+			deps.SAMLSLOHandler.RegisterRoutes(r)
 		}
 
 		// US-253: MFA endpoints. Mounted alongside password login when both
@@ -944,6 +964,15 @@ func main() {
 					RefreshService: deps.RefreshService,
 					MarkingRepo:    markingRepo,
 				})
+				// US-255: back-channel logout reuses the same Verifier
+				// so IdP key rotations apply to both surfaces in lockstep.
+				deps.OIDCLogoutHandler = auth.NewOIDCBackChannelLogoutHandler(auth.OIDCBackChannelLogoutDeps{
+					Verifier:       verifier,
+					ClientID:       cfg.OIDC.ClientID,
+					Users:          deps.UserRepo,
+					SessionStore:   deps.SessionStore,
+					RefreshService: deps.RefreshService,
+				})
 				log.Printf("[OIDC] enabled: issuer=%s client_id=%s", cfg.OIDC.IssuerURL, cfg.OIDC.ClientID)
 			}
 		}
@@ -993,6 +1022,19 @@ func main() {
 					RefreshService: deps.RefreshService,
 					MarkingRepo:    samlMarkingRepo,
 				})
+				// US-255: SAML SLO. The same gosaml2-backed verifier
+				// satisfies SAMLLogoutVerifier (it implements both narrow
+				// interfaces), so a single instance powers both ACS
+				// signature verification AND LogoutRequest verification +
+				// LogoutResponse rendering.
+				if logoutVerifier, ok := samlVerifier.(auth.SAMLLogoutVerifier); ok {
+					deps.SAMLSLOHandler = auth.NewSAMLSLOHandler(auth.SAMLSLOHandlerDeps{
+						LogoutVerifier: logoutVerifier,
+						Users:          deps.UserRepo,
+						SessionStore:   deps.SessionStore,
+						RefreshService: deps.RefreshService,
+					})
+				}
 				log.Printf("[SAML] enabled: idp=%s entity_id=%s acs=%s",
 					cfg.SAML.IdPIssuer, cfg.SAML.SPEntityID, cfg.SAML.SPACSURL)
 			}

@@ -119,6 +119,19 @@ func (s *RefreshService) Rotate(ctx context.Context, plain string) (string, *Ref
 	return s.Generate(ctx, old.UserID, old.ID)
 }
 
+// RevokeAllForUser revokes every outstanding refresh token issued to the
+// supplied user id with the given reason. Used by SSO single-logout flows
+// (OIDC back-channel logout, SAML SLO) where the IdP signals the user has
+// ended their session — every device that might still hold a refresh token
+// for this user must stop being able to mint fresh access tokens. Idempotent
+// on empty-chain / already-revoked rows.
+func (s *RefreshService) RevokeAllForUser(ctx context.Context, userID, reason string) error {
+	if userID == "" {
+		return nil
+	}
+	return s.store.RevokeAllForUser(ctx, userID, reason)
+}
+
 // Revoke explicitly revokes a token by its plaintext (used by logout).
 // Best-effort: missing/already-revoked tokens return nil so logout is
 // idempotent.
