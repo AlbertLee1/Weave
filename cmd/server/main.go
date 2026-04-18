@@ -42,6 +42,7 @@ import (
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
+	"github.com/liyang/weave/pkg/security/pii"
 	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/timeseries"
@@ -1463,6 +1464,14 @@ func main() {
 		if deps.OmsRepo != nil {
 			deps.FunnelConsumer.SetLinkPropagationResolver(newLinkPropagationResolver(deps.OmsRepo))
 		}
+
+		// US-263: PII auto-detection. The scanner uses pure-Go regexes
+		// (email / SSN / phone / Luhn-checked credit card) and is cheap
+		// enough to run on every CREATE/MODIFY without a feature flag.
+		// A positive match appends the well-known "PII" marking to the
+		// edit so the existing marking-based mandatory access control
+		// gates visibility on the very first read.
+		deps.FunnelConsumer.SetPIIDetector(pii.NewScanner())
 
 		// US-046: optional embedding side-channel. Each CREATE/MODIFY edit
 		// for a configured object type produces a vector via the embedding

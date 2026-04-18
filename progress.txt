@@ -143,6 +143,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Bleve-returned `_markings` field shape is shape-tolerant: bleve stores arrays as `[]interface{}`, but a single-element array can come back as a bare `string`, and an empty array is absent entirely. Any code that reads `_markings` from `searchReq.Fields=["*"]` MUST handle all three: `string`, `[]string`, `[]interface{}` (with non-string entries silently dropped). One `decodeMarkings(map[string]interface{}) []string` helper is the single choke point — duplicate it nowhere. Same shape applies to any other multi-valued reserved field that may someday be read back via `searchReq.Fields`.
 - Adding a new nullable TEXT-enum field to BOTH object_types + properties at once (classification / sensitivity / policy-label / …): one migration covers both tables, shape is `ADD COLUMN IF NOT EXISTS <col> TEXT` (nullable, no default). The minimum working set on pg_repository.go is 5+4 paths: `object_types` needs Create INSERT + Get SELECT + List SELECT + ListInterfaceObjectTypes SELECT + Update UPDATE; `properties` needs Create INSERT + List SELECT + Get SELECT + Update UPDATE. Every path uses `NULLIF($N, '')` on write and `COALESCE(col, '')` on read so the Go model stays plain `string`. Miss any one path → you'll see a "wrote it, list still empty" silent bug. Prior art: US-262 classification, US-260 expires_at applied this pattern to `user_markings`.
 - Enum-backed dropdowns: put the canonical list in ONE place and consume it everywhere. Backend owns the truth (`pkg/oms.KnownClassifications()` + `IsKnownClassification`) and the frontend mirrors via `CLASSIFICATION_VALUES` + `Classification` type. `IsKnown*` MUST accept empty string as a legal value when the field is optional — otherwise every handler gets a redundant `s == "" || IsKnown(s)` pattern; centralising that asymmetry in the predicate keeps callers clean. For the UI, assert the full option set (`['', 'A', 'B', ...]`) in one test — adding a new label then produces one test failure instead of N silent-drift bugs.
+- Runtime "scan-content-then-tag-marking" hooks (US-263 PII auto-detect, future "auto-classify by content"): hook at `pkg/funnel/Consumer.applyBatchWithHistory` AFTER `resolveConflicts`/`preserveEditOnlyFields`/`filterWritableProperties` and BEFORE `applyBatchEdits` so the detector sees the FINAL property set the index will store. Wrong order = the user-edit-merge-back can introduce PII fields after the detector ran ⇒ silent miss. Detector interface stays minimal (`DetectPII(props) bool`); skip non-string values + DELETE/link edits; dedupe against existing `edit.Markings` before append. Hook is unconditionally wired in `cmd/server/main.go` because the cost is constant pure-Go regex per edit (no PG / NATS dep) — degraded-mode test routers naturally skip it. Same setter pattern as `SetLinkPropagationResolver` / `SetEditOnlyField`. Once tagged, never auto-untag — fail-secure, admin uses `revokeMarkingFor` to remove.
+- Regex-PII detector design choices (`pkg/security/pii`): SSN restricted to `XXX-XX-XXXX` (bare `\d{9}` flood-tags order numbers / postal+ext); credit card MUST be Luhn-validated (the regex alone false-positives every long numeric ID); phone format-permissive (parens / dashes / dots / +CC); email standard `\b...@...\.[a-z]{2,}\b` with `(?i)` for embedded matches. Skip non-string values entirely (numbers / bools come back from Bleve as native types — `fmt.Sprint`-ing them to scan would invite catastrophic false positives). Pure-Go (no CGO) keeps US-230's `CGO_ENABLED=0` Dockerfile invariant intact.
 - Partial-update tri-state collision with "always-on dropdown" UX: `*string` on the DTO means nil=preserve / ""=clear / value=assign, but a React `<select>` is ALWAYS on-screen with some value loaded. The right default is "Edit form sends current form value as-is" — if user left the unspecified sentinel, that's "" ⇒ intentional clear; if user kept the loaded value, server sees the same value ⇒ no-op. Don't try to send undefined-when-unchanged unless the UI has an explicit "keep current" affordance; you'll just confuse future readers. The tri-state shape survives because SDK callers (scripts, CI-driven migrations) can still omit the field to preserve.
 
 ## 2026-04-18 - US-200 Derived Properties framework
@@ -2203,4 +2205,40 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - 测试下拉选项列表的完整性（包括 Unspecified 哨兵）比单独测试每一个值更有价值 —— `Array.from(select.options).map(o => o.value)` 一次性断言全套候选。未来有人扩展分类枚举时，测试会立刻红；通过 `CLASSIFICATION_VALUES` 常量驱动，就能避免三处漂移（types.ts / ObjectTypeAdminPage / PropertiesEditor）。
   - ObjectType 和 Property 的两组 DTO 共享相同的 classification 三态形状，但它们分别驻留在 `UpdateObjectTypeRequest` 和 `UpdatePropertyRequest` 里 —— 不要想着抽出公共 base struct。这两个 struct 字段集合差别大（例如 Property 有 IsSearchable/IsSortable，ObjectType 有 Visibility/Status），基类复用的 PR 代价高于一次复制粘贴 + 一次 Search/Replace。同样适用于前端的 CreateFormState / EditFormState。
   - 策略强制（搜索/导出时应用）不是 US-262 的职责边界：该 story 把分类作为元数据落盘并在 `ToFullMetadataJSON` 和 ObjectType 属性条目中输出，就已经让下游（SDK / 审计 / 管理员）看到；真正的 policy gating（block / redact / warn）属于 marking / masking / policy engine 的工作。未来 story 若要把分类接入运行时强制，可以复用 `masking.Engine.Compile` 的 `AppliesTo` 模式，按分类查到规则集后再在 `ServiceImpl.applyColumnMasking` 之后加一个 `applyClassificationPolicy` hook。
+---
+
+## 2026-04-19 - US-263 PII 自动检测
+- 新增 `pkg/security/pii` 纯 Go 正则扫描器：4 个独立 detector + Scanner 顶层 API。
+  - `IsEmail` 用 `(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b` 匹配嵌入到长文本里的邮件地址。
+  - `IsSSN` 仅认 `XXX-XX-XXXX` 一种规范形式 —— 9 位无分隔的形态会与 ID 串大量碰撞，留给将来按需扩展。
+  - `IsPhone` 接受 `(NNN) NNN-NNNN` / `NNN-NNN-NNNN` / `NNN.NNN.NNNN` / `+1 NNN NNN NNNN` / 连续 10 位等北美形态。
+  - `IsCreditCard` 是 13–19 位数字候选 + Luhn 校验：`creditCardCandidate` 正则圈出候选段，`luhnValid` 算 mod-10。Luhn 是 "不是任意 16 位数字都算卡号" 的关键护栏。
+  - `Scanner.DetectPII(map[string]interface{}) bool` 是 funnel 热路径调用入口；`Scanner.Categories(...)` 返回去重排序的命中类别（`email`/`ssn`/`phone`/`credit_card`），方便审计 / 仪表盘消费。
+  - 跳过非 string 值；展开 `[]string` 与 `[]interface{}` 让多值字段也能正确扫描。
+  - `PIIMarkingName = "PII"` 与 auth migration 已 seed 的 marking 名字对齐。
+- 33 个 `pkg/security/pii` 单测覆盖：4 个 detector 的 happy / negative / edge case；Scanner 在 nil props / empty props / no_pii / 各类别 / 数组形态 / 多类别合并等矩阵；`Categories` 排序断言；`PIIMarkingName` 常量 pin。
+- pkg/funnel.Consumer 新增 `PIIDetector` 窄接口 + `SetPIIDetector` setter + `piiDetector` 字段。
+  - `applyBatchWithHistory` 在 `resolveConflicts` 之后、`applyBatchEdits` 之前调用 `autoTagPIIMarkings`，保证 detector 看到的是经过 US-076 写入过滤 / US-027 edit-only 保留 / US-021 冲突合并之后的最终 properties。
+  - autoTag 仅作用于 CREATE/MODIFY；DELETE 与 link 编辑 short-circuit；nil detector 与未挂载等价。
+  - 命中后 dedup 追加 `"PII"` 到 `edit.Markings`：既有显式 PII tag 不重复；现存其他 marking（如 CONFIDENTIAL）保留。
+- pkg/funnel/pii_marking_test.go 6 个集成 case：detector hit 写入 _markings / detector miss 不写入 _markings / 与 CONFIDENTIAL 共存合并 / 显式 PII 不重复 / nil detector noop / DELETE 不调用 detector / 真 `pii.NewScanner()` 端到端 smoke。`stubPIIDetector` 让前 5 个用例不依赖正则细节，专注于 funnel 钩子合约。
+- cmd/server/main.go 在 funnel 段无条件挂载 `pii.NewScanner()`：纯 Go regex 路径成本恒定（无 PG / NATS 依赖），degraded-mode 测试 router 不挂载也不会破坏现有用例（既有 funnel test 无 detector ⇒ noop）。
+- `go test -short -count=1 ./pkg/... ./cmd/server/...` 全绿；`go vet ./...` 无输出；`go build ./...` 干净。
+- 文件改动：
+  - `pkg/security/pii/scanner.go` (new)
+  - `pkg/security/pii/scanner_test.go` (new)
+  - `pkg/funnel/consumer.go` (PIIDetector interface + PIIMarkingName const + piiDetector field + SetPIIDetector setter + autoTagPIIMarkings + containsString + 钩子接入 applyBatchWithHistory)
+  - `pkg/funnel/pii_marking_test.go` (new)
+  - `cmd/server/main.go` (import pkg/security/pii + 无条件 SetPIIDetector(pii.NewScanner()))
+  - `prd.json` (US-263 passes=true + notes)
+- **Learnings for future iterations:**
+  - 任何"运行时按内容打 marking"的钩子放在 funnel consumer 的 `applyBatchWithHistory` 里比放在 action executor 里更覆盖：所有写路径（admin handler / action / replay / 未来 ingest shim）都最终汇入 EditBatch，funnel 是最后一道公共闸口。Action-executor 上挂只覆盖一种来源；ingest replay 会绕过去。和 US-261 的 marking 继承钩子完全同形（都在 funnel consumer 上加 setter + 接口）。
+  - 钩子顺序很重要：必须放在 `resolveConflicts`（US-021）/ `preserveEditOnlyFields`（US-027）/ `filterWritableProperties`（US-076）之后，detector 才能看到"最终落盘的 properties"。否则会出现：用户的 edit-only 字段被合并回来后才出现 PII，但 detector 已经在合并前判 false ⇒ 漏标。
+  - 纯 Go pure-regex detector 的 zero-config 默认值是"无条件挂载"。它没有任何运行时依赖（PG / NATS / disk），开销恒定（每 edit O(properties × regex 成本)），所以不需要环境变量门控；degraded-mode router 自然就不会挂载（不走 cmd/server/main.go 这一路），既有 funnel 单测都不挂载也不会被惊扰。和 US-261 那种"需要 OmsRepo 才挂载"的钩子不同 —— 后者要查表，前者纯计算。
+  - PII detector 的"非字符串值跳过"是关键：Bleve 把数字、布尔、时间都按非 string 形态返回；如果对它们做正则匹配，要么 panic，要么得先 fmt.Sprintf 把所有值转 string，引入大量假阳性（比如 long ID = SSN 误报，但 SSN 又不带分隔，所以 Luhn 又会进一步误报）。把 detector 限定为"只看 string 与 string 数组"是最安全的最小工作集，回头按需增量扩展。
+  - SSN 仅认 `XXX-XX-XXXX` 一种形态是有意为之：bare `\d{9}` 的形态会大面积误报订单号 / 内部 ID / 邮编+扩展 等等；上线把它打 PII tag 会让大量本来公开的对象被误升级为 PII 受保护，对业务的破坏远大于"漏检了无分隔 SSN"。生产里如果某个组织的数据真的把 SSN 以纯数字存储，应用 admin 用 explicit marking grant 处理，不必让 detector 扛 false positive 的成本。
+  - Luhn 校验是信用卡 detector 的核心护栏：单纯 13–19 位数字会大面积误报，包括订单 ID、外部 system-of-record 编号、防伪码等等。Luhn 把 false positive 压到接近 0；几乎所有发卡组织（Visa / MC / Amex / Discover / JCB / Diners）都遵循 Luhn。代价是反向校验时需要剥离非数字字符 —— `stripNonDigits` 单独抽出，以便将来支持 IBAN 或其他校验体系时复用。
+  - `PIIDetector` 接口 1 个方法 `DetectPII(properties map[string]interface{}) bool` 是最小化的合约 —— 没有按字段返回类别 / 没有给字段名上下文。如果未来 story 需要 "哪个字段命中哪类 PII" 的精细审计，可以加第二个方法 `DetectPIIWithCategories(props) (bool, map[string][]string)`，类型断言或新 setter 拼接。一开始就把审计粒度做满会让 stub 写起来很重。
+  - "无条件挂载 + nil-detector noop" 是 setter 钩子的典型双稳态：production main.go 走"挂载真实实现"，所有 cmd/server 的 contract / e2e / unit test router 走"不挂载 = noop"。新加一个 setter 钩子时，从这个形态起步，后续若需要 per-deployment 关掉，再额外加 env 门控；先做加法再做减法成本低。
+  - PII auto-tag 不会反向"取消" PII —— 一旦 marking 被打上，后续 edit 即使内容不再 PII 也会保留 PII tag。这是 fail-secure 的合理选择（一旦泄露过，就当作长期敏感）。如果业务确认安全，可以由管理员通过 `revokeMarkingFor` 主动摘除；不要尝试在 detector 路径里写"未命中就移除 PII"的逻辑，会让 marking 状态在两次写之间抖动。
 ---

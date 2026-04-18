@@ -928,8 +928,8 @@
         "Tests pass"
       ],
       "priority": 64,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新增 pkg/security/pii 纯 Go 正则扫描器（email / SSN XXX-XX-XXXX / NA 电话 / Luhn 校验信用卡），暴露 IsEmail/IsSSN/IsPhone/IsCreditCard + Scanner.DetectPII + Categories；33 个单测覆盖各类边界（embedded、format variants、Luhn invalid 等）。pkg/funnel.Consumer 增加 PIIDetector 接口 + SetPIIDetector 钩子 + autoTagPIIMarkings：扫描 CREATE/MODIFY 的 properties，命中即对 edit.Markings 追加 'PII'（去重；既有显式 PII 不重复）；DELETE/link 编辑跳过；nil detector 与未挂载等价。集成测试 6 个：正例命中、负例不写 _markings、与 CONFIDENTIAL 共存、显式 PII 不重复、未挂载 noop、DELETE 不调用 detector、真 Scanner 端到端 smoke。cmd/server/main.go 在 funnel 段无条件挂载 pii.NewScanner()（无 PG 依赖、纯 Go regex 路径成本恒定）。`go test -short ./pkg/... ./cmd/...` 全绿；`go vet ./...` / `go build ./...` 干净。"
     },
     {
       "id": "US-264",

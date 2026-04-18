@@ -79,6 +79,25 @@ type LinkPropagationResolver interface {
 	LookupLinkPropagation(ctx context.Context, linkTypeRID string) (LinkPropagation, bool, error)
 }
 
+// PIIDetector reports whether an edit's property values carry PII
+// (email / SSN / phone / credit card). When wired on the consumer
+// every CREATE/MODIFY edit is scanned and a positive result auto-
+// tags the indexed document with the well-known "PII" marking so the
+// existing marking-based mandatory access control gates visibility
+// without requiring the writer to remember to add the marking.
+//
+// Implementations are expected to be cheap to call and safe for
+// concurrent use; pkg/security/pii.Scanner is the canonical impl.
+type PIIDetector interface {
+	DetectPII(properties map[string]interface{}) bool
+}
+
+// PIIMarkingName is the marking auto-attached to objects whose
+// properties trigger a positive PII detection. Pinned to "PII" — the
+// auth-side migration seeds this exact label and admins grant it via
+// the existing marking-grant endpoints.
+const PIIMarkingName = "PII"
+
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
 type Consumer struct {
 	js            nats.JetStreamContext
@@ -144,6 +163,12 @@ type Consumer struct {
 	// entirely, which preserves pre-US-261 behaviour.
 	linkPropagation LinkPropagationResolver
 
+	// piiDetector, when set, scans every CREATE/MODIFY edit's property
+	// values and auto-attaches the PII marking on a positive match
+	// (US-263). Nil leaves the marking set untouched — the same shape
+	// every other optional consumer hook follows.
+	piiDetector PIIDetector
+
 	// embedFields holds the optional embedding side-channel state. See
 	// embeddings.go for the wiring methods and the per-batch hook.
 	embedFields
@@ -199,6 +224,16 @@ func (c *Consumer) SetLinkEdgeDeleter(d LinkEdgeDeleter) {
 // to call before Start().
 func (c *Consumer) SetLinkPropagationResolver(r LinkPropagationResolver) {
 	c.linkPropagation = r
+}
+
+// SetPIIDetector wires the US-263 PII auto-detection hook. When set,
+// every CREATE/MODIFY edit has its Properties scanned via the detector
+// and a positive result appends the well-known "PII" marking to the
+// edit's Markings slice (deduplicated) before the index write — so the
+// per-row `_markings` field reflects the auto-tagging on the very
+// first read. Pass nil to disable. Safe to call before Start().
+func (c *Consumer) SetPIIDetector(d PIIDetector) {
+	c.piiDetector = d
 }
 
 // SetAlwaysApplyField wires the US-021 always-apply hook. When set, ingest
@@ -904,6 +939,7 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	if len(batch.Edits) == 0 {
 		return nil
 	}
+	batch.Edits = c.autoTagPIIMarkings(batch.Edits)
 
 	// Capture prev_state for each edit BEFORE the batch is applied. CREATE
 	// and link edits get a nil prev_state by definition; MODIFY/DELETE pull
@@ -983,6 +1019,44 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 		}
 	}
 	return nil
+}
+
+// autoTagPIIMarkings is the US-263 hook that scans every CREATE/MODIFY
+// edit's property values via the configured PIIDetector and appends the
+// PII marking to the edit's Markings slice on a positive match. The
+// step runs after every other property-rewriting filter (US-076 writable
+// columns, US-027 edit-only preserve, US-021 conflict resolution) so the
+// detector sees the FINAL property set the index will store. A nil
+// detector or DELETE/link edits short-circuit unchanged. The marking is
+// deduplicated against the edit's existing Markings so an explicit PII
+// tag from the writer is never duplicated.
+func (c *Consumer) autoTagPIIMarkings(edits []Edit) []Edit {
+	if c.piiDetector == nil {
+		return edits
+	}
+	for i := range edits {
+		e := &edits[i]
+		if e.Type != EditTypeCreate && e.Type != EditTypeModify {
+			continue
+		}
+		if !c.piiDetector.DetectPII(e.Properties) {
+			continue
+		}
+		if containsString(e.Markings, PIIMarkingName) {
+			continue
+		}
+		e.Markings = append(e.Markings, PIIMarkingName)
+	}
+	return edits
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchDocument loads the current bleve document for (ontology, objectType, pk)
