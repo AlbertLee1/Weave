@@ -5952,6 +5952,111 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/snapshot:
+    post:
+      operationId: createObjectSetSnapshot
+      summary: Freeze an ObjectSet's primary key list into a versioned snapshot
+      description: |
+        US-224. Executes the ObjectSet referenced by `{objectSetRid}` (created
+        earlier via `createTemporary`) and persists the resulting
+        `(objectType, primaryKeys, definition)` tuple as an
+        `object_set_snapshots` row. The returned `snapshotRid` (format
+        `ri.objectsets.main.snapshot.<uuid>`) is durable and can be passed to
+        `getObjectSetSnapshot` later to read back the same membership even
+        after the underlying base set mutates. v1 freezes membership only;
+        property values returned by `getObjectSetSnapshot` come from the live
+        Bleve index at read time.
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectSetRid
+          required: true
+          schema:
+            type: string
+          description: The RID of the ObjectSet to freeze (must be a previously stored ObjectSet, e.g. via createTemporary).
+      responses:
+        "200":
+          description: Snapshot persisted. Returns the new snapshotRid plus the materialised primary keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshotRid, objectType, primaryKeys, totalCount, createdAt]
+                properties:
+                  snapshotRid:
+                    type: string
+                    description: Newly assigned snapshot RID (`ri.objectsets.main.snapshot.<uuid>`).
+                  objectType:
+                    type: string
+                    description: API name of the ObjectType the materialised PKs resolve under.
+                  primaryKeys:
+                    type: array
+                    items: { type: string }
+                    description: The frozen primary key list at create time.
+                  totalCount:
+                    type: string
+                    description: Number of primary keys in the snapshot, encoded as a string for API parity with loadObjects.
+                  truncated:
+                    type: boolean
+                    description: True when the underlying executor hit its 10000-PK cap and the snapshot is an approximate prefix.
+                  createdAt:
+                    type: string
+                    format: date-time
+                    description: Server-assigned creation timestamp (UTC).
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/snapshots/{snapshotRid}:
+    get:
+      operationId: getObjectSetSnapshot
+      summary: Read back a previously frozen ObjectSet snapshot
+      description: |
+        US-224. Loads the persisted snapshot row for `{snapshotRid}` and
+        returns its frozen primary keys rendered through the live Bleve
+        index using the same WireObject envelope `loadObjects` produces. PK
+        membership is frozen at create time; current property values come
+        from the index at read time.
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: snapshotRid
+          required: true
+          schema:
+            type: string
+          description: Snapshot RID returned by createObjectSetSnapshot.
+      responses:
+        "200":
+          description: Frozen rows for the snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshotRid, objectType, data, totalCount, createdAt]
+                properties:
+                  snapshotRid:
+                    type: string
+                  objectType:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WireObject"
+                  totalCount:
+                    type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe:
     get:
       operationId: subscribeObjectSet

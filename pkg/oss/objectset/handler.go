@@ -75,12 +75,13 @@ type PropertyFilterProvider interface {
 
 // Handler handles ObjectSet HTTP requests.
 type Handler struct {
-	executor         *Executor
-	indexMgr         *index.Manager
-	store            *Store
-	aggEngine        *aggregation.Engine
-	propertyFilter   PropertyFilterProvider
-	historySnapshots HistorySnapshotProvider
+	executor           *Executor
+	indexMgr           *index.Manager
+	store              *Store
+	aggEngine          *aggregation.Engine
+	propertyFilter     PropertyFilterProvider
+	historySnapshots   HistorySnapshotProvider
+	persistedSnapshots PersistedSnapshotStore
 }
 
 // NewHandler creates a new ObjectSet handler.

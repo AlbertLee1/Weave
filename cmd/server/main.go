@@ -98,6 +98,13 @@ type ServerDeps struct {
 	// OmsRepo the loadObjects handler honours `?asOf=<RFC3339>`; absent
 	// the route falls through to TimeTravelUnavailable 400.
 	HistorySnapshotStore historySnapshotStore
+	// US-224 ObjectSet Versioned Snapshots. ObjectSetSnapshotStore is the
+	// uncached *PGRepository view onto Create/GetObjectSetSnapshot. When
+	// wired the POST /objectSets/{rid}/snapshot and GET
+	// /objectSets/snapshots/{rid} routes are functional; absent the
+	// snapshot endpoints return SnapshotsUnavailable 400 so the routes are
+	// still mounted (and discoverable via OpenAPI / contract tests).
+	ObjectSetSnapshotStore oms.ObjectSetSnapshotStore
 	TimeSeriesStore      timeseries.Store
 	GeotemporalStore     geotemporal.Store
 	CipherDecryptor      cipher.Decryptor
@@ -455,6 +462,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.OmsRepo != nil && deps.HistorySnapshotStore != nil {
 				objSetHandler.SetHistorySnapshotProvider(newHistorySnapshotAdapter(deps.OmsRepo, deps.HistorySnapshotStore))
 			}
+			// US-224: persisted ObjectSet snapshots. Wire only when a
+			// PG-backed catalog is available; without it the snapshot routes
+			// degrade to SnapshotsUnavailable 400 instead of materialising
+			// in-memory rows that can never be read back.
+			if deps.ObjectSetSnapshotStore != nil {
+				objSetHandler.SetPersistedSnapshotStore(newObjectSetSnapshotAdapter(deps.ObjectSetSnapshotStore))
+			}
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", objSetHandler.LoadObjects)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks", objSetHandler.LoadLinks)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/aggregate", objSetHandler.Aggregate)
@@ -464,6 +478,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// not swallow the static path segments.
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsMultipleObjectTypes", objSetHandler.LoadObjectsMultipleObjectTypes)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjectsOrInterfaces", objSetHandler.LoadObjectsOrInterfaces)
+			// US-224: snapshot routes. POST /{objectSetRid}/snapshot freezes
+			// an ObjectSet; GET /snapshots/{snapshotRid} returns the frozen
+			// rows. The static "snapshots" segment must be registered BEFORE
+			// the GET wildcard /{objectSetRid} so chi resolves the prefix
+			// match correctly.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/snapshot", objSetHandler.CreateSnapshot)
+			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/snapshots/{snapshotRid}", objSetHandler.GetSnapshot)
 			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}", objSetHandler.GetObjectSet)
 
 			// US-055: SSE ObjectSet subscribe scaffold. Wire only when a
@@ -617,6 +638,10 @@ func main() {
 		// *PGRepository for the same reason — SnapshotObjectsAt is not on
 		// the oms.Repository surface that the cache decorator wraps.
 		deps.HistorySnapshotStore = pgRepo
+		// US-224: persisted ObjectSet snapshots. Same pattern — the
+		// Create/GetObjectSetSnapshot methods live on *PGRepository, not
+		// on the cached metadata Repository.
+		deps.ObjectSetSnapshotStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		deps.AuditStore = audit.NewPGStore(pool)
 		// US-011: the index rebuild admin command re-ingests from
