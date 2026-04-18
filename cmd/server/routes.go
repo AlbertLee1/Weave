@@ -31,6 +31,17 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/linkTypes", omsHandler.CreateLinkType)
 	r.Put("/api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}", omsHandler.UpdateLinkType)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}", omsHandler.DeleteLinkType)
+	// LinkProperty admin CRUD (US-210): schema lives per LinkType; edge values
+	// ride on link_edges.edge_properties JSONB and are written via the edges
+	// PUT endpoint below.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/properties", omsHandler.ListLinkProperties)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/properties", omsHandler.CreateLinkProperty)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/links/properties/byRid/{linkPropertyRid}", omsHandler.UpdateLinkProperty)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/links/properties/byRid/{linkPropertyRid}", omsHandler.DeleteLinkProperty)
+	// US-210 edge-value upsert: replaces link_edges.edge_properties for the
+	// (linkTypeRid, sourcePk, targetPk) edge, validating values against the
+	// LinkType's declared link-property schema.
+	r.Put("/api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/edges/{sourcePk}/{targetPk}/properties", omsHandler.PutLinkEdgeProperties)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes", omsHandler.ListActionTypes)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actionTypes", omsHandler.CreateActionType)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/byRid/{actionTypeRid}", omsHandler.GetActionTypeByRidV2)

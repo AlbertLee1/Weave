@@ -12,9 +12,11 @@ import (
 
 // OMSHandler provides HTTP handlers for OMS V2 and admin endpoints.
 type OMSHandler struct {
-	repo          Repository
-	queryExecutor QueryExecutor
-	actorFn       ActorFunc
+	repo              Repository
+	queryExecutor     QueryExecutor
+	actorFn           ActorFunc
+	linkPropertyStore LinkPropertyStore
+	linkEdgeStore     LinkEdgeStore
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
@@ -27,6 +29,21 @@ func NewOMSHandler(repo Repository) *OMSHandler {
 // FunctionRID through this executor instead of returning raw metadata.
 func (h *OMSHandler) SetQueryExecutor(qe QueryExecutor) {
 	h.queryExecutor = qe
+}
+
+// SetLinkPropertyStore wires the narrow LinkPropertyStore used by the
+// link-property admin handlers (US-210). When unset the corresponding CRUD
+// endpoints respond with 503 NotConfigured so degraded-mode test routers that
+// do not supply the store still boot cleanly.
+func (h *OMSHandler) SetLinkPropertyStore(s LinkPropertyStore) {
+	h.linkPropertyStore = s
+}
+
+// SetLinkEdgeStore wires the narrow LinkEdgeStore used by the edge-value
+// handlers (US-210) and by the searchAround enrichment path. When unset the
+// PUT edge-properties endpoint responds with 503 NotConfigured.
+func (h *OMSHandler) SetLinkEdgeStore(s LinkEdgeStore) {
+	h.linkEdgeStore = s
 }
 
 // SetActorFunc sets a function that extracts the user ID from request context.

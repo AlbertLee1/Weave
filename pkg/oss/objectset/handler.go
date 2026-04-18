@@ -226,6 +226,17 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// US-210: surface per-edge properties produced by a searchAround
+		// step. Values are injected under "__edge" to avoid colliding with
+		// object properties. Absent when the traversal wasn't searchAround
+		// or no edge carried properties.
+		if edge, ok := result.EdgeProperties[pk]; ok && len(edge) > 0 {
+			if props == nil {
+				props = make(map[string]interface{}, 1)
+			}
+			props["__edge"] = edge
+		}
+
 		data = append(data, oss.FormatObject(result.ObjectType, pk, props))
 	}
 

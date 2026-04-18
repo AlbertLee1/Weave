@@ -80,6 +80,13 @@ type ServerDeps struct {
 	// catalog is nil and the routes are not registered.
 	MediaStore        *media.Store
 	MediaCatalog      oms.MediaAssetStore
+	// US-210: Link Properties. LinkPropertyStore holds the edge-property
+	// schema (new link_properties table); LinkEdgeStore is the narrow CRUD
+	// surface over link_edges used by the PUT edges/properties endpoint and
+	// the searchAround enrichment path. Both are served by the uncached
+	// *PGRepository in the non-degraded bootstrap.
+	LinkPropertyStore oms.LinkPropertyStore
+	LinkEdgeStore     oms.LinkEdgeStore
 	TimeSeriesStore   timeseries.Store
 	GeotemporalStore  geotemporal.Store
 	CipherDecryptor   cipher.Decryptor
@@ -312,6 +319,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// OMS routes
 		if deps.OmsRepo != nil {
 			omsHandler := oms.NewOMSHandler(deps.OmsRepo)
+			if deps.LinkPropertyStore != nil {
+				omsHandler.SetLinkPropertyStore(deps.LinkPropertyStore)
+			}
+			if deps.LinkEdgeStore != nil {
+				omsHandler.SetLinkEdgeStore(deps.LinkEdgeStore)
+			}
 			RegisterRoutes(api, omsHandler)
 		}
 
@@ -566,6 +579,11 @@ func main() {
 		// metadata cache decorator does not wrap MediaAssetStore methods, and
 		// upload/delete are infrequent enough that direct PG hits are fine.
 		deps.MediaCatalog = pgRepo
+		// US-210: link-property schema + link-edge value stores. Same reason
+		// as MediaCatalog — these narrow stores are not on oms.Repository, so
+		// the CachedRepository decorator does not wrap them.
+		deps.LinkPropertyStore = pgRepo
+		deps.LinkEdgeStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		deps.AuditStore = audit.NewPGStore(pool)
 		// US-011: the index rebuild admin command re-ingests from
@@ -799,6 +817,12 @@ func main() {
 		}
 		if prov := buildEmbeddingProvider(); prov != nil {
 			deps.ObjSetExecutor.SetEmbeddingProvider(prov)
+		}
+		// US-210: edge-property enrichment for searchAround over M2M links.
+		// Uses the uncached pgRepo (for LinkType lookups) + the LinkEdgeStore
+		// to surface link_edges.edge_properties keyed by the "other end" PK.
+		if deps.OmsRepo != nil && deps.LinkEdgeStore != nil {
+			deps.ObjSetExecutor.SetEdgePropertiesProvider(newPGEdgePropertiesResolver(deps.OmsRepo, deps.LinkEdgeStore))
 		}
 	}
 

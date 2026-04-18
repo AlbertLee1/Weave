@@ -32,6 +32,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Nullable text column in Go: `NULLIF($N, '')` on INSERT / UPDATE + `COALESCE(col, '')` on SELECT keeps the Go model a plain `string` (no `sql.NullString`) while the DB carries proper NULLs so partial indexes `WHERE col IS NOT NULL`, self-referential FKs and data-quality checks still work. Every `COALESCE(description, '')` in pg_repository.go is prior art — follow the same shape for any new nullable text.
 - Optional field on Update DTO: use `*string` (or `*bool` etc) so callers can distinguish three states — omit=preserve, `""`=clear, `"X"`=assign. Bare `string` collapses "omit" and "clear" into one, silently nuking existing data whenever a client sends a partial update. `UpdateLinkTypeRequest.IsRequired *bool` is prior art.
 - Self-referential FK in schema: prefer NULLable-without-REFERENCES for pair-authoring workflows where both sides are created separately (A↔B bidirectional links, parent/child before-both-exist, etc). Handler-layer validation enforces symmetry invariants; the DB accepts a temporary dangling reference during authoring. REFERENCES would require deferred constraints or a magic create-order — more surface area than it's worth when validation is already centralized.
+- Adding a new route to `cmd/server` is a 3-step sync: (1) `RegisterRoutes` in `cmd/server/routes.go`, (2) matching `paths:` entry in `api/openapi.yaml`, (3) copy canonical to embedded: `cp api/openapi.yaml cmd/server/openapi_spec.yaml`. The `TestContract_*` trio fails otherwise with a precise "missing entries" diagnostic — friendly, non-ambiguous.
+- Direction-aware edge lookups (forward source-keyed vs reverse target-keyed) need SEPARATE store primitives — `ListLinkEdgesWithProperties(sourcePKs)` and `ListLinkEdgesWithPropertiesByTarget(targetPKs)`. Emulating reverse by filtering a forward call silently returns wrong rows. Pattern generalizes to any adjacency-list traversal where direction matters.
+- Optional executor-level enrichment hooks (`SetEdgePropertiesProvider`, etc.) should be setter-injected rather than constructor args. Keeps the "no provider wired" path zero-cost, makes degraded-mode test routers trivial, and lets new hooks ship without disrupting existing NewExecutor callers.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -337,5 +340,59 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Test symmetry assertions need order-agnostic comparisons: Bleve result ordering is stable within a single search but differs between queries with different underlying plans. `sameSet(a, b)` as a tiny local helper beats `sort.Strings`-then-compare because it names the intent.
   - When adding a column that existing mock repos will carry in struct-value maps (e.g. `mockRepo.linkTypes []oms.LinkType`), NO mock updates are needed — the new field flows through struct copies automatically. Unlike adding a new method to `oms.Repository` (which needs ~15 stub updates across the tree), a new struct field is a zero-touch addition.
   - Field on wire / field in DB / field in model should share the SAME omitempty semantics. If DB is `NULL` → Go `""` → JSON absent, the round-trip is clean. If any layer persists an empty string instead of NULL, a partial index `WHERE inverse_link_rid IS NOT NULL` would include every row and defeat its purpose. NULLIF at the INSERT/UPDATE boundary is the only place this guarantee is enforced.
+---
+
+## 2026-04-18 - US-210 Link Properties (M2M edge properties)
+- Added migration `000036_link_properties` creating the new `link_properties` table (mirrors `properties` shape: rid / link_type_rid → link_types(rid) ON DELETE CASCADE / api_name / display_name / description / base_type / type_config JSONB / is_array / is_nullable / created_at) plus UNIQUE (link_type_rid, api_name) + index on link_type_rid. Per-edge VALUES continue to ride on the existing `link_edges.edge_properties` JSONB column from migration 000006 — no duplicate storage.
+- New `oms.LinkProperty` model + `LinkPropertyStore` narrow 5-method interface (Create/Get/List/Update/Delete); implemented on `*PGRepository` in `pg_repository_link_property.go`. Kept OUT of `oms.Repository` for the same reason US-202/US-203 narrow stores were — avoids stubbing across ~15 mock repos.
+- New `oms.LinkEdgeStore` narrow 5-method interface: GetLinkEdge, UpsertLinkEdge, DeleteLinkEdge, ListLinkEdgesWithProperties (source-keyed), ListLinkEdgesWithPropertiesByTarget (target-keyed). Implemented on `*PGRepository` in `link_edges.go` — the ByTarget variant is the missing primitive for reverse-direction searchAround enrichment; without it the reverse path would silently return rows mapped from the wrong side.
+- Admin CRUD + edge-value endpoints (`admin_handlers_link_property.go`):
+  - `GET/POST /api/v2/ontologies/{o}/links/{linkTypeRid}/properties` — list / create link-property schema rows.
+  - `PUT/DELETE /api/v2/ontologies/{o}/links/properties/byRid/{linkPropertyRid}` — update / delete.
+  - `PUT /api/v2/ontologies/{o}/links/{linkTypeRid}/edges/{sourcePk}/{targetPk}/properties` — upsert edge_properties for a specific edge. Body `values` map is validated against the LinkType's declared link-property schema (unknown keys → 400, non-nullable missing → 400) then marshalled into `link_edges.edge_properties` JSONB. Upsert semantics — if the edge row doesn't exist, it's created.
+  - `OMSHandler.SetLinkPropertyStore` / `SetLinkEdgeStore` are optional setters so degraded-mode test routers (where these stores aren't wired) respond with 503 NotConfigured rather than panicking.
+- searchAround edge enrichment (`pkg/oss/objectset/executor.go` + `handler.go`):
+  - New `EdgePropertiesProvider` interface with one method `ResolveEdgeProperties(ctx, sourceObjectType, linkAPIName, sourcePKs, dir) (map[pk]map[string]interface{}, error)`. Keyed by the "other end" PK — target PK in forward direction, source PK in reverse. Nil when no provider wired OR nothing to enrich.
+  - `Result.EdgeProperties` carries the same map out of `executeSearchAround`.
+  - `Handler.LoadObjects` injects it under `__edge` so clients get per-row edge values without a second round-trip; MarshalJSON already flattens map keys to top-level so `__edge` ships as a sibling of the row's object properties.
+- Wiring layer (`cmd/server/`):
+  - `ServerDeps.LinkPropertyStore` + `ServerDeps.LinkEdgeStore` added (same pattern as `MediaStore/MediaCatalog`). Both captured from the uncached `pgRepo` BEFORE wrapping with `oms.NewCachedRepository` — CachedRepository only decorates `oms.Repository`, not these narrow stores.
+  - `RegisterRoutes` mounts the 5 new endpoints alongside the existing linkType admin routes.
+  - `newPGEdgePropertiesResolver` (in `edge_properties_resolver.go`): adapter that satisfies `objectset.EdgePropertiesProvider` by looking up the LinkType via a narrow `edgePropsResolverRepo` subset of oms.Repository, filtering to MANY_TO_MANY cardinality only, and delegating to the LinkEdgeStore. Reverse direction dispatches to `ListLinkEdgesWithPropertiesByTarget` so the enrichment keys are source PKs; forward uses `ListLinkEdgesWithProperties`.
+  - `NewFullRouter` calls `SetEdgePropertiesProvider` on the ObjSetExecutor when both `OmsRepo` and `LinkEdgeStore` are available.
+- OpenAPI spec (`api/openapi.yaml` + embedded copy at `cmd/server/openapi_spec.yaml`): new `paths` entries for all 5 routes, matching the contract test's "every chi route MUST be documented" invariant.
+- Tests:
+  - `pkg/oms/link_property_test.go` (5 cases): Validate requires rid/linkTypeRid/apiName/baseType; DataTypeJSON produces `{type:"string"}` for scalar, `{type:"array", subType:{type:"integer"}}` for arrays, merges TypeConfig for enum-style constraints; JSON round-trip honours omitempty on displayName/description/typeConfig.
+  - `pkg/oms/admin_handlers_link_property_test.go` (12 cases): happy-path Create returns 201 + rid + persisted row; duplicate apiName → 409; unknown LinkType → 404; invalid baseType → 400 with parameter hint; List empty → `{data: []}`; Update DisplayName success; Delete returns 204 and removes row; PutLinkEdgeProperties happy path writes JSONB; unknown apiName → 400 with `parameter` surfaced; required (isNullable=false) missing → 400; unknown LinkType → 404; second PUT replaces prior values (upsert semantics). Uses in-memory `memLinkPropertyStore` + `memLinkEdgeStore` satisfying the narrow interfaces.
+  - `pkg/oss/objectset/searcharound_edgeprops_test.go` (3 cases): searchAround with provider surfaces edge props keyed by target PK and records `DirectionForward`; no provider → `Result.EdgeProperties` stays nil; provider is skipped entirely when the inner set is empty (no wasted call).
+  - `pkg/oss/objectset/handler_edgeprops_test.go` (2 cases): end-to-end LoadObjects with searchAround + provider produces rows carrying `__edge.role` per group; when the provider returns nothing for a link, no `__edge` key is added.
+- All `go test -short ./...` green; `go vet ./...` clean; contract tests (all routes documented + no orphans + embedded spec matches canonical) pass.
+- Files changed:
+  - `migrations/000036_link_properties.up.sql` (new)
+  - `migrations/000036_link_properties.down.sql` (new)
+  - `pkg/oms/link_property.go` (new — model + LinkPropertyStore interface)
+  - `pkg/oms/link_property_test.go` (new)
+  - `pkg/oms/pg_repository_link_property.go` (new — CRUD via PGRepository)
+  - `pkg/oms/admin_handlers_link_property.go` (new — admin CRUD + edge-value handler + schema validation)
+  - `pkg/oms/admin_handlers_link_property_test.go` (new — 12 handler tests w/ in-memory stores)
+  - `pkg/oms/handlers.go` (linkPropertyStore/linkEdgeStore fields + SetLinkPropertyStore/SetLinkEdgeStore)
+  - `pkg/oms/link_edges.go` (LinkEdgeStore interface + GetLinkEdge + ListLinkEdgesWithProperties + ListLinkEdgesWithPropertiesByTarget)
+  - `pkg/oss/objectset/executor.go` (EdgePropertiesProvider interface + SetEdgePropertiesProvider + executeSearchAround enrichment + Result.EdgeProperties field)
+  - `pkg/oss/objectset/handler.go` (LoadObjects injects result.EdgeProperties under `__edge`)
+  - `pkg/oss/objectset/searcharound_edgeprops_test.go` (new, 3 tests)
+  - `pkg/oss/objectset/handler_edgeprops_test.go` (new, 2 tests)
+  - `cmd/server/edge_properties_resolver.go` (new — pgEdgePropertiesResolver adapter)
+  - `cmd/server/main.go` (LinkPropertyStore/LinkEdgeStore deps + SetEdgePropertiesProvider wiring)
+  - `cmd/server/routes.go` (5 new link-property routes)
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (new `paths` entries for all 5 routes)
+  - `prd.json` (US-210 passes=true)
+- **Learnings for future iterations:**
+  - New routes registered on `cmd/server` MUST be added to `api/openapi.yaml` — the contract tests (`TestContract_AllRoutesDocumented` + `TestContract_EmbeddedSpecMatchesCanonical`) enforce it. The embedded copy `cmd/server/openapi_spec.yaml` is a byte-for-byte duplicate of the canonical spec; after editing canonical, `cp api/openapi.yaml cmd/server/openapi_spec.yaml` is the only supported sync path. No codegen.
+  - Reverse-direction searchAround enrichment needs a separate `ListLinkEdgesWithPropertiesByTarget` primitive. Emulating it by filtering a forward-direction list silently returns zero results when `sourcePKs` are target-side. Always add both the source-keyed and target-keyed variant when building an edge-lookup interface, even if only forward is exercised at commit time — the direction-aware caller WILL arrive within a few iterations.
+  - Narrow stores like `LinkPropertyStore` / `LinkEdgeStore` stay out of `oms.Repository`: the CachedRepository decorator only wraps Repository methods, so directly handing the bare `pgRepo` to the dep (`deps.LinkPropertyStore = pgRepo`) is the cleanest wiring. Capture pgRepo BEFORE `oms.NewCachedRepository(pgRepo, ...)` wraps it.
+  - Executor-level enrichment hooks should be OPTIONAL setters (`SetEdgePropertiesProvider`) rather than constructor args — keeps the "no provider wired" path zero-cost and makes degraded-mode test routers trivial.
+  - Edge properties flow as `Result.EdgeProperties map[pk]map[string]interface{}` keyed by the "other end" PK. In forward direction that's `target_object_rid`, in reverse that's `source_object_rid`. Injecting under `__edge` in LoadObjects avoids collision with object properties; `__` prefix matches the existing `__primaryKey` / `__apiName` / `__rid` convention on WireObject.
+  - When validating edge_property values at write time, shape invariants (unknown key rejection, required-field enforcement) are the right layer's business — deep type/constraint validation belongs with the runtime enforcement path that already handles regular properties. Don't duplicate the constraint-engine here; keep the write-time validator surface-level.
+  - Contract-test failure mode is friendly: it prints the exact `METHOD /path` lines missing from the spec. Three-step fix is always: add `paths:` block to `api/openapi.yaml`, copy to `cmd/server/openapi_spec.yaml`, re-run `go test -short ./cmd/server/ -run TestContract`.
 ---
 

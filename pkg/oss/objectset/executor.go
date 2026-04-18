@@ -50,6 +50,16 @@ type PolicyQueryProvider interface {
 	PolicyQuery(ctx context.Context, objectType string) (query.Query, error)
 }
 
+// EdgePropertiesProvider is the optional hook the executor consults when a
+// searchAround step walks a MANY_TO_MANY link (US-210). Implementations
+// return a map keyed by the "other end" primary key (target PK in forward,
+// source PK in reverse) whose values are the link_edges.edge_properties
+// JSONB decoded into a map. When absent the executor skips enrichment and
+// Result.EdgeProperties remains nil.
+type EdgePropertiesProvider interface {
+	ResolveEdgeProperties(ctx context.Context, sourceObjectType, linkAPIName string, sourcePKs []string, dir links.Direction) (map[string]map[string]interface{}, error)
+}
+
 // Executor evaluates ObjectSet definitions.
 type Executor struct {
 	indexMgr       *index.Manager
@@ -59,6 +69,7 @@ type Executor struct {
 	vectorStore    NNVectorStore
 	embedProvider  NNEmbeddingProvider
 	policyProvider PolicyQueryProvider
+	edgeProps      EdgePropertiesProvider
 }
 
 // NewExecutor creates a new ObjectSet executor.
@@ -84,6 +95,16 @@ func (e *Executor) SetInterfaceResolver(r InterfaceResolver) {
 // ServiceImpl applies to Load / Search. Passing nil detaches the hook.
 func (e *Executor) SetPolicyProvider(p PolicyQueryProvider) {
 	e.policyProvider = p
+}
+
+// SetEdgePropertiesProvider wires the optional edge-property enrichment
+// provider (US-210). When attached, executeSearchAround populates
+// Result.EdgeProperties with a map keyed by the "other end" primary key
+// whose value is the per-edge properties JSON decoded into a map. When
+// unset the searchAround path behaves exactly as before — no enrichment,
+// Result.EdgeProperties stays nil.
+func (e *Executor) SetEdgePropertiesProvider(p EdgePropertiesProvider) {
+	e.edgeProps = p
 }
 
 // resolvePolicyQuery looks up the policy query for objectType via the
@@ -150,6 +171,14 @@ type Result struct {
 	// PrimaryKeys[i]. Kept so downstream consumers can recover per-row
 	// type info without re-walking PerTypePKs.
 	Origins []string
+	// EdgeProperties carries the per-edge properties produced by a
+	// searchAround step over a MANY_TO_MANY link (US-210). Keyed by the
+	// "other end" primary key (target PK in forward direction, source PK in
+	// reverse) whose value is the decoded JSON map from
+	// link_edges.edge_properties. Nil for non-searchAround results, for M2M
+	// searchAround when no EdgePropertiesProvider is wired, or when no
+	// resolved edge carries any properties.
+	EdgeProperties map[string]map[string]interface{}
 }
 
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
@@ -587,12 +616,24 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 		targetType, _ = resolver.ResolveTargetObjectType(ctx, sourceResult.ObjectType, def.Link)
 	}
 
+	// US-210: optional edge-property enrichment. Only runs when a provider
+	// is wired AND the inner set produced at least one PK. Failures are
+	// non-fatal — traversal stays correct even if enrichment is unavailable.
+	var edgeProps map[string]map[string]interface{}
+	if e.edgeProps != nil && len(sourceResult.PrimaryKeys) > 0 && len(linkedPKs) > 0 {
+		ep, err := e.edgeProps.ResolveEdgeProperties(ctx, sourceResult.ObjectType, def.Link, sourceResult.PrimaryKeys, dir)
+		if err == nil && len(ep) > 0 {
+			edgeProps = ep
+		}
+	}
+
 	return &Result{
 		ObjectType:  targetType,
 		PrimaryKeys: linkedPKs,
 		// Inherit truncation from the source set: if the inner set was already
 		// approximate, the searchAround output is also approximate.
-		Truncated: sourceResult.Truncated,
+		Truncated:      sourceResult.Truncated,
+		EdgeProperties: edgeProps,
 	}, nil
 }
 

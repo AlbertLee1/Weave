@@ -2952,6 +2952,191 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/properties:
+    get:
+      operationId: listLinkProperties
+      summary: List link properties
+      description: |
+        Returns every link property declared on the given LinkType. Link
+        properties are the typed schema for edge values on a MANY_TO_MANY
+        link (US-210).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Link properties list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    post:
+      operationId: createLinkProperty
+      summary: Create a link property
+      description: |
+        Declares a typed property on a LinkType's edges. The schema row
+        lives in the link_properties table; per-edge values ride on
+        link_edges.edge_properties (JSONB) and are written via the
+        PUT edges/properties endpoint (US-210).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [apiName, baseType]
+              properties:
+                apiName:
+                  type: string
+                displayName:
+                  type: string
+                description:
+                  type: string
+                baseType:
+                  type: string
+                typeConfig:
+                  type: object
+                isArray:
+                  type: boolean
+                isNullable:
+                  type: boolean
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/BadRequestError"
+  /api/v2/ontologies/{ontologyApiName}/links/properties/byRid/{linkPropertyRid}:
+    put:
+      operationId: updateLinkProperty
+      summary: Update a link property
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkPropertyRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteLinkProperty
+      summary: Delete a link property
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkPropertyRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/edges/{sourcePk}/{targetPk}/properties:
+    put:
+      operationId: putLinkEdgeProperties
+      summary: Upsert edge property values
+      description: |
+        Replaces the `edge_properties` JSONB for the (linkTypeRid, sourcePk,
+        targetPk) edge. Values are validated against the LinkType's declared
+        link-property schema — unknown keys are rejected and non-nullable
+        properties must be present. If no edge row exists the endpoint
+        upserts one (US-210).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkTypeRid
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: sourcePk
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: targetPk
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                values:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Edge with updated properties.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/getByRidBatch:
     post:
       operationId: getObjectTypesByRidBatch
