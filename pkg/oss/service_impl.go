@@ -16,6 +16,7 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/pagination"
 	"github.com/liyang/weave/pkg/oss/where"
+	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
 )
 
@@ -36,6 +37,12 @@ type ServiceImpl struct {
 	// so denied rows never materialise. A nil engine short-circuits to
 	// bleve.NewMatchAllQuery() so existing callers are unaffected.
 	policyEngine *security.Engine
+
+	// rowPolicyEngine is the US-256 row_policies engine. When attached its
+	// compiled clauses are AND-combined alongside policyEngine so both
+	// security surfaces enforce at read time. A nil engine is treated as
+	// "no additional filter" and existing callers are unaffected.
+	rowPolicyEngine *rls.Engine
 }
 
 // NewService creates a new OSS service.
@@ -64,26 +71,54 @@ func (s *ServiceImpl) SetPolicyEngine(e *security.Engine) {
 	s.policyEngine = e
 }
 
+// SetRowPolicyEngine attaches the US-256 row_policies engine. Its output
+// is AND-combined with whatever the security.Engine emits (if any), keeping
+// the two security surfaces independently authorable. Pass nil to detach.
+func (s *ServiceImpl) SetRowPolicyEngine(e *rls.Engine) {
+	s.rowPolicyEngine = e
+}
+
 // compilePolicyQuery compiles the row-level security policy for ot into a
-// Bleve query suitable for AND-combining into a read request. When the
-// policy engine is not attached the function returns nil — callers MUST
-// treat a nil return as "no extra filter" and use their base query
-// unchanged (no wrapping conjunction). An engine that resolves to a
-// match-all clause is also returned as nil to avoid degenerate
-// ConjunctionQuery wrappers.
+// Bleve query suitable for AND-combining into a read request. Both the
+// security.Engine (US-046 rule-based ABAC) and the rls.Engine (US-256
+// predicate-based row policies) are consulted; their output is joined with
+// a ConjunctionQuery so BOTH surfaces enforce simultaneously. A nil return
+// means "no extra filter" and callers use their base query unchanged. An
+// engine that resolves to a match-all clause contributes nothing to avoid
+// degenerate wrappers.
 func (s *ServiceImpl) compilePolicyQuery(ctx context.Context, ot oms.ObjectType) (query.Query, error) {
-	if s.policyEngine == nil {
-		return nil, nil
-	}
 	user := auth.UserFromContext(ctx)
-	q, err := s.policyEngine.Evaluate(ctx, user, ot)
-	if err != nil {
-		return nil, err
+
+	var abacQ query.Query
+	if s.policyEngine != nil {
+		q, err := s.policyEngine.Evaluate(ctx, user, ot)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := q.(*query.MatchAllQuery); !ok {
+			abacQ = q
+		}
 	}
-	if _, ok := q.(*query.MatchAllQuery); ok {
+
+	var rlsQ query.Query
+	if s.rowPolicyEngine != nil {
+		q, err := s.rowPolicyEngine.Compile(ctx, user, ot.RID)
+		if err != nil {
+			return nil, err
+		}
+		rlsQ = q
+	}
+
+	switch {
+	case abacQ == nil && rlsQ == nil:
 		return nil, nil
+	case abacQ != nil && rlsQ == nil:
+		return abacQ, nil
+	case abacQ == nil && rlsQ != nil:
+		return rlsQ, nil
+	default:
+		return bleve.NewConjunctionQuery(abacQ, rlsQ), nil
 	}
-	return q, nil
 }
 
 // mergePolicyQuery AND-combines a user-supplied Bleve query with the

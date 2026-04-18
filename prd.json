@@ -830,8 +830,8 @@
         "Tests pass"
       ],
       "priority": 57,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000055_row_policies (rid, object_type_rid FK→object_types, predicate JSONB where.WhereClause, applies_to JSONB {roles,groups,users}, description, created_by, created_at, updated_at + idx_row_policies_object_type). New pkg/rls package: RowPolicy model, narrow Store interface (Create/Get/List/ListByObjectType/Update/Delete) + in-memory MemoryStore, GroupMembershipLookup interface (adapter over auth.GroupRepository.ListUserGroups lives in cmd/server). Engine.Compile(ctx, user, otRID) resolves applicable policies (AppliesTo role/group/user intersection), converts each predicate via where.ConvertToBleveQuery, and OR-combines with DisjunctionQuery(MinShould=1). Admin bypass (PermUserManage) + nil-user short-circuit + permissive (policies that don't apply to caller add no filter). Integration: ServiceImpl.compilePolicyQuery AND-combines the existing security.Engine output with the new rls.Engine output; policyQueryAdapter on the ObjectSet path does the same so Load/Search + LoadObjectSet/Aggregate both enforce. Admin CRUD at /api/admin/row-policies (Create/List[?objectType=]/Get/Patch/Delete) behind PermUserManage; every write triggers engine.Reload so query-time cache stays fresh. PG store in cmd/server/row_policy_store.go (uncached — CRUD volume low, engine holds the hot path). Wiring conditional on deps.RowPolicyStore != nil — degraded-mode routers and contract-test harnesses skip registration. Tests: 10 engine tests (no policies, role match, role miss, group scope, user scope, admin bypass, nil user, invalid predicate error, scoped to ObjectType, OR-combined multi) + 4 model tests + 7 handler tests (Create/Create-401/Create-validation/List/List-filter-objectType/Get-Update-Delete/Get-404/WriteRefreshesEngine) + 2 ServiceImpl integration tests (FiltersListAndSearch, GetHidesDeniedObject)."
     },
     {
       "id": "US-257",

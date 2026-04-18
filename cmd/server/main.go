@@ -38,6 +38,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/subscriptions"
@@ -159,6 +160,14 @@ type ServerDeps struct {
 	// mounted.
 	GroupRepo auth.GroupRepository
 	RoleRepo  auth.RoleRepository
+	// US-256 Row-Level Security. RowPolicyStore is the admin-CRUD surface
+	// over the row_policies table; RowPolicyEngine compiles applicable
+	// predicates into Bleve queries at read time. Both are populated from
+	// the PG bootstrap block and left nil in degraded mode — the routes
+	// are not mounted and the OSS service's read paths observe no
+	// additional filter.
+	RowPolicyStore  rls.Store
+	RowPolicyEngine *rls.Engine
 	// US-253: TOTP-based MFA. MFAStore is the narrow persistence surface
 	// over the new users.mfa_secret / users.mfa_enabled columns; satisfied
 	// by the uncached *PGUserRepository. MFAChallenges bridges the login
@@ -691,6 +700,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					userRoleHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-256: Row-Level Security admin CRUD. Mounts the
+		// /api/admin/row-policies surface when the RowPolicyStore is wired
+		// (PG mode). The handler is given the RowPolicyEngine pointer so
+		// writes trigger an in-process cache refresh without waiting for
+		// the next full Reload.
+		if deps.RowPolicyStore != nil {
+			rlsHandler := rls.NewHandler(deps.RowPolicyStore, deps.AuditStore, deps.RowPolicyEngine)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					rlsHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -825,6 +847,10 @@ func main() {
 		// (group membership, role→permission resolution).
 		deps.GroupRepo = auth.NewPGGroupRepository(pool)
 		deps.RoleRepo = auth.NewPGRoleRepository(pool)
+		// US-256: Row-level policy store (row_policies table). Uncached —
+		// admin CRUD is infrequent and the engine's own cache absorbs the
+		// hot-path reads at query time.
+		deps.RowPolicyStore = newPGRowPolicyStore(pool)
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)
@@ -1184,6 +1210,25 @@ func main() {
 		impl.SetPolicyEngine(deps.PolicyEngine)
 	}
 
+	// 4c. US-256 Row-Level Policy Engine. Lives alongside the existing
+	// security.Engine so both enforcement surfaces compose via AND in the
+	// OSS service's Load/Search paths. A store failure at boot logs a
+	// warning but does not block startup — new policies will start
+	// enforcing after the first successful admin write + Reload.
+	if deps.RowPolicyStore != nil {
+		var gl rls.GroupMembershipLookup
+		if deps.GroupRepo != nil {
+			gl = newGroupLookupFromRepo(deps.GroupRepo)
+		}
+		deps.RowPolicyEngine = rls.New(deps.RowPolicyStore, gl)
+		if err := deps.RowPolicyEngine.Reload(ctx); err != nil {
+			log.Printf("[RLS] warning: failed to load row policies from DB: %v", err)
+		}
+		if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
+			impl.SetRowPolicyEngine(deps.RowPolicyEngine)
+		}
+	}
+
 	// 5. Aggregation Engine
 	deps.AggEngine = aggregation.NewEngine()
 
@@ -1201,9 +1246,15 @@ func main() {
 		}
 		// US-046: wire the shared row-level policy engine into the
 		// executor through a narrow adapter so LoadObjectSet / Aggregate
-		// paths enforce the same row filter as Load / Search.
-		if deps.OmsRepo != nil && deps.PolicyEngine != nil {
-			deps.ObjSetExecutor.SetPolicyProvider(newPolicyQueryAdapter(deps.OmsRepo, deps.PolicyEngine))
+		// paths enforce the same row filter as Load / Search. US-256
+		// layers the row_policies engine onto the same adapter so both
+		// security surfaces compose on the ObjectSet path too.
+		if deps.OmsRepo != nil && (deps.PolicyEngine != nil || deps.RowPolicyEngine != nil) {
+			adapter := newPolicyQueryAdapter(deps.OmsRepo, deps.PolicyEngine)
+			if deps.RowPolicyEngine != nil {
+				adapter.SetRowPolicyEngine(deps.RowPolicyEngine)
+			}
+			deps.ObjSetExecutor.SetPolicyProvider(adapter)
 		}
 		// US-046: nearestNeighbors backend. The vector store wraps the OMS
 		// repo (which exposes pgvector via FindNearestNeighbors) and the

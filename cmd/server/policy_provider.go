@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
 
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
 )
 
@@ -30,12 +32,20 @@ type policyProviderRepo interface {
 // pkg/security import while still enforcing row-level policy on
 // LoadObjectSet / Aggregate paths (US-046).
 type policyQueryAdapter struct {
-	repo   policyProviderRepo
-	engine *security.Engine
+	repo      policyProviderRepo
+	engine    *security.Engine
+	rlsEngine *rls.Engine
 }
 
 func newPolicyQueryAdapter(repo policyProviderRepo, engine *security.Engine) *policyQueryAdapter {
 	return &policyQueryAdapter{repo: repo, engine: engine}
+}
+
+// SetRowPolicyEngine attaches the US-256 row_policies engine. The adapter
+// compiles both the security.Engine output AND the rls.Engine output and
+// AND-combines them before handing the result to the ObjectSet executor.
+func (a *policyQueryAdapter) SetRowPolicyEngine(e *rls.Engine) {
+	a.rlsEngine = e
 }
 
 // propertyFilterAdapter implements pkg/oss/objectset.PropertyFilterProvider
@@ -125,10 +135,13 @@ func (a *ingestPolicyAdapter) AllowedForIngest(ctx context.Context, ontologyAPIN
 }
 
 // PolicyQuery satisfies the objectset.PolicyQueryProvider contract. A nil
-// receiver or nil engine short-circuits to (nil, nil) which the executor
-// treats as "no policy attached" and uses its base query unchanged.
+// receiver or no wired engines short-circuit to (nil, nil) which the
+// executor treats as "no policy attached" and uses its base query unchanged.
 func (a *policyQueryAdapter) PolicyQuery(ctx context.Context, objectType string) (query.Query, error) {
-	if a == nil || a.engine == nil || a.repo == nil {
+	if a == nil || a.repo == nil {
+		return nil, nil
+	}
+	if a.engine == nil && a.rlsEngine == nil {
 		return nil, nil
 	}
 	scope := index.OntologyScopeFromContext(ctx)
@@ -153,5 +166,35 @@ func (a *policyQueryAdapter) PolicyQuery(ctx context.Context, objectType string)
 		return nil, fmt.Errorf("policy provider: object type %q not found in ontology %q", objectType, scope)
 	}
 	user := auth.UserFromContext(ctx)
-	return a.engine.Evaluate(ctx, user, *ot)
+
+	var abacQ query.Query
+	if a.engine != nil {
+		q, err := a.engine.Evaluate(ctx, user, *ot)
+		if err != nil {
+			return nil, err
+		}
+		if _, isAll := q.(*query.MatchAllQuery); !isAll {
+			abacQ = q
+		}
+	}
+
+	var rlsQ query.Query
+	if a.rlsEngine != nil {
+		q, err := a.rlsEngine.Compile(ctx, user, ot.RID)
+		if err != nil {
+			return nil, err
+		}
+		rlsQ = q
+	}
+
+	switch {
+	case abacQ == nil && rlsQ == nil:
+		return bleve.NewMatchAllQuery(), nil
+	case abacQ != nil && rlsQ == nil:
+		return abacQ, nil
+	case abacQ == nil && rlsQ != nil:
+		return rlsQ, nil
+	default:
+		return bleve.NewConjunctionQuery(abacQ, rlsQ), nil
+	}
 }
