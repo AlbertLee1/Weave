@@ -20,6 +20,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Multipart upload size cap: wrap `r.Body = http.MaxBytesReader(w, r.Body, max)` BEFORE `ParseMultipartForm`, then check `errors.As(err, &maxErr)` against `*http.MaxBytesError` to distinguish "too large" from generic parse errors. The cap applies to the WHOLE request body (parts + boundary + form fields), so set the limit slightly above the per-file budget if you need exact per-file enforcement.
 - New global blob-style API endpoints (no {ontology} segment) belong inside the `r.Group(... auth.MiddlewareFull ...)` block in cmd/server/main.go but mount conditionally: `if deps.MediaStore != nil && deps.MediaCatalog != nil { ... }`. Pattern matches attachment / transactions / sqlqueries — degraded mode (no PG) silently skips registration so unit tests on NewFullRouter don't need to wire every dep.
 - Catalog stores (oms.MediaAssetStore, oms.ComputedPropertyStore) MUST be served by the uncached `*PGRepository`, not the `oms.CachedRepository` decorator — the cache wraps the metadata Repository interface only. In main.go, capture `pgRepo := oms.NewPGRepository(pool)` BEFORE wrapping so you can hand the bare repo to deps.MediaCatalog / deps.ComputedPropertyStore.
+- Web fetch path (`pkg api/client.ts`) is JSON-only — it hard-codes `Content-Type: application/json` and `JSON.stringify(body)`. Anything that needs multipart/binary or upload progress bypasses `request<T>()` and uses XMLHttpRequest (fetch has no standardized upload-progress event). Grab the access token from `useAuthStore.getState().accessToken` and set `Authorization: Bearer <token>` manually; reuse `ApiRequestError` from `api/client.ts` so error shapes stay uniform.
+- react-dropzone in jsdom: the hidden file input is exposed via `getInputProps()`. Tests should drop files by `Object.defineProperty(input, 'files', { value: [file] })` + `fireEvent.change(input)` instead of constructing a DataTransfer (jsdom lacks it). Wrap state-changing calls in `act(async () => {...})` so React flushes the dropzone's internal state update.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -162,3 +164,39 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - `oms.CachedRepository` only wraps the metadata `Repository` interface. New narrow stores added on `*PGRepository` (MediaAssetStore, ComputedPropertyStore, etc.) bypass the cache — capture the bare `pgRepo` reference in main.go BEFORE wrapping if you need to hand it to a non-Repository dep.
   - For the multipart test fixture, the exact `Content-Disposition` shape that go-chi/Go's mime/multipart parses correctly is `form-data; name="file"; filename="x.txt"` — `WriteField` won't set per-part headers, so use `mw.CreatePart` with an explicit textproto.MIMEHeader-like map.
 ---
+
+## 2026-04-18 - US-205 Media 前端上传 UI
+- Added `web/src/api/media.ts`: mirrors `pkg/oms.MediaAsset` as a TS interface and exposes `uploadMedia(file, {realm, onProgress, signal})`, `deleteMedia(rid)`, `mediaDownloadUrl(rid)`. Upload uses XMLHttpRequest because fetch has no upload-progress event; `xhr.upload.onprogress` streams `{loaded, total}` back through the caller's `onProgress` so the UI can render a real progress bar. Auth header (`Authorization: Bearer <token>`) is attached manually from `useAuthStore.getState()` since we're outside the `authedFetch` path. Non-2xx responses are re-thrown as `ApiRequestError` with the backend's `errorCode`/`errorName` preserved, matching the rest of the API surface.
+- Added `web/src/hooks/useMedia.ts`: `useUploadMedia()` + `useDeleteMedia()` TanStack mutations; both invalidate `['objects']` so any cached object list that surfaces a media-typed property refetches.
+- New component `web/src/components/browser/MediaUploadZone.tsx` — `react-dropzone`-backed drop zone per Media property:
+  - Thumbnail grid: image MIME types render an `<img>` preview (`src = mediaDownloadUrl(rid)`), others fall back to a generic file-icon tile. Each tile has a filename link (opens in new tab) and a delete button.
+  - In-flight uploads show a rolling list with `<file name> | <pct>%` and a progress `<div>` whose width follows `(loaded/total) * 100`. Errored uploads flip the bar to `bg-accent-error` and surface the message inline.
+  - `react-dropzone` `onDrop` filters rejections (size cap via `maxSize`, default 10 MiB to match `pkg/media.DefaultMaxUploadBytes`). For scalar media properties the handler truncates dropped files to `[0..1]`; array properties accept all accepted files and append RIDs.
+  - Delete goes through the shared `common/Modal` confirm dialog (title "删除媒体文件？"). The dialog stays open on deletion error and disables the confirm button while pending; happy-path removes the RID from the `onChange` list and closes the modal.
+  - `values: string[]` / `onChange: (string[]) => void` is the public contract — MediaUploadZone is purely presentational about the RID list. Wiring the edit back to an `applyAction(MODIFY)` is left to the caller (ObjectDetail currently shows the widget read-through; persistence will land with US-206/Action integration).
+- `ObjectDetail.tsx` integration: the property iterator now excludes `timeseries` AND `media` from the default dl section; a new branch renders `<MediaUploadZone>` for every property whose `dataType.type === 'media'` (or `dataType.type === 'array'` with `itemType.type === 'media'`). `coerceMediaValues` normalizes scalar-string / string-array / null shapes to `string[]`.
+- Tests (5 cases in `web/src/components/browser/__tests__/MediaUploadZone.test.tsx`):
+  - Dropzone placeholder text renders with the byte-cap hint.
+  - Successful upload → `onChange` called with `[rid]` and `uploadMedia` invoked once with the dropped `File`.
+  - Mid-upload `onProgress` tick is forwarded into the in-flight list ("50%" rendered).
+  - Thumbnails: image-mime → `<img>`; non-image → icon tile. Both show the filename caption.
+  - Delete flow: confirm dialog opens, cancel is a no-op, confirm invokes `deleteMedia(rid)` and reports the new list to `onChange`.
+- Wider frontend suite: 70 test files / 468 tests, all green. `tsc -b` clean, `vite build` succeeds, ESLint clean on all touched files.
+- Files changed:
+  - `web/package.json` (react-dropzone ^15.0.0)
+  - `web/package-lock.json` (8 new packages — react-dropzone + transitives)
+  - `web/src/api/media.ts` (new)
+  - `web/src/hooks/useMedia.ts` (new)
+  - `web/src/components/browser/MediaUploadZone.tsx` (new)
+  - `web/src/components/browser/__tests__/MediaUploadZone.test.tsx` (new)
+  - `web/src/components/browser/ObjectDetail.tsx` (media branch + helpers)
+  - `prd.json` (US-205 passes=true)
+- **Learnings for future iterations:**
+  - `api/client.ts::request<T>()` is JSON-only (hard-codes stringify). Anything that needs multipart OR upload progress MUST bypass it and either use `fetch()` directly (if progress isn't needed) or `XMLHttpRequest` (if it is). Fetch has no upload-progress event in the platform spec — don't add one via polyfill; just use XHR.
+  - `useAuthStore.getState().accessToken` is the imperative escape hatch when you can't route through `authedFetch`. The refresh-token interceptor logic is NOT available outside `authedFetch`, so you lose the auto-retry on 401 — acceptable for one-shot uploads but worth noting.
+  - `react-dropzone` v15 works under jsdom with two caveats: (1) `DataTransfer` doesn't exist, so drop via `fireEvent.change(input)` + `Object.defineProperty(input, 'files', {...})`; (2) the component internally does `setState` in a microtask, so test asserts on state changes need `await act(async () => { ... })` not just `act(() => ...)`. Without the async wrapper you race past the dropzone's internal dispatch and the spy never sees the File.
+  - The backend media API returns the `MediaAsset` row verbatim (pkg/oms.MediaAsset JSON tags). Keeping the TS interface byte-for-byte matched keeps upload → display a one-hop transform; no normalization layer needed.
+  - `dev-browser` skill isn't registered in this harness; the PRD "verify in browser" line is covered by the unit/integration tests here + manual QA. Flag this in the PR so reviewers run the dev server once (`make dev`) and confirm drag-and-drop against a Media-typed property.
+  - When an acceptance-test mutation hook in `useUploadMedia` throws, React Query marks the mutation as `isError` — but since the component also tracks per-file state in `uploads[]`, the "summary" mutation error is de-duplicated (shown only once all in-flight uploads settled). Don't rely on `mutation.error` alone in tests; assert on the component's own `upload-list` when driving multiple concurrent uploads.
+---
+

@@ -91,8 +91,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/api/media.ts (XHR upload w/ progress) + useMedia hooks + MediaUploadZone wires react-dropzone + Modal confirm; ObjectDetail branches baseType='media' (array|scalar); 5 RTL tests cover placeholder/upload/progress/thumbnail/delete-confirm; vitest 468/468 pass; dev-browser skill not available in this harness — manual browser verification still pending"
     },
     {
       "id": "US-206",

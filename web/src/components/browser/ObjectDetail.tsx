@@ -3,10 +3,24 @@ import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { LinkedObjectsTab } from './LinkedObjectsTab';
 import { TimeSeriesChart } from '../common/TimeSeriesChart';
+import { MediaUploadZone } from './MediaUploadZone';
 
 function baseTypeOf(dt: DataType): string {
   if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
   return dt.type;
+}
+
+function isArrayType(dt: DataType): boolean {
+  return dt.type === 'array';
+}
+
+function coerceMediaValues(val: unknown): string[] {
+  if (val === null || val === undefined) return [];
+  if (Array.isArray(val)) {
+    return val.filter((v): v is string => typeof v === 'string');
+  }
+  if (typeof val === 'string' && val !== '') return [val];
+  return [];
 }
 
 interface ObjectDetailProps {
@@ -53,11 +67,15 @@ export function ObjectDetail({
                 </dd>
               </div>
 
-              {/* Remaining properties (non-timeseries) */}
+              {/* Remaining properties (non-timeseries, non-media) */}
               {objectType.properties &&
                 Object.entries(objectType.properties)
                   .filter(([name]) => name !== objectType.primaryKey)
-                  .filter(([, prop]) => baseTypeOf(prop.dataType) !== 'timeseries')
+                  .filter(
+                    ([, prop]) =>
+                      baseTypeOf(prop.dataType) !== 'timeseries' &&
+                      baseTypeOf(prop.dataType) !== 'media',
+                  )
                   .map(([name]) => {
                     const val = object[name];
                     let display: string;
@@ -99,6 +117,19 @@ export function ObjectDetail({
                     label={name}
                   />
                 </section>
+              ))}
+
+          {/* Media properties: dropzone upload + thumbnails + delete */}
+          {objectType.properties &&
+            Object.entries(objectType.properties)
+              .filter(([, prop]) => baseTypeOf(prop.dataType) === 'media')
+              .map(([name, prop]) => (
+                <MediaUploadZone
+                  key={`media-${name}`}
+                  propertyName={name}
+                  values={coerceMediaValues(object[name])}
+                  multiple={isArrayType(prop.dataType)}
+                />
               ))}
 
           {/* Linked objects section */}
