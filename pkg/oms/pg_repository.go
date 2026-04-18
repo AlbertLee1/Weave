@@ -89,14 +89,22 @@ func (r *PGRepository) UpdateOntology(ctx context.Context, o *Ontology) error {
 // --- ObjectType ---
 
 func (r *PGRepository) CreateObjectType(ctx context.Context, ot *ObjectType) error {
-	_, err := r.pool.Exec(ctx,
+	pkProps := ot.EffectivePrimaryKeys()
+	if pkProps == nil {
+		pkProps = []string{}
+	}
+	pkPropsJSON, err := json.Marshal(pkProps)
+	if err != nil {
+		return fmt.Errorf("encode primaryKeys: %w", err)
+	}
+	_, err = r.pool.Exec(ctx,
 		`INSERT INTO object_types (rid, ontology_rid, api_name, display_name, plural_display_name,
 		 description, primary_key_prop, title_property, status, visibility, icon_name, color,
-		 deprecated_reason, deprecated_deadline)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		 deprecated_reason, deprecated_deadline, primary_key_props)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		ot.RID, ot.OntologyRID, ot.APIName, ot.DisplayName, ot.PluralDisplayName,
 		ot.Description, ot.PrimaryKey, ot.TitleProperty, ot.Status, ot.Visibility,
-		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline)
+		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline, pkPropsJSON)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -105,25 +113,27 @@ func (r *PGRepository) CreateObjectType(ctx context.Context, ot *ObjectType) err
 
 func (r *PGRepository) GetObjectType(ctx context.Context, rid string) (*ObjectType, error) {
 	ot := &ObjectType{}
+	var pkPropsJSON []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(plural_display_name, ''),
 		 COALESCE(description, ''), primary_key_prop, COALESCE(title_property, ''),
 		 COALESCE(status, 'ACTIVE'), COALESCE(visibility, 'NORMAL'),
 		 COALESCE(icon_name, ''), COALESCE(color, ''),
 		 COALESCE(deprecated_reason, ''), deprecated_deadline,
-		 created_at, updated_at
+		 created_at, updated_at, COALESCE(primary_key_props, '[]'::jsonb)
 		 FROM object_types WHERE rid = $1`, rid).
 		Scan(&ot.RID, &ot.OntologyRID, &ot.APIName, &ot.DisplayName, &ot.PluralDisplayName,
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt)
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)
 
 	// Load properties
 	props, err := r.ListProperties(ctx, ot.RID)
@@ -133,6 +143,23 @@ func (r *PGRepository) GetObjectType(ctx context.Context, rid string) (*ObjectTy
 	ot.Properties = props
 
 	return ot, nil
+}
+
+// decodePrimaryKeyProps unmarshals the JSONB primary_key_props column. Empty
+// or malformed columns fall back to a single-element list over the legacy
+// primary_key_prop column so rows from before migration 000037 (or rows
+// where the JSONB column was set to '[]') still expose a usable key list.
+func decodePrimaryKeyProps(raw []byte, legacy string) []string {
+	if len(raw) > 0 {
+		var pks []string
+		if err := json.Unmarshal(raw, &pks); err == nil && len(pks) > 0 {
+			return pks
+		}
+	}
+	if legacy != "" {
+		return []string{legacy}
+	}
+	return nil
 }
 
 func (r *PGRepository) GetObjectTypeByAPIName(ctx context.Context, ontologyRID, apiName string) (*ObjectType, error) {
@@ -158,7 +185,7 @@ func (r *PGRepository) ListObjectTypes(ctx context.Context, ontologyRID string) 
 		 COALESCE(status, 'ACTIVE'), COALESCE(visibility, 'NORMAL'),
 		 COALESCE(icon_name, ''), COALESCE(color, ''),
 		 COALESCE(deprecated_reason, ''), deprecated_deadline,
-		 created_at, updated_at
+		 created_at, updated_at, COALESCE(primary_key_props, '[]'::jsonb)
 		 FROM object_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -170,13 +197,15 @@ func (r *PGRepository) ListObjectTypes(ctx context.Context, ontologyRID string) 
 	var result []ObjectType
 	for rows.Next() {
 		var ot ObjectType
+		var pkPropsJSON []byte
 		if err := rows.Scan(&ot.RID, &ot.OntologyRID, &ot.APIName, &ot.DisplayName, &ot.PluralDisplayName,
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt); err != nil {
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON); err != nil {
 			return nil, err
 		}
+		ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)
 		result = append(result, ot)
 	}
 	return result, nil
@@ -765,7 +794,7 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 		 COALESCE(ot.status, 'ACTIVE'), COALESCE(ot.visibility, 'NORMAL'),
 		 COALESCE(ot.icon_name, ''), COALESCE(ot.color, ''),
 		 COALESCE(ot.deprecated_reason, ''), ot.deprecated_deadline,
-		 ot.created_at, ot.updated_at
+		 ot.created_at, ot.updated_at, COALESCE(ot.primary_key_props, '[]'::jsonb)
 		 FROM object_types ot
 		 JOIN object_type_interfaces oti ON ot.rid = oti.object_type_rid
 		 WHERE oti.interface_rid = $1
@@ -778,13 +807,15 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 	var result []ObjectType
 	for rows.Next() {
 		var ot ObjectType
+		var pkPropsJSON []byte
 		if err := rows.Scan(&ot.RID, &ot.OntologyRID, &ot.APIName, &ot.DisplayName, &ot.PluralDisplayName,
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt); err != nil {
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON); err != nil {
 			return nil, err
 		}
+		ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)
 		result = append(result, ot)
 	}
 	return result, nil

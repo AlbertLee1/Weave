@@ -222,6 +222,20 @@ components:
           type: string
         primaryKey:
           type: string
+          description: |
+            Legacy single-field primary key (the first element of `primaryKeys`
+            for composite-key ObjectTypes). Always present.
+        primaryKeys:
+          type: array
+          description: |
+            Composite primary key (US-211). Ordered list of property apiNames
+            that together uniquely identify an object. Single-element arrays
+            are equivalent to `primaryKey`. Composite-key objects are
+            addressed by colon-joined values:
+            `/objects/{objectType}/{key1}:{key2}`.
+          items:
+            type: string
+          minItems: 1
         titleProperty:
           type: string
         status:
@@ -244,7 +258,11 @@ components:
             $ref: "#/components/schemas/PropertyDataType"
     CreateObjectTypeRequest:
       type: object
-      required: [apiName, displayName, primaryKey]
+      required: [apiName, displayName]
+      description: |
+        Either `primaryKey` (legacy) or `primaryKeys` (US-211 composite) must be
+        supplied. If both are present, `primaryKeys` wins and `primaryKey` is
+        rewritten to `primaryKeys[0]`.
       properties:
         apiName:
           type: string
@@ -256,6 +274,11 @@ components:
           type: string
         primaryKey:
           type: string
+        primaryKeys:
+          type: array
+          items:
+            type: string
+          minItems: 1
         titleProperty:
           type: string
         status:

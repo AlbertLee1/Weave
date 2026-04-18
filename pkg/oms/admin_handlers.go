@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -93,10 +94,18 @@ type CreateObjectTypeRequest struct {
 	DisplayName       string `json:"displayName"`
 	PluralDisplayName string `json:"pluralDisplayName,omitempty"`
 	Description       string `json:"description,omitempty"`
-	PrimaryKey        string `json:"primaryKey"`
-	TitleProperty     string `json:"titleProperty,omitempty"`
-	Status            string `json:"status"`
-	Visibility        string `json:"visibility"`
+	// PrimaryKey is the legacy single-field key. Senders may provide either
+	// this OR PrimaryKeys; if both are set, PrimaryKeys wins and PrimaryKey
+	// is overwritten with PrimaryKeys[0]. At least one must be supplied.
+	PrimaryKey string `json:"primaryKey,omitempty"`
+	// PrimaryKeys (US-211) is the ordered list of property API names that
+	// together form a composite key. A single-element array is equivalent
+	// to a non-empty PrimaryKey. The route /objects/{objectType}/{key1}:{key2}
+	// joins the values with ':' for retrieval.
+	PrimaryKeys   []string `json:"primaryKeys,omitempty"`
+	TitleProperty string   `json:"titleProperty,omitempty"`
+	Status        string   `json:"status"`
+	Visibility    string   `json:"visibility"`
 }
 
 // UpdateObjectTypeRequest is the request body for updating an object type.
@@ -284,12 +293,28 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	if req.PrimaryKey == "" {
+	// US-211: accept either legacy primaryKey (string) or composite primaryKeys
+	// ([]string). If both are present, primaryKeys wins and primaryKey is
+	// rewritten to its first element so legacy single-PK consumers keep working.
+	pkList := req.PrimaryKeys
+	if len(pkList) == 0 && req.PrimaryKey != "" {
+		pkList = []string{req.PrimaryKey}
+	}
+	if len(pkList) == 0 {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:primaryKey", map[string]string{
 			"parameter": "primaryKey",
-			"reason":    "primaryKey is required",
+			"reason":    "primaryKey or primaryKeys is required",
 		}))
 		return
+	}
+	for i, pk := range pkList {
+		if pk == "" {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:primaryKeys", map[string]string{
+				"parameter": "primaryKeys",
+				"reason":    fmt.Sprintf("primaryKeys[%d] is empty", i),
+			}))
+			return
+		}
 	}
 
 	status := req.Status
@@ -308,7 +333,8 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		DisplayName:       req.DisplayName,
 		PluralDisplayName: req.PluralDisplayName,
 		Description:       req.Description,
-		PrimaryKey:        req.PrimaryKey,
+		PrimaryKey:        pkList[0],
+		PrimaryKeys:       pkList,
 		TitleProperty:     req.TitleProperty,
 		Status:            status,
 		Visibility:        visibility,
@@ -2309,6 +2335,7 @@ func (h *OMSHandler) ImportOntology(w http.ResponseWriter, r *http.Request) {
 			PluralDisplayName: ot.PluralDisplayName,
 			Description:       ot.Description,
 			PrimaryKey:        ot.PrimaryKey,
+			PrimaryKeys:       ot.EffectivePrimaryKeys(),
 			TitleProperty:     ot.TitleProperty,
 			Status:            ot.Status,
 			Visibility:        ot.Visibility,

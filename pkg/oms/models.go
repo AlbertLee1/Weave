@@ -54,13 +54,20 @@ type Ontology struct {
 
 // ObjectType defines a type of object in the ontology.
 type ObjectType struct {
-	RID                string     `json:"rid"`
-	OntologyRID        string     `json:"-"`
-	APIName            string     `json:"apiName"`
-	DisplayName        string     `json:"displayName"`
-	PluralDisplayName  string     `json:"pluralDisplayName,omitempty"`
-	Description        string     `json:"description,omitempty"`
-	PrimaryKey         string     `json:"primaryKey"`
+	RID               string `json:"rid"`
+	OntologyRID       string `json:"-"`
+	APIName           string `json:"apiName"`
+	DisplayName       string `json:"displayName"`
+	PluralDisplayName string `json:"pluralDisplayName,omitempty"`
+	Description       string `json:"description,omitempty"`
+	// PrimaryKey is the legacy single-field key. For composite-PK ObjectTypes
+	// it is set to the FIRST element of PrimaryKeys for backward compatibility
+	// with single-key call sites; new code should consult EffectivePrimaryKeys().
+	PrimaryKey string `json:"primaryKey"`
+	// PrimaryKeys is the ordered list of property API names that together make
+	// up the primary key. US-211 made composite keys first-class; it is empty
+	// only on objects loaded from rows whose 000037 backfill has not yet run.
+	PrimaryKeys        []string   `json:"primaryKeys,omitempty"`
 	TitleProperty      string     `json:"titleProperty,omitempty"`
 	Status             string     `json:"status"`
 	Visibility         string     `json:"visibility"`
@@ -73,6 +80,25 @@ type ObjectType struct {
 	UpdatedAt          time.Time  `json:"-"`
 }
 
+// EffectivePrimaryKeys returns the canonical key-property list, falling back
+// to a single-element slice over PrimaryKey when PrimaryKeys is unset (which
+// is the shape pre-US-211 rows arrive with).
+func (ot *ObjectType) EffectivePrimaryKeys() []string {
+	if len(ot.PrimaryKeys) > 0 {
+		return ot.PrimaryKeys
+	}
+	if ot.PrimaryKey != "" {
+		return []string{ot.PrimaryKey}
+	}
+	return nil
+}
+
+// IsCompositeKey reports whether this ObjectType uses more than one property
+// as its primary key.
+func (ot *ObjectType) IsCompositeKey() bool {
+	return len(ot.EffectivePrimaryKeys()) > 1
+}
+
 // ToWireJSON returns the V2 wire format JSON for ObjectType.
 func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 	wire := map[string]interface{}{
@@ -82,6 +108,9 @@ func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 		"primaryKey":  ot.PrimaryKey,
 		"rid":         ot.RID,
 		"visibility":  ot.Visibility,
+	}
+	if pks := ot.EffectivePrimaryKeys(); len(pks) > 0 {
+		wire["primaryKeys"] = pks
 	}
 
 	if ot.PluralDisplayName != "" {
@@ -118,6 +147,9 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 		"primaryKey":  ot.PrimaryKey,
 		"rid":         ot.RID,
 		"visibility":  ot.Visibility,
+	}
+	if pks := ot.EffectivePrimaryKeys(); len(pks) > 0 {
+		wire["primaryKeys"] = pks
 	}
 
 	if ot.PluralDisplayName != "" {
