@@ -274,8 +274,8 @@ type TokenResponse struct {
 	Scope        string `json:"scope,omitempty"`
 }
 
-// Token handles POST /oauth/token. It dispatches on grant_type; only
-// authorization_code and client_credentials are supported.
+// Token handles POST /oauth/token. It dispatches on grant_type;
+// authorization_code, client_credentials, and refresh_token are supported.
 func (h *OAuthHandler) Token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -287,6 +287,8 @@ func (h *OAuthHandler) Token(w http.ResponseWriter, r *http.Request) {
 		h.tokenAuthorizationCode(w, r)
 	case "client_credentials":
 		h.tokenClientCredentials(w, r)
+	case "refresh_token":
+		h.tokenRefresh(w, r)
 	default:
 		writeOAuthTokenError(w, http.StatusBadRequest, "unsupported_grant_type",
 			fmt.Sprintf("grant_type %q is not supported", grant))
@@ -374,6 +376,114 @@ func (h *OAuthHandler) tokenClientCredentials(w http.ResponseWriter, r *http.Req
 
 	// client_credentials is an app-level grant: no end-user identity.
 	resp, err := h.issueAccessOnly(r, clientID, "", scopes)
+	if err != nil {
+		writeOAuthTokenError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	writeTokenResponse(w, resp)
+}
+
+// tokenRefresh implements the refresh_token grant (RFC 6749 §6) with
+// rotation: the presented refresh token is consumed (revoked) and a fresh
+// (access, refresh) pair is minted. Replaying a rotated refresh fails with
+// invalid_grant. Optional scope narrowing is supported; widening is rejected
+// with invalid_scope.
+//
+// Public clients (no client_secret on the registered application) may
+// refresh by presenting client_id alone — matching the PKCE / SPA contract.
+// Confidential clients (registered with a client_secret) MUST also present
+// the secret via Basic auth or the form body.
+func (h *OAuthHandler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
+	rawRefresh := r.PostForm.Get("refresh_token")
+	clientID := r.PostForm.Get("client_id")
+	if rawRefresh == "" || clientID == "" {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_request",
+			"refresh_token and client_id are required")
+		return
+	}
+	if !IsOAuthRefreshToken(rawRefresh) {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is malformed")
+		return
+	}
+	prefix, err := ParseOAuthToken(rawRefresh)
+	if err != nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is malformed")
+		return
+	}
+
+	app, err := h.apps.GetByClientID(r.Context(), clientID)
+	if err != nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", "unknown client_id")
+		return
+	}
+	// Confidential clients must authenticate. A registered app with a
+	// non-empty ClientSecretHash is treated as confidential; SPAs that
+	// register without a secret skip this branch.
+	if len(app.ClientSecretHash) > 0 {
+		_, secret, credErr := extractClientCredentials(r)
+		if credErr != nil {
+			writeOAuthTokenError(w, http.StatusUnauthorized, "invalid_client", credErr.Error())
+			return
+		}
+		if err := ValidateClientSecretShape(secret); err != nil {
+			writeOAuthTokenError(w, http.StatusUnauthorized, "invalid_client", "malformed client_secret")
+			return
+		}
+		candidate := HashClientSecret(secret)
+		if subtle.ConstantTimeCompare(candidate, app.ClientSecretHash) != 1 {
+			writeOAuthTokenError(w, http.StatusUnauthorized, "invalid_client", "client_secret mismatch")
+			return
+		}
+	}
+
+	candidates, err := h.tokens.GetByPrefix(r.Context(), prefix, TokenTypeRefresh)
+	if err != nil || len(candidates) == 0 {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", "unknown refresh_token")
+		return
+	}
+	want := HashOAuthToken(rawRefresh)
+	now := h.now()
+	var matched *OAuthToken
+	for _, tok := range candidates {
+		if subtle.ConstantTimeCompare(tok.TokenHash, want) == 1 {
+			matched = tok
+			break
+		}
+	}
+	if matched == nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", "unknown refresh_token")
+		return
+	}
+	if err := matched.IsUsable(now); err != nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+		return
+	}
+	if matched.ClientID != clientID {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant",
+			"refresh_token was issued to a different client")
+		return
+	}
+
+	scopes := matched.Scopes
+	if rawScope := r.PostForm.Get("scope"); rawScope != "" {
+		requested := strings.Fields(rawScope)
+		narrowed, err := NarrowScopes(matched.Scopes, requested)
+		if err != nil {
+			writeOAuthTokenError(w, http.StatusBadRequest, "invalid_scope",
+				"requested scope exceeds the original grant")
+			return
+		}
+		scopes = narrowed
+	}
+
+	// Revoke BEFORE issuing the new pair so a concurrent replay sees the
+	// old token already consumed.
+	if err := h.tokens.Revoke(r.Context(), matched.ID, now); err != nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+		return
+	}
+
+	resp, err := h.issueAccessAndRefresh(r, clientID, matched.UserID, scopes)
 	if err != nil {
 		writeOAuthTokenError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return

@@ -8057,10 +8057,11 @@ paths:
       summary: OAuth 2.0 token endpoint
       description: |
         Exchanges an authorization code for an access (and refresh) token,
-        or issues an app-level access token under the client_credentials
-        grant. Follows RFC 6749 §4.1.3 / §4.4.
+        rotates a refresh token for a fresh pair, or issues an app-level
+        access token under the client_credentials grant. Follows RFC 6749
+        §4.1.3 / §4.4 / §6.
 
-        Two grant types are supported:
+        Three grant types are supported:
 
         - `authorization_code` with PKCE — requires `code`, `redirect_uri`,
           `client_id`, and `code_verifier`. Returns `access_token` +
@@ -8068,6 +8069,14 @@ paths:
         - `client_credentials` — requires `client_id` + `client_secret`
           either via HTTP Basic Authorization or in the form body.
           Returns `access_token` only (no refresh token).
+        - `refresh_token` — requires `refresh_token` + `client_id`. The
+          presented refresh token is consumed (rotation, RFC 9700) and a
+          new (access, refresh) pair is issued. Optional `scope` form
+          parameter narrows the new grant — widening is rejected with
+          `invalid_scope`. Confidential clients (registered with a
+          client_secret) MUST also authenticate via Basic auth or form
+          body; public clients (no registered secret) authenticate by
+          `client_id` alone.
       tags: [Developer]
       requestBody:
         required: true
@@ -8079,7 +8088,7 @@ paths:
               properties:
                 grant_type:
                   type: string
-                  enum: [authorization_code, client_credentials]
+                  enum: [authorization_code, client_credentials, refresh_token]
                 code:
                   type: string
                 redirect_uri:
@@ -8090,6 +8099,12 @@ paths:
                   type: string
                 code_verifier:
                   type: string
+                refresh_token:
+                  type: string
+                  description: |
+                    The refresh token to rotate. Required when
+                    grant_type=refresh_token. The token is single-use:
+                    re-presenting it after rotation returns invalid_grant.
                 scope:
                   type: string
       responses:

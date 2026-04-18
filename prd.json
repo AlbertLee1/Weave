@@ -700,8 +700,8 @@
         "Tests pass"
       ],
       "priority": 48,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Authorization Code + PKCE already shipped under US-142; this story adds (1) the refresh_token grant — full RFC 6749 §6 rotation: presented refresh is consumed, fresh (access, refresh) pair minted, replay returns invalid_grant, optional scope narrowing via NarrowScopes (widening rejected as invalid_scope), confidential clients require Basic-auth/secret + public PKCE clients refresh by client_id alone; (2) canonical scope catalogue ScopeRead/ScopeWrite/ScopeAdmin in pkg/developer/oauth_scopes.go with KnownScopes()/IsKnownScope(); 14 new tests across oauth_refresh_test.go + oauth_scopes_test.go all green"
     },
     {
       "id": "US-248",
