@@ -412,8 +412,8 @@
         "Tests pass"
       ],
       "priority": 28,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "AggregationRequest.SubAggregations + named per-bucket recursion in pkg/oss/aggregation; OpenAPI schema + ObjectSet aggregate handler wired; 5 unit tests."
     },
     {
       "id": "US-228",

@@ -1740,6 +1740,33 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GroupBySpec"
+        subAggregations:
+          type: array
+          description: |
+            Named child aggregations executed against each leaf bucket of the
+            outer groupBy (or against the full request scope when no outer
+            groupBy is supplied). Sub-aggregations may themselves carry
+            sub-aggregations to any depth.
+          items:
+            $ref: "#/components/schemas/SubAggregationSpec"
+    SubAggregationSpec:
+      type: object
+      required: [name, aggregation]
+      properties:
+        name:
+          type: string
+        aggregation:
+          type: array
+          items:
+            $ref: "#/components/schemas/AggregationSpec"
+        groupBy:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupBySpec"
+        subAggregations:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubAggregationSpec"
     AggregationRow:
       type: object
       properties:
@@ -1749,6 +1776,10 @@ components:
         metrics:
           type: object
           additionalProperties: true
+        subAggregations:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/AggregationResponse"
     CountObjectsResponse:
       type: object
       required: [count]
@@ -1768,6 +1799,13 @@ components:
           enum: [ACCURATE, APPROXIMATE]
         computeUsage:
           type: number
+        subAggregations:
+          type: object
+          description: |
+            Top-level sub-aggregation results, present only when the request
+            specified subAggregations and no outer groupBy.
+          additionalProperties:
+            $ref: "#/components/schemas/AggregationResponse"
     AggregateObjectSetRequest:
       type: object
       required: [objectSet, aggregation]
@@ -1782,6 +1820,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GroupBySpec"
+        subAggregations:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubAggregationSpec"
     CreateTemporaryRequest:
       type: object
       required: [objectSet]

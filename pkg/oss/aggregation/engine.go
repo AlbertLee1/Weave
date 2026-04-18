@@ -12,10 +12,22 @@ import (
 
 // AggregationRequest represents a Palantir V2 aggregation request.
 type AggregationRequest struct {
-	ObjectType   string               `json:"objectType"`
-	Query        *bleve.SearchRequest `json:"-"` // pre-built search request (may be nil for all objects)
-	Aggregations []AggregationSpec    `json:"aggregation"`
-	GroupBy      []GroupBySpec        `json:"groupBy,omitempty"`
+	ObjectType      string               `json:"objectType"`
+	Query           *bleve.SearchRequest `json:"-"` // pre-built search request (may be nil for all objects)
+	Aggregations    []AggregationSpec    `json:"aggregation"`
+	GroupBy         []GroupBySpec        `json:"groupBy,omitempty"`
+	SubAggregations []SubAggregationSpec `json:"subAggregations,omitempty"`
+}
+
+// SubAggregationSpec is a named child aggregation that runs against the scope
+// of each leaf bucket of the parent (or the request scope when the parent has
+// no groupBy). Sub-aggregations may themselves carry sub-aggregations to any
+// depth — duplicate names within the same level are rejected at validation.
+type SubAggregationSpec struct {
+	Name            string               `json:"name"`
+	Aggregations    []AggregationSpec    `json:"aggregation"`
+	GroupBy         []GroupBySpec        `json:"groupBy,omitempty"`
+	SubAggregations []SubAggregationSpec `json:"subAggregations,omitempty"`
 }
 
 // AggregationSpec defines what to aggregate.
@@ -66,8 +78,18 @@ func NewEngine() *Engine {
 
 // Aggregate performs aggregation on the given index.
 func (e *Engine) Aggregate(idx bleve.Index, req *AggregationRequest) (*AggregationResponse, error) {
-	// Build base query (match all if no query).
-	var baseQuery query.Query = bleve.NewMatchAllQuery()
+	return e.AggregateWithQuery(idx, nil, req)
+}
+
+// AggregateWithQuery performs aggregation on the given index with an explicit base query.
+func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
+	if baseQuery == nil {
+		baseQuery = bleve.NewMatchAllQuery()
+	}
+
+	if err := validateSubAggregations(req.SubAggregations); err != nil {
+		return nil, err
+	}
 
 	var resp *AggregationResponse
 	var err error
@@ -81,6 +103,17 @@ func (e *Engine) Aggregate(idx bleve.Index, req *AggregationRequest) (*Aggregati
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if len(req.SubAggregations) > 0 && len(req.GroupBy) == 0 {
+		subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations)
+		if err != nil {
+			return nil, err
+		}
+		resp.SubAggregations = subs
+		if subTrunc {
+			resp.Accuracy = "APPROXIMATE"
+		}
 	}
 
 	if resp.Accuracy == "" {
@@ -90,31 +123,54 @@ func (e *Engine) Aggregate(idx bleve.Index, req *AggregationRequest) (*Aggregati
 	return resp, nil
 }
 
-// AggregateWithQuery performs aggregation on the given index with an explicit base query.
-func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
-	if baseQuery == nil {
-		baseQuery = bleve.NewMatchAllQuery()
+// validateSubAggregations enforces non-empty Names and uniqueness within a
+// single level, recursing into nested sub-aggregations.
+func validateSubAggregations(subs []SubAggregationSpec) error {
+	if len(subs) == 0 {
+		return nil
 	}
+	seen := make(map[string]struct{}, len(subs))
+	for i, s := range subs {
+		if s.Name == "" {
+			return fmt.Errorf("subAggregations[%d]: name is required", i)
+		}
+		if _, dup := seen[s.Name]; dup {
+			return fmt.Errorf("subAggregations[%d]: duplicate name %q", i, s.Name)
+		}
+		seen[s.Name] = struct{}{}
+		if err := validateSubAggregations(s.SubAggregations); err != nil {
+			return fmt.Errorf("subAggregations[%d] (%s): %w", i, s.Name, err)
+		}
+	}
+	return nil
+}
 
-	var resp *AggregationResponse
-	var err error
-
-	// If groupBy is specified, use Bleve facets.
-	if len(req.GroupBy) > 0 {
-		resp, err = e.aggregateWithGroupBy(idx, baseQuery, req)
-	} else {
-		// Simple aggregation without groupBy.
-		resp, err = e.aggregateSimple(idx, baseQuery, req)
+// runSubAggregations executes each named sub-aggregation against the given
+// scope query and returns the results keyed by Name. Each sub-aggregation
+// reuses Aggregate's grouping + recursion machinery so nested sub-aggregations
+// resolve transparently.
+func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []SubAggregationSpec) (map[string]*AggregationResponse, bool, error) {
+	if len(subs) == 0 {
+		return nil, false, nil
 	}
-	if err != nil {
-		return nil, err
+	out := make(map[string]*AggregationResponse, len(subs))
+	var truncated bool
+	for _, s := range subs {
+		childReq := &AggregationRequest{
+			Aggregations:    s.Aggregations,
+			GroupBy:         s.GroupBy,
+			SubAggregations: s.SubAggregations,
+		}
+		childResp, err := e.AggregateWithQuery(idx, scope, childReq)
+		if err != nil {
+			return nil, false, fmt.Errorf("subAggregation %q: %w", s.Name, err)
+		}
+		if childResp.Accuracy == "APPROXIMATE" {
+			truncated = true
+		}
+		out[s.Name] = childResp
 	}
-
-	if resp.Accuracy == "" {
-		resp.Accuracy = "ACCURATE"
-	}
-	resp.ComputeUsage = 4.0
-	return resp, nil
+	return out, truncated, nil
 }
 
 // aggregateSimple performs aggregation without groupBy.
@@ -171,7 +227,7 @@ func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, re
 		return nil, fmt.Errorf("groupBy is empty")
 	}
 
-	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations)
+	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations, req.SubAggregations)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +240,9 @@ func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, re
 }
 
 // recursiveGroupBy processes groupBy specs one at a time, nesting results.
-func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec) ([]AggregationRow, bool, error) {
+// Sub-aggregations attach to leaf rows only; intermediate groupBy levels
+// pass them through unchanged.
+func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec, subs []SubAggregationSpec) ([]AggregationRow, bool, error) {
 	gb := groupBys[0]
 	remaining := groupBys[1:]
 
@@ -199,7 +257,7 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 	for _, entry := range entries {
 		if len(remaining) > 0 {
 			// Recurse with narrowed scope
-			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs)
+			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs, subs)
 			if err != nil {
 				return nil, false, err
 			}
@@ -212,10 +270,14 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 				for k, v := range subRow.Group {
 					combined[k] = v
 				}
-				rows = append(rows, AggregationRow{Group: combined, Metrics: subRow.Metrics})
+				rows = append(rows, AggregationRow{
+					Group:           combined,
+					Metrics:         subRow.Metrics,
+					SubAggregations: subRow.SubAggregations,
+				})
 			}
 		} else {
-			// Leaf level — compute metrics
+			// Leaf level — compute metrics + run sub-aggregations against bucket scope.
 			metrics, leafTrunc, err := e.computeMetrics(idx, entry.scopeQuery, specs)
 			if err != nil {
 				return nil, false, fmt.Errorf("compute metrics for group %v: %w", entry.value, err)
@@ -223,10 +285,21 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 			if leafTrunc {
 				truncated = true
 			}
-			rows = append(rows, AggregationRow{
+			row := AggregationRow{
 				Group:   map[string]interface{}{gb.Field: entry.value},
 				Metrics: metrics,
-			})
+			}
+			if len(subs) > 0 {
+				subResults, subTrunc, err := e.runSubAggregations(idx, entry.scopeQuery, subs)
+				if err != nil {
+					return nil, false, fmt.Errorf("sub-aggregations for group %v: %w", entry.value, err)
+				}
+				if subTrunc {
+					truncated = true
+				}
+				row.SubAggregations = subResults
+			}
+			rows = append(rows, row)
 		}
 	}
 
