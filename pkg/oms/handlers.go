@@ -12,12 +12,14 @@ import (
 
 // OMSHandler provides HTTP handlers for OMS V2 and admin endpoints.
 type OMSHandler struct {
-	repo                  Repository
-	queryExecutor         QueryExecutor
-	actorFn               ActorFunc
-	linkPropertyStore     LinkPropertyStore
-	linkEdgeStore         LinkEdgeStore
-	savedObjectSetLister  SavedObjectSetLister
+	repo                     Repository
+	queryExecutor            QueryExecutor
+	actorFn                  ActorFunc
+	linkPropertyStore        LinkPropertyStore
+	linkEdgeStore            LinkEdgeStore
+	savedObjectSetLister     SavedObjectSetLister
+	interfaceMethodStore     InterfaceMethodStore
+	interfaceMethodDispatcher InterfaceMethodActionDispatcher
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.

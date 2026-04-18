@@ -306,7 +306,12 @@ type ActionType struct {
 	SideEffects        json.RawMessage `json:"sideEffects,omitempty"`
 	FunctionRID        string          `json:"functionRid,omitempty"`
 	IsFunctionBacked   bool            `json:"isFunctionBacked"`
-	CreatedAt          time.Time       `json:"-"`
+	// ImplementsMethodRID (US-214) points at an interface_methods row whose
+	// signature this ActionType claims to implement. Empty means the action
+	// is not method-bound. Surfaced on the wire via ToFullMetadataJSON and
+	// consumed by the polymorphic invoke endpoint.
+	ImplementsMethodRID string    `json:"implementsMethodRid,omitempty"`
+	CreatedAt           time.Time `json:"-"`
 }
 
 // actionParamDef is the internal (stored) array-element format.
@@ -386,6 +391,9 @@ func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
 		wire["functionRid"] = at.FunctionRID
 	}
 	wire["isFunctionBacked"] = at.IsFunctionBacked
+	if at.ImplementsMethodRID != "" {
+		wire["implementsMethodRid"] = at.ImplementsMethodRID
+	}
 	return json.Marshal(wire)
 }
 

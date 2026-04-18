@@ -87,6 +87,12 @@ type ServerDeps struct {
 	// *PGRepository in the non-degraded bootstrap.
 	LinkPropertyStore oms.LinkPropertyStore
 	LinkEdgeStore     oms.LinkEdgeStore
+	// US-214 Interface Method Signatures. InterfaceMethodStore holds the
+	// interface_methods table CRUD; InterfaceMethodDispatcher (optional)
+	// forwards a polymorphic invoke to the actions.Executor so the invoke
+	// endpoint can actually run the resolved ActionType.
+	InterfaceMethodStore      oms.InterfaceMethodStore
+	InterfaceMethodDispatcher oms.InterfaceMethodActionDispatcher
 	TimeSeriesStore   timeseries.Store
 	GeotemporalStore  geotemporal.Store
 	CipherDecryptor   cipher.Decryptor
@@ -324,6 +330,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			if deps.LinkEdgeStore != nil {
 				omsHandler.SetLinkEdgeStore(deps.LinkEdgeStore)
+			}
+			if deps.InterfaceMethodStore != nil {
+				omsHandler.SetInterfaceMethodStore(deps.InterfaceMethodStore)
+			}
+			if deps.InterfaceMethodDispatcher != nil {
+				omsHandler.SetInterfaceMethodDispatcher(deps.InterfaceMethodDispatcher)
 			}
 			RegisterRoutes(api, omsHandler)
 		}
@@ -584,6 +596,10 @@ func main() {
 		// the CachedRepository decorator does not wrap them.
 		deps.LinkPropertyStore = pgRepo
 		deps.LinkEdgeStore = pgRepo
+		// US-214: interface_methods CRUD + ActionType.implementsMethodRid
+		// validation. Served by the uncached *PGRepository (the
+		// CachedRepository decorator wraps the oms.Repository surface only).
+		deps.InterfaceMethodStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		deps.AuditStore = audit.NewPGStore(pool)
 		// US-011: the index rebuild admin command re-ingests from
@@ -907,6 +923,9 @@ func main() {
 	// 8. Action Executor
 	if deps.OmsRepo != nil {
 		deps.ActionExecutor = actions.NewExecutor(deps.OmsRepo, publisher)
+		// US-214: polymorphic invoke forwards to the ActionExecutor via a
+		// narrow adapter so pkg/oms stays free of a pkg/actions import.
+		deps.InterfaceMethodDispatcher = newInterfaceMethodDispatcher(deps.ActionExecutor)
 	}
 
 	// Build router

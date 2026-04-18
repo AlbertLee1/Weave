@@ -518,10 +518,12 @@ func (r *PGRepository) CreateActionType(ctx context.Context, at *ActionType) err
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO action_types (rid, ontology_rid, api_name, display_name, description,
-		 status, parameters, rules, function_rid, is_function_backed, submission_criteria, side_effects)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		 status, parameters, rules, function_rid, is_function_backed, submission_criteria, side_effects,
+		 implements_method_rid)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''))`,
 		at.RID, at.OntologyRID, at.APIName, at.DisplayName, at.Description,
-		at.Status, params, rules, at.FunctionRID, at.IsFunctionBacked, sc, se)
+		at.Status, params, rules, at.FunctionRID, at.IsFunctionBacked, sc, se,
+		at.ImplementsMethodRID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -534,12 +536,14 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 COALESCE(status, 'ACTIVE'), parameters, rules,
 		 COALESCE(function_rid, ''), is_function_backed, created_at,
-		 submission_criteria, side_effects
+		 submission_criteria, side_effects,
+		 COALESCE(implements_method_rid, '')
 		 FROM action_types WHERE rid = $1`, rid).
 		Scan(&at.RID, &at.OntologyRID, &at.APIName, &at.DisplayName, &at.Description,
 			&at.Status, &at.Parameters, &at.Rules,
 			&at.FunctionRID, &at.IsFunctionBacked, &at.CreatedAt,
-			&at.SubmissionCriteria, &at.SideEffects)
+			&at.SubmissionCriteria, &at.SideEffects,
+			&at.ImplementsMethodRID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -570,7 +574,8 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 COALESCE(status, 'ACTIVE'), parameters, rules,
 		 COALESCE(function_rid, ''), is_function_backed, created_at,
-		 submission_criteria, side_effects
+		 submission_criteria, side_effects,
+		 COALESCE(implements_method_rid, '')
 		 FROM action_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -585,7 +590,8 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 		if err := rows.Scan(&at.RID, &at.OntologyRID, &at.APIName, &at.DisplayName, &at.Description,
 			&at.Status, &at.Parameters, &at.Rules,
 			&at.FunctionRID, &at.IsFunctionBacked, &at.CreatedAt,
-			&at.SubmissionCriteria, &at.SideEffects); err != nil {
+			&at.SubmissionCriteria, &at.SideEffects,
+			&at.ImplementsMethodRID); err != nil {
 			return nil, err
 		}
 		result = append(result, at)
@@ -596,9 +602,10 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 func (r *PGRepository) UpdateActionType(ctx context.Context, at *ActionType) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE action_types SET display_name=$1, description=$2, status=$3,
-		 parameters=$4, rules=$5, submission_criteria=$6, side_effects=$7 WHERE rid=$8`,
+		 parameters=$4, rules=$5, submission_criteria=$6, side_effects=$7,
+		 implements_method_rid=NULLIF($8, '') WHERE rid=$9`,
 		at.DisplayName, at.Description, at.Status, at.Parameters, at.Rules,
-		at.SubmissionCriteria, at.SideEffects, at.RID)
+		at.SubmissionCriteria, at.SideEffects, at.ImplementsMethodRID, at.RID)
 	if err != nil {
 		return err
 	}

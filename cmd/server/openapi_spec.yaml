@@ -519,6 +519,9 @@ components:
           items:
             type: object
             additionalProperties: true
+        implementsMethodRid:
+          description: "US-214: RID of an InterfaceMethod this ActionType implements."
+          type: string
     UpdateActionTypeRequest:
       type: object
       properties:
@@ -548,6 +551,9 @@ components:
           items:
             type: object
             additionalProperties: true
+        implementsMethodRid:
+          description: "US-214: tri-state pointer. Omit to preserve, empty string to clear, RID to assign."
+          type: string
     ActionType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -580,6 +586,9 @@ components:
           type: string
         isFunctionBacked:
           type: boolean
+        implementsMethodRid:
+          description: "US-214: RID of an InterfaceMethod this ActionType implements, if any."
+          type: string
     ActionParameterV2:
       type: object
       required: [dataType, required]
@@ -693,6 +702,93 @@ components:
           type: object
           additionalProperties:
             type: string
+    InterfaceMethodParam:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        required:
+          type: boolean
+        default: {}
+    InterfaceMethodReturns:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+    InterfaceMethod:
+      type: object
+      required: [rid, interfaceRid, name, params, returns]
+      properties:
+        rid:
+          type: string
+        interfaceRid:
+          type: string
+        name:
+          type: string
+        params:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceMethodParam"
+        returns:
+          $ref: "#/components/schemas/InterfaceMethodReturns"
+        description:
+          type: string
+    CreateInterfaceMethodRequest:
+      type: object
+      required: [name, returns]
+      properties:
+        name:
+          type: string
+        params:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceMethodParam"
+        returns:
+          $ref: "#/components/schemas/InterfaceMethodReturns"
+        description:
+          type: string
+    UpdateInterfaceMethodRequest:
+      type: object
+      required: [name, returns]
+      properties:
+        name:
+          type: string
+        params:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterfaceMethodParam"
+        returns:
+          $ref: "#/components/schemas/InterfaceMethodReturns"
+        description:
+          type: string
+    InvokeInterfaceMethodRequest:
+      type: object
+      required: [objectType]
+      properties:
+        objectType:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+    InvokeInterfaceMethodResponse:
+      type: object
+      required: [actionTypeRid, actionTypeApiName, objectType, methodRid]
+      properties:
+        actionTypeRid:
+          type: string
+        actionTypeApiName:
+          type: string
+        objectType:
+          type: string
+        methodRid:
+          type: string
+        result:
+          type: object
+          additionalProperties: true
     QueryType:
       type: object
       required: [rid, apiName, displayName, status]
@@ -3867,6 +3963,171 @@ paths:
       responses:
         "204":
           description: Detached.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/methods:
+    get:
+      operationId: listInterfaceMethods
+      summary: List methods declared on an Interface
+      description: "US-214: Returns every InterfaceMethod signature declared on the given Interface."
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: interfaceRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Interface method list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InterfaceMethod"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    post:
+      operationId: createInterfaceMethod
+      summary: Declare a new method on an Interface
+      description: "US-214: Creates a new InterfaceMethod signature (name + params + returns) owned by the named Interface."
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: interfaceRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInterfaceMethodRequest"
+      responses:
+        "201":
+          description: Created interface method.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterfaceMethod"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/methods/byRid/{methodRid}:
+    get:
+      operationId: getInterfaceMethod
+      summary: Fetch a single interface method by rid
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: methodRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Interface method.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterfaceMethod"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateInterfaceMethod
+      summary: Replace an interface method's mutable fields
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: methodRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInterfaceMethodRequest"
+      responses:
+        "200":
+          description: Updated interface method.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterfaceMethod"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteInterfaceMethod
+      summary: Delete an interface method
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: methodRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/methods/{methodRid}/invoke:
+    post:
+      operationId: invokeInterfaceMethod
+      summary: Polymorphically invoke a method on an ObjectType
+      description: "US-214: Resolves the ActionType that implements the named InterfaceMethod AND targets the caller-supplied ObjectType, then forwards parameters to it. Returns the dispatch decision plus the executor's edit summary."
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: methodRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvokeInterfaceMethodRequest"
+      responses:
+        "200":
+          description: Dispatched successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvokeInterfaceMethodResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

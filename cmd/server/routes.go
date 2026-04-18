@@ -61,6 +61,15 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces", omsHandler.CreateInterface)
 	r.Put("/api/v2/ontologies/{ontologyApiName}/interfaces/byRid/{interfaceRid}", omsHandler.UpdateInterface)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/interfaces/byRid/{interfaceRid}", omsHandler.DeleteInterface)
+	// US-214 Interface Method Signatures: CRUD on methods declared on an
+	// Interface + the polymorphic invoke endpoint that dispatches to the
+	// ActionType implementing that method for a given ObjectType.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/methods", omsHandler.ListInterfaceMethods)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/methods", omsHandler.CreateInterfaceMethod)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaces/methods/byRid/{methodRid}", omsHandler.GetInterfaceMethod)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/interfaces/methods/byRid/{methodRid}", omsHandler.UpdateInterfaceMethod)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/interfaces/methods/byRid/{methodRid}", omsHandler.DeleteInterfaceMethod)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaces/methods/{methodRid}/invoke", omsHandler.InvokeInterfaceMethod)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces", omsHandler.ListObjectTypeInterfaces)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces", omsHandler.AttachInterfaceHandler)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces/{interfaceRid}", omsHandler.DetachInterface)

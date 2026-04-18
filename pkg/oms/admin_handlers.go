@@ -195,6 +195,10 @@ type CreateActionTypeRequest struct {
 	Status      string          `json:"status"`
 	Parameters  json.RawMessage `json:"parameters"`
 	Rules       json.RawMessage `json:"rules"`
+	// ImplementsMethodRID (US-214) optionally binds this ActionType to an
+	// InterfaceMethod signature. When set the create handler validates that
+	// the referenced method exists in the same ontology.
+	ImplementsMethodRID string `json:"implementsMethodRid,omitempty"`
 }
 
 // UpdateActionTypeRequest is the request body for updating an action type.
@@ -206,6 +210,9 @@ type UpdateActionTypeRequest struct {
 	Rules              json.RawMessage `json:"rules"`
 	SubmissionCriteria json.RawMessage `json:"submissionCriteria,omitempty"`
 	SideEffects        json.RawMessage `json:"sideEffects,omitempty"`
+	// ImplementsMethodRID (US-214) is a tri-state pointer: nil = leave
+	// unchanged, "" = clear the binding, non-empty = validate + assign.
+	ImplementsMethodRID *string `json:"implementsMethodRid,omitempty"`
 }
 
 // --- Admin handlers ---
@@ -897,14 +904,27 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 	}
 
 	at := &ActionType{
-		RID:         rid.NewActionTypeRID(),
-		OntologyRID: ontologyRID,
-		APIName:     req.APIName,
-		DisplayName: req.DisplayName,
-		Description: req.Description,
-		Status:      status,
-		Parameters:  req.Parameters,
-		Rules:       req.Rules,
+		RID:                 rid.NewActionTypeRID(),
+		OntologyRID:         ontologyRID,
+		APIName:             req.APIName,
+		DisplayName:         req.DisplayName,
+		Description:         req.Description,
+		Status:              status,
+		Parameters:          req.Parameters,
+		Rules:               req.Rules,
+		ImplementsMethodRID: req.ImplementsMethodRID,
+	}
+
+	// US-214: if the action claims an InterfaceMethod binding, verify the
+	// method exists in the same ontology BEFORE we commit (or route to a
+	// branch overlay). The lookup uses the narrow InterfaceMethodStore when
+	// configured; degraded-mode routers that don't wire the store reject the
+	// field so callers get a clean error instead of a dangling reference.
+	if at.ImplementsMethodRID != "" {
+		if apiErr := h.validateImplementsMethodRID(r.Context(), ontologyRID, at.ImplementsMethodRID); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
 	}
 
 	// Branch overlay
@@ -971,6 +991,16 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.SideEffects) > 0 {
 		updated.SideEffects = req.SideEffects
+	}
+	// US-214 tri-state: nil=preserve, ""=clear, "X"=validate+assign.
+	if req.ImplementsMethodRID != nil {
+		updated.ImplementsMethodRID = *req.ImplementsMethodRID
+		if updated.ImplementsMethodRID != "" {
+			if apiErr := h.validateImplementsMethodRID(r.Context(), existing.OntologyRID, updated.ImplementsMethodRID); apiErr != nil {
+				apierror.WriteJSON(w, apiErr)
+				return
+			}
+		}
 	}
 
 	// Branch overlay

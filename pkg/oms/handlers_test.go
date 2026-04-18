@@ -36,6 +36,11 @@ type mockRepo struct {
 	automationRules []oms.AutomationRule
 	executions      []oms.AutomationExecution
 	notifications   []oms.Notification
+	// interfaceAttachments backs AttachInterface / ListObjectTypeInterfaces
+	// so US-214 tests can assert "this ObjectType does/does not implement
+	// the target Interface" via the real code path. Prior tests only read
+	// nil slices from these methods.
+	interfaceAttachments []oms.ObjectTypeInterface
 
 	// Error controls
 	createErr error
@@ -370,20 +375,39 @@ func (m *mockRepo) DeleteInterface(_ context.Context, rid string) error {
 	return oms.ErrNotFound
 }
 
-func (m *mockRepo) AttachInterface(_ context.Context, _ *oms.ObjectTypeInterface) error {
-	return m.createErr
+func (m *mockRepo) AttachInterface(_ context.Context, oti *oms.ObjectTypeInterface) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.interfaceAttachments = append(m.interfaceAttachments, *oti)
+	return nil
 }
 
-func (m *mockRepo) DetachInterface(_ context.Context, _, _ string) error {
-	return m.deleteErr
+func (m *mockRepo) DetachInterface(_ context.Context, objectTypeRID, interfaceRID string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i, a := range m.interfaceAttachments {
+		if a.ObjectTypeRID == objectTypeRID && a.InterfaceRID == interfaceRID {
+			m.interfaceAttachments = append(m.interfaceAttachments[:i], m.interfaceAttachments[i+1:]...)
+			return nil
+		}
+	}
+	return oms.ErrNotFound
 }
 
 func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
 	return nil, nil
 }
 
-func (m *mockRepo) ListObjectTypeInterfaces(_ context.Context, _ string) ([]oms.ObjectTypeInterface, error) {
-	return nil, nil
+func (m *mockRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
+	var out []oms.ObjectTypeInterface
+	for _, a := range m.interfaceAttachments {
+		if a.ObjectTypeRID == objectTypeRID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 // SharedProperty methods
