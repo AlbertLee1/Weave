@@ -27,6 +27,7 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/developer"
+	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
@@ -177,6 +178,14 @@ type ServerDeps struct {
 	// service's read paths emit property values unchanged.
 	ColumnMaskStore  masking.Store
 	ColumnMaskEngine *masking.Engine
+	// US-258 Cell-Level Security. CellMaskStore is the admin-CRUD surface
+	// over the cell_masks table; CellMaskEngine compiles the applicable
+	// per-(ObjectType, primaryKey) mask transforms at read time. Both are
+	// populated from the PG bootstrap block and left nil in degraded mode
+	// — the routes are not mounted and the OSS service's read paths skip
+	// cell-level rewriting.
+	CellMaskStore  cellsec.Store
+	CellMaskEngine *cellsec.Engine
 	// US-253: TOTP-based MFA. MFAStore is the narrow persistence surface
 	// over the new users.mfa_secret / users.mfa_enabled columns; satisfied
 	// by the uncached *PGUserRepository. MFAChallenges bridges the login
@@ -734,6 +743,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					maskHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-258: Cell-Level Security admin CRUD. Mounts
+		// /api/admin/cell-masks when CellMaskStore is wired. Handler
+		// receives CellMaskEngine so writes refresh the in-process
+		// cache immediately.
+		if deps.CellMaskStore != nil {
+			cellHandler := cellsec.NewHandler(deps.CellMaskStore, deps.AuditStore, deps.CellMaskEngine)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					cellHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -876,6 +897,10 @@ func main() {
 		// same reason as RowPolicyStore — admin volume is low, engine owns
 		// the hot-path cache.
 		deps.ColumnMaskStore = newPGColumnMaskStore(pool)
+		// US-258: Cell-mask store (cell_masks table). Same uncached pattern
+		// — cell masks are per-(ObjectType, primaryKey, property) and the
+		// engine's own index keeps lookup O(1) on the read path.
+		deps.CellMaskStore = newPGCellMaskStore(pool)
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)
@@ -1271,6 +1296,26 @@ func main() {
 		}
 		if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
 			impl.SetColumnMaskEngine(deps.ColumnMaskEngine)
+		}
+	}
+
+	// 4e. US-258 Cell-Level Security Engine. Indexes cell_masks by
+	// (objectTypeRID, primaryKey) so read paths can look up applicable
+	// per-row transforms in O(1). Runs AFTER the column-mask engine so
+	// cell-specific rules can sharpen (or add to) the column-wide policy
+	// for a single instance. GroupMembershipLookup is shared with
+	// masking/rls via Go's structural typing (one adapter serves all).
+	if deps.CellMaskStore != nil {
+		var gl cellsec.GroupMembershipLookup
+		if deps.GroupRepo != nil {
+			gl = newGroupLookupFromRepo(deps.GroupRepo)
+		}
+		deps.CellMaskEngine = cellsec.New(deps.CellMaskStore, gl)
+		if err := deps.CellMaskEngine.Reload(ctx); err != nil {
+			log.Printf("[CellSec] warning: failed to load cell masks from DB: %v", err)
+		}
+		if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
+			impl.SetCellMaskEngine(deps.CellMaskEngine)
 		}
 	}
 

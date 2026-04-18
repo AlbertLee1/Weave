@@ -11,6 +11,7 @@ import (
 	"github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/masking"
@@ -51,6 +52,13 @@ type ServiceImpl struct {
 	// a no-op so legacy callers that haven't wired masking keep their
 	// current wire shape.
 	columnMaskEngine *masking.Engine
+
+	// cellMaskEngine is the US-258 cell_masks engine. When attached it
+	// rewrites property values on a SPECIFIC (objectType, primaryKey) row
+	// for callers outside the mask's AppliesTo allow list. Runs AFTER
+	// applyColumnMasking so cell-specific rules can override or add to the
+	// column-wide mask set for that row. A nil engine is a no-op.
+	cellMaskEngine *cellsec.Engine
 }
 
 // NewService creates a new OSS service.
@@ -92,6 +100,15 @@ func (s *ServiceImpl) SetRowPolicyEngine(e *rls.Engine) {
 // but never leak to the caller's network. Pass nil to detach.
 func (s *ServiceImpl) SetColumnMaskEngine(e *masking.Engine) {
 	s.columnMaskEngine = e
+}
+
+// SetCellMaskEngine attaches the US-258 cell_masks engine. Compiled
+// transforms are applied to every WireObject returned from the service's
+// read paths AFTER column masking, so per-row overrides can sharpen (or
+// add to) the column-wide policy for a specific instance. Pass nil to
+// detach.
+func (s *ServiceImpl) SetCellMaskEngine(e *cellsec.Engine) {
+	s.cellMaskEngine = e
 }
 
 // compilePolicyQuery compiles the row-level security policy for ot into a
@@ -284,6 +301,51 @@ func (s *ServiceImpl) applyColumnMasking(ctx context.Context, ot *oms.ObjectType
 	return objs
 }
 
+// applyCellMasking enforces US-258 cell-level security by rewriting property
+// values on a per-(objectType, primary key) basis. Runs AFTER applyColumnMasking
+// so row-specific cell rules can further restrict (or add transforms not
+// declared at the column level) for a single instance. A nil engine, nil
+// object-type or empty input slice short-circuits to a no-op. Transforms
+// reuse the masking rule vocabulary (hash/redact/partial) and mutate the
+// property map in place for allocation-free pass-through when no cell masks
+// apply.
+func (s *ServiceImpl) applyCellMasking(ctx context.Context, ot *oms.ObjectType, objs []*WireObject) []*WireObject {
+	if s.cellMaskEngine == nil || ot == nil || len(objs) == 0 {
+		return objs
+	}
+	user := auth.UserFromContext(ctx)
+	for _, o := range objs {
+		if o == nil || len(o.Properties) == 0 {
+			continue
+		}
+		pk := stringifyPrimaryKey(o.PrimaryKey)
+		if pk == "" {
+			continue
+		}
+		transforms, err := s.cellMaskEngine.Compile(ctx, user, ot.RID, pk)
+		if err != nil || len(transforms) == 0 {
+			continue
+		}
+		masking.ApplyTransforms(o.Properties, transforms)
+	}
+	return objs
+}
+
+// stringifyPrimaryKey renders a WireObject primary key as the canonical
+// string key used by pkg/cellsec's index. Matches how FormatObject stores
+// the value (string in practice, but WireObject.PrimaryKey is typed as
+// interface{} for future composite keys). Returns "" when the value is
+// nil — such rows bypass cell masking (nothing to target).
+func stringifyPrimaryKey(pk interface{}) string {
+	if pk == nil {
+		return ""
+	}
+	if s, ok := pk.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", pk)
+}
+
 // applyPropertyVisibility enforces US-048 column-level visibility by running
 // the row-level policy engine's AllowedProperties hook against each returned
 // WireObject. The engine short-circuits to nil when no PROPERTY-scope
@@ -363,6 +425,7 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
+	filtered = s.applyCellMasking(ctx, ot, filtered)
 	return filtered[0], nil
 }
 
@@ -428,7 +491,8 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 	}
 	filtered = s.applyMarkingFilter(ctx, ot, filtered)
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
-	page.Data = s.applyColumnMasking(ctx, ot, filtered)
+	filtered = s.applyColumnMasking(ctx, ot, filtered)
+	page.Data = s.applyCellMasking(ctx, ot, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -589,7 +653,8 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	}
 	filtered = s.applyMarkingFilter(ctx, ot, filtered)
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
-	page.Data = s.applyColumnMasking(ctx, ot, filtered)
+	filtered = s.applyColumnMasking(ctx, ot, filtered)
+	page.Data = s.applyCellMasking(ctx, ot, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -846,7 +911,8 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 	}
 	filtered = s.applyMarkingFilter(ctx, targetOT, filtered)
 	filtered = s.applyPropertyVisibility(ctx, targetOT, filtered)
-	page.Data = s.applyColumnMasking(ctx, targetOT, filtered)
+	filtered = s.applyColumnMasking(ctx, targetOT, filtered)
+	page.Data = s.applyCellMasking(ctx, targetOT, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -949,5 +1015,8 @@ func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRe
 	filtered := s.applyPropertyVisibility(ctx, otherOT, []*WireObject{obj})
 	// US-257: value-level masking after visibility filtering.
 	filtered = s.applyColumnMasking(ctx, otherOT, filtered)
+	// US-258: per-cell rules after the column-wide pass so row-specific
+	// overrides can sharpen the wire view.
+	filtered = s.applyCellMasking(ctx, otherOT, filtered)
 	return filtered[0], nil
 }

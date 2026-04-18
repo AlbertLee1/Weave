@@ -858,8 +858,8 @@
         "Tests pass"
       ],
       "priority": 59,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/cellsec mirrors pkg/masking shape but adds primary_key dimension: Engine indexes masks by (objectTypeRID → primaryKey → []CellMask) for O(1) per-row lookup; reuses masking.MaskRule + masking.AppliesTo so admins see one rule vocabulary across column and cell surfaces; migration 000057 creates cell_masks with FK ON DELETE CASCADE + dual indexes (object_type + composite); wired into 5 read paths (GetObject/ListObjects/SearchObjects/ListLinkedObjects/GetLinkedObject) via applyCellMasking helper that runs AFTER applyColumnMasking so per-row rules sharpen column-wide defaults; admin CRUD at /api/admin/cell-masks with engine.Reload on every write; PG store in cmd/server/cell_mask_store.go follows pgColumnMaskStore pattern; 3 integration tests against real Bleve index prove targeted instance isolation, GetObject path, and composition with column masks."
     },
     {
       "id": "US-259",
