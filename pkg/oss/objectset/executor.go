@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -219,6 +221,8 @@ func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error
 		return e.executeInterfaceBase(ctx, def)
 	case "interfaceLinkSearchAround":
 		return e.executeInterfaceLinkSearchAround(ctx, def)
+	case "sample":
+		return e.executeSample(ctx, def)
 	case "methodInput":
 		return nil, fmt.Errorf("methodInput objectSet not yet supported: bind at function invocation time")
 	default:
@@ -1045,6 +1049,61 @@ func coerceNumeric(v interface{}) (float64, bool) {
 		return float64(n), true
 	}
 	return 0, false
+}
+
+// executeSample evaluates the inner ObjectSet and returns at most def.Size
+// primary keys chosen uniformly at random via Algorithm R (reservoir
+// sampling). When Seed is set the PRNG is seeded deterministically so two
+// runs of the same definition produce the same output; when Seed is nil a
+// wall-clock seed is used. Size >= len(inner) returns the inner slice in
+// place (shuffling is neither required nor performed in that case).
+func (e *Executor) executeSample(ctx context.Context, def *Definition) (*Result, error) {
+	inner, err := e.execute(ctx, def.ObjectSet)
+	if err != nil {
+		return nil, fmt.Errorf("execute sample inner: %w", err)
+	}
+
+	size := *def.Size
+	// #nosec G404 — math/rand is intentional: reservoir sampling wants a
+	// deterministic, reproducible PRNG keyed on the caller-supplied Seed.
+	var src rand.Source
+	if def.Seed != nil {
+		src = rand.NewSource(*def.Seed)
+	} else {
+		src = rand.NewSource(time.Now().UnixNano())
+	}
+	rng := rand.New(src)
+
+	sampled := reservoirSample(inner.PrimaryKeys, size, rng)
+
+	return &Result{
+		ObjectType:  inner.ObjectType,
+		PrimaryKeys: sampled,
+		Truncated:   inner.Truncated,
+	}, nil
+}
+
+// reservoirSample returns a k-element uniform random sample of pks using
+// Algorithm R. When k >= len(pks) the entire slice is returned as a fresh
+// copy. Nil or empty pks returns an empty slice.
+func reservoirSample(pks []string, k int, rng *rand.Rand) []string {
+	if k <= 0 || len(pks) == 0 {
+		return []string{}
+	}
+	if k >= len(pks) {
+		out := make([]string, len(pks))
+		copy(out, pks)
+		return out
+	}
+	reservoir := make([]string, k)
+	copy(reservoir, pks[:k])
+	for i := k; i < len(pks); i++ {
+		j := rng.Intn(i + 1)
+		if j < k {
+			reservoir[j] = pks[i]
+		}
+	}
+	return reservoir
 }
 
 // executeReference looks up a stored ObjectSet from the Store and executes it.

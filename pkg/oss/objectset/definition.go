@@ -47,6 +47,12 @@ type Definition struct {
 	// For "methodInput" — name of the function method input parameter whose
 	// bound ObjectSet should be used at execution time.
 	Input string `json:"input,omitempty"`
+
+	// For "sample" (US-225) — Size is the target sample count and Seed is the
+	// optional deterministic PRNG seed. Both are pointers so an unset Seed is
+	// distinguishable from the zero seed and a missing Size fails validation.
+	Size *int   `json:"size,omitempty"`
+	Seed *int64 `json:"seed,omitempty"`
 }
 
 // DerivedPropertyDef declares a single per-object computation the executor
@@ -191,6 +197,16 @@ func (d *Definition) Validate() error {
 	case "methodInput":
 		if d.Input == "" {
 			return fmt.Errorf("methodInput objectSet requires input")
+		}
+	case "sample":
+		if d.ObjectSet == nil {
+			return fmt.Errorf("sample objectSet requires objectSet")
+		}
+		if d.Size == nil {
+			return fmt.Errorf("sample objectSet requires size")
+		}
+		if *d.Size <= 0 {
+			return fmt.Errorf("sample objectSet requires size > 0, got %d", *d.Size)
 		}
 	default:
 		return fmt.Errorf("unknown objectSet type: %q", d.Type)

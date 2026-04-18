@@ -1518,7 +1518,7 @@ components:
         Composable ObjectSet definition. Supported types: base, static, filter,
         union, intersect, subtract, searchAround, reference, nearestNeighbors,
         withProperties, asType, asBaseObjectTypes, interfaceBase,
-        interfaceLinkSearchAround, methodInput. See pkg/oss/objectset.
+        interfaceLinkSearchAround, methodInput, sample. See pkg/oss/objectset.
       additionalProperties: true
       required: [type]
       properties:
@@ -1540,6 +1540,7 @@ components:
             - interfaceBase
             - interfaceLinkSearchAround
             - methodInput
+            - sample
         objectType:
           type: string
           description: Used by base, static, and asType.
@@ -1565,6 +1566,13 @@ components:
         input:
           type: string
           description: Used by methodInput — name of the function method input parameter bound at invocation time.
+        size:
+          type: integer
+          description: Used by sample — number of primary keys to return via uniform reservoir sampling from the inner ObjectSet. Required when type=sample.
+        seed:
+          type: integer
+          format: int64
+          description: Used by sample — optional deterministic PRNG seed. When set two runs of the same definition produce identical samples; omit for a wall-clock-seeded sample.
     LoadObjectSetRequest:
       type: object
       required: [objectSet, select]

@@ -384,8 +384,8 @@
         "Tests pass"
       ],
       "priority": 26,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Definition 新增 type=sample + Size *int + Seed *int64 (pointer shape lets absent Seed stay distinguishable from zero); executor uses Algorithm R reservoir sampling with math/rand.NewSource(seed || wall-clock). Size<=0 rejected at Validate, Size>=len(inner) returns the inner slice verbatim, empty inner returns empty without error. Truncated flag propagated from inner. 12 unit tests cover validate / parse / determinism / seed divergence / empty-inner / large-size. OpenAPI + embedded spec extended with type=sample + size + seed."
     },
     {
       "id": "US-226",
