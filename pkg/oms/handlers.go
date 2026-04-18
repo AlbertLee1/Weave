@@ -14,6 +14,7 @@ import (
 type OMSHandler struct {
 	repo                     Repository
 	queryExecutor            QueryExecutor
+	functionExecutor         FunctionExecutor
 	actorFn                  ActorFunc
 	linkPropertyStore        LinkPropertyStore
 	linkEdgeStore            LinkEdgeStore
@@ -32,6 +33,15 @@ func NewOMSHandler(repo Repository) *OMSHandler {
 // FunctionRID through this executor instead of returning raw metadata.
 func (h *OMSHandler) SetQueryExecutor(qe QueryExecutor) {
 	h.queryExecutor = qe
+}
+
+// SetFunctionExecutor wires an optional FunctionExecutor used by the
+// /functions/{rid}/execute endpoint (US-216). When unset the endpoint still
+// validates parameters against the function signature but reports 503
+// NotConfigured on the dispatch step — degraded-mode test routers without an
+// executor wired can still exercise the validator surface.
+func (h *OMSHandler) SetFunctionExecutor(e FunctionExecutor) {
+	h.functionExecutor = e
 }
 
 // SetLinkPropertyStore wires the narrow LinkPropertyStore used by the

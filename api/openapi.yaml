@@ -4385,6 +4385,66 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute:
+    post:
+      operationId: executeFunction
+      summary: Validate parameters against the Function signature and dispatch (US-216)
+      description: |
+        Validates the caller-supplied `parameters` against the Function's
+        declared signature (required, type, defaults, unknown-key rejection).
+        On a validation failure the response is a 400 carrying
+        `parameter`+`code`+`reason` so SDKs can map back to typed errors.
+        On success the coerced parameter map is forwarded to the configured
+        FunctionExecutor.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parameters:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Function executed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid:
+                    type: string
+                  result: {}
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          description: Function executor not configured. Body echoes the coerced parameters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid:
+                    type: string
+                  parameters:
+                    type: object
+                    additionalProperties: true
+                  error:
+                    type: string
   /api/v2/ontologies/{ontologyApiName}/branches:
     post:
       operationId: createBranch

@@ -201,6 +201,93 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, existing)
 }
 
+// ExecuteFunction handles POST /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute.
+// The endpoint loads the function, validates the caller's parameters against
+// its declared signature (US-216), then dispatches to the optional
+// FunctionExecutor. Validation failures surface as 400 with a
+// `parameter`+`code` payload so SDKs can map them back to typed errors.
+func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
+	fnIdentifier := chi.URLParam(r, "functionRid")
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+
+	fn, err := h.repo.GetFunctionByName(r.Context(), ontologyAPIName, fnIdentifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("FunctionNotFound", map[string]string{
+				"functionRid": fnIdentifier,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetFunctionFailed", nil))
+		return
+	}
+
+	var body struct {
+		Parameters map[string]interface{} `json:"parameters"`
+	}
+	// Empty bodies are legal — a function with all-default / all-optional
+	// params should be invokable with no payload.
+	if r.ContentLength != 0 {
+		if err := httputil.ReadJSON(r, &body); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+				"reason": "invalid JSON",
+			}))
+			return
+		}
+	}
+	if body.Parameters == nil {
+		body.Parameters = map[string]interface{}{}
+	}
+
+	sig, err := ParseFunctionSignature(fn.Signature)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("InvalidStoredSignature", nil))
+		return
+	}
+	coerced, err := ValidateAndCoerceFunctionParams(sig, body.Parameters)
+	if err != nil {
+		var pe *FunctionParamError
+		if errors.As(err, &pe) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:"+pe.Parameter, map[string]string{
+				"parameter": pe.Parameter,
+				"code":      pe.Code,
+				"reason":    pe.Reason,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:parameters", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	if h.functionExecutor == nil {
+		// Degraded-mode: no executor wired. Still surface the validated /
+		// coerced parameter map so callers can confirm the contract is
+		// honoured even when execution itself isn't available.
+		w.Header().Set("X-Function-Executor", "not-configured")
+		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"functionRid": fn.RID,
+			"parameters":  coerced,
+			"error":       "no FunctionExecutor wired",
+		})
+		return
+	}
+
+	result, err := h.functionExecutor.Execute(r.Context(), fn, coerced)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewBadRequest("FunctionExecutionFailed", map[string]string{
+			"error": err.Error(),
+		}))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"functionRid": fn.RID,
+		"result":      result,
+	})
+}
+
 // DeleteFunction handles DELETE /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}.
 func (h *OMSHandler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 	fnRID := chi.URLParam(r, "functionRid")

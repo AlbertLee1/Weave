@@ -253,8 +253,8 @@
         "Tests pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ParseFunctionSignature + ValidateAndCoerceFunctionParams in pkg/oms/function.go (typed FunctionParamError carries Code: missing_required/type_mismatch/unknown_parameter/default_invalid). New POST /functions/{rid}/execute endpoint validates+coerces params before dispatching to the optional FunctionExecutor; degraded-mode (no executor wired) returns 503 with the coerced parameter map echoed. 14 validator tests + 10 endpoint tests."
     },
     {
       "id": "US-217",

@@ -3,6 +3,8 @@ package oms
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/liyang/weave/pkg/types"
 )
 
 // Function runtime values pinned by the registry. The migration carries the
@@ -152,6 +154,173 @@ func signatureFromBytes(raw []byte) json.RawMessage {
 	out := make(json.RawMessage, len(trimmed))
 	copy(out, trimmed)
 	return out
+}
+
+// ParsedFunctionSignature is the typed view of a function's wire signature.
+// Returned by ParseFunctionSignature so callers (the runtime validator, future
+// SDK generators, doc tooling) can read params + returns directly without
+// re-implementing the JSON shape walk.
+type ParsedFunctionSignature struct {
+	Params  []FunctionParam
+	Returns *FunctionReturn
+}
+
+// FunctionParam is one entry of ParsedFunctionSignature.Params.
+type FunctionParam struct {
+	Name     string
+	Type     string
+	Required bool
+	Default  json.RawMessage
+}
+
+// FunctionReturn is the parsed `returns` clause of a signature.
+type FunctionReturn struct {
+	Type string
+}
+
+// HasContract reports whether the signature declares any params or returns.
+// An empty contract means "no contract declared" and the runtime validator
+// short-circuits — every input is accepted.
+func (s ParsedFunctionSignature) HasContract() bool {
+	return len(s.Params) > 0 || s.Returns != nil
+}
+
+// ParseFunctionSignature decodes the wire signature into the typed view used
+// by the runtime validator. An empty / null / "{}" raw message returns the
+// zero-value ParsedFunctionSignature with HasContract()==false. Callers MUST
+// have already passed the raw bytes through ValidateFunctionSignature; this
+// helper assumes the shape is well-formed and returns a generic decode error
+// otherwise.
+func ParseFunctionSignature(raw json.RawMessage) (ParsedFunctionSignature, error) {
+	trimmed := trimASCIISpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" || string(trimmed) == "{}" {
+		return ParsedFunctionSignature{}, nil
+	}
+	var sig functionSignatureSchema
+	if err := json.Unmarshal(trimmed, &sig); err != nil {
+		return ParsedFunctionSignature{}, fmt.Errorf("invalid signature: %w", err)
+	}
+	out := ParsedFunctionSignature{}
+	if len(sig.Params) > 0 {
+		out.Params = make([]FunctionParam, len(sig.Params))
+		for i, p := range sig.Params {
+			out.Params[i] = FunctionParam{
+				Name:     p.Name,
+				Type:     p.Type,
+				Required: p.Required,
+				Default:  p.Default,
+			}
+		}
+	}
+	if sig.Returns != nil {
+		out.Returns = &FunctionReturn{Type: sig.Returns.Type}
+	}
+	return out, nil
+}
+
+// FunctionParamError is the typed error returned by ValidateAndCoerceFunctionParams
+// so HTTP handlers can surface a 400 with a structured `parameter`+`reason`
+// payload without grepping the message string. Code is one of:
+//   - "missing_required" — the param is required and no value was supplied
+//   - "type_mismatch"    — the supplied value does not match the declared type
+//   - "unknown_parameter"— the input map carries a name not declared in the signature
+//   - "default_invalid"  — a declared default value cannot be decoded as JSON
+type FunctionParamError struct {
+	Parameter string
+	Code      string
+	Reason    string
+}
+
+// Error implements the error interface. The message stays human-readable for
+// log output; structured handlers should reach for Parameter / Code directly.
+func (e *FunctionParamError) Error() string {
+	if e.Parameter == "" {
+		return e.Reason
+	}
+	return fmt.Sprintf("parameter %q: %s", e.Parameter, e.Reason)
+}
+
+// ValidateAndCoerceFunctionParams enforces the signature contract against the
+// caller-supplied params map. Behaviour:
+//   - Empty / no-contract signature: returns the input map unchanged (every
+//     input accepted, including unknown keys — an undeclared signature opts
+//     out of validation).
+//   - For each declared param: if missing AND required → missing_required.
+//     If missing with a declared default → the default is decoded and placed
+//     into the result map. If missing optional with no default → the key stays
+//     absent in the output.
+//   - For each supplied param: if a type is declared, the value must satisfy
+//     types.Validate against {Type: BaseType(param.Type)}; otherwise it passes
+//     through as-is. Optional params accept JSON null without complaint.
+//   - Any input key NOT declared in the signature → unknown_parameter.
+//
+// The returned map is a fresh allocation; the caller may mutate it without
+// affecting the input.
+func ValidateAndCoerceFunctionParams(sig ParsedFunctionSignature, input map[string]interface{}) (map[string]interface{}, error) {
+	if !sig.HasContract() {
+		out := make(map[string]interface{}, len(input))
+		for k, v := range input {
+			out[k] = v
+		}
+		return out, nil
+	}
+
+	declared := make(map[string]FunctionParam, len(sig.Params))
+	for _, p := range sig.Params {
+		declared[p.Name] = p
+	}
+
+	for name := range input {
+		if _, ok := declared[name]; !ok {
+			return nil, &FunctionParamError{
+				Parameter: name,
+				Code:      "unknown_parameter",
+				Reason:    fmt.Sprintf("parameter %q is not declared in the function signature", name),
+			}
+		}
+	}
+
+	out := make(map[string]interface{}, len(sig.Params))
+	for _, p := range sig.Params {
+		val, present := input[p.Name]
+
+		if !present || val == nil {
+			if len(p.Default) > 0 {
+				var dv interface{}
+				if err := json.Unmarshal(p.Default, &dv); err != nil {
+					return nil, &FunctionParamError{
+						Parameter: p.Name,
+						Code:      "default_invalid",
+						Reason:    fmt.Sprintf("default value is not valid JSON: %v", err),
+					}
+				}
+				out[p.Name] = dv
+				continue
+			}
+			if p.Required {
+				return nil, &FunctionParamError{
+					Parameter: p.Name,
+					Code:      "missing_required",
+					Reason:    fmt.Sprintf("required parameter %q is missing", p.Name),
+				}
+			}
+			continue
+		}
+
+		if p.Type != "" {
+			dt := types.DataType{Type: types.BaseType(p.Type)}
+			if err := types.Validate(val, dt, !p.Required); err != nil {
+				return nil, &FunctionParamError{
+					Parameter: p.Name,
+					Code:      "type_mismatch",
+					Reason:    err.Error(),
+				}
+			}
+		}
+		out[p.Name] = val
+	}
+
+	return out, nil
 }
 
 func trimASCIISpace(b []byte) []byte {
