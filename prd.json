@@ -553,8 +553,8 @@
         "Tests pass（'中国银行' 能搜到 '中国银行总部'）"
       ],
       "priority": 38,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "AnalyzerCJK constant + side-effect import of bleve/v2/analysis/lang/cjk; fieldMappingFor routes text + analyzer=cjk to Bleve's bigram CJK analyzer (unicode tokenizer + width filter + lowercase + bigram). PRD example '中国银行' matches '中国银行总部' via the new TestBuildMappingCJKAnalyzer. ObjectType opts in via existing TypeConfig.analyzer hint — no schema/migration change needed. Pure-Go (gojieba ruled out by CGO_ENABLED=0 invariant)."
     },
     {
       "id": "US-238",

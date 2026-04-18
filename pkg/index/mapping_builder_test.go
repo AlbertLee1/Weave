@@ -259,6 +259,82 @@ func TestBuildMappingNotIndexed(t *testing.T) {
 	}
 }
 
+// TestBuildMappingCJKAnalyzer is the US-237 acceptance test. A property
+// declaring `analyzer: cjk` in its TypeConfig must produce a TextField wired
+// to Bleve's CJK analyzer (unicode tokenizer + width filter + lowercase +
+// CJK bigram filter). Critically, a MatchQuery for "中国银行" must match a
+// document whose value is "中国银行总部" — this is the exact PRD example.
+func TestBuildMappingCJKAnalyzer(t *testing.T) {
+	ot := &oms.ObjectType{
+		APIName: "Bank",
+		Properties: []oms.Property{
+			{APIName: "id", BaseType: "string", IsSearchable: true},
+			{
+				APIName:      "name",
+				BaseType:     "string",
+				IsSearchable: true,
+				TypeConfig:   json.RawMessage(`{"analyzer":"cjk"}`),
+			},
+		},
+	}
+
+	im := BuildMapping(ot)
+	if im == nil {
+		t.Fatal("BuildMapping returned nil")
+	}
+
+	dm := im.DefaultMapping
+	nameDM, ok := dm.Properties["name"]
+	if !ok {
+		t.Fatalf("missing name mapping")
+	}
+	if len(nameDM.Fields) != 1 {
+		t.Fatalf("name got %d fields, want 1", len(nameDM.Fields))
+	}
+	if got := nameDM.Fields[0].Analyzer; got != AnalyzerCJK {
+		t.Errorf("name analyzer = %q, want %q", got, AnalyzerCJK)
+	}
+
+	idx, err := bleve.NewMemOnly(im)
+	if err != nil {
+		t.Fatalf("NewMemOnly: %v", err)
+	}
+	defer idx.Close()
+
+	docs := map[string]map[string]interface{}{
+		"1": {"id": "1", "name": "中国银行总部"},
+		"2": {"id": "2", "name": "美国华尔街分行"},
+		"3": {"id": "3", "name": "中国工商银行"},
+	}
+	for id, doc := range docs {
+		if err := idx.Index(id, doc); err != nil {
+			t.Fatalf("index %s: %v", id, err)
+		}
+	}
+
+	// The PRD acceptance: searching for "中国银行" lights up the doc whose
+	// name is "中国银行总部". With bigram analysis the query expands to
+	// {中国, 国银, 银行}, all three of which are present in doc 1.
+	mq := bleve.NewMatchQuery("中国银行")
+	mq.SetField("name")
+	res, err := idx.Search(bleve.NewSearchRequest(mq))
+	if err != nil {
+		t.Fatalf("search 中国银行: %v", err)
+	}
+	hits := make(map[string]bool, len(res.Hits))
+	for _, h := range res.Hits {
+		hits[h.ID] = true
+	}
+	if !hits["1"] {
+		t.Errorf("expected doc 1 (中国银行总部) to match 中国银行; hits=%v", hits)
+	}
+	// Doc 3 (中国工商银行) shares only {中国} as a complete bigram with the
+	// query — partial overlap is fine, but doc 2 must NOT match.
+	if hits["2"] {
+		t.Errorf("doc 2 (美国华尔街分行) should not match 中国银行; hits=%v", hits)
+	}
+}
+
 // TestBuildMappingNotAnalyzed verifies the single-field shape: the returned
 // mapping for a not_analyzed field must use the keyword analyzer explicitly.
 func TestBuildMappingNotAnalyzed(t *testing.T) {

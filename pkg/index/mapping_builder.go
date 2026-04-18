@@ -4,6 +4,12 @@ import (
 	"encoding/json"
 
 	"github.com/blevesearch/bleve/v2"
+	// Register the CJK analyzer so fieldMappingFor can select it for CJK
+	// (Chinese / Japanese / Korean) text. Bleve's CJK analyzer applies a
+	// width filter, lowercase, and a bigram filter on top of the unicode
+	// tokenizer — bigram analysis is what lets "中国银行" match
+	// "中国银行总部" (US-237).
+	_ "github.com/blevesearch/bleve/v2/analysis/lang/cjk"
 	// Register the English language analyzer so fieldMappingFor can select
 	// it by name for standard-text fields. The Porter/Snowball stemmer this
 	// package ships gives Foundry-like semantics for word-root matching
@@ -27,6 +33,11 @@ const (
 	AnalyzerNotAnalyzed = "not_analyzed"
 	AnalyzerStandard    = "standard"
 	AnalyzerNotIndexed  = "not_indexed"
+	// AnalyzerCJK selects bleve's CJK analyzer (unicode tokenizer + width
+	// filter + lowercase + bigram filter). Use it on text fields holding
+	// Chinese / Japanese / Korean content so that token-style queries like
+	// "中国银行" match "中国银行总部" via shared bigrams. US-237.
+	AnalyzerCJK = "cjk"
 )
 
 // MarkingsField is the reserved Bleve keyword field that carries every
@@ -109,7 +120,11 @@ func fieldMappingFor(analyzer, baseType string, isSearchable bool) *mapping.Fiel
 			return mapping.NewKeywordFieldMapping()
 		}
 		fm := mapping.NewTextFieldMapping()
-		fm.Analyzer = standardTextAnalyzer
+		if analyzer == AnalyzerCJK {
+			fm.Analyzer = AnalyzerCJK
+		} else {
+			fm.Analyzer = standardTextAnalyzer
+		}
 		return fm
 	}
 
