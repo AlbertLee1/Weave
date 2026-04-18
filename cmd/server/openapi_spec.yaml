@@ -1489,7 +1489,27 @@ components:
         where:
           type: object
           additionalProperties: true
-          description: WhereClause filter (see pkg/oss/where).
+          description: |
+            WhereClause filter (see pkg/oss/where). Supported `type` values
+            include eq, gt/gte/lt/lte, isNull, contains, fuzzy,
+            containsAllTerms, containsAnyTerm, containsAllTermsInOrder,
+            containsAllTermsInOrderPrefixLastTerm, startsWith, wildcard,
+            and/or/not, and the geospatial operators.
+        fuzzy:
+          type: object
+          description: |
+            Optional fuzzy matching config applied to eq / containsAllTerms /
+            containsAnyTerm / fuzzy clauses within `where`. The
+            `?fuzziness=N` query parameter, when set, overrides this field.
+          properties:
+            maxEdits:
+              type: integer
+              minimum: 0
+              maximum: 2
+              enum: [0, 1, 2]
+              description: |
+                Levenshtein edit distance (0, 1 or 2). When the `fuzzy` object is
+                provided but `maxEdits` is omitted or 0, the default is 1.
         select:
           type: array
           items:
@@ -5743,6 +5763,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ObjectType"
+        - name: fuzziness
+          in: query
+          required: false
+          description: |
+            Levenshtein edit distance for fuzzy matching. 0 disables fuzzy
+            (exact match), 1 tolerates one edit (e.g. "Kafka" matches "Kafca"),
+            2 tolerates two edits. When set, overrides any `fuzzy` body field.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 2
+            enum: [0, 1, 2]
       requestBody:
         required: true
         content:

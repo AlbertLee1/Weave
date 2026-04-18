@@ -36,6 +36,8 @@ func ConvertToBleveQueryWithOpts(clause *WhereClause, opts *ConvertOptions) (que
 		return convertIsNull(clause)
 	case "contains":
 		return convertContains(clause)
+	case "fuzzy":
+		return convertFuzzy(clause, fuzz)
 	case "containsAllTerms":
 		return convertContainsAllTermsFuzzy(clause, fuzz)
 	case "containsAnyTerm":
@@ -202,6 +204,35 @@ func convertContains(clause *WhereClause) (query.Query, error) {
 
 	q := bleve.NewTermQuery(strVal)
 	q.SetField(clause.Field)
+	return q, nil
+}
+
+// convertFuzzy handles the "fuzzy" operator using a Bleve FuzzyQuery.
+// Unlike MatchQuery.SetFuzziness (which tokenises+analyses the input),
+// FuzzyQuery treats the value as a single pre-analysed term and matches it
+// against the index with Levenshtein edit distance — the canonical tool for
+// "the indexed token is Kafka, the query is Kafca" lookups.
+//
+// Fuzziness precedence: when the caller provides no FuzzyConfig (fuzz==0) the
+// operator still needs a sensible default, so it falls back to 1 — matching the
+// resolveFuzziness "fuzzy-is-set-but-maxEdits-omitted" default.
+func convertFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
+	var strVal string
+	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
+		return nil, fmt.Errorf("fuzzy value must be a string: %w", err)
+	}
+	if strings.TrimSpace(strVal) == "" {
+		return nil, fmt.Errorf("fuzzy value must be a non-empty string")
+	}
+
+	effective := fuzz
+	if effective <= 0 {
+		effective = 1
+	}
+
+	q := bleve.NewFuzzyQuery(strings.ToLower(strVal))
+	q.SetField(clause.Field)
+	q.SetFuzziness(effective)
 	return q, nil
 }
 

@@ -255,11 +255,39 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 	// Read orderBy from query params (kept for backwards compat).
 	orderBy := r.URL.Query().Get("orderBy")
 
+	// Read fuzziness from query params. Accepts 0/1/2; anything else is a 400.
+	// When present it REPLACES any body.Fuzzy — the query-string form is the
+	// documented Foundry-style API and wins on conflict.
+	fuzzy := body.Fuzzy
+	if raw := r.URL.Query().Get("fuzziness"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 || n > where.MaxFuzziness {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFuzziness", map[string]string{
+				"reason":     "fuzziness must be 0, 1, or 2",
+				"fuzziness":  raw,
+				"maxAllowed": strconv.Itoa(where.MaxFuzziness),
+			}))
+			return
+		}
+		if n == 0 {
+			fuzzy = nil
+		} else {
+			fuzzy = &where.FuzzyConfig{MaxEdits: n}
+		}
+	} else if fuzzy != nil && (fuzzy.MaxEdits < 0 || fuzzy.MaxEdits > where.MaxFuzziness) {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFuzziness", map[string]string{
+			"reason":     "fuzzy.maxEdits must be 0, 1, or 2",
+			"fuzziness":  strconv.Itoa(fuzzy.MaxEdits),
+			"maxAllowed": strconv.Itoa(where.MaxFuzziness),
+		}))
+		return
+	}
+
 	page, err := h.svc.SearchObjects(r.Context(), SearchObjectsRequest{
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
 		Where:       body.Where,
-		Fuzzy:       body.Fuzzy,
+		Fuzzy:       fuzzy,
 		PageSize:    pageSize,
 		PageToken:   pageToken,
 		OrderBy:     orderBy,

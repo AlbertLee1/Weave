@@ -1063,3 +1063,117 @@ func TestFuzzy_ThroughAndClause(t *testing.T) {
 	ids := searchWithWhereOpts(t, idx, clause, opts)
 	assertIDs(t, ids, []string{"1"})
 }
+
+// --- "fuzzy" WhereClause operator (bleve.NewFuzzyQuery) ---
+//
+// These tests exercise the explicit fuzzy operator — a single-term FuzzyQuery
+// that doesn't re-tokenise the input. It complements MatchQuery.SetFuzziness
+// by giving callers a way to target one indexed token directly.
+
+func TestFuzzyOperator_MatchWithDefaultMaxEdits(t *testing.T) {
+	// No FuzzyConfig supplied → operator falls back to maxEdits=1.
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "name",
+		Value: json.RawMessage(`"jonh"`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"1"})
+}
+
+func TestFuzzyOperator_ExactMatch(t *testing.T) {
+	idx := setupFuzzyTestIndex(t)
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "name",
+		Value: json.RawMessage(`"john"`),
+	}
+	ids := searchWithWhere(t, idx, clause)
+	assertIDs(t, ids, []string{"1"})
+}
+
+func TestFuzzyOperator_HonoursMaxEdits(t *testing.T) {
+	// "kofka" → "kafka" needs one edit. With MaxEdits=2 it matches; the
+	// "disable-fuzzy" semantic for this operator is expressed by passing no
+	// FuzzyConfig at all and using a literal operator ("contains") instead —
+	// a non-nil FuzzyConfig with MaxEdits=0 means "use the default (1)".
+	idx := setupFuzzyTestIndex(t)
+	if err := idx.Index("4", map[string]interface{}{"name": "kafka", "city": "brno"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "name",
+		Value: json.RawMessage(`"kofka"`),
+	}
+
+	opts1 := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 1}}
+	ids := searchWithWhereOpts(t, idx, clause, opts1)
+	assertIDs(t, ids, []string{"4"})
+
+	// MaxEdits=2 still matches since 1 edit ≤ 2.
+	opts2 := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 2}}
+	ids = searchWithWhereOpts(t, idx, clause, opts2)
+	assertIDs(t, ids, []string{"4"})
+}
+
+func TestFuzzyOperator_MaxEdits2Tolerance(t *testing.T) {
+	// "kaffca" → "kafka" is two edits away; maxEdits=1 misses, maxEdits=2 hits.
+	idx := setupFuzzyTestIndex(t)
+	if err := idx.Index("4", map[string]interface{}{"name": "kafka", "city": "brno"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "name",
+		Value: json.RawMessage(`"kaffca"`),
+	}
+
+	opts1 := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 1}}
+	ids := searchWithWhereOpts(t, idx, clause, opts1)
+	assertIDs(t, ids, []string{})
+
+	opts2 := &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 2}}
+	ids = searchWithWhereOpts(t, idx, clause, opts2)
+	assertIDs(t, ids, []string{"4"})
+}
+
+func TestFuzzyOperator_EmptyValueRejected(t *testing.T) {
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "name",
+		Value: json.RawMessage(`"   "`),
+	}
+	if _, err := ConvertToBleveQuery(clause); err == nil {
+		t.Fatalf("expected error for empty fuzzy value")
+	}
+}
+
+func TestFuzzyOperator_NonStringRejected(t *testing.T) {
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "age",
+		Value: json.RawMessage(`42`),
+	}
+	if _, err := ConvertToBleveQuery(clause); err == nil {
+		t.Fatalf("expected error for numeric fuzzy value")
+	}
+}
+
+func TestFuzzyOperator_UsesBleveFuzzyQuery(t *testing.T) {
+	// Sanity: the operator must produce a *query.FuzzyQuery, not a MatchQuery —
+	// PRD US-232 explicitly requires Bleve FuzzyQuery integration.
+	clause := &WhereClause{
+		Type:  "fuzzy",
+		Field: "name",
+		Value: json.RawMessage(`"kafka"`),
+	}
+	q, err := ConvertToBleveQueryWithOpts(clause, &ConvertOptions{Fuzzy: &FuzzyConfig{MaxEdits: 2}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if _, ok := q.(*query.FuzzyQuery); !ok {
+		t.Fatalf("expected *query.FuzzyQuery, got %T", q)
+	}
+}
