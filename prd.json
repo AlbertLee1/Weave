@@ -900,8 +900,8 @@
         "Tests pass"
       ],
       "priority": 62,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "迁移 000059 在 link_types 增加 propagate_markings BOOLEAN NOT NULL DEFAULT FALSE。LinkType.PropagateMarkings 字段（JSON omitempty）经 PG INSERT/SELECT/UPDATE 全部 round-trip。CreateLinkTypeRequest 增加 bool 入参；UpdateLinkTypeRequest 用 *bool 三态指针，省略=保留、false=禁用、true=启用，避免裸 bool 把现有 LinkType 静默关掉。pkg/funnel 新增 LinkPropagationResolver 窄接口；Consumer.applyLinkCreate 在边写入成功后调用 propagateMarkings：解析源/目标 ObjectType API name -> 从 Bleve fetch 源 _markings -> 与目标 _markings 取去重排序并集 -> reindex 目标。所有传播失败仅 log 不阻断 LINK_CREATE（best-effort 富化）。cmd/server/link_propagation_resolver.go 用窄接口（只需 GetLinkType + GetObjectType）适配 OMS 仓库；degraded mode（无 PG）resolver 不挂载、Consumer 静默 no-op。新增 7 个 funnel 单测（基础继承/合并保留/禁用/源无标记/未知 LinkType/目标未索引/resolver 错误吞掉）+ helper 形状单测，6 个 cmd/server resolver 单测，7 个 oms 管理 handler 单测覆盖 POST/PUT/JSON 输出三态。"
     },
     {
       "id": "US-262",

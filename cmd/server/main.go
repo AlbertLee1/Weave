@@ -1454,6 +1454,16 @@ func main() {
 			)
 		})
 
+		// US-261: marking inheritance via LinkType.PropagateMarkings. The
+		// resolver looks up the LinkType + source/target ObjectType API
+		// names so the funnel consumer can copy `_markings` from the source
+		// onto the target after a successful LINK_CREATE upsert. Wired only
+		// when an OMS repo is available; degraded-mode (no PG) routers leave
+		// it unset and the consumer silently no-ops.
+		if deps.OmsRepo != nil {
+			deps.FunnelConsumer.SetLinkPropagationResolver(newLinkPropagationResolver(deps.OmsRepo))
+		}
+
 		// US-046: optional embedding side-channel. Each CREATE/MODIFY edit
 		// for a configured object type produces a vector via the embedding
 		// provider, rate-limited to the configured tokens-per-second budget.

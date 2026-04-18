@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,6 +55,28 @@ type LinkEdgeWriter interface {
 // Satisfied by *oms.PGRepository. Tests can supply a fake.
 type LinkEdgeDeleter interface {
 	DeleteLinkEdge(ctx context.Context, linkTypeRID, sourcePK, targetPK string) error
+}
+
+// LinkPropagation describes the LinkType-level settings the consumer needs
+// to drive US-261 marking inheritance. When PropagateMarkings is true, the
+// consumer copies the source object's markings into the target after a
+// successful LINK_CREATE upsert. The two API names are required so the
+// consumer can scope Bleve fetches/writes to the correct per-objectType
+// indexes; the field-name mismatch with LinkType.SourceObjectType (RIDs in
+// PG) is intentional — pkg/funnel must not import pkg/oms's RID resolution.
+type LinkPropagation struct {
+	PropagateMarkings       bool
+	SourceObjectTypeAPIName string
+	TargetObjectTypeAPIName string
+}
+
+// LinkPropagationResolver returns the propagation settings for a LinkType
+// RID. Nil resolver disables propagation altogether; (zero, false, nil)
+// means "LinkType not found" and is treated as a soft skip so an out-of-band
+// delete cannot poison the consumer. Implementations are expected to be
+// thread-safe (the consumer calls them from its NATS callback goroutine).
+type LinkPropagationResolver interface {
+	LookupLinkPropagation(ctx context.Context, linkTypeRID string) (LinkPropagation, bool, error)
 }
 
 // Consumer subscribes to NATS and processes edit batches, updating Bleve indexes.
@@ -115,6 +138,12 @@ type Consumer struct {
 	// processed. Nil = link delete edits are logged and skipped.
 	linkEdgeDeleter LinkEdgeDeleter
 
+	// linkPropagation, when set, resolves LinkType-level propagation
+	// settings (US-261) so the consumer can copy a source object's markings
+	// onto the target after a LINK_CREATE upsert. Nil disables propagation
+	// entirely, which preserves pre-US-261 behaviour.
+	linkPropagation LinkPropagationResolver
+
 	// embedFields holds the optional embedding side-channel state. See
 	// embeddings.go for the wiring methods and the per-batch hook.
 	embedFields
@@ -161,6 +190,15 @@ func (c *Consumer) SetLinkEdgeWriter(w LinkEdgeWriter) {
 // call before Start().
 func (c *Consumer) SetLinkEdgeDeleter(d LinkEdgeDeleter) {
 	c.linkEdgeDeleter = d
+}
+
+// SetLinkPropagationResolver wires the US-261 marking inheritance hook.
+// When set, every LINK_CREATE that successfully upserts an edge consults
+// the resolver to decide whether to copy the source object's marking set
+// into the target object's `_markings` field. Pass nil to disable. Safe
+// to call before Start().
+func (c *Consumer) SetLinkPropagationResolver(r LinkPropagationResolver) {
+	c.linkPropagation = r
 }
 
 // SetAlwaysApplyField wires the US-021 always-apply hook. When set, ingest
@@ -329,7 +367,7 @@ func (c *Consumer) applyEdit(ontologyAPIName string, edit Edit) error {
 		scopedKey := index.ScopedKey(ontologyAPIName, edit.ObjectType)
 		return c.indexMgr.DeleteDocument(scopedKey, edit.PrimaryKey)
 	case EditTypeLinkCreate:
-		return c.applyLinkCreate(edit)
+		return c.applyLinkCreate(ontologyAPIName, edit)
 	case EditTypeLinkDelete:
 		return c.applyLinkDelete(edit)
 	default:
@@ -337,8 +375,12 @@ func (c *Consumer) applyEdit(ontologyAPIName string, edit Edit) error {
 	}
 }
 
-// applyLinkCreate writes a M2M link edge via the configured LinkEdgeWriter.
-func (c *Consumer) applyLinkCreate(edit Edit) error {
+// applyLinkCreate writes a M2M link edge via the configured LinkEdgeWriter
+// and, when a LinkPropagationResolver is wired, propagates the source
+// object's markings onto the target (US-261). Propagation failures are
+// logged but never fail the edge upsert — the link is the source of truth
+// for graph traversal, marking inheritance is best-effort enrichment.
+func (c *Consumer) applyLinkCreate(ontologyAPIName string, edit Edit) error {
 	if c.linkEdgeWriter == nil {
 		log.Printf("funnel: LINK_CREATE skipped (no link edge writer): %s %s→%s",
 			edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey)
@@ -349,7 +391,143 @@ func (c *Consumer) applyLinkCreate(edit Edit) error {
 		SourceObjectPK: edit.PrimaryKey,
 		TargetObjectPK: edit.TargetPrimaryKey,
 	}
-	return c.linkEdgeWriter.UpsertLinkEdge(context.Background(), edge)
+	if err := c.linkEdgeWriter.UpsertLinkEdge(context.Background(), edge); err != nil {
+		return err
+	}
+	if err := c.propagateMarkings(ontologyAPIName, edit); err != nil {
+		log.Printf("funnel: marking propagation failed for %s %s→%s: %v",
+			edit.LinkTypeRID, edit.PrimaryKey, edit.TargetPrimaryKey, err)
+	}
+	return nil
+}
+
+// propagateMarkings is the US-261 hook that copies the source object's
+// `_markings` set onto the target object after a successful LINK_CREATE
+// upsert when the LinkType opts in via PropagateMarkings=true. Returns nil
+// for every "soft" skip (resolver not wired, LinkType not found, propagation
+// disabled, source has no markings, target not yet indexed) so the caller
+// only logs genuine errors. Bleve fetch + index writes are scoped to the
+// per-objectType indexes that the resolver returns.
+func (c *Consumer) propagateMarkings(ontologyAPIName string, edit Edit) error {
+	if c.linkPropagation == nil || edit.LinkTypeRID == "" {
+		return nil
+	}
+	info, found, err := c.linkPropagation.LookupLinkPropagation(context.Background(), edit.LinkTypeRID)
+	if err != nil {
+		return err
+	}
+	if !found || !info.PropagateMarkings {
+		return nil
+	}
+	if info.SourceObjectTypeAPIName == "" || info.TargetObjectTypeAPIName == "" {
+		return nil
+	}
+	srcDoc := c.fetchDocument(ontologyAPIName, info.SourceObjectTypeAPIName, edit.PrimaryKey)
+	sourceMarkings := decodeMarkings(srcDoc)
+	if len(sourceMarkings) == 0 {
+		return nil
+	}
+	tgtDoc := c.fetchDocument(ontologyAPIName, info.TargetObjectTypeAPIName, edit.TargetPrimaryKey)
+	if tgtDoc == nil {
+		return nil
+	}
+	existing := decodeMarkings(tgtDoc)
+	merged := mergeMarkings(existing, sourceMarkings)
+	if equalStringSet(existing, merged) {
+		return nil
+	}
+	newDoc := make(map[string]interface{}, len(tgtDoc))
+	for k, v := range tgtDoc {
+		if k == markingsField {
+			continue
+		}
+		newDoc[k] = v
+	}
+	newDoc[markingsField] = merged
+	return c.indexMgr.IndexDocument(
+		index.ScopedKey(ontologyAPIName, info.TargetObjectTypeAPIName),
+		edit.TargetPrimaryKey, newDoc)
+}
+
+// decodeMarkings extracts a deduplicated, sorted slice of marking names
+// from a Bleve-returned document. Bleve hands array fields back as either
+// `[]interface{}` or a single string when the array has length 1, so the
+// helper handles both shapes; an absent or non-string-valued key returns
+// nil (treated as "no markings" by callers).
+func decodeMarkings(doc map[string]interface{}) []string {
+	if doc == nil {
+		return nil
+	}
+	raw, ok := doc[markingsField]
+	if !ok || raw == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		seen[s] = struct{}{}
+	}
+	switch v := raw.(type) {
+	case string:
+		add(v)
+	case []string:
+		for _, s := range v {
+			add(s)
+		}
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				add(s)
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// mergeMarkings returns the deduplicated, sorted union of existing and
+// incoming marking names. Sorting keeps the on-disk shape stable so a
+// no-op re-index (existing already covers incoming) is detectable via
+// equalStringSet without re-sorting.
+func mergeMarkings(existing, incoming []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(incoming))
+	for _, s := range existing {
+		if s != "" {
+			seen[s] = struct{}{}
+		}
+	}
+	for _, s := range incoming {
+		if s != "" {
+			seen[s] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func equalStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // applyLinkDelete removes a M2M link edge via the configured LinkEdgeDeleter.
@@ -449,7 +627,7 @@ func (c *Consumer) applyBatchEdits(ontologyAPIName string, edits []Edit) error {
 	for _, edit := range linkEdits {
 		switch edit.Type {
 		case EditTypeLinkCreate:
-			if err := c.applyLinkCreate(edit); err != nil {
+			if err := c.applyLinkCreate(ontologyAPIName, edit); err != nil {
 				return fmt.Errorf("apply link create: %w", err)
 			}
 		case EditTypeLinkDelete:

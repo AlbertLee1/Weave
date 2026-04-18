@@ -157,6 +157,11 @@ type UpdateLinkTypeRequest struct {
 	// empty-string pointer to clear the existing pairing; omit the field to
 	// leave it untouched.
 	InverseLinkRID *string `json:"inverseLinkRid,omitempty"`
+	// PropagateMarkings (US-261) is a tri-state pointer: nil = leave the
+	// existing setting untouched, false = disable propagation, true = enable
+	// it. Bare bool would silently disable any LinkType that did not echo
+	// the field on a partial update.
+	PropagateMarkings *bool `json:"propagateMarkings,omitempty"`
 }
 
 // CreatePropertyRequest is the request body for creating a property.
@@ -185,6 +190,11 @@ type CreateLinkTypeRequest struct {
 	JoinTableConfig  json.RawMessage `json:"joinTableConfig,omitempty"`
 	IsRequired       bool            `json:"required"`
 	InverseLinkRID   string          `json:"inverseLinkRid,omitempty"`
+	// PropagateMarkings (US-261) opts the LinkType into automatic marking
+	// inheritance: every LINK_CREATE event copies the source object's
+	// `_markings` set into the target's. Default false preserves the
+	// pre-US-261 behaviour where link creation never touches markings.
+	PropagateMarkings bool `json:"propagateMarkings,omitempty"`
 }
 
 // CreateActionTypeRequest is the request body for creating an action type.
@@ -783,18 +793,19 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lt := &LinkType{
-		RID:              rid.NewLinkTypeRID(),
-		OntologyRID:      ontologyRID,
-		APIName:          req.APIName,
-		DisplayName:      req.DisplayName,
-		Description:      req.Description,
-		SourceObjectType: req.SourceObjectType,
-		TargetObjectType: req.TargetObjectType,
-		Cardinality:      req.Cardinality,
-		ForeignKeyConfig: req.ForeignKeyConfig,
-		JoinTableConfig:  req.JoinTableConfig,
-		IsRequired:       req.IsRequired,
-		InverseLinkRID:   req.InverseLinkRID,
+		RID:               rid.NewLinkTypeRID(),
+		OntologyRID:       ontologyRID,
+		APIName:           req.APIName,
+		DisplayName:       req.DisplayName,
+		Description:       req.Description,
+		SourceObjectType:  req.SourceObjectType,
+		TargetObjectType:  req.TargetObjectType,
+		Cardinality:       req.Cardinality,
+		ForeignKeyConfig:  req.ForeignKeyConfig,
+		JoinTableConfig:   req.JoinTableConfig,
+		IsRequired:        req.IsRequired,
+		InverseLinkRID:    req.InverseLinkRID,
+		PropagateMarkings: req.PropagateMarkings,
 	}
 
 	if apiErr := h.validateInverseLinkPair(r.Context(), lt); apiErr != nil {
@@ -1236,6 +1247,9 @@ func (h *OMSHandler) UpdateLinkType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.InverseLinkRID != nil {
 		updated.InverseLinkRID = *req.InverseLinkRID
+	}
+	if req.PropagateMarkings != nil {
+		updated.PropagateMarkings = *req.PropagateMarkings
 	}
 
 	if apiErr := h.validateInverseLinkPair(r.Context(), &updated); apiErr != nil {

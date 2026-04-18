@@ -268,8 +268,15 @@ type LinkType struct {
 	// relationship from the opposite direction (e.g. emp->dept pairs with
 	// dept->emp). Partner's (source, target) ObjectTypes must be the mirror
 	// of this row's (target, source); validation lives in the admin handlers.
-	InverseLinkRID string    `json:"inverseLinkRid,omitempty"`
-	CreatedAt      time.Time `json:"-"`
+	InverseLinkRID string `json:"inverseLinkRid,omitempty"`
+	// PropagateMarkings (US-261) toggles automatic marking inheritance for
+	// links created under this LinkType: when true, every LINK_CREATE event
+	// merges the source object's `_markings` set into the target object's
+	// `_markings` so child objects inherit the parent's classifications.
+	// Default false preserves pre-US-261 behaviour where link creation never
+	// touches markings.
+	PropagateMarkings bool      `json:"propagateMarkings,omitempty"`
+	CreatedAt         time.Time `json:"-"`
 }
 
 // ToWireJSON returns the V2 wire format JSON for LinkType.
@@ -288,6 +295,9 @@ func (lt *LinkType) ToWireJSON() ([]byte, error) {
 	}
 	if lt.InverseLinkRID != "" {
 		wire["inverseLinkRid"] = lt.InverseLinkRID
+	}
+	if lt.PropagateMarkings {
+		wire["propagateMarkings"] = true
 	}
 	return json.Marshal(wire)
 }

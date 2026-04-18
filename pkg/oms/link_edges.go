@@ -238,7 +238,7 @@ func (r *PGRepository) GetLinkTypeByAPIName(ctx context.Context, ontologyRID, ap
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 source_object_type, target_object_type, cardinality,
 		 foreign_key_config, join_table_config, is_required,
-		 COALESCE(inverse_link_rid, ''), created_at
+		 COALESCE(inverse_link_rid, ''), propagate_markings, created_at
 		 FROM link_types
 		 WHERE (rid = $2 OR api_name = $2)
 		   AND (ontology_rid = $1
@@ -247,7 +247,7 @@ func (r *PGRepository) GetLinkTypeByAPIName(ctx context.Context, ontologyRID, ap
 		Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
 			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
 			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired,
-			&lt.InverseLinkRID, &lt.CreatedAt)
+			&lt.InverseLinkRID, &lt.PropagateMarkings, &lt.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
