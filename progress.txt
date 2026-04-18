@@ -24,6 +24,7 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - react-dropzone in jsdom: the hidden file input is exposed via `getInputProps()`. Tests should drop files by `Object.defineProperty(input, 'files', { value: [file] })` + `fireEvent.change(input)` instead of constructing a DataTransfer (jsdom lacks it). Wrap state-changing calls in `act(async () => {...})` so React flushes the dropzone's internal state update.
 - Parameterized BaseType additions (Array/Struct/Union): no migration needed. `Property.TypeConfig` is JSONB and `DataTypeJSON` merges unknown keys through, so adding a `Variants []DataType` / similar field on `pkg/types.DataType` is a wire-only change. Only 4 places need editing: (1) new constant + `allBaseTypes` entry, (2) `json:"xxx,omitempty"` DataType field, (3) Coerce+Validate branches, (4) sdkgen typemap (ts/python/go).
 - Union-typed values are tagged on the wire. Two accepted shapes: `{__type: "<variant>", value: <v>}` (universal wrapper — coerce emits this form) OR `{__type: "<variant>", ...structFields}` (flattened tagged struct — read path recognizes it via "key count != 2" heuristic). Validate trusts the `__type` hint when present; untagged values are tried variant-by-variant in declared order. Put specific variants first — `fmt.Sprintf`-backed String coerce is greedy.
+- Recursive UI components using self-referential data: label each level with a dot-separated path prop ('', '0', '0.1', ...) so aria-labels stay unique and tests can address any depth via `struct field name 0.1` / `data-testid="struct-fields-0.1"`. Root gets its own sentinel testid (e.g. `struct-fields-root`). Validators walk the same tree recursively — keep "this subtree is valid" one function that short-circuits on first bad leaf.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -224,5 +225,36 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - When Coerce tries each variant, both Coerce AND Validate must succeed for the variant to be accepted. Coerce alone is too lenient for `Union[string, integer]` — `coerceString(42)` succeeds via `fmt.Sprintf`, which would mean integer input always lands in the first variant if it's string. The Validate pass after Coerce is what makes the "try-in-order" semantic meaningful.
   - Ordering matters: put MORE-specific variants first. For `Union[Integer, String]`, `"42"` coerces to Integer; `"hello"` falls through to String. Reversing the order would route `"42"` to String (via fmt.Sprintf) and never try Integer.
   - `TestBaseType_AllDefined` is the canary that flags any new BaseType addition — the fixed-length slice + count assertion catches drift between `allBaseTypes` and the explicit enumeration.
+---
+
+## 2026-04-18 - US-207 Struct 嵌套属性编辑器
+- Extended the Admin property editor so Struct's `fields` can themselves be Struct — recursively — via the existing `typeConfig: { fields: [...] }` wire format.
+  - `StructField` gains an optional `fields?: StructField[]` (populated only when `type === 'struct'`).
+  - `StructFieldsEditor` is now self-recursive: each field row reads its `type` select, and when `type === 'struct'` the row renders a nested `<StructFieldsEditor>` beneath it, indented via a left border (`ml-4 pl-3 border-l`).
+  - Type selector now shows the full BASE_TYPES list (previously filtered 'struct' out so nesting was impossible).
+  - Reorder: each row has ▲ / ▼ buttons that swap with the neighbour; ▲ disabled on the first row, ▼ disabled on the last. Remove (✕) stays.
+  - Wire shape on submit: scalar fields serialize to `{name, type}`; struct fields serialize to `{name, type: 'struct', fields: [...]}` recursively. `serializeStructFields` guarantees the omitempty shape — no empty `fields` key on scalar entries.
+  - `parseStructConfig` → `parseStructFields` recursively parses already-persisted struct configs so the Edit flow can round-trip nested structures in future.
+  - Validation (`isStructTreeValid`) recursively requires each struct subtree to have ≥1 field AND every field name to be non-empty. The outer `AddPropertyForm.structInvalid` uses it directly to disable Submit; a nested empty struct blocks submit the same way a top-level empty struct does.
+- Labels / test ids use dot-separated path strings so aria-label queries stay unambiguous at any depth:
+  - Root container: `data-testid="struct-fields-root"`, field labels `struct field name 0`, `struct field type 0`, move/remove buttons `move struct field 0 up`, `move struct field 0 down`, `remove struct field 0`.
+  - Nested inside index 0: `data-testid="struct-fields-0"`, labels `struct field name 0.1`, etc.
+- 6 new RTL tests in `PropertiesEditor.test.tsx`:
+  - Nested struct happy path — outer struct → inner struct → string leaf, submit POSTs typeConfig with the full recursive shape.
+  - Submit blocked when a nested struct is declared but has no children.
+  - Reorder: 3 fields, click ▲ on index 2, verify order a-c-b.
+  - Move button disable state at list boundaries.
+  - Nested remove: delete a child under an outer struct.
+  - Pre-existing "renders struct field editor" test updated to query the new `struct-fields-root` testid.
+- Full web suite: `tsc -b` clean, `vitest run` 70 files / 473 tests all green, `vite build` clean.
+- Files changed:
+  - `web/src/components/admin/PropertiesEditor.tsx` (StructField adds fields?, parseStructFields/serializeStructFields/isStructTreeValid helpers, recursive StructFieldsEditor with reorder controls, nested indentation, type selector no longer filters struct)
+  - `web/src/components/admin/__tests__/PropertiesEditor.test.tsx` (6 new tests + testid rename)
+  - `prd.json` (US-207 passes=true)
+- **Learnings for future iterations:**
+  - Recursive React components that need to be addressable by tests at any depth should accept a `path?: string` prop (default `""` for root) and embed it in both `data-testid` and every `aria-label` they emit. Labels like `struct field name 0.1.2` stay unique; a parent test that scopes via `within(getByTestId('struct-fields-0.1'))` stays tidy. Don't use raw integer indices at nested levels — they collide with the parent's.
+  - When broadening a choice set in the UI (here: allowing 'struct' in the nested type select), the validator must ALSO broaden. If `isStructTreeValid` only checked the top-level, an empty nested struct would silently ship a `{fields: []}` subtree to the backend. The rule "allowed in the UI ⇒ validated in the UI" is easy to forget because the scalar validator already short-circuits on the top-level length==0 check.
+  - React Testing Library accessible-name matching on buttons with decorative prefixes: "+ Add field" matches `/Add field/i` but NOT `/^Add field$/i`. Anchored regexes are dangerous when labels carry icons / punctuation. Prefer substring matches + scoping via `within(parentEl)` to disambiguate rather than anchoring.
+  - Keep wire serialization centralized in one helper (`serializeStructFields`). The in-memory state can carry an `undefined` or an empty `fields` on scalar rows while the user is editing, but the JSON that hits the backend must be canonical — one function at the boundary is the only way to keep that invariant. Same idea as pkg/oss/objectset's validate-at-boundary pattern.
 ---
 

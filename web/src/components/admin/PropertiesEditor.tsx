@@ -41,18 +41,16 @@ type BaseType = (typeof BASE_TYPES)[number];
 interface StructField {
   name: string;
   type: BaseType;
+  fields?: StructField[];
 }
 
 export interface StructTypeConfig {
   fields: StructField[];
 }
 
-function parseStructConfig(tc: unknown): StructField[] {
-  if (!tc || typeof tc !== 'object') return [];
-  const obj = tc as Record<string, unknown>;
-  const fields = obj.fields;
-  if (!Array.isArray(fields)) return [];
-  return fields
+function parseStructFields(raw: unknown): StructField[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
     .map((f) => {
       if (!f || typeof f !== 'object') return null;
       const rec = f as Record<string, unknown>;
@@ -63,9 +61,41 @@ function parseStructConfig(tc: unknown): StructField[] {
           ? (rec.type as BaseType)
           : 'string';
       if (!name) return null;
-      return { name, type };
+      const field: StructField = { name, type };
+      if (type === 'struct') {
+        field.fields = parseStructFields(rec.fields);
+      }
+      return field;
     })
     .filter((f): f is StructField => f !== null);
+}
+
+function parseStructConfig(tc: unknown): StructField[] {
+  if (!tc || typeof tc !== 'object') return [];
+  const obj = tc as Record<string, unknown>;
+  return parseStructFields(obj.fields);
+}
+
+function serializeStructFields(fields: StructField[]): StructField[] {
+  return fields.map((f) => {
+    if (f.type === 'struct') {
+      return {
+        name: f.name,
+        type: f.type,
+        fields: serializeStructFields(f.fields ?? []),
+      };
+    }
+    return { name: f.name, type: f.type };
+  });
+}
+
+function isStructTreeValid(fields: StructField[]): boolean {
+  if (fields.length === 0) return false;
+  for (const f of fields) {
+    if (!f.name.trim()) return false;
+    if (f.type === 'struct' && !isStructTreeValid(f.fields ?? [])) return false;
+  }
+  return true;
 }
 
 export function PropertiesEditor({
@@ -335,9 +365,7 @@ function AddPropertyForm({
   );
   const duplicate = !!form.apiName && taken.has(form.apiName);
   const structInvalid =
-    form.baseType === 'struct' &&
-    (form.structFields.length === 0 ||
-      form.structFields.some((f) => !f.name.trim()));
+    form.baseType === 'struct' && !isStructTreeValid(form.structFields);
   const canSubmit =
     !!form.apiName.trim() && !duplicate && !structInvalid && !create.isPending;
 
@@ -355,7 +383,7 @@ function AddPropertyForm({
       isSortable: form.isSortable,
     };
     if (form.baseType === 'struct') {
-      body.typeConfig = { fields: form.structFields };
+      body.typeConfig = { fields: serializeStructFields(form.structFields) };
     }
     try {
       await create.mutateAsync(body);
@@ -719,10 +747,14 @@ function DeletePropertyForm({
 function StructFieldsEditor({
   fields,
   onChange,
+  path = '',
 }: {
   fields: StructField[];
   onChange: (fields: StructField[]) => void;
+  path?: string;
 }) {
+  const testId = path === '' ? 'struct-fields-root' : `struct-fields-${path}`;
+
   function setField(idx: number, next: StructField) {
     const copy = fields.slice();
     copy[idx] = next;
@@ -736,11 +768,19 @@ function StructFieldsEditor({
   function addField() {
     onChange([...fields, { name: '', type: 'string' }]);
   }
+  function moveField(idx: number, delta: -1 | 1) {
+    const target = idx + delta;
+    if (target < 0 || target >= fields.length) return;
+    const copy = fields.slice();
+    [copy[idx], copy[target]] = [copy[target], copy[idx]];
+    onChange(copy);
+  }
+
   return (
-    <div className="flex flex-col gap-2" data-testid="struct-fields">
+    <div className="flex flex-col gap-2" data-testid={testId}>
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-widest text-text-secondary">
-          Struct fields
+          {path === '' ? 'Struct fields' : 'Nested fields'}
         </span>
         <button
           type="button"
@@ -755,45 +795,87 @@ function StructFieldsEditor({
           Struct type requires at least one field.
         </p>
       )}
-      {fields.map((f, idx) => (
-        <div key={idx} className="grid grid-cols-[1fr_10rem_auto] gap-2">
-          <input
-            type="text"
-            aria-label={`struct field name ${idx}`}
-            placeholder="field name"
-            value={f.name}
-            onChange={(e) =>
-              setField(idx, { ...f, name: e.target.value })
-            }
-            className={inputClass + ' font-mono'}
-          />
-          <select
-            aria-label={`struct field type ${idx}`}
-            value={f.type}
-            onChange={(e) =>
-              setField(idx, {
-                ...f,
-                type: e.target.value as BaseType,
-              })
-            }
-            className={inputClass}
-          >
-            {BASE_TYPES.filter((t) => t !== 'struct').map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => removeField(idx)}
-            aria-label={`remove struct field ${idx}`}
-            className="px-2 text-xs text-accent-error hover:underline"
-          >
-            ✕
-          </button>
-        </div>
-      ))}
+      {fields.map((f, idx) => {
+        const label = path === '' ? `${idx}` : `${path}.${idx}`;
+        const isStruct = f.type === 'struct';
+        return (
+          <div key={idx} className="flex flex-col gap-2">
+            <div className="grid grid-cols-[1fr_10rem_auto_auto_auto] gap-2 items-center">
+              <input
+                type="text"
+                aria-label={`struct field name ${label}`}
+                placeholder="field name"
+                value={f.name}
+                onChange={(e) =>
+                  setField(idx, { ...f, name: e.target.value })
+                }
+                className={inputClass + ' font-mono'}
+              />
+              <select
+                aria-label={`struct field type ${label}`}
+                value={f.type}
+                onChange={(e) => {
+                  const nextType = e.target.value as BaseType;
+                  const next: StructField = { ...f, type: nextType };
+                  if (nextType === 'struct') {
+                    next.fields = f.fields ?? [];
+                  } else {
+                    delete next.fields;
+                  }
+                  setField(idx, next);
+                }}
+                className={inputClass}
+              >
+                {BASE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => moveField(idx, -1)}
+                disabled={idx === 0}
+                aria-label={`move struct field ${label} up`}
+                className="px-1.5 text-xs text-accent-cyan hover:underline disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:no-underline"
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                onClick={() => moveField(idx, 1)}
+                disabled={idx === fields.length - 1}
+                aria-label={`move struct field ${label} down`}
+                className="px-1.5 text-xs text-accent-cyan hover:underline disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:no-underline"
+              >
+                ▼
+              </button>
+              <button
+                type="button"
+                onClick={() => removeField(idx)}
+                aria-label={`remove struct field ${label}`}
+                className="px-2 text-xs text-accent-error hover:underline"
+              >
+                ✕
+              </button>
+            </div>
+            {isStruct && (
+              <div
+                className="ml-4 pl-3 border-l"
+                style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+              >
+                <StructFieldsEditor
+                  fields={f.fields ?? []}
+                  onChange={(nextChildren) =>
+                    setField(idx, { ...f, fields: nextChildren })
+                  }
+                  path={label}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

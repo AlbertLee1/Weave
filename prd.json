@@ -120,8 +120,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PropertiesEditor.StructFieldsEditor now self-recurses: when a field's type is set to 'struct' a nested editor renders inline (data-testid=struct-fields-{path}, dot-separated path like '0.1'); BASE_TYPES no longer filtered so nested struct is selectable; add/remove/up/down controls per row, up/down disabled on boundaries; serializeStructFields produces {fields:[{name,type,fields?}]} matching the existing {fields:[...]} wire shape; isStructTreeValid recursively enforces 'each struct must have >=1 non-empty-named child'; 6 new RTL tests cover nested-struct happy path, empty-nested-struct submit block, reorder, move button disabled states, nested remove; web vitest 473/473 green, tsc -b clean, vite build clean"
     },
     {
       "id": "US-208",

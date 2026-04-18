@@ -296,7 +296,7 @@ describe('PropertiesEditor', () => {
       within(form).getByLabelText(/Base Type/i),
       'struct',
     );
-    expect(within(form).getByTestId('struct-fields')).toBeInTheDocument();
+    expect(within(form).getByTestId('struct-fields-root')).toBeInTheDocument();
     expect(
       within(form).getByText(/Struct type requires at least one field/i),
     ).toBeInTheDocument();
@@ -377,5 +377,224 @@ describe('PropertiesEditor', () => {
       name: 'Delete',
     }) as HTMLButtonElement;
     expect(deleteBtn.disabled).toBe(true);
+  });
+
+  it('supports nested struct fields recursively', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: /Add Property/i }));
+    const form = await screen.findByTestId('add-property-form');
+    await user.type(within(form).getAllByRole('textbox')[0], 'profile');
+    await user.selectOptions(
+      within(form).getByLabelText(/Base Type/i),
+      'struct',
+    );
+
+    const topFields = within(form).getByTestId('struct-fields-root');
+    await user.click(
+      within(topFields).getByRole('button', { name: /Add field/i }),
+    );
+    const outerName = within(topFields).getByLabelText(
+      'struct field name 0',
+    ) as HTMLInputElement;
+    await user.type(outerName, 'address');
+    const outerType = within(topFields).getByLabelText(
+      'struct field type 0',
+    ) as HTMLSelectElement;
+    expect(
+      Array.from(outerType.options).map((o) => o.value),
+    ).toContain('struct');
+    await user.selectOptions(outerType, 'struct');
+
+    const nested = await within(form).findByTestId('struct-fields-0');
+    await user.click(
+      within(nested).getByRole('button', { name: /Add field/i }),
+    );
+    const nestedName = within(nested).getByLabelText(
+      'struct field name 0.0',
+    ) as HTMLInputElement;
+    await user.type(nestedName, 'street');
+    const nestedType = within(nested).getByLabelText(
+      'struct field type 0.0',
+    ) as HTMLSelectElement;
+    await user.selectOptions(nestedType, 'string');
+
+    await user.click(
+      within(form).getByRole('button', { name: /Create property/i }),
+    );
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    const body = state.createCalls[0].body as Record<string, unknown>;
+    expect(body.baseType).toBe('struct');
+    expect(body.typeConfig).toEqual({
+      fields: [
+        {
+          name: 'address',
+          type: 'struct',
+          fields: [{ name: 'street', type: 'string' }],
+        },
+      ],
+    });
+  });
+
+  it('blocks submit when a nested struct field has no children', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: /Add Property/i }));
+    const form = await screen.findByTestId('add-property-form');
+    await user.type(within(form).getAllByRole('textbox')[0], 'profile');
+    await user.selectOptions(
+      within(form).getByLabelText(/Base Type/i),
+      'struct',
+    );
+    const topFields = within(form).getByTestId('struct-fields-root');
+    await user.click(
+      within(topFields).getByRole('button', { name: /Add field/i }),
+    );
+    await user.type(
+      within(topFields).getByLabelText('struct field name 0'),
+      'nested',
+    );
+    await user.selectOptions(
+      within(topFields).getByLabelText('struct field type 0'),
+      'struct',
+    );
+
+    const submit = within(form).getByRole('button', {
+      name: /Create property/i,
+    }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+  });
+
+  it('reorders struct fields via move-up / move-down controls', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: /Add Property/i }));
+    const form = await screen.findByTestId('add-property-form');
+    await user.type(within(form).getAllByRole('textbox')[0], 'profile');
+    await user.selectOptions(
+      within(form).getByLabelText(/Base Type/i),
+      'struct',
+    );
+    const topFields = within(form).getByTestId('struct-fields-root');
+    for (let i = 0; i < 3; i++) {
+      await user.click(
+        within(topFields).getByRole('button', { name: /Add field/i }),
+      );
+    }
+    await user.type(
+      within(topFields).getByLabelText('struct field name 0'),
+      'a',
+    );
+    await user.type(
+      within(topFields).getByLabelText('struct field name 1'),
+      'b',
+    );
+    await user.type(
+      within(topFields).getByLabelText('struct field name 2'),
+      'c',
+    );
+
+    await user.click(
+      within(topFields).getByLabelText('move struct field 2 up'),
+    );
+    await user.click(
+      within(form).getByRole('button', { name: /Create property/i }),
+    );
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    const body = state.createCalls[0].body as Record<string, unknown>;
+    expect(body.typeConfig).toEqual({
+      fields: [
+        { name: 'a', type: 'string' },
+        { name: 'c', type: 'string' },
+        { name: 'b', type: 'string' },
+      ],
+    });
+  });
+
+  it('disables move-up on the first field and move-down on the last', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: /Add Property/i }));
+    const form = await screen.findByTestId('add-property-form');
+    await user.selectOptions(
+      within(form).getByLabelText(/Base Type/i),
+      'struct',
+    );
+    const topFields = within(form).getByTestId('struct-fields-root');
+    await user.click(
+      within(topFields).getByRole('button', { name: /Add field/i }),
+    );
+    await user.click(
+      within(topFields).getByRole('button', { name: /Add field/i }),
+    );
+    const firstUp = within(topFields).getByLabelText(
+      'move struct field 0 up',
+    ) as HTMLButtonElement;
+    const lastDown = within(topFields).getByLabelText(
+      'move struct field 1 down',
+    ) as HTMLButtonElement;
+    expect(firstUp.disabled).toBe(true);
+    expect(lastDown.disabled).toBe(true);
+  });
+
+  it('removes a nested struct field', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: /Add Property/i }));
+    const form = await screen.findByTestId('add-property-form');
+    await user.type(within(form).getAllByRole('textbox')[0], 'profile');
+    await user.selectOptions(
+      within(form).getByLabelText(/Base Type/i),
+      'struct',
+    );
+    const topFields = within(form).getByTestId('struct-fields-root');
+    await user.click(
+      within(topFields).getByRole('button', { name: /Add field/i }),
+    );
+    await user.type(
+      within(topFields).getByLabelText('struct field name 0'),
+      'outer',
+    );
+    await user.selectOptions(
+      within(topFields).getByLabelText('struct field type 0'),
+      'struct',
+    );
+    const nested = await within(form).findByTestId('struct-fields-0');
+    await user.click(
+      within(nested).getByRole('button', { name: /Add field/i }),
+    );
+    await user.type(
+      within(nested).getByLabelText('struct field name 0.0'),
+      'kid',
+    );
+    await user.selectOptions(
+      within(nested).getByLabelText('struct field type 0.0'),
+      'integer',
+    );
+    await user.click(
+      within(nested).getByLabelText('remove struct field 0.0'),
+    );
+    expect(
+      within(nested).queryByLabelText('struct field name 0.0'),
+    ).not.toBeInTheDocument();
   });
 });
