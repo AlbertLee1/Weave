@@ -131,6 +131,15 @@ func (r *PGUserRepository) UpsertUserRole(ctx context.Context, userID, role stri
 	return err
 }
 
+// RevokeUserRole deletes the user's grant of the supplied role. Idempotent:
+// removing a role the user does not hold is a no-op.
+func (r *PGUserRepository) RevokeUserRole(ctx context.Context, userID, role string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM user_roles WHERE user_id = $1 AND role = $2`,
+		userID, role)
+	return err
+}
+
 // SetPassword writes the bcrypt password_hash for the given user. Returns
 // ErrUserNotFound if no user matches.
 func (r *PGUserRepository) SetPassword(ctx context.Context, userID, passwordHash string) error {

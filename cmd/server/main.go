@@ -145,6 +145,12 @@ type ServerDeps struct {
 	// degraded mode so the /api/admin/service-accounts routes are not
 	// mounted.
 	ServiceAccountRepo auth.ServiceAccountRepository
+	// US-251: Groups / Roles admin CRUD. Populated from the uncached
+	// *PGRepository wrappers in the PG bootstrap block; nil in degraded
+	// mode so the /api/admin/{groups,roles,users}/... routes are not
+	// mounted.
+	GroupRepo auth.GroupRepository
+	RoleRepo  auth.RoleRepository
 	CORSOrigins []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -582,6 +588,35 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					saHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-251: Groups / Roles / User-role admin CRUD. Gated behind
+		// PermUserManage. Each handler mounts conditionally on its own
+		// repo so partially-wired deployments (e.g. unit-test routers)
+		// don't trip mystery 5xxs. User-role grant+revoke requires BOTH
+		// the users repo (for existence check + grant) and the roles
+		// repo (for registry lookup), so it gates on both.
+		if deps.GroupRepo != nil {
+			groupHandler := auth.NewGroupHandler(deps.GroupRepo, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					groupHandler.RegisterRoutes(admin)
+				})
+		}
+		if deps.RoleRepo != nil {
+			roleHandler := auth.NewRoleHandler(deps.RoleRepo, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					roleHandler.RegisterRoutes(admin)
+				})
+		}
+		if deps.UserRepo != nil && deps.RoleRepo != nil {
+			revoker, _ := deps.UserRepo.(auth.UserRoleRevoker)
+			userRoleHandler := auth.NewUserRoleHandler(deps.UserRepo, deps.RoleRepo, revoker, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					userRoleHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -707,6 +742,11 @@ func main() {
 		// implementation is uncached — CRUD volume is low and the
 		// name-uniqueness invariant needs fresh reads.
 		deps.ServiceAccountRepo = auth.NewPGServiceAccountRepository(pool)
+		// US-251: Groups and roles registry. Same uncached pattern — admin
+		// CRUD volume is low and both tables back cache-sensitive lookups
+		// (group membership, role→permission resolution).
+		deps.GroupRepo = auth.NewPGGroupRepository(pool)
+		deps.RoleRepo = auth.NewPGRoleRepository(pool)
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)

@@ -758,8 +758,8 @@
         "Tests pass"
       ],
       "priority": 52,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000051 adds groups / user_groups / roles / role_permissions (users table pre-exists from migration 000007); seeds 5 built-in roles (viewer/editor/ontology-owner/admin/ingest-writer) with Builtin=true. Narrow GroupRepository (Create/Get/List/Update/Delete + AddMember/RemoveMember/ListMembers/ListUserGroups) and RoleRepository (Create/Get/List/Delete/UpdateDescription + SetPermissions/ListPermissions) with PG-backed impls kept off oms.Repository to avoid the cascade-stub problem (matches US-249 pattern). Admin handlers: GroupHandler + RoleHandler + UserRoleHandler mount 14 endpoints under PermUserManage guard — /api/admin/groups CRUD + /members, /api/admin/roles CRUD + /permissions, /api/admin/users/{id}/roles grant+revoke. Built-in role protection at handler layer (409 BuiltinRoleProtected on DELETE + PUT permissions). List endpoint resolves empty builtins via static RolePermissions() fallback so wire responses match resolver. Grant handler validates BOTH user existence + role registry presence before UpsertUserRole. UserRoleRevoker narrow interface added to avoid widening UserRepository mock cascade. 38 unit tests + 11 PG integration tests all green."
     },
     {
       "id": "US-252",

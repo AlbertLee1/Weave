@@ -72,7 +72,25 @@ func (f *fakeUserRepo) ListUserOntologyRoles(_ context.Context, userID string) (
 }
 
 func (f *fakeUserRepo) UpsertUserRole(_ context.Context, userID, role string) error {
+	for _, existing := range f.roles[userID] {
+		if existing == role {
+			return nil
+		}
+	}
 	f.roles[userID] = append(f.roles[userID], role)
+	return nil
+}
+
+// RevokeUserRole satisfies UserRoleRevoker for the fake. Idempotent.
+func (f *fakeUserRepo) RevokeUserRole(_ context.Context, userID, role string) error {
+	existing := f.roles[userID]
+	filtered := existing[:0]
+	for _, r := range existing {
+		if r != role {
+			filtered = append(filtered, r)
+		}
+	}
+	f.roles[userID] = filtered
 	return nil
 }
 
