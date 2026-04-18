@@ -140,6 +140,11 @@ type ServerDeps struct {
 	// any misconfig (missing IdP cert, unparseable PEM) leaves Handler
 	// nil and the routes are not mounted.
 	SAMLHandler *auth.SAMLHandler
+	// US-249: Service account admin CRUD. Populated from the uncached
+	// *PGRepository-style wrapper in the PG bootstrap block; nil in
+	// degraded mode so the /api/admin/service-accounts routes are not
+	// mounted.
+	ServiceAccountRepo auth.ServiceAccountRepository
 	CORSOrigins []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -565,6 +570,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			usageHandler := developer.NewUsageHandler(deps.ApplicationRepo, deps.UsageSamples)
 			usageHandler.RegisterRoutes(api)
 		}
+
+		// US-249: Service accounts admin CRUD. Gated behind PermUserManage so
+		// only admin-level roles can mint / list / revoke non-interactive
+		// principals. Degraded mode without PG leaves the repo nil and the
+		// routes are not mounted so test routers don't see mystery 5xxs.
+		if deps.ServiceAccountRepo != nil {
+			saHandler := auth.NewServiceAccountHandler(deps.ServiceAccountRepo, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					saHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -685,6 +702,11 @@ func main() {
 		deps.IndexDocSource = newPGIndexDocSource(pgRepo)
 		deps.UserRepo = auth.NewPGUserRepository(pool)
 		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
+		// US-249: service accounts share the users FK so the bootstrap
+		// ordering is after UserRepo (which runs migrations). The PG
+		// implementation is uncached — CRUD volume is low and the
+		// name-uniqueness invariant needs fresh reads.
+		deps.ServiceAccountRepo = auth.NewPGServiceAccountRepository(pool)
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)

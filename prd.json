@@ -729,8 +729,8 @@
         "Tests pass"
       ],
       "priority": 50,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000049_service_accounts creates the table with FK to users(id), TEXT[] scopes, RFC3339 expires_at, soft-delete via disabled_at, and a unique partial index on name WHERE disabled_at IS NULL so operators can recreate a SA under the same name after disabling the prior one. pkg/auth/service_account.go carries ServiceAccount + Validate + IsActive helpers (name regex ^[A-Za-z0-9][A-Za-z0-9._-]*$ up to 128 chars; pointer-typed ExpiresAt/DisabledAt). pkg/auth/service_account_repository.go is the narrow ServiceAccountRepository interface + PGServiceAccountRepository (Create/GetByID/GetByName/ListActive/Update/Disable) with dynamic partial-PATCH SQL and SQLSTATE 23505→ErrServiceAccountNameConflict translation. ServiceAccountUpdate uses *Description / *[]Scopes / **ExpiresAt pointer-fields so omit/clear/replace are all distinguishable. pkg/auth/service_account_handlers.go mounts the 5-endpoint CRUD: POST/GET/GET-id/PATCH/DELETE — owner defaults to the caller's UserFromContext, 409 on name conflict, 404 on unknown id, 400 on bad RFC3339, 401 on missing user. cmd/server/main.go wires deps.ServiceAccountRepo (uncached *PGRepository) and gates the routes behind RequirePermission(PermUserManage) so only admin-level roles can mutate; degraded mode (no PG) leaves the repo nil and the routes are not mounted (proven by TestUS249_ServiceAccountRoutesUnmountedWithoutRepo). 18 handler unit tests + 6 repository integration tests + 2 wire tests all green; full CGO_ENABLED=0 build clean; short test suite across pkg/auth, pkg/... and cmd/server green."
     },
     {
       "id": "US-250",
