@@ -39,6 +39,7 @@ class Client:
 
         # Lazy import to avoid circular references at module-import time.
         from .actions import ActionsAPI
+        from .functions import FunctionsAPI
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
@@ -47,6 +48,7 @@ class Client:
         self.objects = ObjectsAPI(self)
         self.actions = ActionsAPI(self)
         self.objectsets = ObjectSetsAPI(self)
+        self.functions = FunctionsAPI(self)
 
     @property
     def token(self) -> str:

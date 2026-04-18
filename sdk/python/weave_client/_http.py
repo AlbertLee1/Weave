@@ -11,7 +11,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 try:  # pragma: no cover - exercised only when httpx is installed
     import httpx  # type: ignore
@@ -80,6 +80,73 @@ class Transport:
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8") if e.fp is not None else ""
             return HTTPResponse(e.code, body, dict(e.headers or {}))
+
+    def stream_lines(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Optional[Dict[str, str]] = None,
+        json_body: Any = None,
+    ) -> Tuple[int, Dict[str, str], Iterator[str]]:
+        """Issue a request and return (status, headers, line_iterator).
+
+        Used by NDJSON-style streaming endpoints (US-219). Callers consume
+        the iterator lazily — each yielded value is one decoded UTF-8 line
+        with the trailing newline stripped. The transport keeps the
+        underlying socket / response alive until the iterator is exhausted
+        or garbage-collected.
+
+        On HTTP error responses (4xx/5xx) the iterator yields the entire
+        error body as a single line; callers should branch on the status
+        code before attempting to parse stream entries.
+        """
+        headers = dict(headers or {})
+        body_bytes: Optional[bytes] = None
+        if json_body is not None:
+            body_bytes = json.dumps(json_body).encode("utf-8")
+            headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Accept", "application/x-ndjson")
+
+        if self._httpx_client is not None:  # pragma: no cover - httpx path
+            req = self._httpx_client.build_request(
+                method.upper(), url, headers=headers, content=body_bytes
+            )
+            resp = self._httpx_client.send(req, stream=True)
+            status = resp.status_code
+            resp_headers = dict(resp.headers)
+
+            def _httpx_iter() -> Iterator[str]:
+                try:
+                    for line in resp.iter_lines():
+                        if line:
+                            yield line if isinstance(line, str) else line.decode("utf-8")
+                finally:
+                    resp.close()
+
+            return status, resp_headers, _httpx_iter()
+
+        req = urllib.request.Request(url=url, data=body_bytes, method=method.upper())
+        for k, v in headers.items():
+            req.add_header(k, v)
+        try:
+            r = urllib.request.urlopen(req, timeout=self.timeout)
+            status = r.status
+            resp_headers = dict(r.getheaders())
+
+            def _urllib_iter() -> Iterator[str]:
+                try:
+                    for raw in r:
+                        line = raw.decode("utf-8").rstrip("\r\n")
+                        if line:
+                            yield line
+                finally:
+                    r.close()
+
+            return status, resp_headers, _urllib_iter()
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8") if e.fp is not None else ""
+            return e.code, dict(e.headers or {}), iter([body] if body else [])
 
 
 def build_query_string(params: Dict[str, Any]) -> str:

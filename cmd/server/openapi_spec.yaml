@@ -4444,7 +4444,7 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute:
     post:
       operationId: executeFunction
-      summary: Validate parameters against the Function signature and dispatch (US-216/US-218)
+      summary: Validate parameters against the Function signature and dispatch (US-216/US-218/US-219)
       description: |
         Validates the caller-supplied `parameters` against the Function's
         declared signature (required, type, defaults, unknown-key rejection).
@@ -4456,6 +4456,17 @@ paths:
         exhausted quota surfaces as 429 with `realm`+`functionRid`;
         exceeding the CPU deadline surfaces as 408; exceeding the heap
         ceiling surfaces as 429.
+
+        US-219 streaming: pass `?stream=1` to receive an NDJSON stream
+        (`Content-Type: application/x-ndjson`). One newline-delimited JSON
+        object per line: `{"item": <element>}` for each emitted element
+        (executors that return an array stream one element per line; scalar
+        results stream as a single line; an empty array yields zero lines).
+        Errors that occur AFTER the executor has been dispatched are
+        delivered in-band as a terminal `{"error": {"code","reason","functionRid"}}`
+        line so the SDK iterator can surface them without parsing HTTP
+        status codes. Pre-execution errors (validation, 404, quota,
+        no-executor) still return regular HTTP error responses.
       tags: [Functions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -4464,6 +4475,16 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: stream
+          required: false
+          description: |
+            Set to `1` to receive an NDJSON stream of items
+            (`application/x-ndjson`). Each line is `{"item": ...}`; a
+            terminal `{"error": ...}` line is appended on executor failure.
+          schema:
+            type: string
+            enum: ["1"]
       requestBody:
         required: false
         content:
@@ -4476,7 +4497,11 @@ paths:
                   additionalProperties: true
       responses:
         "200":
-          description: Function executed.
+          description: |
+            Function executed. Default content type is `application/json`
+            with a `{functionRid, result}` body. When `?stream=1` is set,
+            the response is `application/x-ndjson` with one item per line
+            (`{"item": ...}`) and an optional terminal `{"error": ...}` line.
           content:
             application/json:
               schema:
@@ -4485,6 +4510,14 @@ paths:
                   functionRid:
                     type: string
                   result: {}
+            application/x-ndjson:
+              schema:
+                type: string
+                description: |
+                  Newline-delimited JSON. Each line is one of:
+                  `{"item": <value>}` for an emitted element, or
+                  `{"error": {"code","reason","functionRid"}}` as the
+                  terminal line on executor failure.
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":

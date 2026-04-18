@@ -297,8 +297,8 @@
         "Tests pass"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "writeFunctionStream emits {item}/{error} NDJSON lines with chunked flush; pre-execution failures still surface as regular HTTP errors. Python SDK ships FunctionsAPI.execute_stream() — a generator that raises WeaveError on terminal error lines. 9 new SDK tests + 9 new Go handler tests."
     },
     {
       "id": "US-220",

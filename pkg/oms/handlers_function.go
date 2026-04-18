@@ -277,6 +277,18 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 // as 400 with a `parameter`+`code` payload; CPU-timeout / memory-limit
 // violations surface as 408 / 429 respectively so SDKs can map them back
 // to typed retry/backoff behaviour.
+//
+// US-219 streaming: when ?stream=1 is set, successful execution emits an
+// NDJSON stream (Content-Type: application/x-ndjson). One newline-delimited
+// JSON object per emitted item: `{"item": <value>}`. If the executor returns
+// an array, each element becomes one line; a scalar result becomes one line;
+// an empty array becomes zero lines. Errors that occur AFTER the executor
+// has been dispatched (timeout, memory, executor failure) are emitted in-band
+// as a terminal `{"error": {"code","reason"}}` line so the SDK iterator can
+// surface them without parsing HTTP status codes. Pre-execution errors
+// (validation, 404, quota, no-executor) still return regular HTTP error
+// responses with a single JSON body — the NDJSON contract only kicks in
+// once the response stream has been opened.
 func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	fnIdentifier := chi.URLParam(r, "functionRid")
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
@@ -356,6 +368,8 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	streaming := r.URL.Query().Get("stream") == "1"
+
 	// Handler-side CPU budget (US-218). The underlying Goja runtime also
 	// enforces this ceiling via its own context watchdog, but wrapping
 	// here guarantees the 5s limit applies to every FunctionExecutor
@@ -364,6 +378,10 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	result, err := h.functionExecutor.Execute(execCtx, fn, coerced)
+	if streaming {
+		writeFunctionStream(w, fn.RID, result, err, execCtx)
+		return
+	}
 	if err != nil {
 		// CPU timeout → 408. Either the runtime returned the typed
 		// sentinel or the handler-side deadline fired without the
@@ -393,6 +411,63 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"functionRid": fn.RID,
 		"result":      result,
+	})
+}
+
+// writeFunctionStream emits the executor's outcome as an NDJSON stream
+// (US-219). The response is opened with 200 + Content-Type:
+// application/x-ndjson and either:
+//   - one `{"item": <element>}` line per element when result is a slice
+//   - one `{"item": <result>}` line when result is a scalar (non-nil)
+//   - zero lines for an empty slice
+//
+// followed by an optional terminal `{"error": {"code","reason"}}` line when
+// err is non-nil. The handler flushes after each line so iterating clients
+// receive items as they're encoded. Errors mid-stream are in-band so the
+// SDK iterator can surface them without parsing HTTP status codes.
+func writeFunctionStream(w http.ResponseWriter, fnRID string, result interface{}, execErr error, execCtx context.Context) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+
+	emit := func(record map[string]interface{}) {
+		_ = enc.Encode(record)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	if execErr == nil {
+		switch items := result.(type) {
+		case []interface{}:
+			for _, it := range items {
+				emit(map[string]interface{}{"item": it})
+			}
+		case nil:
+			// no-op — empty stream
+		default:
+			emit(map[string]interface{}{"item": result})
+		}
+		return
+	}
+
+	code := "FunctionExecutionFailed"
+	switch {
+	case errors.Is(execErr, fnerrors.ErrTimeout) || errors.Is(execCtx.Err(), context.DeadlineExceeded):
+		code = "FunctionExecutionTimeout"
+	case errors.Is(execErr, fnerrors.ErrMemoryLimit):
+		code = "FunctionMemoryLimitExceeded"
+	}
+	emit(map[string]interface{}{
+		"error": map[string]interface{}{
+			"code":        code,
+			"reason":      execErr.Error(),
+			"functionRid": fnRID,
+		},
 	})
 }
 
