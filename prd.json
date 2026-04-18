@@ -525,8 +525,8 @@
         "Tests pass"
       ],
       "priority": 36,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "WireObject gains Highlights map[string][]string rendered as `_highlights` (omitted when empty). SearchObjectsRequest.Highlight opts in via body `highlight: {style, fields}` or query `?highlight=true|false|field1,field2`. Bleve's html-style highlighter wraps matches with <mark>…</mark>. 8 unit/handler tests + round-trip assertion; contract trio green."
     },
     {
       "id": "US-236",

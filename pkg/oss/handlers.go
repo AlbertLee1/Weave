@@ -214,6 +214,7 @@ type searchRequestBody struct {
 	Where     *where.WhereClause `json:"where"`
 	Fuzzy     *where.FuzzyConfig `json:"fuzzy,omitempty"`
 	Select    []string           `json:"select,omitempty"`
+	Highlight *HighlightConfig   `json:"highlight,omitempty"`
 	PageSize  int                `json:"pageSize,omitempty"`
 	PageToken string             `json:"pageToken,omitempty"`
 	OrderBy   *OrderBy           `json:"orderBy,omitempty"`
@@ -307,11 +308,29 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// US-235: ?highlight=true or ?highlight=field1,field2 shorthand. Presence
+	// of the param enables highlighting regardless of body; an explicit
+	// `false`/`0`/`off` disables it even if the body asked for it. When the
+	// param is absent, body.Highlight (if any) wins.
+	highlight := body.Highlight
+	if raw := r.URL.Query().Get("highlight"); raw != "" {
+		hl, ok := parseHighlightQueryParam(raw)
+		if !ok {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidHighlight", map[string]string{
+				"reason":    "highlight query parameter must be true/false or a comma-separated field list",
+				"highlight": raw,
+			}))
+			return
+		}
+		highlight = hl
+	}
+
 	page, err := h.svc.SearchObjects(r.Context(), SearchObjectsRequest{
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
 		Where:       whereClause,
 		Fuzzy:       fuzzy,
+		Highlight:   highlight,
 		PageSize:    pageSize,
 		PageToken:   pageToken,
 		OrderBy:     orderBy,
@@ -330,6 +349,36 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
+}
+
+// parseHighlightQueryParam parses `?highlight=` values: literal booleans
+// (true/1/on/yes enable with defaults, false/0/off/no explicitly disable),
+// or a comma-separated field list which enables highlighting on those
+// fields only. Returns (nil, true) for the explicit-disable case and
+// (non-nil, true) for the enable cases. An all-whitespace / unparseable
+// input returns (nil, false) so the handler can surface a 400.
+func parseHighlightQueryParam(raw string) (*HighlightConfig, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, false
+	}
+	switch strings.ToLower(trimmed) {
+	case "false", "0", "no", "off":
+		return nil, true
+	case "true", "1", "yes", "on":
+		return &HighlightConfig{}, true
+	}
+	parts := strings.Split(trimmed, ",")
+	fields := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			fields = append(fields, p)
+		}
+	}
+	if len(fields) == 0 {
+		return nil, false
+	}
+	return &HighlightConfig{Fields: fields}, true
 }
 
 // splitRegexQueryParam parses the `?regex=field:pattern` shorthand. The split

@@ -28,9 +28,23 @@ type SearchObjectsRequest struct {
 	ObjectType  string
 	Where       *where.WhereClause
 	Fuzzy       *where.FuzzyConfig
-	PageSize    int
-	PageToken   string
-	OrderBy     string
+	// Highlight, when non-nil, instructs the service to attach Bleve
+	// `<mark>`-wrapped snippets to each returned object under the
+	// `_highlights` key. Fields are the specific property apiNames to
+	// highlight; when nil / empty, Bleve defaults to every text field with
+	// term vectors.
+	Highlight *HighlightConfig
+	PageSize  int
+	PageToken string
+	OrderBy   string
+}
+
+// HighlightConfig configures the per-search highlighter. Style is a Bleve
+// highlighter name (e.g. "html", "ansi"). An empty Style defaults to "html"
+// — which wraps matches with <mark>…</mark>, matching the US-235 contract.
+type HighlightConfig struct {
+	Style  string   `json:"style,omitempty"`
+	Fields []string `json:"fields,omitempty"`
 }
 
 // LinkedObjectsRequest is the request for listing linked objects.

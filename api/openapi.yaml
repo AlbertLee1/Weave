@@ -1516,6 +1516,29 @@ components:
               description: |
                 Levenshtein edit distance (0, 1 or 2). When the `fuzzy` object is
                 provided but `maxEdits` is omitted or 0, the default is 1.
+        highlight:
+          type: object
+          description: |
+            Optional US-235 highlight config. When present, each returned
+            object carries a `_highlights: { field: [snippet...] }` key where
+            matched terms are wrapped with <mark>...</mark>. The `?highlight`
+            query parameter, when set, overrides this body field:
+            `?highlight=true` enables defaults; `?highlight=false` disables;
+            `?highlight=field1,field2` restricts highlighting to the listed
+            fields.
+          properties:
+            style:
+              type: string
+              description: |
+                Highlighter name registered with Bleve (e.g. "html", "ansi").
+                Defaults to "html" which wraps matches with <mark>...</mark>.
+            fields:
+              type: array
+              description: |
+                Property apiNames to highlight. Empty / omitted falls back to
+                every searchable text field with term vectors.
+              items:
+                type: string
         select:
           type: array
           items:
@@ -5794,6 +5817,20 @@ paths:
           schema:
             type: string
             example: "name:^A.*"
+        - name: highlight
+          in: query
+          required: false
+          description: |
+            US-235 highlight shorthand. `true`/`1`/`on`/`yes` enables default
+            highlighting (every searchable text field wrapped with
+            <mark>...</mark> using Bleve's "html" style). `false`/`0`/`off`/
+            `no` disables highlighting even when the body's `highlight` field
+            is set. A comma-separated list (`body,title`) restricts
+            highlighting to the listed property apiNames. When set, the
+            response rows carry a `_highlights: { field: [snippet...] }` key.
+          schema:
+            type: string
+            example: "body,title"
       requestBody:
         required: true
         content:

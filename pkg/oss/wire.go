@@ -12,12 +12,19 @@ type WireObject struct {
 	PrimaryKey interface{}
 	APIName    string
 	Properties map[string]interface{}
+	// Highlights carries per-field snippet lists produced by a Bleve
+	// highlighter (US-235). Keys are property apiNames; values are snippet
+	// strings in which matched terms are wrapped with <mark>...</mark>. A
+	// nil / empty map suppresses the `_highlights` key on the wire so
+	// non-highlighted responses stay byte-identical to their pre-feature
+	// shape.
+	Highlights map[string][]string
 }
 
 // MarshalJSON produces the Palantir V2 flattened format where properties
 // appear at the top level alongside __rid, __primaryKey, __apiName.
 func (wo *WireObject) MarshalJSON() ([]byte, error) {
-	m := make(map[string]interface{}, len(wo.Properties)+3)
+	m := make(map[string]interface{}, len(wo.Properties)+4)
 	for k, v := range wo.Properties {
 		m[k] = v
 	}
@@ -26,12 +33,15 @@ func (wo *WireObject) MarshalJSON() ([]byte, error) {
 	}
 	m["__primaryKey"] = wo.PrimaryKey
 	m["__apiName"] = wo.APIName
+	if len(wo.Highlights) > 0 {
+		m["_highlights"] = wo.Highlights
+	}
 	return json.Marshal(m)
 }
 
 // UnmarshalJSON reverses the flattened Palantir V2 format: extracts __rid,
-// __primaryKey, __apiName from the top-level map and puts everything else
-// into Properties.
+// __primaryKey, __apiName, _highlights from the top-level map and puts
+// everything else into Properties.
 func (wo *WireObject) UnmarshalJSON(data []byte) error {
 	var m map[string]interface{}
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -50,9 +60,43 @@ func (wo *WireObject) UnmarshalJSON(data []byte) error {
 		wo.APIName, _ = v.(string)
 		delete(m, "__apiName")
 	}
+	if v, ok := m["_highlights"]; ok {
+		wo.Highlights = decodeHighlights(v)
+		delete(m, "_highlights")
+	}
 
 	wo.Properties = m
 	return nil
+}
+
+// decodeHighlights normalises an arbitrary JSON-decoded value back into the
+// `map[string][]string` shape that MarshalJSON emits. Unknown shapes are
+// silently dropped so round-tripping a WireObject never surfaces an error.
+func decodeHighlights(raw interface{}) map[string][]string {
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make(map[string][]string, len(m))
+	for k, v := range m {
+		arr, ok := v.([]interface{})
+		if !ok {
+			continue
+		}
+		snippets := make([]string, 0, len(arr))
+		for _, item := range arr {
+			if s, ok := item.(string); ok {
+				snippets = append(snippets, s)
+			}
+		}
+		if len(snippets) > 0 {
+			out[k] = snippets
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // FilterProperties returns a view of the WireObject whose Properties map
@@ -90,6 +134,7 @@ func (wo *WireObject) FilterProperties(allowed []string) *WireObject {
 		PrimaryKey: wo.PrimaryKey,
 		APIName:    wo.APIName,
 		Properties: filtered,
+		Highlights: wo.Highlights,
 	}
 }
 

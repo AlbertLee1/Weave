@@ -402,6 +402,25 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	searchReq.Size = pageSize
 	searchReq.From = cursor.Offset
 
+	// US-235: attach a highlighter when the caller asked for match
+	// snippets. Default style is "html" — which wraps matched terms with
+	// <mark>...</mark>. Callers can restrict highlighting to specific
+	// fields; an empty Fields slice falls back to Bleve's all-text-fields
+	// default.
+	if req.Highlight != nil {
+		style := req.Highlight.Style
+		if style == "" {
+			style = "html"
+		}
+		hr := bleve.NewHighlightWithStyle(style)
+		for _, f := range req.Highlight.Fields {
+			if f = strings.TrimSpace(f); f != "" {
+				hr.AddField(f)
+			}
+		}
+		searchReq.Highlight = hr
+	}
+
 	// Apply ordering if specified.
 	if req.OrderBy != "" {
 		searchReq.SortBy(parseOrderBy(req.OrderBy))
@@ -437,7 +456,25 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		if v, ok := hit.Fields[ot.PrimaryKey]; ok {
 			pk = fmt.Sprintf("%v", v)
 		}
-		page.Data = append(page.Data, FormatObject(req.ObjectType, pk, hit.Fields))
+		obj := FormatObject(req.ObjectType, pk, hit.Fields)
+		// US-235: attach per-field snippets the highlighter produced.
+		// Fragments are already post-processed (e.g. `<mark>`-wrapped by
+		// the "html" style). A hit with no fragments leaves Highlights
+		// nil so the wire shape stays identical to an un-highlighted
+		// response.
+		if len(hit.Fragments) > 0 {
+			hl := make(map[string][]string, len(hit.Fragments))
+			for field, frags := range hit.Fragments {
+				if len(frags) == 0 {
+					continue
+				}
+				hl[field] = append([]string(nil), frags...)
+			}
+			if len(hl) > 0 {
+				obj.Highlights = hl
+			}
+		}
+		page.Data = append(page.Data, obj)
 	}
 
 	// ABAC: drop denied rows and redact masked properties.
