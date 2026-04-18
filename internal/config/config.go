@@ -161,6 +161,15 @@ type AuditExportConfig struct {
 	// optional key prefix.
 	S3Bucket string
 	S3Prefix string
+
+	// RootHashFile enables the US-266 daily root-hash publisher when
+	// non-empty. Every RootHashInterval the server appends a
+	// `YYYY-MM-DD\t<hex>\n` line anchoring the previous UTC day's chain
+	// root to this file. Operator must place the file on append-only
+	// storage (or back it with an immutable FS snapshot) so the anchors
+	// survive a later attacker.
+	RootHashFile     string
+	RootHashInterval time.Duration
 }
 
 // Config holds all process-wide settings loaded from env.
@@ -226,6 +235,7 @@ func Load() (*Config, error) {
 			SyslogNetwork:       "udp",
 			SyslogFacility:      1, // user
 			SyslogSeverity:      6, // info
+			RootHashInterval:    24 * time.Hour,
 		},
 	}
 
@@ -600,6 +610,19 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("WEAVE_AUDIT_EXPORT_S3_PREFIX"); v != "" {
 		cfg.AuditExport.S3Prefix = v
+	}
+
+	// Audit log tamper-proof chain root-hash publisher (US-266). Setting
+	// WEAVE_AUDIT_ROOTHASH_FILE to a path enables the daily publisher.
+	if v := os.Getenv("WEAVE_AUDIT_ROOTHASH_FILE"); v != "" {
+		cfg.AuditExport.RootHashFile = v
+	}
+	if v := os.Getenv("WEAVE_AUDIT_ROOTHASH_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_ROOTHASH_INTERVAL %q: must be a positive duration", v)
+		}
+		cfg.AuditExport.RootHashInterval = d
 	}
 
 	return cfg, nil

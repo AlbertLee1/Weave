@@ -11,7 +11,8 @@ import (
 )
 
 // AuditEvent represents a single audit log entry. It mirrors the audit_events
-// table from migration 000020.
+// table from migration 000020, extended with chain fields from migration
+// 000062 (US-266 tamper-proof chain).
 type AuditEvent struct {
 	ID           string          `json:"id"`
 	ActorID      string          `json:"actor_id"`
@@ -22,6 +23,11 @@ type AuditEvent struct {
 	IP           string          `json:"ip"`
 	UserAgent    string          `json:"user_agent"`
 	Timestamp    time.Time       `json:"ts"`
+
+	// Chain fields — populated by the Store on Insert.
+	ChainSeq  int64  `json:"chain_seq,omitempty"`
+	PrevHash  string `json:"prev_hash,omitempty"`
+	EntryHash string `json:"entry_hash,omitempty"`
 }
 
 // ListFilter constrains which events Store.List returns.
@@ -68,8 +74,35 @@ func NewMemoryStore() *MemoryStore {
 func (s *MemoryStore) Insert(_ context.Context, evt AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Chain fields: prev_hash points at the tail's entry_hash; chain_seq
+	// is the 1-based position in the store. Any caller-supplied values
+	// are overwritten — the Store is the authority on the chain.
+	var prevHash string
+	if len(s.events) > 0 {
+		prevHash = s.events[len(s.events)-1].EntryHash
+	}
+	evt.PrevHash = prevHash
+	evt.ChainSeq = int64(len(s.events) + 1)
+	h, err := HashEvent(prevHash, evt)
+	if err != nil {
+		return err
+	}
+	evt.EntryHash = h
+
 	s.events = append(s.events, evt)
 	return nil
+}
+
+// ListChain returns every event in the store ORDERED BY chain_seq ASC, so
+// callers can walk the linkage with VerifyChain. In-memory stores always
+// preserve insertion order, so this is equivalent to returning a snapshot.
+func (s *MemoryStore) ListChain(_ context.Context) ([]AuditEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AuditEvent, len(s.events))
+	copy(out, s.events)
+	return out, nil
 }
 
 func (s *MemoryStore) List(_ context.Context, f ListFilter) ([]AuditEvent, error) {

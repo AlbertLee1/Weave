@@ -679,6 +679,44 @@ func TestLoadConfig_AuditExport_DefaultsDisabled(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_AuditRootHash_Defaults(t *testing.T) {
+	os.Unsetenv("WEAVE_AUDIT_ROOTHASH_FILE")
+	os.Unsetenv("WEAVE_AUDIT_ROOTHASH_INTERVAL")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditExport.RootHashFile != "" {
+		t.Errorf("default RootHashFile should be empty, got %q", cfg.AuditExport.RootHashFile)
+	}
+	if cfg.AuditExport.RootHashInterval != 24*time.Hour {
+		t.Errorf("default RootHashInterval = %v, want 24h", cfg.AuditExport.RootHashInterval)
+	}
+}
+
+func TestLoadConfig_AuditRootHash_FromEnv(t *testing.T) {
+	t.Setenv("WEAVE_AUDIT_ROOTHASH_FILE", "/var/log/weave/audit-roots.log")
+	t.Setenv("WEAVE_AUDIT_ROOTHASH_INTERVAL", "12h")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditExport.RootHashFile != "/var/log/weave/audit-roots.log" {
+		t.Errorf("RootHashFile = %q", cfg.AuditExport.RootHashFile)
+	}
+	if cfg.AuditExport.RootHashInterval != 12*time.Hour {
+		t.Errorf("RootHashInterval = %v, want 12h", cfg.AuditExport.RootHashInterval)
+	}
+}
+
+func TestLoadConfig_AuditRootHash_RejectsBadInterval(t *testing.T) {
+	t.Setenv("WEAVE_AUDIT_ROOTHASH_INTERVAL", "nonsense")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for malformed interval")
+	}
+}
+
 func TestLoadConfig_AuditExport_StdoutFromEnv(t *testing.T) {
 	t.Setenv("WEAVE_AUDIT_EXPORT_KIND", "stdout")
 	t.Setenv("WEAVE_AUDIT_EXPORT_BATCH_SIZE", "250")

@@ -912,7 +912,22 @@ func main() {
 		// stdout/syslog/S3 via a BatchedExporter. Disabled by default so
 		// fresh deployments don't wake up writing to an un-configured
 		// destination; enable with WEAVE_AUDIT_EXPORT_KIND.
-		deps.AuditStore = newAuditStoreWithExport(cfg.AuditExport, audit.NewPGStore(pool))
+		// US-266: the PG store now writes a tamper-proof hash chain on
+		// every Insert (chain_seq / prev_hash / entry_hash columns). An
+		// optional root-hash publisher (enabled via
+		// WEAVE_AUDIT_ROOTHASH_FILE) anchors the previous UTC day's chain
+		// root to an append-only file every interval — operators run
+		// `weave-audit-verify -root-file <path>` to cross-check.
+		pgAudit := audit.NewPGStore(pool)
+		deps.AuditStore = newAuditStoreWithExport(cfg.AuditExport, pgAudit)
+		if cfg.AuditExport.RootHashFile != "" {
+			pub := audit.NewRootHashPublisher(pgAudit, cfg.AuditExport.RootHashFile)
+			pub.SetInterval(cfg.AuditExport.RootHashInterval)
+			pub.Start(ctx)
+			defer pub.Stop()
+			log.Printf("audit root-hash publisher enabled: file=%s interval=%s",
+				cfg.AuditExport.RootHashFile, cfg.AuditExport.RootHashInterval)
+		}
 		// US-011: the index rebuild admin command re-ingests from
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.

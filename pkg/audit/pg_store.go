@@ -7,11 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PGStore is a Postgres-backed audit event Store. It maps directly to the
-// audit_events table from migration 000020.
+// audit_events table from migration 000020, extended by migration 000062
+// with chain_seq / prev_hash / entry_hash for tamper-proof auditing
+// (US-266).
 type PGStore struct {
 	pool *pgxpool.Pool
 }
@@ -21,17 +24,50 @@ func NewPGStore(pool *pgxpool.Pool) *PGStore {
 	return &PGStore{pool: pool}
 }
 
+// chainAdvisoryLockKey is the session-wide advisory-lock key that
+// serialises audit chain inserts across all connections. Any 64-bit int
+// is fine so long as it's unique within the installation's advisory
+// namespace; this magic number was derived from fnv64("audit_events_chain").
+const chainAdvisoryLockKey = 7395125168213812345
+
+// Insert writes evt into audit_events, chaining it onto the current tail.
+// The chain_seq / prev_hash / entry_hash fields on evt are IGNORED — the
+// store is the authority on chain state. All work happens inside a single
+// tx that holds a transaction-scoped advisory lock, so concurrent callers
+// across multiple pool connections still produce a single coherent chain.
 func (s *PGStore) Insert(ctx context.Context, evt AuditEvent) error {
-	var diffArg any
-	if len(evt.DiffJSON) > 0 {
-		diffArg = []byte(evt.DiffJSON)
-	}
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO audit_events (id, actor_id, action, resource_type, resource_rid, diff_json, ip, user_agent, ts)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		evt.ID, evt.ActorID, evt.Action, evt.ResourceType, evt.ResourceRID,
-		diffArg, evt.IP, evt.UserAgent, evt.Timestamp)
-	return err
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", chainAdvisoryLockKey); err != nil {
+			return fmt.Errorf("audit: acquire chain lock: %w", err)
+		}
+
+		var tailHash string
+		if err := tx.QueryRow(ctx,
+			`SELECT entry_hash FROM audit_events ORDER BY chain_seq DESC LIMIT 1`,
+		).Scan(&tailHash); err != nil && err != pgx.ErrNoRows {
+			return fmt.Errorf("audit: read chain tail: %w", err)
+		}
+
+		evt.PrevHash = tailHash
+		hash, err := HashEvent(tailHash, evt)
+		if err != nil {
+			return err
+		}
+		evt.EntryHash = hash
+
+		var diffArg any
+		if len(evt.DiffJSON) > 0 {
+			diffArg = []byte(evt.DiffJSON)
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO audit_events (id, actor_id, action, resource_type, resource_rid,
+			    diff_json, ip, user_agent, ts, prev_hash, entry_hash)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			evt.ID, evt.ActorID, evt.Action, evt.ResourceType, evt.ResourceRID,
+			diffArg, evt.IP, evt.UserAgent, evt.Timestamp,
+			evt.PrevHash, evt.EntryHash)
+		return err
+	})
 }
 
 func (s *PGStore) List(ctx context.Context, f ListFilter) ([]AuditEvent, error) {
@@ -65,7 +101,9 @@ func (s *PGStore) List(ctx context.Context, f ListFilter) ([]AuditEvent, error) 
 		argN++
 	}
 
-	q := "SELECT id, actor_id, action, resource_type, resource_rid, diff_json, ip, user_agent, ts FROM audit_events"
+	q := `SELECT id, actor_id, action, resource_type, resource_rid, diff_json,
+	             ip, user_agent, ts, chain_seq, prev_hash, entry_hash
+	      FROM audit_events`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -78,6 +116,34 @@ func (s *PGStore) List(ctx context.Context, f ListFilter) ([]AuditEvent, error) 
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)
 	}
 
+	return s.queryEvents(ctx, q, args)
+}
+
+// ListChain returns every audit event ORDERED BY chain_seq ASC for use by
+// the verification tool.
+func (s *PGStore) ListChain(ctx context.Context) ([]AuditEvent, error) {
+	return s.queryEvents(ctx,
+		`SELECT id, actor_id, action, resource_type, resource_rid, diff_json,
+		        ip, user_agent, ts, chain_seq, prev_hash, entry_hash
+		 FROM audit_events
+		 ORDER BY chain_seq ASC`, nil)
+}
+
+// ListChainByDay returns every audit event whose timestamp falls in the
+// UTC calendar day containing `day`, ordered by chain_seq ASC. Used by
+// the root-hash publisher.
+func (s *PGStore) ListChainByDay(ctx context.Context, day time.Time) ([]AuditEvent, error) {
+	start := time.Date(day.UTC().Year(), day.UTC().Month(), day.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 1)
+	return s.queryEvents(ctx,
+		`SELECT id, actor_id, action, resource_type, resource_rid, diff_json,
+		        ip, user_agent, ts, chain_seq, prev_hash, entry_hash
+		 FROM audit_events
+		 WHERE ts >= $1 AND ts < $2
+		 ORDER BY chain_seq ASC`, []any{start, end})
+}
+
+func (s *PGStore) queryEvents(ctx context.Context, q string, args []any) ([]AuditEvent, error) {
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -90,7 +156,8 @@ func (s *PGStore) List(ctx context.Context, f ListFilter) ([]AuditEvent, error) 
 		var diff []byte
 		var ts time.Time
 		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.ResourceType,
-			&e.ResourceRID, &diff, &e.IP, &e.UserAgent, &ts); err != nil {
+			&e.ResourceRID, &diff, &e.IP, &e.UserAgent, &ts,
+			&e.ChainSeq, &e.PrevHash, &e.EntryHash); err != nil {
 			return nil, err
 		}
 		if diff != nil {

@@ -971,8 +971,8 @@
         "Tests pass"
       ],
       "priority": 67,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/audit/chain.go — HashEvent (canonical-JSON envelope over id/actor/action/resource/diff/ip/ua/ts-UTC/prev_hash) + VerifyChain (contiguity + prev_hash linkage + content hash recompute) + ComputeRootHash. Migration 000062 adds chain_seq BIGSERIAL + prev_hash + entry_hash columns. PGStore.Insert wraps INSERT in a tx holding pg_advisory_xact_lock so concurrent inserts serialise into one coherent chain. pkg/audit/roothash.go publishes one `YYYY-MM-DD\\tHEX\\n` line per UTC day to an append-only file (O_APPEND|O_CREATE, 0600) via a Start(ctx)/Stop() scheduler that runs yesterday's anchor immediately at boot then every RootHashInterval. cmd/weave-audit-verify CLI walks ListChain, runs VerifyChain, optionally cross-checks the root-file. Wired via WEAVE_AUDIT_ROOTHASH_FILE + WEAVE_AUDIT_ROOTHASH_INTERVAL; degraded-mode (no PG) silently skips the publisher. 22 new tests (chain stability, tamper detection, root-file parse/verify, scheduler lifecycle); all green."
     },
     {
       "id": "US-267",
