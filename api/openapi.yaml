@@ -1757,6 +1757,27 @@ components:
             sub-aggregations to any depth.
           items:
             $ref: "#/components/schemas/SubAggregationSpec"
+        having:
+          type: array
+          description: |
+            Post-aggregation row filter. Each clause names a metric produced
+            by the same request and drops rows whose metric value does not
+            satisfy the comparison. Clauses AND together; missing or
+            non-numeric metric values fail the clause.
+          items:
+            $ref: "#/components/schemas/HavingClause"
+    HavingClause:
+      type: object
+      required: [metric, op, value]
+      properties:
+        metric:
+          type: string
+          description: Name of a metric produced by this aggregation request.
+        op:
+          type: string
+          enum: [eq, ne, gt, gte, lt, lte]
+        value:
+          type: number
     SubAggregationSpec:
       type: object
       required: [name, aggregation]
@@ -1775,6 +1796,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SubAggregationSpec"
+        having:
+          type: array
+          items:
+            $ref: "#/components/schemas/HavingClause"
     AggregationRow:
       type: object
       properties:
@@ -1832,6 +1857,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SubAggregationSpec"
+        having:
+          type: array
+          items:
+            $ref: "#/components/schemas/HavingClause"
     CreateTemporaryRequest:
       type: object
       required: [objectSet]

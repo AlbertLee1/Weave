@@ -17,6 +17,7 @@ type AggregationRequest struct {
 	Aggregations    []AggregationSpec    `json:"aggregation"`
 	GroupBy         []GroupBySpec        `json:"groupBy,omitempty"`
 	SubAggregations []SubAggregationSpec `json:"subAggregations,omitempty"`
+	Having          []HavingClause       `json:"having,omitempty"`
 }
 
 // SubAggregationSpec is a named child aggregation that runs against the scope
@@ -28,6 +29,18 @@ type SubAggregationSpec struct {
 	Aggregations    []AggregationSpec    `json:"aggregation"`
 	GroupBy         []GroupBySpec        `json:"groupBy,omitempty"`
 	SubAggregations []SubAggregationSpec `json:"subAggregations,omitempty"`
+	Having          []HavingClause       `json:"having,omitempty"`
+}
+
+// HavingClause is a post-aggregation row filter. Each clause names a metric
+// produced by the same request, a comparison op, and a numeric threshold.
+// Rows whose metric value fails any clause are dropped from the response.
+// Missing / non-numeric metric values always fail — use a dedicated metric
+// name (not a dotted default-derived name) for robust matching.
+type HavingClause struct {
+	Metric string  `json:"metric"`
+	Op     string  `json:"op"` // eq, ne, gt, gte, lt, lte
+	Value  float64 `json:"value"`
 }
 
 // AggregationSpec defines what to aggregate.
@@ -91,6 +104,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if err := validateSubAggregations(req.SubAggregations); err != nil {
 		return nil, err
 	}
+	if err := ValidateHaving(req.Having); err != nil {
+		return nil, err
+	}
 
 	var resp *AggregationResponse
 	var err error
@@ -115,6 +131,10 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		if subTrunc {
 			resp.Accuracy = "APPROXIMATE"
 		}
+	}
+
+	if len(req.Having) > 0 {
+		resp.Data = ApplyHaving(resp.Data, req.Having)
 	}
 
 	if resp.Accuracy == "" {
@@ -161,6 +181,7 @@ func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []S
 			Aggregations:    s.Aggregations,
 			GroupBy:         s.GroupBy,
 			SubAggregations: s.SubAggregations,
+			Having:          s.Having,
 		}
 		childResp, err := e.AggregateWithQuery(idx, scope, childReq)
 		if err != nil {

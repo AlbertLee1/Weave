@@ -403,10 +403,11 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 
 // AggregateObjectSetRequest is the request for objectSet aggregation.
 type AggregateObjectSetRequest struct {
-	ObjectSet       *Definition                          `json:"objectSet"`
-	Aggregation     []aggregation.AggregationSpec        `json:"aggregation"`
-	GroupBy         []aggregation.GroupBySpec            `json:"groupBy,omitempty"`
-	SubAggregations []aggregation.SubAggregationSpec     `json:"subAggregations,omitempty"`
+	ObjectSet       *Definition                      `json:"objectSet"`
+	Aggregation     []aggregation.AggregationSpec    `json:"aggregation"`
+	GroupBy         []aggregation.GroupBySpec        `json:"groupBy,omitempty"`
+	SubAggregations []aggregation.SubAggregationSpec `json:"subAggregations,omitempty"`
+	Having          []aggregation.HavingClause       `json:"having,omitempty"`
 }
 
 // Aggregate handles POST /api/v2/ontologies/{ont}/objectSets/aggregate.
@@ -465,6 +466,7 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 		Aggregations:    req.Aggregation,
 		GroupBy:         req.GroupBy,
 		SubAggregations: req.SubAggregations,
+		Having:          req.Having,
 	}
 
 	aggResult, err := h.aggEngine.AggregateWithQuery(idx, baseQuery, aggReq)

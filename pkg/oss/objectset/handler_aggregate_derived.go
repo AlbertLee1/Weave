@@ -61,6 +61,9 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 			return nil, fmt.Errorf("derived-field aggregation only supports exact groupBy, got %q", gb.Type)
 		}
 	}
+	if err := aggregation.ValidateHaving(req.Having); err != nil {
+		return nil, err
+	}
 
 	derivedFields := collectDerivedFieldNames(result.DerivedValues)
 
@@ -113,8 +116,12 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 		rows = append(rows, row)
 	}
 
+	data := groupDerivedRows(rows, 0, req.GroupBy, req.Aggregation)
+	if len(req.Having) > 0 {
+		data = aggregation.ApplyHaving(data, req.Having)
+	}
 	resp := &aggregation.AggregationResponse{
-		Data:     groupDerivedRows(rows, 0, req.GroupBy, req.Aggregation),
+		Data:     data,
 		Accuracy: "ACCURATE",
 	}
 	resp.ComputeUsage = 4.0
