@@ -29,6 +29,18 @@ func staleObjectAPIError(err error) *apierror.APIError {
 	})
 }
 
+// typedAPIError unwraps a chained *apierror.APIError (e.g. WEAVE_VALIDATION_ENUM
+// from US-208 ValueType constraint enforcement) so the handler surfaces the
+// pre-built status code + parameters instead of collapsing it into a generic
+// 400 ActionFailed. Returns nil when no typed error is present.
+func typedAPIError(err error) *apierror.APIError {
+	var apiErr *apierror.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
+	return nil
+}
+
 // Handler handles action HTTP requests.
 type Handler struct {
 	executor *Executor
@@ -104,6 +116,10 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if staleErr := staleObjectAPIError(err); staleErr != nil {
 			apierror.WriteJSON(w, staleErr)
+			return
+		}
+		if apiErr := typedAPIError(err); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
 			return
 		}
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
@@ -214,6 +230,10 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, staleErr)
 			return
 		}
+		if apiErr := typedAPIError(err); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
@@ -307,8 +327,13 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 // asBatchError converts an error returned by ApplyBatchAtomic / CommitBatch
 // into a structured API error response. A *BatchError surfaces its phase,
 // failedActionIndex, and actionType; everything else is treated as a generic
-// ActionFailed.
+// ActionFailed. US-208: when the BatchError wraps a typed *apierror.APIError
+// (e.g. WEAVE_VALIDATION_ENUM from constraint validation) the typed error is
+// surfaced verbatim with its original status code + parameters.
 func asBatchError(err error) *apierror.APIError {
+	if apiErr := typedAPIError(err); apiErr != nil {
+		return apiErr
+	}
 	var be *BatchError
 	if errors.As(err, &be) {
 		return apierror.NewInvalidParameter("ActionFailed", map[string]string{

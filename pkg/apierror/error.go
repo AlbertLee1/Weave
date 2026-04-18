@@ -95,6 +95,14 @@ func NewTooManyRequests(name string, params map[string]string) *APIError {
 	return newAPIError("RESOURCE_EXHAUSTED", name, params, http.StatusTooManyRequests)
 }
 
+// NewValidationEnum creates a WEAVE_VALIDATION_ENUM API error (HTTP 422).
+// US-208: returned by the EditBatch validation path when a property value
+// falls outside the ValueType's enum constraint. Callers should populate
+// Parameters with at minimum `property`, `value`, and `allowedValues`.
+func NewValidationEnum(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_VALIDATION_ENUM", name, params, http.StatusUnprocessableEntity)
+}
+
 // WriteJSON writes an APIError as a JSON HTTP response with the appropriate status code.
 func WriteJSON(w http.ResponseWriter, err *APIError) {
 	w.Header().Set("Content-Type", "application/json")

@@ -6,6 +6,19 @@ import (
 	"regexp"
 )
 
+// EnumViolationError signals that a value did not match any entry in the
+// configured enum constraint. It is returned by ValidateConstraints so that
+// the EditBatch validation path can build a structured 422 response carrying
+// AllowedValues verbatim. Callers detect it via errors.As.
+type EnumViolationError struct {
+	Value         interface{}
+	AllowedValues []string
+}
+
+func (e *EnumViolationError) Error() string {
+	return fmt.Sprintf("enum: value %v is not in allowed values %v", e.Value, e.AllowedValues)
+}
+
 // Constraints defines the constraint fields that a ValueType can impose on
 // property values. All fields are optional; only non-zero fields are enforced.
 type Constraints struct {
@@ -75,16 +88,18 @@ func ValidateConstraints(value interface{}, constraints json.RawMessage) error {
 	}
 
 	if len(c.Enum) > 0 {
-		found := false
 		sv := fmt.Sprint(value)
-		for _, allowed := range c.Enum {
-			if fmt.Sprint(allowed) == sv {
+		allowed := make([]string, 0, len(c.Enum))
+		found := false
+		for _, a := range c.Enum {
+			as := fmt.Sprint(a)
+			allowed = append(allowed, as)
+			if as == sv {
 				found = true
-				break
 			}
 		}
 		if !found {
-			return fmt.Errorf("enum: value %v is not in allowed values %v", value, c.Enum)
+			return &EnumViolationError{Value: value, AllowedValues: allowed}
 		}
 	}
 

@@ -134,8 +134,8 @@
         "Tests pass"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "types.EnumViolationError typed err carries Value+AllowedValues; apierror.NewValidationEnum -> WEAVE_VALIDATION_ENUM (HTTP 422); executor.validateValueTypeConstraints unwraps via errors.As and emits APIError with property/value/allowedValues/objectType params; BatchError gains Cause+Unwrap so the typed err survives through ApplyBatchAtomic; handlers.Apply / ApplyWithOverrides / asBatchError check typedAPIError() before falling back to ActionFailed; tests: pkg/types Enum_TypedError + Enum_TypedError_MixedTypes; pkg/actions Executor_EnumViolation_ReturnsTypedAPIError422 + Handler_Apply_EnumViolation_422 + Handler_ApplyBatch_EnumViolation_422; legacy ValueTypeConstraint_EnumViolation rewritten to assert on the typed APIError contract"
     },
     {
       "id": "US-209",

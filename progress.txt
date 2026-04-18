@@ -3,6 +3,10 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 ---
 
 ## Codebase Patterns
+- New apierror status code: add a constructor in `pkg/apierror/error.go` next to the existing `NewNotFound` / `NewBadRequest` family — use uppercase-snake `ErrorCode` (e.g. `WEAVE_VALIDATION_ENUM`), pick an http.Status* constant, and the wire format / WriteJSON path picks it up automatically. No extra plumbing needed.
+- Surfacing typed `*apierror.APIError` from action validation: return the APIError directly from the validator (e.g. `validateValueTypeConstraints`); Prepare wraps it with `fmt.Errorf("...: %w", err)` so `errors.As` still finds it. Handlers MUST then check `errors.As(err, &apiErr *apierror.APIError)` BEFORE wrapping into the legacy `ActionFailed` 400 — otherwise the typed status code + structured Parameters are lost.
+- `BatchError` (pkg/actions/executor.go) needs a `Cause error` field + `Unwrap()` method to propagate typed errors from Prepare through `ApplyBatchAtomic`. Without it the batch path collapses every prepare failure into a generic 400, masking 422/409/403 distinctions. Update both BatchError construction sites (publish failure + per-action prepare failure) when adding a new typed validation error.
+- Typed constraint errors (`types.EnumViolationError`): when ValidateConstraints needs to surface structured detail (allowed values, rejected value), define a typed error in `pkg/types/constraints.go` with public fields, return it from the relevant branch, and keep `Error()` returning the legacy string. Callers detect via `errors.As` and ignore the string. Don't try to parse fields out of `err.Error()` — that path always loses fidelity.
 - Goja sandbox recipe (reusable for derived props / formulas): call `vm.Set(name, goja.Undefined())` then `vm.GlobalObject().Delete(name)` for each denied host global; add watchdog goroutine that does `vm.Interrupt(...)` when `context.Done()` fires.
 - Read-only object views in Goja: implement `goja.DynamicObject` and keep a reference to the owning `*goja.Runtime` so `Get` can return `runtime.ToValue(v)` from the same VM — returning values from a different runtime crashes Goja.
 - Goja `Callable` from `goja.AssertFunction` is a Go `func(this Value, args ...Value) (Value, error)`; do NOT try to `.Get("call")` and re-invoke — just call it directly.
@@ -256,5 +260,32 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - When broadening a choice set in the UI (here: allowing 'struct' in the nested type select), the validator must ALSO broaden. If `isStructTreeValid` only checked the top-level, an empty nested struct would silently ship a `{fields: []}` subtree to the backend. The rule "allowed in the UI ⇒ validated in the UI" is easy to forget because the scalar validator already short-circuits on the top-level length==0 check.
   - React Testing Library accessible-name matching on buttons with decorative prefixes: "+ Add field" matches `/Add field/i` but NOT `/^Add field$/i`. Anchored regexes are dangerous when labels carry icons / punctuation. Prefer substring matches + scoping via `within(parentEl)` to disambiguate rather than anchoring.
   - Keep wire serialization centralized in one helper (`serializeStructFields`). The in-memory state can carry an `undefined` or an empty `fields` on scalar rows while the user is editing, but the JSON that hits the backend must be canonical — one function at the boundary is the only way to keep that invariant. Same idea as pkg/oss/objectset's validate-at-boundary pattern.
+---
+
+## 2026-04-18 - US-208 Enum/Categorical 约束执行
+- Promoted enum constraint failures from a stringly-typed `fmt.Errorf` to a typed `*types.EnumViolationError` carrying both the rejected `Value` and the stringified `AllowedValues` slice. `Error()` keeps the legacy `enum: value X is not in allowed values [...]` shape so existing logs / generic constraint tests keep passing.
+- Added `apierror.NewValidationEnum(name, params)` returning `ErrorCode = "WEAVE_VALIDATION_ENUM"` at HTTP 422. Slot fits the existing `NewNotFound` / `NewBadRequest` family in `pkg/apierror/error.go`; WriteJSON path required no changes.
+- `executor.validateValueTypeConstraints` now `errors.As`-detects `*EnumViolationError` and returns the typed APIError populated with `objectType`, `property`, `value`, and `allowedValues` (comma-separated). Non-enum constraint failures still go through the legacy `fmt.Errorf("property %q: %w", ...)` path, so regex / minLength / min / max behaviour is unchanged.
+- `BatchError` gained `Cause error` + `Unwrap() error` so a typed APIError surfaced by Prepare survives the wrap inside `ApplyBatchAtomic`. Both BatchError construction sites (per-action prepare failure + publish failure) populate `Cause`.
+- Handlers learnt a single `typedAPIError(err) *apierror.APIError` helper. `Apply`, `ApplyWithOverrides`, and `asBatchError` all check it BEFORE falling back to the generic `ActionFailed` 400 wrap. Status code + structured Parameters now flow end-to-end.
+- Tests:
+  - `pkg/types/constraints_test.go`: `TestValidateConstraints_Enum_TypedError` (errors.As + AllowedValues exact match) and `TestValidateConstraints_Enum_TypedError_MixedTypes` (numeric + string mixed enum stringifies in declared order).
+  - `pkg/actions/actions_test.go`: `TestExecutor_EnumViolation_ReturnsTypedAPIError422` (Prepare-level — APIError has code/status/property/value/allowedValues/objectType), `TestHandler_Apply_EnumViolation_422` (HTTP — chi router + ResponseRecorder, body decoded as wireFormat, asserts errorCode + parameters), `TestHandler_ApplyBatch_EnumViolation_422` (atomic batch with one good + one bad action surfaces the bad row's typed error verbatim — confirms BatchError.Cause unwrap).
+  - Legacy `TestExecutor_ValueTypeConstraint_EnumViolation` rewritten to assert on the typed APIError contract instead of substring matching the err.Error() string.
+- All `go test -short ./pkg/...` packages pass; e2e suite green; `go build ./...` and `go vet` clean on touched packages.
+- Files changed:
+  - `pkg/types/constraints.go` (EnumViolationError type + branch returns it)
+  - `pkg/types/constraints_test.go` (2 new typed-error tests + import errors/reflect)
+  - `pkg/apierror/error.go` (NewValidationEnum constructor)
+  - `pkg/actions/executor.go` (apierror import, validateValueTypeConstraints unwrap, BatchError Cause+Unwrap, both BatchError construction sites)
+  - `pkg/actions/handlers.go` (typedAPIError helper, Apply/ApplyWithOverrides/asBatchError unwrap calls)
+  - `pkg/actions/actions_test.go` (apierror import, 3 new tests, legacy enum test rewritten to typed-error contract)
+  - `prd.json` (US-208 passes=true)
+- **Learnings for future iterations:**
+  - When promoting a constraint check to a typed APIError, keep the underlying `Error()` string stable. The string is what the user sees in legacy logs and what some non-handler tests still match on. The typed channel (`errors.As`) is purely additive.
+  - `fmt.Errorf("...: %w", err)` preserves the chain — but only for callers that actually walk it. Every place that ALSO wraps the err string (e.g. `BatchError{Message: err.Error()}`) loses the typed payload. Check those wrapping sites whenever you add a new typed error class downstream.
+  - The sweep needed for this iteration was: validator → Prepare wrap → BatchError wrap → asBatchError handler → Apply handler → ApplyWithOverrides handler. Five layers — and missing any one drops the 422 back to a 400. A `typedAPIError(err) *apierror.APIError` helper is the right shape because it makes the new pattern one-line per call site.
+  - Enum allowedValues on the wire are best as a single comma-separated string in `Parameters` (the apierror Parameters map is `map[string]string` by design — JSON arrays don't fit). Clients that need the slice can `strings.Split(p["allowedValues"], ",")`. Don't try to teach the apierror Parameters map a richer type — every APIError downstream pays the cost.
+  - Batch path subtlety: `ApplyBatchAtomic` wraps EVERY Prepare error, not just the publish err. Forgetting `Cause` on the per-action wrap silently broke the typed-error pipeline for batch and made TestHandler_ApplyBatch_EnumViolation_422 the only signal — would have shipped fine without that test. Always exercise BOTH single + batch handler paths whenever you add a typed validation error.
 ---
 

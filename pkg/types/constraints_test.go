@@ -2,6 +2,8 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -170,6 +172,49 @@ func TestValidateConstraints_Enum_Fail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "enum") {
 		t.Fatalf("error should mention enum, got: %v", err)
+	}
+}
+
+// US-208: enum violations must be a typed *EnumViolationError so HTTP layers
+// can build a structured 422 response containing the allowedValues list and
+// the rejected value verbatim.
+func TestValidateConstraints_Enum_TypedError(t *testing.T) {
+	c := constraintsJSON(map[string]interface{}{
+		"enum": []string{"low", "medium", "high", "critical"},
+	})
+	err := ValidateConstraints("urgent", c)
+	if err == nil {
+		t.Fatal("expected enum violation")
+	}
+	var ev *EnumViolationError
+	if !errors.As(err, &ev) {
+		t.Fatalf("expected *EnumViolationError via errors.As, got %T: %v", err, err)
+	}
+	wantAllowed := []string{"low", "medium", "high", "critical"}
+	if !reflect.DeepEqual(ev.AllowedValues, wantAllowed) {
+		t.Fatalf("AllowedValues = %v, want %v", ev.AllowedValues, wantAllowed)
+	}
+	if got := reflect.ValueOf(ev.Value).String(); got != "urgent" {
+		t.Fatalf("Value = %v, want urgent", ev.Value)
+	}
+}
+
+// Mixed-type enums (numbers + strings) preserve their stringified form so the
+// wire response is a single comparable list.
+func TestValidateConstraints_Enum_TypedError_MixedTypes(t *testing.T) {
+	c := constraintsJSON(map[string]interface{}{
+		"enum": []interface{}{1, 2, 3, "manual"},
+	})
+	err := ValidateConstraints(99, c)
+	if err == nil {
+		t.Fatal("expected enum violation")
+	}
+	var ev *EnumViolationError
+	if !errors.As(err, &ev) {
+		t.Fatalf("expected *EnumViolationError, got %T: %v", err, err)
+	}
+	if !reflect.DeepEqual(ev.AllowedValues, []string{"1", "2", "3", "manual"}) {
+		t.Fatalf("AllowedValues = %v, want stringified mixed enum", ev.AllowedValues)
 	}
 }
 

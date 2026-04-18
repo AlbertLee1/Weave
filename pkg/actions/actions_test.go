@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
@@ -3572,11 +3573,18 @@ func TestExecutor_ValueTypeConstraint_EnumViolation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected enum constraint violation error")
 	}
-	if !strings.Contains(err.Error(), "priority") {
-		t.Fatalf("error should mention field 'priority', got: %v", err)
+	// US-208 changed the contract: enum failures now return a typed
+	// *apierror.APIError with property + allowedValues in Parameters,
+	// rather than the legacy "constraint validation: ... enum: ..." string.
+	var apiErr *apierror.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *apierror.APIError, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), "enum") {
-		t.Fatalf("error should mention enum constraint, got: %v", err)
+	if apiErr.ErrorCode != "WEAVE_VALIDATION_ENUM" {
+		t.Fatalf("ErrorCode = %q, want WEAVE_VALIDATION_ENUM", apiErr.ErrorCode)
+	}
+	if apiErr.Parameters["property"] != "priority" {
+		t.Fatalf("Parameters.property = %q, want priority", apiErr.Parameters["property"])
 	}
 }
 
@@ -3629,5 +3637,171 @@ func TestExecutor_ValueTypeConstraint_NilProperty_Passes(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected result")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// US-208: Enum violation surfaces as WEAVE_VALIDATION_ENUM (HTTP 422)
+// ---------------------------------------------------------------------------
+
+// newEnumTicketRepo builds a ticket-priority valueTypeAwareMockRepo whose
+// `priority` property is constrained to the enum {low, medium, high, critical}.
+// The shape is reused across the executor + handler tests below.
+func newEnumTicketRepo() *valueTypeAwareMockRepo {
+	return &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createTicket", []ParameterDef{
+					{ID: "title", Type: "string", Required: true},
+					{ID: "priority", Type: "string", Required: true},
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Ticket", PropertyBindings: map[string]PropertyBinding{
+						"title":    {Type: "parameter", Value: "title"},
+						"priority": {Type: "parameter", Value: "priority"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Ticket": {RID: "ri.ontology.main.object-type.ticket", APIName: "Ticket"},
+		},
+		properties: map[string][]oms.Property{
+			"Ticket": {
+				{APIName: "title", BaseType: "string"},
+				{APIName: "priority", BaseType: "string", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "ticketPriority",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"ticketPriority": {
+				RID:      "ri.ontology.main.value-type.priority",
+				APIName:  "ticketPriority",
+				BaseType: "string",
+				Constraints: mustJSON(map[string]interface{}{
+					"enum": []string{"low", "medium", "high", "critical"},
+				}),
+			},
+		},
+	}
+}
+
+func TestExecutor_EnumViolation_ReturnsTypedAPIError422(t *testing.T) {
+	exec := NewExecutor(newEnumTicketRepo(), nil)
+	_, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createTicket",
+		Parameters: map[string]interface{}{
+			"title":    "Bug report",
+			"priority": "urgent",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected enum violation error from Prepare")
+	}
+	var apiErr *apierror.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *apierror.APIError via errors.As, got %T: %v", err, err)
+	}
+	if apiErr.ErrorCode != "WEAVE_VALIDATION_ENUM" {
+		t.Fatalf("ErrorCode = %q, want WEAVE_VALIDATION_ENUM", apiErr.ErrorCode)
+	}
+	if apiErr.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("StatusCode = %d, want 422", apiErr.StatusCode)
+	}
+	if got := apiErr.Parameters["property"]; got != "priority" {
+		t.Fatalf("Parameters.property = %q, want priority", got)
+	}
+	if got := apiErr.Parameters["value"]; got != "urgent" {
+		t.Fatalf("Parameters.value = %q, want urgent", got)
+	}
+	allowed := apiErr.Parameters["allowedValues"]
+	for _, want := range []string{"low", "medium", "high", "critical"} {
+		if !strings.Contains(allowed, want) {
+			t.Fatalf("Parameters.allowedValues = %q, want it to contain %q", allowed, want)
+		}
+	}
+	if got := apiErr.Parameters["objectType"]; got != "Ticket" {
+		t.Fatalf("Parameters.objectType = %q, want Ticket", got)
+	}
+}
+
+func TestHandler_Apply_EnumViolation_422(t *testing.T) {
+	exec := NewExecutor(newEnumTicketRepo(), nil)
+	handler := NewHandler(exec)
+	router := setupRouter(handler)
+
+	body := mustJSON(map[string]interface{}{
+		"parameters": map[string]interface{}{
+			"title":    "Bug report",
+			"priority": "urgent",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createTicket/apply",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ErrorCode  string            `json:"errorCode"`
+		ErrorName  string            `json:"errorName"`
+		Parameters map[string]string `json:"parameters"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal error response: %v", err)
+	}
+	if resp.ErrorCode != "WEAVE_VALIDATION_ENUM" {
+		t.Fatalf("errorCode = %q, want WEAVE_VALIDATION_ENUM", resp.ErrorCode)
+	}
+	if resp.Parameters["property"] != "priority" {
+		t.Fatalf("parameters.property = %q, want priority", resp.Parameters["property"])
+	}
+	allowed := resp.Parameters["allowedValues"]
+	for _, want := range []string{"low", "medium", "high", "critical"} {
+		if !strings.Contains(allowed, want) {
+			t.Fatalf("parameters.allowedValues = %q, missing %q", allowed, want)
+		}
+	}
+}
+
+func TestHandler_ApplyBatch_EnumViolation_422(t *testing.T) {
+	exec := NewExecutor(newEnumTicketRepo(), nil)
+	handler := NewHandler(exec)
+	router := setupRouter(handler)
+
+	// Batch atomicity: one bad request fails the whole batch with the
+	// underlying enum error code surfaced verbatim, not a generic 400.
+	body := mustJSON(map[string]interface{}{
+		"actions": []map[string]interface{}{
+			{"parameters": map[string]interface{}{"title": "ok", "priority": "low"}},
+			{"parameters": map[string]interface{}{"title": "bad", "priority": "urgent"}},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createTicket/applyBatch",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ErrorCode  string            `json:"errorCode"`
+		Parameters map[string]string `json:"parameters"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal error response: %v", err)
+	}
+	if resp.ErrorCode != "WEAVE_VALIDATION_ENUM" {
+		t.Fatalf("batch enum violation errorCode = %q, want WEAVE_VALIDATION_ENUM", resp.ErrorCode)
+	}
+	if resp.Parameters["property"] != "priority" {
+		t.Fatalf("batch enum parameters.property = %q, want priority", resp.Parameters["property"])
 	}
 }

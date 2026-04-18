@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
@@ -222,12 +223,16 @@ type BatchFailure struct {
 
 // BatchError is the structured error returned by ApplyBatchAtomic on failure.
 // It carries enough metadata for the HTTP handler to build a deterministic
-// response body (phase, failedActionIndex, actionType).
+// response body (phase, failedActionIndex, actionType). Cause preserves the
+// original typed error (e.g. *apierror.APIError from US-208 enum validation)
+// so the handler can surface it via errors.As instead of collapsing to a
+// generic 400.
 type BatchError struct {
 	Phase             string
 	FailedActionIndex int
 	ActionType        string
 	Message           string
+	Cause             error
 }
 
 func (e *BatchError) Error() string {
@@ -235,6 +240,16 @@ func (e *BatchError) Error() string {
 		return ""
 	}
 	return fmt.Sprintf("action %d (%s) %s: %s", e.FailedActionIndex, e.ActionType, e.Phase, e.Message)
+}
+
+// Unwrap exposes the underlying cause to errors.Is / errors.As so HTTP layers
+// can recover typed errors (e.g. *apierror.APIError from constraint validation)
+// embedded inside a *BatchError envelope.
+func (e *BatchError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 // Prepare runs the pure, fallible part of applying an action: lookup action
@@ -497,6 +512,18 @@ func (e *Executor) validateValueTypeConstraints(ctx context.Context, ontologyRID
 				continue // ValueType not found — skip gracefully
 			}
 			if err := types.ValidateConstraints(value, vt.Constraints); err != nil {
+				// US-208: surface enum violations as a typed WEAVE_VALIDATION_ENUM
+				// (HTTP 422) so callers see allowedValues + the rejected value
+				// instead of a generic 400 ActionFailed wrap.
+				var enumErr *types.EnumViolationError
+				if errors.As(err, &enumErr) {
+					return apierror.NewValidationEnum("EnumViolation", map[string]string{
+						"objectType":    edit.ObjectType,
+						"property":      propName,
+						"value":         fmt.Sprint(value),
+						"allowedValues": strings.Join(enumErr.AllowedValues, ","),
+					})
+				}
 				return fmt.Errorf("property %q: %w", propName, err)
 			}
 		}
@@ -573,6 +600,7 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 				FailedActionIndex: -1,
 				ActionType:        "",
 				Message:           fmt.Sprintf("publish edits: %v", err),
+				Cause:             err,
 			}
 		}
 	}
@@ -676,6 +704,7 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 				FailedActionIndex: i,
 				ActionType:        reqs[i].ActionType,
 				Message:           err.Error(),
+				Cause:             err,
 			}
 		}
 		prepared = append(prepared, p)
