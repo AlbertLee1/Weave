@@ -396,6 +396,10 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// US-240: async-apply polling endpoint. Always registered when the
 			// executor is wired; returns 404 if no job store is attached.
 			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}", actionHandler.GetJob)
+			// US-242: approval-workflow endpoints. Always registered when the
+			// executor is wired; return 404 if no approval store is attached.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/approve", actionHandler.ApproveAction)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/reject", actionHandler.RejectAction)
 		}
 
 		// US-061/062: Stream ingest endpoint — bypasses Action rules, publishes
@@ -980,6 +984,11 @@ func main() {
 			// mode (no PG) the handler silently falls back to sync Apply —
 			// see serveAsyncApply in pkg/actions/handlers.go.
 			deps.ActionExecutor.SetActionJobStore(newPGActionJobStore(deps.PGPool))
+			// US-242: approval-workflow store persists pending / terminal
+			// approval rows. Wired in the same PG-gated block as the job
+			// store — degraded-mode (no PG) routers keep the sync-apply
+			// contract stable for unit tests.
+			deps.ActionExecutor.SetActionApprovalStore(newPGActionApprovalStore(deps.PGPool))
 		}
 		// US-241: progress reporter publishes to NATS on actions.progress.<jobId>
 		// when the JS action calls weave.reportProgress(percent, message). The

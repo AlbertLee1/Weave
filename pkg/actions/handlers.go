@@ -129,6 +129,21 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// US-242: approval gate. When the target ActionType is flagged
+	// RequiresApproval AND an ActionApprovalStore is wired, enqueue a
+	// PENDING approval row and short-circuit with 202 {approvalId}. Degraded
+	// mode (no store) ignores the flag so the sync apply contract stays
+	// stable for tests / single-user deployments. The caller must already
+	// have supplied valid parameters — approval snapshots the body so the
+	// reviewer sees exactly what will run if they approve.
+	if h.executor.ActionApprovalStore() != nil {
+		at, resolveErr := h.executor.ResolveActionType(r.Context(), ontologyRID, action)
+		if resolveErr == nil && at != nil && at.RequiresApproval {
+			h.serveApprovalEnqueue(w, r, ontologyRID, at, &req)
+			return
+		}
+	}
+
 	// VALIDATE_AND_EXECUTE: normal execution.
 	result, err := h.executor.Apply(r.Context(), ontologyRID, &req)
 	if err != nil {
@@ -580,4 +595,175 @@ func (h *Handler) Revert(w http.ResponseWriter, r *http.Request) {
 		Edits:       countEdits(result.Edits),
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// approvalReviewRequest is the JSON body for the approve / reject endpoints.
+// Reason is optional; when present it is recorded on the approval row for
+// audit purposes.
+type approvalReviewRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// serveApprovalEnqueue persists a PENDING ActionApproval and responds with
+// 202 {approvalId, status}. Called from Apply when the resolved ActionType
+// has RequiresApproval set and an ActionApprovalStore is wired. The
+// parameters body is snapshotted verbatim — the reviewer sees exactly what
+// the caller submitted.
+func (h *Handler) serveApprovalEnqueue(w http.ResponseWriter, r *http.Request, ontologyRID string, at *oms.ActionType, req *ApplyRequest) {
+	if len(at.Approvers) == 0 {
+		apierror.WriteJSON(w, apierror.NewBadRequest("ApprovalNotConfigured",
+			map[string]string{
+				"actionType": at.APIName,
+				"message":    "action is flagged requiresApproval but no approvers are configured",
+			}))
+		return
+	}
+	paramsJSON, err := json.Marshal(req.Parameters)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ApprovalEncodeFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	now := time.Now()
+	approval := &ActionApproval{
+		ID:              uuid.New().String(),
+		ActionTypeRID:   at.RID,
+		OntologyAPIName: ontologyRID,
+		ActionType:      at.APIName,
+		Parameters:      paramsJSON,
+		Approvers:       append([]string(nil), at.Approvers...),
+		Status:          ActionApprovalStatusPending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if u := auth.UserFromContext(r.Context()); u != nil {
+		approval.RequestedBy = u.ID
+	}
+	if err := h.executor.ActionApprovalStore().CreateActionApproval(r.Context(), approval); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ApprovalCreateFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusAccepted, &PendingApprovalResponse{
+		ApprovalID: approval.ID,
+		Status:     ActionApprovalStatusPending,
+	})
+}
+
+// ApproveAction handles POST .../actions/approvals/{approvalId}/approve.
+// Transitions a PENDING row to APPROVED and records the reviewer + reason.
+// Authorization: caller's user.ID or user.Roles must intersect the approval's
+// snapshotted approvers list. Already-terminal rows return 409 Conflict.
+func (h *Handler) ApproveAction(w http.ResponseWriter, r *http.Request) {
+	h.reviewApproval(w, r, ActionApprovalStatusApproved)
+}
+
+// RejectAction handles POST .../actions/approvals/{approvalId}/reject.
+// Transitions a PENDING row to REJECTED. Same auth rules as ApproveAction.
+func (h *Handler) RejectAction(w http.ResponseWriter, r *http.Request) {
+	h.reviewApproval(w, r, ActionApprovalStatusRejected)
+}
+
+// reviewApproval is the shared body of ApproveAction / RejectAction. The
+// approve and reject flows only differ in the terminal status they set, so a
+// single helper keeps the auth + state-transition logic in one place.
+func (h *Handler) reviewApproval(w http.ResponseWriter, r *http.Request, newStatus string) {
+	approvalID := chi.URLParam(r, "approvalId")
+	if approvalID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingApprovalId", nil))
+		return
+	}
+	store := h.executor.ActionApprovalStore()
+	if store == nil {
+		apierror.WriteJSON(w, apierror.NewNotFound("ApprovalNotFound",
+			map[string]string{"approvalId": approvalID}))
+		return
+	}
+
+	user := auth.UserFromContext(r.Context())
+	if user == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("Unauthenticated", nil))
+		return
+	}
+
+	approval, err := store.GetActionApproval(r.Context(), approvalID)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ApprovalNotFound",
+				map[string]string{"approvalId": approvalID}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ApprovalLoadFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+
+	if approval.Status != ActionApprovalStatusPending {
+		apierror.WriteJSON(w, apierror.NewConflict("ApprovalAlreadyReviewed",
+			map[string]string{
+				"approvalId":    approvalID,
+				"currentStatus": approval.Status,
+			}))
+		return
+	}
+
+	if !userCanApprove(user, approval.Approvers) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("ApprovalForbidden",
+			map[string]string{
+				"approvalId": approvalID,
+				"userId":     user.ID,
+			}))
+		return
+	}
+
+	// Body is optional — callers can approve/reject without a reason.
+	var body approvalReviewRequest
+	if r.ContentLength > 0 {
+		if err := httputil.ReadJSON(r, &body); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody",
+				map[string]string{"error": err.Error()}))
+			return
+		}
+	}
+
+	reviewedBy := user.ID
+	upd := ActionApprovalUpdate{
+		Status:     newStatus,
+		ReviewedBy: &reviewedBy,
+		Reason:     &body.Reason,
+	}
+	if err := store.UpdateActionApproval(r.Context(), approvalID, upd); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ApprovalUpdateFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{
+		"approvalId": approvalID,
+		"status":     newStatus,
+	})
+}
+
+// userCanApprove returns true when any entry in approvers matches the
+// caller's ID or any of their role names. Treats the approvers list as an
+// OR of acceptable identities so modelers can mix role-based and
+// individual-named approvers without a separate flag.
+func userCanApprove(user *auth.User, approvers []string) bool {
+	if user == nil || len(approvers) == 0 {
+		return false
+	}
+	for _, a := range approvers {
+		if a == "" {
+			continue
+		}
+		if a == user.ID {
+			return true
+		}
+		for _, role := range user.Roles {
+			if role == a {
+				return true
+			}
+		}
+	}
+	return false
 }

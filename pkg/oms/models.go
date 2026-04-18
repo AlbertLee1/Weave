@@ -315,8 +315,19 @@ type ActionType struct {
 	// rules are executed to compensate (roll back) the side effects of this
 	// action when a saga batch fails downstream. Empty means the action is
 	// not part of any saga; the coordinator treats it as non-compensating.
-	CompensateActionRID string    `json:"compensateActionRid,omitempty"`
-	CreatedAt           time.Time `json:"-"`
+	CompensateActionRID string `json:"compensateActionRid,omitempty"`
+	// RequiresApproval (US-242) flags an action as requiring human approval
+	// before its edits are committed. When true and an ApprovalStore is wired,
+	// the Apply handler enqueues an ActionApproval row instead of executing
+	// rules and returns a 202 PendingApproval envelope. False by default so
+	// existing ActionTypes keep sync-apply semantics.
+	RequiresApproval bool `json:"requiresApproval,omitempty"`
+	// Approvers (US-242) is a snapshot of role names (or user IDs) that can
+	// approve a pending request. A caller qualifies when their user.Roles OR
+	// user.ID intersects this slice. Empty means nobody can approve — the
+	// Apply handler rejects such gated actions up front.
+	Approvers []string  `json:"approvers,omitempty"`
+	CreatedAt time.Time `json:"-"`
 }
 
 // actionParamDef is the internal (stored) array-element format.

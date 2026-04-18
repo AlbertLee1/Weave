@@ -598,6 +598,14 @@ components:
         compensateActionRid:
           description: "US-239: RID of the saga-compensating ActionType, if any."
           type: string
+        requiresApproval:
+          description: "US-242: when true, apply requests enqueue an ActionApproval instead of executing rules until reviewed."
+          type: boolean
+        approvers:
+          description: "US-242: snapshot of role names or user IDs eligible to approve requests for this ActionType."
+          type: array
+          items:
+            type: string
     ActionParameterV2:
       type: object
       required: [dataType, required]
@@ -2074,6 +2082,90 @@ components:
           type: string
           enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
           description: Initial job status at the time of the 202 response.
+    PendingApprovalResponse:
+      type: object
+      description: |
+        US-242: 202-Accepted envelope returned by POST /actions/{action}/apply
+        when the target ActionType is flagged requiresApproval and an
+        ActionApprovalStore is wired. Clients route to the approval queue UI
+        using {approvalId}; the action does NOT execute until the approval row
+        is transitioned to APPROVED via POST
+        /actions/approvals/{approvalId}/approve.
+      required: [approvalId, status]
+      properties:
+        approvalId:
+          type: string
+          description: Unique ID for the pending approval row.
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+          description: Initial approval status — always PENDING at enqueue time.
+    ActionApproval:
+      type: object
+      description: |
+        US-242: persisted approval request. status transitions PENDING →
+        (APPROVED | REJECTED); terminal states are immutable (409 Conflict on
+        re-approve). parameters is a snapshot of the original apply body so the
+        reviewer can inspect what will run if approved. approvers is a snapshot
+        of the ActionType's approvers list at submission time — later edits
+        don't retroactively change who can review an already-queued request.
+      required: [id, ontologyApiName, actionType, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        actionTypeRid:
+          type: string
+        ontologyApiName:
+          type: string
+        actionType:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Snapshot of the original apply body parameters.
+        approvers:
+          type: array
+          items:
+            type: string
+          description: Snapshot of approver role names or user IDs eligible to review.
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+        requestedBy:
+          type: string
+        reviewedBy:
+          type: string
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ApprovalReviewRequest:
+      type: object
+      description: |
+        US-242: JSON body for POST .../actions/approvals/{approvalId}/approve
+        and /reject. reason is optional and is recorded on the approval row
+        for audit.
+      properties:
+        reason:
+          type: string
+    ApprovalReviewResponse:
+      type: object
+      description: |
+        US-242: 200 OK envelope returned by the approve / reject endpoints.
+        Mirrors the ActionApproval row's terminal shape — carries the id and
+        the new status so SDK callers don't need a second GET to confirm the
+        transition.
+      required: [approvalId, status]
+      properties:
+        approvalId:
+          type: string
+        status:
+          type: string
+          enum: [APPROVED, REJECTED]
     ActionJob:
       type: object
       description: |
@@ -6468,11 +6560,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/SyncApplyActionResponseV2"
         "202":
-          description: "US-240: async job accepted."
+          description: |
+            US-240: async job accepted (when ?async=true and a job store is
+            wired). US-242: pending approval enqueued (when the ActionType is
+            flagged requiresApproval and an approval store is wired).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AsyncApplyActionResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/AsyncApplyActionResponse"
+                  - $ref: "#/components/schemas/PendingApprovalResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
@@ -6506,6 +6603,81 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/approve:
+    post:
+      operationId: approveAction
+      summary: Approve a pending ActionApproval (US-242)
+      description: |
+        Transitions a PENDING ActionApproval row to APPROVED. The caller's
+        user.ID or any of user.Roles must intersect the approval's snapshotted
+        approvers list. Already-terminal rows return 409 Conflict.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: approvalId
+          required: true
+          description: ID of the pending approval row.
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalReviewRequest"
+      responses:
+        "200":
+          description: Approval transitioned to APPROVED.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalReviewResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/reject:
+    post:
+      operationId: rejectAction
+      summary: Reject a pending ActionApproval (US-242)
+      description: |
+        Transitions a PENDING ActionApproval row to REJECTED. Authorization
+        and conflict rules match the approve endpoint.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: approvalId
+          required: true
+          description: ID of the pending approval row.
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalReviewRequest"
+      responses:
+        "200":
+          description: Approval transitioned to REJECTED.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalReviewResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
   /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides:
     post:
       operationId: applyActionWithOverrides

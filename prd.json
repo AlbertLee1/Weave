@@ -626,8 +626,8 @@
         "Tests pass"
       ],
       "priority": 43,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ActionType gains RequiresApproval bool + Approvers []string (JSONB in migration 000047); pkg/actions ActionApproval + narrow ActionApprovalStore interface + PG adapter in cmd/server/action_approval_store.go; Apply handler routes to serveApprovalEnqueue (202 PendingApproval) when RequiresApproval && store wired, degrades to sync when store absent; ApproveAction/RejectAction endpoints with user.ID-or-user.Roles ∩ approvers auth check, PENDING-only transitions (409 on re-approve); 6 tests cover enqueue + degraded mode + approve/reject happy-path + forbidden + conflict + 404; OpenAPI + embedded spec updated with 4 schemas (PendingApprovalResponse/ActionApproval/ApprovalReviewRequest/ApprovalReviewResponse) + 2 paths + requiresApproval/approvers fields on ActionType"
     },
     {
       "id": "US-243",

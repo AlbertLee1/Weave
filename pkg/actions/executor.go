@@ -161,6 +161,7 @@ type Executor struct {
 	objectFetcher      ObjectFetcher
 	atomicLogStore     AtomicActionLogStore
 	jobStore           ActionJobStore
+	approvalStore      ActionApprovalStore
 	progressPub        ProgressPublisher
 }
 
@@ -220,6 +221,30 @@ func (e *Executor) SetActionJobStore(s ActionJobStore) {
 // gracefully without reaching into the Executor's internals.
 func (e *Executor) ActionJobStore() ActionJobStore {
 	return e.jobStore
+}
+
+// SetActionApprovalStore attaches the approval-workflow store used by the
+// Apply handler to enqueue pending approvals when ActionType.RequiresApproval
+// is set (US-242). When nil the RequiresApproval flag is ignored and the
+// action runs synchronously — matches the ActionJobStore degraded-mode
+// pattern. Safe to call once at boot before the executor is shared with
+// handlers.
+func (e *Executor) SetActionApprovalStore(s ActionApprovalStore) {
+	e.approvalStore = s
+}
+
+// ActionApprovalStore returns the wired approval store (may be nil).
+func (e *Executor) ActionApprovalStore() ActionApprovalStore {
+	return e.approvalStore
+}
+
+// ResolveActionType is an exported shim around the saga coordinator's
+// lookup helper so the Apply handler can locate the ActionType before
+// executing rules — needed by the US-242 approval gate which inspects the
+// RequiresApproval flag before deciding whether to route to Apply or to
+// enqueue a pending approval.
+func (e *Executor) ResolveActionType(ctx context.Context, ontologyRID, ridOrName string) (*oms.ActionType, error) {
+	return e.resolveActionType(ctx, ontologyRID, ridOrName)
 }
 
 // PreparedAction is the output of Executor.Prepare: everything computable for
