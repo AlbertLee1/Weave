@@ -310,7 +310,12 @@ type ActionType struct {
 	// signature this ActionType claims to implement. Empty means the action
 	// is not method-bound. Surfaced on the wire via ToFullMetadataJSON and
 	// consumed by the polymorphic invoke endpoint.
-	ImplementsMethodRID string    `json:"implementsMethodRid,omitempty"`
+	ImplementsMethodRID string `json:"implementsMethodRid,omitempty"`
+	// CompensateActionRID (US-239) points at another action_types row whose
+	// rules are executed to compensate (roll back) the side effects of this
+	// action when a saga batch fails downstream. Empty means the action is
+	// not part of any saga; the coordinator treats it as non-compensating.
+	CompensateActionRID string    `json:"compensateActionRid,omitempty"`
 	CreatedAt           time.Time `json:"-"`
 }
 

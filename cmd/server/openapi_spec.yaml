@@ -522,6 +522,9 @@ components:
         implementsMethodRid:
           description: "US-214: RID of an InterfaceMethod this ActionType implements."
           type: string
+        compensateActionRid:
+          description: "US-239: RID of another ActionType whose rules compensate this action during a saga rollback. Must live in the same ontology; self-reference is rejected."
+          type: string
     UpdateActionTypeRequest:
       type: object
       properties:
@@ -553,6 +556,9 @@ components:
             additionalProperties: true
         implementsMethodRid:
           description: "US-214: tri-state pointer. Omit to preserve, empty string to clear, RID to assign."
+          type: string
+        compensateActionRid:
+          description: "US-239: tri-state pointer for the saga compensator. Omit to preserve, empty string to clear, RID to assign (partner must live in the same ontology and must not self-reference)."
           type: string
     ActionType:
       type: object
@@ -588,6 +594,9 @@ components:
           type: boolean
         implementsMethodRid:
           description: "US-214: RID of an InterfaceMethod this ActionType implements, if any."
+          type: string
+        compensateActionRid:
+          description: "US-239: RID of the saga-compensating ActionType, if any."
           type: string
     ActionParameterV2:
       type: object
@@ -6453,6 +6462,18 @@ paths:
           description: Action API name. All batch items share this action.
           schema:
             type: string
+        - in: query
+          name: atomic
+          required: false
+          description: "US-238: when true, wrap the action_log writes in a PG transaction that commits before the NATS publish."
+          schema:
+            type: boolean
+        - in: query
+          name: saga
+          required: false
+          description: "US-239: when true, route through the saga coordinator. On any prepare/commit failure, previously-prepared actions' compensators fire in reverse declaration order."
+          schema:
+            type: boolean
       requestBody:
         required: true
         content:

@@ -308,6 +308,25 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 		reqs.Actions[i].ActionType = action
 	}
 
+	// US-239: opt-in saga coordination via ?saga=true. Walks the batch in
+	// declaration order; on the first prepare-or-commit failure every
+	// previously-prepared action's compensator (if any) fires in reverse
+	// order. Sits alongside ?atomic=true rather than replacing it — saga
+	// is about rollback semantics, atomic-tx is about PG isolation.
+	if r.URL.Query().Get("saga") == "true" {
+		sagaResult, sagaErr := h.executor.ApplyBatchSaga(r.Context(), ontologyRID, reqs.Actions)
+		if sagaErr != nil {
+			apierror.WriteJSON(w, asBatchError(sagaErr))
+			return
+		}
+		resp := &BatchApplyActionResponseV2{}
+		if returnEdits != "NONE" {
+			resp.Edits = countEdits(sagaResult.AppliedEdits)
+		}
+		httputil.WriteJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	// US-238: opt-in PG-transaction commit via ?atomic=true. The default
 	// path is the existing best-effort-commit atomic batch — it prepares
 	// all-or-nothing but writes action_logs outside a tx. Setting

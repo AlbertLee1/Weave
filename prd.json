@@ -582,8 +582,8 @@
         "Tests pass（两步 saga，第二步失败则第一步补偿）"
       ],
       "priority": 40,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000045 action_types.compensate_action_rid + partial index; ActionType.CompensateActionRID with NULLIF/COALESCE; admin handlers validate self-reference + same-ontology; pkg/actions.ApplyBatchSaga prepares in order, on failure runs compensators in reverse via resolveActionType + filtered-params Prepare; POST applyBatch?saga=true routes to coordinator; 4 saga_test.go cases + handler E2E"
     },
     {
       "id": "US-240",

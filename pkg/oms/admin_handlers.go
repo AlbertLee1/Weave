@@ -199,6 +199,11 @@ type CreateActionTypeRequest struct {
 	// InterfaceMethod signature. When set the create handler validates that
 	// the referenced method exists in the same ontology.
 	ImplementsMethodRID string `json:"implementsMethodRid,omitempty"`
+	// CompensateActionRID (US-239) optionally names another ActionType in
+	// the same ontology whose rules compensate this action during a saga
+	// rollback. Create-time validation checks that the referenced
+	// ActionType exists and lives in the same ontology.
+	CompensateActionRID string `json:"compensateActionRid,omitempty"`
 }
 
 // UpdateActionTypeRequest is the request body for updating an action type.
@@ -213,6 +218,10 @@ type UpdateActionTypeRequest struct {
 	// ImplementsMethodRID (US-214) is a tri-state pointer: nil = leave
 	// unchanged, "" = clear the binding, non-empty = validate + assign.
 	ImplementsMethodRID *string `json:"implementsMethodRid,omitempty"`
+	// CompensateActionRID (US-239) is a tri-state pointer: nil = leave
+	// unchanged, "" = clear the compensation pair, non-empty = validate +
+	// assign. Prevents self-reference (an action cannot compensate itself).
+	CompensateActionRID *string `json:"compensateActionRid,omitempty"`
 }
 
 // --- Admin handlers ---
@@ -913,6 +922,7 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 		Parameters:          req.Parameters,
 		Rules:               req.Rules,
 		ImplementsMethodRID: req.ImplementsMethodRID,
+		CompensateActionRID: req.CompensateActionRID,
 	}
 
 	// US-214: if the action claims an InterfaceMethod binding, verify the
@@ -922,6 +932,14 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 	// field so callers get a clean error instead of a dangling reference.
 	if at.ImplementsMethodRID != "" {
 		if apiErr := h.validateImplementsMethodRID(r.Context(), ontologyRID, at.ImplementsMethodRID); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+	}
+	// US-239: if the action declares a compensator, verify the partner
+	// ActionType exists in the same ontology and is not a self-reference.
+	if at.CompensateActionRID != "" {
+		if apiErr := h.validateCompensateActionRID(r.Context(), ontologyRID, at.RID, at.CompensateActionRID); apiErr != nil {
 			apierror.WriteJSON(w, apiErr)
 			return
 		}
@@ -997,6 +1015,16 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 		updated.ImplementsMethodRID = *req.ImplementsMethodRID
 		if updated.ImplementsMethodRID != "" {
 			if apiErr := h.validateImplementsMethodRID(r.Context(), existing.OntologyRID, updated.ImplementsMethodRID); apiErr != nil {
+				apierror.WriteJSON(w, apiErr)
+				return
+			}
+		}
+	}
+	// US-239 tri-state: nil=preserve, ""=clear compensator, "X"=validate+assign.
+	if req.CompensateActionRID != nil {
+		updated.CompensateActionRID = *req.CompensateActionRID
+		if updated.CompensateActionRID != "" {
+			if apiErr := h.validateCompensateActionRID(r.Context(), existing.OntologyRID, existing.RID, updated.CompensateActionRID); apiErr != nil {
 				apierror.WriteJSON(w, apiErr)
 				return
 			}
