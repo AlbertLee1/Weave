@@ -1747,6 +1747,38 @@ func (r *PGRepository) InsertActionLog(ctx context.Context, al *ActionLog) error
 	return nil
 }
 
+// WriteActionLogsAtomic persists the given action log rows in a single
+// PostgreSQL transaction. All rows commit together or nothing is written —
+// this is the PG side of the US-238 atomic-batch guarantee. Each row's ID
+// and CreatedAt are back-filled on success; on failure the caller receives a
+// raw pgx error and no rows are visible after rollback.
+func (r *PGRepository) WriteActionLogsAtomic(ctx context.Context, logs []*ActionLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for _, al := range logs {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO action_logs (action_type_rid, user_id, parameters, edits, status, error_message, prev_edits)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			 RETURNING id, created_at`,
+			al.ActionTypeRID, al.UserID, al.Parameters, al.Edits, al.Status, nilIfEmpty(al.ErrorMessage), al.PrevEdits).
+			Scan(&al.ID, &al.CreatedAt); err != nil {
+			return fmt.Errorf("insert action log: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
 // --- ObjectHistory (Tier 2.3) ---
 
 // InsertObjectHistory writes a new history row and back-fills the generated

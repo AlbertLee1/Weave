@@ -142,6 +142,16 @@ type ObjectFetcher interface {
 	FetchObject(ctx context.Context, ontologyAPIName, objectType, primaryKey string) (map[string]interface{}, error)
 }
 
+// AtomicActionLogStore writes a slice of action logs in a single PostgreSQL
+// transaction. US-238 uses it to commit batch-action state atomically before
+// any NATS publish — the tx either succeeds (all logs persisted, publisher is
+// fired afterwards) or the whole batch rolls back without any NATS message
+// being emitted. Kept as a narrow, setter-injected interface so
+// degraded-mode / test executors can operate without a PG pool.
+type AtomicActionLogStore interface {
+	WriteActionLogsAtomic(ctx context.Context, logs []*oms.ActionLog) error
+}
+
 // Executor executes actions.
 type Executor struct {
 	omsRepo            oms.Repository
@@ -149,6 +159,7 @@ type Executor struct {
 	functionDispatcher FunctionDispatcher
 	objectChecker      ObjectExistenceChecker
 	objectFetcher      ObjectFetcher
+	atomicLogStore     AtomicActionLogStore
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit
@@ -183,6 +194,15 @@ func (e *Executor) SetObjectExistenceChecker(c ObjectExistenceChecker) {
 // once at boot.
 func (e *Executor) SetObjectFetcher(f ObjectFetcher) {
 	e.objectFetcher = f
+}
+
+// SetAtomicActionLogStore attaches the PG-backed action-log tx store used by
+// ApplyBatchAtomicTx (US-238) to persist all action logs in a single
+// transaction before firing the NATS publish. When nil the atomic-tx path
+// degrades to the legacy best-effort CommitBatch flow. Safe to call once at
+// boot before the executor is shared with handlers.
+func (e *Executor) SetAtomicActionLogStore(s AtomicActionLogStore) {
+	e.atomicLogStore = s
 }
 
 // PreparedAction is the output of Executor.Prepare: everything computable for
@@ -781,6 +801,159 @@ func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string,
 	}
 	result.Mode = "bestEffort"
 	result.Failures = failures
+	return result, nil
+}
+
+// ApplyBatchAtomicTx (US-238) is ApplyBatchAtomic plus a PostgreSQL
+// transaction around the action-log writes. Every request is prepared first;
+// on any prepare failure a *BatchError is returned with phase="validation"
+// (or phase="internal") and nothing is committed or published. When all
+// prepare successes have been collected the flow is:
+//
+//  1. Compute the combined post-collapse EditBatch.
+//  2. Write every per-action ActionLog via AtomicActionLogStore in a single
+//     PG transaction. If that fails a *BatchError with phase="commit" is
+//     returned and the publisher is NOT called — matching the AC
+//     "PG 事务包裹，失败时 rollback 所有编辑".
+//  3. Only after the tx commit succeeds does the executor publish the
+//     EditBatch to NATS, matching the AC "NATS 发布在 commit 后". A
+//     post-commit publish failure returns a *BatchError with phase="publish"
+//     but the PG action logs are already persisted (accepted tradeoff:
+//     at-most-once publish after commit).
+//
+// When no AtomicActionLogStore is wired (e.g. unit tests without a PG pool)
+// the method falls back to the existing ApplyBatchAtomic/CommitBatch flow so
+// degraded-mode callers keep working.
+func (e *Executor) ApplyBatchAtomicTx(ctx context.Context, ontologyRID string, reqs []ApplyRequest) (*BatchResult, error) {
+	if e.atomicLogStore == nil {
+		return e.ApplyBatchAtomic(ctx, ontologyRID, reqs)
+	}
+
+	prepared := make([]*PreparedAction, 0, len(reqs))
+	for i := range reqs {
+		p, err := e.Prepare(ctx, ontologyRID, &reqs[i])
+		if err != nil {
+			return nil, &BatchError{
+				Phase:             classifyPrepareError(err),
+				FailedActionIndex: i,
+				ActionType:        reqs[i].ActionType,
+				Message:           err.Error(),
+				Cause:             err,
+			}
+		}
+		prepared = append(prepared, p)
+	}
+
+	return e.commitBatchAtomicTx(ctx, ontologyRID, prepared)
+}
+
+// commitBatchAtomicTx runs the "PG tx then publish" commit path described on
+// ApplyBatchAtomicTx. Split out so future callers (e.g. applyBatchBestEffort
+// with an atomic-tx option) can share the core logic without duplicating
+// classification / error shaping.
+func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName string, prepared []*PreparedAction) (*BatchResult, error) {
+	result := &BatchResult{
+		Mode:    "atomic",
+		Results: make([]*ApplyResult, 0, len(prepared)),
+	}
+	if len(prepared) == 0 {
+		return result, nil
+	}
+
+	var all []funnel.Edit
+	for _, p := range prepared {
+		all = append(all, p.Edits...)
+	}
+	collapsed := CollapseEdits(all)
+
+	for _, p := range prepared {
+		result.Results = append(result.Results, &ApplyResult{
+			ActionRID: p.ActionType.RID,
+			Edits:     p.Edits,
+		})
+	}
+
+	// Empty post-collapse batch: no PG state to write, no NATS message to
+	// publish. Successful no-op — mirrors CommitBatch.
+	if len(collapsed) == 0 {
+		return result, nil
+	}
+
+	// Build action log rows up-front so the tx callback can persist them
+	// all in one shot. Mirrors the per-row shape used by CommitBatch.
+	logs := make([]*oms.ActionLog, 0, len(prepared))
+	for _, p := range prepared {
+		paramsJSON, _ := json.Marshal(p.Request.Parameters)
+		editsJSON, _ := json.Marshal(p.Edits)
+		row := &oms.ActionLog{
+			ActionTypeRID: p.ActionType.RID,
+			UserID:        p.UserID,
+			Parameters:    paramsJSON,
+			Edits:         editsJSON,
+			Status:        "SUCCESS",
+		}
+		if p.PrevEdits != nil {
+			prevEditsJSON, _ := json.Marshal(p.PrevEdits)
+			row.PrevEdits = prevEditsJSON
+		}
+		logs = append(logs, row)
+	}
+
+	// Phase 1: PG transaction — all logs or none. A failure here means
+	// NOTHING is published (AC "PG 事务包裹，失败时 rollback 所有编辑").
+	if err := e.atomicLogStore.WriteActionLogsAtomic(ctx, logs); err != nil {
+		return nil, &BatchError{
+			Phase:             "commit",
+			FailedActionIndex: -1,
+			ActionType:        "",
+			Message:           fmt.Sprintf("atomic commit: %v", err),
+			Cause:             err,
+		}
+	}
+
+	// Phase 2: NATS publish AFTER commit (AC "NATS 发布在 commit 后"). A
+	// publish failure leaves the PG logs in place — accepted tradeoff so
+	// the tx boundary stays short.
+	batch := &funnel.EditBatch{
+		ID:              uuid.New().String(),
+		OntologyAPIName: ontologyAPIName,
+		Edits:           collapsed,
+		UserID:          prepared[0].UserID,
+		Timestamp:       time.Now(),
+	}
+
+	var offset uint64
+	if e.publisher != nil {
+		var err error
+		offset, err = e.publisher.Publish(batch)
+		if err != nil {
+			return nil, &BatchError{
+				Phase:             "publish",
+				FailedActionIndex: -1,
+				ActionType:        "",
+				Message:           fmt.Sprintf("publish edits: %v", err),
+				Cause:             err,
+			}
+		}
+	}
+
+	result.BatchID = batch.ID
+	result.Offset = offset
+	result.AppliedEdits = collapsed
+	for _, r := range result.Results {
+		r.BatchID = batch.ID
+		r.Offset = offset
+	}
+
+	// Per-action side effects (best-effort, non-blocking). Mirrors CommitBatch.
+	for i, p := range prepared {
+		ExecuteSideEffects(p.ActionType.SideEffects, ActionResult{
+			ActionRID: p.ActionType.RID,
+			BatchID:   batch.ID,
+			Edits:     result.Results[i].Edits,
+		})
+	}
+
 	return result, nil
 }
 

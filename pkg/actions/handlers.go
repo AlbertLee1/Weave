@@ -308,8 +308,20 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 		reqs.Actions[i].ActionType = action
 	}
 
-	// Always atomic.
-	result, err := h.executor.ApplyBatchAtomic(r.Context(), ontologyRID, reqs.Actions)
+	// US-238: opt-in PG-transaction commit via ?atomic=true. The default
+	// path is the existing best-effort-commit atomic batch — it prepares
+	// all-or-nothing but writes action_logs outside a tx. Setting
+	// atomic=true routes through the tx-wrapped commit so PG state rolls
+	// back together on failure and NATS publish happens post-commit.
+	var (
+		result *BatchResult
+		err    error
+	)
+	if r.URL.Query().Get("atomic") == "true" {
+		result, err = h.executor.ApplyBatchAtomicTx(r.Context(), ontologyRID, reqs.Actions)
+	} else {
+		result, err = h.executor.ApplyBatchAtomic(r.Context(), ontologyRID, reqs.Actions)
+	}
 	if err != nil {
 		apierror.WriteJSON(w, asBatchError(err))
 		return

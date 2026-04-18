@@ -965,6 +965,13 @@ func main() {
 	// 8. Action Executor
 	if deps.OmsRepo != nil {
 		deps.ActionExecutor = actions.NewExecutor(deps.OmsRepo, publisher)
+		// US-238: opt-in PG-transactional batch commit via ?atomic=true.
+		// Wired only when a PG pool exists — the store lives on the
+		// uncached *PGRepository (same pattern as LinkPropertyStore /
+		// MediaCatalog / ObjectSetSnapshotStore).
+		if deps.PGPool != nil {
+			deps.ActionExecutor.SetAtomicActionLogStore(oms.NewPGRepository(deps.PGPool))
+		}
 		// US-214: polymorphic invoke forwards to the ActionExecutor via a
 		// narrow adapter so pkg/oms stays free of a pkg/actions import.
 		deps.InterfaceMethodDispatcher = newInterfaceMethodDispatcher(deps.ActionExecutor)
