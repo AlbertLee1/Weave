@@ -5744,9 +5744,32 @@ paths:
     post:
       operationId: loadObjectSet
       summary: Materialize an ObjectSet definition into a page of objects
+      description: |
+        Returns the live state of every object in the ObjectSet. When the
+        optional `asOf` query parameter is supplied (RFC3339 timestamp,
+        e.g. `2026-01-01T00:00:00Z`) the handler scans `object_history`
+        for the snapshot whose `[valid_from, valid_to)` validity window
+        covers `asOf` and returns the object as it existed at that
+        instant. Time-travel currently only supports `base` ObjectSet
+        definitions; composite types (`filter`, `union`, `intersect`,
+        `searchAround`, ...) reject `asOf` with `TimeTravelUnsupportedObjectSet`.
       tags: [ObjectSets]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: asOf
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: |
+            US-223 time-travel: RFC3339 timestamp at which to read object
+            state. When set the response reflects the snapshot recorded
+            in object_history at that instant rather than the live Bleve
+            index. Errors: `InvalidAsOf` (malformed timestamp),
+            `TimeTravelUnavailable` (provider not wired in degraded
+            mode), `TimeTravelUnsupportedObjectSet` (non-base ObjectSet),
+            `TimeTravelFailed` (snapshot read backend error).
       requestBody:
         required: true
         content:

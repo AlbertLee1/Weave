@@ -73,13 +73,13 @@ type ServerDeps struct {
 	// events onto the hub via its OnChange hook; tests (and degraded-mode
 	// bootstraps) may leave it nil and the SSE route will return a clean
 	// 500 SSESubscribeNotConfigured.
-	FunnelBroadcast   *funnel.Broadcast
-	AttachmentStore   attachment.BlobStore
+	FunnelBroadcast *funnel.Broadcast
+	AttachmentStore attachment.BlobStore
 	// US-204: Media upload/download/delete API. Both fields must be wired
 	// for the /api/v2/media routes to mount; in degraded mode (no PG) the
 	// catalog is nil and the routes are not registered.
-	MediaStore        *media.Store
-	MediaCatalog      oms.MediaAssetStore
+	MediaStore   *media.Store
+	MediaCatalog oms.MediaAssetStore
 	// US-210: Link Properties. LinkPropertyStore holds the edge-property
 	// schema (new link_properties table); LinkEdgeStore is the narrow CRUD
 	// surface over link_edges used by the PUT edges/properties endpoint and
@@ -93,15 +93,20 @@ type ServerDeps struct {
 	// endpoint can actually run the resolved ActionType.
 	InterfaceMethodStore      oms.InterfaceMethodStore
 	InterfaceMethodDispatcher oms.InterfaceMethodActionDispatcher
-	TimeSeriesStore   timeseries.Store
-	GeotemporalStore  geotemporal.Store
-	CipherDecryptor   cipher.Decryptor
-	TransactionStore  transactions.Store
-	SqlQueryEngine    sqlqueries.Engine
-	IndexDocSource    index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
-	AuditStore        audit.Store                // US-067: audit event store (nil = endpoint returns 503)
-	IngestRateLimiter oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
-	WebSocketHub      *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
+	// US-223 Time-Travel Queries. HistorySnapshotStore is the uncached
+	// *PGRepository view onto SnapshotObjectsAt. When wired alongside
+	// OmsRepo the loadObjects handler honours `?asOf=<RFC3339>`; absent
+	// the route falls through to TimeTravelUnavailable 400.
+	HistorySnapshotStore historySnapshotStore
+	TimeSeriesStore      timeseries.Store
+	GeotemporalStore     geotemporal.Store
+	CipherDecryptor      cipher.Decryptor
+	TransactionStore     transactions.Store
+	SqlQueryEngine       sqlqueries.Engine
+	IndexDocSource       index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
+	AuditStore           audit.Store                // US-067: audit event store (nil = endpoint returns 503)
+	IngestRateLimiter    oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
+	WebSocketHub         *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	// US-141: Developer Console application registry. When nil the
 	// /api/v2/developer/applications routes are not registered.
 	ApplicationRepo developer.ApplicationRepository
@@ -442,6 +447,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.PolicyEngine != nil && deps.OmsRepo != nil {
 				objSetHandler.SetPropertyFilterProvider(newPropertyFilterAdapter(deps.OmsRepo, deps.PolicyEngine))
 			}
+			// US-223: wire the time-travel snapshot provider when both an
+			// OMS repo (for ObjectType resolution) and the uncached
+			// *PGRepository (which exposes SnapshotObjectsAt) are available.
+			// Degraded-mode test routers without PG leave the hook unset and
+			// asOf requests fall through to TimeTravelUnavailable 400.
+			if deps.OmsRepo != nil && deps.HistorySnapshotStore != nil {
+				objSetHandler.SetHistorySnapshotProvider(newHistorySnapshotAdapter(deps.OmsRepo, deps.HistorySnapshotStore))
+			}
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", objSetHandler.LoadObjects)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks", objSetHandler.LoadLinks)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/aggregate", objSetHandler.Aggregate)
@@ -600,6 +613,10 @@ func main() {
 		// validation. Served by the uncached *PGRepository (the
 		// CachedRepository decorator wraps the oms.Repository surface only).
 		deps.InterfaceMethodStore = pgRepo
+		// US-223: time-travel snapshot reader. Served by the uncached
+		// *PGRepository for the same reason — SnapshotObjectsAt is not on
+		// the oms.Repository surface that the cache decorator wraps.
+		deps.HistorySnapshotStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		deps.AuditStore = audit.NewPGStore(pool)
 		// US-011: the index rebuild admin command re-ingests from

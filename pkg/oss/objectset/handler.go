@@ -3,7 +3,9 @@ package objectset
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strconv"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
@@ -73,11 +75,12 @@ type PropertyFilterProvider interface {
 
 // Handler handles ObjectSet HTTP requests.
 type Handler struct {
-	executor       *Executor
-	indexMgr       *index.Manager
-	store          *Store
-	aggEngine      *aggregation.Engine
-	propertyFilter PropertyFilterProvider
+	executor         *Executor
+	indexMgr         *index.Manager
+	store            *Store
+	aggEngine        *aggregation.Engine
+	propertyFilter   PropertyFilterProvider
+	historySnapshots HistorySnapshotProvider
 }
 
 // NewHandler creates a new ObjectSet handler.
@@ -98,6 +101,17 @@ func NewHandler(executor *Executor, indexMgr *index.Manager, store *Store) *Hand
 // boot; the Handler re-reads the field on every request.
 func (h *Handler) SetPropertyFilterProvider(p PropertyFilterProvider) {
 	h.propertyFilter = p
+}
+
+// SetHistorySnapshotProvider wires the optional US-223 time-travel reader.
+// When attached, LoadObjects honours the `?asOf=<RFC3339>` query parameter
+// by routing through the provider instead of the live Bleve index. Passing
+// nil detaches the hook (asOf requests then return 501). The reader is only
+// consulted for "base" ObjectSet definitions; composite types (filter,
+// union, intersect, ...) reject asOf with a 400 because Bleve has no
+// per-instant snapshot to filter against.
+func (h *Handler) SetHistorySnapshotProvider(p HistorySnapshotProvider) {
+	h.historySnapshots = p
 }
 
 // applyPropertyVisibility is the Handler-side chokepoint that US-048
@@ -148,7 +162,26 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 
 	// Stamp the ontology scope on the context so the executor and downstream
 	// Bleve lookups use per-ontology index keys (US-044).
-	ctx := WithOntologyScope(r.Context(), chi.URLParam(r, "ontologyApiName"))
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	ctx := WithOntologyScope(r.Context(), ontologyAPIName)
+
+	// US-223: ?asOf=<RFC3339> short-circuits to the time-travel path. We
+	// scan object_history for the snapshot covering the requested instant
+	// and skip the Bleve fetch entirely. Only "base" ObjectSets are
+	// supported because composite types (filter / union / ...) need a
+	// per-instant Bleve index that we don't materialise.
+	if asOfRaw := r.URL.Query().Get("asOf"); asOfRaw != "" {
+		asOf, err := time.Parse(time.RFC3339, asOfRaw)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAsOf", map[string]string{
+				"asOf":   asOfRaw,
+				"reason": "asOf must be an RFC3339 timestamp, e.g. 2026-01-01T00:00:00Z",
+			}))
+			return
+		}
+		h.loadObjectsAsOf(w, r, ctx, ontologyAPIName, &req, asOf)
+		return
+	}
 
 	// Execute the ObjectSet to get PKs
 	result, err := h.executor.Execute(ctx, req.ObjectSet)
@@ -264,6 +297,106 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		resp.NextPageToken = nextCursor.Encode()
 	}
 
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// loadObjectsAsOf serves the US-223 time-travel branch of LoadObjects. It
+// resolves the ObjectSet to a single base ObjectType, asks the wired
+// HistorySnapshotProvider for every PK whose [valid_from, valid_to)
+// interval covers asOf, then applies select / pagination exactly like the
+// live path. Errors before any data is written so the response stays a
+// regular JSON envelope.
+func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx context.Context, ontologyAPIName string, req *LoadObjectSetRequest, asOf time.Time) {
+	if h.historySnapshots == nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeTravelUnavailable", map[string]string{
+			"reason": "history snapshot provider is not configured on this server",
+		}))
+		return
+	}
+	if req.ObjectSet.Type != "base" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeTravelUnsupportedObjectSet", map[string]string{
+			"objectSetType": req.ObjectSet.Type,
+			"reason":        "asOf time-travel currently only supports base ObjectSet definitions",
+		}))
+		return
+	}
+	if req.ObjectSet.ObjectType == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingObjectType", map[string]string{
+			"reason": "base ObjectSet requires objectType for asOf time-travel",
+		}))
+		return
+	}
+
+	snapshots, err := h.historySnapshots.SnapshotObjectsAt(ctx, ontologyAPIName, req.ObjectSet.ObjectType, asOf)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeTravelFailed", map[string]string{
+			"asOf":  asOf.Format(time.RFC3339),
+			"error": err.Error(),
+		}))
+		return
+	}
+
+	// Sort PKs ASC for stable pagination. The live path inherits Bleve's
+	// internal order; the asOf path has no equivalent so deterministic-by-PK
+	// is the safest default.
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].PrimaryKey < snapshots[j].PrimaryKey
+	})
+
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	if pageSize > 1000 {
+		pageSize = 1000
+	}
+	offset := 0
+	if req.PageToken != "" {
+		if cursor, err := pagination.DecodeCursor(req.PageToken); err == nil {
+			offset = cursor.Offset
+		}
+	}
+	totalCount := len(snapshots)
+	start := offset
+	if start > totalCount {
+		start = totalCount
+	}
+	end := start + pageSize
+	if end > totalCount {
+		end = totalCount
+	}
+	pageSnaps := snapshots[start:end]
+
+	data := make([]*oss.WireObject, 0, len(pageSnaps))
+	for _, snap := range pageSnaps {
+		props := snap.Properties
+		if len(req.Select) > 0 {
+			filtered := make(map[string]interface{}, len(req.Select))
+			for _, f := range req.Select {
+				if v, ok := props[f]; ok {
+					filtered[f] = v
+				}
+			}
+			props = filtered
+		}
+		data = append(data, oss.FormatObject(req.ObjectSet.ObjectType, snap.PrimaryKey, props))
+	}
+
+	data, err = h.applyPropertyVisibility(ctx, req.ObjectSet.ObjectType, data)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("PropertyFilterFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+
+	resp := &LoadObjectSetResponse{
+		Data:               data,
+		TotalCount:         strconv.Itoa(totalCount),
+		TotalCountAccuracy: "EXACT",
+	}
+	if end < totalCount {
+		nextCursor := &pagination.Cursor{Offset: end}
+		resp.NextPageToken = nextCursor.Encode()
+	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 

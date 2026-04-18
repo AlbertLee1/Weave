@@ -355,8 +355,8 @@
         "Tests pass"
       ],
       "priority": 24,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000043 adds valid_from/valid_to + backfill window; InsertObjectHistory stamps valid_from = recorded_at and closes prior version's valid_to in the same call so [valid_from, valid_to) intervals are non-overlapping. PGRepository.SnapshotObjectsAt scans the half-open interval and skips DELETE tombstones. objectset.HistorySnapshotProvider narrow interface + SetHistorySnapshotProvider hook on the Handler; LoadObjects honours `?asOf=<RFC3339>` for base ObjectSets only (composite types get TimeTravelUnsupportedObjectSet 400). cmd/server wires the historySnapshotAdapter via the uncached *PGRepository. 8 unit tests in handler_asof_test.go + 3 integration tests in object_history_asof_test.go."
     },
     {
       "id": "US-224",

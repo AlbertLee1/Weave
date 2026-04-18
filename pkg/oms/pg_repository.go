@@ -1767,8 +1767,8 @@ func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory
 		err = r.pool.QueryRow(ctx,
 			`INSERT INTO object_history
 			   (object_type_rid, primary_key, version, prev_state, new_state,
-			    edit_type, source, action_log_rid, user_id, recorded_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			    edit_type, source, action_log_rid, user_id, recorded_at, valid_from)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
 			 RETURNING id, recorded_at`,
 			h.ObjectTypeRID, h.PrimaryKey, h.Version,
 			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
@@ -1779,8 +1779,8 @@ func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory
 		err = r.pool.QueryRow(ctx,
 			`INSERT INTO object_history
 			   (object_type_rid, primary_key, version, prev_state, new_state,
-			    edit_type, source, action_log_rid, user_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			    edit_type, source, action_log_rid, user_id, valid_from)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
 			 RETURNING id, recorded_at`,
 			h.ObjectTypeRID, h.PrimaryKey, h.Version,
 			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
@@ -1788,6 +1788,22 @@ func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory
 			Scan(&h.ID, &h.RecordedAt)
 	}
 	if err != nil {
+		return err
+	}
+	// US-223: close out the prior open version of (object_type_rid, primary_key)
+	// so a snapshot read at time T resolves to exactly one row per PK. Any
+	// row with the same (object_type_rid, primary_key) and version < ours
+	// whose valid_to is still NULL is the previous "live" version; stamp its
+	// valid_to with our own valid_from (== recorded_at) so the [valid_from,
+	// valid_to) range becomes contiguous and non-overlapping.
+	if _, err := r.pool.Exec(ctx,
+		`UPDATE object_history
+		    SET valid_to = $3
+		  WHERE object_type_rid = $1
+		    AND primary_key = $2
+		    AND version < $4
+		    AND valid_to IS NULL`,
+		h.ObjectTypeRID, h.PrimaryKey, h.RecordedAt, h.Version); err != nil {
 		return err
 	}
 	h.Source = source
@@ -1889,6 +1905,45 @@ func (r *PGRepository) LoadLatestObjectStates(ctx context.Context, objectTypeRID
 		 WHERE object_type_rid = $1
 		 ORDER BY primary_key, version DESC`,
 		objectTypeRID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []LatestObjectState
+	for rows.Next() {
+		var pk, editType string
+		var newState []byte
+		if err := rows.Scan(&pk, &newState, &editType); err != nil {
+			return nil, err
+		}
+		if editType == "DELETE" || len(newState) == 0 {
+			continue
+		}
+		buf := make([]byte, len(newState))
+		copy(buf, newState)
+		result = append(result, LatestObjectState{
+			PrimaryKey: pk,
+			NewState:   buf,
+		})
+	}
+	return result, rows.Err()
+}
+
+// SnapshotObjectsAt returns the per-PK new_state of every primary_key whose
+// validity window covers asOf for the given ObjectType RID. The validity
+// window is `[valid_from, valid_to)` — half-open so adjacent versions never
+// double-count. Rows whose covering version is a DELETE tombstone are
+// skipped: the caller should treat the absence of an entry as "object did
+// not exist at asOf". US-223.
+func (r *PGRepository) SnapshotObjectsAt(ctx context.Context, objectTypeRID string, asOf time.Time) ([]LatestObjectState, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT primary_key, new_state, edit_type
+		   FROM object_history
+		  WHERE object_type_rid = $1
+		    AND valid_from <= $2
+		    AND (valid_to IS NULL OR valid_to > $2)`,
+		objectTypeRID, asOf)
 	if err != nil {
 		return nil, err
 	}
