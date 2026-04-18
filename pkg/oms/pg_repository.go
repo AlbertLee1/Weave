@@ -520,15 +520,16 @@ func (r *PGRepository) CreateActionType(ctx context.Context, at *ActionType) err
 	if err != nil {
 		return err
 	}
+	paramSchema := normaliseParameterSchemaForWrite(at.ParameterSchema)
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO action_types (rid, ontology_rid, api_name, display_name, description,
 		 status, parameters, rules, function_rid, is_function_backed, submission_criteria, side_effects,
-		 implements_method_rid, compensate_action_rid, requires_approval, approvers)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16)`,
+		 implements_method_rid, compensate_action_rid, requires_approval, approvers, parameter_schema)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16, $17)`,
 		at.RID, at.OntologyRID, at.APIName, at.DisplayName, at.Description,
 		at.Status, params, rules, at.FunctionRID, at.IsFunctionBacked, sc, se,
 		at.ImplementsMethodRID, at.CompensateActionRID,
-		at.RequiresApproval, approvers)
+		at.RequiresApproval, approvers, paramSchema)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -538,6 +539,7 @@ func (r *PGRepository) CreateActionType(ctx context.Context, at *ActionType) err
 func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionType, error) {
 	at := &ActionType{}
 	var approvers []byte
+	var paramSchema []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 COALESCE(status, 'ACTIVE'), parameters, rules,
@@ -546,7 +548,8 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 		 COALESCE(implements_method_rid, ''),
 		 COALESCE(compensate_action_rid, ''),
 		 COALESCE(requires_approval, FALSE),
-		 COALESCE(approvers, '[]'::jsonb)
+		 COALESCE(approvers, '[]'::jsonb),
+		 parameter_schema
 		 FROM action_types WHERE rid = $1`, rid).
 		Scan(&at.RID, &at.OntologyRID, &at.APIName, &at.DisplayName, &at.Description,
 			&at.Status, &at.Parameters, &at.Rules,
@@ -555,7 +558,8 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 			&at.ImplementsMethodRID,
 			&at.CompensateActionRID,
 			&at.RequiresApproval,
-			&approvers)
+			&approvers,
+			&paramSchema)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -563,6 +567,7 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 		return nil, err
 	}
 	at.Approvers = decodeApprovers(approvers)
+	at.ParameterSchema = parameterSchemaFromBytes(paramSchema)
 	return at, nil
 }
 
@@ -591,7 +596,8 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 		 COALESCE(implements_method_rid, ''),
 		 COALESCE(compensate_action_rid, ''),
 		 COALESCE(requires_approval, FALSE),
-		 COALESCE(approvers, '[]'::jsonb)
+		 COALESCE(approvers, '[]'::jsonb),
+		 parameter_schema
 		 FROM action_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -604,6 +610,7 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 	for rows.Next() {
 		var at ActionType
 		var approvers []byte
+		var paramSchema []byte
 		if err := rows.Scan(&at.RID, &at.OntologyRID, &at.APIName, &at.DisplayName, &at.Description,
 			&at.Status, &at.Parameters, &at.Rules,
 			&at.FunctionRID, &at.IsFunctionBacked, &at.CreatedAt,
@@ -611,10 +618,12 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 			&at.ImplementsMethodRID,
 			&at.CompensateActionRID,
 			&at.RequiresApproval,
-			&approvers); err != nil {
+			&approvers,
+			&paramSchema); err != nil {
 			return nil, err
 		}
 		at.Approvers = decodeApprovers(approvers)
+		at.ParameterSchema = parameterSchemaFromBytes(paramSchema)
 		result = append(result, at)
 	}
 	return result, nil
@@ -625,15 +634,16 @@ func (r *PGRepository) UpdateActionType(ctx context.Context, at *ActionType) err
 	if err != nil {
 		return err
 	}
+	paramSchema := normaliseParameterSchemaForWrite(at.ParameterSchema)
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE action_types SET display_name=$1, description=$2, status=$3,
 		 parameters=$4, rules=$5, submission_criteria=$6, side_effects=$7,
 		 implements_method_rid=NULLIF($8, ''),
 		 compensate_action_rid=NULLIF($9, ''),
-		 requires_approval=$10, approvers=$11 WHERE rid=$12`,
+		 requires_approval=$10, approvers=$11, parameter_schema=$12 WHERE rid=$13`,
 		at.DisplayName, at.Description, at.Status, at.Parameters, at.Rules,
 		at.SubmissionCriteria, at.SideEffects, at.ImplementsMethodRID,
-		at.CompensateActionRID, at.RequiresApproval, approvers, at.RID)
+		at.CompensateActionRID, at.RequiresApproval, approvers, paramSchema, at.RID)
 	if err != nil {
 		return err
 	}
@@ -679,6 +689,42 @@ func decodeApprovers(raw []byte) []string {
 		return nil
 	}
 	return out
+}
+
+// normaliseParameterSchemaForWrite maps the in-memory ParameterSchema blob
+// onto a value pgx can hand to the nullable JSONB column. A nil / empty / JSON
+// "null" raw message becomes a true SQL NULL so GetActionType round-trips
+// "no schema" as nil. pgx encodes nil json.RawMessage as the literal string
+// "null", which the JSONB column accepts but breaks the empty-round-trip
+// contract — so we normalise here at the single write choke point.
+func normaliseParameterSchemaForWrite(raw json.RawMessage) interface{} {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return []byte(raw)
+}
+
+// parameterSchemaFromBytes decodes the action_types.parameter_schema JSONB
+// bytes into a json.RawMessage; NULL rows (legacy / pre-US-245) and the
+// literal JSON "null" both decode to nil so callers can rely on len == 0
+// for the "no schema declared" check.
+func parameterSchemaFromBytes(raw []byte) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return append(json.RawMessage(nil), raw...)
+}
+
+// hasParameterSchemaRaw reports whether a wire-inbound ParameterSchema blob
+// carries a non-empty, non-null JSON Schema. Handler layer uses this to
+// distinguish "keep as-is" (request omits the field) from "clear" (request
+// sends null / empty) on PATCH-shaped action-type updates.
+func hasParameterSchemaRaw(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null"
 }
 
 // --- Interface ---

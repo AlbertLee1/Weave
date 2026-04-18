@@ -326,8 +326,13 @@ type ActionType struct {
 	// approve a pending request. A caller qualifies when their user.Roles OR
 	// user.ID intersects this slice. Empty means nobody can approve — the
 	// Apply handler rejects such gated actions up front.
-	Approvers []string  `json:"approvers,omitempty"`
-	CreatedAt time.Time `json:"-"`
+	Approvers []string `json:"approvers,omitempty"`
+	// ParameterSchema (US-245) holds an optional JSON Schema (Draft-07)
+	// document evaluated after the legacy ParameterDef validator. Any
+	// violation is surfaced as a structured 422 WEAVE_VALIDATION_SCHEMA
+	// error with field-level detail. Empty / null means "no schema".
+	ParameterSchema json.RawMessage `json:"parameterSchema,omitempty"`
+	CreatedAt       time.Time       `json:"-"`
 }
 
 // actionParamDef is the internal (stored) array-element format.
@@ -409,6 +414,9 @@ func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
 	wire["isFunctionBacked"] = at.IsFunctionBacked
 	if at.ImplementsMethodRID != "" {
 		wire["implementsMethodRid"] = at.ImplementsMethodRID
+	}
+	if len(at.ParameterSchema) > 0 && string(at.ParameterSchema) != "null" {
+		wire["parameterSchema"] = json.RawMessage(at.ParameterSchema)
 	}
 	return json.Marshal(wire)
 }

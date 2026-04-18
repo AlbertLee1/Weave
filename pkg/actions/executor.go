@@ -163,6 +163,7 @@ type Executor struct {
 	jobStore           ActionJobStore
 	approvalStore      ActionApprovalStore
 	progressPub        ProgressPublisher
+	paramSchemas       *ParameterSchemaValidator
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit
@@ -172,8 +173,9 @@ type Executor struct {
 // behavioral change.
 func NewExecutor(omsRepo oms.Repository, publisher Publisher) *Executor {
 	return &Executor{
-		omsRepo:   omsRepo,
-		publisher: publisher,
+		omsRepo:      omsRepo,
+		publisher:    publisher,
+		paramSchemas: NewParameterSchemaValidator(),
 	}
 }
 
@@ -345,6 +347,16 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	// Step 3: Validate parameters
 	if err := ValidateParameters(paramDefs, req.Parameters); err != nil {
 		return nil, fmt.Errorf("validate params: %w", err)
+	}
+
+	// Step 3b (US-245): evaluate the optional Draft-07 JSON Schema. Schema
+	// violations surface as a typed *ParameterSchemaError whose APIError()
+	// renders a structured 422 WEAVE_VALIDATION_SCHEMA — the handler's
+	// typedAPIError branch unwraps it and emits field-level detail. A
+	// malformed stored schema (compile error) returns an untyped error so
+	// the handler's fallback 400 kicks in.
+	if err := e.validateParameterSchema(actionType.ParameterSchema, req.Parameters); err != nil {
+		return nil, fmt.Errorf("parameter schema: %w", err)
 	}
 
 	// Step 4: Extract UserID from auth context
@@ -570,6 +582,28 @@ func (e *Executor) fetchPrevEdits(ctx context.Context, ontologyAPIName string, e
 // the property definition has a valueTypeApiName in its TypeConfig, the
 // associated ValueType is loaded and its Constraints are enforced. Returns a
 // descriptive error on the first violation with the field name and reason.
+// validateParameterSchema evaluates the ActionType's declared Draft-07 JSON
+// Schema (US-245) against the request parameters. Returns a wrapped
+// *apierror.APIError (WEAVE_VALIDATION_SCHEMA / HTTP 422) for field-level
+// violations so the handler's typedAPIError branch can surface the structured
+// payload. Malformed stored schemas (compile errors) return an untyped error
+// — they're not the caller's fault, so the 400 ActionFailed fallback is the
+// right shape. When no schema is declared the method is a no-op.
+func (e *Executor) validateParameterSchema(schema json.RawMessage, params map[string]interface{}) error {
+	if e == nil || e.paramSchemas == nil || !hasParameterSchema(schema) {
+		return nil
+	}
+	err := e.paramSchemas.Validate(schema, params)
+	if err == nil {
+		return nil
+	}
+	var schemaErr *ParameterSchemaError
+	if errors.As(err, &schemaErr) {
+		return schemaErr.APIError()
+	}
+	return err
+}
+
 func (e *Executor) validateValueTypeConstraints(ctx context.Context, ontologyRID string, edits []funnel.Edit) error {
 	for _, edit := range edits {
 		if edit.Type != funnel.EditTypeCreate && edit.Type != funnel.EditTypeModify {

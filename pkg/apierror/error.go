@@ -110,6 +110,15 @@ func NewValidationEnum(name string, params map[string]string) *APIError {
 	return newAPIError("WEAVE_VALIDATION_ENUM", name, params, http.StatusUnprocessableEntity)
 }
 
+// NewValidationSchema creates a WEAVE_VALIDATION_SCHEMA API error (HTTP 422).
+// US-245: returned by the ActionType parameter-validation DSL when a request
+// violates the declared JSON Schema (Draft-07). Callers populate Parameters
+// with at minimum `field` (instance path), `reason` (schema message) and
+// optionally `keyword` (violated JSON Schema keyword).
+func NewValidationSchema(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_VALIDATION_SCHEMA", name, params, http.StatusUnprocessableEntity)
+}
+
 // WriteJSON writes an APIError as a JSON HTTP response with the appropriate status code.
 func WriteJSON(w http.ResponseWriter, err *APIError) {
 	w.Header().Set("Content-Type", "application/json")

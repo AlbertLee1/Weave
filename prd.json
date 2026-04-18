@@ -669,8 +669,8 @@
         "Tests pass"
       ],
       "priority": 46,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added santhosh-tekuri/jsonschema/v5 (pure-Go, CGO-friendly) + migration 000048 ADD COLUMN parameter_schema JSONB on action_types. pkg/actions/parameter_schema.go ships ParameterSchemaValidator (compile-cache keyed by raw-JSON bytes, Draft7), ParameterSchemaError (typed violation list) and APIError() renderer that emits WEAVE_VALIDATION_SCHEMA 422 via apierror.NewValidationSchema. Violation payload carries field (dot-path), keyword (JSON Schema keyword that failed), reason (human message) AND a full JSON-encoded 'violations' array so SDKs can surface every failure. Executor.Prepare gains a Step 3b hook between ValidateParameters and criteria evaluation; schema-compile failures fall through to the legacy ActionFailed 400 (not the author's fault). Tri-state ParameterSchema pointer on UpdateActionTypeRequest (nil/null-clear/non-empty-replace) matches prior art. 16 unit + handler tests cover nil/null/empty no-op, required/pattern/range/dependency/multi violations, happy path, compile-cache reuse, malformed-schema compile error, typed-error APIError() structure, handler wire-422 round-trip. Full pkg/ + cmd/ + internal/ + e2e/northwind/foundry_parity green; CGO_ENABLED=0 build clean."
     },
     {
       "id": "US-246",

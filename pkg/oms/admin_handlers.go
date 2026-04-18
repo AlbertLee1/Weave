@@ -204,6 +204,11 @@ type CreateActionTypeRequest struct {
 	// rollback. Create-time validation checks that the referenced
 	// ActionType exists and lives in the same ontology.
 	CompensateActionRID string `json:"compensateActionRid,omitempty"`
+	// ParameterSchema (US-245) optionally attaches a Draft-07 JSON Schema
+	// that every Apply request must satisfy. When non-empty the Prepare
+	// flow evaluates it after the legacy ParameterDef validator and emits
+	// WEAVE_VALIDATION_SCHEMA 422 on violation.
+	ParameterSchema json.RawMessage `json:"parameterSchema,omitempty"`
 }
 
 // UpdateActionTypeRequest is the request body for updating an action type.
@@ -222,6 +227,10 @@ type UpdateActionTypeRequest struct {
 	// unchanged, "" = clear the compensation pair, non-empty = validate +
 	// assign. Prevents self-reference (an action cannot compensate itself).
 	CompensateActionRID *string `json:"compensateActionRid,omitempty"`
+	// ParameterSchema (US-245) is a tri-state pointer: nil = leave
+	// unchanged, an explicit null/empty RawMessage = clear the schema,
+	// non-empty = replace. Stored as JSONB on the action_types row.
+	ParameterSchema *json.RawMessage `json:"parameterSchema,omitempty"`
 }
 
 // --- Admin handlers ---
@@ -923,6 +932,7 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 		Rules:               req.Rules,
 		ImplementsMethodRID: req.ImplementsMethodRID,
 		CompensateActionRID: req.CompensateActionRID,
+		ParameterSchema:     req.ParameterSchema,
 	}
 
 	// US-214: if the action claims an InterfaceMethod binding, verify the
@@ -1028,6 +1038,16 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 				apierror.WriteJSON(w, apiErr)
 				return
 			}
+		}
+	}
+	// US-245 tri-state: nil=preserve, empty/null RawMessage=clear schema,
+	// non-empty=replace. The Prepare path treats empty / null schemas as
+	// no-ops so clearing is a safe operation.
+	if req.ParameterSchema != nil {
+		if hasParameterSchemaRaw(*req.ParameterSchema) {
+			updated.ParameterSchema = *req.ParameterSchema
+		} else {
+			updated.ParameterSchema = nil
 		}
 	}
 
