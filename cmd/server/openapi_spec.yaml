@@ -1706,7 +1706,7 @@ components:
       properties:
         type:
           type: string
-          enum: [exact, fixedWidth, range, ranges, duration, topValues]
+          enum: [exact, fixedWidth, range, ranges, duration, topValues, geohash]
         field:
           type: string
         maxGroupCount:
@@ -1734,6 +1734,13 @@ components:
               enum: [SECONDS, MINUTES, HOURS, DAYS, WEEKS, MONTHS, YEARS]
             value:
               type: number
+        precision:
+          type: integer
+          minimum: 1
+          maximum: 12
+          description: |
+            Geohash character precision for `geohash` groupBy (1..12). Defaults
+            to 6 (≈ ±0.61km cell). Precision 1 ≈ 5000km; precision 12 ≈ 3.7cm.
     AggregationRequest:
       type: object
       required: [aggregation]

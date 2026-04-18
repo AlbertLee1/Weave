@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
+	github.com/axiomhq/hyperloglog v0.2.6
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/blevesearch/bleve_index_api v1.2.11
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
@@ -34,7 +35,6 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.4.5 // indirect
-	github.com/axiomhq/hyperloglog v0.2.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
 	github.com/blevesearch/geo v0.2.4 // indirect
@@ -87,6 +87,7 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/mmcloughlin/geohash v0.10.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
 	github.com/moby/patternmatcher v0.6.0 // indirect

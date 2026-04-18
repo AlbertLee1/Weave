@@ -455,8 +455,8 @@
         "Tests pass"
       ],
       "priority": 31,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "geohash groupBy type (pure Go mmcloughlin/geohash) w/ precision 1-12 — uber/h3-go was ruled out to preserve CGO_ENABLED=0 Dockerfile invariant; decoder tolerates []float64 / []interface{} / map{lat,lon|lng|latitude,longitude} shapes; 13 new tests in pkg/oss/aggregation/geohash_test.go cover default+custom precision, library-hash equality, out-of-range rejection, empty index, missing field, per-cell metrics, decoder shape tolerance; OpenAPI schema gets 'geohash' enum value + precision (1..12) field"
     },
     {
       "id": "US-231",

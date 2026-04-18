@@ -56,13 +56,14 @@ type AggregationSpec struct {
 
 // GroupBySpec defines how to group results.
 type GroupBySpec struct {
-	Type          string         `json:"type"` // "exact", "fixedWidth", "range", "ranges", "duration", "topValues"
+	Type          string         `json:"type"` // "exact", "fixedWidth", "range", "ranges", "duration", "topValues", "geohash"
 	Field         string         `json:"field"`
 	MaxGroups     *int           `json:"maxGroupCount,omitempty"`
 	Width         *float64       `json:"fixedWidth,omitempty"` // for fixedWidth
 	Ranges        []Range        `json:"ranges,omitempty"`     // for range/ranges
 	Duration      string         `json:"duration,omitempty"`   // ISO 8601: P1D, P1W, P1M, P1Y
 	DurationValue *DurationValue `json:"value,omitempty"`      // for duration: {unit: "DAYS", value: 30}
+	Precision     *int           `json:"precision,omitempty"`  // for geohash: character precision 1..12 (default 6 ≈ ±0.61km)
 }
 
 // DurationValue represents a duration using Palantir V2 unit/value format.
@@ -341,6 +342,8 @@ func (e *Engine) getGroupEntries(idx bleve.Index, baseQuery query.Query, gb Grou
 		return e.getDurationEntries(idx, baseQuery, gb)
 	case "topValues":
 		return e.getTopValuesEntries(idx, baseQuery, gb)
+	case "geohash":
+		return e.getGeohashEntries(idx, baseQuery, gb)
 	default:
 		return nil, false, fmt.Errorf("unsupported groupBy type: %q", gb.Type)
 	}
