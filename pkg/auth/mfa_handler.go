@@ -26,6 +26,9 @@ type MFAHandlerDeps struct {
 	MFAChallenges  *MFAChallengeStore
 	MarkingRepo    MarkingRepository
 	AuditStore     audit.Store
+	// Sessions is the optional session inventory (US-254). When wired,
+	// successful /verify inserts a row alongside the access-token issuance.
+	Sessions SessionStore
 	// Issuer is the label embedded in the otpauth:// URL that authenticator
 	// apps surface as the account scope. Defaults to DefaultMFAIssuer.
 	Issuer string
@@ -313,10 +316,18 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, apierror.NewInternal("MFASignFailed", map[string]string{"reason": err.Error()}))
 		return
 	}
-	refreshPlain, _, err := h.deps.RefreshService.Generate(r.Context(), user.ID, "")
+	refreshPlain, refreshRec, err := h.deps.RefreshService.Generate(r.Context(), user.ID, "")
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("MFARefreshFailed", map[string]string{"reason": err.Error()}))
 		return
+	}
+	if h.deps.Sessions != nil && refreshRec != nil {
+		_ = h.deps.Sessions.Create(r.Context(), &SessionRecord{
+			UserID:         user.ID,
+			RefreshTokenID: refreshRec.ID,
+			IP:             clientIP(r),
+			UserAgent:      r.UserAgent(),
+		})
 	}
 	ttl := 15 * 60
 	if h.deps.Signer.ttl > 0 {

@@ -802,8 +802,8 @@
         "Tests pass"
       ],
       "priority": 55,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000054 adds sessions (id UUID PK, user_id FK users ON DELETE CASCADE, refresh_token_id FK refresh_tokens ON DELETE SET NULL, ip, user_agent, created_at, last_seen) with idx_sessions_user + idx_sessions_last_seen(user_id, last_seen DESC); pkg/auth/session_store.go defines SessionRecord + SessionStore interface (Create/Get/ListByUser/Delete/DeleteAllForUser/Touch/RotateRefreshToken) + MemorySessionStore in-memory impl with sort-by-LastSeen-desc + owner-enforced Delete; pkg/auth/pg_session_store.go mirrors the interface over pgxpool with a two-step Delete that distinguishes ErrSessionNotFound from ErrSessionForbidden; ErrSessionNotFound / ErrSessionForbidden sentinels are the HTTP status hooks; pkg/auth/session_handler.go exposes GET /api/auth/sessions + DELETE /api/auth/sessions/{sessionID} under the standard MiddlewareFull auth group, emits SessionListResponse{sessions:[]SessionView} (empty-array-not-null), marks the current row via SessionIDAttributeKey on User.Attributes, and when RefreshService is wired the delete revokes the bound refresh_tokens.id with reason 'session_revoked' so the cookie becomes dead after the access TTL; LoginHandler/MFAHandler.Verify now optionally create a session row on success (IP + UA captured via clientIP/r.UserAgent); RefreshHandler calls RotateRefreshToken(oldID, newID, now) on rotate so the session row stays bound to the live chain member; cmd/server/main.go bootstraps NewPGSessionStore(pool) on the uncached pool and mounts SessionHandler.RegisterRoutes inside the auth group only when deps.SessionStore != nil (degraded-mode / contract-test routers skip both registration and the insert); 14 new unit tests across session_store_test.go (create validation + list-ordering + owner-scoped delete + touch + delete-all-for-user) + session_handler_test.go (401 unauth / 200 list filters to caller / current marker / 204 delete owner / 403 non-owner / 404 missing / refresh revoked on session delete / empty array sentinel)."
     },
     {
       "id": "US-255",

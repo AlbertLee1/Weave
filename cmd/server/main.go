@@ -161,7 +161,11 @@ type ServerDeps struct {
 	// directly.
 	MFAStore      auth.MFASecretStore
 	MFAChallenges *auth.MFAChallengeStore
-	CORSOrigins   []string // Allowed CORS origins (empty = disabled)
+	// US-254: active-session inventory for GET/DELETE /api/auth/sessions.
+	// Populated by the PG bootstrap block; nil in degraded mode so the
+	// routes are not mounted and login/refresh skip the session insert.
+	SessionStore auth.SessionStore
+	CORSOrigins  []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -286,12 +290,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			RateLimit:      loginRateLimit,
 			MarkingRepo:    markingRepo,
 			MFAChallenges:  deps.MFAChallenges,
+			Sessions:       deps.SessionStore,
 		})
 		refreshHandler := auth.NewRefreshHandler(auth.RefreshHandlerDeps{
 			Users:          deps.UserRepo,
 			Resolver:       deps.RoleResolver,
 			Signer:         deps.JWTSigner,
 			RefreshService: deps.RefreshService,
+			Sessions:       deps.SessionStore,
 		})
 		logoutHandler := auth.NewLogoutHandler(deps.RefreshService, nil)
 		r.Method(http.MethodPost, "/api/auth/login", loginHandler)
@@ -325,6 +331,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				RefreshService: deps.RefreshService,
 				MFAChallenges:  deps.MFAChallenges,
 				MarkingRepo:    markingRepo,
+				Sessions:       deps.SessionStore,
 			})
 			mfaHandler.RegisterRoutes(r)
 		}
@@ -404,6 +411,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
+
+		// US-254: active-session inventory. Mounted inside the auth group so
+		// only authenticated callers can enumerate/revoke their own sessions.
+		// When SessionStore is nil (degraded mode / tests) the routes are
+		// skipped so the endpoint surface stays honest.
+		if deps.SessionStore != nil {
+			sessionHandler := auth.NewSessionHandler(auth.SessionHandlerDeps{
+				Sessions:       deps.SessionStore,
+				RefreshService: deps.RefreshService,
+				AuditStore:     deps.AuditStore,
+			})
+			sessionHandler.RegisterRoutes(api)
+		}
 
 		// OMS routes
 		if deps.OmsRepo != nil {
@@ -797,6 +817,11 @@ func main() {
 			auth.NewPGRefreshStore(pool),
 			auth.RefreshServiceOptions{AbsoluteTTL: cfg.JWT.RefreshTokenTTL},
 		)
+		// US-254: PG-backed session inventory. Same uncached pattern — admin
+		// volume is low and the /api/auth/sessions endpoints need to see their
+		// own writes immediately (a brand-new login must appear on the next
+		// list call).
+		deps.SessionStore = auth.NewPGSessionStore(pool)
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

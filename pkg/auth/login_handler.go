@@ -63,6 +63,10 @@ type LoginHandlerDeps struct {
 	// MFA enforcement is silently skipped (degraded mode for tests that
 	// don't care about second-factor flow).
 	MFAChallenges *MFAChallengeStore
+	// Sessions is the optional session inventory (US-254). When wired,
+	// successful logins insert a row so /api/auth/sessions surfaces the
+	// device. Nil in degraded mode skips the insert.
+	Sessions SessionStore
 }
 
 // LoginHandler implements POST /api/auth/login. It returns access + refresh
@@ -208,10 +212,19 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshPlain, _, err := h.deps.RefreshService.Generate(ctx, user.ID, "")
+	refreshPlain, refreshRec, err := h.deps.RefreshService.Generate(ctx, user.ID, "")
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("LoginRefreshFailed", map[string]string{"reason": err.Error()}))
 		return
+	}
+
+	if h.deps.Sessions != nil && refreshRec != nil {
+		_ = h.deps.Sessions.Create(ctx, &SessionRecord{
+			UserID:         user.ID,
+			RefreshTokenID: refreshRec.ID,
+			IP:             clientIP(r),
+			UserAgent:      r.UserAgent(),
+		})
 	}
 
 	h.auditLogin(ctx, user.ID, "login_success", r)

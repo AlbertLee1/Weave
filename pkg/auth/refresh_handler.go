@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
@@ -26,6 +27,10 @@ type RefreshHandlerDeps struct {
 	Signer         *JWTSigner
 	RefreshService *RefreshService
 	AuditStore     audit.Store
+	// Sessions is the optional session inventory (US-254). When wired, the
+	// rotate path rebinds the session row's refresh_token_id from the old
+	// to the new ID so /sessions delete always revokes the live chain.
+	Sessions SessionStore
 }
 
 // RefreshHandler implements POST /api/auth/refresh. It rotates the refresh
@@ -66,6 +71,7 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	oldRec, _ := h.deps.RefreshService.Lookup(ctx, plain)
 	newPlain, newRec, err := h.deps.RefreshService.Rotate(ctx, plain)
 	if err != nil {
 		switch {
@@ -104,6 +110,10 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("RefreshSignFailed", map[string]string{"reason": err.Error()}))
 		return
+	}
+
+	if h.deps.Sessions != nil && oldRec != nil && newRec != nil {
+		_ = h.deps.Sessions.RotateRefreshToken(ctx, oldRec.ID, newRec.ID, time.Now())
 	}
 
 	if h.deps.AuditStore != nil {
