@@ -393,6 +393,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/revert", actionHandler.Revert)
+			// US-240: async-apply polling endpoint. Always registered when the
+			// executor is wired; returns 404 if no job store is attached.
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}", actionHandler.GetJob)
 		}
 
 		// US-061/062: Stream ingest endpoint — bypasses Action rules, publishes
@@ -971,6 +974,12 @@ func main() {
 		// MediaCatalog / ObjectSetSnapshotStore).
 		if deps.PGPool != nil {
 			deps.ActionExecutor.SetAtomicActionLogStore(oms.NewPGRepository(deps.PGPool))
+			// US-240: async apply persists job state to action_jobs. The PG
+			// adapter lives in cmd/server/ so pkg/oms stays free of a
+			// pkg/actions import (actions already imports oms). In degraded
+			// mode (no PG) the handler silently falls back to sync Apply —
+			// see serveAsyncApply in pkg/actions/handlers.go.
+			deps.ActionExecutor.SetActionJobStore(newPGActionJobStore(deps.PGPool))
 		}
 		// US-214: polymorphic invoke forwards to the ActionExecutor via a
 		// narrow adapter so pkg/oms stays free of a pkg/actions import.

@@ -2060,6 +2060,56 @@ components:
           $ref: "#/components/schemas/ValidationResult"
         edits:
           $ref: "#/components/schemas/ActionResults"
+    AsyncApplyActionResponse:
+      type: object
+      description: |
+        US-240: 202-Accepted envelope returned by POST /actions/{action}/apply?async=true.
+        Clients poll GET /actions/jobs/{jobId} until status reaches SUCCEEDED or FAILED.
+      required: [jobId, status]
+      properties:
+        jobId:
+          type: string
+          description: Unique ID for the async action job.
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+          description: Initial job status at the time of the 202 response.
+    ActionJob:
+      type: object
+      description: |
+        US-240: persisted state of an async action apply. status transitions
+        PENDING → RUNNING → (SUCCEEDED | FAILED). progress is 0..100. result
+        holds the SyncApplyActionResponseV2 envelope on success; errorMessage
+        is populated on FAILED.
+      required: [jobId, ontologyApiName, actionType, status, progress, createdAt, updatedAt]
+      properties:
+        jobId:
+          type: string
+        ontologyApiName:
+          type: string
+        actionType:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        result:
+          type: object
+          additionalProperties: true
+          description: On SUCCEEDED, contains the sync-apply response envelope.
+        errorMessage:
+          type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     ApplyBatchRequest:
       type: object
       description: |
@@ -6383,6 +6433,12 @@ paths:
         Executes a single action. The action API name is in the URL path {action}.
         Supports options.mode (VALIDATE_ONLY | VALIDATE_AND_EXECUTE) and
         options.returnEdits (ALL | ALL_V2_WITH_DELETIONS | NONE).
+
+        US-240: setting ?async=true returns 202 Accepted with a jobId; the
+        action then runs in the background and its state can be polled via
+        GET /actions/jobs/{jobId}. In degraded deployments without a job
+        store, the async query is silently ignored and the endpoint falls
+        through to the synchronous 200 response.
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -6392,6 +6448,12 @@ paths:
           description: Action API name.
           schema:
             type: string
+        - in: query
+          name: async
+          required: false
+          description: "US-240: when true, run the action asynchronously and return 202 {jobId}. Poll GET /actions/jobs/{jobId} for progress/result."
+          schema:
+            type: boolean
       requestBody:
         required: true
         content:
@@ -6405,8 +6467,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SyncApplyActionResponseV2"
+        "202":
+          description: "US-240: async job accepted."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsyncApplyActionResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}:
+    get:
+      operationId: getActionJob
+      summary: Get async action job status (US-240)
+      description: |
+        Returns the current state of an async action job created by
+        POST /actions/{action}/apply?async=true. Pollers should back off on
+        PENDING/RUNNING responses and read .result once status=SUCCEEDED.
+        status=FAILED surfaces the underlying error via .errorMessage.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: jobId
+          required: true
+          description: Async job ID returned from apply?async=true.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current job state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionJob"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides:

@@ -1,13 +1,19 @@
 package actions
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -111,6 +117,17 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// US-240: opt-in async via ?async=true. When an ActionJobStore is wired
+	// we persist a PENDING job row, return 202 {jobId}, and run the Apply in
+	// a detached goroutine that updates the row as it progresses. When no
+	// store is wired (e.g. degraded-mode test harness without PG) the query
+	// param is silently ignored and the call falls through to the sync path
+	// so the response contract stays stable for callers without a catalog.
+	if r.URL.Query().Get("async") == "true" && h.executor.ActionJobStore() != nil {
+		h.serveAsyncApply(w, r, ontologyRID, &req, returnEdits)
+		return
+	}
+
 	// VALIDATE_AND_EXECUTE: normal execution.
 	result, err := h.executor.Apply(r.Context(), ontologyRID, &req)
 	if err != nil {
@@ -135,6 +152,136 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// serveAsyncApply persists a PENDING ActionJob, kicks off a detached goroutine
+// that runs the sync Apply path and updates the job row, and returns a 202
+// Accepted envelope carrying {jobId}. The goroutine uses a fresh
+// context.Background() (not the request context) so Apply keeps running after
+// the HTTP response has been written.
+func (h *Handler) serveAsyncApply(w http.ResponseWriter, r *http.Request, ontologyRID string, req *ApplyRequest, returnEdits string) {
+	store := h.executor.ActionJobStore()
+	job := &ActionJob{
+		JobID:          uuid.New().String(),
+		OntologyAPI:    ontologyRID,
+		ActionTypeName: req.ActionType,
+		Status:         ActionJobStatusPending,
+		Progress:       0,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if u := auth.UserFromContext(r.Context()); u != nil {
+		job.CreatedBy = u.ID
+	}
+	if err := store.CreateActionJob(r.Context(), job); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ActionJobCreateFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+
+	// Copy request + ontology onto a detached context so the goroutine keeps
+	// running once the response has been flushed. Auth user identity is
+	// captured via copyAuthContext so the underlying Apply still records the
+	// correct caller in ActionLog.
+	bgCtx := copyAuthContext(context.Background(), r.Context())
+	reqCopy := *req
+
+	go runAsyncApply(bgCtx, h.executor, store, job.JobID, ontologyRID, &reqCopy, returnEdits)
+
+	httputil.WriteJSON(w, http.StatusAccepted, &AsyncApplyResponse{
+		JobID:  job.JobID,
+		Status: ActionJobStatusPending,
+	})
+}
+
+// runAsyncApply is the detached worker goroutine for the async apply path.
+// It walks the job through RUNNING → SUCCEEDED/FAILED, persisting progress
+// markers along the way so pollers see forward motion without having to wait
+// for the terminal state. All store errors are best-effort logged — the
+// goroutine MUST NOT block on a failing store write since nothing is watching.
+func runAsyncApply(ctx context.Context, exec *Executor, store ActionJobStore, jobID, ontologyRID string, req *ApplyRequest, returnEdits string) {
+	// Transition PENDING → RUNNING with 10% progress so SDK pollers see the
+	// worker has picked the job up.
+	progress10 := 10
+	if err := store.UpdateActionJob(ctx, jobID, ActionJobUpdate{
+		Status:   ActionJobStatusRunning,
+		Progress: &progress10,
+	}); err != nil {
+		log.Printf("actions: async job %s: failed to mark RUNNING: %v", jobID, err)
+	}
+
+	result, err := exec.Apply(ctx, ontologyRID, req)
+	if err != nil {
+		msg := err.Error()
+		failProg := 0
+		upd := ActionJobUpdate{
+			Status:       ActionJobStatusFailed,
+			Progress:     &failProg,
+			ErrorMessage: &msg,
+		}
+		if updErr := store.UpdateActionJob(ctx, jobID, upd); updErr != nil {
+			log.Printf("actions: async job %s: failed to mark FAILED: %v", jobID, updErr)
+		}
+		return
+	}
+
+	// Build the sync response envelope so pollers receive an identical shape
+	// to the sync path once the job completes.
+	resp := &SyncApplyActionResponseV2{OperationID: result.BatchID}
+	if returnEdits != "NONE" {
+		resp.Edits = countEdits(result.Edits)
+	}
+	resultJSON, _ := json.Marshal(resp)
+
+	doneProg := 100
+	if err := store.UpdateActionJob(ctx, jobID, ActionJobUpdate{
+		Status:   ActionJobStatusSucceeded,
+		Progress: &doneProg,
+		Result:   resultJSON,
+	}); err != nil {
+		log.Printf("actions: async job %s: failed to mark SUCCEEDED: %v", jobID, err)
+	}
+}
+
+// copyAuthContext copies the authenticated User (if present) from src onto
+// dst. Used to hand the async goroutine a background context that still
+// carries the caller's identity for ActionLog / rate-limit keys while
+// detaching from the request's cancellation.
+func copyAuthContext(dst, src context.Context) context.Context {
+	if u := auth.UserFromContext(src); u != nil {
+		return auth.WithUser(dst, u)
+	}
+	return dst
+}
+
+// GetJob handles GET /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}.
+// Returns the current ActionJob row as JSON. 404 if the job does not exist.
+// When no ActionJobStore is wired (degraded mode) the endpoint returns 404 so
+// callers that never persisted a job get a consistent shape.
+func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "jobId")
+	if jobID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingJobId", nil))
+		return
+	}
+	store := h.executor.ActionJobStore()
+	if store == nil {
+		apierror.WriteJSON(w, apierror.NewNotFound("ActionJobNotFound",
+			map[string]string{"jobId": jobID}))
+		return
+	}
+	job, err := store.GetActionJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ActionJobNotFound",
+				map[string]string{"jobId": jobID}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionJobLoadFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, job)
 }
 
 // ApplyActionOverrides is the Foundry OSv2 override envelope. In Foundry this

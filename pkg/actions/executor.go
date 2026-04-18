@@ -160,6 +160,7 @@ type Executor struct {
 	objectChecker      ObjectExistenceChecker
 	objectFetcher      ObjectFetcher
 	atomicLogStore     AtomicActionLogStore
+	jobStore           ActionJobStore
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit
@@ -203,6 +204,21 @@ func (e *Executor) SetObjectFetcher(f ObjectFetcher) {
 // boot before the executor is shared with handlers.
 func (e *Executor) SetAtomicActionLogStore(s AtomicActionLogStore) {
 	e.atomicLogStore = s
+}
+
+// SetActionJobStore attaches the persistent job store used by the async apply
+// path (US-240). When nil the handler's ?async=true query degrades to the
+// synchronous flow so test routers without a PG pool keep working. Safe to
+// call once at boot before the executor is shared with handlers.
+func (e *Executor) SetActionJobStore(s ActionJobStore) {
+	e.jobStore = s
+}
+
+// ActionJobStore returns the wired async-job store (may be nil in degraded
+// mode). Exported so the handler can detect "no store wired" and degrade
+// gracefully without reaching into the Executor's internals.
+func (e *Executor) ActionJobStore() ActionJobStore {
+	return e.jobStore
 }
 
 // PreparedAction is the output of Executor.Prepare: everything computable for

@@ -597,8 +597,8 @@
         "Tests pass"
       ],
       "priority": 41,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000046 action_jobs table with PENDING/RUNNING/SUCCEEDED/FAILED status enum + progress 0-100 CHECK; pkg/actions.ActionJob + ActionJobStore narrow interface (mirrors MediaAssetStore pattern); Executor.SetActionJobStore setter-injected hook; POST /actions/{action}/apply?async=true spawns detached goroutine using copyAuthContext so ctx survives response flush; 202 Accepted {jobId, status} envelope; GET /actions/jobs/{jobId} returns full ActionJob row (404 via oms.ErrNotFound); degraded-mode fallback to sync when no store wired; pgActionJobStore lives in cmd/server (not pkg/oms) to keep dep direction clean; OpenAPI schemas AsyncApplyActionResponse + ActionJob + async path; 5 handler tests cover 202 flow, poll success, 404, failure surfaced on job, degraded-mode sync fallback"
     },
     {
       "id": "US-241",
