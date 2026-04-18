@@ -1491,13 +1491,16 @@ components:
           additionalProperties: true
           description: |
             WhereClause filter (see pkg/oss/where). Supported `type` values
-            include eq, gt/gte/lt/lte, isNull, contains, fuzzy, phrase,
+            include eq, gt/gte/lt/lte, isNull, contains, fuzzy, phrase, regex,
             containsAllTerms, containsAnyTerm, containsAllTermsInOrder,
             containsAllTermsInOrderPrefixLastTerm, startsWith, wildcard,
             and/or/not, and the geospatial operators. The `phrase` operator
             accepts either a structured value
             `{"phrase": "quick fox", "slop": 2}` or a Lucene-style string
-            `"quick fox"~2`; slop is clamped to [0, 32].
+            `"quick fox"~2`; slop is clamped to [0, 32]. The `regex` operator
+            takes a RE2 (Go regexp/syntax Perl) pattern as the value, is
+            lowercased to match the standard analyser's indexed form, and
+            executes under a 500ms server-side timeout.
         fuzzy:
           type: object
           description: |
@@ -5778,6 +5781,19 @@ paths:
             minimum: 0
             maximum: 2
             enum: [0, 1, 2]
+        - name: regex
+          in: query
+          required: false
+          description: |
+            Shorthand for a single regex where-clause: `field:pattern` (split on
+            the FIRST colon so patterns may contain colons). Pattern must be a
+            valid RE2 / Go regexp/syntax Perl expression and is capped at 1024
+            characters. Execution is bounded by a 500ms server-side timeout.
+            When set, REPLACES any `where` body field — use the structured
+            body form for AND/OR composition.
+          schema:
+            type: string
+            example: "name:^A.*"
       requestBody:
         required: true
         content:

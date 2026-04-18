@@ -511,8 +511,8 @@
         "Tests pass"
       ],
       "priority": 35,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/oss/where.convertRegex (Bleve RegexpQuery + regexp/syntax Perl pre-validation, MaxRegexPatternLength=1024, lowercased to match analyser); index.Manager.SearchInContext + service-layer ctx.WithTimeout(RegexQueryTimeout=500ms) gated by where.HasRegexClause walk; handler ?regex=field:pattern shorthand splits on first colon and replaces body.where (mirrors fuzziness override). 8 where unit tests + 7 handler E2E tests; OpenAPI + embedded spec synced (regex param + operator listed in where description)."
     },
     {
       "id": "US-235",

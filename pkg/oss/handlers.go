@@ -1,9 +1,11 @@
 package oss
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -283,10 +285,32 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// US-234: ?regex=field:pattern shorthand. When present it REPLACES
+	// body.where with a single `{type: "regex", field, value: pattern}` clause,
+	// matching the fuzziness-overrides-body convention. Use the structured
+	// where-clause body form (`{"type":"regex",...}`) for AND/OR composition.
+	whereClause := body.Where
+	if raw := r.URL.Query().Get("regex"); raw != "" {
+		field, pattern, ok := splitRegexQueryParam(raw)
+		if !ok {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRegex", map[string]string{
+				"reason": "regex query parameter must be in field:pattern form",
+				"regex":  raw,
+			}))
+			return
+		}
+		valBytes, _ := json.Marshal(pattern)
+		whereClause = &where.WhereClause{
+			Type:  "regex",
+			Field: field,
+			Value: valBytes,
+		}
+	}
+
 	page, err := h.svc.SearchObjects(r.Context(), SearchObjectsRequest{
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
-		Where:       body.Where,
+		Where:       whereClause,
 		Fuzzy:       fuzzy,
 		PageSize:    pageSize,
 		PageToken:   pageToken,
@@ -306,6 +330,23 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
+}
+
+// splitRegexQueryParam parses the `?regex=field:pattern` shorthand. The split
+// is on the FIRST colon so patterns may legitimately contain colons (e.g.
+// `^foo:bar$`). Returns false when the field part is missing/empty or the
+// colon is absent — both surface as a 400 to the caller.
+func splitRegexQueryParam(raw string) (field, pattern string, ok bool) {
+	idx := strings.IndexByte(raw, ':')
+	if idx <= 0 || idx == len(raw)-1 {
+		return "", "", false
+	}
+	field = strings.TrimSpace(raw[:idx])
+	pattern = raw[idx+1:]
+	if field == "" || pattern == "" {
+		return "", "", false
+	}
+	return field, pattern, true
 }
 
 // CountObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count.

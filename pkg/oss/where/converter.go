@@ -40,6 +40,8 @@ func ConvertToBleveQueryWithOpts(clause *WhereClause, opts *ConvertOptions) (que
 		return convertFuzzy(clause, fuzz)
 	case "phrase":
 		return convertPhraseSlop(clause)
+	case "regex":
+		return convertRegex(clause)
 	case "containsAllTerms":
 		return convertContainsAllTermsFuzzy(clause, fuzz)
 	case "containsAnyTerm":

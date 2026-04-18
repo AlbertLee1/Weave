@@ -2,6 +2,7 @@ package oss
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -406,8 +407,23 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		searchReq.SortBy(parseOrderBy(req.OrderBy))
 	}
 
-	result, err := s.indexMgr.Search(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
+	// US-234: regex queries are bounded by RegexQueryTimeout to prevent
+	// pathological patterns from monopolising the index reader. Bleve honours
+	// context cancellation through its term iterator so the deadline applies
+	// inside the FSA traversal, not just at the call site.
+	hasRegex := where.HasRegexClause(req.Where)
+	searchCtx := ctx
+	if hasRegex {
+		var cancel context.CancelFunc
+		searchCtx, cancel = context.WithTimeout(ctx, where.RegexQueryTimeout)
+		defer cancel()
+	}
+
+	result, err := s.indexMgr.SearchInContext(searchCtx, scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
 	if err != nil {
+		if hasRegex && errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("regex search exceeded %s timeout: %w", where.RegexQueryTimeout, err)
+		}
 		return nil, err
 	}
 

@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,6 +208,21 @@ func (m *Manager) Search(objectType string, req *bleve.SearchRequest) (*bleve.Se
 		return nil, fmt.Errorf("index not found for object type %q", objectType)
 	}
 	return idx.Search(req)
+}
+
+// SearchInContext executes a search bound to the supplied context. Bleve
+// honours context cancellation inside the term iterator, so a deadline
+// imposed by the caller (e.g. the regex-search timeout) propagates through
+// the FSA traversal without needing a goroutine wrapper.
+func (m *Manager) SearchInContext(ctx context.Context, objectType string, req *bleve.SearchRequest) (*bleve.SearchResult, error) {
+	m.mu.RLock()
+	idx, ok := m.indexes[objectType]
+	m.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("index not found for object type %q", objectType)
+	}
+	return idx.SearchInContext(ctx, req)
 }
 
 // DocCount returns the number of documents in the specified index.
