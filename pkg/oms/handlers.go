@@ -154,6 +154,116 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	w.Write(wireData)
 }
 
+// GetObjectTypeResolved handles
+// GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved.
+// US-212: returns the ObjectType with parent properties + outgoing links
+// merged in (child entries override matching api_name). Surfaces a 400 for
+// inheritance cycles so admin tooling can flag the misconfiguration.
+func (h *OMSHandler) GetObjectTypeResolved(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	apiName := chi.URLParam(r, "objectTypeApiName")
+
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"ontologyApiName":   ontologyRID,
+				"objectTypeApiName": apiName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		return
+	}
+
+	resolved, err := ResolveInheritedObjectType(r.Context(), repo, ot)
+	if err != nil {
+		if errors.Is(err, ErrInheritanceCycle) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+				"parameter":         "extendsRid",
+				"objectTypeApiName": apiName,
+				"reason":            "inheritance chain forms a cycle",
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ResolveInheritanceFailed", nil))
+		return
+	}
+
+	wire := map[string]interface{}{
+		"apiName":     ot.APIName,
+		"displayName": ot.DisplayName,
+		"status":      ot.Status,
+		"primaryKey":  ot.PrimaryKey,
+		"rid":         ot.RID,
+		"visibility":  ot.Visibility,
+	}
+	if pks := ot.EffectivePrimaryKeys(); len(pks) > 0 {
+		wire["primaryKeys"] = pks
+	}
+	if ot.PluralDisplayName != "" {
+		wire["pluralDisplayName"] = ot.PluralDisplayName
+	}
+	if ot.Description != "" {
+		wire["description"] = ot.Description
+	}
+	if ot.TitleProperty != "" {
+		wire["titleProperty"] = ot.TitleProperty
+	}
+	if ot.ExtendsRID != "" {
+		wire["extendsRid"] = ot.ExtendsRID
+	}
+	if len(resolved.ExtendsChain) > 0 {
+		wire["extendsChain"] = resolved.ExtendsChain
+	}
+
+	props := make(map[string]interface{}, len(resolved.Properties))
+	for _, p := range resolved.Properties {
+		entry := map[string]interface{}{
+			"dataType": p.DataTypeJSON(),
+			"rid":      p.RID,
+		}
+		if p.ObjectTypeRID != "" && p.ObjectTypeRID != ot.RID {
+			entry["inheritedFrom"] = p.ObjectTypeRID
+		}
+		if p.DisplayName != "" {
+			entry["displayName"] = p.DisplayName
+		}
+		if p.Description != "" {
+			entry["description"] = p.Description
+		}
+		props[p.APIName] = entry
+	}
+	wire["properties"] = props
+
+	links := make([]map[string]interface{}, 0, len(resolved.OutgoingLinkTypes))
+	for _, lt := range resolved.OutgoingLinkTypes {
+		entry := map[string]interface{}{
+			"apiName":                 lt.APIName,
+			"displayName":             lt.DisplayName,
+			"rid":                     lt.RID,
+			"objectTypeApiName":       lt.SourceObjectType,
+			"linkedObjectTypeApiName": lt.TargetObjectType,
+			"cardinality":             lt.Cardinality,
+			"required":                lt.IsRequired,
+		}
+		if lt.Description != "" {
+			entry["description"] = lt.Description
+		}
+		if lt.SourceObjectType != "" && lt.SourceObjectType != ot.RID {
+			entry["inheritedFrom"] = lt.SourceObjectType
+		}
+		links = append(links, entry)
+	}
+	wire["outgoingLinkTypes"] = links
+
+	httputil.WriteJSON(w, http.StatusOK, wire)
+}
+
 // ListOutgoingLinkTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes.
 func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Request) {
 	repo, ok := h.resolveRepo(w, r)

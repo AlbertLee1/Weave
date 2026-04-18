@@ -106,6 +106,10 @@ type CreateObjectTypeRequest struct {
 	TitleProperty string   `json:"titleProperty,omitempty"`
 	Status        string   `json:"status"`
 	Visibility    string   `json:"visibility"`
+	// ExtendsRID (US-212) optionally points at a parent ObjectType in the same
+	// ontology. Validation: parent must exist, share the ontology, and not form
+	// a cycle.
+	ExtendsRID string `json:"extendsRid,omitempty"`
 }
 
 // UpdateObjectTypeRequest is the request body for updating an object type.
@@ -120,6 +124,10 @@ type UpdateObjectTypeRequest struct {
 	Color              string  `json:"color,omitempty"`
 	DeprecatedReason   string  `json:"deprecatedReason,omitempty"`
 	DeprecatedDeadline *string `json:"deprecatedDeadline,omitempty"`
+	// ExtendsRID (US-212) overwrites the parent pointer when non-nil. Pass an
+	// empty-string pointer to clear the link; omit the field to leave it
+	// untouched. Same shape as LinkType.InverseLinkRID.
+	ExtendsRID *string `json:"extendsRid,omitempty"`
 }
 
 // UpdateOntologyRequest is the request body for updating an ontology.
@@ -338,6 +346,45 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		TitleProperty:     req.TitleProperty,
 		Status:            status,
 		Visibility:        visibility,
+		ExtendsRID:        req.ExtendsRID,
+	}
+
+	// US-212: validate inheritance candidate. The parent must exist, live in the
+	// same ontology, and not introduce a cycle once this row is added. The
+	// candidate's RID is the freshly generated `ot.RID`, so the cycle check
+	// degenerates to "parent does not already point back through ot.RID" — but
+	// since ot is brand new, only the same-row self-loop case is reachable.
+	if req.ExtendsRID != "" {
+		parent, err := h.repo.GetObjectType(r.Context(), req.ExtendsRID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+					"parameter": "extendsRid",
+					"reason":    "parent ObjectType not found",
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("GetParentObjectTypeFailed", nil))
+			return
+		}
+		if parent.OntologyRID != ontologyRID {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+				"parameter": "extendsRid",
+				"reason":    "parent ObjectType belongs to a different ontology",
+			}))
+			return
+		}
+		if err := ValidateInheritanceCandidate(r.Context(), h.repo, ot.RID, req.ExtendsRID); err != nil {
+			if errors.Is(err, ErrInheritanceCycle) {
+				apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+					"parameter": "extendsRid",
+					"reason":    "inheritance chain forms a cycle",
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("ValidateInheritanceFailed", nil))
+			return
+		}
 	}
 
 	// Branch overlay: if ?branch= is set, record as branch change instead of writing to main
@@ -416,6 +463,46 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 		updated.DeprecatedDeadline = &t
 	} else {
 		updated.DeprecatedDeadline = nil
+	}
+	// US-212: ExtendsRID tri-state — nil pointer leaves unchanged, "" clears,
+	// non-empty rewrites and is validated against the same rules as Create
+	// (parent exists, same ontology, no cycle including the row's own RID so a
+	// chain like A→B→C→A surfaces as 400).
+	if req.ExtendsRID != nil {
+		newParent := *req.ExtendsRID
+		if newParent != "" {
+			parent, perr := h.repo.GetObjectType(r.Context(), newParent)
+			if perr != nil {
+				if errors.Is(perr, ErrNotFound) {
+					apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+						"parameter": "extendsRid",
+						"reason":    "parent ObjectType not found",
+					}))
+					return
+				}
+				apierror.WriteJSON(w, apierror.NewInternal("GetParentObjectTypeFailed", nil))
+				return
+			}
+			if parent.OntologyRID != existing.OntologyRID {
+				apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+					"parameter": "extendsRid",
+					"reason":    "parent ObjectType belongs to a different ontology",
+				}))
+				return
+			}
+			if verr := ValidateInheritanceCandidate(r.Context(), h.repo, existing.RID, newParent); verr != nil {
+				if errors.Is(verr, ErrInheritanceCycle) {
+					apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:extendsRid", map[string]string{
+						"parameter": "extendsRid",
+						"reason":    "inheritance chain forms a cycle",
+					}))
+					return
+				}
+				apierror.WriteJSON(w, apierror.NewInternal("ValidateInheritanceFailed", nil))
+				return
+			}
+		}
+		updated.ExtendsRID = newParent
 	}
 
 	// Branch overlay
@@ -2321,14 +2408,28 @@ func (h *OMSHandler) ImportOntology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Map old RIDs to new RIDs for object types (needed for link types)
-	otRIDMap := make(map[string]string) // old RID -> new RID
+	// Map old RIDs to new RIDs for object types (needed for link types and
+	// US-212 inheritance: ExtendsRID may point at any other ObjectType in the
+	// export, including one that appears later in the slice). Pre-allocate
+	// new RIDs so the parent pointer can be remapped regardless of order.
+	otRIDMap := make(map[string]string, len(export.ObjectTypes))
+	for _, ot := range export.ObjectTypes {
+		otRIDMap[ot.RID] = rid.NewObjectTypeRID()
+	}
 
 	// Create object types
 	for _, ot := range export.ObjectTypes {
 		oldRID := ot.RID
+		extendsRID := ""
+		if ot.ExtendsRID != "" {
+			if mapped, ok := otRIDMap[ot.ExtendsRID]; ok {
+				extendsRID = mapped
+			} else {
+				extendsRID = ot.ExtendsRID
+			}
+		}
 		newOT := &ObjectType{
-			RID:               rid.NewObjectTypeRID(),
+			RID:               otRIDMap[oldRID],
 			OntologyRID:       ontology.RID,
 			APIName:           ot.APIName,
 			DisplayName:       ot.DisplayName,
@@ -2341,6 +2442,7 @@ func (h *OMSHandler) ImportOntology(w http.ResponseWriter, r *http.Request) {
 			Visibility:        ot.Visibility,
 			IconName:          ot.IconName,
 			Color:             ot.Color,
+			ExtendsRID:        extendsRID,
 		}
 		if newOT.Status == "" {
 			newOT.Status = "ACTIVE"
@@ -2355,7 +2457,6 @@ func (h *OMSHandler) ImportOntology(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		otRIDMap[oldRID] = newOT.RID
 
 		// Create properties
 		for _, p := range ot.Properties {

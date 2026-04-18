@@ -256,6 +256,12 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/PropertyDataType"
+        extendsRid:
+          type: string
+          description: |
+            Optional parent ObjectType RID (US-212 inheritance). Parent
+            properties and outgoing links are merged into the child via the
+            `/resolved` endpoint. Cycles are rejected at write time.
     CreateObjectTypeRequest:
       type: object
       required: [apiName, displayName]
@@ -287,6 +293,12 @@ components:
         visibility:
           type: string
           enum: [PROMINENT, NORMAL, HIDDEN]
+        extendsRid:
+          type: string
+          description: |
+            Optional parent ObjectType RID (US-212). Must reference an existing
+            ObjectType in the same ontology and not introduce an inheritance
+            cycle.
     UpdateObjectTypeRequest:
       type: object
       properties:
@@ -314,6 +326,12 @@ components:
           type: string
           format: date-time
           nullable: true
+        extendsRid:
+          type: string
+          nullable: true
+          description: |
+            Optional parent ObjectType RID (US-212). Pass an empty string to
+            clear the parent pointer; omit the field to leave it unchanged.
     PropertyDataType:
       type: object
       properties:
@@ -3226,6 +3244,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved:
+    get:
+      operationId: getObjectTypeResolved
+      summary: Get an ObjectType with parent properties + outgoing links merged in (US-212)
+      description: |
+        Returns the ObjectType view with all inherited properties and outgoing
+        link types merged from its `extendsRid` chain. Child entries override
+        matching api-name entries from parents. Cycle in the inheritance chain
+        surfaces as 400 with `errorName=InvalidParameter:extendsRid`.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: Resolved ObjectType with merged properties and outgoing links.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

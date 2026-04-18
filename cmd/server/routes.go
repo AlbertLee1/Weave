@@ -19,6 +19,9 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/getByRidBatch", omsHandler.GetObjectTypesByRidBatchV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}", omsHandler.GetObjectType)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/fullMetadata", omsHandler.GetObjectTypeFullMetadataV2)
+	// US-212 Object Type Inheritance: returns the type with parent properties
+	// + outgoing links merged (child overrides on api_name match).
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved", omsHandler.GetObjectTypeResolved)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes", omsHandler.ListOutgoingLinkTypes)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/editsHistory", omsHandler.PostObjectTypeEditsHistoryV2)
 	// Property admin CRUD (US-147)

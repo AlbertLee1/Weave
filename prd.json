@@ -195,8 +195,8 @@
         "Tests pass"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000038 adds nullable extends_rid + partial index; pkg/oms.ResolveInheritedObjectType walks chain and merges properties/outgoing-links (child overrides on api_name); ValidateInheritanceCandidate cycle guard; admin Create/Update accept extendsRid (UpdateObjectTypeRequest.ExtendsRID *string for tri-state clear) with same-ontology + cycle validation; new GET /api/v2/ontologies/{o}/objectTypes/{ot}/resolved endpoint returns merged view + extendsChain; import handler pre-allocates new RIDs to remap parent pointers regardless of order"
     },
     {
       "id": "US-213",

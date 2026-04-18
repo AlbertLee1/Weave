@@ -75,6 +75,11 @@ type ObjectType struct {
 	Color              string     `json:"color,omitempty"`
 	DeprecatedReason   string     `json:"deprecatedReason,omitempty"`
 	DeprecatedDeadline *time.Time `json:"deprecatedDeadline,omitempty"`
+	// ExtendsRID (US-212) optionally points at a parent ObjectType in the same
+	// ontology. The parent's properties and outgoing links are merged into the
+	// child at resolution time via ResolveInheritedObjectType; child rows still
+	// own their direct properties only.
+	ExtendsRID         string     `json:"extendsRid,omitempty"`
 	Properties         []Property `json:"properties,omitempty"`
 	CreatedAt          time.Time  `json:"-"`
 	UpdatedAt          time.Time  `json:"-"`
@@ -111,6 +116,9 @@ func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 	}
 	if pks := ot.EffectivePrimaryKeys(); len(pks) > 0 {
 		wire["primaryKeys"] = pks
+	}
+	if ot.ExtendsRID != "" {
+		wire["extendsRid"] = ot.ExtendsRID
 	}
 
 	if ot.PluralDisplayName != "" {
@@ -150,6 +158,9 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 	}
 	if pks := ot.EffectivePrimaryKeys(); len(pks) > 0 {
 		wire["primaryKeys"] = pks
+	}
+	if ot.ExtendsRID != "" {
+		wire["extendsRid"] = ot.ExtendsRID
 	}
 
 	if ot.PluralDisplayName != "" {
