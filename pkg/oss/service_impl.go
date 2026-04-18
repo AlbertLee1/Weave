@@ -59,6 +59,13 @@ type ServiceImpl struct {
 	// applyColumnMasking so cell-specific rules can override or add to the
 	// column-wide mask set for that row. A nil engine is a no-op.
 	cellMaskEngine *cellsec.Engine
+
+	// dataAccessAuditor is the US-264 data-access audit sink. Emits an
+	// audit_events row (action = "data.access") on successful reads of
+	// ObjectTypes whose AuditDataAccess flag is true. A nil auditor, or an
+	// ObjectType that hasn't opted in, is a no-op so the audit write cost
+	// is paid only for explicitly-governed types.
+	dataAccessAuditor *DataAccessAuditor
 }
 
 // NewService creates a new OSS service.
@@ -109,6 +116,15 @@ func (s *ServiceImpl) SetColumnMaskEngine(e *masking.Engine) {
 // detach.
 func (s *ServiceImpl) SetCellMaskEngine(e *cellsec.Engine) {
 	s.cellMaskEngine = e
+}
+
+// SetDataAccessAuditor attaches the US-264 data-access audit sink. When
+// attached, every successful GetObject / ListObjects / SearchObjects /
+// ListLinkedObjects / GetLinkedObject call emits an audit_events row for
+// ObjectTypes whose AuditDataAccess flag is true. Passing nil detaches the
+// auditor (back-compat for tests that don't wire an audit store).
+func (s *ServiceImpl) SetDataAccessAuditor(a *DataAccessAuditor) {
+	s.dataAccessAuditor = a
 }
 
 // compilePolicyQuery compiles the row-level security policy for ot into a
@@ -426,6 +442,10 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
 	filtered = s.applyCellMasking(ctx, ot, filtered)
+	s.dataAccessAuditor.Record(ctx, ot, "getObject", map[string]any{
+		"objectType": req.ObjectType,
+		"primaryKey": req.PrimaryKey,
+	})
 	return filtered[0], nil
 }
 
@@ -500,6 +520,11 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		nextCursor := &pagination.Cursor{Offset: nextOffset}
 		page.NextPageToken = nextCursor.Encode()
 	}
+
+	s.dataAccessAuditor.Record(ctx, ot, "listObjects", map[string]any{
+		"objectType": req.ObjectType,
+		"count":      len(page.Data),
+	})
 
 	return page, nil
 }
@@ -662,6 +687,11 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		nextCursor := &pagination.Cursor{Offset: nextOffset}
 		page.NextPageToken = nextCursor.Encode()
 	}
+
+	s.dataAccessAuditor.Record(ctx, ot, "searchObjects", map[string]any{
+		"objectType": req.ObjectType,
+		"count":      len(page.Data),
+	})
 
 	return page, nil
 }
@@ -921,6 +951,14 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 		page.NextPageToken = nextCursor.Encode()
 	}
 
+	s.dataAccessAuditor.Record(ctx, targetOT, "listLinkedObjects", map[string]any{
+		"objectType":       req.ObjectType,
+		"sourcePrimaryKey": req.PrimaryKey,
+		"linkType":         req.LinkType,
+		"direction":        dir.String(),
+		"count":            len(page.Data),
+	})
+
 	return page, nil
 }
 
@@ -1018,5 +1056,12 @@ func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRe
 	// US-258: per-cell rules after the column-wide pass so row-specific
 	// overrides can sharpen the wire view.
 	filtered = s.applyCellMasking(ctx, otherOT, filtered)
+	s.dataAccessAuditor.Record(ctx, otherOT, "getLinkedObject", map[string]any{
+		"objectType":             req.ObjectType,
+		"sourcePrimaryKey":       req.PrimaryKey,
+		"linkType":               req.LinkType,
+		"direction":              dir.String(),
+		"linkedObjectPrimaryKey": req.LinkedObjectPrimaryKey,
+	})
 	return filtered[0], nil
 }

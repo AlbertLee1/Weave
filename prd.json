@@ -942,8 +942,8 @@
         "Tests pass"
       ],
       "priority": 65,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000061 ObjectType.audit_data_access bool column; pkg/oss.DataAccessAuditor gates on the flag; SetDataAccessAuditor hook on ServiceImpl + objectset.Handler records data.access events for GetObject/ListObjects/SearchObjects/ListLinkedObjects/GetLinkedObject/loadObjectSet; audit.ClientInfoMiddleware + ClientInfoFromContext propagates IP+UserAgent from the HTTP layer; admin handlers Create/UpdateObjectType surface the flag via tri-state *bool on Update"
     },
     {
       "id": "US-265",

@@ -73,6 +73,16 @@ type PropertyFilterProvider interface {
 	AllowedProperties(ctx context.Context, objectType string) ([]string, error)
 }
 
+// DataAccessAuditor records successful loadObjectSet reads for the US-264
+// per-ObjectType audit toggle. RecordLoadObjectSet is a best-effort sink —
+// implementations decide whether the target ObjectType has opted in and
+// silently drop rows for opted-out types. Kept as an interface so
+// pkg/oss/objectset does not need to import pkg/audit or pkg/oms directly;
+// cmd/server wires a thin adapter that forwards to oss.DataAccessAuditor.
+type DataAccessAuditor interface {
+	RecordLoadObjectSet(ctx context.Context, ontologyRID, objectTypeAPIName string, details map[string]any)
+}
+
 // Handler handles ObjectSet HTTP requests.
 type Handler struct {
 	executor           *Executor
@@ -82,6 +92,7 @@ type Handler struct {
 	propertyFilter     PropertyFilterProvider
 	historySnapshots   HistorySnapshotProvider
 	persistedSnapshots PersistedSnapshotStore
+	dataAccessAuditor  DataAccessAuditor
 }
 
 // NewHandler creates a new ObjectSet handler.
@@ -102,6 +113,14 @@ func NewHandler(executor *Executor, indexMgr *index.Manager, store *Store) *Hand
 // boot; the Handler re-reads the field on every request.
 func (h *Handler) SetPropertyFilterProvider(p PropertyFilterProvider) {
 	h.propertyFilter = p
+}
+
+// SetDataAccessAuditor wires the optional US-264 loadObjectSet audit sink.
+// When attached and the target ObjectType has opted in via AuditDataAccess,
+// every successful LoadObjects call emits an audit_events row (action =
+// "data.access"). Passing nil detaches the hook.
+func (h *Handler) SetDataAccessAuditor(a DataAccessAuditor) {
+	h.dataAccessAuditor = a
 }
 
 // SetHistorySnapshotProvider wires the optional US-223 time-travel reader.
@@ -298,6 +317,14 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		resp.NextPageToken = nextCursor.Encode()
 	}
 
+	if h.dataAccessAuditor != nil {
+		h.dataAccessAuditor.RecordLoadObjectSet(ctx, ontologyAPIName, result.ObjectType, map[string]any{
+			"count":      len(data),
+			"totalCount": totalCount,
+			"truncated":  result.Truncated,
+		})
+	}
+
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -398,6 +425,15 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 		nextCursor := &pagination.Cursor{Offset: end}
 		resp.NextPageToken = nextCursor.Encode()
 	}
+
+	if h.dataAccessAuditor != nil {
+		h.dataAccessAuditor.RecordLoadObjectSet(ctx, ontologyAPIName, req.ObjectSet.ObjectType, map[string]any{
+			"count":      len(data),
+			"totalCount": totalCount,
+			"asOf":       asOf.Format(time.RFC3339),
+		})
+	}
+
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 

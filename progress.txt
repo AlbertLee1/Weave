@@ -146,6 +146,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Runtime "scan-content-then-tag-marking" hooks (US-263 PII auto-detect, future "auto-classify by content"): hook at `pkg/funnel/Consumer.applyBatchWithHistory` AFTER `resolveConflicts`/`preserveEditOnlyFields`/`filterWritableProperties` and BEFORE `applyBatchEdits` so the detector sees the FINAL property set the index will store. Wrong order = the user-edit-merge-back can introduce PII fields after the detector ran ⇒ silent miss. Detector interface stays minimal (`DetectPII(props) bool`); skip non-string values + DELETE/link edits; dedupe against existing `edit.Markings` before append. Hook is unconditionally wired in `cmd/server/main.go` because the cost is constant pure-Go regex per edit (no PG / NATS dep) — degraded-mode test routers naturally skip it. Same setter pattern as `SetLinkPropagationResolver` / `SetEditOnlyField`. Once tagged, never auto-untag — fail-secure, admin uses `revokeMarkingFor` to remove.
 - Regex-PII detector design choices (`pkg/security/pii`): SSN restricted to `XXX-XX-XXXX` (bare `\d{9}` flood-tags order numbers / postal+ext); credit card MUST be Luhn-validated (the regex alone false-positives every long numeric ID); phone format-permissive (parens / dashes / dots / +CC); email standard `\b...@...\.[a-z]{2,}\b` with `(?i)` for embedded matches. Skip non-string values entirely (numbers / bools come back from Bleve as native types — `fmt.Sprint`-ing them to scan would invite catastrophic false positives). Pure-Go (no CGO) keeps US-230's `CGO_ENABLED=0` Dockerfile invariant intact.
 - Partial-update tri-state collision with "always-on dropdown" UX: `*string` on the DTO means nil=preserve / ""=clear / value=assign, but a React `<select>` is ALWAYS on-screen with some value loaded. The right default is "Edit form sends current form value as-is" — if user left the unspecified sentinel, that's "" ⇒ intentional clear; if user kept the loaded value, server sees the same value ⇒ no-op. Don't try to send undefined-when-unchanged unless the UI has an explicit "keep current" affordance; you'll just confuse future readers. The tri-state shape survives because SDK callers (scripts, CI-driven migrations) can still omit the field to preserve.
+- HTTP-layer context carriers for service-layer audit/telemetry (US-264 ClientInfo): when a service method needs request-scoped metadata (caller IP, User-Agent, trace header, …) without taking an `*http.Request` dependency, define a tiny struct + `WithX`/`FromContext` helpers in a leaf package (pkg/audit/context.go) and attach a chi middleware that stamps the struct onto the request context. Empty-value guard inside `WithX` keeps non-HTTP callers (unit tests, background jobs) from polluting the context tree with zero-valued entries. Unique empty-struct key (`type clientInfoKey struct{}`) avoids string-based collisions. Same shape generalises to any cross-cutting context carrier — request-ID, locale, trace-context extensions.
+- Service-layer read-path audit hooks (US-264 DataAccessAuditor): package the "check flag on the ObjectType → optionally emit audit row" logic into a small helper type with a nil-safe receiver (`*DataAccessAuditor`). Call sites inside ServiceImpl drop a single line at the very END of the read path after all filtering/masking has run — so the audit reflects the row set the caller ACTUALLY saw, not the pre-policy set. The ObjectType is already loaded earlier in every read path (OMS lookup for policy + marking), so the flag check is free. Errors from `audit.Record` are SWALLOWED — a failed audit must never turn a 200 into a 500; operators monitor audit write health separately.
+- objectset.Handler doesn't have the *ObjectType on hand (it works with api-name strings from the executor result), so the audit sink must be a narrow interface implemented by an adapter in cmd/server that owns the OMS repo (`loadObjectSetAuditAdapter`). Keeps `pkg/oss/objectset` free of any `pkg/oms` / `pkg/audit` import, matches the same pattern used by `newPropertyFilterAdapter` / `newHistorySnapshotAdapter` / `newObjectSetSnapshotAdapter`. Never widen the handler itself to accept an OMS repo — the adapter-in-cmd-server indirection keeps the handler testable in isolation.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -2242,3 +2245,43 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - "无条件挂载 + nil-detector noop" 是 setter 钩子的典型双稳态：production main.go 走"挂载真实实现"，所有 cmd/server 的 contract / e2e / unit test router 走"不挂载 = noop"。新加一个 setter 钩子时，从这个形态起步，后续若需要 per-deployment 关掉，再额外加 env 门控；先做加法再做减法成本低。
   - PII auto-tag 不会反向"取消" PII —— 一旦 marking 被打上，后续 edit 即使内容不再 PII 也会保留 PII tag。这是 fail-secure 的合理选择（一旦泄露过，就当作长期敏感）。如果业务确认安全，可以由管理员通过 `revokeMarkingFor` 主动摘除；不要尝试在 detector 路径里写"未命中就移除 PII"的逻辑，会让 marking 状态在两次写之间抖动。
 ---
+
+## 2026-04-19 - US-264 数据访问审计日志
+- 为每个 ObjectType 新增 per-ObjectType 数据访问审计开关，开启后所有 OSS 读路径都会写一条 `audit_events` 行（`action = "data.access"`），由审计员按用户/资源/时间检索。
+- Migration `000061_object_type_data_access_audit`：`object_types.audit_data_access BOOLEAN NOT NULL DEFAULT FALSE`。现有行保留默认 false，只有 admin 显式开启才开始审计 —— 避免"升级后一晚上 audit_events 表暴涨"。
+- `pkg/oms.ObjectType.AuditDataAccess bool` (omitempty 序列化)；5 处 pg_repository 路径全部加列：Create (INSERT $18) / GetObjectType (SELECT) / ListObjectTypes (SELECT) / UpdateObjectType (SET $13) / ListInterfaceObjectTypes (SELECT)。ToWireJSON 在 flag=true 时追加 `auditDataAccess: true`。
+- 新的通用上下文携带器 `pkg/audit.ClientInfo{IP, UserAgent}` + `WithClientInfo` / `ClientInfoFromContext` + `ClientInfoMiddleware`。中间件在 `cmd/server/main.go` 全局 middleware 栈中紧跟 `middleware.RealIP` 挂载，X-Forwarded-For 优先，RemoteAddr host 部分兜底。这样 service layer 的审计钩子无需反向依赖 `*http.Request`。
+- 新审计器 `pkg/oss.DataAccessAuditor`：`Enabled(ot)` 预判 + `Record(ctx, ot, operation, details)` 落库。nil-safe（受信号 nil auditor / nil store / nil ot 都短路），store 为 nil 时自动 no-op，降级模式无需额外 wiring。DiffJSON payload 形如 `{"operation":"getObject","primaryKey":"emp1",...}` —— 对下游 SIEM 与 `GET /api/v2/admin/auditEvents` 保持统一 schema。
+- `ServiceImpl.SetDataAccessAuditor(a)` 注入钩子；在 5 个读方法结尾追加一次 `dataAccessAuditor.Record(...)`：`GetObject` / `ListObjects` / `SearchObjects` / `ListLinkedObjects`（记 target OT） / `GetLinkedObject`（记 target OT）。钩子放在最后一个 filter/mask 调用之后，所以写进 audit 的"返回行数"是用户真实能看到的数量，不是原始查询命中数。
+- `pkg/oss/objectset.Handler` 的 `LoadObjects` 路径额外加 `DataAccessAuditor` 接口 + `SetDataAccessAuditor` setter。因为 handler 只持有 objectType 的 api name，真实的 flag 检查由 `cmd/server/loadObjectSetAuditAdapter` 负责：先按 (ontologyRID, apiName) 查 OMS 拿 `*oms.ObjectType`，再走共享的 `oss.DataAccessAuditor.Record`，同时兼顾 live 路径与 `?asOf=` 时间穿越路径。
+- Admin handler 扩展：`CreateObjectTypeRequest.AuditDataAccess bool`（默认 false）和 `UpdateObjectTypeRequest.AuditDataAccess *bool`（三态指针：nil=保留 / true|false=覆写），与 US-262 Classification 三态指针同形。
+- 测试：
+  - `pkg/audit/context_test.go`：ClientInfo round-trip、零值跳过、X-Forwarded-For 优先、RemoteAddr host 兜底。
+  - `pkg/oss/data_access_audit_test.go`：Enabled 谓词表格测试、GetObject 开启时记录 actor/IP/UA/operation、默认不记录、ListObjects / SearchObjects 触发、未 wire auditor 时不 panic。
+  - `pkg/oss/objectset/handler_data_access_audit_test.go`：LoadObjects 通过 recording stub 捕获 `RecordLoadObjectSet`，验证 ontologyRID / objectTypeAPIName / count / totalCount 字段；未挂载时 2xx 正常返回。
+  - `pkg/oms/admin_handlers_audit_access_test.go`：Create 写入 true / Create 默认 false 且 omitempty / Update 省略保留 / Update 显式 false 关闭 / Update 显式 true 开启。
+- Files changed:
+  - `migrations/000061_object_type_data_access_audit.up.sql` (new)
+  - `migrations/000061_object_type_data_access_audit.down.sql` (new)
+  - `pkg/oms/models.go` (AuditDataAccess field + ToWireJSON 分支)
+  - `pkg/oms/pg_repository.go` (5 处 OT 路径加列)
+  - `pkg/oms/admin_handlers.go` (Create/Update 请求体 + 持久化分支)
+  - `pkg/oms/admin_handlers_audit_access_test.go` (new)
+  - `pkg/audit/context.go` (new — ClientInfo + middleware)
+  - `pkg/audit/context_test.go` (new)
+  - `pkg/oss/data_access_audit.go` (new — DataAccessAuditor)
+  - `pkg/oss/data_access_audit_test.go` (new)
+  - `pkg/oss/service_impl.go` (dataAccessAuditor 字段 + SetDataAccessAuditor + 5 处 Record 钩子)
+  - `pkg/oss/objectset/handler.go` (DataAccessAuditor 接口 + SetDataAccessAuditor + LoadObjects 两个分支的钩子)
+  - `pkg/oss/objectset/handler_data_access_audit_test.go` (new)
+  - `cmd/server/data_access_audit_adapter.go` (new — 把 OMS 查询与 oss.DataAccessAuditor 粘起来的桥)
+  - `cmd/server/main.go` (ClientInfoMiddleware 全局挂载 + 两处 wire: ServiceImpl.SetDataAccessAuditor + objSetHandler.SetDataAccessAuditor)
+  - `.ralph-repo/prd.json` (US-264 passes=true + notes)
+- **Learnings for future iterations:**
+  - 给 `ServiceImpl` 加 setter-injected 钩子的代价几乎为零：degraded-mode 测试 router 不挂载时 service 的每个读路径都走 `nil.Method(...)` 分支，`DataAccessAuditor` 的 nil-receiver 安全设计把调用方从 `if s.dataAccessAuditor != nil` 判断中解放出来。US-254 / US-261 / US-263 都是这个 setter 三段式：narrow interface + setter + nil 受体 = 0 成本占位。
+  - 把 audit 行钩在"最后一个 filter/mask 调用之后"，记录的 count 就是用户真实能看到的行数，policy / marking / column mask / cell mask 剔除掉的行自然不被计入。一旦把钩子放到 filter 之前，`count` 会被 denied rows 污染，合规审计场景里会被质疑"看见的比能看见的多"；同样道理也适用于将来 `/aggregate` 审计钩子 —— 钩在 apply-derived 之后，而不是 Bleve hit 数。
+  - `http.Request` → 上下文桥接模式值得沉淀：`ClientInfoMiddleware` 是标准三段 `type X struct{...}; WithX/FromX; Middleware(next)`，任何 service 方法想拿 request-scoped metadata 不再需要绕一圈 `http.Request.Context().Value("string-key")`（还得猜 key）。service 只 import leaf 包 `pkg/audit`，HTTP 耦合被 middleware 吃掉。
+  - 一旦有一个"per-OT toggle + 运行时读"场景（audit / quota / retention / export policy ...），pg_repository 的 5 处 OT 路径必须都加列，否则某个少见入口（LinkedObjects 走 ListInterfaceObjectTypes 查 target OT ⇒ 拿到的 AuditDataAccess=false）会让审计静默丢行。这是 US-262 classification 已经踩过的五步清单，这次 US-264 直接复用。
+  - objectset Handler 的 audit 绕一圈 adapter 是对的 —— 如果把 OMS repo 直接塞给 handler，会让 degraded-mode test router 的 fixture 爆炸（objectset 单测从不 wire repo）。narrow-interface-in-pkg + adapter-in-cmd/server 的套路对所有"handler 需要 OMS 查 flag"的未来场景都适用（US-210 edge properties / US-223 history snapshots / US-224 persisted snapshots 都是这个形）。
+---
+

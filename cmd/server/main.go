@@ -269,6 +269,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(SecurityHeadersMiddleware())
+	// US-264: stamp caller IP + User-Agent onto every request context so the
+	// OSS data-access auditor (pkg/oss) can record audit_events rows without
+	// taking an *http.Request dependency. Runs AFTER middleware.RealIP so
+	// X-Forwarded-For rewriting has already taken effect.
+	r.Use(audit.ClientInfoMiddleware)
 	if deps.CORSOrigins != nil && len(deps.CORSOrigins) > 0 {
 		r.Use(CORSMiddleware(deps.CORSOrigins))
 	}
@@ -625,6 +630,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// in-memory rows that can never be read back.
 			if deps.ObjectSetSnapshotStore != nil {
 				objSetHandler.SetPersistedSnapshotStore(newObjectSetSnapshotAdapter(deps.ObjectSetSnapshotStore))
+			}
+			// US-264: hook loadObjectSet into the data-access auditor so
+			// reads against audit-opted-in ObjectTypes produce an
+			// audit_events row (action = "data.access"). Adapter resolves
+			// the target ObjectType via the OMS repo so the handler stays
+			// oblivious to the flag check.
+			if deps.OmsRepo != nil && deps.AuditStore != nil {
+				objSetHandler.SetDataAccessAuditor(
+					newLoadObjectSetAuditAdapter(deps.OmsRepo, oss.NewDataAccessAuditor(deps.AuditStore)),
+				)
 			}
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", objSetHandler.LoadObjects)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks", objSetHandler.LoadLinks)
@@ -1332,6 +1347,15 @@ func main() {
 		if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
 			impl.SetColumnMaskEngine(deps.ColumnMaskEngine)
 		}
+	}
+
+	// 4d2. US-264 Data-Access Audit. The auditor is a thin wrapper over the
+	// AuditStore; it emits an audit_events row (action = "data.access") on
+	// successful OSS reads of ObjectTypes whose AuditDataAccess flag is
+	// true. Wired unconditionally — a nil AuditStore produces a no-op
+	// auditor so degraded-mode test routers inherit a safe default.
+	if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
+		impl.SetDataAccessAuditor(oss.NewDataAccessAuditor(deps.AuditStore))
 	}
 
 	// 4e. US-258 Cell-Level Security Engine. Indexes cell_masks by

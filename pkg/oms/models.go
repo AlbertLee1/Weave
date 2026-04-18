@@ -85,8 +85,15 @@ type ObjectType struct {
 	// Secret). Empty means "unspecified". The column is purely metadata in v1
 	// — admins use it for governance / auditing via the admin UI — and is not
 	// (yet) wired into any enforcement hook.
-	Classification string     `json:"classification,omitempty"`
-	Properties     []Property `json:"properties,omitempty"`
+	Classification string `json:"classification,omitempty"`
+	// AuditDataAccess (US-264) toggles per-ObjectType data-access auditing.
+	// When true, the OSS read paths (GetObject, ListObjects, SearchObjects,
+	// ListLinkedObjects, GetLinkedObject, loadObjectSet) emit an
+	// audit_events row with action = "data.access" for every successful
+	// read. Defaults to false so existing ObjectTypes do not pay the audit
+	// write cost until an admin opts in.
+	AuditDataAccess bool       `json:"auditDataAccess,omitempty"`
+	Properties      []Property `json:"properties,omitempty"`
 	CreatedAt      time.Time  `json:"-"`
 	UpdatedAt      time.Time  `json:"-"`
 }
@@ -186,6 +193,9 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 	}
 	if ot.Classification != "" {
 		wire["classification"] = ot.Classification
+	}
+	if ot.AuditDataAccess {
+		wire["auditDataAccess"] = true
 	}
 
 	if len(ot.Properties) > 0 {

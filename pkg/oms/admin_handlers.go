@@ -114,6 +114,11 @@ type CreateObjectTypeRequest struct {
 	// from KnownClassifications(). Empty / omitted means "unspecified".
 	// Unknown labels are rejected with a typed 400.
 	Classification string `json:"classification,omitempty"`
+	// AuditDataAccess (US-264) opts the ObjectType into per-read audit
+	// logging. Defaults to false; admins flip the flag to emit an
+	// audit_events row (action = "data.access") for every successful OSS
+	// read against this type.
+	AuditDataAccess bool `json:"auditDataAccess,omitempty"`
 }
 
 // UpdateObjectTypeRequest is the request body for updating an object type.
@@ -137,6 +142,11 @@ type UpdateObjectTypeRequest struct {
 	// collapse "omit" and "clear" into one, silently clearing classification
 	// on every partial update.
 	Classification *string `json:"classification,omitempty"`
+	// AuditDataAccess (US-264) is a tri-state pointer: nil = leave unchanged,
+	// true/false = toggle the per-read audit flag. Partial updates that omit
+	// the field preserve the current setting so admins can edit other
+	// attributes without accidentally disabling audit.
+	AuditDataAccess *bool `json:"auditDataAccess,omitempty"`
 }
 
 // UpdateOntologyRequest is the request body for updating an ontology.
@@ -405,6 +415,7 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		Visibility:        visibility,
 		ExtendsRID:        req.ExtendsRID,
 		Classification:    req.Classification,
+		AuditDataAccess:   req.AuditDataAccess,
 	}
 
 	// US-212: validate inheritance candidate. The parent must exist, live in the
@@ -534,6 +545,11 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updated.Classification = *req.Classification
+	}
+	// US-264 audit-data-access tri-state: nil = preserve, explicit bool =
+	// overwrite. No additional validation — the column is a plain flag.
+	if req.AuditDataAccess != nil {
+		updated.AuditDataAccess = *req.AuditDataAccess
 	}
 	// US-212: ExtendsRID tri-state — nil pointer leaves unchanged, "" clears,
 	// non-empty rewrites and is validated against the same rules as Create
