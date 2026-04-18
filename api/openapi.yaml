@@ -1491,10 +1491,13 @@ components:
           additionalProperties: true
           description: |
             WhereClause filter (see pkg/oss/where). Supported `type` values
-            include eq, gt/gte/lt/lte, isNull, contains, fuzzy,
+            include eq, gt/gte/lt/lte, isNull, contains, fuzzy, phrase,
             containsAllTerms, containsAnyTerm, containsAllTermsInOrder,
             containsAllTermsInOrderPrefixLastTerm, startsWith, wildcard,
-            and/or/not, and the geospatial operators.
+            and/or/not, and the geospatial operators. The `phrase` operator
+            accepts either a structured value
+            `{"phrase": "quick fox", "slop": 2}` or a Lucene-style string
+            `"quick fox"~2`; slop is clamped to [0, 32].
         fuzzy:
           type: object
           description: |

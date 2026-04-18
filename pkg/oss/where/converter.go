@@ -38,6 +38,8 @@ func ConvertToBleveQueryWithOpts(clause *WhereClause, opts *ConvertOptions) (que
 		return convertContains(clause)
 	case "fuzzy":
 		return convertFuzzy(clause, fuzz)
+	case "phrase":
+		return convertPhraseSlop(clause)
 	case "containsAllTerms":
 		return convertContainsAllTermsFuzzy(clause, fuzz)
 	case "containsAnyTerm":
@@ -233,6 +235,51 @@ func convertFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
 	q := bleve.NewFuzzyQuery(strings.ToLower(strVal))
 	q.SetField(clause.Field)
 	q.SetFuzziness(effective)
+	return q, nil
+}
+
+// convertPhraseSlop handles the "phrase" operator. Value shapes:
+//   - {"phrase": "quick fox", "slop": 2}
+//   - "\"quick fox\"~2" (Lucene-style, slop optional)
+//
+// slop=0 means strict adjacency (same as bleve's PhraseQuery); higher values
+// tolerate position gaps / reordering up to the slop budget. Slop is clamped
+// to [0, MaxPhraseSlop] — larger values are rejected to keep the path-walk
+// bounded.
+func convertPhraseSlop(clause *WhereClause) (query.Query, error) {
+	val, err := ParsePhraseSlopValue(clause.Value)
+	if err != nil {
+		return nil, fmt.Errorf("phrase: %w", err)
+	}
+	if val.Slop < 0 || val.Slop > MaxPhraseSlop {
+		return nil, fmt.Errorf("phrase slop must be in [0, %d], got %d", MaxPhraseSlop, val.Slop)
+	}
+
+	terms := SplitTerms(val.Phrase)
+	if len(terms) == 0 {
+		return bleve.NewMatchNoneQuery(), nil
+	}
+
+	// Lowercase to match the default text analyser's indexed form — same
+	// treatment the fuzzy / prefix operators apply so mixed-case input doesn't
+	// silently miss. Callers who need case-sensitive matching can pre-index
+	// the field with a keyword analyser; the operator itself stays consistent
+	// with the rest of the where package.
+	lowered := make([]string, len(terms))
+	for i, t := range terms {
+		lowered[i] = strings.ToLower(t)
+	}
+
+	if val.Slop == 0 && len(lowered) > 1 {
+		// slop=0 is strict adjacency — delegate to bleve's MatchPhraseQuery so
+		// callers get the optimised path; our custom searcher is only needed
+		// when slop > 0.
+		q := bleve.NewMatchPhraseQuery(val.Phrase)
+		q.SetField(clause.Field)
+		return q, nil
+	}
+
+	q := NewPhraseSlopQuery(lowered, val.Slop, clause.Field)
 	return q, nil
 }
 

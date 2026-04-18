@@ -497,8 +497,8 @@
         "Tests pass"
       ],
       "priority": 34,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/oss/where.PhraseSlopQuery (custom Bleve query) + ParsePhraseSlopString accepts {phrase,slop} or Lucene-style \"quick fox\"~2; slop clamped to [0,32]; slop=0 multi-term delegates to bleve.MatchPhraseQuery, slop>0 uses custom position-walk searcher; 19 where unit tests + 4 handler E2E tests"
     },
     {
       "id": "US-234",
