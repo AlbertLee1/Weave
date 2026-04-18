@@ -981,6 +981,15 @@ func main() {
 			// see serveAsyncApply in pkg/actions/handlers.go.
 			deps.ActionExecutor.SetActionJobStore(newPGActionJobStore(deps.PGPool))
 		}
+		// US-241: progress reporter publishes to NATS on actions.progress.<jobId>
+		// when the JS action calls weave.reportProgress(percent, message). The
+		// store update still runs without NATS (degraded mode), but live fanout
+		// requires a NATS connection. Publisher is setter-injected so handler
+		// tests without NATS / PG keep working — mirrors the AtomicActionLogStore
+		// / ActionJobStore wiring pattern.
+		if deps.NATSConn != nil {
+			deps.ActionExecutor.SetProgressPublisher(newNATSActionProgressPublisher(deps.NATSConn))
+		}
 		// US-214: polymorphic invoke forwards to the ActionExecutor via a
 		// narrow adapter so pkg/oms stays free of a pkg/actions import.
 		deps.InterfaceMethodDispatcher = newInterfaceMethodDispatcher(deps.ActionExecutor)

@@ -161,6 +161,7 @@ type Executor struct {
 	objectFetcher      ObjectFetcher
 	atomicLogStore     AtomicActionLogStore
 	jobStore           ActionJobStore
+	progressPub        ProgressPublisher
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit

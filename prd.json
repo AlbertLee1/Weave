@@ -611,8 +611,8 @@
         "Tests pass"
       ],
       "priority": 42,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/functions ProgressReporter narrow interface + WithProgressReporter/ProgressReporterFromContext ctx helpers; registerWeaveShim always registers the weave global (previously absent when FunctionCaller nil) and attaches reportProgress(percent, message?) that reads reporter from ctx — clamps percent to [0,100], truncates floats, treats message as optional; weave.callFunction remains conditional on FunctionCaller; pkg/actions ProgressPublisher narrow interface + Executor.SetProgressPublisher/ProgressPublisher hooks + ProgressEvent/ProgressSubject wire shape (actions.progress.<jobId>); jobProgressReporter writes UpdateActionJob(Progress) AND PublishProgress fanout, both best-effort (log + continue on failure); cmd/server natsActionProgressPublisher wraps nats.Conn.Publish, wired in main when NATSConn != nil (degraded mode skips silently); handlers.runAsyncApply installs reporter on ctx via functions.WithProgressReporter before exec.Apply so Goja dispatch propagates it; 6 shim tests (happy path, clamp, no-reporter no-op, optional message, coexists with callFunction, absent-from-context) + 4 reporter tests (subject format, store+publish, publisher error non-propagation, nil publisher still updates store) + 1 end-to-end async-goja progress flow test"
     },
     {
       "id": "US-242",

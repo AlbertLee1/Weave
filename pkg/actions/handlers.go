@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/functions"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oms"
 )
@@ -209,6 +210,14 @@ func runAsyncApply(ctx context.Context, exec *Executor, store ActionJobStore, jo
 	}); err != nil {
 		log.Printf("actions: async job %s: failed to mark RUNNING: %v", jobID, err)
 	}
+
+	// US-241: Install a progress reporter on ctx so Goja-backed action
+	// functions can surface live updates via `weave.reportProgress(percent,
+	// message)`. The reporter writes back into the action_jobs row AND
+	// fans out a NATS event on actions.progress.<jobId>. Publisher may be
+	// nil in degraded mode (no NATS) — the store update path still runs.
+	reporter := newJobProgressReporter(store, exec.ProgressPublisher(), jobID, ontologyRID, req.ActionType)
+	ctx = functions.WithProgressReporter(ctx, reporter)
 
 	result, err := exec.Apply(ctx, ontologyRID, req)
 	if err != nil {

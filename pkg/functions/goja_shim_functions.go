@@ -30,22 +30,30 @@ func (r *Runtime) SetFunctionCaller(caller FunctionCaller) {
 	r.functionCaller = caller
 }
 
-// registerWeaveShim registers the global `weave` object on the VM. The
-// only method exposed today is weave.callFunction(ref, params) which
-// recursively invokes another function via the configured FunctionCaller.
+// registerWeaveShim registers the global `weave` object on the VM. Methods:
 //
-// Guardrails (US-220):
+//   - weave.callFunction(ref, params) — recursively invoke another function
+//     via the configured FunctionCaller (US-220). Only registered when a
+//     FunctionCaller is attached to the runtime.
+//   - weave.reportProgress(percent, message?) — surface a progress update
+//     to the ProgressReporter carried on ctx (US-241). Always registered;
+//     no-ops when no reporter is on ctx so scripts can use it unconditionally
+//     across sync + async dispatch modes.
+//
+// Guardrails (US-220) for callFunction:
 //   - Depth: rejects when the stack carried by ctx already holds fncall.MaxDepth
 //     frames. The 9th nested call is where the limit kicks in.
 //   - Cycle: rejects when ref already appears on the stack. Pair with
 //     fncall.WithFrame(ctx, topLevelRef) before calling Execute so A→B→A
 //     is flagged on the first re-entry.
 func (r *Runtime) registerWeaveShim(vm *goja.Runtime, ctx context.Context) {
+	weave := vm.NewObject()
+	registerProgressShim(vm, weave, ctx)
+
 	if r.functionCaller == nil {
+		_ = vm.Set("weave", weave)
 		return
 	}
-
-	weave := vm.NewObject()
 
 	weave.Set("callFunction", func(call goja.FunctionCall) goja.Value {
 		refVal := call.Argument(0)

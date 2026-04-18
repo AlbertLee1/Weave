@@ -102,18 +102,20 @@ func TestWeaveCallFunction_ParamsFlowThrough(t *testing.T) {
 
 func TestWeaveCallFunction_NoCallerShimAbsent(t *testing.T) {
 	rt := NewRuntime(DefaultConfig())
-	// No SetFunctionCaller call — weave global should not register.
+	// No SetFunctionCaller call — weave.callFunction must be absent even
+	// though the weave global itself is always registered (US-241 added
+	// reportProgress which has no per-runtime dependency).
 
 	result, err := rt.Execute(context.Background(), `
 		function main(input) {
-			return typeof weave;
+			return typeof weave.callFunction;
 		}
 	`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result != "undefined" {
-		t.Fatalf("expected typeof weave == undefined, got %v", result)
+		t.Fatalf("expected typeof weave.callFunction == undefined, got %v", result)
 	}
 }
 
