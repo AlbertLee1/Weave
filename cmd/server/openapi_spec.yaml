@@ -1773,6 +1773,21 @@ components:
             non-numeric metric values fail the clause.
           items:
             $ref: "#/components/schemas/HavingClause"
+        cube:
+          type: boolean
+          description: |
+            When true, expand groupBy into every 2^N subset and concatenate
+            the resulting rows (full set first, grand total last). Rows from
+            partial subsets omit non-grouped dimensions from their group map;
+            absence signals that the dimension was aggregated across all
+            values at that row. Cube takes precedence when rollup is also set.
+        rollup:
+          type: boolean
+          description: |
+            When true, expand groupBy into the hierarchical chain
+            (groupBy[0..N], groupBy[0..N-1], ..., groupBy[0..0], grand total) —
+            N+1 groupings in total. Rolled-up dimensions are absent from the
+            row's group map. Mutex with cube; if both set, cube wins.
     HavingClause:
       type: object
       required: [metric, op, value]
@@ -1868,6 +1883,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/HavingClause"
+        cube:
+          type: boolean
+          description: See AggregationRequest.cube.
+        rollup:
+          type: boolean
+          description: See AggregationRequest.rollup.
     CreateTemporaryRequest:
       type: object
       required: [objectSet]

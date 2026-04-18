@@ -18,6 +18,17 @@ type AggregationRequest struct {
 	GroupBy         []GroupBySpec        `json:"groupBy,omitempty"`
 	SubAggregations []SubAggregationSpec `json:"subAggregations,omitempty"`
 	Having          []HavingClause       `json:"having,omitempty"`
+	// Cube, when true, computes every 2^N subset of the declared groupBys and
+	// concatenates the resulting rows (most specific subset first, then every
+	// (N-1)-subset, down to the grand total). Non-grouped dimensions in a row
+	// are marked absent from Group — callers detect aggregated dimensions by
+	// key absence.
+	Cube bool `json:"cube,omitempty"`
+	// Rollup, when true, computes the hierarchical chain [gb[0..N]], [gb[0..N-1]],
+	// ..., [gb[0..0]], [] — N+1 result groupings in total. Same Group-absence
+	// semantics as Cube for rolled-up dimensions. Mutex with Cube; if both are
+	// set Cube wins.
+	Rollup bool `json:"rollup,omitempty"`
 }
 
 // SubAggregationSpec is a named child aggregation that runs against the scope
@@ -112,10 +123,13 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	var resp *AggregationResponse
 	var err error
 
-	// If groupBy is specified, use Bleve facets.
-	if len(req.GroupBy) > 0 {
+	switch {
+	case (req.Cube || req.Rollup) && len(req.GroupBy) > 0:
+		resp, err = e.aggregateCubeOrRollup(idx, baseQuery, req)
+	case len(req.GroupBy) > 0:
+		// If groupBy is specified, use Bleve facets.
 		resp, err = e.aggregateWithGroupBy(idx, baseQuery, req)
-	} else {
+	default:
 		// Simple aggregation without groupBy.
 		resp, err = e.aggregateSimple(idx, baseQuery, req)
 	}
@@ -256,6 +270,107 @@ func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, re
 	}
 
 	resp := &AggregationResponse{Data: rows}
+	if truncated {
+		resp.Accuracy = "APPROXIMATE"
+	}
+	return resp, nil
+}
+
+// ExpandGroupByCombinations returns the list of groupBy-index subsets to run
+// when cube / rollup is requested. Each subset is an ascending slice of indexes
+// into the declared groupBy slice. Ordering:
+//   - cube: every 2^N subset, the full set first, then decreasing mask order
+//     down to the empty set (grand total last).
+//   - rollup: the hierarchical chain [0..N-1], [0..N-2], ..., [0..0], []
+//     (N+1 entries).
+//
+// Cube takes precedence when both flags are set. Exported so downstream
+// aggregation paths (e.g. objectset derived-field) can reuse the same
+// expansion semantics.
+func ExpandGroupByCombinations(n int, cube, rollup bool) [][]int {
+	if n == 0 {
+		return [][]int{nil}
+	}
+	switch {
+	case cube:
+		total := 1 << n
+		combos := make([][]int, 0, total)
+		for mask := total - 1; mask >= 0; mask-- {
+			var subset []int
+			for i := 0; i < n; i++ {
+				if mask&(1<<i) != 0 {
+					subset = append(subset, i)
+				}
+			}
+			combos = append(combos, subset)
+		}
+		return combos
+	case rollup:
+		combos := make([][]int, 0, n+1)
+		for k := n; k > 0; k-- {
+			subset := make([]int, k)
+			for i := 0; i < k; i++ {
+				subset[i] = i
+			}
+			combos = append(combos, subset)
+		}
+		combos = append(combos, nil)
+		return combos
+	default:
+		subset := make([]int, n)
+		for i := range subset {
+			subset[i] = i
+		}
+		return [][]int{subset}
+	}
+}
+
+// aggregateCubeOrRollup dispatches the full set of groupBy subsets implied by
+// Cube/Rollup. Each subset runs through the same recursive grouping path as a
+// plain request; rows are concatenated into a single flat response with
+// non-grouped dimensions absent from the Group map.
+func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
+	combos := ExpandGroupByCombinations(len(req.GroupBy), req.Cube, req.Rollup)
+	var allRows []AggregationRow
+	var truncated bool
+	for _, subset := range combos {
+		if len(subset) == 0 {
+			metrics, tr, err := e.computeMetrics(idx, baseQuery, req.Aggregations)
+			if err != nil {
+				return nil, fmt.Errorf("cube/rollup grand total: %w", err)
+			}
+			if tr {
+				truncated = true
+			}
+			row := AggregationRow{Metrics: metrics}
+			if len(req.SubAggregations) > 0 {
+				subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations)
+				if err != nil {
+					return nil, fmt.Errorf("cube/rollup grand total sub-aggregations: %w", err)
+				}
+				if subTrunc {
+					truncated = true
+				}
+				row.SubAggregations = subs
+			}
+			allRows = append(allRows, row)
+			continue
+		}
+		subsetGBs := make([]GroupBySpec, len(subset))
+		for i, idx := range subset {
+			subsetGBs[i] = req.GroupBy[idx]
+		}
+		rows, tr, err := e.recursiveGroupBy(idx, baseQuery, subsetGBs, req.Aggregations, req.SubAggregations)
+		if err != nil {
+			return nil, fmt.Errorf("cube/rollup subset %v: %w", subset, err)
+		}
+		if tr {
+			truncated = true
+		}
+		allRows = append(allRows, rows...)
+	}
+
+	resp := &AggregationResponse{Data: allRows}
 	if truncated {
 		resp.Accuracy = "APPROXIMATE"
 	}

@@ -469,8 +469,8 @@
         "Tests pass"
       ],
       "priority": 32,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "AggregationRequest + AggregateObjectSetRequest Cube/Rollup; ExpandGroupByCombinations shared by Bleve + derived paths"
     },
     {
       "id": "US-232",

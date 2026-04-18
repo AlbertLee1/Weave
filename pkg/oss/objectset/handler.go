@@ -408,6 +408,8 @@ type AggregateObjectSetRequest struct {
 	GroupBy         []aggregation.GroupBySpec        `json:"groupBy,omitempty"`
 	SubAggregations []aggregation.SubAggregationSpec `json:"subAggregations,omitempty"`
 	Having          []aggregation.HavingClause       `json:"having,omitempty"`
+	Cube            bool                             `json:"cube,omitempty"`
+	Rollup          bool                             `json:"rollup,omitempty"`
 }
 
 // Aggregate handles POST /api/v2/ontologies/{ont}/objectSets/aggregate.
@@ -467,6 +469,8 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 		GroupBy:         req.GroupBy,
 		SubAggregations: req.SubAggregations,
 		Having:          req.Having,
+		Cube:            req.Cube,
+		Rollup:          req.Rollup,
 	}
 
 	aggResult, err := h.aggEngine.AggregateWithQuery(idx, baseQuery, aggReq)

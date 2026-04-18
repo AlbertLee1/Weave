@@ -116,7 +116,12 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 		rows = append(rows, row)
 	}
 
-	data := groupDerivedRows(rows, 0, req.GroupBy, req.Aggregation)
+	var data []aggregation.AggregationRow
+	if req.Cube || req.Rollup {
+		data = expandDerivedCubeOrRollup(rows, req.GroupBy, req.Aggregation, req.Cube, req.Rollup)
+	} else {
+		data = groupDerivedRows(rows, 0, req.GroupBy, req.Aggregation)
+	}
 	if len(req.Having) > 0 {
 		data = aggregation.ApplyHaving(data, req.Having)
 	}
@@ -126,6 +131,30 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 	}
 	resp.ComputeUsage = 4.0
 	return resp, nil
+}
+
+// expandDerivedCubeOrRollup mirrors the engine's Cube/Rollup path for the
+// derived in-memory rows. Each subset of groupBys produces its own slice of
+// AggregationRows via groupDerivedRows; concatenation order (full set first,
+// grand total last for cube; hierarchical chain for rollup) matches the engine
+// path. Non-grouped dimensions are absent from each row's Group map.
+func expandDerivedCubeOrRollup(rows []derivedAggRow, gbs []aggregation.GroupBySpec, specs []aggregation.AggregationSpec, cube, rollup bool) []aggregation.AggregationRow {
+	combos := aggregation.ExpandGroupByCombinations(len(gbs), cube, rollup)
+	var out []aggregation.AggregationRow
+	for _, subset := range combos {
+		if len(subset) == 0 {
+			out = append(out, aggregation.AggregationRow{
+				Metrics: computeDerivedMetrics(rows, specs),
+			})
+			continue
+		}
+		subsetGBs := make([]aggregation.GroupBySpec, len(subset))
+		for i, idx := range subset {
+			subsetGBs[i] = gbs[idx]
+		}
+		out = append(out, groupDerivedRows(rows, 0, subsetGBs, specs)...)
+	}
+	return out
 }
 
 // derivedAggRow carries everything needed to emit a single row through a
