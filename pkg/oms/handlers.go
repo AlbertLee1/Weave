@@ -16,6 +16,7 @@ type OMSHandler struct {
 	queryExecutor            QueryExecutor
 	functionExecutor         FunctionExecutor
 	functionQuotaLimiter     FunctionQuotaLimiter
+	functionResultCache      FunctionResultCache
 	actorFn                  ActorFunc
 	linkPropertyStore        LinkPropertyStore
 	linkEdgeStore            LinkEdgeStore
@@ -54,6 +55,18 @@ func (h *OMSHandler) SetFunctionExecutor(e FunctionExecutor) {
 // supply one.
 func (h *OMSHandler) SetFunctionQuotaLimiter(l FunctionQuotaLimiter) {
 	h.functionQuotaLimiter = l
+}
+
+// SetFunctionResultCache wires the optional result cache used by the
+// /functions/{rid}/execute endpoint (US-221) for Functions flagged
+// `pure=true`. The cache is consulted AFTER signature validation and
+// quota enforcement so cached responses still respect both gates.
+//
+// A nil or unset cache disables result caching — the handler dispatches
+// every call directly to the executor, matching the legacy behaviour
+// US-221 introduced this hook on top of.
+func (h *OMSHandler) SetFunctionResultCache(c FunctionResultCache) {
+	h.functionResultCache = c
 }
 
 // SetLinkPropertyStore wires the narrow LinkPropertyStore used by the

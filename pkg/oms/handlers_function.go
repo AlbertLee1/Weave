@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/functions/cache"
 	"github.com/liyang/weave/pkg/functions/fnerrors"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
@@ -24,7 +25,12 @@ type CreateFunctionRequest struct {
 	Version    string          `json:"version,omitempty"`
 	Runtime    string          `json:"runtime,omitempty"`
 	Signature  json.RawMessage `json:"signature,omitempty"`
-	CreatedBy  string          `json:"createdBy,omitempty"`
+	// Pure marks the function as deterministic in its inputs. When true the
+	// execute handler may serve repeat calls with identical params from the
+	// LRU+TTL result cache (US-221). Defaults to false when omitted so
+	// nothing caches by accident.
+	Pure      bool   `json:"pure,omitempty"`
+	CreatedBy string `json:"createdBy,omitempty"`
 }
 
 // UpdateFunctionRequest is the request body for updating a function. Pointer
@@ -38,6 +44,11 @@ type UpdateFunctionRequest struct {
 	Version    string           `json:"version,omitempty"`
 	Runtime    *string          `json:"runtime,omitempty"`
 	Signature  *json.RawMessage `json:"signature,omitempty"`
+	// Pure is a pointer so callers can distinguish "omit ⇒ preserve" from
+	// "send false ⇒ disable caching" (US-221). Sending true on a previously
+	// impure row opts the function into the LRU+TTL result cache the next
+	// time the row is read.
+	Pure *bool `json:"pure,omitempty"`
 }
 
 // CreateFunction handles POST /api/v2/ontologies/{ontologyApiName}/functions.
@@ -89,6 +100,7 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		SourceCode:  req.SourceCode,
 		Runtime:     req.Runtime,
 		Signature:   req.Signature,
+		Pure:        req.Pure,
 		CreatedBy:   req.CreatedBy,
 	}
 	if err := fn.Validate(); err != nil {
@@ -247,6 +259,9 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.Signature != nil {
 		existing.Signature = *req.Signature
 	}
+	if req.Pure != nil {
+		existing.Pure = *req.Pure
+	}
 	if err := existing.Validate(); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:function", map[string]string{
 			"reason": err.Error(),
@@ -370,6 +385,26 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 
 	streaming := r.URL.Query().Get("stream") == "1"
 
+	// Result cache (US-221). Pure functions short-circuit repeat calls
+	// with identical params from the LRU+TTL cache. Streaming responses
+	// skip the cache because the handler emits items one at a time —
+	// reconstituting them from a cached scalar/slice would require an
+	// extra projection layer we don't need yet. Cache misses fall through
+	// to the regular dispatch path.
+	cacheable := fn.Pure && !streaming && h.functionResultCache != nil
+	var cacheKey string
+	if cacheable {
+		cacheKey = functionResultCacheKey(fn, coerced)
+		if cached, hit := h.functionResultCache.Get(cacheKey); hit {
+			httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+				"functionRid": fn.RID,
+				"result":      cached,
+				"cached":      true,
+			})
+			return
+		}
+	}
+
 	// Handler-side CPU budget (US-218). The underlying Goja runtime also
 	// enforces this ceiling via its own context watchdog, but wrapping
 	// here guarantees the 5s limit applies to every FunctionExecutor
@@ -406,6 +441,13 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 			"error": err.Error(),
 		}))
 		return
+	}
+
+	// Cache the successful result so the next pure-call with the same
+	// params hits the cache. Errors are never cached — the caller may have
+	// raced an external state change the function depends on.
+	if cacheable {
+		h.functionResultCache.Put(cacheKey, result)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -469,6 +511,16 @@ func writeFunctionStream(w http.ResponseWriter, fnRID string, result interface{}
 			"functionRid": fnRID,
 		},
 	})
+}
+
+// functionResultCacheKey builds the canonical cache key for a Function
+// invocation (US-221). The key combines the function's RID and version with
+// a SHA-256 digest of the params map so two calls only collide when both
+// the function build AND the input are identical. NormalisedVersion()
+// substitutes the DEFAULT version when the row predates US-217 — keeps
+// legacy rows cacheable without breaking the rid@version contract.
+func functionResultCacheKey(fn *Function, params map[string]interface{}) string {
+	return cache.Key(fn.RID, fn.NormalisedVersion(), params)
 }
 
 // realmFromRID returns the `realm` segment from a Weave Resource Identifier

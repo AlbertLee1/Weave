@@ -28,6 +28,19 @@ type FunctionQuotaLimiter interface {
 	Allow(key string) bool
 }
 
+// FunctionResultCache is the narrow Get/Put surface the ExecuteFunction
+// handler uses to short-circuit repeat calls to a `pure=true` Function
+// (US-221). Concrete implementations live in pkg/functions/cache so
+// pkg/oms stays free of the LRU dependency. A nil receiver behaves as
+// a pass-through (Get always misses, Put no-ops) — the handler honours
+// that contract by checking for nil before consulting the cache, so
+// degraded-mode test routers without a cache wired keep their original
+// "always re-run" semantics.
+type FunctionResultCache interface {
+	Get(key string) (interface{}, bool)
+	Put(key string, value interface{})
+}
+
 // DefaultFunctionExecutionTimeout is the per-call CPU budget the
 // ExecuteFunction handler enforces via context.WithTimeout. The underlying
 // Goja runtime also honours this limit (see pkg/functions.DefaultConfig),

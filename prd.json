@@ -326,8 +326,8 @@
         "Tests pass"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000042 adds functions.pure (default false); pkg/functions/cache.NewDefault = 10k LRU + 5min TTL keyed by rid@version + sha256(canonical-params); narrow oms.FunctionResultCache interface + OMSHandler.SetFunctionResultCache; ExecuteFunction gates cache lookup on fn.Pure && !streaming, emits cached:true on hit; errors never cached; param map insertion order canonicalised so {a,b}=={b,a}; 22 unit tests + 8 handler tests"
     },
     {
       "id": "US-222",

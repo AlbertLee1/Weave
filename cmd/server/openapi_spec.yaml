@@ -854,6 +854,15 @@ components:
               required: [type]
               properties:
                 type: { type: string }
+        pure:
+          type: boolean
+          default: false
+          description: |
+            US-221: when true the execute endpoint may serve repeat calls
+            with identical params from a per-process LRU+TTL cache (10k
+            entries, 5-minute TTL). Defaults to false so impure functions
+            (those that read external state, the wall clock, or mutate
+            shared state) keep their original "always re-run" semantics.
         createdBy:
           type: string
         createdAt:
@@ -4280,6 +4289,12 @@ paths:
                   enum: [goja, http]
                 signature:
                   type: object
+                pure:
+                  type: boolean
+                  default: false
+                  description: |
+                    US-221: opt the function into the per-process LRU+TTL
+                    result cache. Defaults to false.
                 createdBy:
                   type: string
       responses:
@@ -4376,6 +4391,12 @@ paths:
                   enum: [goja, http]
                 signature:
                   type: object
+                pure:
+                  type: boolean
+                  description: |
+                    US-221: enable / disable per-process result caching.
+                    Omitted ⇒ preserve the existing row's value; sending
+                    false explicitly disables caching.
       responses:
         "200":
           description: Function updated.
@@ -4510,6 +4531,13 @@ paths:
                   functionRid:
                     type: string
                   result: {}
+                  cached:
+                    type: boolean
+                    description: |
+                      US-221: present and `true` when the response was
+                      served from the per-process LRU+TTL result cache
+                      (only applies when the function is `pure=true` and
+                      a cache is wired). Absent otherwise.
             application/x-ndjson:
               schema:
                 type: string

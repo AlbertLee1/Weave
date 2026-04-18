@@ -512,8 +512,15 @@ type Function struct {
 	SourceCode  string          `json:"sourceCode"`
 	Signature   json.RawMessage `json:"signature,omitempty"`
 	Runtime     string          `json:"runtime,omitempty"`
-	CreatedBy   string          `json:"createdBy"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	// Pure marks a Function whose output is deterministic in its inputs —
+	// no I/O, no clock reads, no shared-state mutation (US-221). When true
+	// the ExecuteFunction handler may serve repeat calls from a per-process
+	// LRU+TTL cache keyed on `rid@version + hash(params)`. Defaults to
+	// false so legacy / impure rows keep their original "always re-run"
+	// semantics until an author explicitly opts in.
+	Pure      bool      `json:"pure,omitempty"`
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // OntologyBranch represents a branch for isolated ontology schema changes.
