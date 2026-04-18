@@ -654,8 +654,8 @@
         "Tests pass"
       ],
       "priority": 45,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Extended pkg/actions.Rule with control-flow fields (Condition/Then/Else, ItemsParameter/ItemVariable/IndexVariable/Rules, On/Cases/Default) + new Condition + SwitchCase types. ExecuteRules is now a depth-tracking recursive helper (MaxRuleNestingDepth=5); control-flow bodies reuse the same depth counter so any mix of if/foreach/switch is capped. if supports eq/ne/gt/gte/lt/lte/in/notIn/exists/notExists/truthy/falsy leaf ops + and/or/not logical ops via Condition.All/Any/Not. foreach iterates []interface{} (clean error on non-slice / missing param) and exposes itemVariable (+ optional indexVariable) to child rules via a shallow-cloned params map. switch matches on params[On] against each SwitchCase.When with numeric-aware equality (same toFloat64 helper as criteria.go), falling through to Default when no case matches. 17 new subtests in pkg/actions/control_flow_test.go cover each branch, depth-at-max success, depth-exceeded error, JSON round-trip. go test ./pkg/actions/ green; go build ./... + go vet ./... clean; short test/e2e + northwind + foundry_parity pass. executeFunction rules are still skipped by ExecuteRules; nested executeFunction inside control-flow is left unsupported for this story (Prepare's dispatch pass still iterates top-level only)."
     },
     {
       "id": "US-245",
