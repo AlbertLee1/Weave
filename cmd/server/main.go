@@ -151,7 +151,17 @@ type ServerDeps struct {
 	// mounted.
 	GroupRepo auth.GroupRepository
 	RoleRepo  auth.RoleRepository
-	CORSOrigins []string // Allowed CORS origins (empty = disabled)
+	// US-253: TOTP-based MFA. MFAStore is the narrow persistence surface
+	// over the new users.mfa_secret / users.mfa_enabled columns; satisfied
+	// by the uncached *PGUserRepository. MFAChallenges bridges the login
+	// handler (which mints a challenge after password verification when the
+	// user has MFA enabled) and /api/auth/mfa/verify (which consumes it).
+	// Both must be wired for /api/auth/mfa/* routes to mount; in degraded
+	// mode the routes are skipped and the login handler emits tokens
+	// directly.
+	MFAStore      auth.MFASecretStore
+	MFAChallenges *auth.MFAChallengeStore
+	CORSOrigins   []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -261,6 +271,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				loginRateLimit = n
 			}
 		}
+		// US-253: an in-memory single-use challenge store bridges
+		// /api/auth/login (mints) and /api/auth/mfa/verify (consumes). Always
+		// constructed so the login handler can short-circuit MFA-enabled
+		// users; the verify endpoint is only mounted when MFAStore is wired.
+		if deps.MFAChallenges == nil {
+			deps.MFAChallenges = auth.NewMFAChallengeStore(auth.DefaultMFAChallengeTTL)
+		}
 		loginHandler := auth.NewLoginHandler(auth.LoginHandlerDeps{
 			Users:          deps.UserRepo,
 			Resolver:       deps.RoleResolver,
@@ -268,6 +285,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			RefreshService: deps.RefreshService,
 			RateLimit:      loginRateLimit,
 			MarkingRepo:    markingRepo,
+			MFAChallenges:  deps.MFAChallenges,
 		})
 		refreshHandler := auth.NewRefreshHandler(auth.RefreshHandlerDeps{
 			Users:          deps.UserRepo,
@@ -293,6 +311,22 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// missing or unparseable at boot and the endpoints are skipped.
 		if deps.SAMLHandler != nil {
 			deps.SAMLHandler.RegisterRoutes(r)
+		}
+
+		// US-253: MFA endpoints. Mounted alongside password login when both
+		// MFAStore and MFAChallenges are wired; in degraded mode (no PG)
+		// MFAStore is nil and the routes are skipped.
+		if deps.MFAStore != nil && deps.MFAChallenges != nil {
+			mfaHandler := auth.NewMFAHandler(auth.MFAHandlerDeps{
+				Users:          deps.UserRepo,
+				MFAStore:       deps.MFAStore,
+				Resolver:       deps.RoleResolver,
+				Signer:         deps.JWTSigner,
+				RefreshService: deps.RefreshService,
+				MFAChallenges:  deps.MFAChallenges,
+				MarkingRepo:    markingRepo,
+			})
+			mfaHandler.RegisterRoutes(r)
 		}
 	}
 
@@ -735,7 +769,11 @@ func main() {
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.
 		deps.IndexDocSource = newPGIndexDocSource(pgRepo)
-		deps.UserRepo = auth.NewPGUserRepository(pool)
+		pgUserRepo := auth.NewPGUserRepository(pool)
+		deps.UserRepo = pgUserRepo
+		// US-253: MFA persistence is the same uncached *PGUserRepository so
+		// reads after enable/disable observe their own writes immediately.
+		deps.MFAStore = pgUserRepo
 		deps.APIKeyRepo = auth.NewPGAPIKeyRepository(pool)
 		// US-249: service accounts share the users FK so the bootstrap
 		// ordering is after UserRepo (which runs migrations). The PG

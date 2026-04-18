@@ -39,6 +39,16 @@ type LoginResponse struct {
 	User         LoginUser `json:"user"`
 }
 
+// MFAChallengeResponse is the JSON body returned by POST /api/auth/login
+// when the user has MFA enabled. The SPA must call /api/auth/mfa/verify
+// with the supplied challenge_token + a 6-digit TOTP code to receive a
+// LoginResponse.
+type MFAChallengeResponse struct {
+	MFARequired    bool   `json:"mfa_required"`
+	ChallengeToken string `json:"challenge_token"`
+	ExpiresIn      int    `json:"expires_in"`
+}
+
 // LoginHandlerDeps groups all collaborators for the login handler.
 type LoginHandlerDeps struct {
 	Users          UserRepository
@@ -49,6 +59,10 @@ type LoginHandlerDeps struct {
 	RateLimit   int
 	AuditStore  audit.Store
 	MarkingRepo MarkingRepository // US-082: optional; when set, user markings are included in the JWT
+	// MFAChallenges is consulted when the user has MFA enabled. When nil,
+	// MFA enforcement is silently skipped (degraded mode for tests that
+	// don't care about second-factor flow).
+	MFAChallenges *MFAChallengeStore
 }
 
 // LoginHandler implements POST /api/auth/login. It returns access + refresh
@@ -139,6 +153,27 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := VerifyPassword(user.PasswordHash, req.Password); err != nil {
 		h.auditLogin(ctx, user.ID, "login_failed", r)
 		writeInvalidCredentials(w)
+		return
+	}
+
+	// US-253: when the user has MFA enabled, defer JWT issuance to the
+	// MFA verify endpoint. Mint a single-use challenge token bound to the
+	// user, audit the partial-success ("login_mfa_required"), and return
+	// 202 Accepted with the challenge payload.
+	if user.MFAEnabled && h.deps.MFAChallenges != nil {
+		token, err := h.deps.MFAChallenges.Issue(user.ID)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("LoginMFAChallengeFailed", map[string]string{"reason": err.Error()}))
+			return
+		}
+		h.auditLogin(ctx, user.ID, "login_mfa_required", r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(MFAChallengeResponse{
+			MFARequired:    true,
+			ChallengeToken: token,
+			ExpiresIn:      int(h.deps.MFAChallenges.ttl.Seconds()),
+		})
 		return
 	}
 

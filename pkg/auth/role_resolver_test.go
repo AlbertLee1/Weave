@@ -103,6 +103,37 @@ func (f *fakeUserRepo) SetPassword(_ context.Context, userID, passwordHash strin
 	return nil
 }
 
+// SetMFASecret satisfies MFASecretStore for the fake.
+func (f *fakeUserRepo) SetMFASecret(_ context.Context, userID, secret string) error {
+	u, ok := f.users[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.MFASecret = secret
+	return nil
+}
+
+// SetMFAEnabled satisfies MFASecretStore for the fake.
+func (f *fakeUserRepo) SetMFAEnabled(_ context.Context, userID string, enabled bool) error {
+	u, ok := f.users[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.MFAEnabled = enabled
+	return nil
+}
+
+// ClearMFA satisfies MFASecretStore for the fake.
+func (f *fakeUserRepo) ClearMFA(_ context.Context, userID string) error {
+	u, ok := f.users[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.MFASecret = ""
+	u.MFAEnabled = false
+	return nil
+}
+
 func TestRoleResolver_ResolvesGlobalAndScopedRoles(t *testing.T) {
 	repo := newFakeUserRepo()
 	repo.users["alice"] = &UserRecord{ID: "alice"}

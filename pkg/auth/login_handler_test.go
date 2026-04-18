@@ -191,6 +191,71 @@ func TestLoginHandler_RateLimit(t *testing.T) {
 	}
 }
 
+func TestLoginHandler_MFAEnabledReturnsChallenge(t *testing.T) {
+	repo := newFakeUserRepo()
+	resolver := NewRoleResolver(repo, time.Minute)
+	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
+	signer, _ := NewJWTSigner(priv, &priv.PublicKey, JWTSignerOptions{AccessTokenTTL: 15 * time.Minute})
+	rs := NewRefreshService(NewMemoryRefreshStore(), RefreshServiceOptions{AbsoluteTTL: 7 * 24 * time.Hour})
+	store := NewMFAChallengeStore(time.Minute)
+	h := NewLoginHandler(LoginHandlerDeps{
+		Users:          repo,
+		Resolver:       resolver,
+		Signer:         signer,
+		RefreshService: rs,
+		MFAChallenges:  store,
+	})
+	hash, _ := HashPassword("letmein123!")
+	repo.users["user:alice@example.com"] = &UserRecord{
+		ID:           "user:alice@example.com",
+		Email:        "alice@example.com",
+		PasswordHash: hash,
+		MFASecret:    "JBSWY3DPEHPK3PXP",
+		MFAEnabled:   true,
+	}
+
+	rec := postLogin(t, h, map[string]string{"email": "alice@example.com", "password": "letmein123!"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted with MFA challenge, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp MFAChallengeResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.MFARequired || resp.ChallengeToken == "" {
+		t.Errorf("expected mfa_required=true with challenge_token, got %+v", resp)
+	}
+	if resp.ExpiresIn <= 0 {
+		t.Errorf("expected positive expires_in, got %d", resp.ExpiresIn)
+	}
+	// Token must be live in the store.
+	uid, err := store.Consume(resp.ChallengeToken)
+	if err != nil {
+		t.Fatalf("challenge consume: %v", err)
+	}
+	if uid != "user:alice@example.com" {
+		t.Errorf("user id: got %q", uid)
+	}
+}
+
+func TestLoginHandler_MFAEnabledButStoreUnwiredFallsThrough(t *testing.T) {
+	// When MFAChallenges is nil (degraded mode) the login handler must
+	// still issue tokens — better to log in than to lock everyone out.
+	h, repo, _ := newLoginHandlerHarness(t)
+	hash, _ := HashPassword("letmein123!")
+	repo.users["user:alice@example.com"] = &UserRecord{
+		ID:           "user:alice@example.com",
+		Email:        "alice@example.com",
+		PasswordHash: hash,
+		MFASecret:    "JBSWY3DPEHPK3PXP",
+		MFAEnabled:   true,
+	}
+	rec := postLogin(t, h, map[string]string{"email": "alice@example.com", "password": "letmein123!"})
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 fallback when MFAChallenges is nil, got %d", rec.Code)
+	}
+}
+
 func TestLoginHandler_StoresRefreshToken(t *testing.T) {
 	h, repo, rs := newLoginHandlerHarness(t)
 	seedUser(t, repo, "user:alice@example.com", "alice@example.com", "letmein123!", "Alice")

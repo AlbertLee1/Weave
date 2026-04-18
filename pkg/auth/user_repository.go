@@ -20,8 +20,16 @@ type UserRecord struct {
 	Email        string
 	Name         string
 	PasswordHash string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// MFASecret is the user's TOTP shared secret (base32). Empty when the
+	// user has never started MFA enrollment. Persistence does not enforce
+	// the second factor on its own — see MFAEnabled.
+	MFASecret string
+	// MFAEnabled is true once the user has confirmed possession of the
+	// secret with a valid code via /api/auth/mfa/enable. While true the
+	// login handler returns a challenge instead of an access token.
+	MFAEnabled bool
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // UserRepository is the persistence interface for users and role grants.
@@ -60,9 +68,10 @@ func (r *PGUserRepository) CreateUser(ctx context.Context, u *UserRecord) error 
 func (r *PGUserRepository) GetUserByID(ctx context.Context, id string) (*UserRecord, error) {
 	u := &UserRecord{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, COALESCE(email, ''), COALESCE(password_hash, ''), COALESCE(name, ''), created_at, updated_at
+		`SELECT id, COALESCE(email, ''), COALESCE(password_hash, ''), COALESCE(name, ''),
+		        COALESCE(mfa_secret, ''), COALESCE(mfa_enabled, FALSE), created_at, updated_at
 		 FROM users WHERE id = $1`, id).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.MFASecret, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
@@ -75,9 +84,10 @@ func (r *PGUserRepository) GetUserByID(ctx context.Context, id string) (*UserRec
 func (r *PGUserRepository) GetUserByEmail(ctx context.Context, email string) (*UserRecord, error) {
 	u := &UserRecord{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, COALESCE(email, ''), COALESCE(password_hash, ''), COALESCE(name, ''), created_at, updated_at
+		`SELECT id, COALESCE(email, ''), COALESCE(password_hash, ''), COALESCE(name, ''),
+		        COALESCE(mfa_secret, ''), COALESCE(mfa_enabled, FALSE), created_at, updated_at
 		 FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.CreatedAt, &u.UpdatedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.MFASecret, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
