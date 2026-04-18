@@ -650,6 +650,86 @@ func (h *Handler) serveApprovalEnqueue(w http.ResponseWriter, r *http.Request, o
 	})
 }
 
+// ListApprovals handles GET .../actions/approvals. Returns the approval
+// queue scoped to the current ontology.
+//
+// Query parameters:
+//   - status: PENDING (default) | APPROVED | REJECTED | "" (all)
+//   - mine: "true" (default) | "false" — when true, only rows the caller
+//     can review (user.ID OR user.Roles ∩ approvers) are returned. When
+//     false, the approver filter is lifted so the full queue is visible
+//     (admin / audit view).
+//   - limit: [1, 500] — per-response cap, defaults to 100.
+//
+// Degraded mode: when no ActionApprovalStore is wired the endpoint returns
+// an empty list rather than 500, matching the GetJob degraded contract.
+func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	q := r.URL.Query()
+
+	filter := ActionApprovalListFilter{
+		Status:          ActionApprovalStatusPending,
+		OntologyAPIName: ontologyAPIName,
+		Limit:           100,
+	}
+	if s := q.Get("status"); s != "" {
+		switch strings.ToUpper(s) {
+		case "ALL", "*":
+			filter.Status = ""
+		case ActionApprovalStatusPending,
+			ActionApprovalStatusApproved,
+			ActionApprovalStatusRejected:
+			filter.Status = strings.ToUpper(s)
+		default:
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidApprovalStatus",
+				map[string]string{"status": s, "allowed": "PENDING, APPROVED, REJECTED, ALL"}))
+			return
+		}
+	}
+	if lim := q.Get("limit"); lim != "" {
+		n, err := strconv.Atoi(lim)
+		if err != nil || n < 1 || n > 500 {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidLimit",
+				map[string]string{"limit": lim, "allowed": "1..500"}))
+			return
+		}
+		filter.Limit = n
+	}
+
+	user := auth.UserFromContext(r.Context())
+	mine := q.Get("mine") != "false"
+
+	// Degraded mode: no store wired → empty list.
+	store := h.executor.ActionApprovalStore()
+	if store == nil {
+		httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": []*ActionApproval{}})
+		return
+	}
+
+	rows, err := store.ListActionApprovals(r.Context(), filter)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ApprovalListFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+
+	// Caller-scoped filter applied post-store so we don't have to teach the
+	// store about the OR-of-identity set. Keeps the store interface small.
+	if mine && user != nil {
+		filtered := rows[:0]
+		for _, a := range rows {
+			if userCanApprove(user, a.Approvers) {
+				filtered = append(filtered, a)
+			}
+		}
+		rows = filtered
+	}
+	if rows == nil {
+		rows = []*ActionApproval{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": rows})
+}
+
 // ApproveAction handles POST .../actions/approvals/{approvalId}/approve.
 // Transitions a PENDING row to APPROVED and records the reviewer + reason.
 // Authorization: caller's user.ID or user.Roles must intersect the approval's

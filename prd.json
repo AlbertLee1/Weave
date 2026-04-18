@@ -640,8 +640,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 44,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend: new GET /api/v2/ontologies/{o}/actions/approvals (handler ListApprovals with status/mine/limit filters; post-store OR-of-identity filter via userCanApprove) + ActionApprovalListFilter + PG jsonb ?? operator for approver membership + 4 unit tests; Apply handler + approve/reject unchanged. Frontend: new web/src/api/approvals.ts + useApprovals hooks + ApprovalsPage (/approvals and /approvals/:ontology) with status tabs, mine toggle, parameters <details>, Approve/Reject buttons opening Modal with reason textarea; sidebar 'Approvals' link when ontology active. 6 RTL tests cover list/modal/submit/empty/filter-switch/error. dev-browser skill not available — manual browser verification still pending."
     },
     {
       "id": "US-244",

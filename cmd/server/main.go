@@ -398,6 +398,8 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}", actionHandler.GetJob)
 			// US-242: approval-workflow endpoints. Always registered when the
 			// executor is wired; return 404 if no approval store is attached.
+			// US-243: ListApprovals backs the /approvals UI page.
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/approvals", actionHandler.ListApprovals)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/approve", actionHandler.ApproveAction)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/reject", actionHandler.RejectAction)
 		}

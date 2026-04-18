@@ -46,6 +46,21 @@ type ActionApprovalUpdate struct {
 	Reason     *string
 }
 
+// ActionApprovalListFilter narrows ListActionApprovals to a subset of rows.
+// Status="" returns every status; Status="PENDING" (etc.) filters to that
+// terminal/non-terminal state. OntologyAPIName filter defaults to "all
+// ontologies" when empty. Approver (user ID or role string) restricts the
+// result to rows whose snapshot Approvers list contains the value; empty
+// means "no approver restriction". Limit is clamped to [1, 500] by the
+// handler; 0 at the store layer means "no limit" so integration tests can
+// pull every row without juggling a sentinel.
+type ActionApprovalListFilter struct {
+	Status          string
+	OntologyAPIName string
+	Approver        string
+	Limit           int
+}
+
 // ActionApprovalStore is the narrow persistence surface used by the approval
 // workflow handlers. Kept OFF oms.Repository so the cascade of mock repos
 // across the test tree (pkg/oms, pkg/oss, pkg/links, pkg/actions, etc.) does
@@ -56,6 +71,7 @@ type ActionApprovalStore interface {
 	CreateActionApproval(ctx context.Context, a *ActionApproval) error
 	GetActionApproval(ctx context.Context, id string) (*ActionApproval, error)
 	UpdateActionApproval(ctx context.Context, id string, upd ActionApprovalUpdate) error
+	ListActionApprovals(ctx context.Context, filter ActionApprovalListFilter) ([]*ActionApproval, error)
 }
 
 // PendingApprovalResponse is the 202-Accepted envelope returned by Apply when

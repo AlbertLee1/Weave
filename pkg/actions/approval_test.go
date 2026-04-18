@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,41 @@ func (m *memActionApprovalStore) GetActionApproval(_ context.Context, id string)
 	return &copy, nil
 }
 
+func (m *memActionApprovalStore) ListActionApprovals(_ context.Context, filter ActionApprovalListFilter) ([]*ActionApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*ActionApproval, 0, len(m.approvals))
+	for _, a := range m.approvals {
+		if filter.Status != "" && a.Status != filter.Status {
+			continue
+		}
+		if filter.OntologyAPIName != "" && a.OntologyAPIName != filter.OntologyAPIName {
+			continue
+		}
+		if filter.Approver != "" {
+			match := false
+			for _, approver := range a.Approvers {
+				if approver == filter.Approver {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		copy := *a
+		out = append(out, &copy)
+	}
+	// Deterministic ordering by ID for tests — production PG store orders by
+	// created_at DESC.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
 func (m *memActionApprovalStore) UpdateActionApproval(_ context.Context, id string, upd ActionApprovalUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -73,6 +109,7 @@ func (m *memActionApprovalStore) UpdateActionApproval(_ context.Context, id stri
 func setupApprovalRouter(handler *Handler) *chi.Mux {
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", handler.Apply)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/actions/approvals", handler.ListApprovals)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/approve", handler.ApproveAction)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/reject", handler.RejectAction)
 	return r
@@ -367,6 +404,179 @@ func TestApproveAction_AlreadyTerminal_Conflict(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409 on terminal approval, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestListApprovals_DefaultsToPendingForCaller verifies that GET
+// /actions/approvals returns only rows whose snapshotted approvers list
+// intersects the caller's identity AND whose status is PENDING (default).
+// Rows the caller cannot approve are filtered out even when their own
+// request is in the queue.
+func TestListApprovals_DefaultsToPendingForCaller(t *testing.T) {
+	repo := &mockOmsRepo{}
+	exec := NewExecutor(repo, nil)
+	store := newMemActionApprovalStore()
+	exec.SetActionApprovalStore(store)
+	handler := NewHandler(exec)
+	router := setupApprovalRouter(handler)
+
+	// Seed: PENDING for approver-1, PENDING for data-gov, APPROVED (terminal),
+	// and a PENDING the caller can't approve.
+	seed := func(a *ActionApproval) { _ = store.CreateActionApproval(context.Background(), a) }
+	now := time.Now()
+	seed(&ActionApproval{
+		ID: "a-01", OntologyAPIName: "ont-1", ActionType: "deleteAccount",
+		Approvers: []string{"approver-1"}, Status: ActionApprovalStatusPending,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	seed(&ActionApproval{
+		ID: "a-02", OntologyAPIName: "ont-1", ActionType: "dropTable",
+		Approvers: []string{"data-gov"}, Status: ActionApprovalStatusPending,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	seed(&ActionApproval{
+		ID: "a-03", OntologyAPIName: "ont-1", ActionType: "resetPassword",
+		Approvers: []string{"approver-1"}, Status: ActionApprovalStatusApproved,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	seed(&ActionApproval{
+		ID: "a-04", OntologyAPIName: "ont-1", ActionType: "archive",
+		Approvers: []string{"intruder"}, Status: ActionApprovalStatusPending,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/ont-1/actions/approvals", nil)
+	ctx := auth.WithUser(req.Context(), &auth.User{ID: "u-7", Roles: []string{"approver-1"}})
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []ActionApproval `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected 1 approval visible to approver-1, got %d: %+v", len(resp.Data), resp.Data)
+	}
+	if resp.Data[0].ID != "a-01" {
+		t.Fatalf("expected a-01, got %q", resp.Data[0].ID)
+	}
+}
+
+// TestListApprovals_MineFalseListsAllStatuses verifies that ?mine=false
+// lifts the approver filter; callers can see every PENDING row in the
+// ontology (useful for admin dashboards / audit views).
+func TestListApprovals_MineFalseListsAllStatuses(t *testing.T) {
+	repo := &mockOmsRepo{}
+	exec := NewExecutor(repo, nil)
+	store := newMemActionApprovalStore()
+	exec.SetActionApprovalStore(store)
+	handler := NewHandler(exec)
+	router := setupApprovalRouter(handler)
+
+	now := time.Now()
+	seed := func(a *ActionApproval) { _ = store.CreateActionApproval(context.Background(), a) }
+	seed(&ActionApproval{ID: "b-01", OntologyAPIName: "ont-1", ActionType: "a",
+		Approvers: []string{"x"}, Status: ActionApprovalStatusPending,
+		CreatedAt: now, UpdatedAt: now})
+	seed(&ActionApproval{ID: "b-02", OntologyAPIName: "ont-1", ActionType: "b",
+		Approvers: []string{"y"}, Status: ActionApprovalStatusPending,
+		CreatedAt: now, UpdatedAt: now})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/ont-1/actions/approvals?mine=false", nil)
+	ctx := auth.WithUser(req.Context(), &auth.User{ID: "u-7", Roles: []string{"approver-1"}})
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []ActionApproval `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 approvals without mine filter, got %d", len(resp.Data))
+	}
+}
+
+// TestListApprovals_StatusFilter verifies that ?status=APPROVED narrows the
+// result set to terminal-approved rows (inspection / audit pattern).
+func TestListApprovals_StatusFilter(t *testing.T) {
+	repo := &mockOmsRepo{}
+	exec := NewExecutor(repo, nil)
+	store := newMemActionApprovalStore()
+	exec.SetActionApprovalStore(store)
+	handler := NewHandler(exec)
+	router := setupApprovalRouter(handler)
+
+	now := time.Now()
+	seed := func(a *ActionApproval) { _ = store.CreateActionApproval(context.Background(), a) }
+	seed(&ActionApproval{ID: "c-01", OntologyAPIName: "ont-1", ActionType: "a",
+		Approvers: []string{"approver-1"}, Status: ActionApprovalStatusPending,
+		CreatedAt: now, UpdatedAt: now})
+	seed(&ActionApproval{ID: "c-02", OntologyAPIName: "ont-1", ActionType: "b",
+		Approvers: []string{"approver-1"}, Status: ActionApprovalStatusApproved,
+		CreatedAt: now, UpdatedAt: now})
+	seed(&ActionApproval{ID: "c-03", OntologyAPIName: "ont-1", ActionType: "c",
+		Approvers: []string{"approver-1"}, Status: ActionApprovalStatusRejected,
+		CreatedAt: now, UpdatedAt: now})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/ont-1/actions/approvals?status=APPROVED", nil)
+	ctx := auth.WithUser(req.Context(), &auth.User{ID: "u-7", Roles: []string{"approver-1"}})
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Data []ActionApproval `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Data) != 1 || resp.Data[0].ID != "c-02" {
+		t.Fatalf("expected only c-02, got %+v", resp.Data)
+	}
+}
+
+// TestListApprovals_NoStoreDegradedMode verifies that without an approval
+// store the endpoint returns an empty list rather than 500 — same degraded
+// shape used by GetJob when no ActionJobStore is wired.
+func TestListApprovals_NoStoreDegradedMode(t *testing.T) {
+	repo := &mockOmsRepo{}
+	exec := NewExecutor(repo, nil)
+	// Intentionally do NOT wire SetActionApprovalStore.
+	handler := NewHandler(exec)
+	router := setupApprovalRouter(handler)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/ont-1/actions/approvals", nil)
+	ctx := auth.WithUser(req.Context(), &auth.User{ID: "u-7", Roles: []string{"approver-1"}})
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 empty-list in degraded mode, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []ActionApproval `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Data) != 0 {
+		t.Fatalf("expected empty list, got %+v", resp.Data)
 	}
 }
 

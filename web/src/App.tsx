@@ -21,6 +21,7 @@ import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
+import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,6 +60,8 @@ export default function App() {
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
+              <Route path="approvals" element={<ApprovalsPage />} />
+              <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="import/:ontology" element={<ImportWizardPage />} />

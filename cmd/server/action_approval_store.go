@@ -77,6 +77,73 @@ func (s *pgActionApprovalStore) GetActionApproval(ctx context.Context, id string
 	return &a, nil
 }
 
+func (s *pgActionApprovalStore) ListActionApprovals(ctx context.Context, filter actions.ActionApprovalListFilter) ([]*actions.ActionApproval, error) {
+	where := []string{}
+	args := []interface{}{}
+	argN := 1
+	if filter.Status != "" {
+		where = append(where, "status = $"+strconv.Itoa(argN))
+		args = append(args, filter.Status)
+		argN++
+	}
+	if filter.OntologyAPIName != "" {
+		where = append(where, "ontology_api_name = $"+strconv.Itoa(argN))
+		args = append(args, filter.OntologyAPIName)
+		argN++
+	}
+	if filter.Approver != "" {
+		// Approvers is a JSONB array of strings; `?` tests element membership.
+		where = append(where, "approvers ?? $"+strconv.Itoa(argN))
+		args = append(args, filter.Approver)
+		argN++
+	}
+	q := `SELECT id, action_type_rid, ontology_api_name, action_type,
+	             COALESCE(parameters, '{}'::jsonb),
+	             COALESCE(approvers, '[]'::jsonb),
+	             status, requested_by, reviewed_by, reason, created_at, updated_at
+	      FROM action_approvals`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY created_at DESC"
+	if filter.Limit > 0 {
+		q += " LIMIT $" + strconv.Itoa(argN)
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*actions.ActionApproval, 0)
+	for rows.Next() {
+		var a actions.ActionApproval
+		var params, approvers []byte
+		if err := rows.Scan(&a.ID, &a.ActionTypeRID, &a.OntologyAPIName, &a.ActionType,
+			&params, &approvers, &a.Status,
+			&a.RequestedBy, &a.ReviewedBy, &a.Reason,
+			&a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if len(params) > 0 && string(params) != "{}" {
+			a.Parameters = params
+		}
+		if len(approvers) > 0 {
+			var parsed []string
+			if err := json.Unmarshal(approvers, &parsed); err == nil {
+				a.Approvers = parsed
+			}
+		}
+		out = append(out, &a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *pgActionApprovalStore) UpdateActionApproval(ctx context.Context, id string, upd actions.ActionApprovalUpdate) error {
 	args := []interface{}{}
 	sets := []string{"updated_at = NOW()"}

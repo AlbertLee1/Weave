@@ -6603,6 +6603,58 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/approvals:
+    get:
+      operationId: listActionApprovals
+      summary: List ActionApproval rows (US-243)
+      description: |
+        Returns the approval queue scoped to the current ontology. The `mine`
+        query parameter (default `true`) restricts the result to rows the
+        caller can review — an entry matches when `user.ID` equals any of
+        the approval's snapshotted `approvers` OR `user.Roles` intersects
+        that list. Set `mine=false` for an unscoped admin / audit view. The
+        `status` filter defaults to `PENDING`; `ALL` lifts the filter.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: status
+          required: false
+          description: |
+            Filter by status. One of PENDING (default), APPROVED, REJECTED,
+            or ALL / * (no filter).
+          schema:
+            type: string
+        - in: query
+          name: mine
+          required: false
+          description: |
+            Restrict to rows the caller can review (default `true`).
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - in: query
+          name: limit
+          required: false
+          description: Max rows to return (1..500, default 100).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Approval queue.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ActionApproval"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/approve:
     post:
       operationId: approveAction
