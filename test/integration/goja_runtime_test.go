@@ -141,7 +141,7 @@ func TestGojaRuntime_Integration(t *testing.T) {
 		RID:         rid.NewFunctionRID(),
 		OntologyRID: ont.RID,
 		Name:        "findOrdersOver",
-		Version:     1,
+		Version:     "1.0.0",
 		SourceCode:  fnSource,
 		CreatedBy:   "integration-test",
 	}

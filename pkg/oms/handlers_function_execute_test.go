@@ -57,7 +57,7 @@ func newExecuteFixtureRepo(sig string) *mockRepo {
 			RID:         "ri.ontology.main.function.add",
 			OntologyRID: "ri.ontology.main.ontology.o1",
 			Name:        "add",
-			Version:     1,
+			Version:     "1.0.0",
 			SourceCode:  "function main(input){ return input.parameters.a + input.parameters.b }",
 			Runtime:     "goja",
 			Signature:   json.RawMessage(sig),

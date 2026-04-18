@@ -34,7 +34,13 @@ func (m *mockOmsRepo) GetFunction(_ context.Context, _ string) (*oms.Function, e
 func (m *mockOmsRepo) GetFunctionByName(_ context.Context, _, _ string) (*oms.Function, error) {
 	return nil, oms.ErrNotFound
 }
+func (m *mockOmsRepo) GetFunctionByNameVersion(_ context.Context, _, _, _ string) (*oms.Function, error) {
+	return nil, oms.ErrNotFound
+}
 func (m *mockOmsRepo) ListFunctions(_ context.Context, _ string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListFunctionVersionsByName(_ context.Context, _, _ string) ([]oms.Function, error) {
 	return nil, nil
 }
 func (m *mockOmsRepo) UpdateFunction(_ context.Context, _ *oms.Function) error { return nil }

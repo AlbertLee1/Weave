@@ -45,7 +45,7 @@ func TestExecuteQueryDispatch_Scalar(t *testing.T) {
 			{
 				RID:        fnRID,
 				Name:       "totalRevenue",
-				Version:    1,
+				Version:    "1.0.0",
 				SourceCode: fnSource,
 			},
 		},
@@ -124,7 +124,7 @@ func TestExecuteQueryDispatch_ObjectList(t *testing.T) {
 			{
 				RID:        fnRID,
 				Name:       "topCustomers",
-				Version:    1,
+				Version:    "1.0.0",
 				SourceCode: fnSource,
 			},
 		},
@@ -250,7 +250,7 @@ func TestExecuteQueryDispatch_FunctionError(t *testing.T) {
 			{
 				RID:        fnRID,
 				Name:       "failing",
-				Version:    1,
+				Version:    "1.0.0",
 				SourceCode: fnSource,
 			},
 		},

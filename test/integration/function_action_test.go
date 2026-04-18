@@ -160,7 +160,7 @@ func TestFunctionAction_CreateOrderAndDecrementStock(t *testing.T) {
 		RID:         rid.NewFunctionRID(),
 		OntologyRID: ont.RID,
 		Name:        "createOrderAndUpdateInventory",
-		Version:     1,
+		Version:     "1.0.0",
 		SourceCode:  fnSource,
 		CreatedBy:   "integration-test",
 	}

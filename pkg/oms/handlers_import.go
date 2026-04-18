@@ -246,7 +246,7 @@ func (h *OMSHandler) importFunctions(ctx context.Context, ontologyRID, mode stri
 		}
 		newFn := &Function{
 			RID: rid.NewFunctionRID(), OntologyRID: ontologyRID,
-			Name: fn.Name, Version: fn.Version, SourceCode: fn.SourceCode, CreatedBy: fn.CreatedBy,
+			Name: fn.Name, Version: fn.NormalisedVersion(), SourceCode: fn.SourceCode, CreatedBy: fn.CreatedBy,
 		}
 		if err := h.repo.CreateFunction(ctx, newFn); err != nil {
 			continue

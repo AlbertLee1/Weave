@@ -143,7 +143,7 @@ func TestUpdateFunction_PreservesSignatureWhenOmitted(t *testing.T) {
 		RID:         "ri.ontology.main.function.f1",
 		OntologyRID: "ri.ontology.main.ontology.o1",
 		Name:        "addNumbers",
-		Version:     1,
+		Version:     "1.0.0",
 		SourceCode:  "return a + b",
 		Runtime:     "goja",
 		Signature:   json.RawMessage(`{"params":[{"name":"a","type":"integer","required":true}],"returns":{"type":"integer"}}`),
@@ -158,7 +158,7 @@ func TestUpdateFunction_PreservesSignatureWhenOmitted(t *testing.T) {
 	}
 	router := setupFunctionRouter(repo)
 
-	body := `{"sourceCode":"return a + b + 1","version":2}`
+	body := `{"sourceCode":"return a + b + 1","version":"2.0.0"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v2/ontologies/northwind/functions/ri.ontology.main.function.f1", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -171,8 +171,8 @@ func TestUpdateFunction_PreservesSignatureWhenOmitted(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &fn); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if fn.Version != 2 {
-		t.Errorf("expected version=2, got %d", fn.Version)
+	if fn.Version != "2.0.0" {
+		t.Errorf("expected version=2.0.0, got %q", fn.Version)
 	}
 	if fn.Runtime != "goja" {
 		t.Errorf("expected runtime preserved as goja, got %q", fn.Runtime)
@@ -187,7 +187,7 @@ func TestUpdateFunction_RejectsUnknownRuntime(t *testing.T) {
 		RID:         "ri.ontology.main.function.f1",
 		OntologyRID: "ri.ontology.main.ontology.o1",
 		Name:        "f",
-		Version:     1,
+		Version:     "1.0.0",
 		SourceCode:  "return 1",
 		Runtime:     "goja",
 	}

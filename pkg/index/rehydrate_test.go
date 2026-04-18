@@ -257,7 +257,13 @@ func (s *stubRehydrateRepo) GetFunction(context.Context, string) (*oms.Function,
 func (s *stubRehydrateRepo) GetFunctionByName(context.Context, string, string) (*oms.Function, error) {
 	return nil, nil
 }
+func (s *stubRehydrateRepo) GetFunctionByNameVersion(context.Context, string, string, string) (*oms.Function, error) {
+	return nil, nil
+}
 func (s *stubRehydrateRepo) ListFunctions(context.Context, string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) ListFunctionVersionsByName(context.Context, string, string) ([]oms.Function, error) {
 	return nil, nil
 }
 func (s *stubRehydrateRepo) UpdateFunction(context.Context, *oms.Function) error { return nil }

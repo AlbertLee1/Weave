@@ -1486,14 +1486,16 @@ func (r *PGRepository) DeleteQueryType(ctx context.Context, rid string) error {
 func (r *PGRepository) CreateFunction(ctx context.Context, fn *Function) error {
 	signature := normaliseSignatureForWrite(fn.Signature)
 	runtime := fn.NormalisedRuntime()
+	version := fn.NormalisedVersion()
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		fn.RID, fn.OntologyRID, fn.Name, fn.Version, fn.SourceCode, fn.CreatedBy, signature, runtime)
+		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime)
 	if err != nil {
 		return wrapPGError(err)
 	}
 	fn.Runtime = runtime
+	fn.Version = version
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}
@@ -1519,7 +1521,37 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 	return fn, nil
 }
 
+// GetFunctionByName resolves a function by RID or by name within the given
+// ontology. When multiple versions exist for the same name (US-217), this
+// returns the latest semver — callers wanting a specific version should use
+// GetFunctionByNameVersion or pass the URL segment through ResolveFunctionRef.
 func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name string) (*Function, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), created_at
+		 FROM functions
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND (rid = $2 OR name = $2)`, ontologyRID, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	candidates, err := scanFunctions(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return nil, ErrNotFound
+	}
+	SortFunctionsByVersionDesc(candidates)
+	winner := candidates[0]
+	return &winner, nil
+}
+
+// GetFunctionByNameVersion resolves a function row pinned to a specific
+// semver. Used by URL refs of the form `name@version`.
+func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID, name, version string) (*Function, error) {
 	fn := &Function{}
 	var sig []byte
 	err := r.pool.QueryRow(ctx,
@@ -1527,7 +1559,7 @@ func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name 
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), created_at
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND (rid = $2 OR name = $2)`, ontologyRID, name).
+		 AND name = $2 AND version = $3`, ontologyRID, name, version).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
 			&sig, &fn.Runtime, &fn.CreatedAt)
 	if err != nil {
@@ -1540,39 +1572,76 @@ func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name 
 	return fn, nil
 }
 
+// ListFunctionVersionsByName returns every stored version of the named
+// function within the ontology, sorted latest-first via
+// SortFunctionsByVersionDesc.
+func (r *PGRepository) ListFunctionVersionsByName(ctx context.Context, ontologyRID, name string) ([]Function, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), created_at
+		 FROM functions
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND name = $2`, ontologyRID, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out, err := scanFunctions(rows)
+	if err != nil {
+		return nil, err
+	}
+	SortFunctionsByVersionDesc(out)
+	return out, nil
+}
+
+// scanFunctions iterates a pgx rows handle that selects the canonical
+// function column list. Centralised so the per-row signature/runtime decoding
+// stays in one place across the read paths.
+func scanFunctions(rows pgx.Rows) ([]Function, error) {
+	var out []Function
+	for rows.Next() {
+		var fn Function
+		var sig []byte
+		if err := rows.Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode,
+			&fn.CreatedBy, &sig, &fn.Runtime, &fn.CreatedAt); err != nil {
+			return nil, err
+		}
+		fn.Signature = signatureFromBytes(sig)
+		out = append(out, fn)
+	}
+	return out, nil
+}
+
 func (r *PGRepository) ListFunctions(ctx context.Context, ontologyRID string) ([]Function, error) {
+	// Order at the SQL layer is best-effort (lexical version sort would
+	// place "10.0.0" before "2.0.0"); SortFunctionsByVersionDesc fixes that
+	// in Go using parsed semver so callers see latest-first per name.
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), created_at
 		 FROM functions
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
-		 ORDER BY name, version`, ontologyRID)
+		 ORDER BY name`, ontologyRID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var result []Function
-	for rows.Next() {
-		var fn Function
-		var sig []byte
-		if err := rows.Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
-			&sig, &fn.Runtime, &fn.CreatedAt); err != nil {
-			return nil, err
-		}
-		fn.Signature = signatureFromBytes(sig)
-		result = append(result, fn)
+	out, err := scanFunctions(rows)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	SortFunctionsByVersionDesc(out)
+	return out, nil
 }
 
 func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {
 	signature := normaliseSignatureForWrite(fn.Signature)
 	runtime := fn.NormalisedRuntime()
+	version := fn.NormalisedVersion()
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE functions SET name=$1, version=$2, source_code=$3, signature=$4, runtime=$5
 		 WHERE rid=$6`,
-		fn.Name, fn.Version, fn.SourceCode, signature, runtime, fn.RID)
+		fn.Name, version, fn.SourceCode, signature, runtime, fn.RID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -1580,6 +1649,7 @@ func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {
 		return ErrNotFound
 	}
 	fn.Runtime = runtime
+	fn.Version = version
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}

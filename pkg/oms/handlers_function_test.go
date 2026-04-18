@@ -86,8 +86,8 @@ func TestListFunctions(t *testing.T) {
 			DisplayName: "Northwind",
 		}},
 		functions: []oms.Function{
-			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: 1, SourceCode: "return 1"},
-			{RID: "ri.ontology.main.function.f2", OntologyRID: "ri.ontology.main.ontology.o1", Name: "findOrders", Version: 1, SourceCode: "return 2"},
+			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: "1.0.0", SourceCode: "return 1"},
+			{RID: "ri.ontology.main.function.f2", OntologyRID: "ri.ontology.main.ontology.o1", Name: "findOrders", Version: "1.0.0", SourceCode: "return 2"},
 		},
 	}
 	router := setupFunctionRouter(repo)
@@ -119,7 +119,7 @@ func TestGetFunction(t *testing.T) {
 			DisplayName: "Northwind",
 		}},
 		functions: []oms.Function{
-			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: 1, SourceCode: "return 1"},
+			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: "1.0.0", SourceCode: "return 1"},
 		},
 	}
 	router := setupFunctionRouter(repo)
@@ -168,12 +168,12 @@ func TestUpdateFunction(t *testing.T) {
 			DisplayName: "Northwind",
 		}},
 		functions: []oms.Function{
-			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: 1, SourceCode: "return 1"},
+			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: "1.0.0", SourceCode: "return 1"},
 		},
 	}
 	router := setupFunctionRouter(repo)
 
-	body := `{"sourceCode":"return 2","version":2}`
+	body := `{"sourceCode":"return 2","version":"2.0.0"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v2/ontologies/northwind/functions/ri.ontology.main.function.f1", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -200,7 +200,7 @@ func TestDeleteFunction(t *testing.T) {
 			DisplayName: "Northwind",
 		}},
 		functions: []oms.Function{
-			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: 1, SourceCode: "return 1"},
+			{RID: "ri.ontology.main.function.f1", OntologyRID: "ri.ontology.main.ontology.o1", Name: "helloWorld", Version: "1.0.0", SourceCode: "return 1"},
 		},
 	}
 	router := setupFunctionRouter(repo)

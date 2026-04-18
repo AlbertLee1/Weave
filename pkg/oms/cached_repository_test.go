@@ -300,7 +300,13 @@ func (*noopRepo) GetFunction(context.Context, string) (*oms.Function, error) {
 func (*noopRepo) GetFunctionByName(context.Context, string, string) (*oms.Function, error) {
 	return nil, nil
 }
+func (*noopRepo) GetFunctionByNameVersion(context.Context, string, string, string) (*oms.Function, error) {
+	return nil, nil
+}
 func (*noopRepo) ListFunctions(context.Context, string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (*noopRepo) ListFunctionVersionsByName(context.Context, string, string) ([]oms.Function, error) {
 	return nil, nil
 }
 func (*noopRepo) UpdateFunction(context.Context, *oms.Function) error { return nil }

@@ -89,13 +89,18 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// SDK Generation (US-136)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/sdkgen", omsHandler.GenerateSDK)
 
-	// Function CRUD (US-089)
+	// Function CRUD (US-089). The {functionRid} segment accepts a RID, a
+	// bare name, or `name@version` (US-217 semver pinning); resolution lives
+	// in OMSHandler.resolveFunctionRef.
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions", omsHandler.CreateFunction)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions", omsHandler.ListFunctions)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.GetFunctionV2)
 	r.Put("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.UpdateFunction)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", omsHandler.DeleteFunction)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute", omsHandler.ExecuteFunction)
+	// US-217 list-versions: returns every stored semver of the named function
+	// in the ontology, latest-first.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionName}/versions", omsHandler.ListFunctionVersions)
 
 	// Ontology Branches (US-113, US-116)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.CreateBranch)

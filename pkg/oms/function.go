@@ -42,10 +42,24 @@ func (f Function) Validate() error {
 	default:
 		return fmt.Errorf("function runtime %q is not supported (expected goja or http)", f.Runtime)
 	}
+	if err := validateFunctionVersion(f.Version); err != nil {
+		return fmt.Errorf("function version: %w", err)
+	}
 	if err := ValidateFunctionSignature(f.Signature); err != nil {
 		return fmt.Errorf("function signature: %w", err)
 	}
 	return nil
+}
+
+// NormalisedVersion returns the version field with the empty default
+// substituted to DefaultFunctionVersion. Callers that persist or compare
+// versions should always read through this helper so the absent-version case
+// matches what the migration's DEFAULT '1.0.0' would store.
+func (f Function) NormalisedVersion() string {
+	if f.Version == "" {
+		return DefaultFunctionVersion
+	}
+	return f.Version
 }
 
 // functionSignatureSchema mirrors the JSON shape declared in US-215:

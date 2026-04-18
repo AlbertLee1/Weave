@@ -641,3 +641,68 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Empty body handling in ExecuteFunction: `r.ContentLength == 0` short-circuits before `ReadJSON` so the handler tolerates `POST .../execute` with no body at all (callers MAY pass an empty body when every param has a default). Naive `ReadJSON(r, &body)` against a nil body errors out with "EOF" — guard it.
   - Test the "no contract" / "with contract" boundary explicitly. The "no signature ⇒ accept everything" rule is easy to forget: it's tempting to make the validator strict-by-default, but every legacy Function predates US-215 and has no signature, so a strict-by-default validator silently breaks them all. Two test cases (no-contract pass-through + unknown-rejected-when-contract-declared) lock the right semantics.
 ---
+
+## 2026-04-18 - US-217 Function 版本管理
+- Migration `000041_function_semver_version` converts `functions.version INTEGER` → `version TEXT NOT NULL DEFAULT '1.0.0'`. Existing rows backfill as `<n>.0.0` so legacy data stays addressable; the (ontology_rid, name) UNIQUE moves to (ontology_rid, name, version) so multiple semver builds of the same function name coexist. The data-type swap is gated on `data_type = 'integer'` and the constraint adds use a pg_constraint NOT EXISTS guard, so re-running the migration is a no-op.
+- `oms.Function.Version` becomes `string` (semver) — the wire JSON for the field flips from integer to string. Tests across `pkg/oms/{handlers_function,handlers_function_us215,handlers_function_execute,execute_query_goja,handlers_import}_test.go` plus `test/integration/{function_action,goja_runtime}_test.go` updated to use `Version: "1.0.0"` literals; the import-handler JSON body in `handlers_import_test.go` updated to send `"version": "1.0.0"` since the JSON Decoder rejects integer ⇒ string. Non-test impact: ~5 production lines (handler default + import carry-over + 4 PG repo Scan/Exec sites).
+- New `pkg/oms/function_semver.go`:
+  - `Semver{Major, Minor, Patch, Pre}` typed view; `ParseSemver(string)` rejects empty / non-MAJOR.MINOR.PATCH / non-numeric / negative segments. Supports `-PRE` suffix; build metadata is preserved in Pre (no separate field).
+  - `CompareSemver(a, b) int` — numeric per-segment, then pre-release `<` no-pre (per semver §11), then lexical pre comparison.
+  - `SortFunctionsByVersionDesc([]Function)` — primary key Name asc, secondary key parsed-Version desc. Unparseable versions sort to the bottom of their name group so a malformed row never hides a valid one. Used by both ListFunctions and ListFunctionVersionsByName so latest is always position 0 within a name.
+  - `validateFunctionVersion(string)` is the Function.Validate hook (extends the existing runtime + signature gate to also enforce semver shape).
+  - `Function.NormalisedVersion()` substitutes empty → `DefaultFunctionVersion` ("1.0.0"). Same shape as `NormalisedRuntime()`.
+- `oms.Repository` interface gains two narrow read methods (kept narrow, no batch / cursor / etc.):
+  - `GetFunctionByNameVersion(ctx, ontologyRID, name, version)` — exact (name, version) lookup; ErrNotFound when nothing matches.
+  - `ListFunctionVersionsByName(ctx, ontologyRID, name)` — every stored semver of the named function, sorted latest-first.
+  Existing `GetFunctionByName` now post-sorts by semver desc and returns the LATEST when multiple rows share a name (pre-US-217 callers transparently get latest semantics).
+- `*PGRepository`:
+  - `CreateFunction` runs `NormalisedVersion()` on the way in so callers can omit the field and the DB still stores the `1.0.0` default.
+  - `ListFunctions` orders by `name` at SQL (lexical version sort would put `10.0.0` before `2.0.0`) and re-sorts in Go via `SortFunctionsByVersionDesc`. New helper `scanFunctions(pgx.Rows)` factored out so the per-row signature/runtime decoding stays in one place across the four read paths.
+  - `GetFunctionByName` issues one query that may return multiple rows (one per version) and picks the latest after sorting; falls back to RID-equality short-circuit when the URL segment IS a RID.
+- Handler updates (`pkg/oms/handlers_function.go`):
+  - `CreateFunctionRequest` gains `Version string` (omitempty); handler defaults to `DefaultFunctionVersion` and validates via `Function.Validate()`. Duplicate (ontology, name, version) returns 409 `FunctionAlreadyExists` with `name` + `version` parameters echoed.
+  - `UpdateFunctionRequest.Version` becomes `string` (legacy was `int`); empty preserves the existing row's version.
+  - `splitFunctionRef("name@1.0.0")` → ("name", "1.0.0", true); `splitFunctionRef("ri.ontology.main.function.f1")` → ("", "", false). RIDs never contain `@`, so the split is unambiguous against the existing "rid or name" paths.
+  - `resolveFunctionRef(ctx, ontologyRID, ref)` is the shared "url segment → row" helper. GetFunctionV2 + ExecuteFunction both go through it so `name@version` pinning works on read AND execute paths uniformly.
+  - New `ListFunctionVersions` handler: `GET /api/v2/ontologies/{o}/functions/{functionName}/versions` returns `{name, data: [Function...]}` sorted latest-first; 404 when no versions exist for the name.
+- Mock-repo plumbing kept consistent across the test tree (~8 files): `mock_functions_test.go` CreateFunction now rejects (ontology, name, version) duplicates with `ErrDuplicate` so the 409 path is exercised in pure-mock tests; the `GetFunctionByName` mock returns latest by SortFunctionsByVersionDesc; new methods stubbed in `pkg/{actions,index,oss,links}/...` and `test/{e2e,northwind,chinook}/mock_link_edges_test.go` plus `pkg/oms/cached_repository_test.go` noopRepo. Pattern: 8 stubs, 2 lines each, return ErrNotFound / nil.
+- Route registration (`cmd/server/routes.go`): one new GET line for `/functions/{functionName}/versions` next to the existing Function CRUD block. chi handles `/functions/{x}/versions` and `/functions/{x}` distinctly because the path lengths differ.
+- OpenAPI (`api/openapi.yaml` + embedded `cmd/server/openapi_spec.yaml`):
+  - `Function.version` schema flips from `type: integer` to `type: string` with semver example.
+  - `createFunction` request body gains `version` (semver string, defaults `1.0.0`, 409 on duplicate).
+  - `updateFunction` request body's `version` flips from integer to string.
+  - `getFunction` description documents the three accepted shapes (rid / name / `name@version`).
+  - New `/functions/{functionName}/versions` GET path entry with 200/401/404 responses.
+  - Embedded copy synced via `cp` — contract tests (`TestContract_AllRoutesDocumented` + `TestContract_NoOrphanedSpecPaths` + `TestContract_EmbeddedSpecMatchesCanonical`) green.
+- Tests added (`pkg/oms/function_semver_test.go` + `pkg/oms/handlers_function_versioning_test.go`):
+  - Semver parsing happy + reject (8+ bad inputs); CompareSemver matrix including pre-release and `10.0.0 > 2.0.0` numeric ordering; SortFunctionsByVersionDesc primary/secondary key + unparseable-sinks-to-bottom.
+  - Handler: default-to-1.0.0 on omitted version; explicit `2.3.4` accepted; invalid `v1` rejected as 400; second post with new version creates a SECOND row (no overwrite, distinct RIDs); duplicate (name, version) returns 409 `FunctionAlreadyExists`; GetByName returns latest when multiple semvers exist (10.0.0 beats 2.0.0 beats 1.0.0); GET `/functions/hello@1.0.0` resolves the pinned version; pinned-but-unknown returns 404; ListFunctions sorts by version desc within each name group; `/functions/{name}/versions` returns full history sorted desc; `/functions/{unknown}/versions` returns 404.
+- All `go test -short ./pkg/... ./internal/... ./cmd/... ./test/e2e/...` green; `go vet ./...` clean; contract-tests trio green.
+- Files changed:
+  - `migrations/000041_function_semver_version.up.sql` (new)
+  - `migrations/000041_function_semver_version.down.sql` (new)
+  - `pkg/oms/function_semver.go` (new — Semver / ParseSemver / CompareSemver / SortFunctionsByVersionDesc / DefaultFunctionVersion)
+  - `pkg/oms/function_semver_test.go` (new)
+  - `pkg/oms/function.go` (Validate calls validateFunctionVersion + NormalisedVersion helper)
+  - `pkg/oms/models.go` (Function.Version int → string + comment)
+  - `pkg/oms/repository.go` (added GetFunctionByNameVersion + ListFunctionVersionsByName interface methods)
+  - `pkg/oms/pg_repository.go` (CreateFunction NormalisedVersion + GetFunctionByName latest-sort + GetFunctionByNameVersion + ListFunctionVersionsByName + scanFunctions helper + ListFunctions in-Go sort)
+  - `pkg/oms/handlers_function.go` (CreateFunctionRequest.Version + 409 includes version + UpdateFunctionRequest.Version is string + resolveFunctionRef + splitFunctionRef + ListFunctionVersions handler + ExecuteFunction now goes through resolveFunctionRef)
+  - `pkg/oms/handlers_function_test.go`, `handlers_function_us215_test.go`, `handlers_function_execute_test.go`, `execute_query_goja_test.go`, `handlers_import_test.go` (test literals migrated to semver strings)
+  - `pkg/oms/handlers_function_versioning_test.go` (new — 11 cases)
+  - `pkg/oms/handlers_import.go` (uses NormalisedVersion on import carry-over)
+  - `pkg/oms/mock_functions_test.go` (CreateFunction enforces (ontology, name, version) UNIQUE; GetFunctionByName returns latest semver; new GetFunctionByNameVersion + ListFunctionVersionsByName)
+  - `pkg/oms/cached_repository_test.go` (noopRepo stubs for the two new interface methods)
+  - `pkg/{actions,index,links,oss}/mock*.go`, `test/{e2e,northwind,chinook}/mock_link_edges_test.go` (stubs for the two new methods)
+  - `test/integration/{function_action,goja_runtime}_test.go` (Version literal migration)
+  - `cmd/server/routes.go` (1 new GET route)
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (Function.version type + createFunction.version + updateFunction.version + getFunction description + new /versions path entry)
+  - `prd.json` (US-217 passes=true)
+- **Learnings for future iterations:**
+  - When a numeric field on a wire model becomes a typed string (semver, RID, enum-as-string), the migration is the easy half — the cascade is in test literals and JSON bodies. `grep -rn 'Version: 1[,)}]' --include='*.go'` plus a quick `grep -n '"version":' *_test.go` finds them all in one pass; sed-replacing the Go side then hand-fixing the JSON literal (since the decoder distinguishes 1 vs "1") is roughly 15 minutes for a registry-scale field.
+  - Lexical version sort is broken for semver: `ORDER BY version` puts "10.0.0" BEFORE "2.0.0". Always re-sort in Go via the parsed Semver after the SQL query (or build a generated-column with major/minor/patch ints if you need the DB to do it). The Go-side sort costs O(n log n) for a tiny n (functions are small) — not worth a generated column.
+  - `name@version` URL pinning is a single-character split that requires NO router changes: the `@` is opaque to chi, and RIDs never contain it (they use `.` separators). Centralise the parse in one helper (`splitFunctionRef`) and route both the GET and the EXECUTE handlers through the same resolver — keeps the "pin works on every endpoint" invariant easy to maintain.
+  - "List X versions" is a separate endpoint, NOT a query param on the main GetX. The wire shape diverges (it's a wrapper `{name, data: [...]}`, not a single Function), and the cache semantics differ (it reads N rows). Same lesson as US-212's `/resolved` route — when the response shape diverges, the URL diverges.
+  - When changing the type of a struct field that's set in 8+ mockRepo stubs, do it in two passes: first the field declaration + production code (compile errors guide you to the call sites), then the per-mock update. The second pass is ~3 lines per mock for the new interface methods. Don't try to add backwards-compat shims (e.g. keeping both `int` and `string` Version) — the cascade is already manageable, and a parallel field would double the maintenance surface forever.
+  - Migrations that change a column type need an existence guard on `data_type` so re-running them on an already-migrated DB is a no-op. Combine with `pg_constraint` checks for the constraint adds — both are required to keep the migration idempotent in CI environments where the migration table may run a fresh apply against a partially-migrated schema.
+---

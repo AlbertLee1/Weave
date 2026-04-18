@@ -370,7 +370,7 @@ func TestImportOntologyV2_RIDRemapping_FunctionRID(t *testing.T) {
 		"valueTypes": [],
 		"typeGroups": [],
 		"functions": [
-			{"rid": "old-fn-1", "name": "calcTotal", "version": 1, "sourceCode": "return 42;", "createdBy": "test"}
+			{"rid": "old-fn-1", "name": "calcTotal", "version": "1.0.0", "sourceCode": "return 42;", "createdBy": "test"}
 		],
 		"queryTypes": [
 			{"rid": "old-qt-1", "apiName": "findThings", "displayName": "Find", "functionRid": "old-fn-1"}
@@ -587,7 +587,7 @@ func TestImportOntologyV2_AllEntityTypes(t *testing.T) {
 			{"rid": "old-tg", "apiName": "Widgets", "displayName": "Widgets"}
 		],
 		"functions": [
-			{"rid": "old-fn", "name": "validateEmail", "version": 1, "sourceCode": "return true;", "createdBy": "test"}
+			{"rid": "old-fn", "name": "validateEmail", "version": "1.0.0", "sourceCode": "return true;", "createdBy": "test"}
 		],
 		"queryTypes": [
 			{"rid": "old-qt", "apiName": "findWidgets", "displayName": "Find Widgets"}

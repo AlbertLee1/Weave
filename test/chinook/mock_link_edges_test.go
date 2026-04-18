@@ -60,7 +60,13 @@ func (r *inMemoryOmsRepo) GetFunction(_ context.Context, _ string) (*oms.Functio
 func (r *inMemoryOmsRepo) GetFunctionByName(_ context.Context, _, _ string) (*oms.Function, error) {
 	return nil, oms.ErrNotFound
 }
+func (r *inMemoryOmsRepo) GetFunctionByNameVersion(_ context.Context, _, _, _ string) (*oms.Function, error) {
+	return nil, oms.ErrNotFound
+}
 func (r *inMemoryOmsRepo) ListFunctions(_ context.Context, _ string) ([]oms.Function, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) ListFunctionVersionsByName(_ context.Context, _, _ string) ([]oms.Function, error) {
 	return nil, nil
 }
 func (r *inMemoryOmsRepo) UpdateFunction(_ context.Context, _ *oms.Function) error { return nil }

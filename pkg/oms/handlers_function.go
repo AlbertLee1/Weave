@@ -1,6 +1,7 @@
 package oms
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,10 +12,15 @@ import (
 	"github.com/liyang/weave/pkg/rid"
 )
 
-// CreateFunctionRequest is the request body for creating a function.
+// CreateFunctionRequest is the request body for creating a function. Version
+// is an optional semver string (US-217); when omitted the handler defaults to
+// DefaultFunctionVersion ("1.0.0"). Posting a name+version pair that already
+// exists in the ontology returns 409 — new versions never overwrite older
+// rows.
 type CreateFunctionRequest struct {
 	Name       string          `json:"name"`
 	SourceCode string          `json:"sourceCode"`
+	Version    string          `json:"version,omitempty"`
 	Runtime    string          `json:"runtime,omitempty"`
 	Signature  json.RawMessage `json:"signature,omitempty"`
 	CreatedBy  string          `json:"createdBy,omitempty"`
@@ -22,12 +28,13 @@ type CreateFunctionRequest struct {
 
 // UpdateFunctionRequest is the request body for updating a function. Pointer
 // fields distinguish "omit ⇒ preserve" from "send empty ⇒ clear" for the
-// fields where that matters; bare strings/ints keep the legacy "empty ⇒
-// preserve" semantics the original handler shipped with.
+// fields where that matters; bare strings keep the legacy "empty ⇒ preserve"
+// semantics the original handler shipped with. Version is a semver string
+// (US-217) — empty preserves the existing row's version.
 type UpdateFunctionRequest struct {
 	Name       string           `json:"name,omitempty"`
 	SourceCode string           `json:"sourceCode,omitempty"`
-	Version    int              `json:"version,omitempty"`
+	Version    string           `json:"version,omitempty"`
 	Runtime    *string          `json:"runtime,omitempty"`
 	Signature  *json.RawMessage `json:"signature,omitempty"`
 }
@@ -69,11 +76,15 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	version := req.Version
+	if version == "" {
+		version = DefaultFunctionVersion
+	}
 	fn := &Function{
 		RID:         rid.NewFunctionRID(),
 		OntologyRID: ontologyRID,
 		Name:        req.Name,
-		Version:     1,
+		Version:     version,
 		SourceCode:  req.SourceCode,
 		Runtime:     req.Runtime,
 		Signature:   req.Signature,
@@ -90,7 +101,8 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.CreateFunction(r.Context(), fn); err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			apierror.WriteJSON(w, apierror.NewConflict("FunctionAlreadyExists", map[string]string{
-				"name": req.Name,
+				"name":    req.Name,
+				"version": fn.Version,
 			}))
 			return
 		}
@@ -121,11 +133,15 @@ func (h *OMSHandler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetFunctionV2 handles GET /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}.
+// The path segment accepts three shapes (US-217):
+//   - `<rid>` — direct lookup by RID
+//   - `<name>` — latest semver of the named function
+//   - `<name>@<version>` — pinned to the supplied semver
 func (h *OMSHandler) GetFunctionV2(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	fnIdentifier := chi.URLParam(r, "functionRid")
 
-	fn, err := h.repo.GetFunctionByName(r.Context(), ontologyRID, fnIdentifier)
+	fn, err := h.resolveFunctionRef(r.Context(), ontologyRID, fnIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("FunctionNotFound", map[string]string{
@@ -138,6 +154,57 @@ func (h *OMSHandler) GetFunctionV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, fn)
+}
+
+// resolveFunctionRef centralises the `<rid>` / `<name>` / `<name>@<version>`
+// URL-segment parsing the GetFunctionV2 + ExecuteFunction handlers share. A
+// missing `@` falls back to the legacy "rid OR latest name" lookup.
+func (h *OMSHandler) resolveFunctionRef(ctx context.Context, ontologyRID, ref string) (*Function, error) {
+	if name, version, ok := splitFunctionRef(ref); ok {
+		return h.repo.GetFunctionByNameVersion(ctx, ontologyRID, name, version)
+	}
+	return h.repo.GetFunctionByName(ctx, ontologyRID, ref)
+}
+
+// splitFunctionRef splits a `name@version` URL segment. Returns (name,
+// version, true) when an `@` is present and both halves are non-empty;
+// otherwise (zero, zero, false). RIDs never contain `@`, so the split is
+// unambiguous against the existing "rid or name" paths.
+func splitFunctionRef(ref string) (string, string, bool) {
+	for i := 0; i < len(ref); i++ {
+		if ref[i] == '@' {
+			name, version := ref[:i], ref[i+1:]
+			if name == "" || version == "" {
+				return "", "", false
+			}
+			return name, version, true
+		}
+	}
+	return "", "", false
+}
+
+// ListFunctionVersions handles GET /api/v2/ontologies/{ontologyApiName}/functions/{functionName}/versions.
+// Returns every stored semver version of the named function within the
+// ontology, sorted latest-first. 404 when no rows exist for the name.
+func (h *OMSHandler) ListFunctionVersions(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	name := chi.URLParam(r, "functionName")
+
+	versions, err := h.repo.ListFunctionVersionsByName(r.Context(), ontologyRID, name)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListFunctionVersionsFailed", nil))
+		return
+	}
+	if len(versions) == 0 {
+		apierror.WriteJSON(w, apierror.NewNotFound("FunctionNotFound", map[string]string{
+			"name": name,
+		}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"name": name,
+		"data": versions,
+	})
 }
 
 // UpdateFunction handles PUT /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}.
@@ -170,7 +237,7 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.SourceCode != "" {
 		existing.SourceCode = req.SourceCode
 	}
-	if req.Version > 0 {
+	if req.Version != "" {
 		existing.Version = req.Version
 	}
 	if req.Runtime != nil {
@@ -210,7 +277,7 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	fnIdentifier := chi.URLParam(r, "functionRid")
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 
-	fn, err := h.repo.GetFunctionByName(r.Context(), ontologyAPIName, fnIdentifier)
+	fn, err := h.resolveFunctionRef(r.Context(), ontologyAPIName, fnIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("FunctionNotFound", map[string]string{

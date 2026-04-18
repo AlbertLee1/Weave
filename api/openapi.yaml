@@ -821,7 +821,12 @@ components:
         name:
           type: string
         version:
-          type: integer
+          type: string
+          description: |
+            Semver string ("MAJOR.MINOR.PATCH" with optional "-PRE"). Multiple
+            versions of the same name coexist (US-217); list endpoints sort
+            latest-first within each name.
+          example: "1.0.0"
         sourceCode:
           type: string
         runtime:
@@ -4262,6 +4267,14 @@ paths:
                   type: string
                 sourceCode:
                   type: string
+                version:
+                  type: string
+                  description: |
+                    Semver string. Defaults to "1.0.0" when omitted (US-217).
+                    Posting a name+version pair that already exists in the
+                    ontology returns 409 — new versions never overwrite older
+                    rows.
+                  example: "1.0.0"
                 runtime:
                   type: string
                   enum: [goja, http]
@@ -4305,7 +4318,12 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}:
     get:
       operationId: getFunction
-      summary: Get a Function by RID or name
+      summary: Get a Function by RID, name, or name@version
+      description: |
+        The path segment accepts three shapes (US-217):
+          - `<rid>`              — direct lookup by RID
+          - `<name>`             — latest semver of the named function
+          - `<name>@<version>`   — pinned to the supplied semver
       tags: [Functions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -4348,7 +4366,11 @@ paths:
                 sourceCode:
                   type: string
                 version:
-                  type: integer
+                  type: string
+                  description: |
+                    Optional semver string. When omitted the existing row's
+                    version is preserved (US-217).
+                  example: "2.0.0"
                 runtime:
                   type: string
                   enum: [goja, http]
@@ -4381,6 +4403,40 @@ paths:
       responses:
         "204":
           description: Function deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionName}/versions:
+    get:
+      operationId: listFunctionVersions
+      summary: List every stored semver of the named function (US-217)
+      description: |
+        Returns the full version history of the named function, sorted
+        latest-first. 404 when no rows match the name.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Function versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, data]
+                properties:
+                  name:
+                    type: string
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Function"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

@@ -501,12 +501,14 @@ type QueryType struct {
 
 // Function represents a stored Function Registry entry. SourceCode is the
 // universal "body" handle: for Runtime="goja" it is the embedded JavaScript
-// source; for Runtime="http" it is the delegate endpoint URL.
+// source; for Runtime="http" it is the delegate endpoint URL. Version is a
+// semver string ("1.0.0", "2.1.0-beta") so multiple versions of the same
+// function name can coexist (US-217); see ParseSemver / CompareSemver.
 type Function struct {
 	RID         string          `json:"rid"`
 	OntologyRID string          `json:"-"`
 	Name        string          `json:"name"`
-	Version     int             `json:"version"`
+	Version     string          `json:"version"`
 	SourceCode  string          `json:"sourceCode"`
 	Signature   json.RawMessage `json:"signature,omitempty"`
 	Runtime     string          `json:"runtime,omitempty"`
