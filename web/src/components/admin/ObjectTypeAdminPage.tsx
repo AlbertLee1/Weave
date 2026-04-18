@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import type { ObjectType, LinkType, ActionType } from '../../api/types';
+import type {
+  ObjectType,
+  LinkType,
+  ActionType,
+  Classification,
+} from '../../api/types';
+import { CLASSIFICATION_VALUES } from '../../api/types';
 import {
   listOutgoingLinkTypes,
   listActionTypes,
@@ -290,6 +296,7 @@ interface CreateFormState {
   titleProperty: string;
   status: (typeof STATUS_VALUES)[number];
   visibility: (typeof VISIBILITY_VALUES)[number];
+  classification: '' | Classification;
   apiNameDirty: boolean;
   pluralDirty: boolean;
 }
@@ -313,6 +320,7 @@ function CreateObjectTypeModal({
     titleProperty: '',
     status: 'ACTIVE',
     visibility: 'NORMAL',
+    classification: '',
     apiNameDirty: false,
     pluralDirty: false,
   });
@@ -353,6 +361,7 @@ function CreateObjectTypeModal({
       titleProperty: form.titleProperty.trim() || undefined,
       status: form.status,
       visibility: form.visibility,
+      classification: form.classification || undefined,
     };
     try {
       await create.mutateAsync(body);
@@ -486,6 +495,29 @@ function CreateObjectTypeModal({
             </select>
           </Field>
         </div>
+        <Field
+          label="Classification"
+          hint="Data classification label (optional)."
+        >
+          <select
+            aria-label="Classification"
+            value={form.classification}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                classification: e.target.value as CreateFormState['classification'],
+              }))
+            }
+            className={inputClass}
+          >
+            <option value="">— Unspecified —</option>
+            {CLASSIFICATION_VALUES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </Field>
         {submitError && (
           <p role="alert" className="text-xs text-accent-error">
             {submitError}
@@ -521,6 +553,7 @@ interface EditFormState {
   visibility: (typeof VISIBILITY_VALUES)[number];
   iconName: string;
   color: string;
+  classification: '' | Classification;
 }
 
 function EditObjectTypeModal({
@@ -543,6 +576,7 @@ function EditObjectTypeModal({
     visibility: objectType.visibility,
     iconName: objectType.icon ?? '',
     color: objectType.color ?? '',
+    classification: objectType.classification ?? '',
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -558,6 +592,13 @@ function EditObjectTypeModal({
       visibility: form.visibility,
       iconName: form.iconName.trim() || undefined,
       color: form.color.trim() || undefined,
+      // US-262: always send the current form value so the tri-state
+      // ("" = clear, known label = assign) lands on the backend. Omitting
+      // the field would preserve the existing value on the server, but
+      // that's indistinguishable from "user left the dropdown alone" in
+      // this UI, where any change the admin makes in the form should be
+      // the new authoritative value.
+      classification: form.classification,
     };
     try {
       await update.mutateAsync({ rid: objectType.rid, body });
@@ -706,6 +747,29 @@ function EditObjectTypeModal({
             />
           </Field>
         </div>
+        <Field
+          label="Classification"
+          hint="Data classification label (optional)."
+        >
+          <select
+            aria-label="Classification"
+            value={form.classification}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                classification: e.target.value as EditFormState['classification'],
+              }))
+            }
+            className={inputClass}
+          >
+            <option value="">— Unspecified —</option>
+            {CLASSIFICATION_VALUES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </Field>
         {submitError && (
           <p role="alert" className="text-xs text-accent-error">
             {submitError}

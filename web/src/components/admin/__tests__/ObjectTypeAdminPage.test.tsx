@@ -424,4 +424,66 @@ describe('ObjectTypeAdminPage', () => {
     });
     expect(state.deleteCalls[0]).toBe('ri.ontology.main.object-type.cust-1');
   });
+
+  // US-262: classification dropdown round-trips through Create + Edit modals.
+
+  it('create modal forwards the Classification dropdown value', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getAllByText('Employee').length).toBeGreaterThan(0);
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Object Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'Invoice');
+    await user.type(screen.getByLabelText(/Primary Key \*/i), 'invoiceId');
+
+    const select = screen.getByLabelText(/Classification/i) as HTMLSelectElement;
+    // Options include all 5 labels + the unspecified sentinel.
+    expect(
+      Array.from(select.options).map((o) => o.value),
+    ).toEqual(['', 'Public', 'Internal', 'Confidential', 'PII', 'Secret']);
+    await user.selectOptions(select, 'Confidential');
+
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    expect(state.createCalls[0].body).toMatchObject({
+      classification: 'Confidential',
+    });
+  });
+
+  it('edit modal preloads classification and forwards the new value', async () => {
+    // Seed the Customer row with a PII classification so the edit form sees it.
+    state.objectTypes[2] = {
+      ...state.objectTypes[2],
+      classification: 'PII',
+    } as (typeof state.objectTypes)[number] & { classification?: string };
+
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getAllByText('Customer').length).toBeGreaterThan(0);
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    await user.click(editButtons[0]); // Customer after asc sort
+
+    const select = (await screen.findByLabelText(
+      /Classification/i,
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('PII');
+    await user.selectOptions(select, 'Secret');
+
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    expect(state.updateCalls[0]).toMatchObject({
+      rid: 'ri.ontology.main.object-type.cust-1',
+      body: expect.objectContaining({
+        classification: 'Secret',
+      }),
+    });
+  });
 });

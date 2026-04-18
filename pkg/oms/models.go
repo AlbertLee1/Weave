@@ -79,10 +79,16 @@ type ObjectType struct {
 	// ontology. The parent's properties and outgoing links are merged into the
 	// child at resolution time via ResolveInheritedObjectType; child rows still
 	// own their direct properties only.
-	ExtendsRID         string     `json:"extendsRid,omitempty"`
-	Properties         []Property `json:"properties,omitempty"`
-	CreatedAt          time.Time  `json:"-"`
-	UpdatedAt          time.Time  `json:"-"`
+	ExtendsRID string `json:"extendsRid,omitempty"`
+	// Classification (US-262) is an optional data-classification label chosen
+	// from KnownClassifications() (Public / Internal / Confidential / PII /
+	// Secret). Empty means "unspecified". The column is purely metadata in v1
+	// — admins use it for governance / auditing via the admin UI — and is not
+	// (yet) wired into any enforcement hook.
+	Classification string     `json:"classification,omitempty"`
+	Properties     []Property `json:"properties,omitempty"`
+	CreatedAt      time.Time  `json:"-"`
+	UpdatedAt      time.Time  `json:"-"`
 }
 
 // EffectivePrimaryKeys returns the canonical key-property list, falling back
@@ -178,6 +184,9 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 	if ot.Color != "" {
 		wire["color"] = ot.Color
 	}
+	if ot.Classification != "" {
+		wire["classification"] = ot.Classification
+	}
 
 	if len(ot.Properties) > 0 {
 		props := make(map[string]interface{})
@@ -191,6 +200,9 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 			}
 			if p.Description != "" {
 				entry["description"] = p.Description
+			}
+			if p.Classification != "" {
+				entry["classification"] = p.Classification
 			}
 			props[p.APIName] = entry
 		}
@@ -227,8 +239,13 @@ type Property struct {
 	// IsEditOnly marks a property as "edit-only" — once a user edit writes a
 	// value to it, concurrent ingest edits must not overwrite that value
 	// regardless of the active conflict-resolution strategy (US-025 / US-055).
-	IsEditOnly bool      `json:"editOnly,omitempty"`
-	CreatedAt  time.Time `json:"-"`
+	IsEditOnly bool `json:"editOnly,omitempty"`
+	// Classification (US-262) is an optional per-property data-classification
+	// label from KnownClassifications() (Public / Internal / Confidential /
+	// PII / Secret). Empty means "unspecified". See ObjectType.Classification
+	// for the semantic scope.
+	Classification string    `json:"classification,omitempty"`
+	CreatedAt      time.Time `json:"-"`
 }
 
 // DataTypeJSON returns the Palantir V2 dataType JSON representation.

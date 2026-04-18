@@ -19,8 +19,19 @@ export interface ObjectType {
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   icon?: string;
   color?: string;
+  classification?: Classification;
   properties?: Record<string, { dataType: DataType; rid: string }>;
 }
+
+// US-262: data-classification vocabulary (mirrors pkg/oms.KnownClassifications).
+export const CLASSIFICATION_VALUES = [
+  'Public',
+  'Internal',
+  'Confidential',
+  'PII',
+  'Secret',
+] as const;
+export type Classification = (typeof CLASSIFICATION_VALUES)[number];
 
 export interface DataType {
   type: string;
@@ -41,6 +52,7 @@ export interface Property {
   status?: string;
   deprecatedReason?: string;
   editOnly?: boolean;
+  classification?: Classification;
 }
 
 export interface LinkType {

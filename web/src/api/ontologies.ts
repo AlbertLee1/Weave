@@ -172,6 +172,7 @@ export interface CreateObjectTypeRequest {
   titleProperty?: string;
   status?: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility?: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
+  classification?: string;
 }
 
 export interface UpdateObjectTypeRequest {
@@ -185,6 +186,8 @@ export interface UpdateObjectTypeRequest {
   color?: string;
   deprecatedReason?: string;
   deprecatedDeadline?: string | null;
+  // US-262 tri-state: omit = preserve, '' = clear, known label = assign.
+  classification?: string;
 }
 
 export function createObjectType(
@@ -233,6 +236,7 @@ export interface CreatePropertyRequest {
   isSearchable?: boolean;
   isSortable?: boolean;
   editOnly?: boolean;
+  classification?: string;
 }
 
 export interface UpdatePropertyRequest {
@@ -244,6 +248,8 @@ export interface UpdatePropertyRequest {
   status?: string;
   deprecatedReason?: string;
   editOnly?: boolean;
+  // US-262 tri-state: omit = preserve, '' = clear, known label = assign.
+  classification?: string;
 }
 
 export async function listProperties(

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import type { ObjectType, Property } from '../../api/types';
+import type { ObjectType, Property, Classification } from '../../api/types';
+import { CLASSIFICATION_VALUES } from '../../api/types';
 import type {
   CreatePropertyRequest,
   UpdatePropertyRequest,
@@ -209,6 +210,7 @@ export function PropertiesEditor({
                 </th>
                 <th className="text-left px-3 py-2 font-medium">Type</th>
                 <th className="text-left px-3 py-2 font-medium">Flags</th>
+                <th className="text-left px-3 py-2 font-medium">Classification</th>
                 <th className="text-right px-3 py-2 font-medium">Actions</th>
               </tr>
             </thead>
@@ -255,6 +257,9 @@ export function PropertiesEditor({
                     </td>
                     <td className="px-3 py-2 text-text-secondary">
                       <PropertyFlags p={p} />
+                    </td>
+                    <td className="px-3 py-2 text-text-secondary">
+                      {p.classification ?? '—'}
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <button
@@ -332,6 +337,7 @@ interface AddFormState {
   isSearchable: boolean;
   isSortable: boolean;
   structFields: StructField[];
+  classification: '' | Classification;
 }
 
 function AddPropertyForm({
@@ -356,6 +362,7 @@ function AddPropertyForm({
     isSearchable: false,
     isSortable: false,
     structFields: [],
+    classification: '',
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -381,6 +388,7 @@ function AddPropertyForm({
       isNullable: form.isNullable,
       isSearchable: form.isSearchable,
       isSortable: form.isSortable,
+      classification: form.classification || undefined,
     };
     if (form.baseType === 'struct') {
       body.typeConfig = { fields: serializeStructFields(form.structFields) };
@@ -503,6 +511,26 @@ function AddPropertyForm({
           onChange={(fields) => setForm((f) => ({ ...f, structFields: fields }))}
         />
       )}
+      <LabeledField label="Classification">
+        <select
+          aria-label="Classification"
+          value={form.classification}
+          onChange={(e) =>
+            setForm((f) => ({
+              ...f,
+              classification: e.target.value as AddFormState['classification'],
+            }))
+          }
+          className={inputClass}
+        >
+          <option value="">— Unspecified —</option>
+          {CLASSIFICATION_VALUES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </LabeledField>
       {submitError && (
         <p role="alert" className="text-xs text-accent-error">
           {submitError}
@@ -530,6 +558,7 @@ interface EditFormState {
   editOnly: boolean;
   status: string;
   deprecatedReason: string;
+  classification: '' | Classification;
 }
 
 function EditPropertyForm({
@@ -553,6 +582,7 @@ function EditPropertyForm({
     editOnly: property.editOnly ?? false,
     status: property.status ?? '',
     deprecatedReason: property.deprecatedReason ?? '',
+    classification: property.classification ?? '',
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -568,6 +598,9 @@ function EditPropertyForm({
       editOnly: form.editOnly,
       status: form.status.trim() || undefined,
       deprecatedReason: form.deprecatedReason.trim() || undefined,
+      // US-262: always forward the dropdown value. "" clears, a known label
+      // assigns; the backend treats a non-nil pointer of "" as clear-intent.
+      classification: form.classification,
     };
     try {
       await update.mutateAsync({ rid: property.rid, body });
@@ -657,6 +690,26 @@ function EditPropertyForm({
           onChange={(v) => setForm((f) => ({ ...f, editOnly: v }))}
         />
       </div>
+      <LabeledField label="Classification">
+        <select
+          aria-label="Classification"
+          value={form.classification}
+          onChange={(e) =>
+            setForm((f) => ({
+              ...f,
+              classification: e.target.value as EditFormState['classification'],
+            }))
+          }
+          className={inputClass}
+        >
+          <option value="">— Unspecified —</option>
+          {CLASSIFICATION_VALUES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </LabeledField>
       {submitError && (
         <p role="alert" className="text-xs text-accent-error">
           {submitError}

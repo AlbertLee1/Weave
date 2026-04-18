@@ -597,4 +597,67 @@ describe('PropertiesEditor', () => {
       within(nested).queryByLabelText('struct field name 0.0'),
     ).not.toBeInTheDocument();
   });
+
+  // US-262: classification dropdown round-trip on Add + Edit property forms.
+
+  it('add-property form forwards the selected Classification', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole('button', { name: /Add Property/i }));
+    const form = await screen.findByTestId('add-property-form');
+    const apiNameInput = within(form).getAllByRole('textbox')[0];
+    await user.type(apiNameInput, 'ssn');
+    await user.selectOptions(
+      within(form).getByLabelText(/Base Type/i),
+      'string',
+    );
+    await user.selectOptions(
+      within(form).getByLabelText(/Classification/i),
+      'PII',
+    );
+    await user.click(
+      within(form).getByRole('button', { name: /Create property/i }),
+    );
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    expect(state.createCalls[0].body).toMatchObject({
+      apiName: 'ssn',
+      baseType: 'string',
+      classification: 'PII',
+    });
+  });
+
+  it('edit-property form preloads classification and forwards the new value', async () => {
+    state.properties[2] = {
+      ...state.properties[2],
+      classification: 'Internal',
+    } as Property;
+
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('lastName')).toBeInTheDocument(),
+    );
+    const row = screen.getByText('lastName').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Edit' }));
+    const form = await screen.findByTestId('edit-property-form');
+    const select = within(form).getByLabelText(
+      /Classification/i,
+    ) as HTMLSelectElement;
+    expect(select.value).toBe('Internal');
+    await user.selectOptions(select, 'Secret');
+    await user.click(
+      within(form).getByRole('button', { name: /Save property/i }),
+    );
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    expect(
+      (state.updateCalls[0].body as { classification?: string }).classification,
+    ).toBe('Secret');
+  });
 });

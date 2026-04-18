@@ -914,8 +914,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 63,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "迁移 000060 在 object_types + properties 加 classification TEXT NULL（无默认）。pkg/oms.KnownClassifications()/IsKnownClassification 固定五个标签：Public/Internal/Confidential/PII/Secret；空串 = 未指定。ObjectType.Classification + Property.Classification（JSON omitempty），ToFullMetadataJSON 按需输出。CreateObjectTypeRequest / CreatePropertyRequest 增加 string Classification；UpdateObjectTypeRequest / UpdatePropertyRequest 用 *string 三态指针（nil=保留，\"\"=清空，known=赋值）。未知标签在 Create/Update 前返回 400 InvalidParameter:classification。pg_repository.go 的 object_types + properties 五个 CRUD 路径（Create/Get/List/ListInterfaceObjectTypes/Update）用 NULLIF/$N ''/COALESCE('') 搭配保持 Go 侧为 plain string。前端 web/src/api/types.ts 增加 Classification 联合类型 + CLASSIFICATION_VALUES 常量；ObjectTypeAdminPage Create + Edit 模态、PropertiesEditor Add + Edit 表单各加 Classification 下拉（'— Unspecified —' 哨兵 + 五个选项），PropertiesEditor 表格增加 Classification 列。测试：12 个 Go 分类单测（已知/未知矩阵 + Create/Update 三态 + 未知拒绝 + Property 同形）；4 个 React RTL 测试（Create 新建/Edit 预加载 + 转发 × 2）。v1 只是元数据层，未接入策略枚举——在 ObjectType.ToFullMetadataJSON + Property 属性条目按需输出后，搜索/导出响应自动携带 classification，管理员和 SDK 可消费该字段；后续 story 可将分类接入 marking / masking 引擎实现运行时强制。"
     },
     {
       "id": "US-263",

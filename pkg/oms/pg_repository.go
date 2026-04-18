@@ -100,11 +100,11 @@ func (r *PGRepository) CreateObjectType(ctx context.Context, ot *ObjectType) err
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO object_types (rid, ontology_rid, api_name, display_name, plural_display_name,
 		 description, primary_key_prop, title_property, status, visibility, icon_name, color,
-		 deprecated_reason, deprecated_deadline, primary_key_props, extends_rid)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NULLIF($16, ''))`,
+		 deprecated_reason, deprecated_deadline, primary_key_props, extends_rid, classification)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NULLIF($16, ''), NULLIF($17, ''))`,
 		ot.RID, ot.OntologyRID, ot.APIName, ot.DisplayName, ot.PluralDisplayName,
 		ot.Description, ot.PrimaryKey, ot.TitleProperty, ot.Status, ot.Visibility,
-		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline, pkPropsJSON, ot.ExtendsRID)
+		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline, pkPropsJSON, ot.ExtendsRID, ot.Classification)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -121,13 +121,13 @@ func (r *PGRepository) GetObjectType(ctx context.Context, rid string) (*ObjectTy
 		 COALESCE(icon_name, ''), COALESCE(color, ''),
 		 COALESCE(deprecated_reason, ''), deprecated_deadline,
 		 created_at, updated_at, COALESCE(primary_key_props, '[]'::jsonb),
-		 COALESCE(extends_rid, '')
+		 COALESCE(extends_rid, ''), COALESCE(classification, '')
 		 FROM object_types WHERE rid = $1`, rid).
 		Scan(&ot.RID, &ot.OntologyRID, &ot.APIName, &ot.DisplayName, &ot.PluralDisplayName,
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID)
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -187,7 +187,7 @@ func (r *PGRepository) ListObjectTypes(ctx context.Context, ontologyRID string) 
 		 COALESCE(icon_name, ''), COALESCE(color, ''),
 		 COALESCE(deprecated_reason, ''), deprecated_deadline,
 		 created_at, updated_at, COALESCE(primary_key_props, '[]'::jsonb),
-		 COALESCE(extends_rid, '')
+		 COALESCE(extends_rid, ''), COALESCE(classification, '')
 		 FROM object_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -204,7 +204,7 @@ func (r *PGRepository) ListObjectTypes(ctx context.Context, ontologyRID string) 
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID); err != nil {
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification); err != nil {
 			return nil, err
 		}
 		ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)
@@ -218,11 +218,11 @@ func (r *PGRepository) UpdateObjectType(ctx context.Context, ot *ObjectType) err
 		`UPDATE object_types SET display_name=$1, plural_display_name=$2, description=$3,
 		 title_property=$4, status=$5, visibility=$6, icon_name=$7, color=$8,
 		 deprecated_reason=$9, deprecated_deadline=$10, extends_rid=NULLIF($11, ''),
-		 updated_at=now()
-		 WHERE rid=$12`,
+		 classification=NULLIF($12, ''), updated_at=now()
+		 WHERE rid=$13`,
 		ot.DisplayName, ot.PluralDisplayName, ot.Description,
 		ot.TitleProperty, ot.Status, ot.Visibility, ot.IconName, ot.Color,
-		ot.DeprecatedReason, ot.DeprecatedDeadline, ot.ExtendsRID, ot.RID)
+		ot.DeprecatedReason, ot.DeprecatedDeadline, ot.ExtendsRID, ot.Classification, ot.RID)
 	if err != nil {
 		return err
 	}
@@ -257,11 +257,11 @@ func (r *PGRepository) CreateProperty(ctx context.Context, p *Property) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO properties (rid, object_type_rid, api_name, display_name, description,
 		 base_type, type_config, is_array, is_nullable, is_searchable, is_sortable, status, shared_property_rid, is_edit_only,
-		 derived, formula)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		 derived, formula, classification)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NULLIF($17, ''))`,
 		p.RID, p.ObjectTypeRID, p.APIName, p.DisplayName, p.Description,
 		p.BaseType, typeConfig, p.IsArray, p.IsNullable, p.IsSearchable, p.IsSortable, status, nilIfEmpty(p.SharedPropertyRID), p.IsEditOnly,
-		p.Derived, p.Formula)
+		p.Derived, p.Formula, p.Classification)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -273,7 +273,7 @@ func (r *PGRepository) ListProperties(ctx context.Context, objectTypeRID string)
 		`SELECT rid, object_type_rid, api_name, COALESCE(display_name, ''), COALESCE(description, ''),
 		 base_type, COALESCE(type_config, '{}'), is_array, is_nullable, is_searchable, is_sortable,
 		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), is_edit_only,
-		 COALESCE(derived, false), COALESCE(formula, ''), created_at
+		 COALESCE(derived, false), COALESCE(formula, ''), COALESCE(classification, ''), created_at
 		 FROM properties WHERE object_type_rid = $1 ORDER BY api_name`, objectTypeRID)
 	if err != nil {
 		return nil, err
@@ -286,7 +286,7 @@ func (r *PGRepository) ListProperties(ctx context.Context, objectTypeRID string)
 		if err := rows.Scan(&p.RID, &p.ObjectTypeRID, &p.APIName, &p.DisplayName, &p.Description,
 			&p.BaseType, &p.TypeConfig, &p.IsArray, &p.IsNullable, &p.IsSearchable, &p.IsSortable,
 			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.IsEditOnly,
-			&p.Derived, &p.Formula, &p.CreatedAt); err != nil {
+			&p.Derived, &p.Formula, &p.Classification, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, p)
@@ -300,12 +300,12 @@ func (r *PGRepository) GetProperty(ctx context.Context, rid string) (*Property, 
 		`SELECT rid, object_type_rid, api_name, COALESCE(display_name, ''), COALESCE(description, ''),
 		 base_type, COALESCE(type_config, '{}'), is_array, is_nullable, is_searchable, is_sortable,
 		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), is_edit_only,
-		 COALESCE(derived, false), COALESCE(formula, ''), created_at
+		 COALESCE(derived, false), COALESCE(formula, ''), COALESCE(classification, ''), created_at
 		 FROM properties WHERE rid = $1`, rid).
 		Scan(&p.RID, &p.ObjectTypeRID, &p.APIName, &p.DisplayName, &p.Description,
 			&p.BaseType, &p.TypeConfig, &p.IsArray, &p.IsNullable, &p.IsSearchable, &p.IsSortable,
 			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.IsEditOnly,
-			&p.Derived, &p.Formula, &p.CreatedAt)
+			&p.Derived, &p.Formula, &p.Classification, &p.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -320,10 +320,10 @@ func (r *PGRepository) UpdateProperty(ctx context.Context, p *Property) error {
 		`UPDATE properties SET display_name=$1, description=$2,
 		 is_searchable=$3, is_sortable=$4, is_nullable=$5,
 		 status=$6, deprecated_reason=$7, is_edit_only=$8,
-		 derived=$9, formula=$10
-		 WHERE rid=$11`,
+		 derived=$9, formula=$10, classification=NULLIF($11, '')
+		 WHERE rid=$12`,
 		p.DisplayName, p.Description, p.IsSearchable, p.IsSortable, p.IsNullable,
-		p.Status, p.DeprecatedReason, p.IsEditOnly, p.Derived, p.Formula, p.RID)
+		p.Status, p.DeprecatedReason, p.IsEditOnly, p.Derived, p.Formula, p.Classification, p.RID)
 	if err != nil {
 		return err
 	}
@@ -906,7 +906,7 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 		 COALESCE(ot.icon_name, ''), COALESCE(ot.color, ''),
 		 COALESCE(ot.deprecated_reason, ''), ot.deprecated_deadline,
 		 ot.created_at, ot.updated_at, COALESCE(ot.primary_key_props, '[]'::jsonb),
-		 COALESCE(ot.extends_rid, '')
+		 COALESCE(ot.extends_rid, ''), COALESCE(ot.classification, '')
 		 FROM object_types ot
 		 JOIN object_type_interfaces oti ON ot.rid = oti.object_type_rid
 		 WHERE oti.interface_rid = $1
@@ -924,7 +924,7 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID); err != nil {
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification); err != nil {
 			return nil, err
 		}
 		ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)

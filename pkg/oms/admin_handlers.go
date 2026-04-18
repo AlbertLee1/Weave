@@ -110,6 +110,10 @@ type CreateObjectTypeRequest struct {
 	// ontology. Validation: parent must exist, share the ontology, and not form
 	// a cycle.
 	ExtendsRID string `json:"extendsRid,omitempty"`
+	// Classification (US-262) is an optional data-classification label chosen
+	// from KnownClassifications(). Empty / omitted means "unspecified".
+	// Unknown labels are rejected with a typed 400.
+	Classification string `json:"classification,omitempty"`
 }
 
 // UpdateObjectTypeRequest is the request body for updating an object type.
@@ -128,6 +132,11 @@ type UpdateObjectTypeRequest struct {
 	// empty-string pointer to clear the link; omit the field to leave it
 	// untouched. Same shape as LinkType.InverseLinkRID.
 	ExtendsRID *string `json:"extendsRid,omitempty"`
+	// Classification (US-262) is a tri-state pointer: nil = leave the existing
+	// label untouched, "" = clear, any known label = assign. Bare string would
+	// collapse "omit" and "clear" into one, silently clearing classification
+	// on every partial update.
+	Classification *string `json:"classification,omitempty"`
 }
 
 // UpdateOntologyRequest is the request body for updating an ontology.
@@ -146,6 +155,9 @@ type UpdatePropertyRequest struct {
 	Status           string `json:"status,omitempty"`
 	DeprecatedReason string `json:"deprecatedReason,omitempty"`
 	EditOnly         *bool  `json:"editOnly,omitempty"`
+	// Classification (US-262) is a tri-state pointer: nil = preserve, "" =
+	// clear, any known label = assign. See UpdateObjectTypeRequest.
+	Classification *string `json:"classification,omitempty"`
 }
 
 // UpdateLinkTypeRequest is the request body for updating a link type.
@@ -176,6 +188,9 @@ type CreatePropertyRequest struct {
 	IsSearchable bool            `json:"isSearchable"`
 	IsSortable   bool            `json:"isSortable"`
 	EditOnly     bool            `json:"editOnly,omitempty"`
+	// Classification (US-262) is an optional label from KnownClassifications().
+	// Empty means "unspecified". Unknown labels are rejected 400.
+	Classification string `json:"classification,omitempty"`
 }
 
 // CreateLinkTypeRequest is the request body for creating a link type.
@@ -368,6 +383,13 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 	if visibility == "" {
 		visibility = "NORMAL"
 	}
+	if !IsKnownClassification(req.Classification) {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:classification", map[string]string{
+			"parameter": "classification",
+			"reason":    "classification must be one of Public, Internal, Confidential, PII, Secret",
+		}))
+		return
+	}
 
 	ot := &ObjectType{
 		RID:               rid.NewObjectTypeRID(),
@@ -382,6 +404,7 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		Status:            status,
 		Visibility:        visibility,
 		ExtendsRID:        req.ExtendsRID,
+		Classification:    req.Classification,
 	}
 
 	// US-212: validate inheritance candidate. The parent must exist, live in the
@@ -498,6 +521,19 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 		updated.DeprecatedDeadline = &t
 	} else {
 		updated.DeprecatedDeadline = nil
+	}
+	// US-262 classification tri-state: nil = preserve, "" = clear, any known
+	// label = assign. Unknown labels reject BEFORE we touch any state so a bad
+	// input never mutates the row.
+	if req.Classification != nil {
+		if !IsKnownClassification(*req.Classification) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:classification", map[string]string{
+				"parameter": "classification",
+				"reason":    "classification must be one of Public, Internal, Confidential, PII, Secret",
+			}))
+			return
+		}
+		updated.Classification = *req.Classification
 	}
 	// US-212: ExtendsRID tri-state — nil pointer leaves unchanged, "" clears,
 	// non-empty rewrites and is validated against the same rules as Create
@@ -668,20 +704,28 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	if !IsKnownClassification(req.Classification) {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:classification", map[string]string{
+			"parameter": "classification",
+			"reason":    "classification must be one of Public, Internal, Confidential, PII, Secret",
+		}))
+		return
+	}
 
 	p := &Property{
-		RID:           rid.NewPropertyRID(),
-		ObjectTypeRID: objectTypeRID,
-		APIName:       req.APIName,
-		DisplayName:   req.DisplayName,
-		Description:   req.Description,
-		BaseType:      req.BaseType,
-		TypeConfig:    req.TypeConfig,
-		IsArray:       req.IsArray,
-		IsNullable:    req.IsNullable,
-		IsSearchable:  req.IsSearchable,
-		IsSortable:    req.IsSortable,
-		IsEditOnly:    req.EditOnly,
+		RID:            rid.NewPropertyRID(),
+		ObjectTypeRID:  objectTypeRID,
+		APIName:        req.APIName,
+		DisplayName:    req.DisplayName,
+		Description:    req.Description,
+		BaseType:       req.BaseType,
+		TypeConfig:     req.TypeConfig,
+		IsArray:        req.IsArray,
+		IsNullable:     req.IsNullable,
+		IsSearchable:   req.IsSearchable,
+		IsSortable:     req.IsSortable,
+		IsEditOnly:     req.EditOnly,
+		Classification: req.Classification,
 	}
 
 	// Branch overlay
@@ -1182,6 +1226,18 @@ func (h *OMSHandler) UpdateProperty(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.EditOnly != nil {
 		updated.IsEditOnly = *req.EditOnly
+	}
+	// US-262 classification tri-state: nil = preserve, "" = clear, any known
+	// label = assign. Reject unknown BEFORE any persistence attempt.
+	if req.Classification != nil {
+		if !IsKnownClassification(*req.Classification) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:classification", map[string]string{
+				"parameter": "classification",
+				"reason":    "classification must be one of Public, Internal, Confidential, PII, Secret",
+			}))
+			return
+		}
+		updated.Classification = *req.Classification
 	}
 
 	// Branch overlay
