@@ -34,6 +34,12 @@ type SearchObjectsRequest struct {
 	// highlight; when nil / empty, Bleve defaults to every text field with
 	// term vectors.
 	Highlight *HighlightConfig
+	// Facets, when non-empty, instructs the service to compute term-count
+	// buckets per field via Bleve facet requests and attach them to the
+	// returned ObjectPage under `facets: {field: [{value, count}]}`
+	// (US-236). Fields that are missing or not indexed silently yield an
+	// empty bucket list.
+	Facets    []string
 	PageSize  int
 	PageToken string
 	OrderBy   string

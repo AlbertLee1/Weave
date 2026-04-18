@@ -421,6 +421,15 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		searchReq.Highlight = hr
 	}
 
+	// US-236: per-field term-count facets. Fields are de-duplicated so a
+	// caller sending `?facets=owner,owner` sees a single bucket list.
+	// Unknown / non-indexed fields silently yield empty buckets — Bleve's
+	// facet executor tolerates them.
+	facetFields := dedupeFacetFields(req.Facets)
+	for _, f := range facetFields {
+		searchReq.AddFacet(f, bleve.NewFacetRequest(f, defaultFacetSize))
+	}
+
 	// Apply ordering if specified.
 	if req.OrderBy != "" {
 		searchReq.SortBy(parseOrderBy(req.OrderBy))
@@ -450,6 +459,20 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		Data: make([]*WireObject, 0, len(result.Hits)),
 	}
 	page.TotalCount = strconv.Itoa(int(result.Total))
+
+	// US-236: materialise facet buckets. Every requested field is
+	// registered — including ones with zero matching terms — so SDK
+	// consumers see a stable key set. Map iteration order over the
+	// underlying `map[string]*search.FacetResult` is nondeterministic;
+	// bucket order inside each slice follows Bleve's facet ordering
+	// (descending count).
+	if len(facetFields) > 0 {
+		facets := make(map[string][]FacetBucket, len(facetFields))
+		for _, f := range facetFields {
+			facets[f] = collectFacetBuckets(result, f)
+		}
+		page.Facets = facets
+	}
 
 	for _, hit := range result.Hits {
 		pk := ""
@@ -508,6 +531,56 @@ func (s *ServiceImpl) CountObjects(ctx context.Context, req CountObjectsRequest)
 	}
 
 	return &CountObjectsResponse{Count: int(count)}, nil
+}
+
+// defaultFacetSize is the per-field bucket ceiling for US-236 faceted
+// searches. Matches the aggregation engine's default for exact groupBy —
+// large enough for realistic category/owner fanouts, small enough to keep
+// single-request cost bounded.
+const defaultFacetSize = 100
+
+// dedupeFacetFields preserves first-seen order while dropping empty and
+// repeat entries so callers passing `?facets=owner,owner,owner` only trigger
+// one Bleve facet and see one bucket list.
+func dedupeFacetFields(fields []string) []string {
+	if len(fields) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(fields))
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if _, ok := seen[f]; ok {
+			continue
+		}
+		seen[f] = struct{}{}
+		out = append(out, f)
+	}
+	return out
+}
+
+// collectFacetBuckets lifts a Bleve facet result into the `[]FacetBucket`
+// wire shape. Returns an empty (non-nil) slice when the field has no
+// matching terms so the caller always sees a stable `[]` on the wire
+// instead of a missing key. `result` may be nil during degraded-mode tests;
+// in that case every field maps to an empty list.
+func collectFacetBuckets(result *bleve.SearchResult, field string) []FacetBucket {
+	if result == nil {
+		return []FacetBucket{}
+	}
+	fr, ok := result.Facets[field]
+	if !ok || fr == nil || fr.Terms == nil {
+		return []FacetBucket{}
+	}
+	terms := fr.Terms.Terms()
+	buckets := make([]FacetBucket, 0, len(terms))
+	for _, t := range terms {
+		buckets = append(buckets, FacetBucket{Value: t.Term, Count: t.Count})
+	}
+	return buckets
 }
 
 // parseOrderBy converts an orderBy string like "field:asc" or "field:desc" into

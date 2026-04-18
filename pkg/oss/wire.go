@@ -153,4 +153,17 @@ type ObjectPage struct {
 	Data          []*WireObject `json:"data"`
 	NextPageToken string        `json:"nextPageToken,omitempty"`
 	TotalCount    string        `json:"totalCount,omitempty"`
+	// Facets carries per-field term counts when the caller requested
+	// facets via `?facets=field1,field2` (US-236). Keys are property
+	// apiNames; values are buckets sorted by descending count (Bleve's
+	// native ordering). Nil / empty map suppresses the `facets` key on
+	// the wire so non-faceted responses stay byte-identical to their
+	// pre-feature shape.
+	Facets map[string][]FacetBucket `json:"facets,omitempty"`
+}
+
+// FacetBucket is a single term + count bucket produced by a faceted search.
+type FacetBucket struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
 }

@@ -1482,6 +1482,27 @@ components:
           type: string
         totalCount:
           type: string
+        facets:
+          type: object
+          description: |
+            Per-field term-count buckets (US-236). Present only when the
+            caller requested `facets` via body or `?facets=` query param.
+            Keys are property apiNames; each value is an array of
+            `{value, count}` sorted by descending count. Fields with no
+            matching terms yield an empty array.
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/FacetBucket"
+    FacetBucket:
+      type: object
+      description: Single term + count bucket produced by a faceted search.
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+      required: [value, count]
     SearchObjectsRequest:
       type: object
       required: [select]
@@ -1539,6 +1560,17 @@ components:
                 every searchable text field with term vectors.
               items:
                 type: string
+        facets:
+          type: array
+          description: |
+            US-236 facet fields. Each field produces a
+            `{value, count}` bucket list under the response's
+            `facets[field]`. The `?facets=field1,field2` query parameter,
+            when set, REPLACES this list so URL-only invocations stay
+            first-class. Fields that are missing or not indexed silently
+            yield an empty bucket list.
+          items:
+            type: string
         select:
           type: array
           items:
@@ -5831,6 +5863,20 @@ paths:
           schema:
             type: string
             example: "body,title"
+        - name: facets
+          in: query
+          required: false
+          description: |
+            US-236 facet shorthand. Comma-separated list of property
+            apiNames to compute term-count buckets for. Duplicates are
+            dropped; unknown / non-indexed fields yield an empty bucket
+            list. When present, REPLACES any `facets` body field. An
+            empty / all-whitespace list is a 400
+            (`errorName: InvalidFacets`). Response shape:
+            `facets: { field: [{value, count}, ...] }`.
+          schema:
+            type: string
+            example: "objectType,owner,createdAt"
       requestBody:
         required: true
         content:

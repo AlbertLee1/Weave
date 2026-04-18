@@ -215,6 +215,7 @@ type searchRequestBody struct {
 	Fuzzy     *where.FuzzyConfig `json:"fuzzy,omitempty"`
 	Select    []string           `json:"select,omitempty"`
 	Highlight *HighlightConfig   `json:"highlight,omitempty"`
+	Facets    []string           `json:"facets,omitempty"`
 	PageSize  int                `json:"pageSize,omitempty"`
 	PageToken string             `json:"pageToken,omitempty"`
 	OrderBy   *OrderBy           `json:"orderBy,omitempty"`
@@ -325,12 +326,30 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		highlight = hl
 	}
 
+	// US-236: ?facets=field1,field2 enables per-field term-count buckets.
+	// When the query param is present it REPLACES body.facets so the
+	// URL-only invocation stays first-class. An empty / all-whitespace
+	// param is a 400 — same shape as highlight/regex.
+	facets := body.Facets
+	if raw, ok := r.URL.Query()["facets"]; ok && len(raw) > 0 {
+		parsed, parseOK := parseFacetsQueryParam(raw[0])
+		if !parseOK {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFacets", map[string]string{
+				"reason": "facets query parameter must be a non-empty comma-separated field list",
+				"facets": raw[0],
+			}))
+			return
+		}
+		facets = parsed
+	}
+
 	page, err := h.svc.SearchObjects(r.Context(), SearchObjectsRequest{
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
 		Where:       whereClause,
 		Fuzzy:       fuzzy,
 		Highlight:   highlight,
+		Facets:      facets,
 		PageSize:    pageSize,
 		PageToken:   pageToken,
 		OrderBy:     orderBy,
@@ -379,6 +398,25 @@ func parseHighlightQueryParam(raw string) (*HighlightConfig, bool) {
 		return nil, false
 	}
 	return &HighlightConfig{Fields: fields}, true
+}
+
+// parseFacetsQueryParam splits `?facets=field1,field2,field3` into a clean
+// field-name slice. Leading/trailing whitespace per field is trimmed. A
+// trailing comma (`a,b,`) is tolerated — only non-empty fields survive. An
+// input whose every field is empty (`""`, `",,"`, `"   "`) returns
+// (nil, false) so the handler can surface a 400.
+func parseFacetsQueryParam(raw string) ([]string, bool) {
+	parts := strings.Split(raw, ",")
+	fields := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			fields = append(fields, p)
+		}
+	}
+	if len(fields) == 0 {
+		return nil, false
+	}
+	return fields, true
 }
 
 // splitRegexQueryParam parses the `?regex=field:pattern` shorthand. The split

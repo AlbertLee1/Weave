@@ -539,8 +539,8 @@
         "Tests pass"
       ],
       "priority": 37,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "facets []string on searchRequestBody + SearchObjectsRequest; ?facets=a,b query param overrides body with InvalidFacets 400 on empty/whitespace; service adds bleve.NewFacetRequest per de-duped field; ObjectPage.Facets map[string][]FacetBucket with omitempty so unfaceted responses stay byte-identical; unknown / non-indexed fields surface empty bucket list so SDK key set stays stable"
     },
     {
       "id": "US-237",
