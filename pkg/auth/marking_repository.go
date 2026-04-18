@@ -124,3 +124,63 @@ func (r *PGMarkingRepository) RevokeMarking(ctx context.Context, userID, marking
 		userID, markingName)
 	return err
 }
+
+// ListGrantsByMarking satisfies MarkingGrantAdminRepository. Returns every
+// (user, granted_at, granted_by) row for the marking, ordered newest
+// first so recent grants float to the top of the admin UI. The slice is
+// always non-nil; an unknown marking name returns [] rather than an
+// error so the admin UI can distinguish "empty roster" from a lookup
+// failure.
+func (r *PGMarkingRepository) ListGrantsByMarking(ctx context.Context, markingName string) ([]MarkingGrant, error) {
+	if r == nil || r.pool == nil {
+		return nil, errors.New("marking repository: nil pool")
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT user_id, marking_name, granted_at, COALESCE(granted_by, '')
+		 FROM user_markings
+		 WHERE marking_name = $1
+		 ORDER BY granted_at DESC`, markingName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]MarkingGrant, 0)
+	for rows.Next() {
+		var g MarkingGrant
+		if err := rows.Scan(&g.UserID, &g.MarkingName, &g.GrantedAt, &g.GrantedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ListGrantsByUser satisfies MarkingGrantAdminRepository. Returns every
+// grant row held by userID, ordered alphabetically by marking name so
+// the admin UI renders a stable list without sorting client-side. Always
+// non-nil slice.
+func (r *PGMarkingRepository) ListGrantsByUser(ctx context.Context, userID string) ([]MarkingGrant, error) {
+	if r == nil || r.pool == nil {
+		return nil, errors.New("marking repository: nil pool")
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT user_id, marking_name, granted_at, COALESCE(granted_by, '')
+		 FROM user_markings
+		 WHERE user_id = $1
+		 ORDER BY marking_name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]MarkingGrant, 0)
+	for rows.Next() {
+		var g MarkingGrant
+		if err := rows.Scan(&g.UserID, &g.MarkingName, &g.GrantedAt, &g.GrantedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}

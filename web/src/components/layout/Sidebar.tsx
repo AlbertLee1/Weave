@@ -21,6 +21,7 @@ const iconPaths: Record<string, string> = {
   upload: 'M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12',
   check:
     'M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -160,8 +161,19 @@ export function Sidebar() {
           label: 'History',
           icon: 'clock',
         },
+        {
+          to: '/admin/markings',
+          label: 'Markings',
+          icon: 'shield',
+        },
       ]
-    : [];
+    : [
+        {
+          to: '/admin/markings',
+          label: 'Markings',
+          icon: 'shield',
+        },
+      ];
 
   return (
     <aside

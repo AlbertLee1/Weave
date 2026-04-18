@@ -1,0 +1,350 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/audit"
+)
+
+// MarkingGrantAdminRepository extends the request-hot-path MarkingRepository
+// with the lookups the admin UI needs to render the /admin/markings page:
+// listing grants by marking (who holds PII?) and listing grants for a user
+// with timestamps (when was alice granted PII, and by whom?). Keeping these
+// on a separate interface follows the US-251 pattern: if the admin surface
+// is not wired (degraded mode / contract tests) the admin handler falls
+// back to apierror.NewInternal instead of cascading the methods across
+// every MarkingRepository mock.
+type MarkingGrantAdminRepository interface {
+	// ListGrantsByMarking returns every grant row for a marking name,
+	// with the full GrantedAt / GrantedBy audit envelope. Used by the
+	// admin UI to render "who holds PII?" per-marking.
+	ListGrantsByMarking(ctx context.Context, markingName string) ([]MarkingGrant, error)
+
+	// ListGrantsByUser returns every grant row held by the user, with
+	// the full GrantedAt / GrantedBy audit envelope. The admin surface
+	// wants the timestamps so the lightweight GetUserMarkings path
+	// stays allocation-free.
+	ListGrantsByUser(ctx context.Context, userID string) ([]MarkingGrant, error)
+}
+
+// MarkingRequest is the POST /api/admin/users/{userId}/markings body.
+type MarkingRequest struct {
+	Marking string `json:"marking"`
+}
+
+// MarkingResponse is the wire shape for a single marking definition.
+type MarkingResponse struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	Color       string `json:"color"`
+}
+
+// MarkingListResponse is returned by GET /api/admin/markings.
+type MarkingListResponse struct {
+	Markings []MarkingResponse `json:"markings"`
+}
+
+// MarkingGrantResponse is the wire shape for a single (user, marking) row.
+type MarkingGrantResponse struct {
+	UserID      string `json:"userId"`
+	MarkingName string `json:"markingName"`
+	GrantedAt   string `json:"grantedAt"`
+	GrantedBy   string `json:"grantedBy"`
+}
+
+// MarkingGrantsResponse is returned by both:
+//   - GET /api/admin/markings/{name}/grants (all grants of one marking)
+//   - GET /api/admin/users/{userId}/markings (all grants held by one user)
+type MarkingGrantsResponse struct {
+	Grants []MarkingGrantResponse `json:"grants"`
+}
+
+func toMarkingResponse(m Marking) MarkingResponse {
+	return MarkingResponse{
+		Name:        m.Name,
+		DisplayName: m.DisplayName,
+		Description: m.Description,
+		Color:       m.Color,
+	}
+}
+
+func toMarkingGrantResponse(g MarkingGrant) MarkingGrantResponse {
+	return MarkingGrantResponse{
+		UserID:      g.UserID,
+		MarkingName: g.MarkingName,
+		GrantedAt:   g.GrantedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		GrantedBy:   g.GrantedBy,
+	}
+}
+
+// MarkingHandler implements the admin REST endpoints for marking grants.
+//
+// Endpoints:
+//   - GET    /api/admin/markings                            — list every marking definition
+//   - GET    /api/admin/markings/{name}/grants              — list grants of one marking (needs MarkingGrantAdminRepository)
+//   - GET    /api/admin/users/{userId}/markings             — list grants held by a user (needs MarkingGrantAdminRepository)
+//   - POST   /api/admin/users/{userId}/markings             — grant a marking (audit: marking_grant)
+//   - DELETE /api/admin/users/{userId}/markings/{marking}   — revoke a grant (audit: marking_revoke)
+//
+// The Grant/Revoke writes call through the existing MarkingRepository
+// (GrantMarking / RevokeMarking), keeping the request hot path untouched.
+type MarkingHandler struct {
+	repo       MarkingRepository
+	admin      MarkingGrantAdminRepository
+	users      UserRepository
+	auditStore audit.Store
+}
+
+// NewMarkingHandler constructs the admin handler around the existing
+// MarkingRepository (grant/revoke/list definitions) plus an optional
+// MarkingGrantAdminRepository for the "list grants" endpoints. When admin
+// is nil, the list-grants endpoints emit a clean 500 with errorName
+// "MarkingGrantLookupUnsupported" so degraded-mode deployments are still
+// discoverable via their error payload. users may be nil, in which case
+// the grant path skips user existence validation.
+func NewMarkingHandler(repo MarkingRepository, admin MarkingGrantAdminRepository, users UserRepository, auditStore audit.Store) *MarkingHandler {
+	return &MarkingHandler{repo: repo, admin: admin, users: users, auditStore: auditStore}
+}
+
+// RegisterRoutes mounts the endpoints. Callers should wrap the registration
+// in RequirePermission(PermUserManage) so only admins can read or mutate
+// grants.
+func (h *MarkingHandler) RegisterRoutes(r chi.Router) {
+	r.Get("/api/admin/markings", h.ListMarkings)
+	r.Get("/api/admin/markings/{name}/grants", h.ListGrantsByMarking)
+	r.Get("/api/admin/users/{userId}/markings", h.ListGrantsByUser)
+	r.Post("/api/admin/users/{userId}/markings", h.GrantMarking)
+	r.Delete("/api/admin/users/{userId}/markings/{marking}", h.RevokeMarking)
+}
+
+// ListMarkings handles GET /api/admin/markings.
+func (h *MarkingHandler) ListMarkings(w http.ResponseWriter, r *http.Request) {
+	if u := UserFromContext(r.Context()); u == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser", map[string]string{
+			"reason": "no authenticated user in request context",
+		}))
+		return
+	}
+	rows, err := h.repo.ListMarkings(r.Context())
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MarkingListFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+	out := MarkingListResponse{Markings: make([]MarkingResponse, 0, len(rows))}
+	for _, m := range rows {
+		out.Markings = append(out.Markings, toMarkingResponse(m))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// ListGrantsByMarking handles GET /api/admin/markings/{name}/grants.
+func (h *MarkingHandler) ListGrantsByMarking(w http.ResponseWriter, r *http.Request) {
+	h.listGrantsByMarkingFor(w, r, chi.URLParam(r, "name"))
+}
+
+func (h *MarkingHandler) listGrantsByMarkingFor(w http.ResponseWriter, r *http.Request, name string) {
+	if u := UserFromContext(r.Context()); u == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser", map[string]string{
+			"reason": "no authenticated user in request context",
+		}))
+		return
+	}
+	if name == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingMarkingName", map[string]string{
+			"reason": "name path parameter is required",
+		}))
+		return
+	}
+	if h.admin == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MarkingGrantLookupUnsupported", map[string]string{
+			"reason": "marking grant admin repository is not wired on this deployment",
+		}))
+		return
+	}
+	grants, err := h.admin.ListGrantsByMarking(r.Context(), name)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MarkingGrantListFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+	out := MarkingGrantsResponse{Grants: make([]MarkingGrantResponse, 0, len(grants))}
+	for _, g := range grants {
+		out.Grants = append(out.Grants, toMarkingGrantResponse(g))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// ListGrantsByUser handles GET /api/admin/users/{userId}/markings.
+func (h *MarkingHandler) ListGrantsByUser(w http.ResponseWriter, r *http.Request) {
+	h.listGrantsByUserFor(w, r, chi.URLParam(r, "userId"))
+}
+
+func (h *MarkingHandler) listGrantsByUserFor(w http.ResponseWriter, r *http.Request, userID string) {
+	if u := UserFromContext(r.Context()); u == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser", map[string]string{
+			"reason": "no authenticated user in request context",
+		}))
+		return
+	}
+	if userID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingUserID", map[string]string{
+			"reason": "userId path parameter is required",
+		}))
+		return
+	}
+	if h.admin == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MarkingGrantLookupUnsupported", map[string]string{
+			"reason": "marking grant admin repository is not wired on this deployment",
+		}))
+		return
+	}
+	grants, err := h.admin.ListGrantsByUser(r.Context(), userID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MarkingGrantListFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+	out := MarkingGrantsResponse{Grants: make([]MarkingGrantResponse, 0, len(grants))}
+	for _, g := range grants {
+		out.Grants = append(out.Grants, toMarkingGrantResponse(g))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// GrantMarking handles POST /api/admin/users/{userId}/markings.
+func (h *MarkingHandler) GrantMarking(w http.ResponseWriter, r *http.Request) {
+	h.grantMarkingFor(w, r, chi.URLParam(r, "userId"))
+}
+
+func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request, userID string) {
+	u := UserFromContext(r.Context())
+	if u == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser", map[string]string{
+			"reason": "no authenticated user in request context",
+		}))
+		return
+	}
+	if userID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingUserID", map[string]string{
+			"reason": "userId path parameter is required",
+		}))
+		return
+	}
+	var req MarkingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMarkingRequest", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	req.Marking = strings.TrimSpace(req.Marking)
+	if req.Marking == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingMarking", map[string]string{
+			"reason": "marking is required",
+		}))
+		return
+	}
+	if h.users != nil {
+		if _, err := h.users.GetUserByID(r.Context(), userID); err != nil {
+			if errors.Is(err, ErrUserNotFound) {
+				apierror.WriteJSON(w, apierror.NewNotFound("UserNotFound", map[string]string{"userId": userID}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("UserLookupFailed", map[string]string{"reason": err.Error()}))
+			return
+		}
+	}
+	if err := h.validateMarkingExists(r.Context(), req.Marking); err != nil {
+		apierror.WriteJSON(w, err)
+		return
+	}
+	if err := h.repo.GrantMarking(r.Context(), userID, req.Marking, u.ID); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GrantMarkingFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+	if h.auditStore != nil {
+		diff, _ := json.Marshal(map[string]string{"marking": req.Marking})
+		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
+			ActorID:      u.ID,
+			Action:       "marking_grant",
+			ResourceType: "User",
+			ResourceRID:  userID,
+			DiffJSON:     diff,
+		})
+	}
+	names, _ := h.repo.GetUserMarkings(r.Context(), userID)
+	if names == nil {
+		names = []string{}
+	}
+	out := MarkingGrantsResponse{Grants: make([]MarkingGrantResponse, 0, len(names))}
+	for _, n := range names {
+		out.Grants = append(out.Grants, MarkingGrantResponse{UserID: userID, MarkingName: n})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// RevokeMarking handles DELETE /api/admin/users/{userId}/markings/{marking}.
+func (h *MarkingHandler) RevokeMarking(w http.ResponseWriter, r *http.Request) {
+	h.revokeMarkingFor(w, r, chi.URLParam(r, "userId"), chi.URLParam(r, "marking"))
+}
+
+func (h *MarkingHandler) revokeMarkingFor(w http.ResponseWriter, r *http.Request, userID, marking string) {
+	u := UserFromContext(r.Context())
+	if u == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser", map[string]string{
+			"reason": "no authenticated user in request context",
+		}))
+		return
+	}
+	if userID == "" || marking == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingPathParameter", map[string]string{
+			"reason": "userId and marking are required",
+		}))
+		return
+	}
+	if err := h.repo.RevokeMarking(r.Context(), userID, marking); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RevokeMarkingFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+	if h.auditStore != nil {
+		diff, _ := json.Marshal(map[string]string{"marking": marking})
+		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
+			ActorID:      u.ID,
+			Action:       "marking_revoke",
+			ResourceType: "User",
+			ResourceRID:  userID,
+			DiffJSON:     diff,
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateMarkingExists returns an *apierror.APIError when the marking
+// name is not in the markings table; nil when it is. Emits a clean 404 so
+// admin UIs can distinguish "typo'd marking name" from "grant store is
+// down".
+func (h *MarkingHandler) validateMarkingExists(ctx context.Context, name string) *apierror.APIError {
+	rows, err := h.repo.ListMarkings(ctx)
+	if err != nil {
+		return apierror.NewInternal("MarkingLookupFailed", map[string]string{"reason": err.Error()})
+	}
+	for _, m := range rows {
+		if m.Name == name {
+			return nil
+		}
+	}
+	return apierror.NewNotFound("MarkingNotFound", map[string]string{"marking": name})
+}

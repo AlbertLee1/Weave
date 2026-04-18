@@ -136,6 +136,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Per-row security engines indexed by (objectTypeRID → primaryKey → masks): for US-258 cell-level security the engine's in-memory cache is a two-level map keyed first by ObjectType RID then by primary key. Reload rebuilds the whole index in one pass (store returns ORDER BY created_at so iteration is stable). Size() is the only convenience accessor and sums across all PKs for one OT — a per-PK Size would invite callers to reach into engine internals. `Compile` takes (user, otRID, pk) and returns nil on three short-circuit paths (nil user / admin / no masks on cell), keeping the caller's per-row hot path allocation-free when no cell masks apply. Reusing `masking.MaskRule` + `masking.AppliesTo` + `masking.ApplyTransforms` means one rule vocabulary spans column-level (US-257) and cell-level (US-258) — admins don't have to remember which surface accepts which rule names.
 - Composing two layered masking engines in ServiceImpl: column-level masking runs first (broad per-OT/property rules), cell-level masking runs AFTER on the same Properties map. Both mutate in place, so the LAST write wins — this is the right shape for "cell rules sharpen column defaults": a column-wide `partial` on SSN becomes a row-specific `redact` for the one sensitive customer. Document the order-invariant in a test that pins the wire shape (prior art: `TestCellMask_ComposesWithColumnMask`). Never invert the order — running cell first would have column silently overwrite cell's sharper rule.
 - Stringifying `WireObject.PrimaryKey` for per-row lookup keys: PrimaryKey is typed `interface{}` but in practice FormatObject stores a string. Use a tiny `stringifyPrimaryKey(pk interface{}) string` helper that short-circuits on `string` and falls through to `fmt.Sprintf("%v", pk)` for future composite-key shapes. Empty string (nil PK) skips the engine call — no legit row has an empty PK, so skipping is safer than looking up "".
+- Non-ontology-scoped admin pages (`/admin/markings`, future `/admin/users`, `/admin/api-keys`, …) sit at the top level of the React router, NOT under `/admin/:ontology/...`. Gate with `PermissionRoute permission="user.manage"` rather than `AdminGuard` — `AdminGuard` resolves scoped ontology permissions via `:ontology` URL param, which these pages don't have. Sidebar MUST expose the entry in BOTH the `activeOntology ? [...] : []` ternary branches; otherwise the page is reachable by URL but not discoverable from the Dashboard. Prior art: US-259 MarkingAdminPage.
+- Admin-surface repo extension without widening the hot-path interface: when an existing narrow repo interface (e.g. `MarkingRepository`) is referenced by many stubbed mocks (request-hot-path tests), DON'T add the new admin-only methods to it — cascades into every mock. Declare a SECOND narrow interface in the same package (e.g. `MarkingGrantAdminRepository` with `ListGrantsByMarking` + `ListGrantsByUser`), have the concrete `*PG<Foo>Repository` implement both, and wire BOTH fields on `ServerDeps` to the SAME instance in main.go. Degraded-mode routers leave the admin field nil; the handler emits a structured 500 `<Resource>LookupUnsupported` on the list-grants endpoints. Same playbook as `UserRoleRevoker` (US-251) and `MarkingGrantAdminRepository` (US-259).
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -2041,4 +2043,44 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - WireObject.PrimaryKey is typed `interface{}` but `FormatObject` stores a string today. A tiny `stringifyPrimaryKey` helper (string fast-path + `fmt.Sprintf("%v", pk)` fallback) future-proofs the engine lookup for composite keys. Empty / nil PK skips the cell mask call entirely — no legit row has empty PK, and looking up "" would match a (misconfigured) mask row.
   - The applyCellMasking hook is 20 lines of boilerplate (nil checks + loop + Compile + ApplyTransforms). Do NOT try to fold it into applyColumnMasking by adding a PK parameter — the column engine's Compile signature is intentionally (user, otRID) with no PK argument, keeping per-row lookup cost constant. Keeping the two engines independent at the ServiceImpl hook level costs one extra function and zero cross-engine coupling; folding them would leak the PK into the column path and require every column-mask test to supply per-row context it doesn't need.
   - `newGroupLookupFromRepo` satisfies `masking.GroupMembershipLookup`, `rls.GroupMembershipLookup`, AND `cellsec.GroupMembershipLookup` via structural typing. Each engine declares its own interface in its own package with the same `UserGroups(ctx, userID) ([]string, error)` signature; one adapter in cmd/server feeds all three. Resist the urge to promote the interface to a shared package — keeping the interface declaration local is what enables the "narrow interface per package" pattern across the whole codebase, and it costs one extra line per new engine (which is still cheaper than the import-cycle dance a shared package would force).
+---
+
+## 2026-04-19 - US-259 Marking 授予/撤销 UI
+- Backend admin handler at `pkg/auth/marking_handlers.go`:
+  - `GET /api/admin/markings` — list marking definitions
+  - `GET /api/admin/markings/{name}/grants` — roster of users holding the marking
+  - `GET /api/admin/users/{userId}/markings` — grants held by a user (with GrantedAt/GrantedBy)
+  - `POST /api/admin/users/{userId}/markings` — grant + `marking_grant` audit event
+  - `DELETE /api/admin/users/{userId}/markings/{marking}` — revoke + `marking_revoke` audit event
+  - Validates marking name exists (404 MarkingNotFound) and user exists (404 UserNotFound) before grant.
+  - All handlers gated by `UserFromContext != nil` (401 when no caller); wired under `RequirePermission(PermUserManage)` in main.go.
+- Repository split: existing `MarkingRepository` stays the request-hot-path surface (login / OIDC / SAML / marking filter). Added narrow `MarkingGrantAdminRepository` with `ListGrantsByMarking` / `ListGrantsByUser` — full GrantedAt/GrantedBy envelope, empty slice on unknown name. The uncached `*PGMarkingRepository` satisfies both; `cmd/server/main.go` constructs one instance and hands it to `deps.MarkingRepo` + `deps.MarkingAdminRepo`.
+- Frontend page at `web/src/components/admin/MarkingAdminPage.tsx`:
+  - Two-pane layout: left = markings list, right = per-marking grants table.
+  - Grant-to-user modal (react `Modal`) with inline error surface for ApiRequestError.
+  - Confirm-before-revoke dialog — the DELETE only fires after the user clicks the second button.
+  - Route registered at `/admin/markings` under `PermissionRoute permission="user.manage"`.
+  - Sidebar `Markings` entry added to Admin section (shield icon) — visible whether or not an ontology is selected.
+- Tests:
+  - 13 Go handler tests in `pkg/auth/marking_handlers_test.go` cover list/grant/revoke happy paths, 401 on missing auth, 404 on unknown marking/user, 400 on missing marking, 500 on repo error, idempotent revoke, and audit-event capture.
+  - 5 RTL tests in `web/src/components/admin/__tests__/MarkingAdminPage.test.tsx` cover list render + auto-select, marking switch, grant modal flow (POST body + URL), confirm-then-revoke (DELETE URL shape), and empty-state wording.
+- Files changed:
+  - `pkg/auth/marking_repository.go` (added ListGrantsByMarking + ListGrantsByUser)
+  - `pkg/auth/marking_handlers.go` (new — admin handler + MarkingGrantAdminRepository interface)
+  - `pkg/auth/marking_handlers_test.go` (new)
+  - `cmd/server/main.go` (ServerDeps.MarkingRepo/MarkingAdminRepo + PG bootstrap + admin route registration)
+  - `web/src/api/markings.ts` (new)
+  - `web/src/hooks/useMarkings.ts` (new)
+  - `web/src/components/admin/MarkingAdminPage.tsx` (new)
+  - `web/src/components/admin/__tests__/MarkingAdminPage.test.tsx` (new)
+  - `web/src/App.tsx` (route registration under PermissionRoute)
+  - `web/src/components/layout/Sidebar.tsx` (shield icon + Markings nav entry, active without ontology)
+  - `prd.json` (US-259 passes=true + notes)
+- **Learnings for future iterations:**
+  - Admin-surface repo extensions on pre-existing narrow interfaces follow the US-251 playbook: new interface, same concrete `*PG<Foo>Repository` implements it implicitly, wire BOTH fields to the SAME instance in main.go. `deps.MarkingRepo = pgMarkingRepo; deps.MarkingAdminRepo = pgMarkingRepo` is the canonical shape — one PG pool, two wiring points. Resist the urge to widen the hot-path interface (would cascade stubs across marking_filter / login / OIDC / SAML tests).
+  - `/admin/*` routes that are NOT ontology-scoped belong at the top level of the React router tree (`admin/markings`, not `admin/:ontology/markings`). Gate with `PermissionRoute permission="user.manage"` instead of `AdminGuard` which scopes to the ontology param. Sidebar must expose the entry in BOTH the `activeOntology` and `no ontology` branches of `adminItems`, otherwise the page is unreachable from the Dashboard.
+  - Confirm-before-destructive pattern for admin UIs: two separate Modals — one for the input (grant form), one for the confirm (revoke dialog). Each carries its own local error state so a failed grant doesn't corrupt the revoke flow's messaging. The DELETE fires only inside the confirm handler; clicking the row's Revoke button just sets `pendingRevoke` state. Tests can assert the DELETE fetch call is absent between the two user actions.
+  - Audit events for cross-resource actions (grant on User+Marking): `ResourceType: "User"`, `ResourceRID: userID`, diff carries `{"marking": "<name>"}`. Two actions (`marking_grant` / `marking_revoke`) not one (`marking_update` + diff)  — each is a distinct semantic event the auditor wants to filter on. Same shape as US-251 `user_role_grant` / `user_role_revoke`.
+  - `MarkingGrant.GrantedAt` is a `time.Time`; on the wire use RFC3339 UTC via `.UTC().Format(time.RFC3339)` (or the equivalent `"2006-01-02T15:04:05Z07:00"` string) so the SPA's `new Date(...)` round-trips correctly. Format the whole envelope in `toMarkingGrantResponse` — do NOT rely on the default `json.Marshal` of `time.Time`, which leaks Go's native format and makes SDK formatters brittle.
+  - Pattern reuse when coding multiple similar admin pages: clone the API client + hooks + page in that order, keeping the hook query keys as `['markings', '<subquery>', ...args]` so invalidations can nuke entire subtrees with one call. `['markings', 'grantsByMarking']` and `['markings', 'grantsByUser', userId]` under a common root means one `invalidateQueries({ queryKey: ['markings'] })` would bust both — but we invalidate narrowly per mutation to avoid refetching unaffected rosters.
 ---

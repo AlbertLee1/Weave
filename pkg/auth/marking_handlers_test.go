@@ -1,0 +1,338 @@
+package auth
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/liyang/weave/pkg/audit"
+)
+
+// fakeMarkingRepo implements MarkingRepository + MarkingGrantAdminRepository
+// in memory so the admin handler tests exercise every wired path without a
+// PostgreSQL dependency.
+type fakeMarkingRepo struct {
+	markings []Marking
+	grants   map[string]map[string]MarkingGrant // userID -> markingName -> grant
+	grantErr error
+}
+
+func newFakeMarkingRepo() *fakeMarkingRepo {
+	return &fakeMarkingRepo{
+		markings: []Marking{
+			{Name: "PUBLIC", DisplayName: "Public", Description: "", Color: "#10b981"},
+			{Name: "INTERNAL", DisplayName: "Internal", Description: "", Color: "#3b82f6"},
+			{Name: "PII", DisplayName: "PII", Description: "", Color: "#ef4444"},
+			{Name: "SECRET", DisplayName: "Secret", Description: "", Color: "#dc2626"},
+		},
+		grants: map[string]map[string]MarkingGrant{},
+	}
+}
+
+func (f *fakeMarkingRepo) ListMarkings(_ context.Context) ([]Marking, error) {
+	out := make([]Marking, len(f.markings))
+	copy(out, f.markings)
+	return out, nil
+}
+
+func (f *fakeMarkingRepo) GetUserMarkings(_ context.Context, userID string) ([]string, error) {
+	user := f.grants[userID]
+	out := make([]string, 0, len(user))
+	for name := range user {
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+func (f *fakeMarkingRepo) GrantMarking(_ context.Context, userID, markingName, grantedBy string) error {
+	if f.grantErr != nil {
+		return f.grantErr
+	}
+	if f.grants[userID] == nil {
+		f.grants[userID] = map[string]MarkingGrant{}
+	}
+	f.grants[userID][markingName] = MarkingGrant{
+		UserID:      userID,
+		MarkingName: markingName,
+		GrantedAt:   time.Now().UTC(),
+		GrantedBy:   grantedBy,
+	}
+	return nil
+}
+
+func (f *fakeMarkingRepo) RevokeMarking(_ context.Context, userID, markingName string) error {
+	delete(f.grants[userID], markingName)
+	return nil
+}
+
+func (f *fakeMarkingRepo) ListGrantsByMarking(_ context.Context, markingName string) ([]MarkingGrant, error) {
+	out := make([]MarkingGrant, 0)
+	for _, user := range f.grants {
+		if g, ok := user[markingName]; ok {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeMarkingRepo) ListGrantsByUser(_ context.Context, userID string) ([]MarkingGrant, error) {
+	user := f.grants[userID]
+	out := make([]MarkingGrant, 0, len(user))
+	for _, g := range user {
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// fakeAuditStore is a minimal in-memory audit.Store for verifying the
+// grant/revoke handlers emit the expected audit events.
+type fakeMarkingAuditStore struct {
+	events []audit.AuditEvent
+}
+
+func (s *fakeMarkingAuditStore) Insert(_ context.Context, e audit.AuditEvent) error {
+	s.events = append(s.events, e)
+	return nil
+}
+
+func (s *fakeMarkingAuditStore) List(_ context.Context, _ audit.ListFilter) ([]audit.AuditEvent, error) {
+	return s.events, nil
+}
+
+func newMarkingHandlerHarness(t *testing.T) (*MarkingHandler, *fakeMarkingRepo, *fakeUserRepo, *fakeMarkingAuditStore) {
+	t.Helper()
+	markingRepo := newFakeMarkingRepo()
+	users := newFakeUserRepo()
+	users.users["user:alice@example.com"] = &UserRecord{ID: "user:alice@example.com", Email: "alice@example.com"}
+	auditStore := &fakeMarkingAuditStore{}
+	h := NewMarkingHandler(markingRepo, markingRepo, users, auditStore)
+	return h, markingRepo, users, auditStore
+}
+
+func TestMarkingHandler_ListMarkings_200(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/markings", nil))
+	rec := httptest.NewRecorder()
+	h.ListMarkings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp MarkingListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Markings) != 4 {
+		t.Errorf("expected 4 markings, got %d", len(resp.Markings))
+	}
+}
+
+func TestMarkingHandler_ListMarkings_Unauth(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/markings", nil)
+	rec := httptest.NewRecorder()
+	h.ListMarkings(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestMarkingHandler_GrantMarking_200_WritesAudit(t *testing.T) {
+	h, repo, _, auditStore := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII"})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := repo.grants["user:alice@example.com"]["PII"]; !ok {
+		t.Errorf("expected PII grant to be persisted")
+	}
+	if len(auditStore.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(auditStore.events))
+	}
+	ev := auditStore.events[0]
+	if ev.Action != "marking_grant" {
+		t.Errorf("expected action=marking_grant, got %q", ev.Action)
+	}
+	if ev.ResourceRID != "user:alice@example.com" {
+		t.Errorf("expected ResourceRID to be the target user, got %q", ev.ResourceRID)
+	}
+	if ev.ActorID != "user:admin@example.com" {
+		t.Errorf("expected ActorID to be the admin, got %q", ev.ActorID)
+	}
+}
+
+func TestMarkingHandler_GrantMarking_UnknownMarking_404(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "GHOST"})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMarkingHandler_GrantMarking_UnknownUser_404(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII"})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:ghost/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:ghost")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMarkingHandler_GrantMarking_MissingMarking_400(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": ""})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestMarkingHandler_GrantMarking_Unauth(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII"})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestMarkingHandler_RevokeMarking_204_WritesAudit(t *testing.T) {
+	h, repo, _, auditStore := newMarkingHandlerHarness(t)
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin")
+
+	req := withAdmin(httptest.NewRequest(http.MethodDelete, "/api/admin/users/user:alice@example.com/markings/PII", nil))
+	rec := httptest.NewRecorder()
+	h.revokeMarkingFor(rec, req, "user:alice@example.com", "PII")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := repo.grants["user:alice@example.com"]["PII"]; ok {
+		t.Errorf("expected PII grant to be removed")
+	}
+	if len(auditStore.events) != 1 || auditStore.events[0].Action != "marking_revoke" {
+		t.Errorf("expected 1 marking_revoke audit event, got %+v", auditStore.events)
+	}
+}
+
+func TestMarkingHandler_RevokeMarking_Idempotent(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	// No prior grant — revoke should still 204.
+	req := withAdmin(httptest.NewRequest(http.MethodDelete, "/api/admin/users/user:alice@example.com/markings/PII", nil))
+	rec := httptest.NewRecorder()
+	h.revokeMarkingFor(rec, req, "user:alice@example.com", "PII")
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204 (idempotent), got %d", rec.Code)
+	}
+}
+
+func TestMarkingHandler_ListGrantsByMarking_200(t *testing.T) {
+	h, repo, _, _ := newMarkingHandlerHarness(t)
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com")
+	_ = repo.GrantMarking(context.Background(), "user:bob@example.com", "PII", "user:admin@example.com")
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/markings/PII/grants", nil))
+	rec := httptest.NewRecorder()
+	h.listGrantsByMarkingFor(rec, req, "PII")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp MarkingGrantsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Grants) != 2 {
+		t.Errorf("expected 2 grants, got %d", len(resp.Grants))
+	}
+}
+
+func TestMarkingHandler_ListGrantsByMarking_NoAdmin_500(t *testing.T) {
+	// When the admin interface is not wired, we should emit a structured
+	// 500 instead of panicking.
+	markingRepo := newFakeMarkingRepo()
+	h := NewMarkingHandler(markingRepo, nil, nil, nil)
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/markings/PII/grants", nil))
+	rec := httptest.NewRecorder()
+	h.listGrantsByMarkingFor(rec, req, "PII")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMarkingHandler_ListGrantsByUser_200(t *testing.T) {
+	h, repo, _, _ := newMarkingHandlerHarness(t)
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com")
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "SECRET", "user:admin@example.com")
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/users/user:alice@example.com/markings", nil))
+	rec := httptest.NewRecorder()
+	h.listGrantsByUserFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp MarkingGrantsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Grants) != 2 {
+		t.Errorf("expected 2 grants, got %d", len(resp.Grants))
+	}
+	for _, g := range resp.Grants {
+		if g.GrantedBy != "user:admin@example.com" {
+			t.Errorf("expected grantedBy=user:admin@example.com, got %q", g.GrantedBy)
+		}
+		if g.GrantedAt == "" {
+			t.Errorf("expected grantedAt to be populated")
+		}
+	}
+}
+
+func TestMarkingHandler_GrantMarking_RepoError_500(t *testing.T) {
+	h, repo, _, _ := newMarkingHandlerHarness(t)
+	repo.grantErr = errors.New("boom")
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII"})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}

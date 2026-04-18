@@ -872,8 +872,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 60,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/auth/marking_handlers.go exposes /api/admin/markings (list defs), /api/admin/markings/{name}/grants (roster per marking), /api/admin/users/{id}/markings (grants per user), POST + DELETE grant/revoke — audits marking_grant / marking_revoke. Split repo interface: existing MarkingRepository stays the request-hot-path surface (GetUserMarkings on login/OIDC/SAML); new MarkingGrantAdminRepository adds ListGrantsByMarking + ListGrantsByUser with GrantedAt/GrantedBy envelope. Both implemented on the uncached *PGMarkingRepository — wired together in main.go so MarkingRepo + MarkingAdminRepo share one pool. Degraded mode (no PG) leaves both nil + skips registration. Frontend: /admin/markings page (MarkingAdminPage) renders marking-list + per-marking grants table with Grant-to-user modal and confirm-before-revoke dialog. Reachable from sidebar Admin section both with and without an active ontology. Gated via PermissionRoute permission=user.manage. 5 RTL tests + 13 Go handler tests all green; dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-260",

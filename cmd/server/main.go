@@ -162,6 +162,15 @@ type ServerDeps struct {
 	// mounted.
 	GroupRepo auth.GroupRepository
 	RoleRepo  auth.RoleRepository
+	// US-259: Marking grant admin CRUD. MarkingRepo is the canonical
+	// request-hot-path surface (also shared with login / OIDC / SAML JWT
+	// enrichment); MarkingAdminRepo is the admin-side extension that
+	// powers /api/admin/markings list-grants endpoints. Both are
+	// populated from the uncached *PGMarkingRepository in the PG
+	// bootstrap block; nil in degraded mode so the routes are not
+	// mounted.
+	MarkingRepo      auth.MarkingRepository
+	MarkingAdminRepo auth.MarkingGrantAdminRepository
 	// US-256 Row-Level Security. RowPolicyStore is the admin-CRUD surface
 	// over the row_policies table; RowPolicyEngine compiles applicable
 	// predicates into Bleve queries at read time. Both are populated from
@@ -719,6 +728,21 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				})
 		}
 
+		// US-259: Marking grant admin CRUD. Gates behind PermUserManage
+		// alongside the other identity-surface admin handlers. Mounts only
+		// when the marking repo is wired (PG mode); degraded-mode routers
+		// skip registration so the contract-test chi.Walk never sees the
+		// routes. MarkingAdminRepo may be nil if only the request-hot-path
+		// MarkingRepository is wired — the handler surfaces a structured
+		// 500 on the list-grants endpoints in that case.
+		if deps.MarkingRepo != nil {
+			markingHandler := auth.NewMarkingHandler(deps.MarkingRepo, deps.MarkingAdminRepo, deps.UserRepo, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					markingHandler.RegisterRoutes(admin)
+				})
+		}
+
 		// US-256: Row-Level Security admin CRUD. Mounts the
 		// /api/admin/row-policies surface when the RowPolicyStore is wired
 		// (PG mode). The handler is given the RowPolicyEngine pointer so
@@ -901,6 +925,16 @@ func main() {
 		// — cell masks are per-(ObjectType, primaryKey, property) and the
 		// engine's own index keeps lookup O(1) on the read path.
 		deps.CellMaskStore = newPGCellMaskStore(pool)
+		// US-259: marking grant admin surface. The concrete
+		// *PGMarkingRepository satisfies BOTH the request-hot-path
+		// MarkingRepository (used by login / OIDC / SAML JWT enrichment
+		// plus the ObjectSet marking filter) AND the new
+		// MarkingGrantAdminRepository used by /api/admin/markings. We
+		// build one instance and share it so both wiring points see the
+		// same pool / cache semantics.
+		pgMarkingRepo := auth.NewPGMarkingRepository(pool)
+		deps.MarkingRepo = pgMarkingRepo
+		deps.MarkingAdminRepo = pgMarkingRepo
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)

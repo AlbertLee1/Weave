@@ -20,6 +20,7 @@ import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
+import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 
@@ -113,6 +114,14 @@ export default function App() {
                   <AdminGuard>
                     <AuditHistoryPage />
                   </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/markings"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <MarkingAdminPage />
+                  </PermissionRoute>
                 }
               />
             </Route>
