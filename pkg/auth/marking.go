@@ -25,11 +25,27 @@ type Marking struct {
 // loads only the marking names for the request hot path, but admin and
 // audit handlers want the full grant record so they can render who
 // granted what and when.
+//
+// ExpiresAt is the optional auto-revocation instant. A nil pointer means
+// the grant is permanent (pre-US-260 default). A non-nil pointer is the
+// exact timestamp at which the grant stops surfacing in GetUserMarkings;
+// the filter is applied in SQL via `WHERE (expires_at IS NULL OR
+// expires_at > NOW())` so expired grants never reach the OSS hot path.
 type MarkingGrant struct {
 	UserID      string
 	MarkingName string
 	GrantedAt   time.Time
 	GrantedBy   string
+	ExpiresAt   *time.Time
+}
+
+// IsExpired reports whether the grant's expires_at is in the past at now.
+// A permanent grant (ExpiresAt == nil) always returns false.
+func (g MarkingGrant) IsExpired(now time.Time) bool {
+	if g.ExpiresAt == nil {
+		return false
+	}
+	return !now.Before(*g.ExpiresAt)
 }
 
 // EvaluateMarkings implements Foundry-style mandatory access control for

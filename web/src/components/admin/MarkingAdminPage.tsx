@@ -47,6 +47,7 @@ export function MarkingAdminPage() {
 
   const [grantFormOpen, setGrantFormOpen] = useState(false);
   const [grantUserId, setGrantUserId] = useState('');
+  const [grantExpiresInDays, setGrantExpiresInDays] = useState('');
   const [grantError, setGrantError] = useState<string | null>(null);
 
   const [pendingRevoke, setPendingRevoke] = useState<MarkingGrant | null>(null);
@@ -61,13 +62,24 @@ export function MarkingAdminPage() {
     e.preventDefault();
     if (!selectedMarking || !grantUserId.trim()) return;
     setGrantError(null);
+    const days = grantExpiresInDays.trim();
+    const expiresInDays = days ? Number(days) : undefined;
+    if (days && (!Number.isFinite(expiresInDays) || (expiresInDays ?? 0) < 0)) {
+      setGrantError('Expires in days must be a non-negative number');
+      return;
+    }
     try {
       await grantMutation.mutateAsync({
         userId: grantUserId.trim(),
         marking: selectedMarking.name,
+        options:
+          expiresInDays && expiresInDays > 0
+            ? { expiresInDays }
+            : undefined,
       });
       setGrantFormOpen(false);
       setGrantUserId('');
+      setGrantExpiresInDays('');
     } catch (err) {
       if (err instanceof ApiRequestError) {
         setGrantError(`${err.errorName}: ${err.parameters?.reason ?? ''}`);
@@ -230,6 +242,9 @@ export function MarkingAdminPage() {
                         <th className="text-left py-2 px-2 font-semibold">
                           Granted At
                         </th>
+                        <th className="text-left py-2 px-2 font-semibold">
+                          Expires At
+                        </th>
                         <th className="py-2 px-2 w-16"></th>
                       </tr>
                     </thead>
@@ -248,6 +263,12 @@ export function MarkingAdminPage() {
                           </td>
                           <td className="py-2 px-2 text-text-secondary">
                             {formatGrantTimestamp(g.grantedAt)}
+                          </td>
+                          <td
+                            className="py-2 px-2 text-text-secondary"
+                            data-testid={`grant-expires-${g.userId}`}
+                          >
+                            {g.expiresAt ? formatGrantTimestamp(g.expiresAt) : '—'}
                           </td>
                           <td className="py-2 px-2 text-right">
                             <button
@@ -299,6 +320,20 @@ export function MarkingAdminPage() {
               className="w-full rounded-md border border-border/40 bg-bg-secondary px-3 py-2 text-sm font-mono text-text-primary focus:outline-none focus:border-accent-amber/60"
               autoFocus
               required
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="block mb-1 text-text-secondary">
+              Expires in days (optional — leave blank for permanent)
+            </span>
+            <input
+              data-testid="grant-expires-input"
+              type="number"
+              min={0}
+              value={grantExpiresInDays}
+              onChange={(e) => setGrantExpiresInDays(e.target.value)}
+              placeholder="30"
+              className="w-full rounded-md border border-border/40 bg-bg-secondary px-3 py-2 text-sm font-mono text-text-primary focus:outline-none focus:border-accent-amber/60"
             />
           </label>
           {grantError && (

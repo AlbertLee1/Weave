@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -34,8 +35,17 @@ type MarkingGrantAdminRepository interface {
 }
 
 // MarkingRequest is the POST /api/admin/users/{userId}/markings body.
+//
+// ExpiresAt is an optional RFC3339 timestamp at which the grant should
+// auto-expire. Omitting it (or passing an empty string) creates a
+// permanent grant. ExpiresInDays is a convenience knob for the common
+// "30-day temporary access" UX — when > 0 it overrides ExpiresAt with
+// `now() + N days`. Negative values are rejected. When both are present
+// ExpiresInDays wins.
 type MarkingRequest struct {
-	Marking string `json:"marking"`
+	Marking       string `json:"marking"`
+	ExpiresAt     string `json:"expiresAt,omitempty"`
+	ExpiresInDays int    `json:"expiresInDays,omitempty"`
 }
 
 // MarkingResponse is the wire shape for a single marking definition.
@@ -52,11 +62,14 @@ type MarkingListResponse struct {
 }
 
 // MarkingGrantResponse is the wire shape for a single (user, marking) row.
+// ExpiresAt is the RFC3339 formatted auto-revocation timestamp, or the
+// empty string for permanent grants.
 type MarkingGrantResponse struct {
 	UserID      string `json:"userId"`
 	MarkingName string `json:"markingName"`
 	GrantedAt   string `json:"grantedAt"`
 	GrantedBy   string `json:"grantedBy"`
+	ExpiresAt   string `json:"expiresAt,omitempty"`
 }
 
 // MarkingGrantsResponse is returned by both:
@@ -76,12 +89,16 @@ func toMarkingResponse(m Marking) MarkingResponse {
 }
 
 func toMarkingGrantResponse(g MarkingGrant) MarkingGrantResponse {
-	return MarkingGrantResponse{
+	resp := MarkingGrantResponse{
 		UserID:      g.UserID,
 		MarkingName: g.MarkingName,
 		GrantedAt:   g.GrantedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		GrantedBy:   g.GrantedBy,
 	}
+	if g.ExpiresAt != nil {
+		resp.ExpiresAt = g.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00")
+	}
+	return resp
 }
 
 // MarkingHandler implements the admin REST endpoints for marking grants.
@@ -255,6 +272,11 @@ func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request,
 		}))
 		return
 	}
+	expiresAt, apierr := resolveGrantExpiry(req)
+	if apierr != nil {
+		apierror.WriteJSON(w, apierr)
+		return
+	}
 	if h.users != nil {
 		if _, err := h.users.GetUserByID(r.Context(), userID); err != nil {
 			if errors.Is(err, ErrUserNotFound) {
@@ -269,12 +291,16 @@ func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request,
 		apierror.WriteJSON(w, err)
 		return
 	}
-	if err := h.repo.GrantMarking(r.Context(), userID, req.Marking, u.ID); err != nil {
+	if err := h.repo.GrantMarking(r.Context(), userID, req.Marking, u.ID, expiresAt); err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("GrantMarkingFailed", map[string]string{"reason": err.Error()}))
 		return
 	}
 	if h.auditStore != nil {
-		diff, _ := json.Marshal(map[string]string{"marking": req.Marking})
+		diffMap := map[string]string{"marking": req.Marking}
+		if expiresAt != nil {
+			diffMap["expiresAt"] = expiresAt.UTC().Format("2006-01-02T15:04:05Z07:00")
+		}
+		diff, _ := json.Marshal(diffMap)
 		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
 			ActorID:      u.ID,
 			Action:       "marking_grant",
@@ -294,6 +320,35 @@ func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// resolveGrantExpiry converts the user-facing ExpiresAt / ExpiresInDays
+// knobs into a normalised *time.Time. Returns (nil, nil) for permanent
+// grants, (*time.Time, nil) for time-limited grants, and (nil, *APIError)
+// for invalid input. ExpiresInDays > 0 wins over ExpiresAt; ExpiresAt is
+// parsed as RFC3339.
+func resolveGrantExpiry(req MarkingRequest) (*time.Time, *apierror.APIError) {
+	if req.ExpiresInDays < 0 {
+		return nil, apierror.NewInvalidParameter("InvalidExpiresInDays", map[string]string{
+			"reason": "expiresInDays must be zero or positive",
+		})
+	}
+	if req.ExpiresInDays > 0 {
+		t := time.Now().UTC().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
+		return &t, nil
+	}
+	s := strings.TrimSpace(req.ExpiresAt)
+	if s == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, apierror.NewInvalidParameter("InvalidExpiresAt", map[string]string{
+			"reason": "expiresAt must be an RFC3339 timestamp",
+		})
+	}
+	t = t.UTC()
+	return &t, nil
 }
 
 // RevokeMarking handles DELETE /api/admin/users/{userId}/markings/{marking}.

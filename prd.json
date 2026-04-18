@@ -886,8 +886,8 @@
         "Tests pass"
       ],
       "priority": 61,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "迁移 000058 为 user_markings 增加 expires_at TIMESTAMPTZ (+ 部分索引 expires_at IS NOT NULL)。MarkingRepository.GrantMarking 接受 *time.Time 过期时间；GetUserMarkings / ListGrantsByMarking / ListGrantsByUser 在 SQL 层以 WHERE (expires_at IS NULL OR expires_at > NOW()) 过滤过期授予，无需后台扫描。API POST /api/admin/users/{userId}/markings 新增 expiresAt (RFC3339) 和 expiresInDays (便捷档) 入参，优先级 expiresInDays > expiresAt；响应 MarkingGrantResponse 新增 expiresAt。前端管理页在授权表单中加入 Expires in days 输入、在授予表格中显示 Expires At 列。新增 5 个 handler 单测 + 2 个 PG 集成测试 + 2 个 UI 测试；所有 marking filter / login / OIDC / SAML / MFA / session 测试继续通过。"
     },
     {
       "id": "US-261",

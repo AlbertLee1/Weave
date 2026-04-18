@@ -5,6 +5,7 @@ import {
   listGrantsByUser,
   listMarkings,
   revokeMarking,
+  type GrantMarkingOptions,
 } from '../api/markings';
 
 export function useMarkings() {
@@ -33,8 +34,15 @@ export function useGrantsByUser(userId: string | null) {
 export function useGrantMarking() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, marking }: { userId: string; marking: string }) =>
-      grantMarking(userId, marking),
+    mutationFn: ({
+      userId,
+      marking,
+      options,
+    }: {
+      userId: string;
+      marking: string;
+      options?: GrantMarkingOptions;
+    }) => grantMarking(userId, marking, options),
     onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: ['markings', 'grantsByMarking'] });
       qc.invalidateQueries({

@@ -12,6 +12,12 @@ export interface MarkingGrant {
   markingName: string;
   grantedAt: string;
   grantedBy: string;
+  expiresAt?: string;
+}
+
+export interface GrantMarkingOptions {
+  expiresAt?: string;
+  expiresInDays?: number;
 }
 
 interface MarkingListResponse {
@@ -43,11 +49,21 @@ export async function listGrantsByUser(userId: string): Promise<MarkingGrant[]> 
   return resp.grants ?? [];
 }
 
-export async function grantMarking(userId: string, marking: string): Promise<MarkingGrant[]> {
+export async function grantMarking(
+  userId: string,
+  marking: string,
+  options?: GrantMarkingOptions,
+): Promise<MarkingGrant[]> {
+  const body: Record<string, string | number> = { marking };
+  if (options?.expiresInDays && options.expiresInDays > 0) {
+    body.expiresInDays = options.expiresInDays;
+  } else if (options?.expiresAt) {
+    body.expiresAt = options.expiresAt;
+  }
   const resp = await request<MarkingGrantsResponse>(
     'POST',
     `/api/admin/users/${encodeURIComponent(userId)}/markings`,
-    { marking },
+    body,
   );
   return resp.grants ?? [];
 }

@@ -238,6 +238,85 @@ describe('MarkingAdminPage', () => {
     });
   });
 
+  it('sends expiresInDays when a time-limited grant is requested', async () => {
+    const calls = installFetch((call) => {
+      if (call.url.endsWith('/api/admin/markings') && call.method === 'GET') {
+        return jsonResponse({ markings: MARKINGS });
+      }
+      if (
+        call.url.includes('/api/admin/markings/PUBLIC/grants') &&
+        call.method === 'GET'
+      ) {
+        return jsonResponse({ grants: [] });
+      }
+      if (
+        call.url.includes('/api/admin/users/') &&
+        call.url.endsWith('/markings') &&
+        call.method === 'POST'
+      ) {
+        return jsonResponse({
+          grants: [
+            { userId: 'user:charlie@example.com', markingName: 'PUBLIC' },
+          ],
+        });
+      }
+      return jsonResponse({ grants: [] });
+    });
+
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('grants-empty')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId('grant-button'));
+    await userEvent.type(
+      await screen.findByTestId('grant-user-input'),
+      'user:charlie@example.com',
+    );
+    await userEvent.type(screen.getByTestId('grant-expires-input'), '30');
+    await userEvent.click(screen.getByRole('button', { name: /^Grant$/i }));
+
+    await waitFor(() => {
+      const postCall = calls.find(
+        (c) =>
+          c.method === 'POST' &&
+          c.url.includes('/api/admin/users/') &&
+          c.url.endsWith('/markings'),
+      );
+      expect(postCall).toBeDefined();
+      expect(postCall!.body).toContain('"expiresInDays":30');
+    });
+  });
+
+  it('renders the expires-at column when the grant carries an expiry', async () => {
+    installFetch((call) => {
+      if (call.url.endsWith('/api/admin/markings') && call.method === 'GET') {
+        return jsonResponse({ markings: MARKINGS });
+      }
+      if (call.url.includes('/api/admin/markings/PUBLIC/grants')) {
+        return jsonResponse({
+          grants: [
+            {
+              userId: 'user:alice@example.com',
+              markingName: 'PUBLIC',
+              grantedAt: '2026-04-19T10:00:00Z',
+              grantedBy: 'user:admin@example.com',
+              expiresAt: '2026-05-19T10:00:00Z',
+            },
+          ],
+        });
+      }
+      return jsonResponse({ grants: [] });
+    });
+
+    renderPage();
+    const cell = await screen.findByTestId(
+      'grant-expires-user:alice@example.com',
+    );
+    expect(cell.textContent?.trim().length ?? 0).toBeGreaterThan(1);
+    expect(cell.textContent).not.toBe('—');
+  });
+
   it('renders an empty state when no grants exist', async () => {
     installFetch((call) => {
       if (call.url.endsWith('/api/admin/markings') && call.method === 'GET') {

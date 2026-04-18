@@ -5,6 +5,7 @@ package auth_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/internal/testutil"
@@ -71,7 +72,7 @@ func TestMarkingRepository_GrantMarking_Persists(t *testing.T) {
 	repo, _ := setupMarkingRepo(t)
 	ctx := context.Background()
 
-	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin"); err != nil {
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", nil); err != nil {
 		t.Fatalf("GrantMarking: %v", err)
 	}
 
@@ -98,10 +99,10 @@ func TestMarkingRepository_GrantMarking_Idempotent(t *testing.T) {
 	repo, _ := setupMarkingRepo(t)
 	ctx := context.Background()
 
-	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin"); err != nil {
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", nil); err != nil {
 		t.Fatalf("first GrantMarking: %v", err)
 	}
-	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin"); err != nil {
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", nil); err != nil {
 		t.Fatalf("second GrantMarking should be idempotent: %v", err)
 	}
 
@@ -127,7 +128,7 @@ func TestMarkingRepository_RevokeMarking(t *testing.T) {
 	repo, _ := setupMarkingRepo(t)
 	ctx := context.Background()
 
-	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin"); err != nil {
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", nil); err != nil {
 		t.Fatalf("GrantMarking: %v", err)
 	}
 	if err := repo.RevokeMarking(ctx, "user:alice@example.com", "PII"); err != nil {
@@ -175,7 +176,7 @@ func TestMarkingRepository_GetUserMarkings_Multiple(t *testing.T) {
 
 	grants := []string{"PUBLIC", "INTERNAL", "CONFIDENTIAL"}
 	for _, m := range grants {
-		if err := repo.GrantMarking(ctx, "user:alice@example.com", m, "user:admin"); err != nil {
+		if err := repo.GrantMarking(ctx, "user:alice@example.com", m, "user:admin", nil); err != nil {
 			t.Fatalf("GrantMarking %s: %v", m, err)
 		}
 	}
@@ -194,6 +195,84 @@ func TestMarkingRepository_GetUserMarkings_Multiple(t *testing.T) {
 	for _, want := range grants {
 		if !gotSet[want] {
 			t.Errorf("expected grant %q to be present, got %v", want, got)
+		}
+	}
+}
+
+// TestMarkingRepository_GrantMarking_Expiry validates that a time-limited
+// grant is persisted with expires_at = the supplied pointer, and that
+// GetUserMarkings / ListGrantsByUser skip a grant whose expires_at is in
+// the past (auto-revocation by query filter, no background sweep).
+func TestMarkingRepository_GrantMarking_Expiry(t *testing.T) {
+	repo, _ := setupMarkingRepo(t)
+	ctx := context.Background()
+
+	future := time.Now().Add(24 * time.Hour)
+	past := time.Now().Add(-1 * time.Hour)
+
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", &future); err != nil {
+		t.Fatalf("GrantMarking PII future: %v", err)
+	}
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "SECRET", "user:admin", &past); err != nil {
+		t.Fatalf("GrantMarking SECRET past: %v", err)
+	}
+
+	names, err := repo.GetUserMarkings(ctx, "user:alice@example.com")
+	if err != nil {
+		t.Fatalf("GetUserMarkings: %v", err)
+	}
+	piiFound, secretFound := false, false
+	for _, n := range names {
+		if n == "PII" {
+			piiFound = true
+		}
+		if n == "SECRET" {
+			secretFound = true
+		}
+	}
+	if !piiFound {
+		t.Errorf("expected non-expired PII grant to surface, got %v", names)
+	}
+	if secretFound {
+		t.Errorf("expected expired SECRET grant to be filtered out, got %v", names)
+	}
+
+	grants, err := repo.ListGrantsByUser(ctx, "user:alice@example.com")
+	if err != nil {
+		t.Fatalf("ListGrantsByUser: %v", err)
+	}
+	for _, g := range grants {
+		if g.MarkingName == "PII" && g.ExpiresAt == nil {
+			t.Errorf("expected PII ExpiresAt to be populated")
+		}
+		if g.MarkingName == "SECRET" {
+			t.Errorf("expired SECRET grant must not appear in ListGrantsByUser, got %+v", g)
+		}
+	}
+}
+
+// TestMarkingRepository_GrantMarking_ReGrantClearsExpiry verifies that
+// re-granting a marking without an expires_at converts a previously
+// time-limited grant into a permanent one (ON CONFLICT DO UPDATE path).
+func TestMarkingRepository_GrantMarking_ReGrantClearsExpiry(t *testing.T) {
+	repo, _ := setupMarkingRepo(t)
+	ctx := context.Background()
+
+	future := time.Now().Add(24 * time.Hour)
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", &future); err != nil {
+		t.Fatalf("GrantMarking with expiry: %v", err)
+	}
+	if err := repo.GrantMarking(ctx, "user:alice@example.com", "PII", "user:admin", nil); err != nil {
+		t.Fatalf("GrantMarking permanent re-grant: %v", err)
+	}
+
+	grants, err := repo.ListGrantsByUser(ctx, "user:alice@example.com")
+	if err != nil {
+		t.Fatalf("ListGrantsByUser: %v", err)
+	}
+	for _, g := range grants {
+		if g.MarkingName == "PII" && g.ExpiresAt != nil {
+			t.Errorf("expected ExpiresAt cleared after permanent re-grant, got %v", g.ExpiresAt)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package oss_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/oss"
@@ -32,7 +33,7 @@ func (s *stubMarkingRepo) GetUserMarkings(_ context.Context, userID string) ([]s
 	return s.userGrants[userID], nil
 }
 
-func (s *stubMarkingRepo) GrantMarking(_ context.Context, _, _, _ string) error {
+func (s *stubMarkingRepo) GrantMarking(_ context.Context, _, _, _ string, _ *time.Time) error {
 	return s.err
 }
 

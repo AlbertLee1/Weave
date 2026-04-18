@@ -43,13 +43,17 @@ func (f *fakeMarkingRepo) ListMarkings(_ context.Context) ([]Marking, error) {
 func (f *fakeMarkingRepo) GetUserMarkings(_ context.Context, userID string) ([]string, error) {
 	user := f.grants[userID]
 	out := make([]string, 0, len(user))
-	for name := range user {
+	now := time.Now()
+	for name, g := range user {
+		if g.IsExpired(now) {
+			continue
+		}
 		out = append(out, name)
 	}
 	return out, nil
 }
 
-func (f *fakeMarkingRepo) GrantMarking(_ context.Context, userID, markingName, grantedBy string) error {
+func (f *fakeMarkingRepo) GrantMarking(_ context.Context, userID, markingName, grantedBy string, expiresAt *time.Time) error {
 	if f.grantErr != nil {
 		return f.grantErr
 	}
@@ -61,6 +65,7 @@ func (f *fakeMarkingRepo) GrantMarking(_ context.Context, userID, markingName, g
 		MarkingName: markingName,
 		GrantedAt:   time.Now().UTC(),
 		GrantedBy:   grantedBy,
+		ExpiresAt:   expiresAt,
 	}
 	return nil
 }
@@ -72,8 +77,12 @@ func (f *fakeMarkingRepo) RevokeMarking(_ context.Context, userID, markingName s
 
 func (f *fakeMarkingRepo) ListGrantsByMarking(_ context.Context, markingName string) ([]MarkingGrant, error) {
 	out := make([]MarkingGrant, 0)
+	now := time.Now()
 	for _, user := range f.grants {
 		if g, ok := user[markingName]; ok {
+			if g.IsExpired(now) {
+				continue
+			}
 			out = append(out, g)
 		}
 	}
@@ -83,7 +92,11 @@ func (f *fakeMarkingRepo) ListGrantsByMarking(_ context.Context, markingName str
 func (f *fakeMarkingRepo) ListGrantsByUser(_ context.Context, userID string) ([]MarkingGrant, error) {
 	user := f.grants[userID]
 	out := make([]MarkingGrant, 0, len(user))
+	now := time.Now()
 	for _, g := range user {
+		if g.IsExpired(now) {
+			continue
+		}
 		out = append(out, g)
 	}
 	return out, nil
@@ -228,7 +241,7 @@ func TestMarkingHandler_GrantMarking_Unauth(t *testing.T) {
 
 func TestMarkingHandler_RevokeMarking_204_WritesAudit(t *testing.T) {
 	h, repo, _, auditStore := newMarkingHandlerHarness(t)
-	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin")
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin", nil)
 
 	req := withAdmin(httptest.NewRequest(http.MethodDelete, "/api/admin/users/user:alice@example.com/markings/PII", nil))
 	rec := httptest.NewRecorder()
@@ -260,8 +273,8 @@ func TestMarkingHandler_RevokeMarking_Idempotent(t *testing.T) {
 
 func TestMarkingHandler_ListGrantsByMarking_200(t *testing.T) {
 	h, repo, _, _ := newMarkingHandlerHarness(t)
-	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com")
-	_ = repo.GrantMarking(context.Background(), "user:bob@example.com", "PII", "user:admin@example.com")
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com", nil)
+	_ = repo.GrantMarking(context.Background(), "user:bob@example.com", "PII", "user:admin@example.com", nil)
 
 	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/markings/PII/grants", nil))
 	rec := httptest.NewRecorder()
@@ -296,8 +309,8 @@ func TestMarkingHandler_ListGrantsByMarking_NoAdmin_500(t *testing.T) {
 
 func TestMarkingHandler_ListGrantsByUser_200(t *testing.T) {
 	h, repo, _, _ := newMarkingHandlerHarness(t)
-	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com")
-	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "SECRET", "user:admin@example.com")
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com", nil)
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "SECRET", "user:admin@example.com", nil)
 
 	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/users/user:alice@example.com/markings", nil))
 	rec := httptest.NewRecorder()
@@ -320,6 +333,139 @@ func TestMarkingHandler_ListGrantsByUser_200(t *testing.T) {
 		if g.GrantedAt == "" {
 			t.Errorf("expected grantedAt to be populated")
 		}
+	}
+}
+
+func TestMarkingHandler_GrantMarking_ExpiresInDays_PersistsExpiry(t *testing.T) {
+	h, repo, _, auditStore := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII", "expiresInDays": 30})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	grant, ok := repo.grants["user:alice@example.com"]["PII"]
+	if !ok {
+		t.Fatalf("expected PII grant to be persisted")
+	}
+	if grant.ExpiresAt == nil {
+		t.Fatalf("expected ExpiresAt to be populated")
+	}
+	// Expires ≈ now + 30d; allow a generous window for scheduling jitter.
+	delta := time.Until(*grant.ExpiresAt)
+	if delta < 29*24*time.Hour || delta > 31*24*time.Hour {
+		t.Errorf("expected ~30 days in the future, got %s", delta)
+	}
+	if len(auditStore.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(auditStore.events))
+	}
+	if !bytes.Contains(auditStore.events[0].DiffJSON, []byte("expiresAt")) {
+		t.Errorf("expected audit diff to record expiresAt, got %s", auditStore.events[0].DiffJSON)
+	}
+}
+
+func TestMarkingHandler_GrantMarking_ExpiresAt_ParsesRFC3339(t *testing.T) {
+	h, repo, _, _ := newMarkingHandlerHarness(t)
+
+	expected := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second)
+	body, _ := json.Marshal(map[string]any{
+		"marking":   "PII",
+		"expiresAt": expected.Format(time.RFC3339),
+	})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	grant := repo.grants["user:alice@example.com"]["PII"]
+	if grant.ExpiresAt == nil {
+		t.Fatalf("expected ExpiresAt to be populated")
+	}
+	if !grant.ExpiresAt.Equal(expected) {
+		t.Errorf("expected ExpiresAt=%s, got %s", expected, grant.ExpiresAt)
+	}
+}
+
+func TestMarkingHandler_GrantMarking_InvalidExpiresAt_400(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII", "expiresAt": "not-a-date"})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestMarkingHandler_GrantMarking_NegativeExpiresInDays_400(t *testing.T) {
+	h, _, _, _ := newMarkingHandlerHarness(t)
+
+	body, _ := json.Marshal(map[string]any{"marking": "PII", "expiresInDays": -5})
+	req := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/users/user:alice@example.com/markings", bytes.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.grantMarkingFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestMarkingHandler_ListGrantsByUser_IncludesExpiresAt(t *testing.T) {
+	h, repo, _, _ := newMarkingHandlerHarness(t)
+	future := time.Now().Add(48 * time.Hour)
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com", &future)
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/users/user:alice@example.com/markings", nil))
+	rec := httptest.NewRecorder()
+	h.listGrantsByUserFor(rec, req, "user:alice@example.com")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp MarkingGrantsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Grants) != 1 || resp.Grants[0].ExpiresAt == "" {
+		t.Errorf("expected ExpiresAt populated on the wire, got %+v", resp.Grants)
+	}
+}
+
+func TestMarkingHandler_GetUserMarkings_FiltersExpired(t *testing.T) {
+	// Stub fake repo's expiry filter directly — expired grants must be
+	// invisible both to GetUserMarkings (MarkingFilter hot path) and to
+	// the admin ListGrantsByUser surface.
+	h, repo, _, _ := newMarkingHandlerHarness(t)
+	past := time.Now().Add(-1 * time.Hour)
+	_ = repo.GrantMarking(context.Background(), "user:alice@example.com", "PII", "user:admin@example.com", &past)
+
+	names, err := repo.GetUserMarkings(context.Background(), "user:alice@example.com")
+	if err != nil {
+		t.Fatalf("GetUserMarkings: %v", err)
+	}
+	for _, n := range names {
+		if n == "PII" {
+			t.Errorf("expired PII must not appear in GetUserMarkings, got %v", names)
+		}
+	}
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/users/user:alice@example.com/markings", nil))
+	rec := httptest.NewRecorder()
+	h.listGrantsByUserFor(rec, req, "user:alice@example.com")
+
+	var resp MarkingGrantsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Grants) != 0 {
+		t.Errorf("expected expired grant filtered, got %+v", resp.Grants)
 	}
 }
 
