@@ -936,6 +936,45 @@ func main() {
 		}
 	}
 
+	// US-252: LDAP/AD periodic directory sync. Constructed AFTER the PG
+	// pool so the sync store can write through. Errors degrade loudly —
+	// a misconfigured directory leaves the rest of the server running so
+	// password / OIDC / SAML logins keep working.
+	if cfg.LDAP.Enabled {
+		if deps.PGPool == nil {
+			log.Printf("[LDAP] WARNING: LDAP.Enabled=true but no PG pool — directory sync disabled")
+		} else {
+			ldapCfg := auth.LDAPSyncConfig{
+				URL:                  cfg.LDAP.URL,
+				BindDN:               cfg.LDAP.BindDN,
+				BindPassword:         cfg.LDAP.BindPassword,
+				StartTLS:             cfg.LDAP.StartTLS,
+				InsecureSkip:         cfg.LDAP.InsecureSkip,
+				UserBaseDN:           cfg.LDAP.UserBaseDN,
+				UserFilter:           cfg.LDAP.UserFilter,
+				UserEmailAttribute:   cfg.LDAP.UserEmailAttribute,
+				UserNameAttribute:    cfg.LDAP.UserNameAttribute,
+				UserLoginAttribute:   cfg.LDAP.UserLoginAttribute,
+				GroupBaseDN:          cfg.LDAP.GroupBaseDN,
+				GroupFilter:          cfg.LDAP.GroupFilter,
+				GroupNameAttribute:   cfg.LDAP.GroupNameAttribute,
+				GroupMemberAttribute: cfg.LDAP.GroupMemberAttribute,
+				GroupDescriptionAttr: cfg.LDAP.GroupDescriptionAttr,
+			}
+			if err := ldapCfg.Validate(); err != nil {
+				log.Printf("[LDAP] WARNING: %v — directory sync disabled", err)
+			} else {
+				ldapStore := auth.NewPGLDAPSyncStore(deps.PGPool)
+				ldapSvc := auth.NewLDAPSyncService(ldapCfg, auth.NewGoLDAPClientFactory(ldapCfg), ldapStore)
+				ldapSched := auth.NewLDAPSyncScheduler(ldapSvc, cfg.LDAP.Interval)
+				ldapSched.Start(ctx)
+				defer ldapSched.Stop()
+				log.Printf("[LDAP] enabled: url=%s user_base=%s interval=%s",
+					cfg.LDAP.URL, cfg.LDAP.UserBaseDN, ldapSched.Interval())
+			}
+		}
+	}
+
 	// 2. Index Manager
 	deps.IndexMgr = index.NewManager(cfg.DataDir)
 	defer deps.IndexMgr.Close()

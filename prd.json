@@ -773,8 +773,8 @@
         "Tests pass"
       ],
       "priority": 53,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000052 adds users.disabled_at + users.ldap_dn + users.last_synced_at + groups.ldap_dn + groups.last_synced_at + ldap_sync_runs audit table; pkg/auth/ldap.go houses LDAPSyncConfig + narrow LDAPClient interface (prod = goLDAPClient wrapping go-ldap/ldap/v3 with paged search + StartTLS + bind, tests stub); LDAPSyncStore narrow CRUD on *PGLDAPSyncStore (separate file ldap_repository.go, kept off UserRepository to avoid mock cascade); LDAPSyncService.Sync runs users-pull → upsert (ldap_dn keyed) → mark orphans disabled (only for ldap_dn IS NOT NULL rows so locally-provisioned password users untouched) → groups-pull → upsert + ReplaceGroupMembers; LDAPSyncScheduler runs initial sync on Start then ticks every cfg.Interval (default 1h, configurable via WEAVE_LDAP_INTERVAL); LDAPConfig added to internal/config with WEAVE_LDAP_* env wiring + AUTH_MODE=ldap shorthand + Validate() gate on URL/UserBaseDN; cmd/server/main.go bootstrap mirrors OIDC/SAML pattern (gated on PG pool + Validate, degraded loudly); 14 unit tests with stub client + in-memory store cover validate / defaults / happy-path / orphan-disable / re-enable-on-return / unknown-member-DN / store-error-still-records-run / unwired-service / membership-shrink / scheduler-runs-immediately + 4 config tests. Pure Go (CGO_ENABLED=0 build clean)."
     },
     {
       "id": "US-253",

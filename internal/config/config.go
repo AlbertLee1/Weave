@@ -106,6 +106,36 @@ type SAMLConfig struct {
 	AttributeName      string
 }
 
+// LDAPConfig controls the periodic LDAP/AD directory sync (US-252). When
+// Enabled is true AND URL + UserBaseDN are populated, the server starts a
+// background scheduler that pulls users + groups from the directory at
+// the configured Interval (default 1h). Users that vanish from the
+// directory are soft-marked disabled; users that reappear are re-enabled.
+// Errors degrade loudly — a misconfigured directory leaves the rest of
+// the server running, so password / OIDC / SAML logins keep working.
+type LDAPConfig struct {
+	Enabled  bool
+	Interval time.Duration
+
+	URL          string // ldap[s]://host:port
+	BindDN       string
+	BindPassword string
+	StartTLS     bool
+	InsecureSkip bool // TEST ONLY — disables cert verification
+
+	UserBaseDN         string
+	UserFilter         string
+	UserEmailAttribute string
+	UserNameAttribute  string
+	UserLoginAttribute string
+
+	GroupBaseDN          string
+	GroupFilter          string
+	GroupNameAttribute   string
+	GroupMemberAttribute string
+	GroupDescriptionAttr string
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -124,6 +154,7 @@ type Config struct {
 	IngestRateLimit IngestRateLimitConfig
 	OIDC            OIDCConfig
 	SAML            SAMLConfig
+	LDAP            LDAPConfig
 }
 
 func Load() (*Config, error) {
@@ -384,6 +415,81 @@ func Load() (*Config, error) {
 		cfg.SAML.AttributeName = v
 	}
 
+	// LDAP/AD directory sync (US-252). AUTH_MODE=ldap is shorthand for
+	// "enable LDAP sync alongside the regular auth pipeline"; operators
+	// can also leave AUTH_MODE=jwt and just set WEAVE_LDAP_ENABLED=true
+	// to keep password/OIDC/SAML running alongside directory sync.
+	if cfg.AuthMode == "ldap" {
+		cfg.LDAP.Enabled = true
+	}
+	if v := os.Getenv("WEAVE_LDAP_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_LDAP_ENABLED %q: %w", v, err)
+		}
+		cfg.LDAP.Enabled = b
+	}
+	if v := os.Getenv("WEAVE_LDAP_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_LDAP_INTERVAL %q: %w", v, err)
+		}
+		cfg.LDAP.Interval = d
+	}
+	if v := os.Getenv("WEAVE_LDAP_URL"); v != "" {
+		cfg.LDAP.URL = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_BIND_DN"); v != "" {
+		cfg.LDAP.BindDN = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_BIND_PASSWORD"); v != "" {
+		cfg.LDAP.BindPassword = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_STARTTLS"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_LDAP_STARTTLS %q: %w", v, err)
+		}
+		cfg.LDAP.StartTLS = b
+	}
+	if v := os.Getenv("WEAVE_LDAP_INSECURE_SKIP_VERIFY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_LDAP_INSECURE_SKIP_VERIFY %q: %w", v, err)
+		}
+		cfg.LDAP.InsecureSkip = b
+	}
+	if v := os.Getenv("WEAVE_LDAP_USER_BASE_DN"); v != "" {
+		cfg.LDAP.UserBaseDN = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_USER_FILTER"); v != "" {
+		cfg.LDAP.UserFilter = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_USER_EMAIL_ATTR"); v != "" {
+		cfg.LDAP.UserEmailAttribute = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_USER_NAME_ATTR"); v != "" {
+		cfg.LDAP.UserNameAttribute = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_USER_LOGIN_ATTR"); v != "" {
+		cfg.LDAP.UserLoginAttribute = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_GROUP_BASE_DN"); v != "" {
+		cfg.LDAP.GroupBaseDN = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_GROUP_FILTER"); v != "" {
+		cfg.LDAP.GroupFilter = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_GROUP_NAME_ATTR"); v != "" {
+		cfg.LDAP.GroupNameAttribute = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_GROUP_MEMBER_ATTR"); v != "" {
+		cfg.LDAP.GroupMemberAttribute = v
+	}
+	if v := os.Getenv("WEAVE_LDAP_GROUP_DESCRIPTION_ATTR"); v != "" {
+		cfg.LDAP.GroupDescriptionAttr = v
+	}
+
 	return cfg, nil
 }
 
@@ -460,6 +566,20 @@ func (c *Config) Validate() error {
 	if c.Functions.Enabled && strings.TrimSpace(c.Functions.BaseURL) == "" {
 		problems = append(problems,
 			"Functions.Enabled=true requires WEAVE_FUNCTIONS_BASE_URL to be set")
+	}
+
+	if c.LDAP.Enabled {
+		var missing []string
+		if strings.TrimSpace(c.LDAP.URL) == "" {
+			missing = append(missing, "WEAVE_LDAP_URL")
+		}
+		if strings.TrimSpace(c.LDAP.UserBaseDN) == "" {
+			missing = append(missing, "WEAVE_LDAP_USER_BASE_DN")
+		}
+		if len(missing) > 0 {
+			problems = append(problems,
+				"LDAP.Enabled=true but missing: "+strings.Join(missing, ", "))
+		}
 	}
 
 	if len(problems) == 0 {

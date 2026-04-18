@@ -586,3 +586,76 @@ func TestConfig_Validate_SAML_FullyPopulatedPasses(t *testing.T) {
 		t.Fatalf("expected SAML-full config to validate, got: %v", err)
 	}
 }
+
+// US-252: LDAP config loading + validation.
+
+func TestLoadConfig_LDAP_AuthModeShortcut(t *testing.T) {
+	t.Setenv("AUTH_MODE", "ldap")
+	t.Setenv("WEAVE_LDAP_URL", "ldap://dc.example.com:389")
+	t.Setenv("WEAVE_LDAP_USER_BASE_DN", "ou=users,dc=example,dc=com")
+	t.Setenv("WEAVE_LDAP_GROUP_BASE_DN", "ou=groups,dc=example,dc=com")
+	t.Setenv("WEAVE_LDAP_BIND_DN", "cn=svc,dc=example,dc=com")
+	t.Setenv("WEAVE_LDAP_BIND_PASSWORD", "shh")
+	t.Setenv("WEAVE_LDAP_INTERVAL", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.LDAP.Enabled {
+		t.Error("AUTH_MODE=ldap should set LDAP.Enabled=true")
+	}
+	if cfg.LDAP.URL != "ldap://dc.example.com:389" {
+		t.Errorf("URL=%q", cfg.LDAP.URL)
+	}
+	if cfg.LDAP.UserBaseDN != "ou=users,dc=example,dc=com" {
+		t.Errorf("UserBaseDN=%q", cfg.LDAP.UserBaseDN)
+	}
+	if cfg.LDAP.BindDN != "cn=svc,dc=example,dc=com" {
+		t.Errorf("BindDN=%q", cfg.LDAP.BindDN)
+	}
+	if cfg.LDAP.Interval != 30*time.Minute {
+		t.Errorf("Interval=%s, want 30m", cfg.LDAP.Interval)
+	}
+}
+
+func TestLoadConfig_LDAP_DisabledByDefault(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.LDAP.Enabled {
+		t.Error("LDAP should default to Enabled=false")
+	}
+}
+
+func TestConfig_Validate_LDAP_MissingFields(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.LDAP.Enabled = true
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error when LDAP.Enabled=true but no URL/BaseDN set")
+	}
+	msg := err.Error()
+	for _, need := range []string{
+		"WEAVE_LDAP_URL",
+		"WEAVE_LDAP_USER_BASE_DN",
+	} {
+		if !strings.Contains(msg, need) {
+			t.Errorf("expected error to mention %s, got: %v", need, err)
+		}
+	}
+}
+
+func TestConfig_Validate_LDAP_FullyPopulatedPasses(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.LDAP = LDAPConfig{
+		Enabled:    true,
+		URL:        "ldaps://dc.example.com:636",
+		UserBaseDN: "ou=users,dc=example,dc=com",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected LDAP-full config to validate, got: %v", err)
+	}
+}
