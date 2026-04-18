@@ -61,8 +61,8 @@
         "Tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000034 media_assets table; pkg/media.Store content-addresses files at {realm}/{yyyy}/{mm}/{sha256} with sha256 dedup (shared blob, distinct RIDs); BaseType 'media' added as #22; MediaAssetStore narrow interface on PGRepository keeps Repository mocks untouched"
     },
     {
       "id": "US-204",

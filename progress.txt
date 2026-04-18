@@ -14,6 +14,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - New OMS resource types with their own table: DON'T extend `oms.Repository`. ~15 mock implementations across pkg/{oms,oss,links,actions,index,automate,ai}, test/{northwind,chinook,e2e,fixtures,integration} would need new stubs. Instead add a narrow interface in the same package (e.g. `ComputedPropertyStore`) and expose CRUD directly on `*PGRepository`.
 - TTL-cache tests: inject a clock via `SetNowFunc(func() time.Time)` + an advance helper. Matches `oms.CachedRepository.nowFunc` convention and keeps time-based tests deterministic without calling `time.Sleep`.
 - JSONB round-trip in pgx: stage through `[]byte` (`var aggJSON []byte` → `json.Unmarshal`). Passing the struct directly to `rows.Scan` will fail.
+- Adding a new BaseType: update (1) `allBaseTypes` map + slice in pkg/types/basetype.go, (2) the count + slice in `TestBaseType_AllDefined`, (3) per-language maps in pkg/sdkgen/typemap.go (ts/python/go). Coerce/Validate have catch-all default branches so opaque types need no work there.
+- Content-addressed blob storage: hash + write in one pass via `io.MultiWriter(tempFile, sha256.New())`, then CAS under a mutex — `os.Stat` the destination; if present drop the temp and reuse, else `os.MkdirAll` + `os.Rename`. Never hash a second time from disk.
+- Path-traversal guard for FS-backed stores: clean the input (`filepath.Clean(filepath.FromSlash(p))`), reject if it starts with `..` or is absolute, then verify `filepath.Abs(resolved)` is under `filepath.Abs(root)+sep`. Single choke point — duplicate nowhere.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -88,4 +91,35 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - The PRD phrase "_computed_at 时戳" is best satisfied by a `Value{Value, ComputedAt}` pair at the resolver layer — downstream HTTP handlers can then decide whether to stamp it on each property or as a sibling map. This keeps the resolver API stable even if the wire format evolves.
   - JSONB round-tripping of structs in pgx uses `[]byte` staging (`var aggJSON []byte` → `json.Unmarshal`). Don't try to pass the struct directly; pgx won't know how to marshal it.
   - Default TTL handling is done in two places (model `CacheTTL()` for the resolver cache path, and repo writes for the column default). Keeping them in sync: the model exposes `DefaultComputedPropertyCacheTTL` as the single source of truth.
+---
+
+## 2026-04-18 - US-203 Media Properties 存储层
+- Added `media` as BaseType #22 (`types.Media = "media"`), updated the allBaseTypes map, basetype_test count, and SDK typemap for ts/python/go. Coerce/Validate's default branches handle it as opaque string (media RID).
+- Migration `000034_media_assets` creates the new table with the PRD-mandated columns (rid, realm, filename, mime, size_bytes, sha256, path, created_by, created_at), plus a `(realm, sha256)` index for dedup lookups and a `created_by` index for per-user listing.
+- New package `pkg/media` with `Store` (content-addressed FS blob store):
+  - Layout: `<root>/<realm>/<yyyy>/<mm>/<sha256>` — root is injected by the caller (typically `data/media`) so the PRD path is recovered when WEAVE_DATA_DIR=data.
+  - `Put` streams the reader through an `io.MultiWriter(tempFile, sha256.Hasher)` in one pass (no double read of the upload body), then does the dedup check under a single mutex: if the content-addressed path already exists it drops the temp file and reuses the existing blob; otherwise it `os.Rename`s the temp into place atomically.
+  - Every Put returns a fresh RID (`ri.media.main.asset.<uuid>`). Dedup happens at the filesystem layer, not at the row layer — the catalog row is the refcount.
+  - `Open`/`DeletePath`/`Exists` resolve relPath through a shared guard that cleans the path and verifies the resolved absolute location still lives under root, so a malicious `../etc/passwd` input never hits the filesystem.
+  - Clock is injectable via `SetNowFunc` so the yyyy/mm partition is deterministic in tests.
+- `pkg/oms.MediaAsset` + `MediaAssetStore` (narrow 5-method interface: Create/Get/Delete/CountBySHA256/ListByCreatedBy) kept OUT of `oms.Repository` — same reasoning as US-202's ComputedPropertyStore, so the ~15 mock repos don't need stubs. `*PGRepository` satisfies it implicitly in `pg_repository_media.go`.
+- Tests (13 unit tests in `pkg/media/media_test.go`): content-addressed path shape, identical-bytes dedup (shared path, distinct RIDs, single physical file), different-bytes distinct paths, per-realm isolation (same hash, different paths), invalid realms rejected (path traversal / separators), default MIME, year/month partitioning, Open/DeletePath/Exists happy path + ErrNotFound twice, path-traversal rejection on Open, RID uniqueness + prefix, 16-way concurrent dedup (all 16 get distinct RIDs but exactly one file lands on disk), empty-bytes upload (size=0, canonical sha256). Plus `media_asset_test.go` covers Validate for missing rid/realm/sha256/path and negative size.
+- Files changed:
+  - `migrations/000034_media_assets.up.sql` (new)
+  - `migrations/000034_media_assets.down.sql` (new)
+  - `pkg/types/basetype.go` (Media base type, count bumped to 22)
+  - `pkg/types/basetype_test.go` (count + slice)
+  - `pkg/sdkgen/typemap.go` (Media → string/str/string)
+  - `pkg/media/media.go` (new — Store, PutOptions, Asset, path guard)
+  - `pkg/media/media_test.go` (new)
+  - `pkg/oms/media_asset.go` (new — MediaAsset, MediaAssetStore interface)
+  - `pkg/oms/media_asset_test.go` (new)
+  - `pkg/oms/pg_repository_media.go` (new — PGRepository CRUD + CountBySHA256 + ListByCreatedBy)
+  - `prd.json` (US-203 passes=true)
+- **Learnings for future iterations:**
+  - Content-addressed dedup is cheapest done at Put time: hash + write in the same io.Copy (via MultiWriter), then compare-and-swap under a mutex. Do NOT scan the temp file back to rehash after the fact — that doubles I/O and races with concurrent uploads.
+  - Always guard relPath → absolute resolution through `filepath.Clean` + `strings.HasPrefix(absResolved, rootAbs+sep)` before opening files. This is the single choke point that prevents `..` and absolute paths from escaping the storage root; duplicate it nowhere, factor it into `resolvePath`.
+  - When adding a new BaseType, three places always drift out of sync: (1) `allBaseTypes` map in `pkg/types/basetype.go`, (2) the fixed-length slice in `TestBaseType_AllDefined`, and (3) the three per-language maps in `pkg/sdkgen/typemap.go`. `Coerce`/`Validate` fall through to a sane default so most new BaseTypes don't need code in those files.
+  - `Media` is the storage-layer base type (property value = media RID). `MediaReference` is the wire-format base type (property value = Foundry MediaReference object pointing at a mediaSet). They are distinct and both exist: the first keeps ownership of bytes; the second is purely a reference format. Don't collapse them.
+  - For new storage-backed packages, the simple-mutex-on-write pattern (`s.mu.Lock()` around the `os.Stat` / `os.MkdirAll` / `os.Rename` sequence) is sufficient for single-machine deployments. Bleve's index and pkg/attachment use the same idiom.
 ---

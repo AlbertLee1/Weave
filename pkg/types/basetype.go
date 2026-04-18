@@ -25,6 +25,7 @@ const (
 	Attachment     BaseType = "attachment"
 	TimeSeries     BaseType = "timeseries"
 	MediaReference BaseType = "mediaReference"
+	Media          BaseType = "media"
 	Marking        BaseType = "marking"
 	Cipher         BaseType = "cipher"
 )
@@ -36,7 +37,7 @@ var allBaseTypes = map[BaseType]bool{
 	Date: true, Timestamp: true, Decimal: true, Array: true,
 	Struct: true, Vector: true, Geopoint: true, Geoshape: true,
 	Attachment: true, TimeSeries: true, MediaReference: true,
-	Marking: true, Cipher: true,
+	Media: true, Marking: true, Cipher: true,
 }
 
 // CanBePrimaryKey reports whether the base type is eligible as a primary key.
@@ -59,7 +60,7 @@ func (bt BaseType) CanBeTitle() bool {
 	}
 }
 
-// IsValid reports whether the base type is one of the 21 known types.
+// IsValid reports whether the base type is one of the 22 known types.
 func (bt BaseType) IsValid() bool {
 	return allBaseTypes[bt]
 }

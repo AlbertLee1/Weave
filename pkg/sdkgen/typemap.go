@@ -41,6 +41,7 @@ var tsTypeMap = TypeMap{
 	types.Attachment:     "string",
 	types.TimeSeries:     "string",
 	types.MediaReference: "string",
+	types.Media:          "string",
 	types.Marking:        "string",
 	types.Cipher:         "string",
 }
@@ -62,6 +63,7 @@ var pythonTypeMap = TypeMap{
 	types.Attachment:     "str",
 	types.TimeSeries:     "str",
 	types.MediaReference: "str",
+	types.Media:          "str",
 	types.Marking:        "str",
 	types.Cipher:         "str",
 }
@@ -83,6 +85,7 @@ var goTypeMap = TypeMap{
 	types.Attachment:     "string",
 	types.TimeSeries:     "string",
 	types.MediaReference: "string",
+	types.Media:          "string",
 	types.Marking:        "string",
 	types.Cipher:         "string",
 }
