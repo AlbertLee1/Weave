@@ -150,8 +150,8 @@
         "Tests pass"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000035 ALTER TABLE link_types ADD COLUMN inverse_link_rid TEXT (nullable+partial-idx); LinkType.InverseLinkRID + ToWireJSON surfaces inverseLinkRid; PGRepository CRUD (Create/Get/List/ListOutgoing/ListIncoming/GetByAPIName/Update) threads the column via NULLIF($N,'') + COALESCE(col,''); CreateLinkTypeRequest/UpdateLinkTypeRequest accept inverseLinkRid (pointer on update for 3-state {omit, clear, set}); new validateInverseLinkPair helper enforces partner exists + same ontology + partner.(source,target) == this.(target,source) + self-reference rejected, returning 404 InverseLinkTypeNotFound or 400 InvalidParameter:inverseLinkRid with expected/partner endpoint hints; searchAround symmetry leverages existing links.Direction plumbing — setupEmployeeDept fixture now cross-references inverse_link_rid and 2 new tests TestBidirectionalLinks_SymmetricTraversal + TestBidirectionalLinks_RoundTripReturnsSource assert forward(A)==reverse(B) and emp1 round-trip; 7 new admin-handler tests (Create/Update happy, NotFound, EndpointMismatch w/ param hints, CrossOntology, ClearByEmptyString, Update mismatch); models_test asserts wire omitempty; short test suite green across pkg/internal/test/cmd"
     },
     {
       "id": "US-210",

@@ -311,6 +311,8 @@ func setupEmployeeDept(t *testing.T) *links.Resolver {
 					SourceProperty: "deptid",
 					TargetProperty: "deptid",
 				}),
+				// US-209 bidirectional pair.
+				InverseLinkRID: "ri.lt.dept-emp",
 			},
 			"ri.lt.dept-emp": {
 				RID:              "ri.lt.dept-emp",
@@ -323,6 +325,7 @@ func setupEmployeeDept(t *testing.T) *links.Resolver {
 					SourceProperty: "deptid",
 					TargetProperty: "deptid",
 				}),
+				InverseLinkRID: "ri.lt.emp-dept",
 			},
 		},
 		outgoing: map[string][]oms.LinkType{},

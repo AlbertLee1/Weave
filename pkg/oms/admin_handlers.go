@@ -136,6 +136,10 @@ type UpdateLinkTypeRequest struct {
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
 	IsRequired  *bool  `json:"required,omitempty"`
+	// InverseLinkRID, when non-nil, overwrites the inverse pointer. Pass an
+	// empty-string pointer to clear the existing pairing; omit the field to
+	// leave it untouched.
+	InverseLinkRID *string `json:"inverseLinkRid,omitempty"`
 }
 
 // CreatePropertyRequest is the request body for creating a property.
@@ -163,6 +167,7 @@ type CreateLinkTypeRequest struct {
 	ForeignKeyConfig json.RawMessage `json:"foreignKeyConfig,omitempty"`
 	JoinTableConfig  json.RawMessage `json:"joinTableConfig,omitempty"`
 	IsRequired       bool            `json:"required"`
+	InverseLinkRID   string          `json:"inverseLinkRid,omitempty"`
 }
 
 // CreateActionTypeRequest is the request body for creating an action type.
@@ -651,6 +656,12 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 		ForeignKeyConfig: req.ForeignKeyConfig,
 		JoinTableConfig:  req.JoinTableConfig,
 		IsRequired:       req.IsRequired,
+		InverseLinkRID:   req.InverseLinkRID,
+	}
+
+	if apiErr := h.validateInverseLinkPair(r.Context(), lt); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
 	}
 
 	// Branch overlay
@@ -679,6 +690,55 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusCreated, lt)
+}
+
+// validateInverseLinkPair enforces the endpoint-symmetry contract for
+// bidirectional LinkTypes (US-209). When lt.InverseLinkRID is empty the call
+// is a no-op. Otherwise the partner is looked up via h.repo.GetLinkType and
+// the pair must:
+//   - live in the same ontology
+//   - satisfy partner.SourceObjectType == lt.TargetObjectType
+//   - satisfy partner.TargetObjectType == lt.SourceObjectType
+//
+// Returns nil on success or a populated *apierror.APIError the caller can
+// write verbatim. Self-reference is rejected because A's inverse being A
+// itself makes no sense for the symmetric-endpoints invariant.
+func (h *OMSHandler) validateInverseLinkPair(ctx context.Context, lt *LinkType) *apierror.APIError {
+	if lt.InverseLinkRID == "" {
+		return nil
+	}
+	if lt.InverseLinkRID == lt.RID {
+		return apierror.NewInvalidParameter("InvalidParameter:inverseLinkRid", map[string]string{
+			"parameter": "inverseLinkRid",
+			"reason":    "inverseLinkRid must not reference the link type itself",
+		})
+	}
+	partner, err := h.repo.GetLinkType(ctx, lt.InverseLinkRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return apierror.NewNotFound("InverseLinkTypeNotFound", map[string]string{
+				"inverseLinkRid": lt.InverseLinkRID,
+			})
+		}
+		return apierror.NewInternal("GetInverseLinkTypeFailed", nil)
+	}
+	if partner.OntologyRID != lt.OntologyRID {
+		return apierror.NewInvalidParameter("InvalidParameter:inverseLinkRid", map[string]string{
+			"parameter": "inverseLinkRid",
+			"reason":    "inverse link must belong to the same ontology",
+		})
+	}
+	if partner.SourceObjectType != lt.TargetObjectType || partner.TargetObjectType != lt.SourceObjectType {
+		return apierror.NewInvalidParameter("InvalidParameter:inverseLinkRid", map[string]string{
+			"parameter":                "inverseLinkRid",
+			"reason":                   "inverse link endpoints must mirror this link (partner.source == this.target and partner.target == this.source)",
+			"expectedSourceObjectType": lt.TargetObjectType,
+			"expectedTargetObjectType": lt.SourceObjectType,
+			"partnerSourceObjectType":  partner.SourceObjectType,
+			"partnerTargetObjectType":  partner.TargetObjectType,
+		})
+	}
+	return nil
 }
 
 // CreateActionType handles POST /api/admin/ontologies/{ontologyApiName}/actionTypes.
@@ -982,6 +1042,14 @@ func (h *OMSHandler) UpdateLinkType(w http.ResponseWriter, r *http.Request) {
 	updated.Description = req.Description
 	if req.IsRequired != nil {
 		updated.IsRequired = *req.IsRequired
+	}
+	if req.InverseLinkRID != nil {
+		updated.InverseLinkRID = *req.InverseLinkRID
+	}
+
+	if apiErr := h.validateInverseLinkPair(r.Context(), &updated); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
 	}
 
 	// Branch overlay

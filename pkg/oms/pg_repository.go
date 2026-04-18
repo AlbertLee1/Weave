@@ -325,11 +325,11 @@ func (r *PGRepository) CreateLinkType(ctx context.Context, lt *LinkType) error {
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO link_types (rid, ontology_rid, api_name, display_name, description,
-		 source_object_type, target_object_type, cardinality, foreign_key_config, join_table_config, is_required)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		 source_object_type, target_object_type, cardinality, foreign_key_config, join_table_config, is_required, inverse_link_rid)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, ''))`,
 		lt.RID, lt.OntologyRID, lt.APIName, lt.DisplayName, lt.Description,
 		lt.SourceObjectType, lt.TargetObjectType, lt.Cardinality,
-		fkConfig, jtConfig, lt.IsRequired)
+		fkConfig, jtConfig, lt.IsRequired, lt.InverseLinkRID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -341,11 +341,13 @@ func (r *PGRepository) GetLinkType(ctx context.Context, rid string) (*LinkType, 
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 source_object_type, target_object_type, cardinality,
-		 foreign_key_config, join_table_config, is_required, created_at
+		 foreign_key_config, join_table_config, is_required,
+		 COALESCE(inverse_link_rid, ''), created_at
 		 FROM link_types WHERE rid = $1`, rid).
 		Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
 			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
-			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired, &lt.CreatedAt)
+			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired,
+			&lt.InverseLinkRID, &lt.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -359,7 +361,8 @@ func (r *PGRepository) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID 
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 source_object_type, target_object_type, cardinality,
-		 foreign_key_config, join_table_config, is_required, created_at
+		 foreign_key_config, join_table_config, is_required,
+		 COALESCE(inverse_link_rid, ''), created_at
 		 FROM link_types WHERE source_object_type = $1 ORDER BY api_name`, objectTypeRID)
 	if err != nil {
 		return nil, err
@@ -371,7 +374,8 @@ func (r *PGRepository) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID 
 		var lt LinkType
 		if err := rows.Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
 			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
-			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired, &lt.CreatedAt); err != nil {
+			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired,
+			&lt.InverseLinkRID, &lt.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, lt)
@@ -385,7 +389,8 @@ func (r *PGRepository) ListIncomingLinkTypes(ctx context.Context, objectTypeRID 
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 source_object_type, target_object_type, cardinality,
-		 foreign_key_config, join_table_config, is_required, created_at
+		 foreign_key_config, join_table_config, is_required,
+		 COALESCE(inverse_link_rid, ''), created_at
 		 FROM link_types WHERE target_object_type = $1 ORDER BY api_name`, objectTypeRID)
 	if err != nil {
 		return nil, err
@@ -397,7 +402,8 @@ func (r *PGRepository) ListIncomingLinkTypes(ctx context.Context, objectTypeRID 
 		var lt LinkType
 		if err := rows.Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
 			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
-			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired, &lt.CreatedAt); err != nil {
+			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired,
+			&lt.InverseLinkRID, &lt.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, lt)
@@ -409,7 +415,8 @@ func (r *PGRepository) ListLinkTypes(ctx context.Context, ontologyRID string) ([
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 source_object_type, target_object_type, cardinality,
-		 foreign_key_config, join_table_config, is_required, created_at
+		 foreign_key_config, join_table_config, is_required,
+		 COALESCE(inverse_link_rid, ''), created_at
 		 FROM link_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -423,7 +430,8 @@ func (r *PGRepository) ListLinkTypes(ctx context.Context, ontologyRID string) ([
 		var lt LinkType
 		if err := rows.Scan(&lt.RID, &lt.OntologyRID, &lt.APIName, &lt.DisplayName, &lt.Description,
 			&lt.SourceObjectType, &lt.TargetObjectType, &lt.Cardinality,
-			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired, &lt.CreatedAt); err != nil {
+			&lt.ForeignKeyConfig, &lt.JoinTableConfig, &lt.IsRequired,
+			&lt.InverseLinkRID, &lt.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, lt)
@@ -433,9 +441,10 @@ func (r *PGRepository) ListLinkTypes(ctx context.Context, ontologyRID string) ([
 
 func (r *PGRepository) UpdateLinkType(ctx context.Context, lt *LinkType) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE link_types SET display_name=$1, description=$2, is_required=$3
-		 WHERE rid=$4`,
-		lt.DisplayName, lt.Description, lt.IsRequired, lt.RID)
+		`UPDATE link_types SET display_name=$1, description=$2, is_required=$3,
+		 inverse_link_rid=NULLIF($4, '')
+		 WHERE rid=$5`,
+		lt.DisplayName, lt.Description, lt.IsRequired, lt.InverseLinkRID, lt.RID)
 	if err != nil {
 		return err
 	}

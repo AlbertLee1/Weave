@@ -221,7 +221,12 @@ type LinkType struct {
 	ForeignKeyConfig json.RawMessage `json:"foreignKeyConfig,omitempty"`
 	JoinTableConfig  json.RawMessage `json:"joinTableConfig,omitempty"`
 	IsRequired       bool            `json:"required"`
-	CreatedAt        time.Time       `json:"-"`
+	// InverseLinkRID optionally points at the LinkType that describes this
+	// relationship from the opposite direction (e.g. emp->dept pairs with
+	// dept->emp). Partner's (source, target) ObjectTypes must be the mirror
+	// of this row's (target, source); validation lives in the admin handlers.
+	InverseLinkRID string    `json:"inverseLinkRid,omitempty"`
+	CreatedAt      time.Time `json:"-"`
 }
 
 // ToWireJSON returns the V2 wire format JSON for LinkType.
@@ -237,6 +242,9 @@ func (lt *LinkType) ToWireJSON() ([]byte, error) {
 	}
 	if lt.Description != "" {
 		wire["description"] = lt.Description
+	}
+	if lt.InverseLinkRID != "" {
+		wire["inverseLinkRid"] = lt.InverseLinkRID
 	}
 	return json.Marshal(wire)
 }

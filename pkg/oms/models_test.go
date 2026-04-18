@@ -127,6 +127,41 @@ func TestLinkType_ToWireJSON(t *testing.T) {
 	}
 }
 
+func TestLinkType_ToWireJSON_IncludesInverseLinkRID(t *testing.T) {
+	// US-209: the wire format surfaces inverseLinkRid when set so clients can
+	// discover the paired direction without an extra round-trip.
+	lt := LinkType{
+		RID:              "ri.ontology.main.link-type.emp-dept",
+		APIName:          "employeeDepartment",
+		DisplayName:      "Employee Department",
+		SourceObjectType: "employee",
+		TargetObjectType: "department",
+		Cardinality:      "MANY_TO_ONE",
+		InverseLinkRID:   "ri.ontology.main.link-type.dept-emp",
+	}
+	data, err := lt.ToWireJSON()
+	if err != nil {
+		t.Fatalf("ToWireJSON failed: %v", err)
+	}
+	var wire map[string]interface{}
+	json.Unmarshal(data, &wire)
+	if wire["inverseLinkRid"] != "ri.ontology.main.link-type.dept-emp" {
+		t.Errorf("expected inverseLinkRid surfaced, got %v", wire["inverseLinkRid"])
+	}
+
+	// Empty InverseLinkRID must be omitted (omitempty semantics).
+	lt.InverseLinkRID = ""
+	data, err = lt.ToWireJSON()
+	if err != nil {
+		t.Fatalf("ToWireJSON (no inverse) failed: %v", err)
+	}
+	wire = nil
+	json.Unmarshal(data, &wire)
+	if _, present := wire["inverseLinkRid"]; present {
+		t.Errorf("inverseLinkRid should be omitted when unset, got %v", wire)
+	}
+}
+
 func TestActionType_ToWireJSON(t *testing.T) {
 	at := ActionType{
 		RID:         "ri.ontology.main.action-type.at1",

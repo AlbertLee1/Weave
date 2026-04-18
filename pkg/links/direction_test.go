@@ -277,6 +277,91 @@ func TestResolveLinked_M2MWithoutEdgeRepo(t *testing.T) {
 	}
 }
 
+// --- US-209 bidirectional links ---
+
+// TestBidirectionalLinks_SymmetricTraversal verifies that an A↔B LinkType pair
+// (with inverse_link_rid cross-references) yields mirrored results regardless
+// of which side is walked: forward on A should equal reverse on B, and
+// forward on B should equal reverse on A.
+func TestBidirectionalLinks_SymmetricTraversal(t *testing.T) {
+	resolver := setupEmployeeDept(t)
+	ctx := context.Background()
+
+	// 1. Metadata: both LinkTypes cross-reference each other via InverseLinkRID.
+	a, err := resolver.ResolveLinked(ctx, "ri.lt.emp-dept", []string{"emp1"}, links.DirectionForward)
+	if err != nil {
+		t.Fatalf("forward A: %v", err)
+	}
+	b, err := resolver.ResolveLinked(ctx, "ri.lt.dept-emp", []string{"emp1"}, links.DirectionReverse)
+	if err != nil {
+		t.Fatalf("reverse B: %v", err)
+	}
+	if !sameSet(a, b) {
+		t.Errorf("forward(A, emp1) vs reverse(B, emp1) mismatch: %v vs %v", a, b)
+	}
+
+	// 2. Forward B from d1 == Reverse A from d1 — both should give {emp1, emp2}.
+	fwdB, err := resolver.ResolveLinked(ctx, "ri.lt.dept-emp", []string{"d1"}, links.DirectionForward)
+	if err != nil {
+		t.Fatalf("forward B: %v", err)
+	}
+	revA, err := resolver.ResolveLinked(ctx, "ri.lt.emp-dept", []string{"d1"}, links.DirectionReverse)
+	if err != nil {
+		t.Fatalf("reverse A: %v", err)
+	}
+	if !sameSet(fwdB, revA) {
+		t.Errorf("forward(B, d1) vs reverse(A, d1) mismatch: %v vs %v", fwdB, revA)
+	}
+	if !sameSet(fwdB, []string{"emp1", "emp2"}) {
+		t.Errorf("forward(B, d1) = %v, want {emp1, emp2}", fwdB)
+	}
+}
+
+// TestBidirectionalLinks_RoundTripReturnsSource verifies that forward-then-
+// inverse-forward traversal through a paired LinkType comes back to include
+// the original source set. This is the canonical "bidirectional" property.
+func TestBidirectionalLinks_RoundTripReturnsSource(t *testing.T) {
+	resolver := setupEmployeeDept(t)
+	ctx := context.Background()
+
+	// emp1 -> forward(A) -> d1 -> forward(B) -> {emp1, emp2}
+	hop1, err := resolver.ResolveLinked(ctx, "ri.lt.emp-dept", []string{"emp1"}, links.DirectionForward)
+	if err != nil {
+		t.Fatalf("hop1: %v", err)
+	}
+	hop2, err := resolver.ResolveLinked(ctx, "ri.lt.dept-emp", hop1, links.DirectionForward)
+	if err != nil {
+		t.Fatalf("hop2: %v", err)
+	}
+	found := map[string]bool{}
+	for _, pk := range hop2 {
+		found[pk] = true
+	}
+	if !found["emp1"] {
+		t.Errorf("round-trip should include originating emp1, got %v", hop2)
+	}
+}
+
+// sameSet returns true when a and b contain the same elements, order-agnostic.
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, x := range a {
+		seen[x]++
+	}
+	for _, x := range b {
+		seen[x]--
+	}
+	for _, v := range seen {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func TestResolveViaJoinTable_WrongCardinality(t *testing.T) {
 	// The exported helper must reject non-M2M link types.
 	lt := &oms.LinkType{

@@ -29,6 +29,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Parameterized BaseType additions (Array/Struct/Union): no migration needed. `Property.TypeConfig` is JSONB and `DataTypeJSON` merges unknown keys through, so adding a `Variants []DataType` / similar field on `pkg/types.DataType` is a wire-only change. Only 4 places need editing: (1) new constant + `allBaseTypes` entry, (2) `json:"xxx,omitempty"` DataType field, (3) Coerce+Validate branches, (4) sdkgen typemap (ts/python/go).
 - Union-typed values are tagged on the wire. Two accepted shapes: `{__type: "<variant>", value: <v>}` (universal wrapper — coerce emits this form) OR `{__type: "<variant>", ...structFields}` (flattened tagged struct — read path recognizes it via "key count != 2" heuristic). Validate trusts the `__type` hint when present; untagged values are tried variant-by-variant in declared order. Put specific variants first — `fmt.Sprintf`-backed String coerce is greedy.
 - Recursive UI components using self-referential data: label each level with a dot-separated path prop ('', '0', '0.1', ...) so aria-labels stay unique and tests can address any depth via `struct field name 0.1` / `data-testid="struct-fields-0.1"`. Root gets its own sentinel testid (e.g. `struct-fields-root`). Validators walk the same tree recursively — keep "this subtree is valid" one function that short-circuits on first bad leaf.
+- Nullable text column in Go: `NULLIF($N, '')` on INSERT / UPDATE + `COALESCE(col, '')` on SELECT keeps the Go model a plain `string` (no `sql.NullString`) while the DB carries proper NULLs so partial indexes `WHERE col IS NOT NULL`, self-referential FKs and data-quality checks still work. Every `COALESCE(description, '')` in pg_repository.go is prior art — follow the same shape for any new nullable text.
+- Optional field on Update DTO: use `*string` (or `*bool` etc) so callers can distinguish three states — omit=preserve, `""`=clear, `"X"`=assign. Bare `string` collapses "omit" and "clear" into one, silently nuking existing data whenever a client sends a partial update. `UpdateLinkTypeRequest.IsRequired *bool` is prior art.
+- Self-referential FK in schema: prefer NULLable-without-REFERENCES for pair-authoring workflows where both sides are created separately (A↔B bidirectional links, parent/child before-both-exist, etc). Handler-layer validation enforces symmetry invariants; the DB accepts a temporary dangling reference during authoring. REFERENCES would require deferred constraints or a magic create-order — more surface area than it's worth when validation is already centralized.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -287,5 +290,52 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - The sweep needed for this iteration was: validator → Prepare wrap → BatchError wrap → asBatchError handler → Apply handler → ApplyWithOverrides handler. Five layers — and missing any one drops the 422 back to a 400. A `typedAPIError(err) *apierror.APIError` helper is the right shape because it makes the new pattern one-line per call site.
   - Enum allowedValues on the wire are best as a single comma-separated string in `Parameters` (the apierror Parameters map is `map[string]string` by design — JSON arrays don't fit). Clients that need the slice can `strings.Split(p["allowedValues"], ",")`. Don't try to teach the apierror Parameters map a richer type — every APIError downstream pays the cost.
   - Batch path subtlety: `ApplyBatchAtomic` wraps EVERY Prepare error, not just the publish err. Forgetting `Cause` on the per-action wrap silently broke the typed-error pipeline for batch and made TestHandler_ApplyBatch_EnumViolation_422 the only signal — would have shipped fine without that test. Always exercise BOTH single + batch handler paths whenever you add a typed validation error.
+---
+
+## 2026-04-18 - US-209 Bidirectional Links
+- Added migration `000035_link_type_inverse` adding nullable `inverse_link_rid TEXT` column to `link_types` plus a partial index (WHERE inverse_link_rid IS NOT NULL). No FK REFERENCES constraint — A↔B pairs are typically created one side at a time so cross-references must be allowed to temporarily dangle; symmetry lives at the handler layer instead.
+- Extended `oms.LinkType` with `InverseLinkRID string` (json:"inverseLinkRid,omitempty"). `LinkType.ToWireJSON()` surfaces the field only when non-empty.
+- PGRepository CRUD: updated `CreateLinkType` INSERT (NULLIF($N,'') collapses the empty string back to NULL so the partial index stays accurate) and `GetLinkType`, `ListOutgoingLinkTypes`, `ListIncomingLinkTypes`, `ListLinkTypes`, `GetLinkTypeByAPIName` (in `link_edges.go`) SELECTs (COALESCE(inverse_link_rid, '')). `UpdateLinkType` now sets `inverse_link_rid=NULLIF($4, '')` alongside the existing display_name / description / is_required columns — the handler decides whether the incoming request touches it.
+- Admin handlers:
+  - `CreateLinkTypeRequest.InverseLinkRID string` (plain field — create is one-shot).
+  - `UpdateLinkTypeRequest.InverseLinkRID *string` — pointer to preserve three-state semantics: **omit** (keep existing), **set to ""** (clear the pairing), **set to some RID** (assign).
+  - `validateInverseLinkPair(ctx, lt *LinkType) *apierror.APIError`: no-op when empty; rejects self-reference (400 InvalidParameter:inverseLinkRid); 404 `InverseLinkTypeNotFound` when partner row missing; 400 with `expectedSourceObjectType` / `expectedTargetObjectType` / `partnerSourceObjectType` / `partnerTargetObjectType` parameters when partner endpoints don't mirror this row's; 400 "same ontology" when cross-ontology.
+  - Validation is called at BOTH paths (Create + Update) BEFORE the branch overlay check, so branch creations carry the same invariants as main commits.
+- `links.Resolver` already supports `DirectionForward`/`DirectionReverse` via US-003 / US-187 plumbing; `InverseLinkRID` is PURE METADATA — it is not consulted during resolution. Symmetry is provable either by (a) traversing one paired LinkType in both directions, or (b) traversing the two LinkTypes separately in the same direction. Both are verified.
+- `setupEmployeeDept` fixture (pkg/links/resolver_test.go) now cross-references inverse_link_rid on both LinkTypes. Adding the field to the existing fixture is zero-risk because the resolver never reads it.
+- Tests:
+  - `pkg/links/direction_test.go`:
+    - `TestBidirectionalLinks_SymmetricTraversal` — asserts `forward(A, [emp1]) == reverse(B, [emp1])` (both produce `[d1]`) and `forward(B, [d1]) == reverse(A, [d1])` (both produce `{emp1, emp2}`). Uses an order-agnostic `sameSet` helper because the resolver's output ordering is deliberately not specified.
+    - `TestBidirectionalLinks_RoundTripReturnsSource` — walks `forward(A, [emp1]) → forward(B, hop1)` and checks emp1 is in the returning set (should also include emp2, its dept-mate).
+  - `pkg/oms/admin_handlers_linkinverse_test.go`:
+    - `TestCreateLinkType_WithInverseLinkRID_Success` — happy path; verifies InverseLinkRID on wire + in repo.
+    - `TestCreateLinkType_WithInverseLinkRID_NotFound` — 404 InverseLinkTypeNotFound.
+    - `TestCreateLinkType_WithInverseLinkRID_EndpointMismatch` — asserts `expectedSourceObjectType` / `expectedTargetObjectType` hints in parameters, confirms no persistence side-effect.
+    - `TestCreateLinkType_WithInverseLinkRID_CrossOntology` — 400 with "same ontology" in reason.
+    - `TestUpdateLinkType_WithInverseLinkRID_Success` — pair-up after creation.
+    - `TestUpdateLinkType_WithInverseLinkRID_ClearedByEmptyString` — three-state pointer semantics: passing `""` clears the pairing (omitted from wire after update).
+    - `TestUpdateLinkType_WithInverseLinkRID_EndpointMismatch` — rejection on update too.
+  - `pkg/oms/models_test.go::TestLinkType_ToWireJSON_IncludesInverseLinkRID` — positive + omitempty assertions.
+- All `go test -short ./pkg/... ./internal/... ./test/... ./cmd/...` green; `go vet ./...` clean. golangci-lint not installed locally (non-blocking per project convention — CI runs it).
+- Files changed:
+  - `migrations/000035_link_type_inverse.up.sql` (new)
+  - `migrations/000035_link_type_inverse.down.sql` (new)
+  - `pkg/oms/models.go` (InverseLinkRID field + ToWireJSON)
+  - `pkg/oms/pg_repository.go` (CreateLinkType INSERT, GetLinkType/List* SELECT, UpdateLinkType SET)
+  - `pkg/oms/link_edges.go` (GetLinkTypeByAPIName SELECT)
+  - `pkg/oms/admin_handlers.go` (CreateLinkTypeRequest, UpdateLinkTypeRequest, validateInverseLinkPair helper, Create/Update wire-up)
+  - `pkg/oms/admin_handlers_linkinverse_test.go` (new, 7 tests)
+  - `pkg/oms/models_test.go` (ToWireJSON inverse test)
+  - `pkg/links/resolver_test.go` (setupEmployeeDept cross-references)
+  - `pkg/links/direction_test.go` (TestBidirectionalLinks_* + sameSet helper)
+  - `prd.json` (US-209 passes=true)
+- **Learnings for future iterations:**
+  - Self-referential FK on the same table is a hazard: if migration added `FOREIGN KEY (inverse_link_rid) REFERENCES link_types(rid)` the create-one-side-first workflow would fail with a dangling reference. Nullable + handler-layer validation is the simpler choice and matches the "pair is edited, not transactional" reality. Use partial indexes `WHERE col IS NOT NULL` to keep the index compact.
+  - For optional fields on an Update DTO, `*string` gives three-state semantics that bare `string` can't: omit=don't-touch, `""`=clear, `"X"`=set. Consistent with how `IsRequired *bool` already works in the same struct. Apply pointer semantics any time "not sent" and "sent as zero value" need to be distinguishable.
+  - `NULLIF($N, '')` + `COALESCE(col, '')` is the canonical Weave pattern for nullable text columns that ride as `string` on the Go model. It keeps the Go side string-valued (no `sql.NullString`) while the DB gets a proper NULL so constraints / partial indexes / FK behaviour all work. See every `COALESCE(description, '')` pairing in pg_repository.go for prior art.
+  - When adding a metadata-only field (not consulted by the runtime), you typically don't need to touch the resolver / handler hot paths — just CRUD + wire format. The InverseLinkRID field is purely for discovery; symmetric traversal is already implemented via `DirectionForward` / `DirectionReverse` on the resolver. Resist the temptation to route traversal through `InverseLinkRID` — it would duplicate an existing capability and create a second path to keep in sync.
+  - Test symmetry assertions need order-agnostic comparisons: Bleve result ordering is stable within a single search but differs between queries with different underlying plans. `sameSet(a, b)` as a tiny local helper beats `sort.Strings`-then-compare because it names the intent.
+  - When adding a column that existing mock repos will carry in struct-value maps (e.g. `mockRepo.linkTypes []oms.LinkType`), NO mock updates are needed — the new field flows through struct copies automatically. Unlike adding a new method to `oms.Repository` (which needs ~15 stub updates across the tree), a new struct field is a zero-touch addition.
+  - Field on wire / field in DB / field in model should share the SAME omitempty semantics. If DB is `NULL` → Go `""` → JSON absent, the round-trip is clean. If any layer persists an empty string instead of NULL, a partial index `WHERE inverse_link_rid IS NOT NULL` would include every row and defeat its purpose. NULLIF at the INSERT/UPDATE boundary is the only place this guarantee is enforced.
 ---
 
