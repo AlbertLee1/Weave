@@ -224,10 +224,12 @@ func (r *PGRepository) CreateProperty(ctx context.Context, p *Property) error {
 	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO properties (rid, object_type_rid, api_name, display_name, description,
-		 base_type, type_config, is_array, is_nullable, is_searchable, is_sortable, status, shared_property_rid, is_edit_only)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		 base_type, type_config, is_array, is_nullable, is_searchable, is_sortable, status, shared_property_rid, is_edit_only,
+		 derived, formula)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		p.RID, p.ObjectTypeRID, p.APIName, p.DisplayName, p.Description,
-		p.BaseType, typeConfig, p.IsArray, p.IsNullable, p.IsSearchable, p.IsSortable, status, nilIfEmpty(p.SharedPropertyRID), p.IsEditOnly)
+		p.BaseType, typeConfig, p.IsArray, p.IsNullable, p.IsSearchable, p.IsSortable, status, nilIfEmpty(p.SharedPropertyRID), p.IsEditOnly,
+		p.Derived, p.Formula)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -238,7 +240,8 @@ func (r *PGRepository) ListProperties(ctx context.Context, objectTypeRID string)
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, object_type_rid, api_name, COALESCE(display_name, ''), COALESCE(description, ''),
 		 base_type, COALESCE(type_config, '{}'), is_array, is_nullable, is_searchable, is_sortable,
-		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), is_edit_only, created_at
+		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), is_edit_only,
+		 COALESCE(derived, false), COALESCE(formula, ''), created_at
 		 FROM properties WHERE object_type_rid = $1 ORDER BY api_name`, objectTypeRID)
 	if err != nil {
 		return nil, err
@@ -250,7 +253,8 @@ func (r *PGRepository) ListProperties(ctx context.Context, objectTypeRID string)
 		var p Property
 		if err := rows.Scan(&p.RID, &p.ObjectTypeRID, &p.APIName, &p.DisplayName, &p.Description,
 			&p.BaseType, &p.TypeConfig, &p.IsArray, &p.IsNullable, &p.IsSearchable, &p.IsSortable,
-			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.IsEditOnly, &p.CreatedAt); err != nil {
+			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.IsEditOnly,
+			&p.Derived, &p.Formula, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, p)
@@ -263,11 +267,13 @@ func (r *PGRepository) GetProperty(ctx context.Context, rid string) (*Property, 
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, object_type_rid, api_name, COALESCE(display_name, ''), COALESCE(description, ''),
 		 base_type, COALESCE(type_config, '{}'), is_array, is_nullable, is_searchable, is_sortable,
-		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), is_edit_only, created_at
+		 COALESCE(status, 'ACTIVE'), COALESCE(deprecated_reason, ''), COALESCE(shared_property_rid, ''), is_edit_only,
+		 COALESCE(derived, false), COALESCE(formula, ''), created_at
 		 FROM properties WHERE rid = $1`, rid).
 		Scan(&p.RID, &p.ObjectTypeRID, &p.APIName, &p.DisplayName, &p.Description,
 			&p.BaseType, &p.TypeConfig, &p.IsArray, &p.IsNullable, &p.IsSearchable, &p.IsSortable,
-			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.IsEditOnly, &p.CreatedAt)
+			&p.Status, &p.DeprecatedReason, &p.SharedPropertyRID, &p.IsEditOnly,
+			&p.Derived, &p.Formula, &p.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -281,10 +287,11 @@ func (r *PGRepository) UpdateProperty(ctx context.Context, p *Property) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE properties SET display_name=$1, description=$2,
 		 is_searchable=$3, is_sortable=$4, is_nullable=$5,
-		 status=$6, deprecated_reason=$7, is_edit_only=$8
-		 WHERE rid=$9`,
+		 status=$6, deprecated_reason=$7, is_edit_only=$8,
+		 derived=$9, formula=$10
+		 WHERE rid=$11`,
 		p.DisplayName, p.Description, p.IsSearchable, p.IsSortable, p.IsNullable,
-		p.Status, p.DeprecatedReason, p.IsEditOnly, p.RID)
+		p.Status, p.DeprecatedReason, p.IsEditOnly, p.Derived, p.Formula, p.RID)
 	if err != nil {
 		return err
 	}

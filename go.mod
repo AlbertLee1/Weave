@@ -3,7 +3,10 @@ module github.com/liyang/weave
 go 1.25.0
 
 require (
+	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/blevesearch/bleve/v2 v2.5.7
+	github.com/blevesearch/bleve_index_api v1.2.11
+	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
@@ -12,6 +15,7 @@ require (
 	github.com/nats-io/nats.go v1.49.0
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
 	go.opentelemetry.io/otel v1.43.0
@@ -22,17 +26,16 @@ require (
 	golang.org/x/crypto v0.48.0
 	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v3 v3.0.1
+	nhooyr.io/websocket v1.8.17
 )
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
-	github.com/HdrHistogram/hdrhistogram-go v1.2.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.4.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
-	github.com/blevesearch/bleve_index_api v1.2.11 // indirect
 	github.com/blevesearch/geo v0.2.4 // indirect
 	github.com/blevesearch/go-faiss v1.0.26 // indirect
 	github.com/blevesearch/go-porterstemmer v1.0.3 // indirect
@@ -63,7 +66,6 @@ require (
 	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -104,7 +106,6 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.2 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
@@ -126,5 +127,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260209200024-4cfbd4190f57 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	nhooyr.io/websocket v1.8.17 // indirect
 )

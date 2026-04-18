@@ -177,6 +177,10 @@ type Property struct {
 	// aggregations). Derived properties cannot be primary keys, cannot be
 	// text-searched, and cannot be written through Action edits (US-004).
 	Derived bool `json:"derived,omitempty"`
+	// Formula is the JavaScript expression evaluated by pkg/types/formula to
+	// produce the Derived property value at query time (US-200). Empty for
+	// non-derived properties.
+	Formula string `json:"formula,omitempty"`
 	// IsEditOnly marks a property as "edit-only" — once a user edit writes a
 	// value to it, concurrent ingest edits must not overwrite that value
 	// regardless of the active conflict-resolution strategy (US-025 / US-055).
