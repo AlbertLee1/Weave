@@ -49,18 +49,27 @@ type Definition struct {
 	Input string `json:"input,omitempty"`
 }
 
-// DerivedPropertyDef declares a single link-hop aggregation the executor
+// DerivedPropertyDef declares a single per-object computation the executor
 // evaluates for each object in a withProperties base set. Name is the output
-// key (surfaced to API callers as a regular property), Link is the link type
-// API name to traverse, Direction is "forward" (default) or "reverse", Metric
-// is one of count / sum / avg / min / max and Field is the target property
-// numeric metrics read from — ignored for count.
+// key (surfaced to API callers as a regular property). For link-hop metrics
+// (count / sum / avg / min / max) Link + Direction + Field describe the
+// traversal. For metric="formula" (US-201) Formula holds the JS expression
+// evaluated by pkg/types/formula against the base object's properties, and
+// Link / Direction / Field are ignored.
 type DerivedPropertyDef struct {
 	Name      string `json:"name"`
-	Link      string `json:"link"`
+	Link      string `json:"link,omitempty"`
 	Direction string `json:"direction,omitempty"`
-	Metric    string `json:"metric"`
+	Metric    string `json:"metric,omitempty"`
 	Field     string `json:"field,omitempty"`
+	Formula   string `json:"formula,omitempty"`
+}
+
+// IsFormula reports whether the derived property should be evaluated as a
+// JS formula against the base object. Callers accept either explicit
+// metric="formula" or a non-empty Formula with an unset metric.
+func (d DerivedPropertyDef) IsFormula() bool {
+	return d.Metric == "formula" || (d.Metric == "" && d.Formula != "")
 }
 
 // PropertyIdentifier identifies a property for nearestNeighbors.
@@ -129,6 +138,12 @@ func (d *Definition) Validate() error {
 		for i, dp := range d.DerivedProperties {
 			if dp.Name == "" {
 				return fmt.Errorf("withProperties derivedProperties[%d] requires name", i)
+			}
+			if dp.IsFormula() {
+				if dp.Formula == "" {
+					return fmt.Errorf("withProperties derivedProperties[%d] (%q) metric %q requires formula", i, dp.Name, "formula")
+				}
+				continue
 			}
 			if dp.Link == "" {
 				return fmt.Errorf("withProperties derivedProperties[%d] (%q) requires link", i, dp.Name)

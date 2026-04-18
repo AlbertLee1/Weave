@@ -8,6 +8,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Goja `Callable` from `goja.AssertFunction` is a Go `func(this Value, args ...Value) (Value, error)`; do NOT try to `.Get("call")` and re-invoke — just call it directly.
 - `properties` table columns land via an ALTER with `ADD COLUMN IF NOT EXISTS ... NOT NULL DEFAULT ...`; matching `pg_repository.go` helpers must add the column to INSERT, SELECT (ListProperties + GetProperty) and UPDATE paths, in that order.
 - `Property` model (pkg/oms/models.go) is the canonical wire shape; adding an omitempty JSON-tagged field is non-breaking for every existing test.
+- `pkg/oss.WireObject.MarshalJSON` flattens Properties to the row's top level alongside `__primaryKey` / `__apiName`; HTTP tests of loadObjects must decode rows as `map[string]interface{}` and read fields directly, not as `row.Properties[...]`.
+- Goja exports whole-number JS arithmetic results as Go `int64` and fractional ones as `float64`. Tests on derived-property numerics should accept either (via a `toFloat64` helper) rather than assert a single concrete type.
+- Executor-level "load base object fields" is a single `bleve.DocIDQuery` with `Fields=["*"]` and `Size=len(pks)`. Batch once per withProperties invocation and share across DPs — per-row Bleve queries were the original pattern and are materially slower at scale.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -29,4 +32,23 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Goja float arithmetic exports as `float64` with JS-precision artefacts; avoid exact-equality tests on multiplied fractions (`0.5 * 125000.5` returns `12500.050000000001`). Use sums or integer operations instead.
   - `Property.Derived` was already in the model from US-004 but never persisted — the v1 plumbing for it was validation-only. US-200 is where it actually becomes writable state.
   - `go test ./...` under this repo includes testcontainer-backed integration packages (`test/e2e/chinook`) that can take >10min. For Ralph iterations targeting a focused package, prefer `go test -short ./pkg/...` first.
+---
+
+## 2026-04-18 - US-201 Derived Properties 查询集成
+- Extended `objectset.DerivedPropertyDef` with a new `Formula` field and accepted `metric="formula"` (or metric="" with a non-empty Formula). Added `IsFormula()` helper so validate and executor share one predicate.
+- `definition.go` Validate: when `IsFormula()` is true, require Formula and skip the Link/Metric/Field checks — formulas don't traverse a link.
+- `executor.go` executeWithProperties: batch-load base object fields via a single `bleve.DocIDQuery` (only when at least one DP needs it) and pass each PK's field map to `formula.New(...).Evaluate(ctx, fields)`. Link-based DPs still short-circuit and never pay for the base-fields load.
+- Result.DerivedValues carries formula results just like count/sum/avg/min/max — the existing LoadObjects handler merge-in already hands them to the client as top-level properties.
+- Tests:
+  - Unit: fullName concat, arithmetic, empty base set, multi-DP in one call, compile-error surface, metric-omitted-with-Formula, validation (missing formula), 100-object scale.
+  - E2E HTTP: POST /objectSets/loadObjects with withProperties+formula and assert fullName appears per row.
+- Files changed:
+  - `pkg/oss/objectset/definition.go` (Formula field, IsFormula, validate branch)
+  - `pkg/oss/objectset/executor.go` (formula import, dispatch, loadBaseObjectFields + evaluateFormulaDerived)
+  - `pkg/oss/objectset/withproperties_formula_test.go` (new)
+  - `prd.json` (US-201 passes=true)
+- **Learnings for future iterations:**
+  - When adding a new DerivedProperty metric, the validate branch is where callers notice a schema change first. Prefer a predicate helper on `DerivedPropertyDef` over inline boolean logic so the executor + validator can't drift.
+  - `bleve.DocIDQuery` with `Fields=["*"]` has a `Size` default that truncates. Always set `Size = len(pks)` or you lose rows silently at scale.
+  - WireObject flattens its properties to top-level JSON; HTTP tests for LoadObjects should assert on the flattened shape, not `row.Properties[...]`.
 ---

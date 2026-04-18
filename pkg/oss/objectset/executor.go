@@ -12,6 +12,7 @@ import (
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oss/where"
+	"github.com/liyang/weave/pkg/types/formula"
 )
 
 // LinkTargetTypeResolver is an optional interface that link resolvers can implement
@@ -633,7 +634,32 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 		derived[pk] = make(map[string]interface{}, len(def.DerivedProperties))
 	}
 
+	// Lazy-loaded base object fields keyed by primary key. Only populated
+	// when at least one derived property needs it (formula metric), so the
+	// existing link-based metrics don't pay the extra Bleve search.
+	var baseFields map[string]map[string]interface{}
+	loadBase := func(ctx context.Context) error {
+		if baseFields != nil {
+			return nil
+		}
+		fields, err := e.loadBaseObjectFields(ctx, inner.ObjectType, inner.PrimaryKeys)
+		if err != nil {
+			return fmt.Errorf("withProperties: load base fields for %q: %w", inner.ObjectType, err)
+		}
+		baseFields = fields
+		return nil
+	}
+
 	for _, dp := range def.DerivedProperties {
+		if dp.IsFormula() {
+			if err := loadBase(ctx); err != nil {
+				return nil, err
+			}
+			if err := e.evaluateFormulaDerived(ctx, dp, inner.PrimaryKeys, baseFields, derived); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		dir, err := links.ParseDirection(dp.Direction)
 		if err != nil {
 			return nil, fmt.Errorf("withProperties %q: %w", dp.Name, err)
@@ -903,6 +929,52 @@ func (e *Executor) evaluateNumericDerived(ctx context.Context, inner *Result, dp
 		case "max":
 			derived[pk][dp.Name] = maxV
 		}
+	}
+	return nil
+}
+
+// loadBaseObjectFields batch-fetches the stored field map for each PK in a
+// single Bleve DocIDQuery. Missing PKs produce no map entry; formula
+// evaluation handles that by passing an empty object through to the JS VM.
+// Returns a non-nil map even when pks is empty so callers can safely index.
+func (e *Executor) loadBaseObjectFields(ctx context.Context, objectType string, pks []string) (map[string]map[string]interface{}, error) {
+	out := make(map[string]map[string]interface{}, len(pks))
+	if len(pks) == 0 {
+		return out, nil
+	}
+	searchReq := bleve.NewSearchRequest(bleve.NewDocIDQuery(pks))
+	searchReq.Fields = []string{"*"}
+	searchReq.Size = len(pks)
+	indexKey := scopedIndexKey(ctx, e.indexMgr, objectType)
+	res, err := e.indexMgr.Search(indexKey, searchReq)
+	if err != nil {
+		return nil, err
+	}
+	for _, hit := range res.Hits {
+		out[hit.ID] = hit.Fields
+	}
+	return out, nil
+}
+
+// evaluateFormulaDerived compiles dp.Formula once and evaluates it per base
+// object, binding the object's stored fields to `this` and `self`. Compile
+// errors surface with a "compile" substring so callers can distinguish them
+// from runtime errors, which are scoped to the offending PK.
+func (e *Executor) evaluateFormulaDerived(ctx context.Context, dp DerivedPropertyDef, pks []string, baseFields map[string]map[string]interface{}, derived map[string]map[string]interface{}) error {
+	evaluator, err := formula.New(dp.Formula)
+	if err != nil {
+		return fmt.Errorf("withProperties %q: %w", dp.Name, err)
+	}
+	for _, pk := range pks {
+		fields := baseFields[pk]
+		if fields == nil {
+			fields = map[string]interface{}{}
+		}
+		v, err := evaluator.Evaluate(ctx, fields)
+		if err != nil {
+			return fmt.Errorf("withProperties %q: evaluate %q: %w", dp.Name, pk, err)
+		}
+		derived[pk][dp.Name] = v
 	}
 	return nil
 }

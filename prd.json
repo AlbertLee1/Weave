@@ -31,8 +31,8 @@
         "Tests pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DerivedPropertyDef.Formula + metric=formula; executor batch-loads base fields once and evaluates; LoadObjects E2E verified"
     },
     {
       "id": "US-202",
