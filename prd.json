@@ -46,8 +46,8 @@
         "Tests pass"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000033 computed_properties table; pkg/oss/computed.Resolver with 60s-default TTL cache + injectable clock; Value.ComputedAt surfaces _computed_at; ComputedPropertyStore narrow interface avoids bloating oms.Repository"
     },
     {
       "id": "US-203",

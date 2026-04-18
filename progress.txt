@@ -11,6 +11,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - `pkg/oss.WireObject.MarshalJSON` flattens Properties to the row's top level alongside `__primaryKey` / `__apiName`; HTTP tests of loadObjects must decode rows as `map[string]interface{}` and read fields directly, not as `row.Properties[...]`.
 - Goja exports whole-number JS arithmetic results as Go `int64` and fractional ones as `float64`. Tests on derived-property numerics should accept either (via a `toFloat64` helper) rather than assert a single concrete type.
 - Executor-level "load base object fields" is a single `bleve.DocIDQuery` with `Fields=["*"]` and `Size=len(pks)`. Batch once per withProperties invocation and share across DPs — per-row Bleve queries were the original pattern and are materially slower at scale.
+- New OMS resource types with their own table: DON'T extend `oms.Repository`. ~15 mock implementations across pkg/{oms,oss,links,actions,index,automate,ai}, test/{northwind,chinook,e2e,fixtures,integration} would need new stubs. Instead add a narrow interface in the same package (e.g. `ComputedPropertyStore`) and expose CRUD directly on `*PGRepository`.
+- TTL-cache tests: inject a clock via `SetNowFunc(func() time.Time)` + an advance helper. Matches `oms.CachedRepository.nowFunc` convention and keeps time-based tests deterministic without calling `time.Sleep`.
+- JSONB round-trip in pgx: stage through `[]byte` (`var aggJSON []byte` → `json.Unmarshal`). Passing the struct directly to `rows.Scan` will fail.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -51,4 +54,38 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - When adding a new DerivedProperty metric, the validate branch is where callers notice a schema change first. Prefer a predicate helper on `DerivedPropertyDef` over inline boolean logic so the executor + validator can't drift.
   - `bleve.DocIDQuery` with `Fields=["*"]` has a `Size` default that truncates. Always set `Size = len(pks)` or you lose rows silently at scale.
   - WireObject flattens its properties to top-level JSON; HTTP tests for LoadObjects should assert on the flattened shape, not `row.Properties[...]`.
+---
+
+## 2026-04-18 - US-202 Computed Properties 聚合型
+- Added migration `000033_computed_properties` creating the new `computed_properties` table with `source_link_rid`, `aggregation` (JSONB), `cache_ttl_seconds`, plus UNIQUE (object_type_rid, api_name) and an index on object_type_rid.
+- Added `pkg/oms.ComputedProperty` model + `ComputedAggregation` (count/sum/avg/min/max, with field required for numerics). `CacheTTL()` substitutes `DefaultComputedPropertyCacheTTL` (60s) when the row's `CacheTTLSeconds` is 0; clamps negative values to zero so a misconfigured row is never read as "cache forever". `Validate()` is called by both the repo writes and will be called by any admin handler before persisting.
+- Added `ComputedPropertyStore` as a narrow 5-method interface (Create/Get/List/Update/Delete) — intentionally kept OUT of `oms.Repository` so the ~15 mock repos scattered through the test tree don't need stubs.
+- Implemented CRUD on `*PGRepository` in `pkg/oms/pg_repository_computed.go`. Aggregation spec round-trips as JSONB; TTL falls back to the 60s default when a caller persists zero.
+- New package `pkg/oss/computed` with `Resolver`:
+  - Dependencies injected as three narrow interfaces: `LinkedObjectsResolver`, `LinkTypeLookup`, `IndexSearcher` (all satisfied by existing prod types).
+  - Cache keyed by `(cp.RID, sourcePK)` with entries tracking `value`, `computedAt`, `expiresAt`. `Evaluate` returns a `Value{Value, ComputedAt}` — ComputedAt is what API handlers surface as `_computed_at`.
+  - Count metric short-circuits after link resolve; numeric metrics resolve the target ObjectType via `LinkTypeLookup.GetLinkType` then issue one Bleve `DocIDQuery` with `Size=len(targets)` (same pattern US-201 established).
+  - Empty target set: `sum` returns `0.0`, everything else returns `nil` — mirrors `executor.evaluateNumericDerived`.
+  - Numeric coercion accepts float32/64, int/32/64, uint/32/64, json.Number.
+  - Clock is injectable (`SetNowFunc`) so cache-TTL behaviour is deterministic in tests.
+  - `InvalidateAll()` clears the cache for admin-write invalidation.
+- Tests: 17 unit tests in `pkg/oss/computed/resolver_test.go` — count, count(empty), sum, avg, min, max, sum(empty)=0, avg(empty)=nil, cache-hit within TTL (link mutated, still returns cached), cache-miss after TTL expiry (recomputes + advances ComputedAt), default-TTL=60s when `CacheTTLSeconds=0`, cache-keyed-by-PK isolation, cache-keyed-by-RID isolation (count vs sum on same PK), `InvalidateAll()`, `CacheTTLSeconds<0` skips cache entirely, invalid aggregation rejected, monotonic ComputedAt.
+- `pkg/oms/computed_property_test.go` covers `ComputedAggregation.Validate`, `ComputedProperty.CacheTTL`, `ComputedProperty.Validate`.
+- Files changed:
+  - `migrations/000033_computed_properties.up.sql` (new)
+  - `migrations/000033_computed_properties.down.sql` (new)
+  - `pkg/oms/computed_property.go` (new — model + ComputedPropertyStore interface)
+  - `pkg/oms/computed_property_test.go` (new)
+  - `pkg/oms/pg_repository_computed.go` (new — PGRepository CRUD)
+  - `pkg/oss/computed/resolver.go` (new)
+  - `pkg/oss/computed/resolver_test.go` (new)
+  - `prd.json` (US-202 passes=true)
+- **Learnings for future iterations:**
+  - When adding a brand-new resource type with its own table, DON'T add CRUD methods to the main `oms.Repository` interface unless you're willing to stub them in ~15 mock files (every pkg/{oms,oss,links,actions,index,automate,ai} and test/{northwind,chinook,e2e,fixtures,integration} has at least one inMemoryOmsRepo / mockRepo / mockOmsRepo / stubRehydrateRepo that needs updating). Instead add a narrow interface in the same package and have `*PGRepository` satisfy it implicitly.
+  - Injecting a clock via `SetNowFunc(func() time.Time)` is the simplest way to test TTL-cache behaviour deterministically. The convention here mirrors `oms.CachedRepository.nowFunc`.
+  - Bleve `DocIDQuery` on per-link target ObjectType still needs `Size = len(targets)` to avoid silent truncation (same learning US-201 called out).
+  - `coerceNumeric` is duplicated between `pkg/oss/objectset/executor.go` and now `pkg/oss/computed/resolver.go`. When a third caller appears, hoist it to `pkg/oss/internal/numeric`.
+  - The PRD phrase "_computed_at 时戳" is best satisfied by a `Value{Value, ComputedAt}` pair at the resolver layer — downstream HTTP handlers can then decide whether to stamp it on each property or as a sibling map. This keeps the resolver API stable even if the wire format evolves.
+  - JSONB round-tripping of structs in pgx uses `[]byte` staging (`var aggJSON []byte` → `json.Unmarshal`). Don't try to pass the struct directly; pgx won't know how to marshal it.
+  - Default TTL handling is done in two places (model `CacheTTL()` for the resolver cache path, and repo writes for the column default). Keeping them in sync: the model exposes `DefaultComputedPropertyCacheTTL` as the single source of truth.
 ---
