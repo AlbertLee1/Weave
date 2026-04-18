@@ -499,15 +499,19 @@ type QueryType struct {
 	CreatedAt   time.Time       `json:"-"`
 }
 
-// Function represents a stored JavaScript function in the ontology.
+// Function represents a stored Function Registry entry. SourceCode is the
+// universal "body" handle: for Runtime="goja" it is the embedded JavaScript
+// source; for Runtime="http" it is the delegate endpoint URL.
 type Function struct {
-	RID         string    `json:"rid"`
-	OntologyRID string    `json:"-"`
-	Name        string    `json:"name"`
-	Version     int       `json:"version"`
-	SourceCode  string    `json:"sourceCode"`
-	CreatedBy   string    `json:"createdBy"`
-	CreatedAt   time.Time `json:"createdAt"`
+	RID         string          `json:"rid"`
+	OntologyRID string          `json:"-"`
+	Name        string          `json:"name"`
+	Version     int             `json:"version"`
+	SourceCode  string          `json:"sourceCode"`
+	Signature   json.RawMessage `json:"signature,omitempty"`
+	Runtime     string          `json:"runtime,omitempty"`
+	CreatedBy   string          `json:"createdBy"`
+	CreatedAt   time.Time       `json:"createdAt"`
 }
 
 // OntologyBranch represents a branch for isolated ontology schema changes.

@@ -824,6 +824,31 @@ components:
           type: integer
         sourceCode:
           type: string
+        runtime:
+          type: string
+          enum: [goja, http]
+          description: Execution runtime. Defaults to "goja" when omitted.
+        signature:
+          type: object
+          description: |
+            JSON schema describing params + returns. Empty / absent means no
+            contract is declared and the runtime validator is skipped.
+          properties:
+            params:
+              type: array
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string }
+                  type: { type: string }
+                  required: { type: boolean }
+                  default: {}
+            returns:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string }
         createdBy:
           type: string
         createdAt:
@@ -4237,6 +4262,11 @@ paths:
                   type: string
                 sourceCode:
                   type: string
+                runtime:
+                  type: string
+                  enum: [goja, http]
+                signature:
+                  type: object
                 createdBy:
                   type: string
       responses:
@@ -4319,6 +4349,11 @@ paths:
                   type: string
                 version:
                   type: integer
+                runtime:
+                  type: string
+                  enum: [goja, http]
+                signature:
+                  type: object
       responses:
         "200":
           description: Function updated.

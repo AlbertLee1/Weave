@@ -41,6 +41,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Inheritance import remap: when CreateOntology copies object types into a fresh ontology, ExtendsRID may point at any other type in the same import — including one that appears later in the slice. Pre-allocate new RIDs for the whole slice into otRIDMap BEFORE the create loop so parent pointers can be remapped regardless of declaration order. Same shape works for any future self-referential field on a row that imports as a batch.
 - pkg/oms needs to call into pkg/actions (e.g. polymorphic invoke forwarding to the ActionExecutor): declare a NARROW interface in pkg/oms (`oms.InterfaceMethodActionDispatcher`), keep pkg/oms free of any pkg/actions import, and put the concrete adapter inside `cmd/server/`. Same trick as `pgEdgePropertiesResolver` from US-210 — keeps the dependency direction clean AND makes degraded-mode test routers trivial (no dispatcher wired ⇒ resolution still works, execution just skipped).
 - When a handler under test relies on `mockRepo` methods that other tests stubbed as "return nil/createErr", promote them to real in-memory implementations (e.g. add an `interfaceAttachments []ObjectTypeInterface` slice in `handlers_test.go` so `AttachInterface` / `ListObjectTypeInterfaces` actually persist). Zero-arg stubs silently hide missing data and your new test passes by accident. The promotion is additive — existing tests that only read nil stay green.
+- NOT NULL DEFAULT '{}'::jsonb columns: read path MUST `COALESCE(col, '{}'::jsonb)` AND write path MUST substitute '{}' for nil json.RawMessage — pgx encodes nil json.RawMessage as the string "null", which the JSONB column happily accepts but breaks the "empty ⇒ nil-on-the-wire" round-trip. Single normalise/decode helper pair (see `pkg/oms/function.go` normaliseSignatureForWrite + signatureFromBytes) keeps both sides honest.
+- Idempotent CHECK constraint additions in migrations: ALTER TABLE … ADD CONSTRAINT has no IF NOT EXISTS for CHECKs (unlike COLUMNS), so wrap with `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '...') THEN ALTER ... END IF; END$$;`. Prior art: `migrations/000040_function_signature_runtime.up.sql` for `functions_runtime_check`.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -567,4 +569,34 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Zero-arg stubs in mockRepo (`AttachInterface(_, _)` → returns createErr) are a trap: they compile fine but the handlers that rely on them (polymorphic invoke, Interface attach/detach chains) silently return empty results. When a new test exercises a handler end-to-end, audit the mockRepo stubs it touches and promote them to real in-memory impls if the handler actually reads the data back. Prior pattern: the `branchChanges` + `actionTypes` slices in mockRepo are real storage; `interfaceAttachments` was not until US-214 needed it.
   - Tri-state pointer fields (`*string` on UpdateActionTypeRequest.ImplementsMethodRID) only disambiguate three states when the handler actually dereferences them differently: nil=preserve, non-nil with "" = clear, non-nil with value = assign. Missing any branch silently collapses the semantics. Ditto on persistence: the UPDATE SQL must use NULLIF($N,'') or the "" case persists as empty string instead of NULL and the partial index stops working. Two places, same invariant — easy to get one right and skip the other.
   - When wiring a new admin handler in cmd/server/routes.go, the contract-test triad enforces: route registered → path entry in `api/openapi.yaml` → embedded copy synced via `cp api/openapi.yaml cmd/server/openapi_spec.yaml`. Failing any leg surfaces as a precise `METHOD /path` diff in the test output. Remember the embedded copy — the spec-served-at-runtime IS the embedded copy, not the canonical file.
+---
+
+## 2026-04-18 - US-215 Function Registry (signature + runtime)
+- Pre-existing infra (US-089) already shipped the `functions` table + Function model + CRUD handlers + chi routes. US-215 layered the registry-shape extensions:
+  - migration 000040: ALTER TABLE functions ADD COLUMN signature JSONB NOT NULL DEFAULT '{}'::jsonb, ADD COLUMN runtime TEXT NOT NULL DEFAULT 'goja' + CHECK (runtime IN ('goja','http')) (constraint added via DO-EXISTS guard so the migration is idempotent).
+  - `pkg/oms/function.go` (new): FunctionRuntimeGoja/HTTP constants; Function.Validate() (name/sourceCode/runtime + delegated signature shape check); Function.NormalisedRuntime() collapses empty → "goja"; ValidateFunctionSignature() enforces params-array + per-param-name + returns.type. signatureFromBytes / normaliseSignatureForWrite keep the JSONB DEFAULT '{}' contract round-trip-safe (empty/{} stored as '{}' but surfaces as nil JSON so omitempty hides the empty case from clients).
+  - `pkg/oms/models.go`: Function gains Signature json.RawMessage + Runtime string (omitempty) — wire-only, since SourceCode stays the universal "body" handle (Goja: JS source; HTTP: endpoint URL).
+  - `pkg/oms/pg_repository.go`: INSERT writes signature+runtime via the helpers; SELECT/Get/GetByName/List COALESCE(signature,'{}'::jsonb) + COALESCE(runtime,'goja') so partially-migrated rows read clean; UPDATE writes the new columns.
+  - `pkg/oms/handlers_function.go`: CreateFunctionRequest gains Runtime string + Signature json.RawMessage; UpdateFunctionRequest gains Runtime *string + Signature *json.RawMessage (tri-state preserve/replace). Handler runs Function.Validate() before persisting and emits 400 InvalidParameter:function with reason on failure. existing.Runtime forced through NormalisedRuntime() so mocks see the same value the DB would store.
+  - openapi.yaml + cmd/server/openapi_spec.yaml: Function schema + create/update request bodies surface the new fields (`runtime` enum [goja, http], `signature` object with params/returns sub-shape).
+- Tests:
+  - `pkg/oms/function_test.go` (new, 9 cases): Validate rejects empty name/sourceCode/unknown runtime; NormalisedRuntime defaults to goja; HTTP runtime accepted; ValidateFunctionSignature accepts nil/{} and a real {params,returns} shape, rejects params-not-array, param-without-name, returns-without-type, invalid JSON.
+  - `pkg/oms/handlers_function_us215_test.go` (new, 5 cases): Create round-trips signature+runtime; Create defaults runtime to "goja"; Create rejects unknown runtime; Create rejects bad signature shape; Update preserves signature when omitted; Update rejects unknown runtime.
+  - All pre-existing Function handler tests still pass (the legacy create-without-signature path still defaults clean).
+- `go test -short ./pkg/... ./cmd/... ./internal/...` green; `go vet ./...` clean; contract-tests trio (TestContract_AllRoutesDocumented + TestContract_NoOrphanedSpecPaths + TestContract_EmbeddedSpecMatchesCanonical) green.
+- Files changed:
+  - `migrations/000040_function_signature_runtime.up.sql` (new)
+  - `migrations/000040_function_signature_runtime.down.sql` (new)
+  - `pkg/oms/function.go` (new)
+  - `pkg/oms/function_test.go` (new)
+  - `pkg/oms/handlers_function_us215_test.go` (new)
+  - `pkg/oms/models.go` (Function.Signature + Function.Runtime)
+  - `pkg/oms/pg_repository.go` (INSERT/SELECT/UPDATE for signature+runtime)
+  - `pkg/oms/handlers_function.go` (request DTOs + Validate gate + NormalisedRuntime)
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (Function schema + create/update bodies)
+  - `prd.json` (US-215 passes=true)
+- **Learnings for future iterations:**
+  - When adding a NOT NULL DEFAULT '{}' JSONB column: the read path must COALESCE(col, '{}'::jsonb) AND the write path must substitute '{}' for nil — pgx encodes nil json.RawMessage as the string "null", which the column accepts but breaks the "empty ⇒ nil-on-the-wire" round-trip the API contract wants. Single normaliseSignatureForWrite + signatureFromBytes choke point keeps both sides honest.
+  - Adding a CHECK constraint inside an idempotent migration: wrap with `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '...') THEN ALTER ... END IF; END$$;`. ALTER TABLE … ADD CONSTRAINT alone has no IF NOT EXISTS for CHECKs (unlike COLUMNS), so the naive form double-fires on re-run.
+  - Tri-state fields on Update DTO: `Signature *json.RawMessage` works the same way `*string` / `*bool` do — nil = preserve, non-nil = replace (including with empty value). Bare `json.RawMessage` would collapse "absent in JSON" and "present with empty body" into the same zero value, which would silently nuke the schema on every partial update.
 ---

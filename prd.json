@@ -239,8 +239,8 @@
         "Tests pass"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000040 ALTER TABLE functions adds signature JSONB DEFAULT '{}' + runtime TEXT DEFAULT 'goja' with CHECK (goja|http); Function model gains Signature json.RawMessage + Runtime string; Function.Validate + ValidateFunctionSignature enforce shape (params array, per-param name, returns.type) at write time; PG repo round-trips signature via normalise/decode helpers so empty rows surface as nil JSON; CreateFunctionRequest accepts runtime+signature; UpdateFunctionRequest uses *string / *json.RawMessage for tri-state preserve/replace; openapi.yaml + embedded copy carry the new fields; 14 new unit + handler tests cover defaults, accept/reject paths, signature shape; legacy US-089 CRUD + routes untouched"
     },
     {
       "id": "US-216",

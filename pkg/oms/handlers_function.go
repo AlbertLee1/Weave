@@ -1,6 +1,7 @@
 package oms
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -12,16 +13,23 @@ import (
 
 // CreateFunctionRequest is the request body for creating a function.
 type CreateFunctionRequest struct {
-	Name       string `json:"name"`
-	SourceCode string `json:"sourceCode"`
-	CreatedBy  string `json:"createdBy,omitempty"`
+	Name       string          `json:"name"`
+	SourceCode string          `json:"sourceCode"`
+	Runtime    string          `json:"runtime,omitempty"`
+	Signature  json.RawMessage `json:"signature,omitempty"`
+	CreatedBy  string          `json:"createdBy,omitempty"`
 }
 
-// UpdateFunctionRequest is the request body for updating a function.
+// UpdateFunctionRequest is the request body for updating a function. Pointer
+// fields distinguish "omit ⇒ preserve" from "send empty ⇒ clear" for the
+// fields where that matters; bare strings/ints keep the legacy "empty ⇒
+// preserve" semantics the original handler shipped with.
 type UpdateFunctionRequest struct {
-	Name       string `json:"name,omitempty"`
-	SourceCode string `json:"sourceCode,omitempty"`
-	Version    int    `json:"version,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	SourceCode string           `json:"sourceCode,omitempty"`
+	Version    int              `json:"version,omitempty"`
+	Runtime    *string          `json:"runtime,omitempty"`
+	Signature  *json.RawMessage `json:"signature,omitempty"`
 }
 
 // CreateFunction handles POST /api/v2/ontologies/{ontologyApiName}/functions.
@@ -67,8 +75,17 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		Name:        req.Name,
 		Version:     1,
 		SourceCode:  req.SourceCode,
+		Runtime:     req.Runtime,
+		Signature:   req.Signature,
 		CreatedBy:   req.CreatedBy,
 	}
+	if err := fn.Validate(); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:function", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	fn.Runtime = fn.NormalisedRuntime()
 
 	if err := h.repo.CreateFunction(r.Context(), fn); err != nil {
 		if errors.Is(err, ErrDuplicate) {
@@ -156,6 +173,19 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.Version > 0 {
 		existing.Version = req.Version
 	}
+	if req.Runtime != nil {
+		existing.Runtime = *req.Runtime
+	}
+	if req.Signature != nil {
+		existing.Signature = *req.Signature
+	}
+	if err := existing.Validate(); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:function", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	existing.Runtime = existing.NormalisedRuntime()
 
 	if err := h.repo.UpdateFunction(r.Context(), existing); err != nil {
 		if errors.Is(err, ErrNotFound) {
