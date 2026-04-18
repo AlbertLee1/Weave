@@ -510,3 +510,79 @@ func TestConfig_Validate_OIDC_FullyPopulatedPasses(t *testing.T) {
 		t.Fatalf("expected OIDC-full config to validate, got: %v", err)
 	}
 }
+
+// US-248: SAML config loading + validation.
+
+func TestLoadConfig_SAML_AuthModeShortcut(t *testing.T) {
+	t.Setenv("AUTH_MODE", "saml")
+	t.Setenv("WEAVE_SAML_IDP_SSO_URL", "https://idp.example.com/sso")
+	t.Setenv("WEAVE_SAML_IDP_ISSUER", "https://idp.example.com")
+	t.Setenv("WEAVE_SAML_IDP_CERT_PEM", "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----")
+	t.Setenv("WEAVE_SAML_SP_ENTITY_ID", "https://weave.example.com")
+	t.Setenv("WEAVE_SAML_SP_ACS_URL", "https://weave.example.com/api/auth/saml/acs")
+	t.Setenv("WEAVE_SAML_ATTRIBUTE_EMAIL", "mail")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.SAML.Enabled {
+		t.Error("AUTH_MODE=saml should set SAML.Enabled=true")
+	}
+	if cfg.SAML.IdPSSOURL != "https://idp.example.com/sso" {
+		t.Errorf("IdPSSOURL=%q", cfg.SAML.IdPSSOURL)
+	}
+	if cfg.SAML.SPACSURL != "https://weave.example.com/api/auth/saml/acs" {
+		t.Errorf("SPACSURL=%q", cfg.SAML.SPACSURL)
+	}
+	if cfg.SAML.AttributeEmail != "mail" {
+		t.Errorf("AttributeEmail=%q", cfg.SAML.AttributeEmail)
+	}
+}
+
+func TestLoadConfig_SAML_DisabledByDefault(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SAML.Enabled {
+		t.Error("SAML should default to Enabled=false")
+	}
+}
+
+func TestConfig_Validate_SAML_MissingFields(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.SAML.Enabled = true
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error when SAML.Enabled=true but config is empty")
+	}
+	msg := err.Error()
+	for _, need := range []string{
+		"WEAVE_SAML_IDP_SSO_URL",
+		"WEAVE_SAML_IDP_ISSUER",
+		"WEAVE_SAML_IDP_CERT_PEM",
+		"WEAVE_SAML_SP_ENTITY_ID",
+		"WEAVE_SAML_SP_ACS_URL",
+	} {
+		if !strings.Contains(msg, need) {
+			t.Errorf("expected error to mention %s, got: %v", need, err)
+		}
+	}
+}
+
+func TestConfig_Validate_SAML_FullyPopulatedPasses(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.SAML = SAMLConfig{
+		Enabled:           true,
+		IdPSSOURL:         "https://idp.example.com/sso",
+		IdPIssuer:         "https://idp.example.com",
+		IdPCertificatePEM: "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
+		SPEntityID:        "https://weave.example.com",
+		SPACSURL:          "https://weave.example.com/api/auth/saml/acs",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected SAML-full config to validate, got: %v", err)
+	}
+}

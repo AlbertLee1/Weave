@@ -135,6 +135,11 @@ type ServerDeps struct {
 	// registered; any misconfig (unreachable issuer, missing client ID)
 	// leaves Handler nil and the routes are not mounted.
 	OIDCHandler *auth.OIDCHandler
+	// US-248: SAML 2.0 SSO front-door. When non-nil the
+	// /api/auth/saml/{metadata,login,acs} endpoints are registered;
+	// any misconfig (missing IdP cert, unparseable PEM) leaves Handler
+	// nil and the routes are not mounted.
+	SAMLHandler *auth.SAMLHandler
 	CORSOrigins []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -270,6 +275,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// registered.
 		if deps.OIDCHandler != nil {
 			deps.OIDCHandler.RegisterRoutes(r)
+		}
+
+		// US-248: SAML SSO front-door. Mounted alongside password login /
+		// OIDC so operators can mix and match; nil means the IdP cert was
+		// missing or unparseable at boot and the endpoints are skipped.
+		if deps.SAMLHandler != nil {
+			deps.SAMLHandler.RegisterRoutes(r)
 		}
 	}
 
@@ -808,6 +820,56 @@ func main() {
 					MarkingRepo:    markingRepo,
 				})
 				log.Printf("[OIDC] enabled: issuer=%s client_id=%s", cfg.OIDC.IssuerURL, cfg.OIDC.ClientID)
+			}
+		}
+	}
+
+	// US-248: SAML 2.0 SSO front-door. Constructed AFTER the JWT signer +
+	// refresh service so the ACS callback has every collaborator it needs to
+	// mint a Weave session once the IdP assertion has been verified. Errors
+	// degrade loudly — the process keeps running with SAML off rather than
+	// crashing, so operators can still use password login / OIDC / API keys.
+	if cfg.SAML.Enabled {
+		if deps.JWTSigner == nil || deps.RefreshService == nil || deps.UserRepo == nil {
+			log.Printf("[SAML] WARNING: SAML.Enabled=true but JWT/refresh/user deps missing — /api/auth/saml/* not mounted")
+		} else {
+			samlVerifier, err := auth.NewSAMLDepsFromConfig(auth.SAMLConfig{
+				IdPSSOURL:          cfg.SAML.IdPSSOURL,
+				IdPIssuer:          cfg.SAML.IdPIssuer,
+				IdPCertificatePEM:  cfg.SAML.IdPCertificatePEM,
+				SPEntityID:         cfg.SAML.SPEntityID,
+				SPACSURL:           cfg.SAML.SPACSURL,
+				SuccessRedirectURL: cfg.SAML.SuccessRedirectURL,
+				AttributeEmail:     cfg.SAML.AttributeEmail,
+				AttributeName:      cfg.SAML.AttributeName,
+			})
+			if err != nil {
+				log.Printf("[SAML] WARNING: configuration rejected: %v — /api/auth/saml/* not mounted", err)
+			} else {
+				var samlMarkingRepo auth.MarkingRepository
+				if deps.PGPool != nil {
+					samlMarkingRepo = auth.NewPGMarkingRepository(deps.PGPool)
+				}
+				deps.SAMLHandler = auth.NewSAMLHandler(auth.SAMLHandlerDeps{
+					Config: auth.SAMLConfig{
+						IdPSSOURL:          cfg.SAML.IdPSSOURL,
+						IdPIssuer:          cfg.SAML.IdPIssuer,
+						IdPCertificatePEM:  cfg.SAML.IdPCertificatePEM,
+						SPEntityID:         cfg.SAML.SPEntityID,
+						SPACSURL:           cfg.SAML.SPACSURL,
+						SuccessRedirectURL: cfg.SAML.SuccessRedirectURL,
+						AttributeEmail:     cfg.SAML.AttributeEmail,
+						AttributeName:      cfg.SAML.AttributeName,
+					},
+					SP:             samlVerifier,
+					Users:          deps.UserRepo,
+					Resolver:       deps.RoleResolver,
+					Signer:         deps.JWTSigner,
+					RefreshService: deps.RefreshService,
+					MarkingRepo:    samlMarkingRepo,
+				})
+				log.Printf("[SAML] enabled: idp=%s entity_id=%s acs=%s",
+					cfg.SAML.IdPIssuer, cfg.SAML.SPEntityID, cfg.SAML.SPACSURL)
 			}
 		}
 	}

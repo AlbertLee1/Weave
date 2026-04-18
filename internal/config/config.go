@@ -86,6 +86,26 @@ type OIDCConfig struct {
 	SuccessRedirectURL string
 }
 
+// SAMLConfig controls the SAML 2.0 SSO front-door (US-248). When Enabled is
+// true AND IdPSSOURL / IdPIssuer / IdPCertificatePEM / SPEntityID / SPACSURL
+// are all populated, the server mounts /api/auth/saml/{metadata,login,acs}
+// and uses russellhaering/gosaml2 to verify IdP-issued assertions. The
+// caller's identity is mapped to a Weave UserRecord by email and a standard
+// LoginResponse is returned — same shape as OIDC + password login so
+// downstream API calls keep going through the existing JWT middleware
+// unchanged.
+type SAMLConfig struct {
+	Enabled            bool
+	IdPSSOURL          string
+	IdPIssuer          string
+	IdPCertificatePEM  string
+	SPEntityID         string
+	SPACSURL           string
+	SuccessRedirectURL string
+	AttributeEmail     string
+	AttributeName      string
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -103,6 +123,7 @@ type Config struct {
 	Functions       FunctionsConfig
 	IngestRateLimit IngestRateLimitConfig
 	OIDC            OIDCConfig
+	SAML            SAMLConfig
 }
 
 func Load() (*Config, error) {
@@ -314,6 +335,55 @@ func Load() (*Config, error) {
 		cfg.OIDC.SuccessRedirectURL = v
 	}
 
+	// SAML 2.0 SSO front-door (US-248). AUTH_MODE=saml is shorthand for
+	// "enable SAML on top of jwt-mode middleware"; operators can also leave
+	// AUTH_MODE=jwt and just set WEAVE_SAML_ENABLED=true to keep
+	// password/OIDC alongside SAML.
+	if cfg.AuthMode == "saml" {
+		cfg.SAML.Enabled = true
+	}
+	if v := os.Getenv("WEAVE_SAML_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_SAML_ENABLED %q: %w", v, err)
+		}
+		cfg.SAML.Enabled = b
+	}
+	if v := os.Getenv("WEAVE_SAML_IDP_SSO_URL"); v != "" {
+		cfg.SAML.IdPSSOURL = v
+	}
+	if v := os.Getenv("WEAVE_SAML_IDP_ISSUER"); v != "" {
+		cfg.SAML.IdPIssuer = v
+	}
+	if v := os.Getenv("WEAVE_SAML_IDP_CERT_PEM"); v != "" {
+		cfg.SAML.IdPCertificatePEM = v
+	}
+	// Operators can either inline the cert (WEAVE_SAML_IDP_CERT_PEM) or
+	// point at a file on disk (WEAVE_SAML_IDP_CERT_PATH). The path-based
+	// form is friendlier for K8s secret mounts and Docker volumes.
+	if v := os.Getenv("WEAVE_SAML_IDP_CERT_PATH"); v != "" {
+		body, err := os.ReadFile(v)
+		if err != nil {
+			return nil, fmt.Errorf("read WEAVE_SAML_IDP_CERT_PATH %q: %w", v, err)
+		}
+		cfg.SAML.IdPCertificatePEM = string(body)
+	}
+	if v := os.Getenv("WEAVE_SAML_SP_ENTITY_ID"); v != "" {
+		cfg.SAML.SPEntityID = v
+	}
+	if v := os.Getenv("WEAVE_SAML_SP_ACS_URL"); v != "" {
+		cfg.SAML.SPACSURL = v
+	}
+	if v := os.Getenv("WEAVE_SAML_SUCCESS_REDIRECT_URL"); v != "" {
+		cfg.SAML.SuccessRedirectURL = v
+	}
+	if v := os.Getenv("WEAVE_SAML_ATTRIBUTE_EMAIL"); v != "" {
+		cfg.SAML.AttributeEmail = v
+	}
+	if v := os.Getenv("WEAVE_SAML_ATTRIBUTE_NAME"); v != "" {
+		cfg.SAML.AttributeName = v
+	}
+
 	return cfg, nil
 }
 
@@ -361,6 +431,29 @@ func (c *Config) Validate() error {
 		if len(missing) > 0 {
 			problems = append(problems,
 				"OIDC.Enabled=true but missing: "+strings.Join(missing, ", "))
+		}
+	}
+
+	if c.SAML.Enabled {
+		var missing []string
+		if strings.TrimSpace(c.SAML.IdPSSOURL) == "" {
+			missing = append(missing, "WEAVE_SAML_IDP_SSO_URL")
+		}
+		if strings.TrimSpace(c.SAML.IdPIssuer) == "" {
+			missing = append(missing, "WEAVE_SAML_IDP_ISSUER")
+		}
+		if strings.TrimSpace(c.SAML.IdPCertificatePEM) == "" {
+			missing = append(missing, "WEAVE_SAML_IDP_CERT_PEM (or WEAVE_SAML_IDP_CERT_PATH)")
+		}
+		if strings.TrimSpace(c.SAML.SPEntityID) == "" {
+			missing = append(missing, "WEAVE_SAML_SP_ENTITY_ID")
+		}
+		if strings.TrimSpace(c.SAML.SPACSURL) == "" {
+			missing = append(missing, "WEAVE_SAML_SP_ACS_URL")
+		}
+		if len(missing) > 0 {
+			problems = append(problems,
+				"SAML.Enabled=true but missing: "+strings.Join(missing, ", "))
 		}
 	}
 

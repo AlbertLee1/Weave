@@ -715,8 +715,8 @@
         "Tests pass"
       ],
       "priority": 49,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/auth/saml_handler.go wraps russellhaering/gosaml2 v0.11.0 (pure Go, CGO-clean) behind a narrow SAMLAssertionVerifier interface (BuildAuthURL / RetrieveAssertionInfo / Metadata) — handler unit tests stub the verifier; the production builder NewSAMLDepsFromConfig hydrates a real *saml2.SAMLServiceProvider from operator-supplied IdP cert PEM. Three endpoints under /api/auth/saml/{metadata,login,acs}: GET metadata returns the SP EntityDescriptor XML built directly (skipping gosaml2.Metadata() which insists on an SP encryption cert we don't ship), GET login mints a RelayState cookie + redirects to IdP SSO URL, POST acs validates the relay pair AND the assertion signature/audience/expiry then upserts a UserRecord keyed on email + mints a Weave LoginResponse identical in shape to /api/auth/login + /api/auth/oidc/callback. Email/displayName extraction walks a configurable attribute candidate list with sensible defaults (email/mail/Microsoft xmlsoap claim URI). IdP-initiated SSO supported when both RelayState form value AND cookie are absent together. SAMLConfig env wiring (WEAVE_SAML_*) + cmd/server/main.go boot block degrade loudly on bad cert / missing fields rather than crashing. 15 SAML unit tests + 4 config tests all green; full build (CGO_ENABLED=0) clean."
     },
     {
       "id": "US-249",
