@@ -308,3 +308,43 @@ func (h *OMSHandler) GetBranchDiff(w http.ResponseWriter, r *http.Request) {
 		"data": entries,
 	})
 }
+
+// GetBranchBreakingChanges handles
+// GET /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/breaking-changes.
+// It returns a BreakingChangesReport covering property deletions, type
+// narrowing, newly-required fields, and primary-key changes — annotated with
+// the ActionTypes and SavedObjectSets that reference the affected schema.
+func (h *OMSHandler) GetBranchBreakingChanges(w http.ResponseWriter, r *http.Request) {
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	ontology, err := h.repo.GetOntology(r.Context(), ontologyAPIName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
+				"ontologyApiName": ontologyAPIName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ResolveOntologyFailed", nil))
+		return
+	}
+
+	branchID := chi.URLParam(r, "branchId")
+	if _, err := h.repo.GetBranch(r.Context(), branchID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("BranchNotFound", map[string]string{
+				"branchId": branchID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetBranchFailed", nil))
+		return
+	}
+
+	report, err := DetectBreakingChanges(r.Context(), h.repo, h.savedObjectSetLister, ontology.RID, ontology.APIName, branchID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("DetectBreakingChangesFailed", nil))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, report)
+}

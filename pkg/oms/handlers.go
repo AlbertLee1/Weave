@@ -12,11 +12,12 @@ import (
 
 // OMSHandler provides HTTP handlers for OMS V2 and admin endpoints.
 type OMSHandler struct {
-	repo              Repository
-	queryExecutor     QueryExecutor
-	actorFn           ActorFunc
-	linkPropertyStore LinkPropertyStore
-	linkEdgeStore     LinkEdgeStore
+	repo                  Repository
+	queryExecutor         QueryExecutor
+	actorFn               ActorFunc
+	linkPropertyStore     LinkPropertyStore
+	linkEdgeStore         LinkEdgeStore
+	savedObjectSetLister  SavedObjectSetLister
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
@@ -44,6 +45,14 @@ func (h *OMSHandler) SetLinkPropertyStore(s LinkPropertyStore) {
 // PUT edge-properties endpoint responds with 503 NotConfigured.
 func (h *OMSHandler) SetLinkEdgeStore(s LinkEdgeStore) {
 	h.linkEdgeStore = s
+}
+
+// SetSavedObjectSetLister wires the optional saved-object-set lookup used by
+// the breaking-change detector (US-213). When unset the detector still runs
+// against ObjectType / Property metadata but reports no SavedObjectSet
+// impacts, matching degraded-mode test routers that don't ship a SavedStore.
+func (h *OMSHandler) SetSavedObjectSetLister(s SavedObjectSetLister) {
+	h.savedObjectSetLister = s
 }
 
 // SetActorFunc sets a function that extracts the user ID from request context.

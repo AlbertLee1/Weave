@@ -93,6 +93,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.GetBranch)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.CloseBranch)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", omsHandler.GetBranchDiff)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/breaking-changes", omsHandler.GetBranchBreakingChanges)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/rebase", omsHandler.RebaseBranch)
 
 	// Ontology Proposals (US-117, US-118)

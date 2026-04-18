@@ -786,6 +786,45 @@ components:
           type: object
           nullable: true
           description: State after the change (null for DELETED).
+    BreakingChange:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum:
+            - PROPERTY_DELETED
+            - PROPERTY_TYPE_NARROWED
+            - PROPERTY_REQUIRED_ADDED
+            - PRIMARY_KEY_CHANGED
+        objectTypeRid:
+          type: string
+        objectTypeApiName:
+          type: string
+        propertyApiName:
+          type: string
+        detail:
+          type: string
+        affectedActionTypes:
+          type: array
+          items:
+            type: string
+          description: RIDs of ActionTypes whose rules reference the affected schema.
+        affectedSavedObjectSets:
+          type: array
+          items:
+            type: string
+          description: IDs of SavedObjectSets whose definition references the affected schema.
+    BreakingChangesReport:
+      type: object
+      required: [branchId, changes]
+      properties:
+        branchId:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BreakingChange"
     OntologyProposal:
       type: object
       required: [id, branchId, ontologyRid, title, status, author, createdAt, updatedAt]
@@ -4167,6 +4206,30 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/BranchDiffEntry"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/breaking-changes:
+    get:
+      operationId: getBranchBreakingChanges
+      summary: Detect breaking changes introduced by a branch
+      description: Compares branch overlay to main, surfacing property deletions, type narrowing, newly-required fields, and primary-key changes — annotated with affected ActionTypes and SavedObjectSets.
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Breaking-change report for the branch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakingChangesReport"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
