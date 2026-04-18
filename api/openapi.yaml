@@ -1573,6 +1573,31 @@ components:
           type: integer
           format: int64
           description: Used by sample — optional deterministic PRNG seed. When set two runs of the same definition produce identical samples; omit for a wall-clock-seeded sample.
+        path:
+          type: array
+          description: |
+            Used by searchAround — ordered list of link hops to walk from the inner
+            objectSet. Each step takes a link API name and optional direction
+            ("" / "forward" / "reverse") plus an optional expectedObjectType the
+            executor asserts against the resolver's target-type lookup. When
+            path is set the legacy `link` / `direction` fields must be unset.
+          items:
+            type: object
+            required: [link]
+            properties:
+              link:
+                type: string
+                description: Link type API name for this hop.
+              direction:
+                type: string
+                enum: ["", forward, reverse]
+                description: Traversal direction. Defaults to forward.
+              expectedObjectType:
+                type: string
+                description: |
+                  Optional assertion — when set, the executor requires the
+                  resolver's target-type lookup for this hop to equal this
+                  value, otherwise the walk fails loudly.
     LoadObjectSetRequest:
       type: object
       required: [objectSet, select]

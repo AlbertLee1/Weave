@@ -581,7 +581,14 @@ func (e *Executor) executeSubtract(ctx context.Context, def *Definition) (*Resul
 // If def.Direction == "reverse" the link is walked target -> source, meaning
 // the input ObjectSet contains objects of the link's declared *target* and the
 // output contains objects of the declared *source*.
+//
+// When def.Path is set the executor walks each step in order, threading the
+// deduped PKs and resolved ObjectType from hop N into hop N+1. See
+// executeSearchAroundPath for the multi-hop implementation (US-226).
 func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*Result, error) {
+	if len(def.Path) > 0 {
+		return e.executeSearchAroundPath(ctx, def)
+	}
 	sourceResult, err := e.execute(ctx, def.ObjectSet)
 	if err != nil {
 		return nil, fmt.Errorf("execute searchAround source: %w", err)
@@ -646,6 +653,109 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 // separate from LinkResolver so reverse support remains opt-in.
 type reverseLinkFinder interface {
 	ResolveLinkedReverseByAPIName(ctx context.Context, callerObjectType, linkTypeAPIName string, callerPKs []string) ([]string, error)
+}
+
+// executeSearchAroundPath walks def.Path as an ordered chain of link hops.
+// Each hop threads the deduped PK set from the previous hop as input and
+// uses the resolved (or declared) ObjectType of the previous hop as its
+// source type. When a step carries ExpectedObjectType the executor asserts
+// the resolver's target-type lookup matches it — a mismatch aborts the walk
+// with a descriptive error so cross-hop paths fail loudly instead of
+// silently walking the wrong index.
+//
+// Edge-property enrichment is intentionally not surfaced for path-based
+// searchAround; the single-hop shape remains the channel for per-edge props.
+func (e *Executor) executeSearchAroundPath(ctx context.Context, def *Definition) (*Result, error) {
+	sourceResult, err := e.execute(ctx, def.ObjectSet)
+	if err != nil {
+		return nil, fmt.Errorf("execute searchAround source: %w", err)
+	}
+
+	currentType := sourceResult.ObjectType
+	currentPKs := sourceResult.PrimaryKeys
+	truncated := sourceResult.Truncated
+
+	for i, step := range def.Path {
+		dir, err := links.ParseDirection(step.Direction)
+		if err != nil {
+			return nil, fmt.Errorf("searchAround path[%d]: %w", i, err)
+		}
+
+		resolvedTargetType := ""
+		if resolver, ok := e.linkResolver.(DirectionalLinkTargetTypeResolver); ok {
+			resolvedTargetType, _ = resolver.ResolveTargetObjectTypeDir(ctx, currentType, step.Link, dir)
+		} else if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok && dir == links.DirectionForward {
+			resolvedTargetType, _ = resolver.ResolveTargetObjectType(ctx, currentType, step.Link)
+		}
+
+		if step.ExpectedObjectType != "" && resolvedTargetType != "" && resolvedTargetType != step.ExpectedObjectType {
+			return nil, fmt.Errorf("searchAround path[%d] (link %q): expectedObjectType %q does not match resolved target %q",
+				i, step.Link, step.ExpectedObjectType, resolvedTargetType)
+		}
+
+		if len(currentPKs) == 0 {
+			// Empty sets stay empty through subsequent hops; pick the best
+			// known target type so downstream callers still see the right
+			// result.ObjectType.
+			currentPKs = nil
+			if step.ExpectedObjectType != "" {
+				currentType = step.ExpectedObjectType
+			} else if resolvedTargetType != "" {
+				currentType = resolvedTargetType
+			}
+			continue
+		}
+
+		var nextPKs []string
+		if dir == links.DirectionForward {
+			nextPKs, err = e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, currentType, step.Link, currentPKs)
+		} else {
+			finder, ok := e.linkResolver.(reverseLinkFinder)
+			if !ok {
+				return nil, fmt.Errorf("searchAround path[%d]: link resolver does not support reverse traversal", i)
+			}
+			nextPKs, err = finder.ResolveLinkedReverseByAPIName(ctx, currentType, step.Link, currentPKs)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("searchAround path[%d] resolve %q: %w", i, step.Link, err)
+		}
+		nextPKs = dedupeStrings(nextPKs)
+
+		// Advance: next hop reads from the resolved (or declared) target type.
+		switch {
+		case resolvedTargetType != "":
+			currentType = resolvedTargetType
+		case step.ExpectedObjectType != "":
+			currentType = step.ExpectedObjectType
+		default:
+			currentType = ""
+		}
+		currentPKs = nextPKs
+	}
+
+	return &Result{
+		ObjectType:  currentType,
+		PrimaryKeys: currentPKs,
+		Truncated:   truncated,
+	}, nil
+}
+
+// dedupeStrings returns pks with duplicates removed while preserving the
+// first-seen order. Returns a nil slice when pks is empty so callers can
+// feed it straight into the next hop without a special case.
+func dedupeStrings(pks []string) []string {
+	if len(pks) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(pks))
+	out := make([]string, 0, len(pks))
+	for _, pk := range pks {
+		if !seen[pk] {
+			seen[pk] = true
+			out = append(out, pk)
+		}
+	}
+	return out
 }
 
 // executeWithProperties executes the inner ObjectSet, then evaluates each

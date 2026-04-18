@@ -398,7 +398,7 @@
         "Tests pass（3 跳完整遍历）"
       ],
       "priority": 27,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

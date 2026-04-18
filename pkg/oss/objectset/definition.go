@@ -48,11 +48,28 @@ type Definition struct {
 	// bound ObjectSet should be used at execution time.
 	Input string `json:"input,omitempty"`
 
+	// For "searchAround" (US-226) — Path enumerates multiple link hops to walk
+	// in order from the inner objectSet. When Path is set the legacy Link /
+	// Direction fields must be unset; an empty Path falls back to the legacy
+	// single-hop behaviour driven by Link.
+	Path []PathStep `json:"path,omitempty"`
+
 	// For "sample" (US-225) — Size is the target sample count and Seed is the
 	// optional deterministic PRNG seed. Both are pointers so an unset Seed is
 	// distinguishable from the zero seed and a missing Size fails validation.
 	Size *int   `json:"size,omitempty"`
 	Seed *int64 `json:"seed,omitempty"`
+}
+
+// PathStep declares one hop in a multi-segment searchAround traversal
+// (US-226). Link is the link type API name to walk; Direction defaults to
+// "forward". ExpectedObjectType, when non-empty, is checked against the
+// link resolver's target type for this hop — a mismatch is a hard error so
+// cross-hop paths fail loudly instead of walking the wrong index.
+type PathStep struct {
+	Link               string `json:"link"`
+	Direction          string `json:"direction,omitempty"`
+	ExpectedObjectType string `json:"expectedObjectType,omitempty"`
 }
 
 // DerivedPropertyDef declares a single per-object computation the executor
@@ -123,8 +140,17 @@ func (d *Definition) Validate() error {
 		if d.ObjectSet == nil {
 			return fmt.Errorf("searchAround objectSet requires objectSet")
 		}
-		if d.Link == "" {
-			return fmt.Errorf("searchAround objectSet requires link")
+		if len(d.Path) > 0 {
+			if d.Link != "" {
+				return fmt.Errorf("searchAround objectSet cannot set both link and path")
+			}
+			for i, step := range d.Path {
+				if step.Link == "" {
+					return fmt.Errorf("searchAround path[%d] requires link", i)
+				}
+			}
+		} else if d.Link == "" {
+			return fmt.Errorf("searchAround objectSet requires link or path")
 		}
 	case "reference":
 		if d.Reference == "" {
