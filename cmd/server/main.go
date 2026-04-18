@@ -31,6 +31,7 @@ import (
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/mcp"
+	"github.com/liyang/weave/pkg/media"
 	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
@@ -74,6 +75,11 @@ type ServerDeps struct {
 	// 500 SSESubscribeNotConfigured.
 	FunnelBroadcast   *funnel.Broadcast
 	AttachmentStore   attachment.BlobStore
+	// US-204: Media upload/download/delete API. Both fields must be wired
+	// for the /api/v2/media routes to mount; in degraded mode (no PG) the
+	// catalog is nil and the routes are not registered.
+	MediaStore        *media.Store
+	MediaCatalog      oms.MediaAssetStore
 	TimeSeriesStore   timeseries.Store
 	GeotemporalStore  geotemporal.Store
 	CipherDecryptor   cipher.Decryptor
@@ -379,6 +385,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			attachmentHandler.RegisterRoutes(api)
 		}
 
+		// US-204: Media upload/download/delete endpoints. Mounted only when
+		// both the content-addressed Store and the MediaAssetStore catalog
+		// are wired; degraded mode without PG silently skips registration.
+		if deps.MediaStore != nil && deps.MediaCatalog != nil {
+			mediaHandler := media.NewHandler(deps.MediaStore, deps.MediaCatalog)
+			mediaHandler.RegisterRoutes(api)
+		}
+
 		// OntologyTransaction experimental edits endpoint (US-041).
 		// Gated behind ?preview=true — only "append edits" is exposed.
 		if deps.TransactionStore != nil {
@@ -548,6 +562,10 @@ func main() {
 		// caches; external invalidation is available via InvalidateAll.
 		pgRepo := oms.NewPGRepository(pool)
 		deps.OmsRepo = oms.NewCachedRepository(pgRepo, 60*time.Second)
+		// US-204: Media catalog is served by the uncached *PGRepository — the
+		// metadata cache decorator does not wrap MediaAssetStore methods, and
+		// upload/delete are infrequent enough that direct PG hits are fine.
+		deps.MediaCatalog = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		deps.AuditStore = audit.NewPGStore(pool)
 		// US-011: the index rebuild admin command re-ingests from
@@ -657,6 +675,12 @@ func main() {
 	attachmentStore := attachment.NewLocalStore(cfg.DataDir + "/attachments")
 	deps.AttachmentStore = attachmentStore
 	attachmentStore.StartCleanupLoop(ctx, 10*time.Minute, 1*time.Hour)
+
+	// 2b-2. Media content-addressed blob store (US-204). Layout matches
+	// pkg/media: <root>/<realm>/<yyyy>/<mm>/<sha256>. The store survives
+	// degraded mode (no PG) so unit/dev runs that don't wire MediaCatalog
+	// still get a working filesystem; the HTTP handler is gated on both.
+	deps.MediaStore = media.NewStore(cfg.DataDir + "/media")
 
 	// 2c. TimeSeries store. Prefer the PG backend when a pool is wired;
 	// fall back to an in-memory store in degraded mode so unit/dev runs

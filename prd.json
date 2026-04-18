@@ -76,8 +76,8 @@
         "Tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/media.Handler exposes POST/GET/DELETE /api/v2/media{/rid}; multipart 'file' field, optional 'realm', http.MaxBytesReader caps at DefaultMaxUploadBytes=10MiB; download sets Content-Disposition with both filename= and RFC5987 filename*=; delete only reclaims the blob when CountBySHA256 hits zero (dedup-safe); wired through ServerDeps.MediaStore + MediaCatalog with the uncached *PGRepository as the catalog backing"
     },
     {
       "id": "US-205",

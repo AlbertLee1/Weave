@@ -17,6 +17,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Adding a new BaseType: update (1) `allBaseTypes` map + slice in pkg/types/basetype.go, (2) the count + slice in `TestBaseType_AllDefined`, (3) per-language maps in pkg/sdkgen/typemap.go (ts/python/go). Coerce/Validate have catch-all default branches so opaque types need no work there.
 - Content-addressed blob storage: hash + write in one pass via `io.MultiWriter(tempFile, sha256.New())`, then CAS under a mutex — `os.Stat` the destination; if present drop the temp and reuse, else `os.MkdirAll` + `os.Rename`. Never hash a second time from disk.
 - Path-traversal guard for FS-backed stores: clean the input (`filepath.Clean(filepath.FromSlash(p))`), reject if it starts with `..` or is absolute, then verify `filepath.Abs(resolved)` is under `filepath.Abs(root)+sep`. Single choke point — duplicate nowhere.
+- Multipart upload size cap: wrap `r.Body = http.MaxBytesReader(w, r.Body, max)` BEFORE `ParseMultipartForm`, then check `errors.As(err, &maxErr)` against `*http.MaxBytesError` to distinguish "too large" from generic parse errors. The cap applies to the WHOLE request body (parts + boundary + form fields), so set the limit slightly above the per-file budget if you need exact per-file enforcement.
+- New global blob-style API endpoints (no {ontology} segment) belong inside the `r.Group(... auth.MiddlewareFull ...)` block in cmd/server/main.go but mount conditionally: `if deps.MediaStore != nil && deps.MediaCatalog != nil { ... }`. Pattern matches attachment / transactions / sqlqueries — degraded mode (no PG) silently skips registration so unit tests on NewFullRouter don't need to wire every dep.
+- Catalog stores (oms.MediaAssetStore, oms.ComputedPropertyStore) MUST be served by the uncached `*PGRepository`, not the `oms.CachedRepository` decorator — the cache wraps the metadata Repository interface only. In main.go, capture `pgRepo := oms.NewPGRepository(pool)` BEFORE wrapping so you can hand the bare repo to deps.MediaCatalog / deps.ComputedPropertyStore.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -122,4 +125,40 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - When adding a new BaseType, three places always drift out of sync: (1) `allBaseTypes` map in `pkg/types/basetype.go`, (2) the fixed-length slice in `TestBaseType_AllDefined`, and (3) the three per-language maps in `pkg/sdkgen/typemap.go`. `Coerce`/`Validate` fall through to a sane default so most new BaseTypes don't need code in those files.
   - `Media` is the storage-layer base type (property value = media RID). `MediaReference` is the wire-format base type (property value = Foundry MediaReference object pointing at a mediaSet). They are distinct and both exist: the first keeps ownership of bytes; the second is purely a reference format. Don't collapse them.
   - For new storage-backed packages, the simple-mutex-on-write pattern (`s.mu.Lock()` around the `os.Stat` / `os.MkdirAll` / `os.Rename` sequence) is sufficient for single-machine deployments. Bleve's index and pkg/attachment use the same idiom.
+---
+
+## 2026-04-18 - US-204 Media 上传 API
+- Added `pkg/media/handlers.go` (`Handler` struct + `RegisterRoutes`) exposing the three Foundry-style media endpoints:
+  - `POST /api/v2/media` — multipart/form-data with required `file` part and optional `realm` form value. Wraps `r.Body` in `http.MaxBytesReader` at `DefaultMaxUploadBytes` (10 MiB) BEFORE calling `ParseMultipartForm`; `errors.As(err, &maxErr)` distinguishes the 10MB cap (returns `MediaUploadTooLarge` 400) from generic multipart parse failure (`InvalidMultipart` 400). On success the bytes are streamed through `Store.Put` (which content-addresses + dedups them) and a row lands in `MediaAssetStore`.
+  - `GET /api/v2/media/{rid}` — looks up the row, opens the blob through the path-traversal-guarded `Store.Open`, then writes `Content-Type` + `Content-Length` + `Content-Disposition: attachment; filename="..."; filename*=UTF-8''<percent-encoded>` so browsers across vintages recover the original filename verbatim.
+  - `DELETE /api/v2/media/{rid}` — fetches the row first (so we still know `(realm, sha256)` after the row is gone), deletes the catalog row, then calls `CountBySHA256`. Only when the count is zero does it call `Store.DeletePath` to reclaim the physical file. Dedup-safe: deleting one of two rows that share a sha256 leaves the blob in place for the survivor.
+- `Handler.SetMaxUploadBytes(n int64)` overrides the cap (used by the too-large test to keep allocations small); `n <= 0` is silently ignored so callers can't accidentally disable it.
+- `auth.UserFromContext(r.Context()).ID` populates `MediaAsset.CreatedBy` when present; in dev/no-auth mode it stays empty.
+- Wired into `cmd/server/main.go`:
+  - New `ServerDeps.MediaStore *media.Store` and `ServerDeps.MediaCatalog oms.MediaAssetStore` fields.
+  - `deps.MediaStore = media.NewStore(cfg.DataDir + "/media")` next to the attachment store init (always wired — the FS root survives degraded mode).
+  - `deps.MediaCatalog = pgRepo` (the bare `*PGRepository`, captured BEFORE wrapping with `oms.NewCachedRepository` — the metadata cache decorator does not wrap MediaAssetStore methods).
+  - Inside the auth-protected route group, mounted next to attachments, gated on `deps.MediaStore != nil && deps.MediaCatalog != nil` so degraded-mode test routers silently skip registration.
+- Tests (11 cases in `pkg/media/handlers_test.go`):
+  - Upload happy path: rid prefix, filename / size / mime / default realm "main", catalog row matches, blob present on disk.
+  - Custom realm via form field; invalid realm (`"../escape"`) rejected as 400.
+  - Missing `file` field → 400 `MissingFile`.
+  - Too-large body (cap shrunk to 64 bytes) → 400 `MediaUploadTooLarge`.
+  - `DefaultMaxUploadBytes` is exactly 10 MiB.
+  - Download happy path: bytes round-trip, `Content-Type` matches, `Content-Disposition` carries `attachment` + filename.
+  - Download / delete on unknown rid → 404 `MediaAssetNotFound`.
+  - Delete-last-reference: blob reclaimed from disk after row is the final reference.
+  - Delete-deduped-blob-kept: two uploads of identical bytes share the path; deleting one leaves the file; deleting the second reclaims it.
+- An in-memory `memCatalog` satisfies `oms.MediaAssetStore` for the handler tests so PostgreSQL is not required (continues the US-202/US-203 narrow-interface pattern).
+- Files changed:
+  - `pkg/media/handlers.go` (new)
+  - `pkg/media/handlers_test.go` (new)
+  - `cmd/server/main.go` (import `pkg/media`, ServerDeps additions, init in main(), conditional route registration)
+  - `prd.json` (US-204 passes=true)
+- **Learnings for future iterations:**
+  - `http.MaxBytesReader` wraps the WHOLE request body — multipart boundaries + form fields count against the cap. If you need exact per-file enforcement, set the limit slightly above the per-file budget OR check `header.Size` after `FormFile` and reject early.
+  - `*http.MaxBytesError` is the typed error to look for via `errors.As`; checking `err == io.EOF` or string matching is fragile because Go wraps the error differently across multipart parse vs. body read paths. Both Upload paths (the ParseMultipartForm call AND the streaming Put when the part exceeds the budget) need the same `errors.As` check.
+  - When you fetch a row to compute "does the underlying blob still have references after delete", do the GET BEFORE the DELETE — once the row is gone the (realm, sha256) tuple is unrecoverable. The handler order is: Get → Delete row → CountBySHA256 → maybe DeletePath.
+  - `oms.CachedRepository` only wraps the metadata `Repository` interface. New narrow stores added on `*PGRepository` (MediaAssetStore, ComputedPropertyStore, etc.) bypass the cache — capture the bare `pgRepo` reference in main.go BEFORE wrapping if you need to hand it to a non-Repository dep.
+  - For the multipart test fixture, the exact `Content-Disposition` shape that go-chi/Go's mime/multipart parses correctly is `form-data; name="file"; filename="x.txt"` — `WriteField` won't set per-part headers, so use `mw.CreatePart` with an explicit textproto.MIMEHeader-like map.
 ---
