@@ -35,22 +35,44 @@ var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 // does not match the expected wvk_<prefix>_<random> shape.
 var ErrInvalidAPIKeyFormat = errors.New("invalid api key format")
 
+// DefaultAPIKeyRotationGrace is the default predecessor-successor overlap
+// window applied by APIKeyHandler.Rotate when the caller does not pass an
+// explicit graceDays. It matches the PRD ("Grace period：双 key 并存 7 天").
+const DefaultAPIKeyRotationGrace = 7 * 24 * time.Hour
+
+// DefaultAPIKeyRotationWarning is the look-ahead window for imminent-rotation
+// warnings: ListPendingRotations surfaces every key whose rotates_at falls
+// within now..now+window so operators can notify the owning service ahead of
+// the cut-off. PRD: "到期前 7 天发送告警事件".
+const DefaultAPIKeyRotationWarning = 7 * 24 * time.Hour
+
 // APIKeyRecord is the persistent representation of an API key row.
 //
 // The raw key is NEVER stored. Only its SHA-256 hash and the lookup-only
 // prefix live in the database. RawKey is populated only on the response from
 // CreateAPIKey so that the operator can copy the secret once at creation time.
+//
+// Rotation fields:
+//   - RotatesAt: when set, the row is scheduled for automatic rotation; the
+//     middleware treats the key as expired once now >= *RotatesAt, so the
+//     window [now, *RotatesAt) is the grace period during which both the
+//     predecessor and its successor validate.
+//   - SuccessorID: populated on the predecessor row once Rotate mints the
+//     replacement. A non-nil successor means the row is already in rotation
+//     and another Rotate call must fail.
 type APIKeyRecord struct {
-	ID         string
-	KeyHash    []byte
-	KeyPrefix  string
-	UserID     string
-	Name       string
-	Scopes     []string
-	CreatedAt  time.Time
-	ExpiresAt  *time.Time
-	RevokedAt  *time.Time
-	LastUsedAt *time.Time
+	ID          string
+	KeyHash     []byte
+	KeyPrefix   string
+	UserID      string
+	Name        string
+	Scopes      []string
+	CreatedAt   time.Time
+	ExpiresAt   *time.Time
+	RevokedAt   *time.Time
+	LastUsedAt  *time.Time
+	RotatesAt   *time.Time
+	SuccessorID *string
 }
 
 // IsRevoked reports whether the key has been administratively revoked.
@@ -62,6 +84,30 @@ func (k *APIKeyRecord) IsExpired(now time.Time) bool {
 		return false
 	}
 	return now.After(*k.ExpiresAt)
+}
+
+// IsRotationExpired reports whether a scheduled rotation has landed: a key
+// with RotatesAt set past "now" is treated as expired by the middleware,
+// ending its grace period. Keys without RotatesAt are never rotation-expired.
+func (k *APIKeyRecord) IsRotationExpired(now time.Time) bool {
+	if k == nil || k.RotatesAt == nil {
+		return false
+	}
+	return !now.Before(*k.RotatesAt)
+}
+
+// InRotationWarningWindow reports whether the key's scheduled rotation is
+// within the supplied look-ahead window: now <= *RotatesAt <= now+window.
+// Rotation already past "now" is NOT in the window (that's IsRotationExpired).
+// Keys without RotatesAt return false.
+func (k *APIKeyRecord) InRotationWarningWindow(now time.Time, window time.Duration) bool {
+	if k == nil || k.RotatesAt == nil || window < 0 {
+		return false
+	}
+	if now.After(*k.RotatesAt) {
+		return false
+	}
+	return !k.RotatesAt.After(now.Add(window))
 }
 
 // GenerateAPIKey returns a fresh raw key and its lookup prefix. The raw key is

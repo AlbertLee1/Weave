@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateKey_Format(t *testing.T) {
@@ -126,5 +127,59 @@ func TestIsAPIKey_False(t *testing.T) {
 		if IsAPIKey(c) {
 			t.Errorf("expected IsAPIKey(%q)=false", c)
 		}
+	}
+}
+
+func TestAPIKeyRecord_IsRotationExpired(t *testing.T) {
+	past := time.Now().Add(-1 * time.Hour)
+	future := time.Now().Add(1 * time.Hour)
+
+	if (&APIKeyRecord{}).IsRotationExpired(time.Now()) {
+		t.Error("nil RotatesAt should never be rotation-expired")
+	}
+	if (&APIKeyRecord{RotatesAt: &future}).IsRotationExpired(time.Now()) {
+		t.Error("future RotatesAt should NOT be rotation-expired yet")
+	}
+	if !(&APIKeyRecord{RotatesAt: &past}).IsRotationExpired(time.Now()) {
+		t.Error("past RotatesAt should be rotation-expired")
+	}
+	// Boundary: now == RotatesAt is considered expired (the cut-off has landed).
+	atCutoff := time.Now()
+	if !(&APIKeyRecord{RotatesAt: &atCutoff}).IsRotationExpired(atCutoff) {
+		t.Error("RotatesAt exactly equal to now should be treated as expired (inclusive cut-off)")
+	}
+}
+
+func TestAPIKeyRecord_InRotationWarningWindow(t *testing.T) {
+	now := time.Now()
+	inWindow := now.Add(3 * 24 * time.Hour)
+	farFuture := now.Add(30 * 24 * time.Hour)
+	past := now.Add(-1 * time.Hour)
+
+	window := 7 * 24 * time.Hour
+
+	if (&APIKeyRecord{}).InRotationWarningWindow(now, window) {
+		t.Error("nil RotatesAt must not be in the warning window")
+	}
+	if !(&APIKeyRecord{RotatesAt: &inWindow}).InRotationWarningWindow(now, window) {
+		t.Error("RotatesAt 3d ahead should be inside a 7d window")
+	}
+	if (&APIKeyRecord{RotatesAt: &farFuture}).InRotationWarningWindow(now, window) {
+		t.Error("RotatesAt 30d ahead should be outside a 7d window")
+	}
+	if (&APIKeyRecord{RotatesAt: &past}).InRotationWarningWindow(now, window) {
+		t.Error("RotatesAt already in the past must not be in the warning window (it's rotation-expired)")
+	}
+	if (&APIKeyRecord{RotatesAt: &inWindow}).InRotationWarningWindow(now, -1) {
+		t.Error("negative window is invalid and must return false")
+	}
+}
+
+func TestAPIKeyRotationDefaults(t *testing.T) {
+	if DefaultAPIKeyRotationGrace != 7*24*time.Hour {
+		t.Errorf("DefaultAPIKeyRotationGrace: got %v, want 7d", DefaultAPIKeyRotationGrace)
+	}
+	if DefaultAPIKeyRotationWarning != 7*24*time.Hour {
+		t.Errorf("DefaultAPIKeyRotationWarning: got %v, want 7d", DefaultAPIKeyRotationWarning)
 	}
 }

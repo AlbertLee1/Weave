@@ -2,12 +2,15 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/liyang/weave/pkg/audit"
 )
 
 // newAPIKeyHandlerHarness builds a fresh handler with an in-memory repo and a
@@ -275,6 +278,316 @@ func TestAPIKeyHandler_Delete_RequiresAuth(t *testing.T) {
 
 	if delRec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", delRec.Code)
+	}
+}
+
+func TestAPIKeyHandler_Rotate_201_ReturnsNewRawKey(t *testing.T) {
+	h, repo := newAPIKeyHandlerHarness(t)
+
+	// Seed a key via Create to mirror the production shape.
+	createBody, _ := json.Marshal(map[string]any{"name": "ci-bot", "scopes": []string{"read"}})
+	createReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", bytes.NewReader(createBody)))
+	createRec := httptest.NewRecorder()
+	h.Create(createRec, createReq)
+	var created APIKeyCreateResponse
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+
+	// Rotate with no body: defaults to 7-day grace.
+	rotReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/"+created.ID+"/rotate", nil))
+	rotRec := httptest.NewRecorder()
+	h.RotateFor(rotRec, rotReq, created.ID)
+
+	if rotRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", rotRec.Code, rotRec.Body.String())
+	}
+
+	var resp APIKeyRotateResponse
+	if err := json.NewDecoder(rotRec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode rotate: %v", err)
+	}
+	if resp.RawKey == "" || !strings.HasPrefix(resp.RawKey, "wvk_") {
+		t.Errorf("expected successor rawKey returned once, got %q", resp.RawKey)
+	}
+	if resp.PredecessorID != created.ID {
+		t.Errorf("PredecessorID: got %q, want %q", resp.PredecessorID, created.ID)
+	}
+	if resp.ID == "" || resp.ID == created.ID {
+		t.Errorf("successor ID must be fresh, got %q", resp.ID)
+	}
+	if resp.Name != "ci-bot" {
+		t.Errorf("Name inherited from predecessor; got %q", resp.Name)
+	}
+	if len(resp.Scopes) != 1 || resp.Scopes[0] != "read" {
+		t.Errorf("Scopes inherited from predecessor; got %v", resp.Scopes)
+	}
+	// Grace is ~7 days in the future (allow 1-minute drift for test runtime).
+	expected := time.Now().Add(DefaultAPIKeyRotationGrace)
+	delta := resp.PredecessorExpiry.Sub(expected)
+	if delta < -time.Minute || delta > time.Minute {
+		t.Errorf("PredecessorExpiry: got %v, expected ~%v (delta %v)", resp.PredecessorExpiry, expected, delta)
+	}
+
+	// Predecessor row now carries rotates_at and successor_id.
+	pred, err := repo.GetByID(rotReq.Context(), created.ID)
+	if err != nil {
+		t.Fatalf("GetByID predecessor: %v", err)
+	}
+	if pred.RotatesAt == nil {
+		t.Error("expected predecessor.RotatesAt populated")
+	}
+	if pred.SuccessorID == nil || *pred.SuccessorID != resp.ID {
+		t.Errorf("expected predecessor.SuccessorID == %q, got %v", resp.ID, pred.SuccessorID)
+	}
+
+	// Successor is live in its own right.
+	succ, err := repo.GetByPrefix(rotReq.Context(), resp.Prefix)
+	if err != nil {
+		t.Fatalf("GetByPrefix successor: %v", err)
+	}
+	if succ.ID != resp.ID {
+		t.Errorf("successor ID mismatch: %q vs %q", succ.ID, resp.ID)
+	}
+}
+
+func TestAPIKeyHandler_Rotate_CustomGraceDays(t *testing.T) {
+	h, repo := newAPIKeyHandlerHarness(t)
+
+	createBody, _ := json.Marshal(map[string]any{"name": "x"})
+	createReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", bytes.NewReader(createBody)))
+	createRec := httptest.NewRecorder()
+	h.Create(createRec, createReq)
+	var created APIKeyCreateResponse
+	json.NewDecoder(createRec.Body).Decode(&created)
+
+	body, _ := json.Marshal(map[string]any{"graceDays": 2})
+	rotReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/"+created.ID+"/rotate", bytes.NewReader(body)))
+	rotReq.Header.Set("Content-Type", "application/json")
+	rotRec := httptest.NewRecorder()
+	h.RotateFor(rotRec, rotReq, created.ID)
+	if rotRec.Code != http.StatusCreated {
+		t.Fatalf("status %d body=%s", rotRec.Code, rotRec.Body.String())
+	}
+
+	pred, _ := repo.GetByID(rotReq.Context(), created.ID)
+	expected := time.Now().Add(2 * 24 * time.Hour)
+	if pred.RotatesAt == nil {
+		t.Fatal("expected RotatesAt populated")
+	}
+	delta := pred.RotatesAt.Sub(expected)
+	if delta < -time.Minute || delta > time.Minute {
+		t.Errorf("custom grace window: got rotates_at=%v, expected ~%v", pred.RotatesAt, expected)
+	}
+}
+
+func TestAPIKeyHandler_Rotate_RejectsDoubleRotation_409(t *testing.T) {
+	h, _ := newAPIKeyHandlerHarness(t)
+
+	createBody, _ := json.Marshal(map[string]any{"name": "x"})
+	createReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys", bytes.NewReader(createBody)))
+	createRec := httptest.NewRecorder()
+	h.Create(createRec, createReq)
+	var created APIKeyCreateResponse
+	json.NewDecoder(createRec.Body).Decode(&created)
+
+	// First rotation: ok.
+	rotReq1 := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/"+created.ID+"/rotate", nil))
+	h.RotateFor(httptest.NewRecorder(), rotReq1, created.ID)
+
+	// Second rotation: must 409.
+	rotReq2 := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/"+created.ID+"/rotate", nil))
+	rotRec2 := httptest.NewRecorder()
+	h.RotateFor(rotRec2, rotReq2, created.ID)
+
+	if rotRec2.Code != http.StatusConflict {
+		t.Errorf("expected 409 on second rotation, got %d body=%s", rotRec2.Code, rotRec2.Body.String())
+	}
+}
+
+func TestAPIKeyHandler_Rotate_RejectsOtherOwner_403(t *testing.T) {
+	h, repo := newAPIKeyHandlerHarness(t)
+
+	// Seed a key owned by another user.
+	raw, prefix, _ := GenerateAPIKey()
+	other := &APIKeyRecord{
+		KeyHash:   HashAPIKey(raw),
+		KeyPrefix: prefix,
+		UserID:    "user:other@example.com",
+		Name:      "other",
+	}
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), other)
+
+	rotReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/"+other.ID+"/rotate", nil))
+	rotRec := httptest.NewRecorder()
+	h.RotateFor(rotRec, rotReq, other.ID)
+
+	if rotRec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on non-owner rotate, got %d", rotRec.Code)
+	}
+}
+
+func TestAPIKeyHandler_Rotate_MissingKey_404(t *testing.T) {
+	h, _ := newAPIKeyHandlerHarness(t)
+
+	rotReq := withAdmin(httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/does-not-exist/rotate", nil))
+	rotRec := httptest.NewRecorder()
+	h.RotateFor(rotRec, rotReq, "does-not-exist")
+
+	if rotRec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rotRec.Code)
+	}
+}
+
+func TestAPIKeyHandler_Rotate_RequiresAuth(t *testing.T) {
+	h, _ := newAPIKeyHandlerHarness(t)
+
+	rotReq := httptest.NewRequest(http.MethodPost, "/api/admin/api-keys/abc/rotate", nil)
+	rotRec := httptest.NewRecorder()
+	h.RotateFor(rotRec, rotReq, "abc")
+
+	if rotRec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rotRec.Code)
+	}
+}
+
+func TestAPIKeyHandler_Rotations_ListsKeysNearingRotation(t *testing.T) {
+	h, repo := newAPIKeyHandlerHarness(t)
+
+	// Seed: one key near rotation, one not rotating, one well past the window.
+	adminID := "user:admin@example.com"
+
+	// Active, no rotation: must not appear.
+	rawA, prefixA, _ := GenerateAPIKey()
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), &APIKeyRecord{
+		KeyHash: HashAPIKey(rawA), KeyPrefix: prefixA, UserID: adminID, Name: "no-rot",
+	})
+
+	// Active, rotates in 3 days (inside default 7d window): must appear.
+	rawB, prefixB, _ := GenerateAPIKey()
+	nearID := "key-near"
+	nearRot := time.Now().Add(3 * 24 * time.Hour)
+	nearSucc := "succ-1"
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), &APIKeyRecord{
+		ID:          nearID,
+		KeyHash:     HashAPIKey(rawB),
+		KeyPrefix:   prefixB,
+		UserID:      adminID,
+		Name:        "near-rot",
+		RotatesAt:   &nearRot,
+		SuccessorID: &nearSucc,
+	})
+
+	// Active, rotates in 30 days (outside default 7d window): must NOT appear.
+	rawC, prefixC, _ := GenerateAPIKey()
+	farRot := time.Now().Add(30 * 24 * time.Hour)
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), &APIKeyRecord{
+		KeyHash: HashAPIKey(rawC), KeyPrefix: prefixC, UserID: adminID, Name: "far-rot", RotatesAt: &farRot,
+	})
+
+	// Rotating key owned by another user: must NOT leak.
+	rawD, prefixD, _ := GenerateAPIKey()
+	otherRot := time.Now().Add(2 * 24 * time.Hour)
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), &APIKeyRecord{
+		KeyHash: HashAPIKey(rawD), KeyPrefix: prefixD, UserID: "user:other@example.com", Name: "other-near", RotatesAt: &otherRot,
+	})
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/api-keys/rotations", nil))
+	rec := httptest.NewRecorder()
+	h.Rotations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp APIKeyRotationsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d (%v)", len(resp.Warnings), resp.Warnings)
+	}
+	if resp.Warnings[0].ID != nearID {
+		t.Errorf("wrong key surfaced: %+v", resp.Warnings[0])
+	}
+	if resp.Warnings[0].SuccessorID != nearSucc {
+		t.Errorf("successor pointer should propagate: %+v", resp.Warnings[0])
+	}
+}
+
+func TestAPIKeyHandler_Rotations_WithinDaysQuery(t *testing.T) {
+	h, repo := newAPIKeyHandlerHarness(t)
+
+	// Key rotates in 10 days: inside a withinDays=14 window, outside default 7d.
+	raw, prefix, _ := GenerateAPIKey()
+	rot := time.Now().Add(10 * 24 * time.Hour)
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), &APIKeyRecord{
+		KeyHash: HashAPIKey(raw), KeyPrefix: prefix, UserID: "user:admin@example.com",
+		Name: "t", RotatesAt: &rot,
+	})
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/api-keys/rotations?withinDays=14", nil))
+	rec := httptest.NewRecorder()
+	h.Rotations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp APIKeyRotationsResponse
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.Warnings) != 1 {
+		t.Errorf("expected widened window to surface the key, got %d warnings", len(resp.Warnings))
+	}
+}
+
+func TestAPIKeyHandler_Rotations_InvalidWithinDays_400(t *testing.T) {
+	h, _ := newAPIKeyHandlerHarness(t)
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/api-keys/rotations?withinDays=abc", nil))
+	rec := httptest.NewRecorder()
+	h.Rotations(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestAPIKeyHandler_Rotations_RequiresAuth(t *testing.T) {
+	h, _ := newAPIKeyHandlerHarness(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/api-keys/rotations", nil)
+	rec := httptest.NewRecorder()
+	h.Rotations(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestAPIKeyHandler_Rotations_EmitsAuditEvents(t *testing.T) {
+	repo := newFakeAPIKeyRepo()
+	audits := audit.NewMemoryStore()
+	h := NewAPIKeyHandler(repo, audits)
+
+	rot := time.Now().Add(4 * 24 * time.Hour)
+	raw, prefix, _ := GenerateAPIKey()
+	repo.Create(httptest.NewRequest(http.MethodGet, "/", nil).Context(), &APIKeyRecord{
+		KeyHash: HashAPIKey(raw), KeyPrefix: prefix,
+		UserID: "user:admin@example.com", Name: "warn-me", RotatesAt: &rot,
+	})
+
+	req := withAdmin(httptest.NewRequest(http.MethodGet, "/api/admin/api-keys/rotations", nil))
+	rec := httptest.NewRecorder()
+	h.Rotations(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+
+	// Poll audit store for at least one api_key_rotation_warning event.
+	events, _ := audits.List(context.Background(), audit.ListFilter{Action: "api_key_rotation_warning"})
+	if len(events) != 1 {
+		t.Fatalf("expected 1 warning audit, got %d", len(events))
+	}
+	if events[0].ActorID != "user:admin@example.com" {
+		t.Errorf("actor id: %q", events[0].ActorID)
+	}
+	if events[0].ResourceType != "APIKey" {
+		t.Errorf("resource type: %q", events[0].ResourceType)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -352,6 +353,50 @@ func (f *fakeAPIKeyRepo) TouchLastUsed(_ context.Context, id string, when time.T
 	return nil
 }
 
+func (f *fakeAPIKeyRepo) Rotate(_ context.Context, predecessorID string, successor *APIKeyRecord, graceUntil time.Time) error {
+	pred, ok := f.byID[predecessorID]
+	if !ok || pred.IsRevoked() {
+		return ErrAPIKeyNotFound
+	}
+	if pred.SuccessorID != nil {
+		return ErrAPIKeyAlreadyRotated
+	}
+	if successor.ID == "" {
+		successor.ID = "key-" + successor.KeyPrefix
+	}
+	if successor.CreatedAt.IsZero() {
+		successor.CreatedAt = time.Now()
+	}
+	// Fan out successor into both maps, then stamp predecessor.
+	sCopy := *successor
+	f.byPrefix[successor.KeyPrefix] = &sCopy
+	f.byID[successor.ID] = &sCopy
+	rot := graceUntil
+	pred.RotatesAt = &rot
+	succID := successor.ID
+	pred.SuccessorID = &succID
+	return nil
+}
+
+func (f *fakeAPIKeyRepo) ListPendingRotations(_ context.Context, now time.Time, within time.Duration) ([]*APIKeyRecord, error) {
+	if within < 0 {
+		within = 0
+	}
+	cutoff := now.Add(within)
+	var out []*APIKeyRecord
+	for _, rec := range f.byID {
+		if rec.IsRevoked() || rec.RotatesAt == nil {
+			continue
+		}
+		if rec.RotatesAt.Before(now) || rec.RotatesAt.After(cutoff) {
+			continue
+		}
+		cp := *rec
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
 // Compile-time check that the fake satisfies the interface.
 var _ APIKeyRepository = (*fakeAPIKeyRepo)(nil)
 
@@ -472,6 +517,71 @@ func TestMiddleware_JWTMode_ExpiredAPIKey_401(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 expired, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestMiddleware_JWTMode_APIKey_InGracePeriod_200(t *testing.T) {
+	// Predecessor with a future RotatesAt (grace window still open) must
+	// authenticate as usual — this is the whole point of the grace period.
+	mw, apiKeys, _ := newAPIKeyMiddlewareHarness(t)
+
+	raw, prefix, _ := GenerateAPIKey()
+	future := time.Now().Add(3 * 24 * time.Hour)
+	succ := "succ-id"
+	if err := apiKeys.Create(context.Background(), &APIKeyRecord{
+		KeyHash:     HashAPIKey(raw),
+		KeyPrefix:   prefix,
+		UserID:      "user:bot@example.com",
+		Name:        "in-grace",
+		RotatesAt:   &future,
+		SuccessorID: &succ,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := mw(handler())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 during grace period, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMiddleware_JWTMode_APIKey_GraceElapsed_401Rotated(t *testing.T) {
+	// Predecessor with RotatesAt in the past must be rejected — the successor
+	// is the only valid credential once the grace window closes.
+	mw, apiKeys, _ := newAPIKeyMiddlewareHarness(t)
+
+	raw, prefix, _ := GenerateAPIKey()
+	past := time.Now().Add(-1 * time.Hour)
+	if err := apiKeys.Create(context.Background(), &APIKeyRecord{
+		KeyHash:   HashAPIKey(raw),
+		KeyPrefix: prefix,
+		UserID:    "user:bot@example.com",
+		Name:      "post-grace",
+		RotatesAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := mw(handler())
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 after grace window, got %d", rec.Code)
+	}
+	// Error body should name-tag this as APIKeyRotated so clients can
+	// distinguish "grace elapsed, rotate your integration" from generic
+	// invalid-key failures.
+	body := rec.Body.String()
+	if !strings.Contains(body, "APIKeyRotated") {
+		t.Errorf("expected APIKeyRotated errorName in 401 body, got %q", body)
 	}
 }
 

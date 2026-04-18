@@ -47,6 +47,12 @@ func (us006FakeAPIKeyRepo) ListByUser(context.Context, string) ([]*auth.APIKeyRe
 }
 func (us006FakeAPIKeyRepo) Revoke(context.Context, string) error                   { return nil }
 func (us006FakeAPIKeyRepo) TouchLastUsed(context.Context, string, time.Time) error { return nil }
+func (us006FakeAPIKeyRepo) Rotate(context.Context, string, *auth.APIKeyRecord, time.Time) error {
+	return nil
+}
+func (us006FakeAPIKeyRepo) ListPendingRotations(context.Context, time.Time, time.Duration) ([]*auth.APIKeyRecord, error) {
+	return nil, nil
+}
 
 // us006StubOmsRepo embeds oms.Repository; only GetObjectTypeByAPIName is
 // overridden so the handler returns a clean 404.

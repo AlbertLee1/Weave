@@ -177,9 +177,16 @@ func handleAPIKey(tok string, apiKeys APIKeyRepository, users UserRepository, re
 		return
 	}
 
-	if rec.IsExpired(time.Now()) {
+	now := time.Now()
+	if rec.IsExpired(now) {
 		apierror.WriteJSON(w, apierror.NewUnauthorized("APIKeyExpired", map[string]string{
 			"reason": "api key has expired",
+		}))
+		return
+	}
+	if rec.IsRotationExpired(now) {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("APIKeyRotated", map[string]string{
+			"reason": "api key grace period has ended; use the rotated successor",
 		}))
 		return
 	}

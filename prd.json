@@ -744,8 +744,8 @@
         "Tests pass"
       ],
       "priority": 51,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000050 adds rotates_at + successor_id; APIKeyRecord gains RotatesAt/*SuccessorID plus IsRotationExpired + InRotationWarningWindow helpers; APIKeyRepository.Rotate (tx: insert successor + stamp predecessor atomically, ErrAPIKeyAlreadyRotated on double-rotate) + ListPendingRotations(now, within) with DefaultAPIKeyRotationGrace / DefaultAPIKeyRotationWarning = 7 days; middleware issues 401 APIKeyRotated once grace elapses but accepts both keys during overlap; POST /api/admin/api-keys/{id}/rotate + GET /api/admin/api-keys/rotations handlers emit audit events (api_key_rotate + api_key_rotation_warning); routes unmounted per US-006 legacy; 12 new tests (model helpers, handler happy + custom graceDays + 409 double-rotate + 403 non-owner + 404 missing + 401 unauth + rotations list + withinDays + audit emission + integration Rotate/ListPendingRotations)"
     },
     {
       "id": "US-251",
