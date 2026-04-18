@@ -2,12 +2,14 @@ package functions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/liyang/weave/pkg/functions/fnerrors"
 )
 
 // Config holds configuration for the Goja runtime sandbox.
@@ -16,13 +18,26 @@ type Config struct {
 	MaxMemoryBytes   int64
 }
 
-// DefaultConfig returns sensible defaults: 5s timeout, 32MB memory.
+// DefaultConfig returns the production defaults required by US-218: a 5s
+// CPU execution budget and a 128MB heap ceiling. Both limits are enforced
+// inside Execute — the context deadline drives goja's Interrupt watchdog,
+// and a companion goroutine polls runtime.MemStats.HeapAlloc against a
+// baseline snapshot captured before execution.
 func DefaultConfig() Config {
 	return Config{
 		MaxExecutionTime: 5 * time.Second,
-		MaxMemoryBytes:   32 * 1024 * 1024,
+		MaxMemoryBytes:   128 * 1024 * 1024,
 	}
 }
+
+// interruptReason is embedded in vm.Interrupt so Execute can distinguish a
+// timeout trigger (→ fnerrors.ErrTimeout / HTTP 408) from a memory-limit
+// trigger (→ fnerrors.ErrMemoryLimit / HTTP 429). The value is surfaced
+// via goja's *InterruptedError.Value() on the returned error.
+const (
+	interruptReasonTimeout = "function.timeout"
+	interruptReasonMemory  = "function.memory"
+)
 
 // maxCallStackSize caps recursion depth to prevent stack overflow.
 const maxCallStackSize = 1024
@@ -83,7 +98,7 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 			select {
 			case <-execCtx.Done():
 				if interrupted.CompareAndSwap(false, true) {
-					vm.Interrupt("execution timeout exceeded")
+					vm.Interrupt(interruptReasonTimeout)
 				}
 				return
 			case <-done:
@@ -95,7 +110,7 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 				runtime.ReadMemStats(&current)
 				if current.HeapAlloc > baseline.HeapAlloc+uint64(r.config.MaxMemoryBytes) {
 					if interrupted.CompareAndSwap(false, true) {
-						vm.Interrupt("memory limit exceeded")
+						vm.Interrupt(interruptReasonMemory)
 					}
 					return
 				}
@@ -109,7 +124,7 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 	// Compile and run the source
 	_, err := vm.RunString(source)
 	if err != nil {
-		return nil, fmt.Errorf("compile error: %w", err)
+		return nil, wrapGojaError(err)
 	}
 
 	// Get the main function
@@ -128,8 +143,29 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 
 	result, err := mainFn(goja.Undefined(), arg)
 	if err != nil {
-		return nil, fmt.Errorf("execution error: %w", err)
+		return nil, wrapGojaError(err)
 	}
 
 	return result.Export(), nil
+}
+
+// wrapGojaError translates a goja-originated error into the fnerrors
+// sentinel when the runtime was interrupted by the quota watchdog.
+// Callers use errors.Is(err, fnerrors.ErrTimeout) / ErrMemoryLimit to map
+// the condition to the appropriate HTTP status (408 / 429). Non-interrupt
+// errors (syntax, thrown exceptions, ...) pass through unchanged.
+func wrapGojaError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ie *goja.InterruptedError
+	if errors.As(err, &ie) {
+		switch ie.Value() {
+		case interruptReasonTimeout:
+			return fmt.Errorf("%w: %s", fnerrors.ErrTimeout, err.Error())
+		case interruptReasonMemory:
+			return fmt.Errorf("%w: %s", fnerrors.ErrMemoryLimit, err.Error())
+		}
+	}
+	return fmt.Errorf("execution error: %w", err)
 }

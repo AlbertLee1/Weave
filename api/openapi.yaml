@@ -4444,14 +4444,18 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute:
     post:
       operationId: executeFunction
-      summary: Validate parameters against the Function signature and dispatch (US-216)
+      summary: Validate parameters against the Function signature and dispatch (US-216/US-218)
       description: |
         Validates the caller-supplied `parameters` against the Function's
         declared signature (required, type, defaults, unknown-key rejection).
         On a validation failure the response is a 400 carrying
         `parameter`+`code`+`reason` so SDKs can map back to typed errors.
         On success the coerced parameter map is forwarded to the configured
-        FunctionExecutor.
+        FunctionExecutor under a 5s CPU deadline and a 128MB heap ceiling.
+        The endpoint also enforces a per-realm per-minute call quota:
+        exhausted quota surfaces as 429 with `realm`+`functionRid`;
+        exceeding the CPU deadline surfaces as 408; exceeding the heap
+        ceiling surfaces as 429.
       tags: [Functions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -4487,6 +4491,35 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "408":
+          description: |
+            Function exceeded the per-call CPU budget (US-218). The error
+            `errorName` is `FunctionExecutionTimeout`; `parameters` echoes
+            the configured `timeout` duration and `functionRid`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  errorName: { type: string }
+                  errorInstanceId: { type: string }
+                  parameters: { type: object, additionalProperties: true }
+        "429":
+          description: |
+            Either the per-realm call quota is exhausted
+            (`errorName=FunctionQuotaExceeded`, `parameters.realm`) or the
+            function's memory ceiling was breached
+            (`errorName=FunctionMemoryLimitExceeded`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  errorName: { type: string }
+                  errorInstanceId: { type: string }
+                  parameters: { type: object, additionalProperties: true }
         "503":
           description: Function executor not configured. Body echoes the coerced parameters.
           content:

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/functions/fnerrors"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
 )
@@ -269,10 +270,13 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExecuteFunction handles POST /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute.
-// The endpoint loads the function, validates the caller's parameters against
-// its declared signature (US-216), then dispatches to the optional
-// FunctionExecutor. Validation failures surface as 400 with a
-// `parameter`+`code` payload so SDKs can map them back to typed errors.
+// The endpoint loads the function, enforces the per-realm call quota
+// (US-218, HTTP 429), validates the caller's parameters against the
+// declared signature (US-216), then dispatches to the optional
+// FunctionExecutor under a 5s context deadline. Validation failures surface
+// as 400 with a `parameter`+`code` payload; CPU-timeout / memory-limit
+// violations surface as 408 / 429 respectively so SDKs can map them back
+// to typed retry/backoff behaviour.
 func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	fnIdentifier := chi.URLParam(r, "functionRid")
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
@@ -286,6 +290,17 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		apierror.WriteJSON(w, apierror.NewInternal("GetFunctionFailed", nil))
+		return
+	}
+
+	// Per-realm call quota (US-218). Realm is the third segment of the
+	// function's RID; fall back to "main" for legacy / malformed RIDs.
+	realm := realmFromRID(fn.RID)
+	if h.functionQuotaLimiter != nil && !h.functionQuotaLimiter.Allow(realm) {
+		apierror.WriteJSON(w, apierror.NewTooManyRequests("FunctionQuotaExceeded", map[string]string{
+			"realm":       realm,
+			"functionRid": fn.RID,
+		}))
 		return
 	}
 
@@ -341,8 +356,34 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.functionExecutor.Execute(r.Context(), fn, coerced)
+	// Handler-side CPU budget (US-218). The underlying Goja runtime also
+	// enforces this ceiling via its own context watchdog, but wrapping
+	// here guarantees the 5s limit applies to every FunctionExecutor
+	// implementation (HTTP-backed, remote-dispatch, ...).
+	execCtx, cancel := context.WithTimeout(r.Context(), DefaultFunctionExecutionTimeout)
+	defer cancel()
+
+	result, err := h.functionExecutor.Execute(execCtx, fn, coerced)
 	if err != nil {
+		// CPU timeout → 408. Either the runtime returned the typed
+		// sentinel or the handler-side deadline fired without the
+		// executor propagating an error that wraps it.
+		if errors.Is(err, fnerrors.ErrTimeout) || errors.Is(execCtx.Err(), context.DeadlineExceeded) {
+			apierror.WriteJSON(w, apierror.NewRequestTimeout("FunctionExecutionTimeout", map[string]string{
+				"functionRid": fn.RID,
+				"timeout":     DefaultFunctionExecutionTimeout.String(),
+			}))
+			return
+		}
+		// Memory-limit overrun → 429. The runtime surfaces this as a
+		// resource-exhausted condition; no amount of retrying the same
+		// input will succeed until the function is rewritten.
+		if errors.Is(err, fnerrors.ErrMemoryLimit) {
+			apierror.WriteJSON(w, apierror.NewTooManyRequests("FunctionMemoryLimitExceeded", map[string]string{
+				"functionRid": fn.RID,
+			}))
+			return
+		}
 		apierror.WriteJSON(w, apierror.NewBadRequest("FunctionExecutionFailed", map[string]string{
 			"error": err.Error(),
 		}))
@@ -353,6 +394,18 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 		"functionRid": fn.RID,
 		"result":      result,
 	})
+}
+
+// realmFromRID returns the `realm` segment from a Weave Resource Identifier
+// (ri.{service}.{realm}.{resourceType}.{uuid}). Falls back to "main" when
+// the RID cannot be parsed — keeps quota enforcement meaningful for
+// legacy rows that predate US-005 (strict RID format).
+func realmFromRID(r string) string {
+	parsed, err := rid.Parse(r)
+	if err != nil || parsed.Realm == "" {
+		return "main"
+	}
+	return parsed.Realm
 }
 
 // DeleteFunction handles DELETE /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}.

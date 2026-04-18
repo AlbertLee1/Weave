@@ -95,6 +95,13 @@ func NewTooManyRequests(name string, params map[string]string) *APIError {
 	return newAPIError("RESOURCE_EXHAUSTED", name, params, http.StatusTooManyRequests)
 }
 
+// NewRequestTimeout creates a DEADLINE_EXCEEDED API error (HTTP 408).
+// Used by long-running compute surfaces such as the Function execute
+// endpoint (US-218) when the per-call CPU budget is exhausted.
+func NewRequestTimeout(name string, params map[string]string) *APIError {
+	return newAPIError("DEADLINE_EXCEEDED", name, params, http.StatusRequestTimeout)
+}
+
 // NewValidationEnum creates a WEAVE_VALIDATION_ENUM API error (HTTP 422).
 // US-208: returned by the EditBatch validation path when a property value
 // falls outside the ValueType's enum constraint. Callers should populate

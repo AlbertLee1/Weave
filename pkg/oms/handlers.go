@@ -15,6 +15,7 @@ type OMSHandler struct {
 	repo                     Repository
 	queryExecutor            QueryExecutor
 	functionExecutor         FunctionExecutor
+	functionQuotaLimiter     FunctionQuotaLimiter
 	actorFn                  ActorFunc
 	linkPropertyStore        LinkPropertyStore
 	linkEdgeStore            LinkEdgeStore
@@ -42,6 +43,17 @@ func (h *OMSHandler) SetQueryExecutor(qe QueryExecutor) {
 // executor wired can still exercise the validator surface.
 func (h *OMSHandler) SetFunctionExecutor(e FunctionExecutor) {
 	h.functionExecutor = e
+}
+
+// SetFunctionQuotaLimiter wires the optional per-realm call-rate limiter
+// used by the /functions/{rid}/execute endpoint (US-218). The limiter is
+// consulted before parameter validation; callers that exhaust their
+// per-minute budget receive 429 with a {realm} parameter echoed in the
+// error body. A nil or unset limiter disables quota enforcement — no
+// throttling is applied, matching degraded-mode test routers that do not
+// supply one.
+func (h *OMSHandler) SetFunctionQuotaLimiter(l FunctionQuotaLimiter) {
+	h.functionQuotaLimiter = l
 }
 
 // SetLinkPropertyStore wires the narrow LinkPropertyStore used by the

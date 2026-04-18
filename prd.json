@@ -283,8 +283,8 @@
         "Tests pass"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/functions.DefaultConfig bumped to 5s/128MiB; wrapGojaError translates goja InterruptedError into fnerrors.ErrTimeout / ErrMemoryLimit. New pkg/functions/quota sliding-window Limiter (per-key, default 60/min). OMSHandler.SetFunctionQuotaLimiter + 5s context.WithTimeout guard in ExecuteFunction: quota→429 FunctionQuotaExceeded (realm keyed), timeout→408 FunctionExecutionTimeout, memory→429 FunctionMemoryLimitExceeded. apierror.NewRequestTimeout (DEADLINE_EXCEEDED/408). 9 limiter tests + 4 runtime-sentinel tests + 6 handler tests covering all three error paths."
     },
     {
       "id": "US-219",
