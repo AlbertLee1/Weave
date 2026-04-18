@@ -328,6 +328,16 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	if err != nil {
 		return nil, fmt.Errorf("execute rules: %w", err)
 	}
+
+	// Step 8b (US-222): executeFunction rules delegate edit generation to a
+	// Function. Dispatched in declaration order; returned edits are appended
+	// after the regular rule-derived edits so cross-action collapse semantics
+	// remain "later wins".
+	fnRuleEdits, err := e.dispatchExecuteFunctionRules(ctx, rules, actionType, req.Parameters)
+	if err != nil {
+		return nil, fmt.Errorf("execute function rules: %w", err)
+	}
+	edits = append(edits, fnRuleEdits...)
 	tagEditsAsUserSource(edits)
 
 	// Step 9: Resolve link type API names to RIDs for LINK_CREATE/LINK_DELETE edits.
@@ -337,7 +347,7 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 	e.resolveUpsertEdits(ctx, edits)
 
 	// Step 11: Validate interface-backed rules — target ObjectType must implement the Interface.
-	if err := e.validateInterfaceRules(ctx, ontologyRID, rules, edits); err != nil {
+	if err := e.validateInterfaceRules(ctx, ontologyRID, rules, req.Parameters); err != nil {
 		return nil, fmt.Errorf("interface validation: %w", err)
 	}
 
@@ -394,10 +404,42 @@ func (e *Executor) resolveUpsertEdits(ctx context.Context, edits []funnel.Edit) 
 	}
 }
 
+// dispatchExecuteFunctionRules invokes the FunctionDispatcher once per
+// executeFunction rule, in declaration order, and returns the concatenated
+// edits. The action type is shallow-copied with FunctionRID overridden so the
+// existing dispatcher contract (which keys off ActionType.FunctionRID) is
+// reused without a new interface method. Returns an error when an
+// executeFunction rule is present but no dispatcher is wired or the rule omits
+// FunctionRID.
+func (e *Executor) dispatchExecuteFunctionRules(ctx context.Context, rules []Rule, actionType *oms.ActionType, params map[string]interface{}) ([]funnel.Edit, error) {
+	var edits []funnel.Edit
+	for i, rule := range rules {
+		if !rule.IsExecuteFunction() {
+			continue
+		}
+		if rule.FunctionRID == "" {
+			return nil, fmt.Errorf("rule %d (executeFunction): functionRid is required", i)
+		}
+		if e.functionDispatcher == nil {
+			return nil, fmt.Errorf("rule %d (executeFunction): function dispatcher not configured", i)
+		}
+		atCopy := *actionType
+		atCopy.FunctionRID = rule.FunctionRID
+		ruleEdits, err := e.functionDispatcher.Dispatch(ctx, &atCopy, params)
+		if err != nil {
+			return nil, fmt.Errorf("rule %d (executeFunction %s): %w", i, rule.FunctionRID, err)
+		}
+		edits = append(edits, ruleEdits...)
+	}
+	return edits, nil
+}
+
 // validateInterfaceRules checks that for each interface-backed rule, the
-// resolved ObjectType actually implements the specified Interface. Rules and
-// edits are parallel slices (1:1 correspondence from ExecuteRules).
-func (e *Executor) validateInterfaceRules(ctx context.Context, ontologyRID string, rules []Rule, edits []funnel.Edit) error {
+// resolved ObjectType actually implements the specified Interface. The target
+// ObjectType is read from request parameters via resolveObjectTypeParam — the
+// same source executeRule uses to populate the edit, so the two stay in lock-
+// step without the caller having to maintain a parallel rules/edits slice.
+func (e *Executor) validateInterfaceRules(ctx context.Context, ontologyRID string, rules []Rule, params map[string]interface{}) error {
 	for i, rule := range rules {
 		if !isInterfaceRule(rule.Type) {
 			continue
@@ -405,7 +447,7 @@ func (e *Executor) validateInterfaceRules(ctx context.Context, ontologyRID strin
 		if rule.InterfaceAPIName == "" {
 			return fmt.Errorf("rule %d (%s): interfaceApiName is required", i, rule.Type)
 		}
-		objectType := edits[i].ObjectType
+		objectType := resolveObjectTypeParam(params)
 
 		// Look up the Interface by API name.
 		iface, err := e.omsRepo.GetInterfaceByAPIName(ctx, ontologyRID, rule.InterfaceAPIName)
@@ -801,6 +843,7 @@ func classifyPrepareError(err error) string {
 		strings.Contains(msg, "parse params"),
 		strings.Contains(msg, "parse rules"),
 		strings.Contains(msg, "execute rules"),
+		strings.Contains(msg, "execute function rules"),
 		strings.Contains(msg, "function dispatch"):
 		return "internal"
 	default:

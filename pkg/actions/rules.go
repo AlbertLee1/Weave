@@ -14,7 +14,7 @@ const editTypeUpsert funnel.EditType = "UPSERT"
 
 // Rule defines an action rule.
 type Rule struct {
-	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink", "createOrModifyObject", "createInterfaceObject", "modifyInterfaceObject", "deleteInterfaceObject"
+	Type       string `json:"type"` // "createObject", "modifyObject", "deleteObject", "createLink", "deleteLink", "createOrModifyObject", "createInterfaceObject", "modifyInterfaceObject", "deleteInterfaceObject", "executeFunction"
 	ObjectType string `json:"objectType"`
 	// For createObject/modifyObject — property bindings
 	PropertyBindings map[string]PropertyBinding `json:"propertyBindings,omitempty"`
@@ -24,6 +24,16 @@ type Rule struct {
 	TargetObjectPrimaryKey string `json:"targetObjectPrimaryKey,omitempty"` // parameter ID for target PK
 	// Interface rule fields — objectType resolved from parameters at runtime
 	InterfaceAPIName string `json:"interfaceApiName,omitempty"`
+	// FunctionRID identifies the Function invoked by an executeFunction rule
+	// (US-222). The Function returns an EditBatch whose edits are merged into
+	// the action's edit list alongside any sibling rules.
+	FunctionRID string `json:"functionRid,omitempty"`
+}
+
+// IsExecuteFunction reports whether the rule delegates edit generation to a
+// Function via the action executor's FunctionDispatcher.
+func (r Rule) IsExecuteFunction() bool {
+	return r.Type == "executeFunction"
 }
 
 // PropertyBinding binds a property to a value source.
@@ -45,10 +55,18 @@ func ParseRules(data json.RawMessage) ([]Rule, error) {
 }
 
 // ExecuteRules generates edits from rules and parameters.
+//
+// executeFunction rules are silently skipped: they require a context and a
+// FunctionDispatcher that this pure helper does not own. The Executor handles
+// them in a parallel pass and merges the function-derived edits with the slice
+// returned here (US-222).
 func ExecuteRules(rules []Rule, params map[string]interface{}) ([]funnel.Edit, error) {
 	var edits []funnel.Edit
 
 	for _, rule := range rules {
+		if rule.IsExecuteFunction() {
+			continue
+		}
 		edit, err := executeRule(rule, params)
 		if err != nil {
 			return nil, err
