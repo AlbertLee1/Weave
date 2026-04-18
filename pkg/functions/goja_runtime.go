@@ -49,6 +49,7 @@ const memCheckInterval = 50 * time.Millisecond
 type Runtime struct {
 	config         Config
 	ontologyClient OntologyClient
+	functionCaller FunctionCaller
 }
 
 // NewRuntime creates a new sandboxed Goja runtime with the given config.
@@ -120,6 +121,9 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 
 	// Register ontology shim if client is configured.
 	r.registerOntologyShim(vm, execCtx)
+
+	// Register weave.callFunction shim if a function caller is configured.
+	r.registerWeaveShim(vm, execCtx)
 
 	// Compile and run the source
 	_, err := vm.RunString(source)
