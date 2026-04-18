@@ -908,7 +908,11 @@ func main() {
 		// on the cached metadata Repository.
 		deps.ObjectSetSnapshotStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
-		deps.AuditStore = audit.NewPGStore(pool)
+		// US-265: optional SIEM exporter tees every persisted event onto
+		// stdout/syslog/S3 via a BatchedExporter. Disabled by default so
+		// fresh deployments don't wake up writing to an un-configured
+		// destination; enable with WEAVE_AUDIT_EXPORT_KIND.
+		deps.AuditStore = newAuditStoreWithExport(cfg.AuditExport, audit.NewPGStore(pool))
 		// US-011: the index rebuild admin command re-ingests from
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.

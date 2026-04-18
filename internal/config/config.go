@@ -136,6 +136,33 @@ type LDAPConfig struct {
 	GroupDescriptionAttr string
 }
 
+// AuditExportConfig controls the SIEM-facing audit log exporter (US-265).
+// Kind selects the transport — "disabled" (default), "stdout", "syslog",
+// or "s3". BatchSize and Retry tune the BatchedExporter wrapper. Syslog /
+// S3 options are only consulted when the corresponding Kind is selected.
+type AuditExportConfig struct {
+	Kind      string // "disabled" | "stdout" | "syslog" | "s3"
+	BatchSize int
+
+	RetryMaxAttempts    int
+	RetryInitialBackoff time.Duration
+	RetryMaxBackoff     time.Duration
+	RetryMultiplier     float64
+
+	// Syslog transport. Network is "udp" or "tcp"; Address is host:port.
+	SyslogNetwork  string
+	SyslogAddress  string
+	SyslogFacility int
+	SyslogSeverity int
+	SyslogHostname string
+	SyslogAppName  string
+
+	// S3 destination. Bucket is required when Kind="s3". Prefix is an
+	// optional key prefix.
+	S3Bucket string
+	S3Prefix string
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -155,6 +182,7 @@ type Config struct {
 	OIDC            OIDCConfig
 	SAML            SAMLConfig
 	LDAP            LDAPConfig
+	AuditExport     AuditExportConfig
 }
 
 func Load() (*Config, error) {
@@ -187,6 +215,17 @@ func Load() (*Config, error) {
 		IngestRateLimit: IngestRateLimitConfig{
 			RatePerSec: 1000,
 			Burst:      1000,
+		},
+		AuditExport: AuditExportConfig{
+			Kind:                "disabled",
+			BatchSize:           100,
+			RetryMaxAttempts:    3,
+			RetryInitialBackoff: 500 * time.Millisecond,
+			RetryMaxBackoff:     10 * time.Second,
+			RetryMultiplier:     2,
+			SyslogNetwork:       "udp",
+			SyslogFacility:      1, // user
+			SyslogSeverity:      6, // info
 		},
 	}
 
@@ -490,6 +529,79 @@ func Load() (*Config, error) {
 		cfg.LDAP.GroupDescriptionAttr = v
 	}
 
+	// Audit log export (US-265). WEAVE_AUDIT_EXPORT_KIND selects the
+	// transport; "disabled" (default) leaves the pipeline off.
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_KIND"); v != "" {
+		cfg.AuditExport.Kind = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_BATCH_SIZE"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_BATCH_SIZE %q: must be a positive integer", v)
+		}
+		cfg.AuditExport.BatchSize = n
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_RETRY_MAX_ATTEMPTS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_RETRY_MAX_ATTEMPTS %q: must be a positive integer", v)
+		}
+		cfg.AuditExport.RetryMaxAttempts = n
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_RETRY_INITIAL_BACKOFF"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_RETRY_INITIAL_BACKOFF %q: %w", v, err)
+		}
+		cfg.AuditExport.RetryInitialBackoff = d
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_RETRY_MAX_BACKOFF"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_RETRY_MAX_BACKOFF %q: %w", v, err)
+		}
+		cfg.AuditExport.RetryMaxBackoff = d
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_RETRY_MULTIPLIER"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_RETRY_MULTIPLIER %q: must be a positive number", v)
+		}
+		cfg.AuditExport.RetryMultiplier = f
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_SYSLOG_NETWORK"); v != "" {
+		cfg.AuditExport.SyslogNetwork = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_SYSLOG_ADDRESS"); v != "" {
+		cfg.AuditExport.SyslogAddress = v
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_SYSLOG_FACILITY"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_SYSLOG_FACILITY %q: %w", v, err)
+		}
+		cfg.AuditExport.SyslogFacility = n
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_SYSLOG_SEVERITY"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_EXPORT_SYSLOG_SEVERITY %q: %w", v, err)
+		}
+		cfg.AuditExport.SyslogSeverity = n
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_SYSLOG_HOSTNAME"); v != "" {
+		cfg.AuditExport.SyslogHostname = v
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_SYSLOG_APP_NAME"); v != "" {
+		cfg.AuditExport.SyslogAppName = v
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_S3_BUCKET"); v != "" {
+		cfg.AuditExport.S3Bucket = v
+	}
+	if v := os.Getenv("WEAVE_AUDIT_EXPORT_S3_PREFIX"); v != "" {
+		cfg.AuditExport.S3Prefix = v
+	}
+
 	return cfg, nil
 }
 
@@ -580,6 +692,29 @@ func (c *Config) Validate() error {
 			problems = append(problems,
 				"LDAP.Enabled=true but missing: "+strings.Join(missing, ", "))
 		}
+	}
+
+	switch strings.ToLower(c.AuditExport.Kind) {
+	case "", "disabled", "stdout":
+		// no transport-specific requirements
+	case "syslog":
+		if strings.TrimSpace(c.AuditExport.SyslogAddress) == "" {
+			problems = append(problems,
+				"AuditExport.Kind=syslog requires WEAVE_AUDIT_EXPORT_SYSLOG_ADDRESS (host:port)")
+		}
+		net := strings.ToLower(c.AuditExport.SyslogNetwork)
+		if net != "" && net != "udp" && net != "tcp" {
+			problems = append(problems,
+				fmt.Sprintf("AuditExport.SyslogNetwork %q: must be udp or tcp", c.AuditExport.SyslogNetwork))
+		}
+	case "s3":
+		if strings.TrimSpace(c.AuditExport.S3Bucket) == "" {
+			problems = append(problems,
+				"AuditExport.Kind=s3 requires WEAVE_AUDIT_EXPORT_S3_BUCKET")
+		}
+	default:
+		problems = append(problems,
+			fmt.Sprintf("AuditExport.Kind %q: must be one of disabled, stdout, syslog, s3", c.AuditExport.Kind))
 	}
 
 	if len(problems) == 0 {

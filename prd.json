@@ -956,8 +956,8 @@
         "Tests pass"
       ],
       "priority": 66,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/audit/export — Exporter interface + Stdout/Syslog(UDP|TCP)/S3 sinks + BatchedExporter (RetryPolicy: MaxAttempts + Initial/MaxBackoff + Multiplier, ctx-aware backoff, buffer cleared after flush regardless) + TeeStore decorator (best-effort detached export, inner error propagates, nil exporter = passthrough). cmd/server/newAuditStoreWithExport wires via WEAVE_AUDIT_EXPORT_KIND + 14 WEAVE_AUDIT_EXPORT_* env vars, defaults to disabled. S3 uses narrow S3Uploader interface (operator wires AWS SDK adapter) to keep CGO_ENABLED=0 go.mod lean. 29 new tests; all green."
     },
     {
       "id": "US-266",

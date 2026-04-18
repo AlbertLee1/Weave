@@ -149,6 +149,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - HTTP-layer context carriers for service-layer audit/telemetry (US-264 ClientInfo): when a service method needs request-scoped metadata (caller IP, User-Agent, trace header, …) without taking an `*http.Request` dependency, define a tiny struct + `WithX`/`FromContext` helpers in a leaf package (pkg/audit/context.go) and attach a chi middleware that stamps the struct onto the request context. Empty-value guard inside `WithX` keeps non-HTTP callers (unit tests, background jobs) from polluting the context tree with zero-valued entries. Unique empty-struct key (`type clientInfoKey struct{}`) avoids string-based collisions. Same shape generalises to any cross-cutting context carrier — request-ID, locale, trace-context extensions.
 - Service-layer read-path audit hooks (US-264 DataAccessAuditor): package the "check flag on the ObjectType → optionally emit audit row" logic into a small helper type with a nil-safe receiver (`*DataAccessAuditor`). Call sites inside ServiceImpl drop a single line at the very END of the read path after all filtering/masking has run — so the audit reflects the row set the caller ACTUALLY saw, not the pre-policy set. The ObjectType is already loaded earlier in every read path (OMS lookup for policy + marking), so the flag check is free. Errors from `audit.Record` are SWALLOWED — a failed audit must never turn a 200 into a 500; operators monitor audit write health separately.
 - objectset.Handler doesn't have the *ObjectType on hand (it works with api-name strings from the executor result), so the audit sink must be a narrow interface implemented by an adapter in cmd/server that owns the OMS repo (`loadObjectSetAuditAdapter`). Keeps `pkg/oss/objectset` free of any `pkg/oms` / `pkg/audit` import, matches the same pattern used by `newPropertyFilterAdapter` / `newHistorySnapshotAdapter` / `newObjectSetSnapshotAdapter`. Never widen the handler itself to accept an OMS repo — the adapter-in-cmd-server indirection keeps the handler testable in isolation.
+- Audit-tail fan-out (SIEM exporter, future write-through replicator): decorate the base `audit.Store` with a `TeeStore{inner, exporter}` at wire time. Insert MUST hit the inner store first and propagate its error AS IS — losing observability is strictly better than losing the audit trail itself. Only on inner success does the event flow to the exporter, and even then via a detached `go func` with `context.Background()` so a cancelled HTTP request never races the committed insert. Log-and-swallow in the goroutine — no error path should bubble back to the caller. Nil exporter is a passthrough so degraded-mode wiring is one line in cmd/server. Reusable for any fire-and-forget write-through (metrics sinks, webhook forwarders, replay queues). Prior art: `pkg/audit/export.TeeStore` (US-265).
+- BatchedExporter with RetryPolicy pattern (US-265): buffer-on-Enqueue + drain-on-threshold-or-explicit-Flush, with exponential backoff (`InitialBackoff * Multiplier^n` capped at `MaxBackoff`) around each attempt. Three invariants worth stressing: (1) ALWAYS clear the buffer after a flush attempt regardless of outcome — callers must not see the same failing batch replayed at every Enqueue; return `*ExportError{Exporter, Attempts, Err}` so operators can distinguish "flaked and gave up" from "recovered". (2) Backoff wait MUST be ctx-aware (`time.NewTimer` + `select { <-ctx.Done(): | <-t.C }`), else a cancelled request hangs for the full cumulative backoff. Tests inject a synchronous `sleepFunc` to observe the schedule without actually sleeping. (3) Zero RetryPolicy defaults to `MaxAttempts=1` (no retry) + BatchSize<=0 defaults to 1 (immediate flush) — mis-configured wirings must still make forward progress, never silently hang or swallow events. Same shape reusable for any retry-with-backoff queue sink.
+- Pluggable-SDK pattern for cloud dependencies under CGO_ENABLED=0 (US-265 S3Uploader): define the transport client as a narrow two-method interface inside the exporter package (`S3Uploader.PutObject(ctx, bucket, key, body)`) instead of importing aws-sdk-go-v2 directly. Operators who need S3 wire a tiny adapter in their cmd/server (`func(ctx, b, k, body) error { _, err := s3c.PutObject(ctx, &s3.PutObjectInput{...}); return err }`). Keeps go.mod lean, the Dockerfile invariant intact, and tests use a trivial in-memory fake. Same shape works for Kinesis / Firehose / Cloud Pub-Sub / anywhere a hyperscaler SDK would otherwise explode the dependency tree. Ship a "not-wired: falling back to disabled" warn so a naive `WEAVE_AUDIT_EXPORT_KIND=s3` gets a clear log line rather than a silent no-op.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -2283,5 +2286,42 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - `http.Request` → 上下文桥接模式值得沉淀：`ClientInfoMiddleware` 是标准三段 `type X struct{...}; WithX/FromX; Middleware(next)`，任何 service 方法想拿 request-scoped metadata 不再需要绕一圈 `http.Request.Context().Value("string-key")`（还得猜 key）。service 只 import leaf 包 `pkg/audit`，HTTP 耦合被 middleware 吃掉。
   - 一旦有一个"per-OT toggle + 运行时读"场景（audit / quota / retention / export policy ...），pg_repository 的 5 处 OT 路径必须都加列，否则某个少见入口（LinkedObjects 走 ListInterfaceObjectTypes 查 target OT ⇒ 拿到的 AuditDataAccess=false）会让审计静默丢行。这是 US-262 classification 已经踩过的五步清单，这次 US-264 直接复用。
   - objectset Handler 的 audit 绕一圈 adapter 是对的 —— 如果把 OMS repo 直接塞给 handler，会让 degraded-mode test router 的 fixture 爆炸（objectset 单测从不 wire repo）。narrow-interface-in-pkg + adapter-in-cmd/server 的套路对所有"handler 需要 OMS 查 flag"的未来场景都适用（US-210 edge properties / US-223 history snapshots / US-224 persisted snapshots 都是这个形）。
+---
+
+## 2026-04-19 - US-265 审计日志导出
+- 新建 `pkg/audit/export` 包，四件套：`Exporter` 接口 + 三个内建 sink（`StdoutExporter` / `SyslogExporter` / `S3Exporter`）+ `BatchedExporter` 包装器 + `TeeStore` 装饰器。
+- `StdoutExporter`：`encoding/json.Encoder` 逐事件写 NDJSON 行，默认落盘到 `os.Stdout`，适配容器日志采集器（Loki / CloudWatch Logs 代理）。空 batch 空转，互斥锁保护并发 Export。
+- `SyslogExporter`：RFC 3164 framing（`<priority>Mon DD HH:MM:SS host app: <JSON>`）。facility/severity 默认 user/info，hostname 走 `os.Hostname()` fallback。提供三个构造器：`NewSyslogExporterWriter(w)` 用于测试/自定义传输，`NewSyslogExporterUDP` / `NewSyslogExporterTCP` 用于生产。timestamp 使用 Go 的 `"Jan _2 15:04:05"` 格式（单数字日期下划线补空格）。
+- `S3Exporter`：narrow `S3Uploader interface{PutObject(ctx, bucket, key, body) error}`，每个 batch 上传为一个 NDJSON 对象，key 模式 `<prefix>/<yyyy>/<mm>/<dd>/<timestamp>-<uuid>.ndjson`，适配 S3 lifecycle 规则和 Glue crawler。构造时校验 Bucket 非空（panic），避免运行时上传到错误地方。
+- `BatchedExporter`：Enqueue 缓冲 + 达到 BatchSize 自动 flush；`RetryPolicy{MaxAttempts, InitialBackoff, MaxBackoff, Multiplier}` 指数退避，`MaxAttempts<=0` 默认 1 次不重试；buffer 在 flush 尝试后**无条件清空**（无论成功失败），防止调用方在下次 Enqueue 时反复冲击同一失败 batch；退避 wait 走 ctx-aware timer（`select { ctx.Done | t.C }`）；测试通过 `sleepFunc` 注入观察退避节奏。`*ExportError{Exporter, Attempts, Err}` 在重试耗尽时返回，实现 `Unwrap` 供 `errors.Is/As`。
+- `TeeStore`：装饰 `audit.Store`，Insert 先走底层持久化（PG），成功后 detached `go func` 把事件喂给 `EventEnqueuer`，context 切回 `context.Background()` 避免 HTTP ctx cancel 竞态吞事件。失败只 log，不回传调用方。nil exporter = 透传，degraded-mode 一行搞定。
+- 配置：`internal/config.AuditExportConfig{Kind, BatchSize, Retry*, Syslog*, S3*}`，14 个 `WEAVE_AUDIT_EXPORT_*` 环境变量。默认 Kind=disabled（新鲜部署不会意外写陌生地址）。Validate 拒绝 syslog 无 address / s3 无 bucket / 未知 kind。
+- 装配：`cmd/server/audit_export.go::newAuditStoreWithExport` 在 `audit.NewPGStore(pool)` 后一层包装。boot 失败（如 syslog dial 出错）log.Warn + 回退到 base store —— exporter 从不应该把 audit-write 拉下来。S3 kind 当前 warn 要求 operator 自己提供 adapter（go.mod 不引 aws-sdk）。
+- 测试（29 条）：
+  - `pkg/audit/export/stdout_test.go`：NDJSON 格式、空 batch no-op、Name。
+  - `pkg/audit/export/syslog_test.go`：RFC3164 priority/timestamp/hostname/app name、多事件分行、默认值填充、Name。
+  - `pkg/audit/export/s3_test.go`：NDJSON body + 按 yyyy/mm/dd 分区的 key、空 batch 无上传、空 Bucket panic、Name。
+  - `pkg/audit/export/batched_test.go`：BatchSize 触发 flush、显式 Flush、transient 失败重试直到成功、`*ExportError` 重试耗尽、MaxBackoff 封顶、ctx cancel 期间中止退避、Zero Retry 单次、默认 BatchSize=1、Name 合成、Export 接口 flush 后再走 retry。
+  - `pkg/audit/export/tee_test.go`：持久化 + 异步导出、底层失败不导出、List 委托、nil exporter 透传。
+  - `cmd/server/audit_export_test.go`：disabled/空 kind 透传、stdout 返回 `*TeeStore`、unknown kind 回退、s3 无 SDK 回退。
+  - `internal/config/config_test.go`：默认 disabled、env 设置、syslog 缺 address 失败、s3 缺 bucket 失败、unknown kind 失败、stdout/syslog-full/s3-full 通过。
+- Files changed:
+  - `pkg/audit/export/exporter.go` (new — Exporter interface + ExportError)
+  - `pkg/audit/export/stdout.go` (new)
+  - `pkg/audit/export/syslog.go` (new)
+  - `pkg/audit/export/s3.go` (new)
+  - `pkg/audit/export/batched.go` (new)
+  - `pkg/audit/export/tee.go` (new)
+  - `pkg/audit/export/{exporter,stdout,syslog,s3,batched,tee}_test.go` (new)
+  - `internal/config/config.go` (AuditExportConfig struct + 14 env vars + Validate)
+  - `internal/config/config_test.go` (8 new cases)
+  - `cmd/server/audit_export.go` (new — newAuditStoreWithExport helper)
+  - `cmd/server/audit_export_test.go` (new)
+  - `cmd/server/main.go` (deps.AuditStore 走 newAuditStoreWithExport 包装)
+- **Learnings for future iterations:**
+  - `go test ./pkg/audit/export/...` 下 `BatchedExporter_ContextCancelDuringBackoff` 使用真实 `time.NewTimer` + 预先 cancelled ctx —— 不需要 `sleepFunc` 注入，select 会立刻命中 `ctx.Done()` 分支，退避 InitialBackoff 设成 1 小时也能毫秒级返回。这是 "ctx-aware timer 是 production path 正确写法" 的最小验证模式。
+  - 初版 `BatchedExporter` 试图用 `isDefaultSleep(func)` 反射判断调用方有没有注入 `sleepFunc`，以决定走 ctx-timer 还是裸调 `sleepFunc`。Go 函数比较不是那么简单，这一层永远会失败并回到 "总是走 ctx-timer" 的分支 —— 直接放弃 reflection，以 `sleepFunc == nil` 作区分更干净。任何 "production 走 A、test 走 B" 的分支，让测试显式 `.sleepFunc = ...` 注入是比 runtime-检测稳的做法。
+  - 给 cmd/server 增加 `main` package 的测试文件时要小心：`cmd/server/audit_export_test.go` 必须 `package main`（同包），否则 `newAuditStoreWithExport` 是小写名不可见。`*auditexport.TeeStore` 的类型断言 `got.(*auditexport.TeeStore)` 能直接跨包匹配，因为字段可见性不影响类型 identity。
+  - 在 go.mod 保持 CGO_ENABLED=0 且不想吞下 aws-sdk-go-v2（它会拖几十个传递依赖，最常见的是 smithy-go 与 aws 配套的内部 package）时，exporter 的 S3 路径用 "narrow interface + operator wires adapter" 是务实选择。Warn-and-fallback 比 panic 或 silent-no-op 都好 —— 日志里会有一行清晰的解释，operator 知道要把 SDK 客户端挂上来。
 ---
 

@@ -659,3 +659,107 @@ func TestConfig_Validate_LDAP_FullyPopulatedPasses(t *testing.T) {
 		t.Fatalf("expected LDAP-full config to validate, got: %v", err)
 	}
 }
+
+// US-265 — Audit export env + validation coverage.
+
+func TestLoadConfig_AuditExport_DefaultsDisabled(t *testing.T) {
+	os.Unsetenv("WEAVE_AUDIT_EXPORT_KIND")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditExport.Kind != "disabled" {
+		t.Fatalf("expected default Kind=disabled, got %q", cfg.AuditExport.Kind)
+	}
+	if cfg.AuditExport.BatchSize != 100 {
+		t.Fatalf("expected default BatchSize=100, got %d", cfg.AuditExport.BatchSize)
+	}
+	if cfg.AuditExport.RetryMaxAttempts != 3 {
+		t.Fatalf("expected default RetryMaxAttempts=3, got %d", cfg.AuditExport.RetryMaxAttempts)
+	}
+}
+
+func TestLoadConfig_AuditExport_StdoutFromEnv(t *testing.T) {
+	t.Setenv("WEAVE_AUDIT_EXPORT_KIND", "stdout")
+	t.Setenv("WEAVE_AUDIT_EXPORT_BATCH_SIZE", "250")
+	t.Setenv("WEAVE_AUDIT_EXPORT_RETRY_MAX_ATTEMPTS", "5")
+	t.Setenv("WEAVE_AUDIT_EXPORT_RETRY_INITIAL_BACKOFF", "250ms")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditExport.Kind != "stdout" {
+		t.Fatalf("Kind=%q want stdout", cfg.AuditExport.Kind)
+	}
+	if cfg.AuditExport.BatchSize != 250 {
+		t.Fatalf("BatchSize=%d want 250", cfg.AuditExport.BatchSize)
+	}
+	if cfg.AuditExport.RetryMaxAttempts != 5 {
+		t.Fatalf("RetryMaxAttempts=%d want 5", cfg.AuditExport.RetryMaxAttempts)
+	}
+	if cfg.AuditExport.RetryInitialBackoff != 250*time.Millisecond {
+		t.Fatalf("RetryInitialBackoff=%v want 250ms", cfg.AuditExport.RetryInitialBackoff)
+	}
+}
+
+func TestConfig_Validate_AuditExport_SyslogRequiresAddress(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{Kind: "syslog", SyslogNetwork: "udp"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for syslog without address")
+	}
+	if !strings.Contains(err.Error(), "SYSLOG_ADDRESS") {
+		t.Fatalf("expected error to mention SYSLOG_ADDRESS, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_AuditExport_S3RequiresBucket(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{Kind: "s3"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for s3 without bucket")
+	}
+	if !strings.Contains(err.Error(), "S3_BUCKET") {
+		t.Fatalf("expected error to mention S3_BUCKET, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_AuditExport_UnknownKind(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{Kind: "kafka"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for unknown kind")
+	}
+}
+
+func TestConfig_Validate_AuditExport_StdoutPasses(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{Kind: "stdout"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("stdout export should validate without extra fields, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_AuditExport_SyslogFullyPopulated(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{
+		Kind:          "syslog",
+		SyslogNetwork: "tcp",
+		SyslogAddress: "siem.internal:601",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("syslog-full config should validate, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_AuditExport_S3FullyPopulated(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{Kind: "s3", S3Bucket: "audit"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("s3-full config should validate, got: %v", err)
+	}
+}
