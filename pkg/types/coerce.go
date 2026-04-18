@@ -36,8 +36,58 @@ func Coerce(value interface{}, dataType DataType) (interface{}, error) {
 		return coerceArray(value, dataType)
 	case Struct:
 		return coerceStruct(value, dataType)
+	case Union:
+		return coerceUnion(value, dataType)
 	default:
 		return value, nil
+	}
+}
+
+// coerceUnion picks the first variant that Coerce+Validate accepts and returns
+// a tagged map {"__type": "<variant>", "value": <coerced>}. When the input is
+// already tagged (carries __type), the named variant is used directly instead
+// of probing every variant.
+func coerceUnion(value interface{}, dataType DataType) (interface{}, error) {
+	if len(dataType.Variants) == 0 {
+		return nil, fmt.Errorf("union has no variants declared")
+	}
+	variantType, inner, tagged := unwrapUnionValue(value)
+	if tagged {
+		for _, v := range dataType.Variants {
+			if v.Type != variantType {
+				continue
+			}
+			coerced, err := Coerce(inner, v)
+			if err != nil {
+				return nil, fmt.Errorf("union variant %q: %w", variantType, err)
+			}
+			return wrapUnionValue(v.Type, coerced), nil
+		}
+		return nil, fmt.Errorf("union discriminator %q does not match any variant", variantType)
+	}
+	var lastErr error
+	for _, v := range dataType.Variants {
+		coerced, err := Coerce(value, v)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if err := Validate(coerced, v, false); err != nil {
+			lastErr = err
+			continue
+		}
+		return wrapUnionValue(v.Type, coerced), nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("value does not match any union variant: %w", lastErr)
+	}
+	return nil, fmt.Errorf("value does not match any union variant")
+}
+
+func wrapUnionValue(variant BaseType, inner interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		UnionDiscriminatorKey: string(variant),
+		UnionValueKey:         inner,
 	}
 }
 

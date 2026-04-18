@@ -106,8 +106,8 @@
         "Tests pass"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Union as BaseType #23; DataType.Variants []DataType carries variant set (round-trips via existing Property.TypeConfig JSONB); Validate honors __type discriminator when present, otherwise tries variants in declared order; Coerce wraps result as {__type, value} for unambiguous round-trip; 15 new unit tests in pkg/types/union_test.go; sdkgen ts/python/go maps Union → unknown/Any/interface{}"
     },
     {
       "id": "US-207",

@@ -44,6 +44,7 @@ var tsTypeMap = TypeMap{
 	types.Media:          "string",
 	types.Marking:        "string",
 	types.Cipher:         "string",
+	types.Union:          "unknown",
 }
 
 var pythonTypeMap = TypeMap{
@@ -66,6 +67,7 @@ var pythonTypeMap = TypeMap{
 	types.Media:          "str",
 	types.Marking:        "str",
 	types.Cipher:         "str",
+	types.Union:          "Any",
 }
 
 var goTypeMap = TypeMap{
@@ -88,4 +90,5 @@ var goTypeMap = TypeMap{
 	types.Media:          "string",
 	types.Marking:        "string",
 	types.Cipher:         "string",
+	types.Union:          "interface{}",
 }

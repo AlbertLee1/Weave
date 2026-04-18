@@ -28,7 +28,16 @@ const (
 	Media          BaseType = "media"
 	Marking        BaseType = "marking"
 	Cipher         BaseType = "cipher"
+	Union          BaseType = "union"
 )
+
+// UnionDiscriminatorKey is the JSON object key that tags a union-typed value
+// with the BaseType of the variant it matches.
+const UnionDiscriminatorKey = "__type"
+
+// UnionValueKey is the JSON object key that carries the wrapped inner value
+// when a union-typed value is serialized with an explicit discriminator.
+const UnionValueKey = "value"
 
 // allBaseTypes is the authoritative set of valid base types.
 var allBaseTypes = map[BaseType]bool{
@@ -37,7 +46,7 @@ var allBaseTypes = map[BaseType]bool{
 	Date: true, Timestamp: true, Decimal: true, Array: true,
 	Struct: true, Vector: true, Geopoint: true, Geoshape: true,
 	Attachment: true, TimeSeries: true, MediaReference: true,
-	Media: true, Marking: true, Cipher: true,
+	Media: true, Marking: true, Cipher: true, Union: true,
 }
 
 // CanBePrimaryKey reports whether the base type is eligible as a primary key.
@@ -66,13 +75,17 @@ func (bt BaseType) IsValid() bool {
 }
 
 // DataType describes a concrete Palantir data type, including parameterised
-// types such as Array(subType) and Struct(fields).
+// types such as Array(subType), Struct(fields), and Union(variants).
 type DataType struct {
 	Type      BaseType            `json:"type"`
 	SubType   *DataType           `json:"subType,omitempty"`
 	Fields    map[string]DataType `json:"fields,omitempty"`
 	Precision *int                `json:"precision,omitempty"`
 	Scale     *int                `json:"scale,omitempty"`
+	// Variants is populated when Type is Union; each entry is a candidate shape
+	// a value may take. Order is meaningful: Coerce and Validate try variants
+	// in the declared order and accept the first match.
+	Variants []DataType `json:"variants,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshalling for DataType.

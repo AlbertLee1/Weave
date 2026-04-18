@@ -10,9 +10,10 @@ func TestBaseType_AllDefined(t *testing.T) {
 		String, Integer, Short, Long, Float, Double, Boolean, Byte,
 		Date, Timestamp, Decimal, Array, Struct, Vector, Geopoint,
 		Geoshape, Attachment, TimeSeries, MediaReference, Media, Marking, Cipher,
+		Union,
 	}
-	if len(all) != 22 {
-		t.Fatalf("expected 22 base types, got %d", len(all))
+	if len(all) != 23 {
+		t.Fatalf("expected 23 base types, got %d", len(all))
 	}
 	seen := make(map[BaseType]bool)
 	for _, bt := range all {

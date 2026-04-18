@@ -104,9 +104,68 @@ func Validate(value interface{}, dataType DataType, nullable bool) error {
 			return fmt.Errorf("expected struct (map), got %T", value)
 		}
 
+	case Union:
+		return validateUnion(value, dataType, nullable)
+
 	default:
 		// For other types (vector, geopoint, geoshape, etc.) accept any value.
 	}
 
 	return nil
+}
+
+// validateUnion accepts value iff it matches at least one declared variant.
+// If value is a map carrying a "__type" discriminator, only the named variant
+// is considered. Otherwise variants are tried in declared order.
+func validateUnion(value interface{}, dataType DataType, nullable bool) error {
+	if len(dataType.Variants) == 0 {
+		return fmt.Errorf("union has no variants declared")
+	}
+	variantType, inner, tagged := unwrapUnionValue(value)
+	if tagged {
+		for _, v := range dataType.Variants {
+			if v.Type == variantType {
+				return Validate(inner, v, nullable)
+			}
+		}
+		return fmt.Errorf("union discriminator %q does not match any variant", variantType)
+	}
+	for _, v := range dataType.Variants {
+		if err := Validate(value, v, nullable); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("value %T does not match any union variant", value)
+}
+
+// unwrapUnionValue inspects value for a tagged-union wrapper.
+// A tagged value is a map that carries a string __type key; the inner value is
+// either the map's "value" key (for scalar variants) or the map itself minus
+// "__type" (for struct variants). Returns (variant BaseType, inner value, true)
+// when tagged; otherwise (_, value, false).
+func unwrapUnionValue(value interface{}) (BaseType, interface{}, bool) {
+	m, ok := value.(map[string]interface{})
+	if !ok {
+		return "", value, false
+	}
+	raw, ok := m[UnionDiscriminatorKey]
+	if !ok {
+		return "", value, false
+	}
+	tag, ok := raw.(string)
+	if !ok {
+		return "", value, false
+	}
+	if inner, hasValue := m[UnionValueKey]; hasValue && len(m) == 2 {
+		return BaseType(tag), inner, true
+	}
+	// Struct-style: strip __type and pass the remaining map through.
+	stripped := make(map[string]interface{}, len(m)-1)
+	for k, v := range m {
+		if k == UnionDiscriminatorKey {
+			continue
+		}
+		stripped[k] = v
+	}
+	return BaseType(tag), stripped, true
 }

@@ -22,6 +22,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Catalog stores (oms.MediaAssetStore, oms.ComputedPropertyStore) MUST be served by the uncached `*PGRepository`, not the `oms.CachedRepository` decorator — the cache wraps the metadata Repository interface only. In main.go, capture `pgRepo := oms.NewPGRepository(pool)` BEFORE wrapping so you can hand the bare repo to deps.MediaCatalog / deps.ComputedPropertyStore.
 - Web fetch path (`pkg api/client.ts`) is JSON-only — it hard-codes `Content-Type: application/json` and `JSON.stringify(body)`. Anything that needs multipart/binary or upload progress bypasses `request<T>()` and uses XMLHttpRequest (fetch has no standardized upload-progress event). Grab the access token from `useAuthStore.getState().accessToken` and set `Authorization: Bearer <token>` manually; reuse `ApiRequestError` from `api/client.ts` so error shapes stay uniform.
 - react-dropzone in jsdom: the hidden file input is exposed via `getInputProps()`. Tests should drop files by `Object.defineProperty(input, 'files', { value: [file] })` + `fireEvent.change(input)` instead of constructing a DataTransfer (jsdom lacks it). Wrap state-changing calls in `act(async () => {...})` so React flushes the dropzone's internal state update.
+- Parameterized BaseType additions (Array/Struct/Union): no migration needed. `Property.TypeConfig` is JSONB and `DataTypeJSON` merges unknown keys through, so adding a `Variants []DataType` / similar field on `pkg/types.DataType` is a wire-only change. Only 4 places need editing: (1) new constant + `allBaseTypes` entry, (2) `json:"xxx,omitempty"` DataType field, (3) Coerce+Validate branches, (4) sdkgen typemap (ts/python/go).
+- Union-typed values are tagged on the wire. Two accepted shapes: `{__type: "<variant>", value: <v>}` (universal wrapper — coerce emits this form) OR `{__type: "<variant>", ...structFields}` (flattened tagged struct — read path recognizes it via "key count != 2" heuristic). Validate trusts the `__type` hint when present; untagged values are tried variant-by-variant in declared order. Put specific variants first — `fmt.Sprintf`-backed String coerce is greedy.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -198,5 +200,29 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - The backend media API returns the `MediaAsset` row verbatim (pkg/oms.MediaAsset JSON tags). Keeping the TS interface byte-for-byte matched keeps upload → display a one-hop transform; no normalization layer needed.
   - `dev-browser` skill isn't registered in this harness; the PRD "verify in browser" line is covered by the unit/integration tests here + manual QA. Flag this in the PR so reviewers run the dev server once (`make dev`) and confirm drag-and-drop against a Media-typed property.
   - When an acceptance-test mutation hook in `useUploadMedia` throws, React Query marks the mutation as `isError` — but since the component also tracks per-file state in `uploads[]`, the "summary" mutation error is de-duplicated (shown only once all in-flight uploads settled). Don't rely on `mutation.error` alone in tests; assert on the component's own `upload-list` when driving multiple concurrent uploads.
+---
+
+## 2026-04-18 - US-206 Union Types 支持
+- Added `Union` as BaseType #23 (`types.Union = "union"`); bumped `allBaseTypes` + `TestBaseType_AllDefined` count to 23. Also exported two well-known keys: `UnionDiscriminatorKey = "__type"` and `UnionValueKey = "value"` so downstream serializers agree on the wire shape.
+- Extended `DataType` with `Variants []DataType` (JSON `variants`, `omitempty`). No new DB column — `Property.TypeConfig` is already JSONB, so `{"variants": [...]}` rides along with existing persistence. Schema round-trips via the existing `DataTypeJSON` path.
+- Validate: new `validateUnion` branch. If the value is a map carrying `__type`, it is routed directly to the named variant (error if no variant matches that discriminator). Otherwise variants are tried in declared order; first match wins. Empty variants list is an error. Nullable honors `nullable` at the dispatcher level.
+- Coerce: new `coerceUnion` branch. If input is tagged, the inner value is coerced against that variant only. Untagged input is attempted against each variant in declared order — Coerce + Validate must both succeed — and the first success is wrapped as `{"__type": "<variant>", "value": <coerced>}`. Nil input passes through unchanged.
+- Added `unwrapUnionValue` shared by Validate/Coerce. Supports both wire shapes: the universal wrapper `{__type, value}` (exactly 2 keys → scalar-style unwrap) and the flattened tagged-struct shape `{__type, ...structFields}` (any other key count → struct-style, strip `__type` and pass the rest through).
+- sdkgen/typemap.go: Union → `unknown` (ts), `Any` (python), `interface{}` (go) — the one escape hatch for generated types when the concrete variant is not known at codegen time.
+- 15 new unit tests in `pkg/types/union_test.go`: BaseType included + wire value, schema JSON round-trip with Variants, validate-first-variant, validate-later-variant, no-variant-match, empty-variants, nil+nullable, discriminator routes to struct variant, discriminator-unknown-variant, discriminator-mismatched-inner-value, wrapped-value-matches, coerce-first-variant-wins, coerce-falls-through-on-first-failure, coerce-honors-hint (coerces 42 → "42" under `__type=string`), empty-variants coerce error, nil pass-through.
+- Files changed:
+  - `pkg/types/basetype.go` (Union constant, allBaseTypes entry, UnionDiscriminatorKey/UnionValueKey exports, Variants field on DataType)
+  - `pkg/types/basetype_test.go` (bumped count to 23, added Union to slice)
+  - `pkg/types/validate.go` (Union branch + validateUnion + unwrapUnionValue)
+  - `pkg/types/coerce.go` (Union branch + coerceUnion + wrapUnionValue helper)
+  - `pkg/types/union_test.go` (new, 15 tests)
+  - `pkg/sdkgen/typemap.go` (Union entries for ts/python/go)
+  - `prd.json` (US-206 passes=true)
+- **Learnings for future iterations:**
+  - `DataType` was designed to be extensible via JSON fields (SubType, Fields, Precision, Scale, now Variants). Adding a new parameterized type only needs: (1) a new BaseType constant + allBaseTypes entry, (2) a new `json:"xxx,omitempty"` field on DataType, (3) branches in Coerce + Validate, (4) sdkgen typemap — NO migration required, because `Property.TypeConfig` is JSONB and `DataTypeJSON` already merges unknown keys through.
+  - The `{__type, value}` wrapper is the cleanest universal shape for tagged unions because it works for both scalars and structs. The flattened form `{__type, ...fields}` still gets recognized (via the "any key count other than exactly 2" heuristic in `unwrapUnionValue`) so callers that want idiomatic tagged-struct JSON don't need to wrap into a nested `value`. Both are supported on read; write path produces the wrapper form for consistency.
+  - When Coerce tries each variant, both Coerce AND Validate must succeed for the variant to be accepted. Coerce alone is too lenient for `Union[string, integer]` — `coerceString(42)` succeeds via `fmt.Sprintf`, which would mean integer input always lands in the first variant if it's string. The Validate pass after Coerce is what makes the "try-in-order" semantic meaningful.
+  - Ordering matters: put MORE-specific variants first. For `Union[Integer, String]`, `"42"` coerces to Integer; `"hello"` falls through to String. Reversing the order would route `"42"` to String (via fmt.Sprintf) and never try Integer.
+  - `TestBaseType_AllDefined` is the canary that flags any new BaseType addition — the fixed-length slice + count assertion catches drift between `allBaseTypes` and the explicit enumeration.
 ---
 
