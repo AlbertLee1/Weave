@@ -69,6 +69,23 @@ type IngestRateLimitConfig struct {
 	Burst      int
 }
 
+// OIDCConfig controls the OIDC Authorization Code flow front-door (US-246).
+// When Enabled is true AND IssuerURL / ClientID / ClientSecret / RedirectURL
+// are all populated, the server mounts /api/auth/oidc/{login,callback} and
+// uses coreos/go-oidc v3 to verify IdP-issued id_tokens. The caller's
+// identity is mapped to a Weave UserRecord by email, and a standard
+// LoginResponse (access + refresh JWTs) is returned — so downstream API
+// calls keep going through the existing JWT middleware unchanged.
+type OIDCConfig struct {
+	Enabled            bool
+	IssuerURL          string
+	ClientID           string
+	ClientSecret       string
+	RedirectURL        string
+	Scopes             []string
+	SuccessRedirectURL string
+}
+
 // Config holds all process-wide settings loaded from env.
 type Config struct {
 	Port     int
@@ -85,6 +102,7 @@ type Config struct {
 	Tracing         TracingConfig
 	Functions       FunctionsConfig
 	IngestRateLimit IngestRateLimitConfig
+	OIDC            OIDCConfig
 }
 
 func Load() (*Config, error) {
@@ -258,6 +276,44 @@ func Load() (*Config, error) {
 		cfg.IngestRateLimit.Burst = n
 	}
 
+	// OIDC (US-246). AUTH_MODE=oidc is shorthand for "enable OIDC front-door
+	// on top of jwt-mode middleware"; operators can also leave AUTH_MODE=jwt
+	// and just set WEAVE_OIDC_ENABLED=true if they want to keep
+	// password-login alongside SSO.
+	if cfg.AuthMode == "oidc" {
+		cfg.OIDC.Enabled = true
+	}
+	if v := os.Getenv("WEAVE_OIDC_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_OIDC_ENABLED %q: %w", v, err)
+		}
+		cfg.OIDC.Enabled = b
+	}
+	if v := os.Getenv("WEAVE_OIDC_ISSUER"); v != "" {
+		cfg.OIDC.IssuerURL = v
+	}
+	if v := os.Getenv("WEAVE_OIDC_CLIENT_ID"); v != "" {
+		cfg.OIDC.ClientID = v
+	}
+	if v := os.Getenv("WEAVE_OIDC_CLIENT_SECRET"); v != "" {
+		cfg.OIDC.ClientSecret = v
+	}
+	if v := os.Getenv("WEAVE_OIDC_REDIRECT_URL"); v != "" {
+		cfg.OIDC.RedirectURL = v
+	}
+	if v := os.Getenv("WEAVE_OIDC_SCOPES"); v != "" {
+		for _, s := range strings.Split(v, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				cfg.OIDC.Scopes = append(cfg.OIDC.Scopes, s)
+			}
+		}
+	}
+	if v := os.Getenv("WEAVE_OIDC_SUCCESS_REDIRECT_URL"); v != "" {
+		cfg.OIDC.SuccessRedirectURL = v
+	}
+
 	return cfg, nil
 }
 
@@ -286,6 +342,26 @@ func (c *Config) Validate() error {
 	if c.AuthMode == "jwt" && c.JWT.PrivateKeyPath == "" && c.JWT.PrivateKeyPEM == "" {
 		problems = append(problems,
 			"AUTH_MODE=jwt requires JWT key material: set WEAVE_JWT_PRIVATE_KEY_PATH or WEAVE_JWT_PRIVATE_KEY_PEM")
+	}
+
+	if c.OIDC.Enabled {
+		var missing []string
+		if strings.TrimSpace(c.OIDC.IssuerURL) == "" {
+			missing = append(missing, "WEAVE_OIDC_ISSUER")
+		}
+		if strings.TrimSpace(c.OIDC.ClientID) == "" {
+			missing = append(missing, "WEAVE_OIDC_CLIENT_ID")
+		}
+		if strings.TrimSpace(c.OIDC.ClientSecret) == "" {
+			missing = append(missing, "WEAVE_OIDC_CLIENT_SECRET")
+		}
+		if strings.TrimSpace(c.OIDC.RedirectURL) == "" {
+			missing = append(missing, "WEAVE_OIDC_REDIRECT_URL")
+		}
+		if len(missing) > 0 {
+			problems = append(problems,
+				"OIDC.Enabled=true but missing: "+strings.Join(missing, ", "))
+		}
 	}
 
 	if c.Functions.Enabled && strings.TrimSpace(c.Functions.BaseURL) == "" {

@@ -685,8 +685,8 @@
         "Tests pass"
       ],
       "priority": 47,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/auth/oidc_handler.go /login+/callback (go-oidc v3 + oauth2); OIDCConfig in internal/config with AUTH_MODE=oidc shortcut + WEAVE_OIDC_* env; wired in cmd/server/main.go gated on discovery success; 12 handler tests via oidctest.Server + 4 config tests"
     },
     {
       "id": "US-247",

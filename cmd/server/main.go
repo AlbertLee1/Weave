@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -105,15 +106,15 @@ type ServerDeps struct {
 	// snapshot endpoints return SnapshotsUnavailable 400 so the routes are
 	// still mounted (and discoverable via OpenAPI / contract tests).
 	ObjectSetSnapshotStore oms.ObjectSetSnapshotStore
-	TimeSeriesStore      timeseries.Store
-	GeotemporalStore     geotemporal.Store
-	CipherDecryptor      cipher.Decryptor
-	TransactionStore     transactions.Store
-	SqlQueryEngine       sqlqueries.Engine
-	IndexDocSource       index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
-	AuditStore           audit.Store                // US-067: audit event store (nil = endpoint returns 503)
-	IngestRateLimiter    oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
-	WebSocketHub         *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
+	TimeSeriesStore        timeseries.Store
+	GeotemporalStore       geotemporal.Store
+	CipherDecryptor        cipher.Decryptor
+	TransactionStore       transactions.Store
+	SqlQueryEngine         sqlqueries.Engine
+	IndexDocSource         index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
+	AuditStore             audit.Store                // US-067: audit event store (nil = endpoint returns 503)
+	IngestRateLimiter      oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
+	WebSocketHub           *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	// US-141: Developer Console application registry. When nil the
 	// /api/v2/developer/applications routes are not registered.
 	ApplicationRepo developer.ApplicationRepository
@@ -129,7 +130,12 @@ type ServerDeps struct {
 	// them off and the auth middleware degrades to JWT / API-key only.
 	AuthCodeRepo   developer.AuthorizationCodeRepository
 	OAuthTokenRepo developer.OAuthTokenRepository
-	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
+	// US-246: OIDC Authorization Code front-door. When Handler is non-nil
+	// the /api/auth/oidc/login and /api/auth/oidc/callback endpoints are
+	// registered; any misconfig (unreachable issuer, missing client ID)
+	// leaves Handler nil and the routes are not mounted.
+	OIDCHandler *auth.OIDCHandler
+	CORSOrigins []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -257,6 +263,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		r.Method(http.MethodPost, "/api/auth/login", loginHandler)
 		r.Method(http.MethodPost, "/api/auth/refresh", refreshHandler)
 		r.Method(http.MethodPost, "/api/auth/logout", logoutHandler)
+
+		// US-246: OIDC SSO front-door. Mounted alongside password login so
+		// operators can offer both; nil means the OIDC discovery failed at
+		// boot (unreachable issuer / misconfig) and the endpoints are not
+		// registered.
+		if deps.OIDCHandler != nil {
+			deps.OIDCHandler.RegisterRoutes(r)
+		}
 	}
 
 	// US-132: WebSocket subscription endpoint. Mounted OUTSIDE the auth
@@ -749,6 +763,53 @@ func main() {
 
 	if cfg.AuthMode == "token" {
 		log.Printf("[AUTH] WARNING: AUTH_MODE=token is deprecated and accepts unauthenticated tokens. Use AUTH_MODE=jwt in production.")
+	}
+
+	// US-246: OIDC front-door. Constructed AFTER the JWT signer + refresh
+	// service so the callback path has every collaborator it needs to mint a
+	// Weave session once the provider's id_token has been verified. Errors
+	// degrade loudly — the process keeps running with OIDC off rather than
+	// crashing so operators can still use password login / API keys.
+	if cfg.OIDC.Enabled {
+		if deps.JWTSigner == nil || deps.RefreshService == nil || deps.UserRepo == nil {
+			log.Printf("[OIDC] WARNING: OIDC.Enabled=true but JWT/refresh/user deps missing — /api/auth/oidc/* not mounted")
+		} else {
+			oidcProvider, err := oidc.NewProvider(ctx, cfg.OIDC.IssuerURL)
+			if err != nil {
+				log.Printf("[OIDC] WARNING: discovery failed for %s: %v — /api/auth/oidc/* not mounted", cfg.OIDC.IssuerURL, err)
+			} else {
+				exchanger, verifier := auth.NewOIDCDepsFromProvider(oidcProvider, auth.OIDCConfig{
+					IssuerURL:          cfg.OIDC.IssuerURL,
+					ClientID:           cfg.OIDC.ClientID,
+					ClientSecret:       cfg.OIDC.ClientSecret,
+					RedirectURL:        cfg.OIDC.RedirectURL,
+					Scopes:             cfg.OIDC.Scopes,
+					SuccessRedirectURL: cfg.OIDC.SuccessRedirectURL,
+				})
+				var markingRepo auth.MarkingRepository
+				if deps.PGPool != nil {
+					markingRepo = auth.NewPGMarkingRepository(deps.PGPool)
+				}
+				deps.OIDCHandler = auth.NewOIDCHandler(auth.OIDCHandlerDeps{
+					Config: auth.OIDCConfig{
+						IssuerURL:          cfg.OIDC.IssuerURL,
+						ClientID:           cfg.OIDC.ClientID,
+						ClientSecret:       cfg.OIDC.ClientSecret,
+						RedirectURL:        cfg.OIDC.RedirectURL,
+						Scopes:             cfg.OIDC.Scopes,
+						SuccessRedirectURL: cfg.OIDC.SuccessRedirectURL,
+					},
+					Exchanger:      exchanger,
+					Verifier:       verifier,
+					Users:          deps.UserRepo,
+					Resolver:       deps.RoleResolver,
+					Signer:         deps.JWTSigner,
+					RefreshService: deps.RefreshService,
+					MarkingRepo:    markingRepo,
+				})
+				log.Printf("[OIDC] enabled: issuer=%s client_id=%s", cfg.OIDC.IssuerURL, cfg.OIDC.ClientID)
+			}
+		}
 	}
 
 	// 2. Index Manager

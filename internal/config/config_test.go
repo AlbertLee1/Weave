@@ -427,3 +427,86 @@ func TestConfig_Validate_MultipleErrors(t *testing.T) {
 		t.Errorf("expected error to mention jwt, got: %v", err)
 	}
 }
+
+// US-246: OIDC config loading + validation.
+
+func TestLoadConfig_OIDC_AuthModeShortcut(t *testing.T) {
+	t.Setenv("AUTH_MODE", "oidc")
+	t.Setenv("WEAVE_OIDC_ISSUER", "https://keycloak.example.com/realms/weave")
+	t.Setenv("WEAVE_OIDC_CLIENT_ID", "weave-client")
+	t.Setenv("WEAVE_OIDC_CLIENT_SECRET", "shh")
+	t.Setenv("WEAVE_OIDC_REDIRECT_URL", "https://weave.example.com/api/auth/oidc/callback")
+	t.Setenv("WEAVE_OIDC_SCOPES", "openid,email,profile,groups")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.OIDC.Enabled {
+		t.Error("AUTH_MODE=oidc should set OIDC.Enabled=true")
+	}
+	if cfg.OIDC.IssuerURL != "https://keycloak.example.com/realms/weave" {
+		t.Errorf("IssuerURL=%q", cfg.OIDC.IssuerURL)
+	}
+	if cfg.OIDC.ClientID != "weave-client" {
+		t.Errorf("ClientID=%q", cfg.OIDC.ClientID)
+	}
+	if cfg.OIDC.ClientSecret != "shh" {
+		t.Errorf("ClientSecret=%q", cfg.OIDC.ClientSecret)
+	}
+	want := []string{"openid", "email", "profile", "groups"}
+	if len(cfg.OIDC.Scopes) != len(want) {
+		t.Fatalf("Scopes=%v, want %v", cfg.OIDC.Scopes, want)
+	}
+	for i, s := range want {
+		if cfg.OIDC.Scopes[i] != s {
+			t.Errorf("Scopes[%d]=%q, want %q", i, cfg.OIDC.Scopes[i], s)
+		}
+	}
+}
+
+func TestLoadConfig_OIDC_DisabledByDefault(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.OIDC.Enabled {
+		t.Error("OIDC should default to Enabled=false")
+	}
+}
+
+func TestConfig_Validate_OIDC_MissingFields(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.OIDC.Enabled = true
+	// Intentionally leave IssuerURL / ClientID / ClientSecret / RedirectURL unset.
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error when OIDC.Enabled=true but no creds set")
+	}
+	msg := err.Error()
+	for _, need := range []string{
+		"WEAVE_OIDC_ISSUER",
+		"WEAVE_OIDC_CLIENT_ID",
+		"WEAVE_OIDC_CLIENT_SECRET",
+		"WEAVE_OIDC_REDIRECT_URL",
+	} {
+		if !strings.Contains(msg, need) {
+			t.Errorf("expected error to mention %s, got: %v", need, err)
+		}
+	}
+}
+
+func TestConfig_Validate_OIDC_FullyPopulatedPasses(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.OIDC = OIDCConfig{
+		Enabled:      true,
+		IssuerURL:    "https://idp.example.com",
+		ClientID:     "weave",
+		ClientSecret: "shh",
+		RedirectURL:  "https://weave.example.com/api/auth/oidc/callback",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected OIDC-full config to validate, got: %v", err)
+	}
+}
