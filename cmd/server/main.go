@@ -32,6 +32,7 @@ import (
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/mcp"
+	"github.com/liyang/weave/pkg/masking"
 	"github.com/liyang/weave/pkg/media"
 	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
@@ -168,6 +169,14 @@ type ServerDeps struct {
 	// additional filter.
 	RowPolicyStore  rls.Store
 	RowPolicyEngine *rls.Engine
+	// US-257 Column-Level Masking. ColumnMaskStore is the admin-CRUD
+	// surface over the column_masks table; ColumnMaskEngine compiles the
+	// applicable mask transforms (hash/redact/partial) for a caller at
+	// read time. Both are populated from the PG bootstrap block and left
+	// nil in degraded mode — the routes are not mounted and the OSS
+	// service's read paths emit property values unchanged.
+	ColumnMaskStore  masking.Store
+	ColumnMaskEngine *masking.Engine
 	// US-253: TOTP-based MFA. MFAStore is the narrow persistence surface
 	// over the new users.mfa_secret / users.mfa_enabled columns; satisfied
 	// by the uncached *PGUserRepository. MFAChallenges bridges the login
@@ -713,6 +722,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					rlsHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-257: Column-Level Masking admin CRUD. Mounts
+		// /api/admin/column-masks when ColumnMaskStore is wired. Handler
+		// receives ColumnMaskEngine so writes refresh the in-process
+		// cache immediately.
+		if deps.ColumnMaskStore != nil {
+			maskHandler := masking.NewHandler(deps.ColumnMaskStore, deps.AuditStore, deps.ColumnMaskEngine)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					maskHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -851,6 +872,10 @@ func main() {
 		// admin CRUD is infrequent and the engine's own cache absorbs the
 		// hot-path reads at query time.
 		deps.RowPolicyStore = newPGRowPolicyStore(pool)
+		// US-257: Column-mask store (column_masks table). Uncached for the
+		// same reason as RowPolicyStore — admin volume is low, engine owns
+		// the hot-path cache.
+		deps.ColumnMaskStore = newPGColumnMaskStore(pool)
 		deps.ApplicationRepo = developer.NewPGApplicationRepository(pool)
 		deps.AuthCodeRepo = developer.NewPGAuthorizationCodeRepository(pool)
 		deps.OAuthTokenRepo = developer.NewPGOAuthTokenRepository(pool)
@@ -1226,6 +1251,26 @@ func main() {
 		}
 		if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
 			impl.SetRowPolicyEngine(deps.RowPolicyEngine)
+		}
+	}
+
+	// 4d. US-257 Column-Level Masking Engine. Lives alongside the RLS
+	// engine; the masking engine rewrites property values in the returned
+	// WireObjects after row-level filters run. A store failure at boot
+	// logs a warning but does not block startup — enforcement starts the
+	// moment the first Reload succeeds, which the admin handler triggers
+	// on every successful write.
+	if deps.ColumnMaskStore != nil {
+		var gl masking.GroupMembershipLookup
+		if deps.GroupRepo != nil {
+			gl = newGroupLookupFromRepo(deps.GroupRepo)
+		}
+		deps.ColumnMaskEngine = masking.New(deps.ColumnMaskStore, gl)
+		if err := deps.ColumnMaskEngine.Reload(ctx); err != nil {
+			log.Printf("[Masking] warning: failed to load column masks from DB: %v", err)
+		}
+		if impl, ok := deps.OssSvc.(*oss.ServiceImpl); ok && impl != nil {
+			impl.SetColumnMaskEngine(deps.ColumnMaskEngine)
 		}
 	}
 

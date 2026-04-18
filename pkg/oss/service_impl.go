@@ -13,6 +13,7 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
+	"github.com/liyang/weave/pkg/masking"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/pagination"
 	"github.com/liyang/weave/pkg/oss/where"
@@ -43,6 +44,13 @@ type ServiceImpl struct {
 	// security surfaces enforce at read time. A nil engine is treated as
 	// "no additional filter" and existing callers are unaffected.
 	rowPolicyEngine *rls.Engine
+
+	// columnMaskEngine is the US-257 column_masks engine. When attached it
+	// rewrites property values on WireObjects returned from every read path
+	// for callers outside the mask's AppliesTo allow list. A nil engine is
+	// a no-op so legacy callers that haven't wired masking keep their
+	// current wire shape.
+	columnMaskEngine *masking.Engine
 }
 
 // NewService creates a new OSS service.
@@ -76,6 +84,14 @@ func (s *ServiceImpl) SetPolicyEngine(e *security.Engine) {
 // the two security surfaces independently authorable. Pass nil to detach.
 func (s *ServiceImpl) SetRowPolicyEngine(e *rls.Engine) {
 	s.rowPolicyEngine = e
+}
+
+// SetColumnMaskEngine attaches the US-257 column_masks engine. Compiled
+// transforms are applied to every WireObject returned from the service's
+// read paths BEFORE serialisation, so masked property values reach the wire
+// but never leak to the caller's network. Pass nil to detach.
+func (s *ServiceImpl) SetColumnMaskEngine(e *masking.Engine) {
+	s.columnMaskEngine = e
 }
 
 // compilePolicyQuery compiles the row-level security policy for ot into a
@@ -239,6 +255,35 @@ func coerceStringSlice(raw any) []string {
 	}
 }
 
+// applyColumnMasking enforces US-257 column-level masking by rewriting
+// property values on each WireObject according to the caller-specific mask
+// transforms compiled by masking.Engine. A nil engine, nil object-type or
+// empty input slice short-circuits to a no-op. The engine bypasses admins
+// and callers inside the mask's AppliesTo allow list, so the returned
+// transform map is empty in those cases and the input slice flows through
+// unchanged.
+//
+// Call order: after applyMarkingFilter so denied rows are dropped first,
+// and after applyPropertyVisibility so property-level visibility decisions
+// are made before value rewriting runs against the surviving properties.
+func (s *ServiceImpl) applyColumnMasking(ctx context.Context, ot *oms.ObjectType, objs []*WireObject) []*WireObject {
+	if s.columnMaskEngine == nil || ot == nil || len(objs) == 0 {
+		return objs
+	}
+	user := auth.UserFromContext(ctx)
+	transforms, err := s.columnMaskEngine.Compile(ctx, user, ot.RID)
+	if err != nil || len(transforms) == 0 {
+		return objs
+	}
+	for _, o := range objs {
+		if o == nil || len(o.Properties) == 0 {
+			continue
+		}
+		masking.ApplyTransforms(o.Properties, transforms)
+	}
+	return objs
+}
+
 // applyPropertyVisibility enforces US-048 column-level visibility by running
 // the row-level policy engine's AllowedProperties hook against each returned
 // WireObject. The engine short-circuits to nil when no PROPERTY-scope
@@ -317,6 +362,7 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 		return nil, oms.ErrNotFound
 	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
+	filtered = s.applyColumnMasking(ctx, ot, filtered)
 	return filtered[0], nil
 }
 
@@ -381,7 +427,8 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		return nil, err
 	}
 	filtered = s.applyMarkingFilter(ctx, ot, filtered)
-	page.Data = s.applyPropertyVisibility(ctx, ot, filtered)
+	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
+	page.Data = s.applyColumnMasking(ctx, ot, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -541,7 +588,8 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		return nil, err
 	}
 	filtered = s.applyMarkingFilter(ctx, ot, filtered)
-	page.Data = s.applyPropertyVisibility(ctx, ot, filtered)
+	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
+	page.Data = s.applyColumnMasking(ctx, ot, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -797,7 +845,8 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 		return nil, err
 	}
 	filtered = s.applyMarkingFilter(ctx, targetOT, filtered)
-	page.Data = s.applyPropertyVisibility(ctx, targetOT, filtered)
+	filtered = s.applyPropertyVisibility(ctx, targetOT, filtered)
+	page.Data = s.applyColumnMasking(ctx, targetOT, filtered)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -898,5 +947,7 @@ func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRe
 
 	// US-048: apply column-level visibility against the target object type.
 	filtered := s.applyPropertyVisibility(ctx, otherOT, []*WireObject{obj})
+	// US-257: value-level masking after visibility filtering.
+	filtered = s.applyColumnMasking(ctx, otherOT, filtered)
 	return filtered[0], nil
 }
