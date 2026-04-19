@@ -1014,8 +1014,8 @@
         "Tests pass"
       ],
       "priority": 70,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/audit/retention.Service + Scheduler — archive-then-delete sweep paginates expired rows by chain_seq ASC through a pluggable Archiver, then issues a single DeleteBefore(cutoff). Archive failure aborts the sweep BEFORE delete so the next run retries; delete-only mode is the zero-config default. Scheduler captures stopCh/doneCh as locals (fixed a Start/Stop race the LDAP/roothash publishers share — Stop nil-ing s.stopCh could race with the goroutine's first select, hanging Stop forever on doneCh). PGStore gained ListBefore(before, cursor, limit) + DeleteBefore(before); both use the existing idx_audit_events_ts. AUDIT_RETENTION_DAYS=0 (default) retains forever; >0 enables the nightly scheduler. Archive wiring via cmd/server/audit_retention.go::startAuditRetention — reuses auditexport.NewS3Exporter (NDJSON batch upload) under a distinct RetentionS3Prefix so archive objects can life-cycle separately from SIEM exports. S3Uploader stays operator-injected (pluggable-SDK pattern from US-265); unwired archive kind falls back to delete-only with a warn. Retention deletion INTENTIONALLY breaks the US-266 tamper-proof chain for pre-retention history — archived NDJSON is the cold-path integrity record. 12 unit tests in pkg/audit/retention + 6 wiring tests in cmd/server + 1 integration test on PGStore helpers + 7 new config tests."
     },
     {
       "id": "US-270",

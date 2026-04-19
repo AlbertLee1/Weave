@@ -170,6 +170,24 @@ type AuditExportConfig struct {
 	// survive a later attacker.
 	RootHashFile     string
 	RootHashInterval time.Duration
+
+	// RetentionDays caps how long audit rows live in Postgres (US-269).
+	// A nightly scheduler archives rows older than the cutoff to the
+	// optional archive sink (reuses the S3 transport when configured)
+	// then deletes them. 0 disables retention entirely — the default so
+	// fresh deployments retain forever until an operator opts in.
+	RetentionDays      int
+	RetentionInterval  time.Duration
+	RetentionBatchSize int
+
+	// RetentionArchive selects the destination where expired rows are
+	// shipped before DB deletion. "none" (default) skips the archive
+	// step and simply deletes; "s3" reuses the S3 transport configured
+	// by S3Bucket + optional S3Prefix but under the RetentionS3Prefix
+	// key namespace so archive objects can be life-cycled separately
+	// from live SIEM export objects.
+	RetentionArchive   string // "none" | "s3"
+	RetentionS3Prefix  string
 }
 
 // Config holds all process-wide settings loaded from env.
@@ -236,6 +254,9 @@ func Load() (*Config, error) {
 			SyslogFacility:      1, // user
 			SyslogSeverity:      6, // info
 			RootHashInterval:    24 * time.Hour,
+			RetentionInterval:   24 * time.Hour,
+			RetentionBatchSize:  1000,
+			RetentionArchive:    "none",
 		},
 	}
 
@@ -625,6 +646,36 @@ func Load() (*Config, error) {
 		cfg.AuditExport.RootHashInterval = d
 	}
 
+	// Audit log retention (US-269). AUDIT_RETENTION_DAYS > 0 enables the
+	// nightly archive-and-delete scheduler; 0 (default) retains forever.
+	if v := os.Getenv("AUDIT_RETENTION_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("invalid AUDIT_RETENTION_DAYS %q: must be a non-negative integer", v)
+		}
+		cfg.AuditExport.RetentionDays = n
+	}
+	if v := os.Getenv("WEAVE_AUDIT_RETENTION_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_RETENTION_INTERVAL %q: must be a positive duration", v)
+		}
+		cfg.AuditExport.RetentionInterval = d
+	}
+	if v := os.Getenv("WEAVE_AUDIT_RETENTION_BATCH_SIZE"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid WEAVE_AUDIT_RETENTION_BATCH_SIZE %q: must be a positive integer", v)
+		}
+		cfg.AuditExport.RetentionBatchSize = n
+	}
+	if v := os.Getenv("WEAVE_AUDIT_RETENTION_ARCHIVE"); v != "" {
+		cfg.AuditExport.RetentionArchive = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("WEAVE_AUDIT_RETENTION_S3_PREFIX"); v != "" {
+		cfg.AuditExport.RetentionS3Prefix = v
+	}
+
 	return cfg, nil
 }
 
@@ -738,6 +789,24 @@ func (c *Config) Validate() error {
 	default:
 		problems = append(problems,
 			fmt.Sprintf("AuditExport.Kind %q: must be one of disabled, stdout, syslog, s3", c.AuditExport.Kind))
+	}
+
+	// Retention (US-269). RetentionDays<=0 disables retention entirely;
+	// only validate dependent fields when enabled.
+	if c.AuditExport.RetentionDays > 0 {
+		archive := strings.ToLower(strings.TrimSpace(c.AuditExport.RetentionArchive))
+		switch archive {
+		case "", "none":
+			// delete-only — no archive destination required
+		case "s3":
+			if strings.TrimSpace(c.AuditExport.S3Bucket) == "" {
+				problems = append(problems,
+					"AuditExport.RetentionArchive=s3 requires WEAVE_AUDIT_EXPORT_S3_BUCKET (reused for archive uploads)")
+			}
+		default:
+			problems = append(problems,
+				fmt.Sprintf("AuditExport.RetentionArchive %q: must be one of none, s3", c.AuditExport.RetentionArchive))
+		}
 	}
 
 	if len(problems) == 0 {

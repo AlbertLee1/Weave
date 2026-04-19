@@ -801,3 +801,124 @@ func TestConfig_Validate_AuditExport_S3FullyPopulated(t *testing.T) {
 		t.Fatalf("s3-full config should validate, got: %v", err)
 	}
 }
+
+// US-269: audit retention env + validation.
+
+func TestLoadConfig_AuditRetention_Defaults(t *testing.T) {
+	os.Unsetenv("AUDIT_RETENTION_DAYS")
+	os.Unsetenv("WEAVE_AUDIT_RETENTION_INTERVAL")
+	os.Unsetenv("WEAVE_AUDIT_RETENTION_BATCH_SIZE")
+	os.Unsetenv("WEAVE_AUDIT_RETENTION_ARCHIVE")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditExport.RetentionDays != 0 {
+		t.Errorf("default RetentionDays=%d, want 0", cfg.AuditExport.RetentionDays)
+	}
+	if cfg.AuditExport.RetentionInterval != 24*time.Hour {
+		t.Errorf("default RetentionInterval=%v, want 24h", cfg.AuditExport.RetentionInterval)
+	}
+	if cfg.AuditExport.RetentionBatchSize != 1000 {
+		t.Errorf("default RetentionBatchSize=%d, want 1000", cfg.AuditExport.RetentionBatchSize)
+	}
+	if cfg.AuditExport.RetentionArchive != "none" {
+		t.Errorf("default RetentionArchive=%q, want \"none\"", cfg.AuditExport.RetentionArchive)
+	}
+}
+
+func TestLoadConfig_AuditRetention_FromEnv(t *testing.T) {
+	t.Setenv("AUDIT_RETENTION_DAYS", "30")
+	t.Setenv("WEAVE_AUDIT_RETENTION_INTERVAL", "6h")
+	t.Setenv("WEAVE_AUDIT_RETENTION_BATCH_SIZE", "500")
+	t.Setenv("WEAVE_AUDIT_RETENTION_ARCHIVE", "s3")
+	t.Setenv("WEAVE_AUDIT_RETENTION_S3_PREFIX", "archive/prod")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuditExport.RetentionDays != 30 {
+		t.Fatalf("RetentionDays=%d want 30", cfg.AuditExport.RetentionDays)
+	}
+	if cfg.AuditExport.RetentionInterval != 6*time.Hour {
+		t.Fatalf("RetentionInterval=%v want 6h", cfg.AuditExport.RetentionInterval)
+	}
+	if cfg.AuditExport.RetentionBatchSize != 500 {
+		t.Fatalf("RetentionBatchSize=%d want 500", cfg.AuditExport.RetentionBatchSize)
+	}
+	if cfg.AuditExport.RetentionArchive != "s3" {
+		t.Fatalf("RetentionArchive=%q want s3", cfg.AuditExport.RetentionArchive)
+	}
+	if cfg.AuditExport.RetentionS3Prefix != "archive/prod" {
+		t.Fatalf("RetentionS3Prefix=%q want archive/prod", cfg.AuditExport.RetentionS3Prefix)
+	}
+}
+
+func TestLoadConfig_AuditRetention_RejectsNegative(t *testing.T) {
+	t.Setenv("AUDIT_RETENTION_DAYS", "-5")
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected error for negative AUDIT_RETENTION_DAYS")
+	}
+}
+
+func TestLoadConfig_AuditRetention_RejectsBadInterval(t *testing.T) {
+	t.Setenv("WEAVE_AUDIT_RETENTION_INTERVAL", "nonsense")
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected error for malformed interval")
+	}
+}
+
+func TestConfig_Validate_AuditRetention_S3ArchiveRequiresBucket(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{
+		Kind:             "disabled",
+		RetentionDays:    30,
+		RetentionArchive: "s3",
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for s3 archive without bucket")
+	}
+	if !strings.Contains(err.Error(), "S3_BUCKET") {
+		t.Fatalf("expected error to mention S3_BUCKET, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_AuditRetention_UnknownArchive(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{
+		Kind:             "disabled",
+		RetentionDays:    30,
+		RetentionArchive: "gcs",
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for unknown archive kind")
+	}
+}
+
+func TestConfig_Validate_AuditRetention_DisabledSkipsArchiveCheck(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{
+		Kind:             "disabled",
+		RetentionDays:    0, // retention off
+		RetentionArchive: "s3",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("retention=0 should skip archive validation, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_AuditRetention_NoneArchivePasses(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.AuditExport = AuditExportConfig{
+		Kind:             "disabled",
+		RetentionDays:    30,
+		RetentionArchive: "none",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("retention + none archive should validate, got: %v", err)
+	}
+}

@@ -158,6 +158,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Streaming-zip HTTP handlers (US-268 export, future bulk-download / backup): headers go on the wire BEFORE `zip.Writer.Create` returns its first byte, so a mid-stream error can NEVER be converted to a structured 500 — all pre-flight checks (auth, body parse, source-not-configured gate) MUST run before the first `w.Header().Set("Content-Type", "application/zip")`. Audit rows for the request ALSO need to land synchronously before the stream starts for the same reason. Inside the stream: log-and-return on error (truncated body on the wire is the only failure mode), NEVER try to emit JSON after zip bytes have flowed. `zip.NewWriter(w).Close()` is load-bearing — skipping it leaves a corrupt archive even if every inner Create succeeded.
 - Narrow-sources-with-adapters pattern for multi-subsystem data aggregation (US-268 Exporter): when a feature needs data from 5+ orthogonal subsystems (user repo, audit store, media catalog, media blobs, ...), define ONE narrow interface per source in the owning leaf package, keep the package free of the underlying subsystem imports, and push translation into thin adapters in `cmd/server/<feature>_<role>.go`. Each source is independently optional — a nil source produces an absent/empty field so degraded deployments still emit a useful response. Constructor is `New<Feature>()` with NO source args; caller sets fields directly (`e.Profile = ...`). Same shape generalises to any "multi-subsystem read pipeline" — cross-service audit reports, compliance-control-evidence bundles, cross-ontology migrations. Prior art: `pkg/gdpr.Exporter` source fields + `cmd/server/gdpr_export.go` adapters.
 - Sanitising untrusted filenames before zip write: `path.Base(name)` strips directory prefixes, `strings.TrimLeft(base, ".")` kills "../" leftovers, then scrub residual separators (`ReplaceAll "/" "_"` + `"\\" "_"`). Empty / "." / ".." falls back to a sentinel like "blob" so the archive layout stays deterministic. Applying to the RID path segment too catches the rare case of a manual test fixture with slashes. NEVER trust the catalog — a compromised DB row can otherwise place bytes anywhere the consumer's unzip routine extracts to.
+- Start(ctx)/Stop() scheduler race (US-269, also latent in LDAPSyncScheduler / RootHashPublisher): inside `Stop` the shape `s.stopCh = nil` races with the goroutine's `case <-s.stopCh:` read — if Stop runs before the goroutine enters select, the goroutine observes nil and waits forever, leaving Stop blocked on doneCh. Fix: allocate `stopCh := make(chan struct{})` + `doneCh := make(chan struct{})` as LOCALS in Start, assign them to the struct fields under the lock, AND capture the locals inside the goroutine closure. The goroutine reads only its captured local copies so Stop's mutations can't affect it. Cheaper than sync.Once + atomic flags and keeps the Start/Stop API unchanged. Only matters under back-to-back Start→Stop (typical production uptime never exercises it; unit tests that start-then-stop-immediately surface it every run).
+- Archive-and-delete retention (US-269) pattern: when a long-running table needs TTL eviction with optional cold-storage archive, the right pipeline is (a) `ListBefore(cutoff, cursor, limit)` with a monotonic cursor over an immutable append-only column (chain_seq for audit, id for any other append-only table), (b) `Archive(batch)` on each page to an idempotent external sink, (c) single `DeleteBefore(cutoff)` at the end. Archive failure aborts BEFORE delete so the next run retries the same rows. DB rows survive on failure; the sink is idempotent so re-archiving a partial run only creates a new object (dedup at query time). Same shape reusable for: object_history retention, action_jobs archival, attachment GC, any temporal-expiry table.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -2443,4 +2445,93 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - **Reusing the decorated audit Store for a read-side feed**: when a new endpoint wants to publish audit events (export, dashboard, SIEM view), feed it `deps.AuditStore` AFTER the PG bootstrap has wrapped it with `RedactingStore`. The new endpoint automatically inherits every read-side compliance rule (US-267 PII scrub, any future retention filter) without a separate plumbing pass. Feeding the raw `*PGStore` or `audit.NewPGStore(pool)` bypass would re-leak erased-user data through the new surface — silent and devastating. Rule of thumb: there should be EXACTLY ONE `audit.Store` reference per read path, and it's always the outermost decorator.
   - **Password hash / MFA secret MUST be dropped at the adapter**: user records carry secrets (PasswordHash, MFASecret) that are useful server-side but MUST NOT re-emit through any user-facing surface, least of all a "download your data" zip. Sanitise at the `cmd/server` adapter boundary (don't copy the field) rather than at the JSON-marshal layer; a `json:"-"` tag on the struct is easy to silently invert with `json.Marshal(&raw)` in a future refactor. The adapter dropping the field is a structural guarantee the compiler can check.
   - **Export-only degraded mode**: mount the `/export` route when `GDPRExporter != nil` even if `GDPRJobStore == nil`, via a dual-branch in the route-mount block. Read-only-audit deployments (archive-only replicas, disaster-recovery restores) still benefit from data portability without the write-side erase infrastructure. Same split applies to any future "admin read vs admin write" feature pair — decouple the wiring checks so partial deployments don't lose read capabilities.
+---
+
+## 2026-04-19 - US-269 审计日志保留策略
+- New package `pkg/audit/retention` owns the archive-and-delete sweep:
+  - `Service.RunOnce(ctx)` computes `cutoff = now - RetentionDays` and, when an
+    archiver is wired, pages through expired events in chain-seq ASC order via
+    `store.ListBefore(cutoff, cursor, batchSize)` → `archiver.Archive(batch)`
+    → advance cursor. Archive failure aborts the sweep BEFORE
+    `store.DeleteBefore(cutoff)` so the next run retries.
+  - Delete-only mode is the zero-config default: when no archiver is set the
+    sweep skips the archive loop and issues one `DeleteBefore`.
+  - `Scheduler` runs RunOnce immediately on Start then every interval; same
+    Start(ctx)/Stop() lifecycle shape as `LDAPSyncScheduler` /
+    `RootHashPublisher`, but captures stopCh/doneCh as locals to fix a race
+    that the other two share (Stop nil-ing s.stopCh could race with the
+    goroutine's first select iteration, leaving the goroutine watching a nil
+    channel and hanging Stop on doneCh forever).
+- `pkg/audit.PGStore` gained two helpers reused by the service:
+  - `ListBefore(ctx, before, cursor, limit)` — paged fetch, `WHERE ts < $1 AND
+    chain_seq > $2 ORDER BY chain_seq ASC LIMIT $3`
+  - `DeleteBefore(ctx, before)` — returns RowsAffected, no tx needed (chain
+    tip unaffected because only historical rows are removed).
+- Config: `AUDIT_RETENTION_DAYS` env → `cfg.AuditExport.RetentionDays`
+  (0 = retain forever, default). Companion knobs:
+  - `WEAVE_AUDIT_RETENTION_INTERVAL` (default 24h)
+  - `WEAVE_AUDIT_RETENTION_BATCH_SIZE` (default 1000)
+  - `WEAVE_AUDIT_RETENTION_ARCHIVE` ∈ {none, s3} — selects the archive sink
+  - `WEAVE_AUDIT_RETENTION_S3_PREFIX` — key namespace for archive objects
+    (reuses the existing WEAVE_AUDIT_EXPORT_S3_BUCKET so lifecycle rules
+    can be shared or split as operators prefer).
+  - `Validate()` checks the s3 archive branch (requires S3Bucket when
+    RetentionDays>0 && archive=s3); delete-only validates with no extra fields.
+- Wiring: `cmd/server/audit_retention.go::startAuditRetention` builds the
+  service and scheduler conditionally on RetentionDays>0, wiring an
+  `auditexport.NewS3Exporter` adapter only when (archive=s3 && S3Bucket
+  && operator-supplied S3Uploader). Missing uploader / missing bucket /
+  unknown archive kind all fall back to delete-only with a warn — the
+  deletion half is the only mandatory guarantee for compliance.
+- Retention deletion INTENTIONALLY breaks the US-266 tamper-proof chain for
+  pre-retention history (the live chain's first surviving row has a
+  prev_hash that no longer points at an in-DB entry). Archived NDJSON is
+  the cold-path integrity record; VerifyChain over PG remains valid from
+  the retention boundary forward. Documented in the retention package doc.
+- Files changed:
+  - `pkg/audit/retention/retention.go` (new)
+  - `pkg/audit/retention/retention_test.go` (new, 12 tests)
+  - `pkg/audit/pg_store.go` (ListBefore + DeleteBefore)
+  - `pkg/audit/pg_store_test.go` (new integration test)
+  - `internal/config/config.go` (RetentionDays + siblings + Validate)
+  - `internal/config/config_test.go` (7 new tests)
+  - `cmd/server/audit_retention.go` (new)
+  - `cmd/server/audit_retention_test.go` (new, 6 tests)
+  - `cmd/server/main.go` (startAuditRetention hook next to root-hash
+    publisher; deferred Stop on shutdown)
+  - `prd.json` (US-269 passes=true)
+- **Learnings for future iterations:**
+  - The Start/Stop race in LDAPSyncScheduler + RootHashPublisher is real
+    but only hits under back-to-back Start→Stop (typical production uptime
+    never exercises it; a unit test that starts and immediately stops
+    surfaces it every time). Pattern to adopt for any new Start(ctx)/Stop()
+    scheduler: allocate stopCh/doneCh inside Start, assign them to the
+    struct fields under the lock, AND capture the local variables inside
+    the goroutine's closure so Stop's nil-out can't race with the select
+    read. Existing schedulers are fine in practice; only fix if a test
+    needs the guarantee.
+  - "Archive-before-delete" with idempotent archiver + chain_seq cursor
+    paging is the right shape for any bulk eviction pipeline: the cursor
+    advances monotonically inside one sweep and resets to 0 on the next,
+    so the archiver re-scans exactly the rows that weren't successfully
+    archived+deleted last time. Relies on the archive sink being
+    idempotent (S3 PutObject with per-batch UUID keys satisfies this).
+  - Reuse `auditexport.NewS3Exporter` as the archive adapter — the Export
+    contract (ndjson batch upload) is already the shape retention wants.
+    A 3-line `exporterArchiver{exp}` wrapper wraps it into the
+    `retention.Archiver` interface. Don't duplicate the S3 key layout /
+    buffering logic; same NDJSON format means archives and live SIEM
+    exports share one offline parse pipeline.
+  - `WEAVE_AUDIT_RETENTION_S3_PREFIX` as a distinct knob (vs. reusing
+    `S3Prefix`): operators often want retention archives under a
+    cold-tier prefix (Glacier lifecycle) and live SIEM under a hot-tier
+    prefix. Sharing one prefix would force them to lifecycle both or
+    neither. Duplicating the prefix knob costs nothing and the split
+    becomes free if the operator wants it.
+  - Retention breaks US-266 chain integrity for old rows — this is a
+    design decision, not a bug. If a future story wants "verifiable
+    retention", the right shape is a separate "chain segment boundary
+    anchor" persisted alongside the archive file so operators can verify
+    pre-retention integrity by reading the archive + the anchor, without
+    touching the live PG chain.
 ---

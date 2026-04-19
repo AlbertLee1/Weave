@@ -136,3 +136,109 @@ func TestPGStore_InsertAndList(t *testing.T) {
 		t.Errorf("expected nil DiffJSON for DELETE event, got %s", string(delEvents[0].DiffJSON))
 	}
 }
+
+// TestPGStore_ListBeforeDeleteBefore exercises the US-269 retention
+// helpers. ListBefore must page by chain_seq ASC and respect the
+// timestamp cutoff; DeleteBefore must remove exactly the rows older
+// than the cutoff and leave the live chain untouched.
+func TestPGStore_ListBeforeDeleteBefore(t *testing.T) {
+	pg := testutil.StartPGContainer(t)
+	if err := database.RunMigrationsUp(pg.DSN, testutil.MigrationsDir()); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	store := NewPGStore(pg.Pool)
+	ctx := context.Background()
+
+	base := time.Now().UTC().Add(-100 * time.Hour)
+	for i := 0; i < 6; i++ {
+		evt := AuditEvent{
+			ActorID:      "user-42",
+			Action:       "CREATE",
+			ResourceType: "ObjectType",
+			ResourceRID:  "ri.ontology.main.objectType.emp",
+			Timestamp:    base.Add(time.Duration(i) * 10 * time.Hour),
+		}
+		if err := Record(ctx, store, evt); err != nil {
+			t.Fatalf("Record[%d]: %v", i, err)
+		}
+	}
+
+	// Cutoff = base + 35h ⇒ rows at t=0,10,20,30 expire (4 rows),
+	// rows at t=40,50 survive.
+	cutoff := base.Add(35 * time.Hour)
+
+	page1, err := store.ListBefore(ctx, cutoff, 0, 3)
+	if err != nil {
+		t.Fatalf("ListBefore page1: %v", err)
+	}
+	if len(page1) != 3 {
+		t.Fatalf("page1 len=%d want 3", len(page1))
+	}
+	for i := 0; i < len(page1); i++ {
+		if page1[i].ChainSeq != int64(i+1) {
+			t.Fatalf("page1[%d].ChainSeq=%d want %d", i, page1[i].ChainSeq, i+1)
+		}
+	}
+
+	page2, err := store.ListBefore(ctx, cutoff, page1[len(page1)-1].ChainSeq, 3)
+	if err != nil {
+		t.Fatalf("ListBefore page2: %v", err)
+	}
+	if len(page2) != 1 {
+		t.Fatalf("page2 len=%d want 1", len(page2))
+	}
+	if page2[0].ChainSeq != 4 {
+		t.Fatalf("page2[0].ChainSeq=%d want 4", page2[0].ChainSeq)
+	}
+
+	empty, err := store.ListBefore(ctx, cutoff, page2[0].ChainSeq, 3)
+	if err != nil {
+		t.Fatalf("ListBefore drain: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("drain len=%d want 0", len(empty))
+	}
+
+	n, err := store.DeleteBefore(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteBefore: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("DeleteBefore n=%d want 4", n)
+	}
+
+	remaining, err := store.List(ctx, ListFilter{})
+	if err != nil {
+		t.Fatalf("List after delete: %v", err)
+	}
+	if len(remaining) != 2 {
+		t.Fatalf("remaining=%d want 2", len(remaining))
+	}
+	// Surviving rows keep their chain_seq (5, 6) so future inserts
+	// chain off the live tail.
+	for _, e := range remaining {
+		if e.ChainSeq != 5 && e.ChainSeq != 6 {
+			t.Fatalf("unexpected surviving ChainSeq=%d", e.ChainSeq)
+		}
+	}
+
+	// Deleting again with the same cutoff is a no-op.
+	n2, err := store.DeleteBefore(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteBefore idempotent: %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("second DeleteBefore n=%d want 0", n2)
+	}
+
+	// Zero-limit ListBefore returns nil (defensive: no work rather
+	// than PG "LIMIT 0" round-trip).
+	zero, err := store.ListBefore(ctx, cutoff, 0, 0)
+	if err != nil {
+		t.Fatalf("ListBefore limit=0: %v", err)
+	}
+	if zero != nil {
+		t.Fatalf("ListBefore limit=0 returned %d rows, want nil", len(zero))
+	}
+}

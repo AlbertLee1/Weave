@@ -992,6 +992,15 @@ func main() {
 			log.Printf("audit root-hash publisher enabled: file=%s interval=%s",
 				cfg.AuditExport.RootHashFile, cfg.AuditExport.RootHashInterval)
 		}
+		// US-269: archive-and-delete retention policy. startAuditRetention
+		// returns nil when RetentionDays<=0; the PG store directly
+		// implements retention.Store so no adapter is needed. Operators
+		// who want S3 archive must additionally supply an S3Uploader
+		// (pluggable SDK pattern from US-265) — without one the sweep
+		// runs in delete-only mode.
+		if sched := startAuditRetention(ctx, cfg.AuditExport, pgAudit, nil); sched != nil {
+			defer sched.Stop()
+		}
 		// US-011: the index rebuild admin command re-ingests from
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.

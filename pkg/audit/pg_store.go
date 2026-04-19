@@ -129,6 +129,44 @@ func (s *PGStore) ListChain(ctx context.Context) ([]AuditEvent, error) {
 		 ORDER BY chain_seq ASC`, nil)
 }
 
+// ListBefore returns up to limit audit events whose timestamp is
+// strictly earlier than `before` AND whose chain_seq is strictly
+// greater than `cursor`, ORDER BY chain_seq ASC. Used by the retention
+// scheduler (US-269) to page through expired rows in chain order so
+// the archive sink receives a stable, ordered stream. Pass cursor=0 to
+// start from the beginning of the chain.
+func (s *PGStore) ListBefore(ctx context.Context, before time.Time, cursor int64, limit int) ([]AuditEvent, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return s.queryEvents(ctx,
+		`SELECT id, actor_id, action, resource_type, resource_rid, diff_json,
+		        ip, user_agent, ts, chain_seq, prev_hash, entry_hash
+		 FROM audit_events
+		 WHERE ts < $1 AND chain_seq > $2
+		 ORDER BY chain_seq ASC
+		 LIMIT $3`,
+		[]any{before, cursor, limit})
+}
+
+// DeleteBefore removes every audit_events row whose timestamp is
+// strictly earlier than `before` and returns the number of rows
+// removed. Used by the retention scheduler (US-269) after expired rows
+// have been handed to the archive sink. Deleting rows intentionally
+// breaks the US-266 tamper-proof chain invariant for pre-retention
+// history — the archive is the cold-path integrity record for those
+// rows. The live chain (retention window onward) remains verifiable
+// end-to-end.
+func (s *PGStore) DeleteBefore(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM audit_events WHERE ts < $1`, before)
+	if err != nil {
+		return 0, fmt.Errorf("audit: delete before %s: %w",
+			before.UTC().Format(time.RFC3339), err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ListChainByDay returns every audit event whose timestamp falls in the
 // UTC calendar day containing `day`, ordered by chain_seq ASC. Used by
 // the root-hash publisher.
