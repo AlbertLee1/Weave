@@ -2855,6 +2855,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /health/live:
+    get:
+      operationId: getHealthLive
+      summary: Liveness probe (Kubernetes-conventional alias)
+      description: |
+        Alias for `/health`. Returned for parity with the conventional
+        Kubernetes liveness probe path so cluster manifests can pin
+        `livenessProbe.httpGet.path: /health/live` without a custom
+        rewrite. Always returns 200 with `{"status":"alive"}`.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
   /health/ready:
     get:
       operationId: getHealthReady

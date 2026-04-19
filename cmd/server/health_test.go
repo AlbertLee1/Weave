@@ -214,26 +214,28 @@ func TestHealthReady_NilDeps_Returns200(t *testing.T) {
 	}
 }
 
-// TestHealth_RoutesMounted verifies that NewFullRouter mounts BOTH /health
-// (liveness) and /health/ready (readiness) and that /health is the alive
-// payload, not the legacy "ok" payload.
+// TestHealth_RoutesMounted verifies that NewFullRouter mounts /health,
+// /health/live (alias for liveness), and /health/ready (readiness) and
+// that the liveness paths return the alive payload.
 func TestHealth_RoutesMounted(t *testing.T) {
 	deps := &ServerDeps{}
 	router := NewFullRouter(deps)
 
-	// /health
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("/health: expected 200, got %d", w.Code)
-	}
-	var live map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &live); err != nil {
-		t.Fatalf("/health body not JSON: %v body=%s", err, w.Body.String())
-	}
-	if live["status"] != "alive" {
-		t.Errorf("/health: expected status=alive, got %q", live["status"])
+	// /health and /health/live both serve the liveness payload.
+	for _, path := range []string{"/health", "/health/live"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: expected 200, got %d", path, w.Code)
+		}
+		var live map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &live); err != nil {
+			t.Fatalf("%s body not JSON: %v body=%s", path, err, w.Body.String())
+		}
+		if live["status"] != "alive" {
+			t.Errorf("%s: expected status=alive, got %q", path, live["status"])
+		}
 	}
 
 	// /health/ready

@@ -319,10 +319,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Use(NewRateLimitMiddlewareWithDefault(rateLimitRules, defaultRateLimitRule))
 
 	// Health endpoints (public, no auth required)
-	// /health is the k8s liveness probe: always returns 200 {"status":"alive"}
-	// /health/ready is the k8s readiness probe: checks PG/NATS/Bleve, 503 if
-	// any configured dependency is unhealthy.
-	r.Method(http.MethodGet, "/health", LivenessHandler())
+	// /health and /health/live are the k8s liveness probe: always return 200
+	// {"status":"alive"}. /health/ready is the k8s readiness probe: checks
+	// PG/NATS/Bleve, 503 if any configured dependency is unhealthy. The
+	// /health/live alias matches the conventional kubernetes path so a
+	// rolling-upgrade probeSpec can pin the explicit endpoint while legacy
+	// /health stays available for compatibility.
+	livenessHandler := LivenessHandler()
+	r.Method(http.MethodGet, "/health", livenessHandler)
+	r.Method(http.MethodGet, "/health/live", livenessHandler)
 	r.Method(http.MethodGet, "/health/ready", ReadinessHandler(deps))
 
 	// OpenAPI & Swagger UI (public)

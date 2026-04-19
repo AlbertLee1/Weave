@@ -9,7 +9,7 @@ package main
 //   - API key management endpoints (/api/v2/admin/api-keys)
 //
 // Routes that MUST remain:
-//   - /health, /health/ready, /metrics (ops)
+//   - /health, /health/live, /health/ready, /metrics (ops)
 //   - /swagger/, /api/openapi.yaml (docs)
 //   - /mcp (AI agent JSON-RPC, not in Foundry namespace)
 //   - /api/v2/ontologies/... (Foundry-aligned read-only + action + objectset routes)
@@ -268,6 +268,7 @@ func TestUS006_FoundryRoutesPreserved(t *testing.T) {
 		{http.MethodPost, "/api/v2/ontologies/northwind/objects/Employee/search"},
 		// Ops routes
 		{http.MethodGet, "/health"},
+		{http.MethodGet, "/health/live"},
 		{http.MethodGet, "/health/ready"},
 		{http.MethodGet, "/metrics"},
 	}

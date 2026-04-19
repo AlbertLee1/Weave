@@ -1100,8 +1100,8 @@
         "Tests pass"
       ],
       "priority": 76,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cmd/server/main.go mounts /health/live alongside legacy /health as a LivenessHandler alias; both paths return 200 {\"status\":\"alive\"} unconditionally while /health/ready keeps the PG/NATS/Bleve readiness probe with 503 on configured-but-failing deps. OpenAPI specs (api/openapi.yaml + cmd/server/openapi_spec.yaml) document both paths so contract tests accept the new operation; wire_us006_test + TestHealth_RoutesMounted cover the new alias end-to-end. internal/upgrade/forward_compat_test.go statically scans every migrations/*.up.sql and enforces four invariants — ADD COLUMN uses IF NOT EXISTS, NOT NULL ADD COLUMN carries DEFAULT, no DROP/RENAME COLUMN|TABLE in up migrations, and ALTER COLUMN TYPE only with an explicit allowlist entry (currently only 000041 semver) — plus a check that docs/upgrade.md references every allowlisted breaking migration. Two legacy migrations (000027 automation_result, 000029 automation_retry_policy) were tightened with IF NOT EXISTS so the whole tree now passes the invariant. scripts/rolling-upgrade.sh drives a 9117/9118 dual-instance drill via BIN_OLD/BIN_NEW: start old, wait /health/live, start new, wait /health/ready, SIGTERM old while continuously polling both ports (fails when neither serves), then SIGTERM new — with set -euo pipefail + trap cleanup. internal/upgrade/scripts_test.go mirrors internal/backup/scripts_test.go (exists / executable / bash -n / shebang / strict mode / dual-instance invariants). docs/upgrade.md is the operator runbook. CGO_ENABLED=0 go build ./... + go vet ./... clean; go test ./cmd/server/... ./internal/upgrade/... ./internal/backup/... ./pkg/... PASS."
     },
     {
       "id": "US-276",

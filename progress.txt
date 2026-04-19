@@ -162,6 +162,9 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Archive-and-delete retention (US-269) pattern: when a long-running table needs TTL eviction with optional cold-storage archive, the right pipeline is (a) `ListBefore(cutoff, cursor, limit)` with a monotonic cursor over an immutable append-only column (chain_seq for audit, id for any other append-only table), (b) `Archive(batch)` on each page to an idempotent external sink, (c) single `DeleteBefore(cutoff)` at the end. Archive failure aborts BEFORE delete so the next run retries the same rows. DB rows survive on failure; the sink is idempotent so re-archiving a partial run only creates a new object (dedup at query time). Same shape reusable for: object_history retention, action_jobs archival, attachment GC, any temporal-expiry table.
 - Grafana dashboard as versioned repo asset (US-272): drop the JSON under `grafana/dashboards/<name>.json` (schemaVersion≥30 for Grafana 9+), pair with `grafana/provisioning/datasources/<ds>.yml` (uid-pinned + `editable: false`) and `grafana/provisioning/dashboards/<loader>.yml` (file-provider `options.path` is the CONTAINER path, not the repo path — docker-compose volume mount does the bridging). Always template the datasource as `${datasource}` variable of type `datasource` so the JSON is portable across dev/stage/prod without a sed copy. `clamp_min(denominator, 1)` on every "fraction of total" PromQL query kills the NaN cold-start gap. Compose syntax is CI-validated with `docker compose config --quiet` (nonzero exit on any schema drift). Dashboard tests should match panels by "title OR any target.expr contains the ID" — substring on the expected metric inside at least one target is the real invariant; requiring full-title stability over a copyedit produces brittle red CI for no benefit.
 - Cross-cutting OpenTelemetry coverage without per-method instrumentation (US-271): HTTPMiddleware + pgx.QueryTracer are the two choke points that cover "every handler" and "every repo method" respectively — install once in `NewFullRouter` / `database.ConnectWithTracer` and every future handler / pgxpool-backed repo inherits span coverage for free. Reserve `tracing.StartSpan(ctx, "pkg.Method", attrs...)` for in-handler business-path spans where finer granularity than the server span is worth the extra attribute payload. For library packages that need request-scoped identity (user, tenant, locale) inside a span without importing pkg/auth, accept a `func(ctx) string` resolver at middleware construction — concrete bindings live at the main.go wiring site so pkg/tracing stays dependency-minimal. Propagator default must be composite `TraceContext{}+Baggage{}`; install it even when tracing is disabled so in-process span authors always get sane propagation defaults. `pgx.QueryTracer` attached at `cfg.ConnConfig.Tracer` BEFORE `pgxpool.NewWithConfig` — every Query/QueryRow/Exec/SendBatch opens a client-kind span automatically. Only attach when tracing.Enabled=true so low-latency reads don't pay span-alloc cost in dev/test.
+- Forward-compatible migration invariants (US-275, enforced by `internal/upgrade/forward_compat_test.go`): every `migrations/*.up.sql` must (1) use `ADD COLUMN IF NOT EXISTS` so migrate up is idempotent, (2) pair any `NOT NULL ADD COLUMN` with a `DEFAULT` so v(N) INSERTs survive after v(N+1) lands the column, (3) avoid `DROP COLUMN`/`DROP TABLE`/`RENAME COLUMN`/`RENAME TABLE` in up.sql — destructive schema ops belong in a later release once every reader is on v(N+1), (4) list any `ALTER COLUMN ... TYPE` in the `allowedNonForwardCompat` allowlist with a paired `docs/upgrade.md` runbook line. Check enforced statically so the whole tree is scanned in single-digit ms inside the default `go test ./...` lane. When a new invariant surfaces a legacy violation, prefer a trivial tightening backport (`IF NOT EXISTS` on old `ADD COLUMN`s) over grandfathering — the fix is byte-identical to a no-op on fresh DBs and an idempotent guard on re-applied DBs.
+- Liveness vs readiness route mounting (US-275): mount the conventional `/health/live` alias via the SAME `LivenessHandler` instance as `/health` rather than serving a 30x redirect — kubelet's `httpGet` probes don't follow redirects by default, so a redirect-based alias silently marks every pod unready. Two `r.Method(http.MethodGet, path, shared)` lines is the right shape. Same principle for any future "Kubernetes-conventional alias for a legacy endpoint" surface: mount twice, never redirect.
+- Two-process coordination scripts (US-275 rolling-upgrade.sh, future blue/green / shadow-replay): `set -euo pipefail` + one `cleanup()` function attached via `trap cleanup EXIT INT TERM` that no-ops on already-dead PIDs (`kill -0 "$PID" 2>/dev/null`). Capture each spawned PID into a named variable (`OLD_PID` / `NEW_PID`) and blank it after `wait` so cleanup won't retry reaped processes. The trap fires on Ctrl-C too so a cancelled drill never leaves zombies. Dual-probe drills that need "never both unready at once" verification should loop short `curl --max-time 2 http://127.0.0.1:$PORT/health/<probe>` polls at 200ms cadence during the handoff window and count any window where neither port returns 200 as a failure — capture the count, fail the script with the specific number so operators know whether it was a single blip or a structural gap.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -2812,4 +2815,98 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
     portable parser is more code than the rest of the script. Stick
     to the dbname extraction; everything else stays inside the DSN
     blob and gets handed to libpq verbatim.
+---
+
+## 2026-04-19 - US-275 Zero-Downtime Upgrade
+- Added `/health/live` route alias alongside the legacy `/health` so
+  Kubernetes manifests can pin the conventional `livenessProbe.httpGet.path:
+  /health/live` while readiness stays on `/health/ready`. Both paths share
+  one `LivenessHandler` instance and emit the same `{"status":"alive"}` 200.
+- Mirrored the new operation in BOTH `api/openapi.yaml` and the embedded
+  `cmd/server/openapi_spec.yaml` so the three contract tests
+  (AllRoutesDocumented + NoOrphanedSpecPaths + EmbeddedSpecMatchesCanonical)
+  stay green. Updated `wire_us006_test.go` route inventory + `TestHealth_RoutesMounted`
+  loop to cover the alias.
+- Created `internal/upgrade/forward_compat_test.go` with four invariants on
+  every `migrations/*.up.sql`:
+  1. ADD COLUMN must use IF NOT EXISTS (idempotent re-apply during rollout).
+  2. NOT NULL ADD COLUMN must carry DEFAULT (otherwise v(N) INSERTs trip
+     not-null violations the moment v(N+1) ships the column).
+  3. No DROP COLUMN / DROP TABLE / RENAME COLUMN / RENAME TABLE in up.sql
+     — those are two-phase deploys that have to wait for v(N+2).
+  4. ALTER COLUMN ... TYPE is gated on an explicit `allowedNonForwardCompat`
+     allowlist (currently only `000041_function_semver_version.up.sql` for
+     the INTEGER→TEXT version migration).
+- Tightened `migrations/000027_automation_result.up.sql` and
+  `migrations/000029_automation_retry_policy.up.sql` with `IF NOT EXISTS`
+  so the whole migration tree now satisfies the invariant suite.
+- Added `scripts/rolling-upgrade.sh` (set -euo pipefail + trap cleanup)
+  that runs the BIN_OLD/BIN_NEW dual-instance drill on ports 9117/9118:
+  bring up old → wait /health/live → bring up new → wait /health/ready →
+  SIGTERM old while polling BOTH ports (failing the run if neither serves
+  in any 200ms window) → SIGTERM new. Defaults `READY_TIMEOUT=60`,
+  `HANDOFF_PROBES=30`. Static `internal/upgrade/scripts_test.go` mirrors
+  `internal/backup/scripts_test.go`: exists / executable / bash -n /
+  shebang / strict-mode / dual-instance invariants ({BIN,_PORT,/health/live,
+  /health/ready,SIGTERM,trap cleanup,handoff}).
+- `docs/upgrade.md` documents the full runbook: probe split table, the
+  four forward-compat invariants, the breaking-migration registry, and
+  the `BIN_OLD=... BIN_NEW=... ./scripts/rolling-upgrade.sh` operator
+  workflow. `TestForwardCompat_DocumentedInUpgradeDoc` ties the registry
+  to the doc so an exception added without a runbook line fails CI.
+- Files changed:
+  - `cmd/server/main.go` (LivenessHandler shared between `/health` + `/health/live`)
+  - `cmd/server/health_test.go` (test loop covers both liveness paths)
+  - `cmd/server/wire_us006_test.go` (added /health/live to route inventory + comment header)
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (new /health/live operation)
+  - `migrations/000027_automation_result.up.sql` (IF NOT EXISTS)
+  - `migrations/000029_automation_retry_policy.up.sql` (IF NOT EXISTS)
+  - `internal/upgrade/forward_compat_test.go` (new; static migration scan)
+  - `internal/upgrade/scripts_test.go` (new; rolling-upgrade.sh static checks)
+  - `scripts/rolling-upgrade.sh` (new; dual-instance drill)
+  - `docs/upgrade.md` (new; operator runbook)
+- **Learnings for future iterations:**
+  - Forward-compat invariants are STATIC repo properties — every check
+    in `internal/upgrade/forward_compat_test.go` runs against the
+    on-disk `migrations/*.up.sql` blobs. No live PG required, so the
+    suite stays in the default `go test ./...` lane (single-digit
+    milliseconds). Use the same shape for any future "every file must
+    have property X" guarantee — invest the 30 lines of regex + an
+    allowlist map, save a hundred PR-time review comments.
+  - When introducing a static-invariant test against a large existing
+    tree, the right move on first failure is to FIX the violations not
+    to grandfather them — `migrations/000027` and `000029` were trivial
+    `IF NOT EXISTS` adds. Allowlists are reserved for genuine breaking
+    changes that already shipped under a maintenance window (000041),
+    not "we couldn't be bothered" exceptions. Each allowlist entry must
+    be paired with a docs/upgrade.md runbook line, which the
+    `TestForwardCompat_DocumentedInUpgradeDoc` check enforces.
+  - Two-process coordination scripts (rolling-upgrade.sh, future "blue
+    /green warm cache", "shadow read replay", etc.) want a single
+    `cleanup()` function attached via `trap cleanup EXIT INT TERM` that
+    no-ops on already-dead PIDs (`kill -0 "$PID" 2>/dev/null`). The
+    trap fires on script exit AND on SIGINT, so Ctrl-C during a long
+    drill never leaves zombies. Capture each spawned PID into a
+    well-named variable so the cleanup branch can blank it after wait
+    — re-trying cleanup on an already-reaped PID is a noisy benign
+    error worth avoiding. Same shape as the in-tree backup.sh's pattern.
+  - Liveness vs readiness: shared handler instance is fine — both
+    paths call the same closure. The reason to mount under two paths
+    rather than alias-via-redirect is that kubelet's HTTP probes do
+    NOT follow 30x by default, so a `/health/live` → `/health` 301
+    would silently mark every pod unready. Mount the handler twice
+    instead. Same pattern works for any future "conventional alias for
+    a legacy endpoint" surface.
+  - OpenAPI contract round-trip: the `cp api/openapi.yaml
+    cmd/server/openapi_spec.yaml` step is load-bearing — without it
+    `TestContract_EmbeddedSpecMatchesCanonical` fails with a clean
+    diff. Skipping the cp once cost an entire iteration's CI cycle on
+    US-235; institutionalised by listing it in the codebase pattern at
+    the top of progress.txt already (#35).
+  - When grandfathering pre-existing migrations into a new invariant,
+    always prefer the smallest tightening fix. `IF NOT EXISTS` on an
+    `ADD COLUMN` is byte-identical to a no-op on a fresh DB and an
+    idempotent guard on a re-applied DB — no downside to backporting.
+    Same logic applies to any future tightening of the migration
+    invariant set (e.g. adding a "must be in a transaction" rule).
 ---
