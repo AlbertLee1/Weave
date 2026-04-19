@@ -986,8 +986,8 @@
         "Tests pass"
       ],
       "priority": 68,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "GDPR erase: POST /api/admin/gdpr/erase + GET /api/admin/gdpr/erase/{jobId}; async job + per-step progress; audit chain preserved via gdpr_redactions overlay applied at audit List time."
     },
     {
       "id": "US-268",

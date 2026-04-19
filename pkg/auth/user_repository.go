@@ -150,6 +150,22 @@ func (r *PGUserRepository) RevokeUserRole(ctx context.Context, userID, role stri
 	return err
 }
 
+// DeleteUser removes the user identity row. ON DELETE CASCADE on every
+// user-keyed FK (user_roles, user_ontology_roles, refresh_tokens,
+// api_keys, sessions, user_markings, group_members, service_accounts)
+// drops the dependent rows in the same statement, so the GDPR erase
+// orchestrator only needs this single call to clear the identity surface.
+//
+// Returns the number of rows affected — 0 when the user is already
+// gone (idempotent, safe for retried jobs).
+func (r *PGUserRepository) DeleteUser(ctx context.Context, userID string) (int, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // SetPassword writes the bcrypt password_hash for the given user. Returns
 // ErrUserNotFound if no user matches.
 func (r *PGUserRepository) SetPassword(ctx context.Context, userID, passwordHash string) error {

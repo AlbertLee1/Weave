@@ -25,15 +25,16 @@ import (
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/developer"
-	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/gdpr"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
-	"github.com/liyang/weave/pkg/mcp"
 	"github.com/liyang/weave/pkg/masking"
+	"github.com/liyang/weave/pkg/mcp"
 	"github.com/liyang/weave/pkg/media"
 	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
@@ -210,7 +211,14 @@ type ServerDeps struct {
 	// Populated by the PG bootstrap block; nil in degraded mode so the
 	// routes are not mounted and login/refresh skip the session insert.
 	SessionStore auth.SessionStore
-	CORSOrigins  []string // Allowed CORS origins (empty = disabled)
+	// US-267: GDPR right-to-be-forgotten async erase. GDPRJobStore tracks
+	// per-job status; GDPRRedactions backs the audit RedactingStore
+	// decorator. Both populate from the PG bootstrap block; nil in
+	// degraded mode so the /api/admin/gdpr/* routes are not mounted and
+	// the audit store skips the redaction overlay.
+	GDPRJobStore   gdpr.JobStore
+	GDPRRedactions audit.RedactionStore
+	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -795,6 +803,28 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					cellHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-267: GDPR right-to-be-forgotten async erase. Mounts when
+		// the GDPRJobStore is wired (PG mode). The orchestrator's step
+		// list is composed from existing services — sessions /
+		// refresh tokens / user identity / audit redaction. Each step
+		// degrades gracefully when its dependency is nil so partially-
+		// wired deployments still produce a sensible job result.
+		if deps.GDPRJobStore != nil {
+			pgUser, _ := deps.UserRepo.(*auth.PGUserRepository)
+			steps := []gdpr.Step{
+				gdpr.NewSessionStep(deps.SessionStore),
+				gdpr.NewRefreshStep(deps.RefreshService),
+				gdpr.NewUserStep(pgUser),
+				gdpr.NewAuditRedactionStep(deps.GDPRRedactions),
+			}
+			eraser := gdpr.NewEraser(deps.GDPRJobStore, steps)
+			gdprHandler := gdpr.NewHandler(deps.GDPRJobStore, eraser, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					gdprHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -918,8 +948,24 @@ func main() {
 		// WEAVE_AUDIT_ROOTHASH_FILE) anchors the previous UTC day's chain
 		// root to an append-only file every interval — operators run
 		// `weave-audit-verify -root-file <path>` to cross-check.
+		// US-267: GDPR right-to-be-forgotten. Two PG-backed stores:
+		//   gdpr_erasure_jobs — async job state, polled by the SDK/UI
+		//   gdpr_redactions   — audit-PII overlay applied at audit List time
+		// The redaction store wraps the audit Store via a RedactingStore
+		// decorator so erased actor_ids see their PII scrubbed without
+		// breaking the US-266 hash chain.
+		deps.GDPRJobStore = newPGGDPRJobStore(pool)
+		deps.GDPRRedactions = newPGGDPRRedactionStore(pool)
+
 		pgAudit := audit.NewPGStore(pool)
-		deps.AuditStore = newAuditStoreWithExport(cfg.AuditExport, pgAudit)
+		// Tee any optional SIEM exporter THEN wrap in the GDPR redaction
+		// overlay. Order matters: the exporter sees the unredacted event
+		// (operators ship full audit to SIEM under separate retention
+		// rules), the API surface sees the redacted view.
+		deps.AuditStore = audit.NewRedactingStore(
+			newAuditStoreWithExport(cfg.AuditExport, pgAudit),
+			deps.GDPRRedactions,
+		)
 		if cfg.AuditExport.RootHashFile != "" {
 			pub := audit.NewRootHashPublisher(pgAudit, cfg.AuditExport.RootHashFile)
 			pub.SetInterval(cfg.AuditExport.RootHashInterval)
