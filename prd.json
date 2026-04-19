@@ -1057,8 +1057,8 @@
         "Typecheck passes"
       ],
       "priority": 73,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "grafana/dashboards/weave-slo.json (schemaVersion=39, 5 panels: http_p99 on weave_http_request_duration_seconds_bucket, error_rate on weave_http_requests_total status=~5xx/4xx, edit_batch_lag on weave_nats_consume_duration_seconds_bucket p95/p99, nats_consumer_lag as publish−consume delta + consume error rate, + build_info stat). Datasource templated so operators can switch Prometheus instances. Deploy annotation keys off changes(weave_build_info[1m]). Auto-provisioning wiring: grafana/prometheus.yml scrapes weave:9117/metrics every 15s; grafana/provisioning/datasources/prometheus.yml pins a default Prometheus datasource; grafana/provisioning/dashboards/weave.yml loads every JSON under /var/lib/grafana/dashboards into a 'Weave' folder with 30s refresh. docker-compose.yml grew two services: prometheus (prom/prometheus:v2.55.0, 15d retention, port 9090, depends_on weave) and grafana (grafana/grafana:10.4.5, port 3000, anonymous Viewer, admin/admin default, mounts provisioning + dashboards read-only, depends_on prometheus). New internal/dashboards package with 4 Go tests that guard the whole stack — TestWeaveSLODashboard_Exists (JSON parses + schemaVersion≥30), TestWeaveSLODashboard_RequiredPanels (all four PRD panels present with the right metric substrings), TestDockerCompose_GrafanaWired (prom+grafana+dashboard file referenced), TestGrafanaProvisioning_DatasourceAndDashboardsPresent (all three provisioning files present). CGO_ENABLED=0 go build ./... + go vet ./... + focused tests clean."
     },
     {
       "id": "US-273",
