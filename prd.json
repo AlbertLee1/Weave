@@ -1028,8 +1028,8 @@
         "Tests pass"
       ],
       "priority": 71,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/compliance.Generator composes over four narrow source interfaces (AuditSource, MarkingSource, ObjectTypeSource, PolicySource) — every source optional, nil produces an empty but non-nil section so partial deployments still emit a useful report. Report shape is stable JSON (AccessStatistics + MarkingDistribution + PolicyCoverage); handler at POST /api/admin/compliance/report emits either application/json (default) or text/html (single-file printable template with inline CSS, no JS/external deps). Format selectable via request body `format` or `?format=` query param. Window fields `from`/`to` are RFC3339 optional; zero `to` defaults to `now`, zero `from` means \"since beginning of audit history\". Handler audits generation as `compliance_report_generated` BEFORE writing body (status-line-already-on-wire prevents mid-stream error emission). Mount gated on `deps.ComplianceGenerator != nil` in cmd/server/main.go; degraded-mode test routers with zero sources leave the generator nil and the route is not registered. Source adapters live in cmd/server/compliance_sources.go (same leaf-adapter pattern as gdpr_export.go). 22 unit tests: Generator empty/error-bubble/window-default/policy-coverage-math, HTML renders all three sections + nil-report error + empty-sections fallback copy, handler JSON/HTML/empty-body/unauthenticated/unconfigured/invalid-window/invalid-format/audit-row/query-string-format. No OpenAPI entry needed — admin-scoped endpoint mounted conditionally; contract-test router doesn't wire the deps so the route never appears in chi.Walk (same convention as /api/admin/gdpr/*)."
     },
     {
       "id": "US-271",

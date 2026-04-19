@@ -27,6 +27,7 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/cipher"
+	"github.com/liyang/weave/pkg/compliance"
 	"github.com/liyang/weave/pkg/developer"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/gdpr"
@@ -223,6 +224,11 @@ type ServerDeps struct {
 	// the PG bootstrap block once the user repo + media catalog + audit
 	// store are available.
 	GDPRExporter *gdpr.Exporter
+	// US-270: Compliance control-evidence report generator. Composes
+	// over AuditStore + MarkingRepo + OmsRepo + the three security-
+	// surface stores; nil means no source is wired and the
+	// /api/admin/compliance/report route is not mounted.
+	ComplianceGenerator *compliance.Generator
 	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -843,6 +849,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					gdprHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-270: Compliance control-evidence report. Mounts when the
+		// compliance generator has at least one wired source — a fully
+		// degraded deployment with zero sources leaves the generator nil
+		// and the route is not registered so test routers don't see a
+		// mystery handler.
+		if deps.ComplianceGenerator != nil {
+			complianceHandler := compliance.NewHandler(deps.ComplianceGenerator, deps.AuditStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					complianceHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -1068,6 +1087,24 @@ func main() {
 		// been wrapped with the redaction decorator so the export inherits
 		// the same PII-scrub semantics as the admin audit API.
 		deps.GDPRExporter = buildGDPRExporter(deps.UserRepo, deps.AuditStore, deps.MediaCatalog, deps.MediaStore)
+
+		// US-270: Compliance report generator. Pulls access statistics
+		// from the redacted AuditStore, marking distribution from the
+		// shared *PGMarkingRepository (which satisfies both the request-
+		// hot-path surface AND the admin grant surface), policy coverage
+		// from the three security-surface stores wired above. Leaves the
+		// generator non-nil whenever any source is available so the
+		// /api/admin/compliance/report route mounts in partial
+		// deployments too.
+		deps.ComplianceGenerator = buildComplianceGenerator(
+			deps.AuditStore,
+			deps.MarkingRepo,
+			deps.MarkingAdminRepo,
+			deps.OmsRepo,
+			deps.RowPolicyStore,
+			deps.ColumnMaskStore,
+			deps.CellMaskStore,
+		)
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

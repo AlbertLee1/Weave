@@ -2535,3 +2535,36 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
     pre-retention integrity by reading the archive + the anchor, without
     touching the live PG chain.
 ---
+
+## 2026-04-19 - US-270 合规报告生成
+- New `pkg/compliance` package:
+  - `report.go` — `Report`, `Generator`, `AuditSource`/`MarkingSource`/`ObjectTypeSource`/`PolicySource` interfaces. Every source optional; Generate emits non-nil empty sections for absent sources so downstream consumers don't need presence checks on every field.
+  - `html.go` — single-file printable HTML template with inline CSS, no JS or external assets. `RenderHTML(w, report)` + `RenderHTMLBytes(report)`. `percent` funcmap for the coverage ratio.
+  - `handlers.go` — `POST /api/admin/compliance/report`. Accepts empty body (default window + default format); `format` is read from body first then `?format=` query param. Supports `json` / `html`. `from`/`to` RFC3339 optional, `to` before `from` → 400 `InvalidWindow`. Audits `compliance_report_generated` BEFORE writing body (same status-line-on-wire invariant as GDPR export).
+- AccessStatistics: ByAction sorted by count DESC then name ASC; TopActors capped at MaxTopActors (default 10). Numbers add up — sum(ByAction counts) == Total, UniqueActors == |distinct actors in window|.
+- MarkingDistribution: every marking defined on the deployment appears, sorted by Name. Grant count from the `MarkingGrantAdminRepository`; when only the request-hot-path MarkingRepository is wired CountGrants returns 0.
+- PolicyCoverage: per-surface (RowPolicies / ColumnMasks / CellMasks) total + distinct covered ObjectTypes. `CoveredObjectTypes` is the UNION across all three surfaces. `CoverageRatio = CoveredObjectTypes / ObjectTypesTotal`, clamped to 0 when denominator is 0 so callers don't need NaN guards.
+- `cmd/server/compliance_sources.go` — narrow adapters translating audit.Store + auth.MarkingRepository + auth.MarkingGrantAdminRepository + oms.Repository + rls.Store + masking.Store + cellsec.Store into the compliance source interfaces. Same "leaf-adapter in cmd/server" shape used by gdpr_export.go. `buildComplianceGenerator` returns nil when ZERO sources could be wired so the route is skipped in fully degraded deployments.
+- `cmd/server/main.go` wires `deps.ComplianceGenerator` in the PG bootstrap block right after the GDPR exporter, and mounts `complianceHandler.RegisterRoutes` inside the auth.RequirePermission(auth.PermUserManage) group alongside the other admin handlers.
+- Tests (22 across four files):
+  - `report_test.go`: empty-generator produces empty-non-nil sections; access histogram sorted DESC-by-count; TopActors cap respected (UniqueActors reflects the full set); markings sorted by Name; policy coverage union + ratio; zero-denominator safe; seven parallel "source returns error" cases bubble via errors.Is; window defaults; dedupe helper.
+  - `html_test.go`: rendered HTML contains all three section headings + coverage percent + actor/action entries + `<!DOCTYPE html>` preamble; nil-report returns error; empty sections render fallback copy ("No events recorded" / "No markings defined").
+  - `handlers_test.go`: 200 JSON + 200 HTML + empty-body-OK + 401 without user + 500 when generator nil + 400 for invalid window / invalid format + audit row written with correct actor/action + `?format=html` query string.
+- Files changed:
+  - `pkg/compliance/report.go` (new)
+  - `pkg/compliance/report_test.go` (new)
+  - `pkg/compliance/html.go` (new)
+  - `pkg/compliance/html_test.go` (new)
+  - `pkg/compliance/handlers.go` (new)
+  - `pkg/compliance/handlers_test.go` (new)
+  - `cmd/server/compliance_sources.go` (new)
+  - `cmd/server/main.go` (ServerDeps.ComplianceGenerator + wire in PG bootstrap + mount route)
+  - `prd.json` (US-270 passes=true)
+- **Learnings for future iterations:**
+  - PRD `PDF/HTML` was treated as "either acceptable" — shipping JSON + HTML satisfies the acceptance criterion without adding a pure-Go PDF dep (signintech/gopdf etc. would work but adds 100s of KB to go.sum for a feature that's rarely printed). If a future story needs PDF explicitly, wrap the HTML output in a headless-chrome pdf hook or bring in a pure-go PDF lib — not a retrofit of the renderer.
+  - Admin endpoints that mount conditionally on a deps.X field don't need OpenAPI entries AS LONG AS the contract test router doesn't wire deps.X. Verified on the gdpr handler (wired same way) — the route never appears in chi.Walk so `TestContract_AllRoutesDocumented` stays green without spec edits. Contract trio (routes / orphaned / embedded-matches) only fires on routes that chi.Walk observes.
+  - "Sorted sections" is not a nice-to-have — unsorted maps iterating in random order produces wire jitter that breaks golden-file / snapshot assertions. Every slice the Generator emits is sorted at the emit site (ByAction by count then action, TopActors same, MarkingSummary by Name) so tests can pin the first row deterministically.
+  - The "empty section emits non-nil slice" convention pays for itself immediately in HTML rendering: the template's `{{if .Access.ByAction}}` cleanly distinguishes "no data" from "field absent" without needing `len` guards everywhere. JSON consumers also avoid the "field missing vs empty array" ambiguity — the API always emits `[]`.
+  - `CoverageRatio` with a zero denominator must clamp to 0 explicitly — `float64(0)/float64(0)` is NaN, which JSON-marshals to `null` (not 0) and then every frontend needs a `?? 0` guard. Pin the invariant in a test (`TestGenerate_PolicyCoverageRatioSafeWithZeroDenominator`) so a future refactor can't silently re-introduce NaN emission.
+  - Handler reading empty POST bodies: `r.ContentLength != 0 && r.Body != nil` is the clean guard — `json.NewDecoder.Decode` on an empty body returns io.EOF which would otherwise become a 400 InvalidRequestBody. Treating "no body" as "use defaults" matches the `curl -X POST` ergonomics users expect for admin endpoints that take mostly-optional parameters.
+---
