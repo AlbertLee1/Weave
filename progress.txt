@@ -2726,3 +2726,90 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
     footgun because Go's zero-value `""` for a missing duration would
     otherwise silently make the test pass for a rule with no debounce.
 ---
+
+## 2026-04-19 - US-274
+- 实现 scripts/backup.sh + scripts/restore.sh + scripts/test-restore.sh，
+  补齐 PRD 验收所要求的"全量逻辑备份 + 媒体快照 + WAL archive + PITR"链路。
+- backup.sh 输出布局：BACKUP_DIR/<UTC>/db.dump (pg_dump custom-format) +
+  media.tar.gz (data/media tar) + wal/ (rsync from $WAL_ARCHIVE_DIR) +
+  manifest.json (sha256 + sizes + WAL segment count)。RETAIN_DAYS 默认 14
+  天，超过则 find -mtime + rm -rf 清理。
+- restore.sh <timestamp|latest> 用字符串比较挑选 ≤ 指定 UTC 时间的最新备份
+  目录，校验 db.dump sha256，pg_restore --clean --if-exists 进目标 DSN，
+  把 media tar 解到 $WEAVE_DATA_DIR (旧 media 移到带时间戳的 .pre-restore
+  目录，避免误覆盖)。当 PITR_TARGET_TIME 设置时 stage WAL 到
+  WAL_RESTORE_DIR 并打印 recovery.signal/restore_command 操作指引；脚本
+  本身不重启 Postgres，把"是否真的要重启"留给 operator。
+- test-restore.sh 端到端验证：在源 DSN 同主机上建 weave_restore_test_$$ DB，
+  跑 backup.sh + restore.sh，比对 schema_migrations / ontologies /
+  object_types / properties / link_types 行数；trap EXIT 清理临时库与
+  备份目录。
+- 文件改动：
+  - 新增 scripts/backup.sh, scripts/restore.sh, scripts/test-restore.sh
+    (chmod +x，#!/usr/bin/env bash + set -euo pipefail)
+  - 新增 internal/backup/scripts_test.go — 8 项纯静态测试 (Exist /
+    Executable / BashParse / HaveShebang + 4 项内容不变量)，无需 Postgres
+    即可在 go test ./... 中跑过
+  - prd.json US-274 passes=true
+- **Learnings for future iterations:**
+  - Operator-shipped shell scripts are testable from Go via 4 layers:
+    `os.Stat` + perm-bit check (executable), `exec.LookPath("bash") +
+    bash -n` (parse), first-line shebang assertion, and string-contains
+    invariant checks for the load-bearing commands (pg_dump / pg_restore /
+    DROP DATABASE / etc). All pure-static — no Postgres required. Mirror
+    the `internal/dashboards` repoRoot helper instead of inventing a new
+    one. Use `runtime.GOOS == "windows"` skip for the unix-mode-bit test;
+    `t.Skipf` (not `t.Fatalf`) when `bash` isn't on PATH so Windows CI
+    stays green.
+  - Operator-script invariant tests should match on the **load-bearing
+    commands** (pg_dump, pg_restore, set -euo pipefail), NOT on incidental
+    formatting (variable names, comments, log strings). A future
+    refactoring that renames a temp variable shouldn't fail the test;
+    a refactoring that drops `pg_dump` or `set -euo pipefail` should.
+    Keep the assertions small and semantically meaningful.
+  - PITR scripts should NEVER auto-restart Postgres or rewrite
+    postgresql.conf. Stage the WAL segments + print the operator
+    instructions, then exit 0. Operator must manually create
+    recovery.signal / set restore_command / restart — that's a deliberate
+    "I want PITR" gate that prevents an `scripts/restore.sh latest` typo
+    from rolling the live cluster back. Same principle: any production
+    DROP / TRUNCATE / config-rewrite operation belongs in operator hands,
+    not in a script that might be invoked from cron.
+  - "Backup directory string-compare to filter by timestamp" works
+    because the YYYYMMDDTHHMMSSZ stamp is lexicographically ordered. Use
+    `[ "$d" \< "$target" ]` rather than `date +%s` arithmetic — the
+    latter introduces shell/date-utility portability concerns
+    (BSD vs GNU date) that the string compare avoids entirely.
+  - `find -mtime +N -exec rm -rf {} +` is the portable retention idiom
+    for daily-rotated backup directories. The `+` form batches into a
+    single rm invocation per N args (vs `\;` which fork/execs per file)
+    and `mindepth 1 -maxdepth 1` avoids descending into the matched
+    backup subtrees (the rm -rf does that).
+  - tar's `-C <dir>` flag changes directory BEFORE archiving so the
+    tarball entries are stored relative to the data root, not the
+    absolute host path. `tar -C $WEAVE_DATA_DIR -czf media.tar.gz media`
+    creates entries `media/...` which un-tar cleanly into any future
+    data root via `tar -C $NEW_ROOT -xzf media.tar.gz`. Mismatched
+    `-C` between backup + restore would create surprising path nesting.
+  - Manifest sha256 in backups is checked at restore time, not at
+    backup time. Backup-side checksum would catch only "the bytes I
+    just wrote don't match the bytes I just read" (which is essentially
+    impossible on a healthy filesystem). Restore-side checksum catches
+    the actual failure mode: backup file was corrupted at rest /
+    truncated by an out-of-disk scenario / replicated to a disk that
+    silently flipped a bit. `shasum -a 256` is on macOS and Linux;
+    GNU coreutils ships `sha256sum` instead — use `shasum -a 256` for
+    portability.
+  - `psql -tAc 'SELECT count(*)'` (-t = tuples-only, -A = unaligned)
+    returns the bare integer with no padding so it's directly
+    comparable in a shell `[ "$a" = "$b" ]` test. Without -tA you get
+    " 12\n" with leading space + trailing newline and the comparison
+    silently fails.
+  - PG_DSN parsing in pure shell: extract the dbname segment with
+    `sed -E 's#.*/([^?]+).*#\1#'` (handles both `dsn/db` and
+    `dsn/db?sslmode=disable` shapes). Don't try to parse the full URL
+    — the auth segment has `:` and `@` in arbitrary places and a
+    portable parser is more code than the rest of the script. Stick
+    to the dbname extraction; everything else stays inside the DSN
+    blob and gets handed to libpq verbatim.
+---

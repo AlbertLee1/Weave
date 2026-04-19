@@ -1085,8 +1085,8 @@
         "Tests pass"
       ],
       "priority": 75,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "scripts/backup.sh emits BACKUP_DIR/<UTC timestamp>/{db.dump,media.tar.gz,wal/,manifest.json} — pg_dump custom-format + tar of $WEAVE_DATA_DIR/media + rsync of $WAL_ARCHIVE_DIR; manifest carries sha256 + sizes + WAL segment count; RETAIN_DAYS prune (default 14d) drops old backup directories. scripts/restore.sh <timestamp|latest> picks the newest backup dir ≤ target (string-compare on UTC stamp), validates db.dump sha256 against manifest, pg_restore --clean --if-exists into $PG_DSN, untars media into a sibling 'media.pre-restore.<stamp>' (no destructive overwrite); when PITR_TARGET_TIME is set it stages WAL into $WAL_RESTORE_DIR and prints the operator instructions for restore_command/recovery_target_time/recovery.signal (script does NOT auto-restart Postgres). scripts/test-restore.sh creates an isolated weave_restore_test_$$ DB on the same Postgres host, runs backup.sh + restore.sh against it, compares row counts on schema_migrations / ontologies / object_types / properties / link_types, drops the test DB on exit. 8 Go tests in internal/backup/scripts_test.go — Exist (3 files), Executable (0o111 bit on unix; skipped on windows), BashParse (exec.LookPath bash + bash -n; skip when bash absent), HaveShebang (#!/usr/bin/env bash on line 1), BackupContainsPgDump (pg_dump + media + WAL_ARCHIVE_DIR + manifest.json invariants), RestoreContainsPgRestore (pg_restore + PITR_TARGET_TIME + media.tar.gz + 'TARGET=\"${1:-latest}\"'), TestRestoreCallsBoth (scripts/{backup,restore}.sh + CREATE DATABASE + DROP DATABASE strings), SetEuoPipefail (strict-mode invariant on all three). CGO_ENABLED=0 go build ./... + go vet ./... clean; go test ./internal/backup/... PASS."
     },
     {
       "id": "US-275",
