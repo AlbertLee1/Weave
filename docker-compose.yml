@@ -74,6 +74,10 @@ services:
       - "9090:9090"
     volumes:
       - ./grafana/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Alerting rule files (see alerts/weave.yml). prometheus.yml's
+      # rule_files glob points at /etc/prometheus/rules/*.yml so adding
+      # a new file under ./alerts is picked up on restart.
+      - ./alerts:/etc/prometheus/rules:ro
       - promdata:/prometheus
     depends_on:
       weave:

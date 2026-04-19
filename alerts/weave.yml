@@ -1,0 +1,130 @@
+# Weave Prometheus alerting rules (US-273).
+#
+# This file is a standard Prometheus PrometheusRule document — the same shape
+# accepted by the Prometheus Operator CRD and by the vanilla
+# `rule_files:` loader in prometheus.yml. Two rule groups:
+#
+#   * weave.slo         — service-level objectives emitted by the Weave
+#                         server itself (weave_* metrics from /metrics).
+#   * weave.infra       — infrastructure invariants that require companion
+#                         exporters (postgres_exporter, node_exporter).
+#                         These alerts stay inert until operators deploy
+#                         the relevant exporter alongside Weave; that's a
+#                         deliberate "no false negatives, no extra deps"
+#                         tradeoff — if you only run Weave, the SLO group
+#                         alone is a useful safety net.
+#
+# See grafana/dashboards/weave-slo.json for the visualisations backing
+# these alerts; every alert expression shares a metric family with the
+# dashboard so an operator can click from a firing alert directly into the
+# matching dashboard panel.
+groups:
+  - name: weave.slo
+    interval: 30s
+    rules:
+      # 5xx response ratio over a 5-minute window. Clamps the denominator
+      # to 1 so a cold-start server with zero traffic doesn't emit NaN.
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(weave_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(weave_http_requests_total[5m])), 1) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: weave
+        annotations:
+          summary: "Weave 5xx error rate above 1% for 5m"
+          description: |
+            More than 1% of HTTP responses over the last 5 minutes returned a
+            5xx status. Check recent deploys (weave_build_info changes) and the
+            http_p99 / error_rate panels on the Weave SLO dashboard.
+          runbook_url: "https://github.com/liyang/weave/blob/main/docs/runbooks/high-error-rate.md"
+
+      # p99 latency exceeding 500ms for 10 minutes is the SLO target called
+      # out in the SLO dashboard description. Histogram is aggregated by
+      # `le` only — per-path drilldown is a dashboard concern.
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(weave_http_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: weave
+        annotations:
+          summary: "Weave HTTP p99 latency above 500ms for 10m"
+          description: |
+            p99 HTTP latency has been above 500ms for 10 minutes. Inspect the
+            http_p99 panel on the Weave SLO dashboard and correlate with
+            db.query spans via OpenTelemetry — common causes are slow
+            Postgres queries, Bleve index rebuilds, and NATS backpressure.
+          runbook_url: "https://github.com/liyang/weave/blob/main/docs/runbooks/high-latency.md"
+
+      # Per-subject publish-rate minus consume-rate. A sustained positive
+      # delta means the JetStream consumer is falling behind the publisher
+      # and Bleve will drift from Postgres. Threshold of 5 msg/s is quiet
+      # enough to avoid flapping during routine burst loads.
+      - alert: NatsLag
+        expr: |
+          sum by (subject) (rate(weave_nats_publish_total{status="ok"}[5m]))
+            - sum by (subject) (rate(weave_nats_consume_total{status="ok"}[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: weave
+        annotations:
+          summary: "NATS consumer lagging publisher by >5 msg/s for 10m on {{ $labels.subject }}"
+          description: |
+            The funnel consumer is processing EditBatch messages slower than
+            they are being published. Bleve indexes are drifting from PG.
+            Check nats_consumer_lag and edit_batch_lag panels on the SLO
+            dashboard; consider restarting the consumer or increasing its
+            MaxAckPending.
+          runbook_url: "https://github.com/liyang/weave/blob/main/docs/runbooks/nats-lag.md"
+
+  - name: weave.infra
+    interval: 30s
+    rules:
+      # Postgres connection-pool exhaustion — requires postgres_exporter
+      # deployed alongside Weave. Threshold of 80% gives operators headroom
+      # to investigate before max_connections is actually hit.
+      - alert: DBConnExhaust
+        expr: |
+          sum(pg_stat_activity_count{datname="weave"})
+            / on() sum(pg_settings_max_connections) > 0.80
+        for: 5m
+        labels:
+          severity: critical
+          service: weave
+        annotations:
+          summary: "Postgres connection pool >80% utilised for 5m"
+          description: |
+            Active connections to the weave database exceed 80% of the
+            configured max_connections ceiling. Long-held sessions and
+            pooler misconfiguration are the usual causes. Requires
+            postgres_exporter to be running.
+          runbook_url: "https://github.com/liyang/weave/blob/main/docs/runbooks/db-conn-exhaust.md"
+
+      # Host disk exhaustion — requires node_exporter. Pins to the root
+      # filesystem; operators with dedicated /var/lib/postgresql or Bleve
+      # volumes should add per-mountpoint siblings in their own PRD.
+      - alert: DiskFull
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
+              / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
+          ) < 0.10
+        for: 10m
+        labels:
+          severity: critical
+          service: weave
+        annotations:
+          summary: "Root filesystem <10% free for 10m on {{ $labels.instance }}"
+          description: |
+            Free space on the root filesystem has been below 10% for 10
+            minutes. Bleve indexes, Postgres WAL archives, and media blobs
+            all grow unbounded without operator intervention. Requires
+            node_exporter to be running.
+          runbook_url: "https://github.com/liyang/weave/blob/main/docs/runbooks/disk-full.md"

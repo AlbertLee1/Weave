@@ -1070,8 +1070,8 @@
         "Typecheck passes"
       ],
       "priority": 74,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "alerts/weave.yml carries two rule groups — weave.slo (HighErrorRate 5xx ratio >1% for 5m on weave_http_requests_total, HighLatency p99 >500ms for 10m on weave_http_request_duration_seconds_bucket, NatsLag publish-consume delta >5 msg/s for 10m on weave_nats_publish_total/weave_nats_consume_total) and weave.infra (DBConnExhaust pg_stat_activity_count/pg_settings_max_connections >80% for 5m via postgres_exporter, DiskFull node_filesystem_avail_bytes/node_filesystem_size_bytes <10% for 10m via node_exporter). Every alert carries severity/service labels + summary/description/runbook_url annotations and references weave_* metrics already emitted by pkg/metrics. grafana/prometheus.yml grew a rule_files glob (/etc/prometheus/rules/*.yml) and docker-compose.yml mounts ./alerts:/etc/prometheus/rules:ro into the prometheus service so `docker compose up` picks up new rule files without extra wiring. 6 new Go tests in internal/dashboards/alerts_test.go — FileExistsAndParses (yaml.v3 round-trip through prometheusRuleFile envelope), RequiredAlertsPresent (all five PRD alert names + non-empty expr/for/severity/summary/description), TotalCountAtLeastFive (counts alerts across groups, guards the ≥5 criterion without hard-coding the list), ExpressionsReferenceWeaveMetrics (SLO alerts must reference the right weave_* metric family; infra alerts are exempt), WiredIntoPrometheus (accepts explicit weave.yml reference OR a glob that filepath.Match would match against weave.yml/weave.yaml), MountedInDockerCompose (./alerts mount present). CGO_ENABLED=0 go build ./... + go vet ./... clean; docker compose config --quiet exits 0."
     },
     {
       "id": "US-274",

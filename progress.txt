@@ -2641,3 +2641,88 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Docker-compose syntax test: `docker compose config --quiet` is the cheapest CI-friendly validator — exits 0 on valid yaml + valid compose schema, nonzero with a precise error pointing at the offending key. Much better than ad-hoc yaml.Unmarshal which misses compose-specific semantics (`condition: service_started`, etc.).
   - For a dashboard JSON test, matching panel identity via "title OR any target.expr contains the ID" is the flex-tolerant shape — titles evolve through copyediting; PromQL expressions evolve through tuning; requiring BOTH to stay the same makes the test brittle for no benefit. Substring matching on the expected metric name inside at least one target is the real invariant worth enforcing.
 ---
+
+## 2026-04-19 - US-273 Grafana 告警规则
+- `alerts/weave.yml` (new) — PrometheusRule-format alerting file carrying
+  TWO groups (so infra alerts stay cleanly partitioned from SLO alerts)
+  with a total of 5 alerts:
+  - `weave.slo` group (all reference weave_* metrics pkg/metrics already
+    emits):
+    - `HighErrorRate` — 5xx ratio on weave_http_requests_total >1% for 5m,
+      severity=critical. `clamp_min(..., 1)` on denominator.
+    - `HighLatency` — histogram_quantile(0.99,
+      weave_http_request_duration_seconds_bucket) >500ms for 10m,
+      severity=warning.
+    - `NatsLag` — rate(weave_nats_publish_total) -
+      rate(weave_nats_consume_total) >5 msg/s per subject for 10m,
+      severity=warning.
+  - `weave.infra` group (requires companion exporters; inert until
+    operators deploy them):
+    - `DBConnExhaust` — pg_stat_activity_count / pg_settings_max_connections
+      >80% for 5m via postgres_exporter, severity=critical.
+    - `DiskFull` — node_filesystem_avail / size <10% for 10m on mountpoint=/
+      via node_exporter, severity=critical.
+  - Every alert carries `severity` + `service=weave` labels and
+    `summary` / `description` / `runbook_url` annotations.
+- `grafana/prometheus.yml` — added `rule_files:
+  /etc/prometheus/rules/*.yml` glob so any new file dropped under ./alerts
+  is loaded on next restart.
+- `docker-compose.yml` — prometheus service now mounts
+  `./alerts:/etc/prometheus/rules:ro` read-only alongside the existing
+  prometheus.yml mount.
+- `internal/dashboards/alerts_test.go` (new) — 6 tests:
+  `FileExistsAndParses` (yaml.v3 round-trip through prometheusRuleFile
+  envelope), `RequiredAlertsPresent` (all five PRD alert names present
+  with non-empty expr/for/severity/summary/description), `TotalCountAtLeastFive`
+  (counts alerts across groups, guards the ≥5 criterion without hard-coding
+  the list), `ExpressionsReferenceWeaveMetrics` (SLO alerts must reference
+  the matching weave_* metric family; infra alerts exempt because they
+  reference companion-exporter metrics), `WiredIntoPrometheus` (accepts
+  explicit weave.yml reference OR a filepath.Match glob in rule_files),
+  `MountedInDockerCompose` (./alerts mount present).
+- Verified: CGO_ENABLED=0 go build ./... clean, go vet ./... clean,
+  go test ./internal/dashboards/... all 10 tests pass, docker compose config
+  --quiet exits 0.
+- Files changed:
+  - `alerts/weave.yml` (new)
+  - `grafana/prometheus.yml` (rule_files glob added)
+  - `docker-compose.yml` (./alerts mount on prometheus service)
+  - `internal/dashboards/alerts_test.go` (new — 6 tests)
+  - `prd.json` (US-273 passes=true with implementation notes)
+- **Learnings for future iterations:**
+  - Two-group rule file layout (`weave.slo` + `weave.infra`) is the
+    principled split when a deliverable mixes "alerts that fire on metrics
+    the service itself emits" with "alerts that fire on companion-exporter
+    metrics." The infra group stays inert without postgres_exporter /
+    node_exporter and operators who don't run the companion exporters
+    don't get unloadable-rule warnings at Prometheus startup — the rule
+    file loads fine, the expressions just evaluate to empty vectors
+    forever until the companion exporter lands. Much better than
+    hard-gating the rule file behind a "do you have exporter X?" flag.
+  - Glob-based `rule_files: /etc/prometheus/rules/*.yml` is the cheapest
+    ongoing-maintenance pattern for alerting-rule files: dropping a new
+    YAML under ./alerts is picked up on the next restart without
+    prometheus.yml churn. The test-side matcher has to mirror that —
+    accept either an explicit path OR a `filepath.Match`-compatible glob
+    that would match the canonical filename. Hard-coding the explicit
+    path in the test forces every new feature to edit prometheus.yml,
+    which defeats the glob.
+  - `rate()` subtraction for "publisher outpacing consumer" is the right
+    shape when both sides emit counter-valued `_total` metrics with a
+    shared label (here `subject`). Requires `by (subject)` on BOTH legs
+    of the subtraction so the sum-over-label happens before the delta;
+    a raw `rate(publish_total) - rate(consume_total)` without the
+    dimension-matching label emits a many-to-many error.
+  - Test shape for "at least N alerts" acceptance criteria: `TotalCountAtLeastFive`
+    does not enumerate alert names — it just counts. Future stories adding
+    a 6th alert don't need to update the count assertion, and the PRD
+    criterion stays the test's source of truth. Pair it with a companion
+    test that checks the specific named alerts so a typo-rename can't
+    silently pass by sharing the total count.
+  - YAML-roundtrip envelope structs: define the envelope INSIDE the test
+    (not in production code) because the shape is only meaningful as a
+    schema assertion. Use `yaml:"..."` tags on every public field so the
+    parser doesn't silently drop rule fields — `for` is the common
+    footgun because Go's zero-value `""` for a missing duration would
+    otherwise silently make the test pass for a rule with no debounce.
+---
