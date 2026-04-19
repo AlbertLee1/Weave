@@ -218,6 +218,11 @@ type ServerDeps struct {
 	// the audit store skips the redaction overlay.
 	GDPRJobStore   gdpr.JobStore
 	GDPRRedactions audit.RedactionStore
+	// US-268: GDPR data-portability export. Optional — when nil the
+	// /api/admin/gdpr/export route emits GDPRExportUnavailable. Wired in
+	// the PG bootstrap block once the user repo + media catalog + audit
+	// store are available.
+	GDPRExporter *gdpr.Exporter
 	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -820,6 +825,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			eraser := gdpr.NewEraser(deps.GDPRJobStore, steps)
 			gdprHandler := gdpr.NewHandler(deps.GDPRJobStore, eraser, deps.AuditStore)
+			if deps.GDPRExporter != nil {
+				gdprHandler.SetExporter(deps.GDPRExporter)
+			}
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					gdprHandler.RegisterRoutes(admin)
+				})
+		} else if deps.GDPRExporter != nil {
+			// Export-only mode: no erase infrastructure but an exporter is
+			// wired. Mount just the export endpoint so data portability
+			// works in read-only-audit deployments.
+			gdprHandler := gdpr.NewHandler(nil, nil, deps.AuditStore)
+			gdprHandler.SetExporter(deps.GDPRExporter)
 			api.With(auth.RequirePermission(auth.PermUserManage)).
 				Group(func(admin chi.Router) {
 					gdprHandler.RegisterRoutes(admin)
@@ -1033,6 +1051,14 @@ func main() {
 		// own writes immediately (a brand-new login must appear on the next
 		// list call).
 		deps.SessionStore = auth.NewPGSessionStore(pool)
+
+		// US-268: GDPR data-portability exporter. Composes over UserRepo +
+		// AuditStore + MediaCatalog + MediaStore; each source degrades
+		// gracefully so partial deployments still emit a useful bundle.
+		// MediaCatalog is wired above (line ~940); AuditStore has already
+		// been wrapped with the redaction decorator so the export inherits
+		// the same PII-scrub semantics as the admin audit API.
+		deps.GDPRExporter = buildGDPRExporter(deps.UserRepo, deps.AuditStore, deps.MediaCatalog, deps.MediaStore)
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

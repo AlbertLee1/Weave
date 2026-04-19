@@ -189,6 +189,87 @@ func TestErase_StepFailureSurfacesAsFailedJob(t *testing.T) {
 	}
 }
 
+func TestExport_RejectsAnonymousCaller(t *testing.T) {
+	h := newTestHandler(t, NewMemoryJobStore(), simpleEraser(NewMemoryJobStore()))
+	h.SetExporter(NewExporter())
+	rec := doJSON(h, http.MethodPost, "/api/admin/gdpr/export",
+		`{"userId":"user:bob"}`, "" /* anonymous */)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExport_RejectsEmptyUserID(t *testing.T) {
+	h := newTestHandler(t, NewMemoryJobStore(), simpleEraser(NewMemoryJobStore()))
+	h.SetExporter(NewExporter())
+	rec := doJSON(h, http.MethodPost, "/api/admin/gdpr/export",
+		`{}`, "user:admin")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "MissingUserID") {
+		t.Errorf("expected MissingUserID, got %s", rec.Body.String())
+	}
+}
+
+func TestExport_ReturnsZipWithCorrectHeaders(t *testing.T) {
+	exporter := NewExporter()
+	exporter.Profile = profileSourceFunc(func(_ context.Context, uid string) (*ExportProfile, error) {
+		return &ExportProfile{ID: uid, Email: "bob@example.com"}, nil
+	})
+	h := newTestHandler(t, NewMemoryJobStore(), simpleEraser(NewMemoryJobStore()))
+	h.SetExporter(exporter)
+	auditStore := audit.NewMemoryStore()
+	h.auditStore = auditStore
+
+	rec := doJSON(h, http.MethodPost, "/api/admin/gdpr/export",
+		`{"userId":"user:bob"}`, "user:admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("content-type = %q, want application/zip", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "gdpr-export-") || !strings.Contains(cd, ".zip") {
+		t.Errorf("content-disposition = %q", cd)
+	}
+
+	files := unzipFiles(t, rec.Body.Bytes())
+	raw, ok := files["data.json"]
+	if !ok {
+		t.Fatalf("zip missing data.json, keys=%v", keysOf(files))
+	}
+	var got ExportBundle
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal data.json: %v", err)
+	}
+	if got.Profile == nil || got.Profile.Email != "bob@example.com" {
+		t.Errorf("profile missing from export: %#v", got.Profile)
+	}
+
+	// Audit row for the request should be present.
+	events, _ := auditStore.List(context.Background(), audit.ListFilter{})
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want 1", len(events))
+	}
+	if events[0].Action != "gdpr_export_request" || events[0].ResourceRID != "user:bob" {
+		t.Errorf("audit event wrong: %#v", events[0])
+	}
+}
+
+func TestExport_DegradedModeWhenUnconfigured(t *testing.T) {
+	h := newTestHandler(t, NewMemoryJobStore(), simpleEraser(NewMemoryJobStore()))
+	// h.exporter intentionally left nil.
+	rec := doJSON(h, http.MethodPost, "/api/admin/gdpr/export",
+		`{"userId":"user:bob"}`, "user:admin")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "GDPRExportUnavailable") {
+		t.Errorf("expected GDPRExportUnavailable, got %s", rec.Body.String())
+	}
+}
+
 // --- helpers ---
 
 func newTestHandler(t *testing.T, store JobStore, e *Eraser) *Handler {

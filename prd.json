@@ -1000,8 +1000,8 @@
         "Tests pass"
       ],
       "priority": 69,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/gdpr/export.go — Exporter composes over 6 narrow source interfaces (ProfileSource, RoleSource, OntologyRoleSource, AuditEventSource, MediaAssetSource, MediaBlobSource). WriteZip streams data.json first then media/<rid>/<filename> blobs; malicious filenames are sanitised (path.Base + strip leading dots + scrub separators) so the zip can't leak outside media/<rid>/. Missing blobs are logged in the bundle (RelativePath cleared) but don't abort the export — partial compliance > zero compliance, same philosophy as the erase orchestrator. POST /api/admin/gdpr/export is sync (application/zip response, Content-Disposition: attachment; filename=gdpr-export-<uid>.zip) mounted under RequirePermission(PermUserManage). Audit row (gdpr_export_request) stamped before streaming begins — mid-stream failure can't emit a structured 500 so the audit lands synchronously up front. cmd/server/gdpr_export.go owns 6 thin adapters (userProfileSource strips PasswordHash + MFASecret; auditActorSource wraps the already-redacted audit.Store so exports inherit the same PII-scrub semantics; mediaCatalogSource caps listing at 10_000). 10 new tests (4 exporter + 4 HTTP + 2 sanitisation/cancellation). pkg/gdpr stays free of pkg/oms / pkg/media imports — adapters own the translation. Degraded mode (no GDPRExporter wired) emits GDPRExportUnavailable 500."
     },
     {
       "id": "US-269",
