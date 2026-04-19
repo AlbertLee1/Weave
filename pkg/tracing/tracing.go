@@ -4,14 +4,21 @@
 // is disabled.
 //
 // Three exporters are supported:
-//   - "stdout"  — pretty-prints spans to stderr; safe for local dev.
-//   - "otlp"    — sends spans to an OTLP HTTP collector (Jaeger, Tempo, ...).
-//   - "none"    — installs a no-op processor; useful for tests.
+//   - "stdout"     — pretty-prints spans to stderr; safe for local dev.
+//   - "otlp"       — sends spans to an OTLP collector. Protocol selected by
+//     Config.OTLPProtocol ("http" or "grpc"); defaults to http.
+//   - "otlphttp"   — explicit OTLP/HTTP shorthand.
+//   - "otlpgrpc"   — explicit OTLP/gRPC shorthand.
+//   - "none"       — installs a no-op processor; useful for tests.
 //
 // When Config.Enabled is false, Init() returns a no-op shutdown function
 // and does NOT touch the global tracer provider, so the rest of the
 // codebase can call otel.Tracer() unconditionally without paying any
 // cost in dev / test setups.
+//
+// Init also installs a composite TextMapPropagator (W3C TraceContext +
+// Baggage) so cross-process trace stitching and baggage forwarding both
+// work out of the box.
 package tracing
 
 import (
@@ -20,12 +27,15 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
@@ -37,14 +47,26 @@ type Config struct {
 	// Enabled gates the entire package; when false Init() is a no-op.
 	Enabled bool
 
-	// Exporter selects the span exporter. One of "stdout" | "otlp" | "none".
-	// Defaults to "stdout" when empty.
+	// Exporter selects the span exporter. One of
+	// "stdout" | "otlp" | "otlphttp" | "otlpgrpc" | "none". Defaults to
+	// "stdout" when empty. The plain "otlp" value defers to OTLPProtocol.
 	Exporter string
 
-	// OTLPEndpoint is the host:port of the OTLP/HTTP collector. Used only
-	// when Exporter == "otlp". When empty, the OpenTelemetry default is
-	// used (otlptracehttp picks up OTEL_EXPORTER_OTLP_ENDPOINT itself).
+	// OTLPEndpoint is the host:port of the OTLP collector. Used only when
+	// Exporter selects an OTLP transport. When empty, the OpenTelemetry
+	// default is used (the OTLP exporter picks up
+	// OTEL_EXPORTER_OTLP_ENDPOINT itself).
 	OTLPEndpoint string
+
+	// OTLPProtocol selects the OTLP transport when Exporter == "otlp".
+	// Accepts "http" (default) or "grpc". Ignored when Exporter is one of
+	// the explicit otlphttp / otlpgrpc shorthands.
+	OTLPProtocol string
+
+	// OTLPInsecure disables TLS on the OTLP transport. Defaults to true so
+	// the in-cluster collector path (`otel-collector:4317`) works without
+	// extra wiring; set to false when targeting a TLS-fronted collector.
+	OTLPInsecure bool
 
 	// ServiceName / ServiceVersion are stamped onto every span as
 	// resource attributes. ServiceName defaults to "weave".
@@ -56,11 +78,26 @@ type Config struct {
 // It exists so callers can always defer shutdown(ctx) without nil-checking.
 func noopShutdown(_ context.Context) error { return nil }
 
+// installPropagator sets a composite TextMapPropagator that handles
+// both W3C Trace Context (cross-process span stitching) AND W3C Baggage
+// (request-scoped key/value propagation, e.g. request_id / user_id).
+// Called from Init() so every Init path picks up consistent propagation.
+func installPropagator() {
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+}
+
 // Init wires a tracer provider for Weave. The returned shutdown function
 // flushes pending spans and tears down the exporter; call it from main()
 // during graceful shutdown.
 func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error, err error) {
 	if !cfg.Enabled {
+		// Even when disabled we still install the propagator so any test
+		// or background job that constructs spans manually picks up a
+		// sane propagation default.
+		installPropagator()
 		return noopShutdown, nil
 	}
 
@@ -85,6 +122,17 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		return noopShutdown, fmt.Errorf("tracing: build resource: %w", err)
 	}
 
+	// Resolve the explicit "otlp" alias against the protocol selector
+	// here so the switch below stays a literal mapping.
+	if exporterName == "otlp" {
+		switch strings.ToLower(strings.TrimSpace(cfg.OTLPProtocol)) {
+		case "grpc":
+			exporterName = "otlpgrpc"
+		default:
+			exporterName = "otlphttp"
+		}
+	}
+
 	var exporter sdktrace.SpanExporter
 	switch exporterName {
 	case "none":
@@ -93,6 +141,7 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		// shipped anywhere.
 		tp := sdktrace.NewTracerProvider(sdktrace.WithResource(res))
 		otel.SetTracerProvider(tp)
+		installPropagator()
 		return tp.Shutdown, nil
 	case "stdout":
 		exp, expErr := stdouttrace.New(
@@ -103,18 +152,34 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 			return noopShutdown, fmt.Errorf("tracing: stdout exporter: %w", expErr)
 		}
 		exporter = exp
-	case "otlp":
+	case "otlphttp":
 		opts := []otlptracehttp.Option{}
 		if cfg.OTLPEndpoint != "" {
-			opts = append(opts, otlptracehttp.WithEndpoint(cfg.OTLPEndpoint), otlptracehttp.WithInsecure())
+			opts = append(opts, otlptracehttp.WithEndpoint(cfg.OTLPEndpoint))
+		}
+		if cfg.OTLPInsecure {
+			opts = append(opts, otlptracehttp.WithInsecure())
 		}
 		exp, expErr := otlptracehttp.New(ctx, opts...)
 		if expErr != nil {
-			return noopShutdown, fmt.Errorf("tracing: otlp exporter: %w", expErr)
+			return noopShutdown, fmt.Errorf("tracing: otlphttp exporter: %w", expErr)
+		}
+		exporter = exp
+	case "otlpgrpc":
+		opts := []otlptracegrpc.Option{}
+		if cfg.OTLPEndpoint != "" {
+			opts = append(opts, otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint))
+		}
+		if cfg.OTLPInsecure {
+			opts = append(opts, otlptracegrpc.WithInsecure())
+		}
+		exp, expErr := otlptracegrpc.New(ctx, opts...)
+		if expErr != nil {
+			return noopShutdown, fmt.Errorf("tracing: otlpgrpc exporter: %w", expErr)
 		}
 		exporter = exp
 	default:
-		return noopShutdown, fmt.Errorf("tracing: unknown exporter %q (want stdout|otlp|none)", exporterName)
+		return noopShutdown, fmt.Errorf("tracing: unknown exporter %q (want stdout|otlp|otlphttp|otlpgrpc|none)", exporterName)
 	}
 
 	tp := sdktrace.NewTracerProvider(
@@ -122,9 +187,20 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
+	installPropagator()
 
 	return tp.Shutdown, nil
 }
+
+// tracerName is the package-scoped tracer name passed to otel.Tracer().
+// Stable across the codebase so all spans authored in pkg/tracing share
+// one InstrumentationScope.
+const tracerName = "github.com/liyang/weave/pkg/tracing"
+
+// Tracer returns the package-scoped Tracer, fetched fresh from the
+// global TracerProvider on every call so test setups that swap the
+// provider with installRecordingProvider(t) see their swap honoured.
+func Tracer() trace.Tracer { return otel.Tracer(tracerName) }
 
 // statusCapturingResponseWriter mirrors the helper in pkg/metrics so the
 // tracing middleware can read back the status code.
@@ -149,18 +225,27 @@ func (s *statusCapturingResponseWriter) Write(b []byte) (int, error) {
 // incoming request in a span tagged with http.method, http.route, and
 // http.status_code. The span name is the chi route template (or the
 // request path when no template matches) so cardinality stays bounded.
+//
+// Inbound TraceContext / Baggage headers are extracted via the global
+// propagator BEFORE the span is started so a parent context from an
+// upstream service is honoured automatically.
 func HTTPMiddleware() func(http.Handler) http.Handler {
-	tracer := otel.Tracer("github.com/liyang/weave/pkg/tracing")
+	tracer := otel.Tracer(tracerName)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Extract any inbound TraceContext + Baggage headers so the
+			// span we start nests under the upstream parent and inherits
+			// any baggage already on the wire.
+			ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
 			route := r.URL.Path
-			if rctx := chi.RouteContext(r.Context()); rctx != nil {
+			if rctx := chi.RouteContext(ctx); rctx != nil {
 				if pat := rctx.RoutePattern(); pat != "" {
 					route = pat
 				}
 			}
 			spanName := r.Method + " " + route
-			ctx, span := tracer.Start(r.Context(), spanName,
+			ctx, span := tracer.Start(ctx, spanName,
 				trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(
 					attribute.String("http.method", r.Method),
@@ -177,7 +262,7 @@ func HTTPMiddleware() func(http.Handler) http.Handler {
 			}
 
 			// Recompute route in case chi populated it after handling.
-			if rctx := chi.RouteContext(r.Context()); rctx != nil {
+			if rctx := chi.RouteContext(ctx); rctx != nil {
 				if pat := rctx.RoutePattern(); pat != "" && pat != route {
 					route = pat
 					span.SetAttributes(attribute.String("http.route", route))

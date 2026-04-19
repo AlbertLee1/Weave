@@ -8,6 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
+	"github.com/liyang/weave/pkg/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // OMSHandler provides HTTP handlers for OMS V2 and admin endpoints.
@@ -137,7 +139,11 @@ func (h *OMSHandler) ListOntologies(w http.ResponseWriter, r *http.Request) {
 // GetOntology handles GET /api/v2/ontologies/{ontologyApiName}.
 func (h *OMSHandler) GetOntology(w http.ResponseWriter, r *http.Request) {
 	rid := chi.URLParam(r, "ontologyApiName")
-	o, err := h.repo.GetOntology(r.Context(), rid)
+	ctx, span := tracing.StartSpan(r.Context(), "oms.GetOntology",
+		attribute.String("ontology.api_name", rid),
+	)
+	defer span.End()
+	o, err := h.repo.GetOntology(ctx, rid)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{"ontologyApiName": rid}))

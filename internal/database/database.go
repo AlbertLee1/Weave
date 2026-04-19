@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,9 +47,21 @@ func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 // ConnectWithConfig creates a connection pool with explicit pool tuning
 // parameters and verifies connectivity with a ping.
 func ConnectWithConfig(ctx context.Context, dsn string, pc PoolConfig) (*pgxpool.Pool, error) {
+	return ConnectWithTracer(ctx, dsn, pc, nil)
+}
+
+// ConnectWithTracer is ConnectWithConfig plus an optional pgx.QueryTracer
+// hook installed on the connection config. Wired by cmd/server when
+// US-271 OpenTelemetry tracing is enabled so every PG query opens a
+// span at pkg/tracing.PgxTracer. Pass tracer=nil to opt out — degraded
+// mode and unit tests should leave it unset.
+func ConnectWithTracer(ctx context.Context, dsn string, pc PoolConfig, tracer pgx.QueryTracer) (*pgxpool.Pool, error) {
 	cfg, err := ParsePoolConfig(dsn, pc)
 	if err != nil {
 		return nil, err
+	}
+	if tracer != nil {
+		cfg.ConnConfig.Tracer = tracer
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

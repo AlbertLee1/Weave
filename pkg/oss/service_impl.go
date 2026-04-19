@@ -20,6 +20,8 @@ import (
 	"github.com/liyang/weave/pkg/oss/where"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
+	"github.com/liyang/weave/pkg/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ServiceImpl implements the Service interface.
@@ -397,6 +399,13 @@ func (s *ServiceImpl) applyPropertyVisibility(ctx context.Context, ot *oms.Objec
 // ErrNotFound (not ErrForbidden) so the policy itself does not leak the
 // object's existence. Allowed objects may have property values redacted.
 func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*WireObject, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.GetObject",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.String("object.primary_key", req.PrimaryKey),
+	)
+	defer span.End()
+
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err

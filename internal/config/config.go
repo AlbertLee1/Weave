@@ -43,10 +43,18 @@ type MetricsConfig struct {
 // pkg/tracing. Defaults: disabled, ServiceName=weave, no exporter.
 // Set Exporter to "stdout" for local debugging or "otlp" with an
 // OTLPEndpoint to ship spans to a real collector.
+//
+// US-271: OTLPProtocol selects HTTP (default) or gRPC transport when
+// Exporter is the generic "otlp" alias. Operators can also pin the
+// transport explicitly via Exporter="otlphttp" / "otlpgrpc". OTLPInsecure
+// defaults to true so a sidecar collector at otel-collector:4317 / 4318
+// works out of the box without TLS plumbing.
 type TracingConfig struct {
 	Enabled      bool
-	Exporter     string // "stdout" | "otlp" | "none"
+	Exporter     string // "stdout" | "otlp" | "otlphttp" | "otlpgrpc" | "none"
 	OTLPEndpoint string
+	OTLPProtocol string // "http" | "grpc"
+	OTLPInsecure bool
 	ServiceName  string
 }
 
@@ -230,9 +238,11 @@ func Load() (*Config, error) {
 			Path:    "/metrics",
 		},
 		Tracing: TracingConfig{
-			Enabled:     false,
-			ServiceName: "weave",
-			Exporter:    "stdout",
+			Enabled:      false,
+			ServiceName:  "weave",
+			Exporter:     "stdout",
+			OTLPProtocol: "http",
+			OTLPInsecure: true,
 		},
 		Functions: FunctionsConfig{
 			Enabled: false,
@@ -363,6 +373,16 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("WEAVE_OTLP_ENDPOINT"); v != "" {
 		cfg.Tracing.OTLPEndpoint = v
+	}
+	if v := os.Getenv("WEAVE_OTLP_PROTOCOL"); v != "" {
+		cfg.Tracing.OTLPProtocol = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("WEAVE_OTLP_INSECURE"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_OTLP_INSECURE %q: %w", v, err)
+		}
+		cfg.Tracing.OTLPInsecure = b
 	}
 
 	if v := os.Getenv("WEAVE_FUNCTIONS_ENABLED"); v != "" {

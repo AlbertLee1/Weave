@@ -14,7 +14,9 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/types"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ApplyOptions controls single-action apply behavior (Foundry OSv2).
@@ -788,6 +790,16 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 // point; internally it routes through Prepare + CommitBatch so there is a
 // single code path for action execution.
 func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequest) (*ApplyResult, error) {
+	actionName := ""
+	if req != nil {
+		actionName = req.ActionType
+	}
+	ctx, span := tracing.StartSpan(ctx, "actions.Apply",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.String("action.type", actionName),
+	)
+	defer span.End()
+
 	prep, err := e.Prepare(ctx, ontologyRID, req)
 	if err != nil {
 		return nil, err

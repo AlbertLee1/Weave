@@ -60,6 +60,100 @@ func TestInit_None_NoError(t *testing.T) {
 	}
 }
 
+func TestInit_OTLPGrpc_NoError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cfg := Config{
+		Enabled:      true,
+		Exporter:     "otlpgrpc",
+		OTLPInsecure: true,
+		OTLPEndpoint: "127.0.0.1:14317", // unreachable but exporter is lazy
+		ServiceName:  "weave-test",
+	}
+	shutdown, err := Init(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Init otlpgrpc: %v", err)
+	}
+	if err := shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+func TestInit_OTLPSelectsGrpcViaProtocol(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cfg := Config{
+		Enabled:      true,
+		Exporter:     "otlp",
+		OTLPProtocol: "grpc",
+		OTLPInsecure: true,
+		OTLPEndpoint: "127.0.0.1:14317",
+		ServiceName:  "weave-test",
+	}
+	shutdown, err := Init(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Init otlp/grpc: %v", err)
+	}
+	if err := shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+func TestInit_OTLPSelectsHttpByDefault(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cfg := Config{
+		Enabled:      true,
+		Exporter:     "otlp",
+		OTLPInsecure: true,
+		OTLPEndpoint: "127.0.0.1:14318",
+		ServiceName:  "weave-test",
+	}
+	shutdown, err := Init(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Init otlp/http (default): %v", err)
+	}
+	if err := shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
+func TestInit_UnknownExporter_Errors(t *testing.T) {
+	ctx := context.Background()
+	cfg := Config{Enabled: true, Exporter: "carrierpigeon"}
+	if _, err := Init(ctx, cfg); err == nil {
+		t.Fatalf("expected error for unknown exporter")
+	}
+}
+
+func TestInit_InstallsCompositePropagator(t *testing.T) {
+	ctx := context.Background()
+	cfg := Config{Enabled: true, Exporter: "none"}
+	shutdown, err := Init(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer shutdown(ctx)
+
+	prop := otel.GetTextMapPropagator()
+	fields := prop.Fields()
+	hasTraceparent, hasBaggage := false, false
+	for _, f := range fields {
+		switch f {
+		case "traceparent":
+			hasTraceparent = true
+		case "baggage":
+			hasBaggage = true
+		}
+	}
+	if !hasTraceparent {
+		t.Errorf("propagator fields missing traceparent: %v", fields)
+	}
+	if !hasBaggage {
+		t.Errorf("propagator fields missing baggage: %v", fields)
+	}
+}
+
 // installRecordingProvider swaps the global tracer provider with one that
 // records spans into a tracetest.SpanRecorder so we can assert on them.
 // Returns a cleanup function that restores the previous provider.

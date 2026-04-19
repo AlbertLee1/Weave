@@ -18,6 +18,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
@@ -48,6 +49,7 @@ import (
 	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/timeseries"
+	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -288,6 +290,22 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(SecurityHeadersMiddleware())
+	// US-271: open one OpenTelemetry server-kind span per request so every
+	// handler is wrapped automatically. Stays cheap when tracing is
+	// disabled — the global TracerProvider is the SDK no-op until
+	// pkg/tracing.Init swaps it. Runs AFTER middleware.RequestID so the
+	// chi-issued request id is already in context.
+	r.Use(tracing.HTTPMiddleware())
+	// US-271: enrich every span + request context with W3C Baggage members
+	// for request_id and (when authenticated) the caller's user_id. Pulls
+	// the user via auth.UserFromContext through a function literal so
+	// pkg/tracing stays free of a pkg/auth import.
+	r.Use(tracing.BaggageMiddleware(func(ctx context.Context) string {
+		if u := auth.UserFromContext(ctx); u != nil {
+			return u.ID
+		}
+		return ""
+	}))
 	// US-264: stamp caller IP + User-Agent onto every request context so the
 	// OSS data-access auditor (pkg/oss) can record audit_events rows without
 	// taking an *http.Request dependency. Runs AFTER middleware.RealIP so
@@ -929,13 +947,45 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// US-271: OpenTelemetry tracer provider. Init is a no-op when
+	// Tracing.Enabled is false, so the rest of the server can use
+	// otel.Tracer / pkg/tracing.StartSpan unconditionally. The
+	// returned shutdown flushes any pending OTLP/stdout exports during
+	// graceful shutdown.
+	tracingShutdown, err := tracing.Init(ctx, tracing.Config{
+		Enabled:        cfg.Tracing.Enabled,
+		Exporter:       cfg.Tracing.Exporter,
+		OTLPEndpoint:   cfg.Tracing.OTLPEndpoint,
+		OTLPProtocol:   cfg.Tracing.OTLPProtocol,
+		OTLPInsecure:   cfg.Tracing.OTLPInsecure,
+		ServiceName:    cfg.Tracing.ServiceName,
+		ServiceVersion: os.Getenv("WEAVE_VERSION"),
+	})
+	if err != nil {
+		log.Fatalf("tracing init: %v", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := tracingShutdown(shutdownCtx); err != nil {
+			log.Printf("tracing shutdown: %v", err)
+		}
+	}()
+
 	deps := &ServerDeps{
 		CORSOrigins: cfg.CORSOrigins,
 	}
 
 	// 1. PostgreSQL
 	if cfg.PGDSN != "" {
-		pool, err := database.Connect(ctx, cfg.PGDSN)
+		// US-271: install the pgx QueryTracer ONLY when tracing is
+		// enabled — the no-op tracer would still allocate a span per
+		// query, which is not free for low-latency reads.
+		var pgTracer pgx.QueryTracer
+		if cfg.Tracing.Enabled {
+			pgTracer = tracing.NewPgxTracer()
+		}
+		pool, err := database.ConnectWithTracer(ctx, cfg.PGDSN, database.DefaultPoolConfig(), pgTracer)
 		if err != nil {
 			log.Fatalf("database connect: %v", err)
 		}

@@ -1043,8 +1043,8 @@
         "Tests pass"
       ],
       "priority": 72,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "tracing.HTTPMiddleware + tracing.BaggageMiddleware wired into NewFullRouter so every handler opens one server-kind span enriched with request_id + user_id baggage AND span attributes; pkg/tracing.PgxTracer wired via database.ConnectWithTracer + pgxpool.Config.ConnConfig.Tracer so every PG query opens a client-kind child span (repo methods inherit coverage without per-method instrumentation). OTLP gRPC exporter added alongside the existing HTTP one — Exporter=otlp defers to OTLPProtocol (http|grpc), Exporter=otlphttp/otlpgrpc are explicit shorthands. Init installs a composite TraceContext+Baggage propagator so inbound W3C headers stitch to the span and outbound clients carry both. Business-path sample spans on oss.GetObject / actions.Apply / oms.GetOntology demonstrate the StartSpan helper for callers that want finer granularity inside a handler. Pgx tracer is only attached when Tracing.Enabled=true so low-latency reads don't pay span-alloc cost in dev/test. New env knobs: WEAVE_OTLP_PROTOCOL, WEAVE_OTLP_INSECURE. 16 new tracing tests (OTLP grpc/http/auto, composite propagator, unknown exporter, BaggageMiddleware populate/omit/nil-resolver, baggage helpers, StartSpan, PgxTracer start/end/error/truncate/nil/firstSQLKeyword). Whole repo go test ./... and go vet ./... clean."
     },
     {
       "id": "US-272",
