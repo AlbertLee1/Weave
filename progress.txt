@@ -2950,3 +2950,21 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - When admin-API edits change limit thresholds, the Manager's cached per-tenant rate.Limiter must be invalidated. Calling mgr.Reload() from Create/Update/Delete (not the Store) keeps the responsibility in the layer that owns the cache.
   - apierror.NewTooManyRequests is the canonical 429 helper; pair it with explicit Retry-After header writes since the helper doesn't set headers.
 ---
+
+## 2026-04-28 - US-278 Secret Management (Vault)
+- Added `pkg/secrets/` package with three pluggable Provider impls behind a single narrow interface (`Get(ctx, key)` + `Name`):
+  - `EnvProvider` — `os.LookupEnv`, dev default
+  - `FileProvider` — per-key files under `$WEAVE_SECRETS_DIR` with path-traversal rejection and trailing-newline trim (matches docker / k8s secret volume convention)
+  - `VaultProvider` — `hashicorp/vault/api` KV-v2 reads with `<path>#<field>` syntax for arbitrary fields inside a secret blob
+- Added `CachingProvider`: TTL-cached wrapper that drives rotation awareness — secrets refreshed in the underlying source pick up automatically after at most one TTL window without a server restart. Errors are NOT cached so transient outages don't stick. `Invalidate(key)` and `Reset()` give admins explicit knobs.
+- Added `Selector` / `SelectFromEnv`: builds the configured Provider from `SECRET_PROVIDER=env|file|vault`, `WEAVE_SECRETS_DIR`, `VAULT_ADDR/TOKEN/NAMESPACE/KV_MOUNT`, and `WEAVE_SECRETS_TTL` (default 5m, `-1` disables caching).
+- Pulled `github.com/hashicorp/vault/api v1.23.0` into go.mod
+- 30+ unit tests across all four files, including: rotation simulation via mocked clock, error-not-cached, path-traversal rejection, mocked Vault Logical client (no real Vault server required)
+- Files changed (10):
+  - pkg/secrets/{provider,env_provider,file_provider,vault_provider,cache,selector}.go + matching tests
+  - go.mod / go.sum (vault api + transitives)
+- **Learnings for future iterations:**
+  - Wrap any pluggable backend in a small narrow interface (`vaultLogicalClient` here) so tests inject hand-rolled stubs without standing up the real server. Saved having to docker-compose Vault into the test container.
+  - Caching errors is almost always wrong for secrets — a transient Vault outage should let the next call retry, not freeze 5m of `not-found` responses. Tests assert this explicitly.
+  - When adding a third-party SDK, add a tiny `buildVaultClient()` helper so `Select` can be exercised in tests without any of that SDK leaking into the public surface.
+---
