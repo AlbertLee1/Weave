@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/functions"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/queryexec"
 )
 
 // TestExecuteQueryDispatch_Scalar verifies that a query backed by a Goja
@@ -53,7 +54,7 @@ func TestExecuteQueryDispatch_Scalar(t *testing.T) {
 	handler := oms.NewOMSHandler(repo)
 
 	rt := functions.NewRuntime(functions.DefaultConfig())
-	handler.SetQueryExecutor(oms.NewGojaQueryExecutor(rt, repo))
+	handler.SetQueryExecutor(queryexec.NewGojaQueryExecutor(rt, repo))
 
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", handler.ExecuteQueryType)
@@ -132,7 +133,7 @@ func TestExecuteQueryDispatch_ObjectList(t *testing.T) {
 	handler := oms.NewOMSHandler(repo)
 
 	rt := functions.NewRuntime(functions.DefaultConfig())
-	handler.SetQueryExecutor(oms.NewGojaQueryExecutor(rt, repo))
+	handler.SetQueryExecutor(queryexec.NewGojaQueryExecutor(rt, repo))
 
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", handler.ExecuteQueryType)
@@ -258,7 +259,7 @@ func TestExecuteQueryDispatch_FunctionError(t *testing.T) {
 	handler := oms.NewOMSHandler(repo)
 
 	rt := functions.NewRuntime(functions.DefaultConfig())
-	handler.SetQueryExecutor(oms.NewGojaQueryExecutor(rt, repo))
+	handler.SetQueryExecutor(queryexec.NewGojaQueryExecutor(rt, repo))
 
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", handler.ExecuteQueryType)
@@ -310,7 +311,7 @@ func TestExecuteQueryDispatch_HTTPDispatch(t *testing.T) {
 	handler := oms.NewOMSHandler(repo)
 
 	rt := functions.NewRuntime(functions.DefaultConfig())
-	handler.SetQueryExecutor(oms.NewRoutingQueryExecutor(rt, repo))
+	handler.SetQueryExecutor(queryexec.NewRoutingQueryExecutor(rt, repo))
 
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/queries/{queryApiName}/execute", handler.ExecuteQueryType)
