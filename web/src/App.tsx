@@ -23,6 +23,7 @@ import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
+import { ThreadsPage } from './components/threads/ThreadsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,6 +62,7 @@ export default function App() {
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
+              <Route path="threads" element={<ThreadsPage />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />

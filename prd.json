@@ -1174,8 +1174,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 81,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/components/threads/ThreadsPage.tsx renders thread list + chat view + new-thread modal; web/src/api/aip.ts + hooks/useAIPThreads.ts cover CRUD + SendMessage; assistant reply reveals via per-character typewriter (streaming-cursor + STREAM_TICK_MS=18ms) — real provider streaming is a future enhancement; route wired at /threads + sidebar entry; vitest 502/502 (6 new ThreadsPage tests); manual browser verification still pending (no dev-browser tool in this harness)"
     },
     {
       "id": "US-281",

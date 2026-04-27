@@ -22,6 +22,7 @@ const iconPaths: Record<string, string> = {
   check:
     'M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3',
   shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+  chat: 'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -112,6 +113,7 @@ export function Sidebar() {
       label: 'Query Builder',
       icon: 'layers',
     },
+    { to: '/threads', label: 'AIP Threads', icon: 'chat' },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];
