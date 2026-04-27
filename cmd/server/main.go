@@ -264,6 +264,18 @@ type ServerDeps struct {
 	// function-calling and the SendMessage loop runs at most one
 	// Provider.Complete cycle (legacy single-turn behaviour).
 	AIPTools *aip.ToolRegistry
+	// AIPToolCatalog persists custom tool definitions (US-285) the LLM
+	// may invoke alongside the built-in tools. The PG-backed catalog
+	// is loaded into AIPTools at boot and the admin /api/v2/aip/tools
+	// CRUD endpoints keep the in-process registry in sync. nil leaves
+	// the admin endpoints unmounted and the registry confined to
+	// whatever the caller pre-populated.
+	AIPToolCatalog aip.ToolCatalog
+	// AIPToolInvoker is the FunctionInvoker that custom tool entries
+	// dispatch through. nil makes catalog-backed tools surface a
+	// clean ErrToolHandlerNotConfigured at execute-time so operators
+	// notice the missing FunctionExecutor wiring.
+	AIPToolInvoker aip.FunctionInvoker
 	// US-281: AIP Logic Flow store + executor. The store persists
 	// flow definitions and run rows; the executor walks the DAG via the
 	// AIPRegistry (LLM nodes) + AIPLogicTools (tool nodes). Both nil
@@ -983,6 +995,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			aipHandler.RegisterRoutes(api)
 		}
 
+		// US-285: AIP custom tool catalog. Mounts the /api/v2/aip/tools
+		// admin CRUD endpoints when the backing catalog is wired (PG
+		// mode). The handler also keeps the in-process AIPTools
+		// registry in sync on every Create/Update/Delete so the next
+		// SendMessage iteration sees the change without a process
+		// restart.
+		if deps.AIPToolCatalog != nil {
+			toolCatalogHandler := aip.NewToolCatalogHandler(deps.AIPToolCatalog, deps.AIPTools, deps.AIPToolInvoker)
+			toolCatalogHandler.RegisterRoutes(api)
+		}
+
 		// US-281: AIP Logic Flows. Mounts only when the backing flow
 		// store is wired (PG mode). The executor pairs the same
 		// AIPRegistry used by /threads with a tool registry so flow
@@ -1300,6 +1323,18 @@ func main() {
 		// extend deps.AIPTools.Register(...) before NewFullRouter.
 		deps.AIPTools = aip.NewToolRegistry()
 		deps.AIPTools.Register(&aip.EchoToolHandler{})
+		// US-285 LLM Tool 扩展: load custom tool definitions from the
+		// aip_tools table and register them in the live registry. The
+		// FunctionInvoker bridges onto the OMS Function Registry so
+		// catalog rows pointing at a Function RID dispatch through the
+		// existing FunctionExecutor wiring (when present). Catalog rows
+		// with no FunctionExecutor wired surface a clean
+		// AIPToolHandlerNotConfigured at execute-time.
+		deps.AIPToolCatalog = newPGAIPToolCatalog(pool)
+		deps.AIPToolInvoker = newAIPFunctionInvoker(deps.OmsRepo, nil)
+		if err := aip.LoadCatalogIntoRegistry(ctx, deps.AIPTools, deps.AIPToolCatalog, deps.AIPToolInvoker); err != nil {
+			log.Printf("warning: failed to load AIP tool catalog: %v", err)
+		}
 		log.Printf("[AIP] thread store wired; providers=%v tools=%v", aipNames, deps.AIPTools.Names())
 
 		// US-281: AIP Logic Flows store + tool registry. Tool registry

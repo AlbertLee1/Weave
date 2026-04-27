@@ -1244,8 +1244,8 @@
         "Tests pass"
       ],
       "priority": 86,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Migration 000069_aip_tools creates the aip_tools table (name PK, description, parameters JSONB, handler_function_rid, enabled, created_by, timestamps) with the same alphanumeric/underscore name CHECK as OpenAI/Anthropic tool conventions. pkg/aip.ToolCatalog (narrow interface, MemoryToolCatalog test impl) keeps this catalogue off oms.Repository — same trick aip.Store uses. pkg/aip.FunctionToolHandler wraps a ToolRecord into the existing aip.ToolHandler contract; it dispatches Execute through a FunctionInvoker callback so pkg/aip stays free of any oms / functions dep. cmd/server/aip_tool_invoker.go bridges FunctionInvoker onto oms.Repository.GetFunction + oms.FunctionExecutor.Execute. cmd/server/aip_tool_store.go is the PG impl; main.go loads enabled rows via aip.LoadCatalogIntoRegistry at boot so the SendMessage loop's Definitions() call from US-284 sees them alongside the built-in echo tool. /api/v2/aip/tools admin CRUD endpoints (ToolCatalogHandler) keep the in-process registry in sync on every Create/Update/Delete (Unregister added on disable/delete). Three-state ToolUpdate pointer fields preserve omit-vs-clear semantics; FunctionToolHandler stringifies the executor's interface{} return for the RoleTool message via a typed switch + JSON fallback."
     },
     {
       "id": "US-286",

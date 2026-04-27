@@ -56,6 +56,23 @@ func (r *ToolRegistry) Register(h ToolHandler) {
 	r.tools[name] = h
 }
 
+// Unregister removes the named tool. No-op when the registry is nil or
+// the name is not registered. Used by the ToolCatalogHandler to keep the
+// in-process registry in sync with the persisted catalogue when a tool
+// is deleted or disabled.
+func (r *ToolRegistry) Unregister(name string) {
+	if r == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
+
 // Get returns the named handler or ErrToolNotFound.
 func (r *ToolRegistry) Get(name string) (ToolHandler, error) {
 	if r == nil {
