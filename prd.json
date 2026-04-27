@@ -1273,8 +1273,8 @@
         "Tests pass"
       ],
       "priority": 88,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000070 pipelines table (id/name/description + inputs/transforms/outputs JSONB + schedule + enabled + created_by); pkg/pipeline.Pipeline schema with Validate() (id format, ≥1 input + ≥1 output, unique node names, type non-empty, upstream-reference + self-loop checks, 5/6-field cron sanity); pkg/pipeline.Store interface + MemoryStore + cmd/server pgPipelineStore; pkg/pipeline.Handler exposes /api/v2/pipelines CRUD with admin/owner scoping (mirrors aiplogic.Handler); 27 unit tests across schema, store, handler"
     },
     {
       "id": "US-288",

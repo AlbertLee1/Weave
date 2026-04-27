@@ -46,6 +46,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/pipeline"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -283,6 +284,10 @@ type ServerDeps struct {
 	// unmounted.
 	AIPLogicStore aiplogic.Store
 	AIPLogicTools aiplogic.ToolRegistry
+	// US-287: Pipeline DSL store. nil in degraded mode so the
+	// /api/v2/pipelines/* CRUD routes are silently unmounted; tests
+	// can inject pipeline.NewMemoryStore() to exercise the handler.
+	PipelineStore pipeline.Store
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1025,6 +1030,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			logicHandler := aiplogic.NewHandler(deps.AIPLogicStore, executor)
 			logicHandler.RegisterRoutes(api)
 		}
+
+		// US-287: Pipeline DSL CRUD. Mounts only when the backing
+		// store is wired (PG mode); degraded-mode deployments leave
+		// the /api/v2/pipelines/* routes unmounted. Pipeline DAG
+		// execution (US-288) and the cron scheduler (US-289) hang
+		// off the same store later.
+		if deps.PipelineStore != nil {
+			pipelineHandler := pipeline.NewHandler(deps.PipelineStore)
+			pipelineHandler.RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1348,6 +1363,12 @@ func main() {
 		deps.AIPLogicStore = newPGAIPLogicStore(pool)
 		deps.AIPLogicTools = aiplogic.NewMapToolRegistry()
 		log.Printf("[AIP] logic-flow store wired; tools=%v", deps.AIPLogicTools.(*aiplogic.MapToolRegistry).Names())
+
+		// US-287: Pipeline DSL store. Persists declarative pipeline
+		// descriptors; the DAG executor (US-288) and cron scheduler
+		// (US-289) ride on top of the same row.
+		deps.PipelineStore = newPGPipelineStore(pool)
+		log.Printf("[pipeline] store wired")
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via
