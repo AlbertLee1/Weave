@@ -1287,8 +1287,8 @@
         "Tests pass"
       ],
       "priority": 89,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/pipeline/dag.go: BuildDAG projects Pipeline → []DAGNode (input/transform/output kinds, deps), TopoOrder Kahn-with-declaration-tiebreak (deterministic + cycle/unknown-dep detection); pkg/pipeline/runner.go: RunDAG coordinator with sync.WaitGroup + buffered semaphore for Parallelism, runState struct keeps cyclo<15, three FailurePolicy values (abort cancels via runCtx, continue marks transitive descendants Skipped via BFS, retry uses MaxRetries+RetryBackoff then routes to abort on exhaustion); NodeRunner interface + NodeRunnerFunc adapter; per-node NodeStatus (pending/running/success/failed/skipped/canceled); 12 unit tests (race-clean) covering topo determinism, cycle detection, abort/continue/retry/exhausted-retry, parallelism caps + serial mode, ctx cancellation, validation gating"
     },
     {
       "id": "US-289",
