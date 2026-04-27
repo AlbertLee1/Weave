@@ -23,6 +23,7 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/aip"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
@@ -249,6 +250,14 @@ type ServerDeps struct {
 	// through (no per-tenant QPS cap).
 	TenantQuotaStore   tenants.Store
 	TenantQuotaManager *tenants.Manager
+	// US-279: AIP Threads. AIPStore persists threads + messages; the
+	// AIPRegistry resolves the named provider (mock/openai/anthropic).
+	// nil-AIPStore degraded mode leaves /api/v2/aip/threads/* routes
+	// unmounted; nil-AIPRegistry leaves SendMessage returning
+	// AIPProviderNotConfigured. The mock provider is always registered
+	// when AIPRegistry is wired.
+	AIPStore    aip.Store
+	AIPRegistry *aip.Registry
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -948,6 +957,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					tqHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-279: AIP Threads CRUD + messages. Mounts only when the
+		// backing store is wired (PG mode); degraded-mode deployments
+		// leave the /api/v2/aip/threads/* routes unregistered. The
+		// registry may be nil (e.g. fully offline test rigs) in which
+		// case SendMessage emits a structured AIPProviderNotConfigured
+		// 500 instead of dispatching.
+		if deps.AIPStore != nil {
+			aipHandler := aip.NewHandler(deps.AIPStore, deps.AIPRegistry)
+			aipHandler.RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1236,6 +1256,17 @@ func main() {
 		// authenticated request.
 		deps.TenantQuotaStore = newPGTenantQuotaStore(pool)
 		deps.TenantQuotaManager = tenants.NewManager(deps.TenantQuotaStore)
+
+		// US-279: AIP Threads + LLM provider registry. The PG store
+		// powers the /api/v2/aip/threads/* CRUD endpoints; the registry
+		// is built from environment variables so OPENAI_API_KEY and
+		// ANTHROPIC_API_KEY drive which providers register at boot.
+		// Mock is always registered so dev / CI deployments can chat
+		// without external credentials.
+		deps.AIPStore = newPGAIPStore(pool)
+		aipReg, aipNames := aip.BuildRegistry(aip.LoadEnvConfig())
+		deps.AIPRegistry = aipReg
+		log.Printf("[AIP] thread store wired; providers=%v", aipNames)
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

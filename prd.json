@@ -1160,8 +1160,8 @@
         "Tests pass"
       ],
       "priority": 80,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000066 aip_threads + aip_messages; pkg/aip with Provider interface + Mock/OpenAI/Anthropic impls + Registry + EnvConfig.BuildRegistry; Store + MemoryStore + cmd/server/aip_store.go pgAIPStore; Handler mounts /api/v2/aip/threads CRUD + messages list/send under auth gate; ownership enforced (createdBy + admin override); 30+ unit tests"
     },
     {
       "id": "US-280",
