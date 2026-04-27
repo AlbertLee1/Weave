@@ -1216,8 +1216,8 @@
         "Tests pass"
       ],
       "priority": 84,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/aip/rag.Retriever wraps ObjectSet candidate executor + Embedder + CorpusLoader, ranks by cosine similarity, returns top-K. PromptTemplate.RenderFromMatches injects {{context}} + {{query}} via FormatContext. 22 unit tests passing."
     },
     {
       "id": "US-284",

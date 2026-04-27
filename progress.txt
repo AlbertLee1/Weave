@@ -3126,3 +3126,53 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - JSON-object input validators (run-input box, ParamsEditor, anything that expects a `Record<string, unknown>`): always reject (a) JSON parse errors with the exception message, (b) non-object top-level shapes (arrays / numbers / strings) with "must be a JSON object". Bare `JSON.parse(...)` accepts every literal — `[1,2,3]` would otherwise pass and break the downstream `Object.keys(input)` consumer.
   - Position-change debounce vs save-on-blur: ReactFlow fires onNodesChange continuously during a drag (1 event per pixel). Only flag `dirty` when the change is `'position'` (drag complete OR keyboard-arrow) or `'remove'`; the intermediate per-pixel position updates write to local state without re-triggering save indicators. If a future iteration needs autosave, debounce the save at the dirty-flag→effect boundary, not at the onNodesChange→state level — local state must always reflect the authoritative canvas position even if save is throttled.
   - "Disable Run while dirty" rule: the executor runs against the PERSISTED flow, not the live editor state. If the user clicks Run while there are unsaved changes, the run reflects whatever was last saved and surprises the operator. Disabling the Run button until they Save (with a tooltip explaining why) is the right UX. Alternative "auto-save before run" couples two intents — the user might want to discard their changes — so explicit save-then-run is safer.
+---
+
+## 2026-04-28 - US-283 RAG 工作流增强
+- Added `pkg/aip/rag` package — encapsulates the Semantic Retriever flow (ObjectSet → corpus → embed → rank) plus a tiny prompt-template engine for {{context}}/{{query}} injection.
+- `pkg/aip/rag/retriever.go`:
+  - `Retriever` constructed via `NewRetriever(executor, embedder, loader)` — panics on any nil dep so the boot path fails loudly rather than at first request.
+  - `CandidateExecutor` interface — narrowed to `Execute(ctx, *objectset.Definition) (*objectset.Result, error)` so production wires `*objectset.Executor` as-is and tests inject a fake. Compile-time assertion `var _ CandidateExecutor = (*objectset.Executor)(nil)` keeps the contract honest if the executor signature ever drifts.
+  - `Embedder` interface — mirrors `embeddings.Provider` (Embed + Model) so a mock/openai provider plugs in without an adapter; defining the alias locally keeps pkg/aip/rag from importing pkg/embeddings just for naming.
+  - `CorpusLoader` interface — `LoadDocuments(ctx, ontology, objectType, pks) ([]Document, error)`. Per-PK loader stays pluggable: production wiring will read indexed Bleve docs and project a text-bearing property; tests inject preset slices. Loader is allowed to return FEWER docs than pks (missing/empty rows simply don't get scored).
+  - `Retrieve(ctx, RetrieveRequest)` algorithm: validate non-empty query + non-nil candidate + K>=0 → execute candidate → short-circuit on empty PK set → load docs → drop empty-text rows → batch-embed query+corpus in a single Embed call → cosine similarity per doc → sort desc → trim to K (DefaultK=5 when K=0).
+  - `cosineSimilarity` returns 0 for length mismatch / zero magnitude (treats degenerate vectors as "no signal" rather than erroring out a whole batch).
+  - `Result.Truncated` propagates from the candidate ObjectSet so callers can warn the user when the corpus was capped at `objectset.BaseExecutionCap` before scoring.
+- `pkg/aip/rag/template.go`:
+  - `PromptTemplate` is a string alias with `Render(query, context)` and `RenderFromMatches(query, matches)`. `strings.ReplaceAll` substitutes every occurrence of `{{query}}` and `{{context}}` (placeholders intentionally simple — anything richer belongs in `pkg/aip/logic`'s template engine).
+  - `FormatContext(matches)` renders matches as a numbered block (`[1] Title (objectType:primaryKey)\ntext\n\n[2] ...`); empty input returns "" so prompts with no retrieved context degrade gracefully.
+  - `DefaultPromptTemplate` ships the canonical "answer using only the context, otherwise say I don't know" body so callers can adopt RAG without authoring a template themselves.
+- 22 unit tests across `retriever_test.go` (12) + `template_test.go` (10):
+  - cosine-similarity ranking with hand-tuned 3-D vectors (alice picked over bob picked over random)
+  - default-K fallback (K=0 → DefaultK=5)
+  - Truncated propagation
+  - empty-candidate short-circuit (loader untouched)
+  - skip-empty-text filter
+  - validation: empty query, nil candidate, negative K all rejected with descriptive errors
+  - executor / loader error wrap (errors.Is)
+  - nil-dep constructor panics for executor/embedder/loader
+  - placeholder substitution: substitutes both, repeated occurrences, no-placeholder pass-through
+  - FormatContext numbering + (objectType:pk) handle, title omitted when empty, empty-input returns ""
+  - RenderFromMatches end-to-end + the no-matches edge case
+  - DefaultPromptTemplate carries both placeholders
+- Quality gates:
+  - `go test ./pkg/aip/rag/...` — 22/22 passing
+  - `go test ./...` — full repo suite green (cmd/server, every pkg/*, test/*)
+  - `go build ./...` — green
+  - `go vet ./...` — clean
+  - `gofmt -l ./pkg/aip/rag/` — clean
+- Files changed (3 new):
+  - pkg/aip/rag/retriever.go (new)
+  - pkg/aip/rag/template.go (new)
+  - pkg/aip/rag/retriever_test.go (new)
+  - pkg/aip/rag/template_test.go (new)
+  - prd.json (US-283 passes=true + notes)
+- **Learnings for future iterations:**
+  - "Encapsulate X (A + B)" PRDs map cleanly to a leaf package with two narrow dependency interfaces that production wires concretely (objectset.Executor + embeddings.Provider) and tests fake. Define interfaces at the consumer (the new package), not the producer — keeps the dependency direction `pkg/aip/rag → pkg/oss/objectset` and avoids the cross-package interface-extraction churn an outward-pointing definition would create.
+  - Compile-time interface satisfaction checks (`var _ CandidateExecutor = (*objectset.Executor)(nil)`) are 1 LOC of insurance against the wrapped type's signature drifting (additional return value, renamed parameter type) — caught at `go build` instead of at first production call. Same pattern is worth replicating any time a downstream package wraps an upstream type behind a narrow interface.
+  - Local interface alias for an upstream surface (Embedder = embeddings.Provider in shape but defined here): keeps the leaf package importable from anywhere without forming a cycle through pkg/embeddings, while still letting concrete `*embeddings.MockProvider` / `*embeddings.OpenAI` satisfy it implicitly. Costs 2 method declarations; saves an import-cycle headache the first time a higher-level orchestrator wants to compose RAG with another embedding-aware feature.
+  - Cosine-similarity tests with hand-tuned vectors > stochastic mock embedders: assigning known unit-vectors to known texts (e.g. {1,0,0}, {0,1,0}, {0,0,1}) lets the test assert ordering deterministically (alice {0.95,0.05,0} dot {1,0,0} = 0.95 vs bob {0,1,0} dot {1,0,0} = 0). The deterministic-hash MockProvider is too noisy for ranking assertions — its `H(text)` cosine similarity has no relationship to text similarity, so a "should rank A over B" assertion would pass or fail by coincidence. Save the hash mock for "vectors should be reproducible across runs" tests; use the fixed-vector approach for "ranking should reflect similarity" tests.
+  - Batch query+corpus into ONE Embed call: providers that amortise per-call setup (auth, network round-trip) get linear-time speedup; providers that don't (mocks, cached) pay nothing extra. Splitting into N+1 calls (one for query, one per doc) is a common mistake — reverse the loop and concatenate up front.
+  - `{{context}}` + `{{query}}` placeholders match the de-facto LangChain / LlamaIndex convention. Keeping the syntax identical means existing prompt libraries can be ported in unchanged. Don't invent a new `${context}` or `<<context>>` notation just to be different — the cost (every cookbook needs translating) dwarfs the benefit (none).
+  - `panic(...)` in NewRetriever for nil deps vs returning an error: fail-fast at boot is correct for THIS surface because the wiring is once-per-process at startup. Returning `(nil, error)` would force every call site into err-checking ceremony for an invariant that's static — the boot path either has the deps or it doesn't. Reserve `error` returns for runtime input validation (`Retrieve(req RetrieveRequest)` IS validated by error return — different surface, different handling).
+---
