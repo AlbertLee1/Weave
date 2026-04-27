@@ -50,7 +50,8 @@ codes (`405`, `204`) are reserved for transport-level conditions.
 | `tools/list` | List the registered Weave tools and their input schemas |
 | `tools/call` | Invoke a tool by `name` with an `arguments` object |
 | `prompts/list` | Returns an empty list (Weave does not yet expose prompts) |
-| `resources/list` | Returns an empty list (Weave does not yet expose resources) |
+| `resources/list` | List ontologies and temporary ObjectSets as MCP resources |
+| `resources/read` | Return the schema for an ontology or the stored definition for an ObjectSet |
 | `ping` | Liveness check; returns `{}` |
 
 Notifications (requests with no `id`) such as `notifications/initialized`
@@ -189,12 +190,40 @@ checks gate every JSON-RPC call. The MCP server itself never inspects
 credentials — it executes tools against whatever `context.Context` the
 HTTP layer hands it.
 
+## Resources
+
+`resources/list` returns one entry per ontology and one entry per
+temporary ObjectSet (created via `POST .../objectSets/createTemporary`).
+URIs follow the `weave://<kind>/<id>` convention:
+
+| URI | Returned by `resources/read` |
+|---|---|
+| `weave://ontology/<rid>` | JSON bundle of `ontology` + `objectTypes` + `linkTypes` + `actionTypes` |
+| `weave://objectset/<id>` | JSON object with the stored ObjectSet `definition` and `createdAt` |
+
+```bash
+# resources/list
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}'
+
+# resources/read for an ontology
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{
+        "uri":"weave://ontology/ri.weave.main.ontology.demo"}}'
+```
+
+Reading a resource for an ObjectSet returns the Definition only —
+materialise the rows by POSTing the Definition to
+`/api/v2/ontologies/{ontology}/objectSets/loadObjects`.
+
 ## Limitations (MVP)
 
 - No JSON Schema validator: argument validation is field presence + a
   primitive type check (string/integer/boolean/object/array).
 - The stdio binary is a stub; it accepts JSON-RPC framing but does not
   yet bootstrap a live PG/NATS-backed Weave instance.
-- `prompts/list` and `resources/list` always return empty arrays.
+- `prompts/list` always returns an empty array.
 - The action executor receives the request user via the auth middleware,
   so anonymous MCP calls run as the `system` user.

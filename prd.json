@@ -1258,8 +1258,8 @@
         "Tests pass"
       ],
       "priority": 87,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/mcp/resources.go adds resources/list + resources/read with weave://ontology/<rid> + weave://objectset/<id> URIs; ObjectSetCatalog narrow interface satisfied by cmd/server adapter over *objectset.Store (new ListEntries/GetEntry helpers); ontology read bundles ontology+objectTypes+linkTypes+actionTypes, objectset read returns Definition+createdAt; initialize handshake now advertises resources capability; 10 new pkg/mcp tests + 3 new objectset.Store tests; degraded-mode test routers without ObjSetStore still serve ontology resources"
     },
     {
       "id": "US-287",

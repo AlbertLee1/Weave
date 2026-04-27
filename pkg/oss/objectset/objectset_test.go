@@ -675,6 +675,56 @@ func TestStore_Stop(t *testing.T) {
 	store.Stop() // should not panic
 }
 
+func TestStore_ListEntries(t *testing.T) {
+	store := objectset.NewStore(1 * time.Hour)
+	def1 := &objectset.Definition{Type: "base", ObjectType: "User"}
+	def2 := &objectset.Definition{Type: "base", ObjectType: "Order"}
+	id1 := store.Put(def1)
+	id2 := store.Put(def2)
+
+	entries := store.ListEntries()
+	if len(entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2", len(entries))
+	}
+	got := map[string]string{}
+	for _, e := range entries {
+		got[e.ID] = e.Definition.ObjectType
+		if e.CreatedAt.IsZero() {
+			t.Errorf("CreatedAt should not be zero for %s", e.ID)
+		}
+	}
+	if got[id1] != "User" || got[id2] != "Order" {
+		t.Errorf("entries = %+v", got)
+	}
+}
+
+func TestStore_GetEntry(t *testing.T) {
+	store := objectset.NewStore(1 * time.Hour)
+	def := &objectset.Definition{Type: "base", ObjectType: "User"}
+	id := store.Put(def)
+
+	entry, err := store.GetEntry(id)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry.ID != id || entry.Definition != def {
+		t.Errorf("entry = %+v", entry)
+	}
+
+	if _, err := store.GetEntry("missing"); err == nil {
+		t.Error("expected error for missing id")
+	}
+}
+
+func TestStore_ListEntries_SkipsExpired(t *testing.T) {
+	store := objectset.NewStore(10 * time.Millisecond)
+	store.Put(&objectset.Definition{Type: "base", ObjectType: "User"})
+	time.Sleep(20 * time.Millisecond)
+	if got := store.ListEntries(); len(got) != 0 {
+		t.Errorf("expected expired entry to be skipped, got %d", len(got))
+	}
+}
+
 // --- Execute Reference Test (1) ---
 
 func TestExecute_Reference(t *testing.T) {

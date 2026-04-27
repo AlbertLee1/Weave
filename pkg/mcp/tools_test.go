@@ -25,6 +25,20 @@ func (f *fakeOmsRepo) ListOntologies(ctx context.Context) ([]oms.Ontology, error
 	return f.ontologies, nil
 }
 
+func (f *fakeOmsRepo) GetOntology(ctx context.Context, rid string) (*oms.Ontology, error) {
+	for i := range f.ontologies {
+		if f.ontologies[i].RID == rid || f.ontologies[i].APIName == rid {
+			o := f.ontologies[i]
+			return &o, nil
+		}
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (f *fakeOmsRepo) ListLinkTypes(ctx context.Context, ontologyRID string) ([]oms.LinkType, error) {
+	return nil, nil
+}
+
 func (f *fakeOmsRepo) ListObjectTypes(ctx context.Context, ontologyRID string) ([]oms.ObjectType, error) {
 	if v, ok := f.objectTypes[ontologyRID]; ok {
 		return v, nil

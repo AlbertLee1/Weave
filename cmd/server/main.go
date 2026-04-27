@@ -419,6 +419,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.ObjSetExecutor != nil {
 			mcpSrv.SetSemanticSearcher(newExecutorSemanticSearcher(deps.ObjSetExecutor))
 		}
+		// US-286: expose temporary ObjectSet entries as MCP resources alongside
+		// the ontology catalogue. Optional — when no Store is wired the
+		// resources/list and resources/read methods still work for ontologies.
+		if deps.ObjSetStore != nil {
+			mcpSrv.SetObjectSetCatalog(newObjectSetCatalogAdapter(deps.ObjSetStore))
+		}
 		r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
 	}
 

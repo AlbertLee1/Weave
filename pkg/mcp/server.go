@@ -41,6 +41,11 @@ type Server struct {
 	// when nil, the semantic_search and ask_objectset tools return a clear
 	// "not configured" error rather than empty data.
 	semanticSearcher SemanticSearcher
+
+	// objectSetCatalog backs the resources/list + resources/read methods
+	// introduced in US-286. Optional — when nil, ObjectSet resources are
+	// simply omitted from the catalogue.
+	objectSetCatalog ObjectSetCatalog
 }
 
 // ServerOption configures a Server at construction time.
@@ -97,7 +102,9 @@ func (s *Server) Handle(ctx context.Context, req *Request) *Response {
 	case "prompts/list":
 		return NewSuccessResponse(req.ID, map[string]any{"prompts": []any{}})
 	case "resources/list":
-		return NewSuccessResponse(req.ID, map[string]any{"resources": []any{}})
+		return s.handleResourcesList(ctx, req)
+	case "resources/read":
+		return s.handleResourcesRead(ctx, req)
 	case "ping":
 		return NewSuccessResponse(req.ID, map[string]any{})
 	default:
@@ -107,13 +114,16 @@ func (s *Server) Handle(ctx context.Context, req *Request) *Response {
 }
 
 // handleInitialize implements the MCP initialize handshake. The response
-// advertises only the tools capability — Weave does not yet expose prompts,
-// resources, or sampling.
+// advertises tools and resources — Weave does not yet expose prompts or
+// sampling. The resources capability is advertised even when no
+// ObjectSetCatalog is wired because ontologies are always enumerable as
+// long as the OMS repo is present.
 func (s *Server) handleInitialize(req *Request) *Response {
 	result := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
-			"tools": map[string]any{"listChanged": false},
+			"tools":     map[string]any{"listChanged": false},
+			"resources": map[string]any{"listChanged": false, "subscribe": false},
 		},
 		"serverInfo": map[string]any{
 			"name":    ServerName,

@@ -14,7 +14,9 @@
 //   - tools/list     : list registered tools and their input schemas
 //   - tools/call     : invoke a tool by name with arguments
 //   - prompts/list   : returns an empty list (Weave does not yet expose prompts)
-//   - resources/list : returns an empty list (Weave does not yet expose resources)
+//   - resources/list : list ontologies and temporary ObjectSets as MCP resources
+//   - resources/read : return the schema for an ontology or the stored
+//     definition for an ObjectSet, given a `weave://<kind>/<id>` URI
 //
 // Notifications (requests with no id) such as notifications/initialized are
 // accepted and dispatched but, per JSON-RPC 2.0, never receive a response.

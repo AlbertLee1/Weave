@@ -115,3 +115,45 @@ func (s *Store) Count() int {
 	defer s.mu.RUnlock()
 	return len(s.entries)
 }
+
+// EntrySnapshot is a stable read-only view of a stored ObjectSet, suitable
+// for callers that want to enumerate the live store without coupling to its
+// internal layout. Definition is the same pointer the original Put received.
+type EntrySnapshot struct {
+	ID         string
+	Definition *Definition
+	CreatedAt  time.Time
+}
+
+// ListEntries returns a snapshot of every non-expired entry. The returned
+// slice is freshly allocated and safe to mutate; the *Definition pointers
+// reference the same Definitions held in the store, so callers that mutate
+// them will affect future Get results — treat the values as read-only.
+func (s *Store) ListEntries() []EntrySnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
+	out := make([]EntrySnapshot, 0, len(s.entries))
+	for id, entry := range s.entries {
+		if now.Sub(entry.createdAt) > s.ttl {
+			continue
+		}
+		out = append(out, EntrySnapshot{ID: id, Definition: entry.def, CreatedAt: entry.createdAt})
+	}
+	return out
+}
+
+// GetEntry is like Get but also returns the entry's creation timestamp. It
+// returns the same expiry / not-found errors Get does.
+func (s *Store) GetEntry(id string) (*EntrySnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.entries[id]
+	if !ok {
+		return nil, fmt.Errorf("objectSet %q not found", id)
+	}
+	if time.Since(entry.createdAt) > s.ttl {
+		return nil, fmt.Errorf("objectSet %q has expired", id)
+	}
+	return &EntrySnapshot{ID: id, Definition: entry.def, CreatedAt: entry.createdAt}, nil
+}
