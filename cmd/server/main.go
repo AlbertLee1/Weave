@@ -24,6 +24,7 @@ import (
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/aip"
+	aiplogic "github.com/liyang/weave/pkg/aip/logic"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
@@ -258,6 +259,13 @@ type ServerDeps struct {
 	// when AIPRegistry is wired.
 	AIPStore    aip.Store
 	AIPRegistry *aip.Registry
+	// US-281: AIP Logic Flow store + executor. The store persists
+	// flow definitions and run rows; the executor walks the DAG via the
+	// AIPRegistry (LLM nodes) + AIPLogicTools (tool nodes). Both nil
+	// in degraded mode so /api/v2/aip/logic-flows/* routes are
+	// unmounted.
+	AIPLogicStore aiplogic.Store
+	AIPLogicTools aiplogic.ToolRegistry
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -968,6 +976,20 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			aipHandler := aip.NewHandler(deps.AIPStore, deps.AIPRegistry)
 			aipHandler.RegisterRoutes(api)
 		}
+
+		// US-281: AIP Logic Flows. Mounts only when the backing flow
+		// store is wired (PG mode). The executor pairs the same
+		// AIPRegistry used by /threads with a tool registry so flow
+		// authors can mix LLM calls with side-effect tools.
+		if deps.AIPLogicStore != nil {
+			tools := deps.AIPLogicTools
+			if tools == nil {
+				tools = aiplogic.NewMapToolRegistry()
+			}
+			executor := aiplogic.NewExecutor(deps.AIPRegistry, tools)
+			logicHandler := aiplogic.NewHandler(deps.AIPLogicStore, executor)
+			logicHandler.RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1267,6 +1289,12 @@ func main() {
 		aipReg, aipNames := aip.BuildRegistry(aip.LoadEnvConfig())
 		deps.AIPRegistry = aipReg
 		log.Printf("[AIP] thread store wired; providers=%v", aipNames)
+
+		// US-281: AIP Logic Flows store + tool registry. Tool registry
+		// includes the built-in echo / concat tools out of the box.
+		deps.AIPLogicStore = newPGAIPLogicStore(pool)
+		deps.AIPLogicTools = aiplogic.NewMapToolRegistry()
+		log.Printf("[AIP] logic-flow store wired; tools=%v", deps.AIPLogicTools.(*aiplogic.MapToolRegistry).Names())
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

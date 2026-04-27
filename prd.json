@@ -1188,8 +1188,8 @@
         "Tests pass"
       ],
       "priority": 82,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000067 aip_logic_flows + aip_logic_flow_runs; pkg/aip/logic package: Flow / Node / Edge / Run models, Validate enforces unique node ids + known types + cycle-free graph, TopoOrder + DAG executor with per-edge active flag drives if-branch skipping; Executor wires aip.Provider for llm nodes + ToolRegistry (echo/concat builtins) for tool nodes; condition mini-DSL supports == != < <= > >= contains; CRUD+execute+runs handlers at /api/v2/aip/logic-flows/*; pgAIPLogicStore in cmd/server; deps wired through ServerDeps.AIPLogicStore + AIPLogicTools (degraded-mode safe); 30 unit tests across flow/store/executor/handlers"
     },
     {
       "id": "US-282",
