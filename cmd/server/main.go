@@ -49,6 +49,7 @@ import (
 	"github.com/liyang/weave/pkg/security/pii"
 	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/subscriptions"
+	"github.com/liyang/weave/pkg/tenants"
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
@@ -240,7 +241,15 @@ type ServerDeps struct {
 	// false (fail-closed).
 	FeatureFlagStore   featureflags.Store
 	FeatureFlagManager *featureflags.Manager
-	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
+	// US-277: Multi-tenant quotas. TenantQuotaStore is the CRUD surface
+	// for /api/admin/tenant-quotas/* admin endpoints; TenantQuotaManager
+	// is the read-side facade middleware uses to gate per-tenant QPS.
+	// Both populate from the PG bootstrap block; nil in degraded mode so
+	// the admin routes are not mounted and middleware passes everything
+	// through (no per-tenant QPS cap).
+	TenantQuotaStore   tenants.Store
+	TenantQuotaManager *tenants.Manager
+	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -338,6 +347,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				next.ServeHTTP(w, req.WithContext(featureflags.WithManager(req.Context(), mgr)))
 			})
 		})
+	}
+	// US-277: per-tenant QPS gating. Reads auth.User.Attributes["realm"]
+	// after the auth middleware runs and rejects with 429 once a tenant
+	// exceeds its configured rate. Anonymous callers and tenants
+	// without a quota row pass through. The middleware also stamps the
+	// Manager on the request context so write handlers can call
+	// CheckObjectQuota / CheckStorageQuota.
+	if deps.TenantQuotaManager != nil {
+		r.Use(tenants.Middleware(deps.TenantQuotaManager))
 	}
 
 	// Health endpoints (public, no auth required)
@@ -919,6 +937,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					ffHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-277: Tenant Quotas admin CRUD. Mounts only when the backing
+		// store is wired (PG mode); degraded-mode deployments leave the
+		// /api/admin/tenant-quotas/* routes unregistered.
+		if deps.TenantQuotaStore != nil {
+			tqHandler := tenants.NewHandler(deps.TenantQuotaStore, deps.TenantQuotaManager)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					tqHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -1200,6 +1229,13 @@ func main() {
 		// context middleware stamps onto every request.
 		deps.FeatureFlagStore = newPGFeatureFlagsStore(pool)
 		deps.FeatureFlagManager = featureflags.NewManager(deps.FeatureFlagStore)
+
+		// US-277: Tenant Quotas. Same shape as feature flags — one
+		// PG-backed store powers both the admin CRUD handlers and the
+		// read-side Manager the QPS middleware uses to gate every
+		// authenticated request.
+		deps.TenantQuotaStore = newPGTenantQuotaStore(pool)
+		deps.TenantQuotaManager = tenants.NewManager(deps.TenantQuotaStore)
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

@@ -2930,3 +2930,23 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Admin routes that depend on a PG-only resource should live in an `if deps.XStore != nil { ... }` block inside the API group so degraded-mode (no PG) deployments don't see mystery handlers and contract tests still see only documented routes.
   - Flag name format constraint (`^[A-Za-z0-9._-]{1,128}$`) lives both in the SQL CHECK and `ValidateFlagName` to catch invalid names at API boundary before hitting PG.
 ---
+
+## 2026-04-28 - US-277 多租户隔离与配额
+- Created `pkg/tenants/` package with Quota model, Store interface, in-memory store, Manager (read-side facade with cached rate.Limiter per tenant), HTTP middleware, and admin Handler
+- Added migration 000065_tenant_quotas (tenant PK, max_objects, max_storage, max_qps, burst, description, timestamps + format/non-negative CHECK constraints)
+- Added `cmd/server/tenant_quotas_store.go` with PG-backed pgTenantQuotaStore satisfying tenants.Store
+- Wired into cmd/server/main.go: `deps.TenantQuotaStore` and `deps.TenantQuotaManager` populated in PG bootstrap; `tenants.Middleware` mounted on every authenticated request to gate per-tenant QPS; admin CRUD routes mounted under PermUserManage
+- Tenant identity sourced from `auth.User.Attributes["realm"]` (re-uses the existing JWT claim feature flags consume)
+- 429 with Retry-After + RESOURCE_EXHAUSTED `TenantQPSQuotaExceeded` error envelope on QPS exceedance
+- Manager.Reload() invalidates the cached limiter map; admin Create/Update/Delete handlers call Reload() so rate caps applied via PUT take effect immediately, no restart
+- Files changed (16):
+  - pkg/tenants/{quota,store,manager,middleware,handlers}.go + matching tests (18 unit tests passing)
+  - cmd/server/tenant_quotas_store.go (new)
+  - cmd/server/main.go (deps + middleware + route mount)
+  - migrations/000065_tenant_quotas.up.sql / down.sql (new)
+- **Learnings for future iterations:**
+  - The pgFeatureFlagsStore + cmd/server pattern (PG-backed Store impl in cmd/server/, package free of pgx) extends straight to per-tenant resource state — every new SaaS-shaped feature should follow it.
+  - Mounting middleware that consumes auth.User MUST happen AFTER the auth middleware fills the context. Currently in NewFullRouter the rate limit + tenant middleware run before login routes mount, so anonymous public endpoints (health, openapi) bypass quota gating naturally — the tenant check just sees no user and passes through.
+  - When admin-API edits change limit thresholds, the Manager's cached per-tenant rate.Limiter must be invalidated. Calling mgr.Reload() from Create/Update/Delete (not the Store) keeps the responsibility in the layer that owns the cache.
+  - apierror.NewTooManyRequests is the canonical 429 helper; pair it with explicit Retry-After header writes since the helper doesn't set headers.
+---
