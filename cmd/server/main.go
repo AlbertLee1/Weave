@@ -30,6 +30,7 @@ import (
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/compliance"
 	"github.com/liyang/weave/pkg/developer"
+	"github.com/liyang/weave/pkg/featureflags"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/gdpr"
 	"github.com/liyang/weave/pkg/geotemporal"
@@ -231,6 +232,14 @@ type ServerDeps struct {
 	// surface stores; nil means no source is wired and the
 	// /api/admin/compliance/report route is not mounted.
 	ComplianceGenerator *compliance.Generator
+	// US-276: Feature Flags. FeatureFlagStore is the CRUD surface for the
+	// /api/admin/feature-flags/* admin endpoints; FeatureFlagManager is
+	// the read-side facade handlers call via featureflags.HasFlag. Both
+	// populate from the PG bootstrap block; nil in degraded mode so the
+	// admin routes are not mounted and in-process HasFlag checks return
+	// false (fail-closed).
+	FeatureFlagStore   featureflags.Store
+	FeatureFlagManager *featureflags.Manager
 	CORSOrigins    []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -317,6 +326,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// US-069: per-endpoint rate limiting with default fallback.
 	rateLimitRules, defaultRateLimitRule := DefaultRateLimitRules()
 	r.Use(NewRateLimitMiddlewareWithDefault(rateLimitRules, defaultRateLimitRule))
+	// US-276: stamp the feature-flag manager on every request context so
+	// downstream handlers can call featureflags.HasFlag(ctx, name, user)
+	// without threading the manager explicitly. Nil manager is a no-op —
+	// degraded-mode deployments leave it unset so every check fails
+	// closed.
+	if deps.FeatureFlagManager != nil {
+		mgr := deps.FeatureFlagManager
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				next.ServeHTTP(w, req.WithContext(featureflags.WithManager(req.Context(), mgr)))
+			})
+		})
+	}
 
 	// Health endpoints (public, no auth required)
 	// /health and /health/live are the k8s liveness probe: always return 200
@@ -885,6 +907,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 					complianceHandler.RegisterRoutes(admin)
 				})
 		}
+
+		// US-276: Feature Flags admin CRUD. Mounts only when the backing
+		// store is wired (PG mode); degraded-mode deployments leave the
+		// /api/admin/feature-flags/* routes unregistered so featureflags.HasFlag
+		// fails closed everywhere.
+		if deps.FeatureFlagStore != nil {
+			ffHandler := featureflags.NewHandler(deps.FeatureFlagStore)
+			api.With(auth.RequirePermission(auth.PermUserManage)).
+				Group(func(admin chi.Router) {
+					ffHandler.RegisterRoutes(admin)
+				})
+		}
 	})
 
 	return r
@@ -1160,6 +1194,12 @@ func main() {
 			deps.ColumnMaskStore,
 			deps.CellMaskStore,
 		)
+
+		// US-276: Feature Flags. One uncached PG-backed store feeds
+		// both the admin CRUD handlers and the read-side Manager the
+		// context middleware stamps onto every request.
+		deps.FeatureFlagStore = newPGFeatureFlagsStore(pool)
+		deps.FeatureFlagManager = featureflags.NewManager(deps.FeatureFlagStore)
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

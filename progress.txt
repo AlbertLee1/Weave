@@ -2910,3 +2910,23 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
     Same logic applies to any future tightening of the migration
     invariant set (e.g. adding a "must be in a transaction" rule).
 ---
+
+## 2026-04-27 - US-276 Feature Flags 系统
+- Implemented `pkg/featureflags/` package with full Flag model, Manager, Store interface, in-memory store, and admin Handler
+- Added `cmd/server/feature_flags_store.go` with PG-backed pgFeatureFlagsStore satisfying featureflags.Store
+- Added migration 000064_feature_flags.up/down.sql with feature_flags table (name PK, description, enabled, realms[], users[], timestamps), name format CHECK constraint, and partial index on enabled
+- Wired into cmd/server/main.go: `deps.FeatureFlagStore` and `deps.FeatureFlagManager` populated in PG bootstrap; context middleware stamps Manager on every request via `featureflags.WithManager`; admin CRUD routes mounted under PermUserManage
+- Three-layer rollout: Enabled=false → off; Enabled=true + no scopes → on; Enabled=true + Users → match by user.ID; Enabled=true + Realms → match by user.Attributes["realm"]; Users + Realms → OR semantics
+- Fail-closed: nil Manager / nil Store / unknown flag / PG error → HasFlag returns false
+- 13 unit tests covering Flag.EnabledFor scenarios, Manager nil safety, context helpers, admin Handler CRUD + validation + auth gating, in-memory Store CRUD/sort
+- Files changed:
+  - pkg/featureflags/ (new package: flag.go, manager.go, store.go, handlers.go + tests)
+  - cmd/server/feature_flags_store.go (new)
+  - cmd/server/main.go (deps + middleware + route mount)
+  - migrations/000064_feature_flags.up.sql / down.sql (new)
+- **Learnings for future iterations:**
+  - The pgGDPRJobStore pattern (PG-backed Store impl in cmd/server/, not the package itself) is the established way to keep feature packages free of pgx deps. featureflags follows the same shape.
+  - Context helpers (`WithManager` / `ManagerFromContext` / `HasFlag(ctx,...)`) let handlers gate without threading the Manager through every signature — install once in middleware, call `featureflags.HasFlag(ctx, "flagname", user)` anywhere downstream.
+  - Admin routes that depend on a PG-only resource should live in an `if deps.XStore != nil { ... }` block inside the API group so degraded-mode (no PG) deployments don't see mystery handlers and contract tests still see only documented routes.
+  - Flag name format constraint (`^[A-Za-z0-9._-]{1,128}$`) lives both in the SQL CHECK and `ValidateFlagName` to catch invalid names at API boundary before hitting PG.
+---
