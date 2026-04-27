@@ -19,11 +19,15 @@ import (
 
 // Roles permitted on Message.Role. Mirrors the OpenAI / Anthropic chat
 // role taxonomy: a stored thread may have one optional "system" anchor
-// at the top followed by alternating user / assistant turns.
+// at the top followed by alternating user / assistant turns. RoleTool
+// (US-284) carries the result of a function call requested by an
+// assistant message earlier in the thread; it always references the
+// originating tool_call by ToolCallID.
 const (
 	RoleSystem    = "system"
 	RoleUser      = "user"
 	RoleAssistant = "assistant"
+	RoleTool      = "tool"
 )
 
 // Provider names recognised by IsKnownProvider. Any other string is
@@ -60,13 +64,22 @@ type ThreadUpdate struct {
 // Message is one row in aip_messages. ID is a monotonic sequence
 // allocated by the store on Append, so callers compare IDs to order
 // messages within a thread.
+//
+// ToolCalls (US-284) is non-empty on assistant rows that requested one
+// or more function invocations — Content is typically empty in that
+// case and the model is awaiting tool results before continuing.
+// ToolCallID + ToolName are set on RoleTool rows and reference the
+// assistant tool_call being answered.
 type Message struct {
-	ID         int64     `json:"id"`
-	ThreadID   string    `json:"threadId"`
-	Role       string    `json:"role"`
-	Content    string    `json:"content"`
-	TokenCount int       `json:"tokenCount,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID         int64      `json:"id"`
+	ThreadID   string     `json:"threadId"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	TokenCount int        `json:"tokenCount,omitempty"`
+	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
+	ToolCallID string     `json:"toolCallId,omitempty"`
+	ToolName   string     `json:"toolName,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
 }
 
 // threadIDRE matches the canonical thread identifier shape: the same
@@ -122,12 +135,12 @@ func KnownProviders() []string {
 	return []string{ProviderMock, ProviderOpenAI, ProviderAnthropic}
 }
 
-// ValidateRole returns an error when role is not one of the three
+// ValidateRole returns an error when role is not one of the four
 // permitted message roles. Matches the SQL CHECK on aip_messages.role.
 func ValidateRole(role string) error {
 	switch role {
-	case RoleSystem, RoleUser, RoleAssistant:
+	case RoleSystem, RoleUser, RoleAssistant, RoleTool:
 		return nil
 	}
-	return fmt.Errorf("role %q is invalid: must be one of system/user/assistant", role)
+	return fmt.Errorf("role %q is invalid: must be one of system/user/assistant/tool", role)
 }

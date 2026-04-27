@@ -259,6 +259,11 @@ type ServerDeps struct {
 	// when AIPRegistry is wired.
 	AIPStore    aip.Store
 	AIPRegistry *aip.Registry
+	// AIPTools is the ToolRegistry the SendMessage handler resolves
+	// model-requested function calls through (US-284). nil disables
+	// function-calling and the SendMessage loop runs at most one
+	// Provider.Complete cycle (legacy single-turn behaviour).
+	AIPTools *aip.ToolRegistry
 	// US-281: AIP Logic Flow store + executor. The store persists
 	// flow definitions and run rows; the executor walks the DAG via the
 	// AIPRegistry (LLM nodes) + AIPLogicTools (tool nodes). Both nil
@@ -974,6 +979,7 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// 500 instead of dispatching.
 		if deps.AIPStore != nil {
 			aipHandler := aip.NewHandler(deps.AIPStore, deps.AIPRegistry)
+			aipHandler.SetToolRegistry(deps.AIPTools)
 			aipHandler.RegisterRoutes(api)
 		}
 
@@ -1288,7 +1294,13 @@ func main() {
 		deps.AIPStore = newPGAIPStore(pool)
 		aipReg, aipNames := aip.BuildRegistry(aip.LoadEnvConfig())
 		deps.AIPRegistry = aipReg
-		log.Printf("[AIP] thread store wired; providers=%v", aipNames)
+		// US-284 Function Calling Chain: register the built-in echo
+		// tool so the SendMessage loop has at least one resolvable
+		// function out of the box. Custom deployments can wrap and
+		// extend deps.AIPTools.Register(...) before NewFullRouter.
+		deps.AIPTools = aip.NewToolRegistry()
+		deps.AIPTools.Register(&aip.EchoToolHandler{})
+		log.Printf("[AIP] thread store wired; providers=%v tools=%v", aipNames, deps.AIPTools.Names())
 
 		// US-281: AIP Logic Flows store + tool registry. Tool registry
 		// includes the built-in echo / concat tools out of the box.

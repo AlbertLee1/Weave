@@ -1230,8 +1230,8 @@
         "Tests pass"
       ],
       "priority": 85,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "MaxToolCallIterations=8 cap in pkg/aip/handlers.go SendMessage loop; aip.ToolRegistry + ToolHandler + EchoToolHandler scaffolding; ChatRequest.Tools / ChatResponse.ToolCalls + RoleTool messages persisted via migration 000068 (tool_calls JSONB + tool_call_id + tool_name + role check v2). Each Provider.Complete iteration appends an assistant turn (with tool_calls when present) and one RoleTool result per tool invocation, so the thread reflects every step. AIPToolLoopExceeded surfaces when the cap is hit; AIPToolNotFound surfaces when the model hallucinates a tool name. Mock provider enriched with tool-call round-trip behaviour for deterministic tests."
     },
     {
       "id": "US-285",

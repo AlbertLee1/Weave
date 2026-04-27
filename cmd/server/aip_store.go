@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -143,11 +144,20 @@ func (s *pgAIPStore) DeleteThread(ctx context.Context, id string) error {
 func (s *pgAIPStore) AppendMessage(ctx context.Context, m *aip.Message) error {
 	var id int64
 	var createdAt = m.CreatedAt
+	var toolCallsJSON []byte
+	if len(m.ToolCalls) > 0 {
+		buf, err := json.Marshal(m.ToolCalls)
+		if err != nil {
+			return err
+		}
+		toolCallsJSON = buf
+	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO aip_messages (thread_id, role, content, token_count)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO aip_messages (thread_id, role, content, token_count, tool_calls, tool_call_id, tool_name)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, created_at`,
-		m.ThreadID, m.Role, m.Content, m.TokenCount).Scan(&id, &createdAt)
+		m.ThreadID, m.Role, m.Content, m.TokenCount,
+		toolCallsJSON, m.ToolCallID, m.ToolName).Scan(&id, &createdAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "aip_messages_thread_id_fkey") ||
 			strings.Contains(err.Error(), "violates foreign key constraint") {
@@ -175,7 +185,9 @@ func (s *pgAIPStore) ListMessages(ctx context.Context, threadID string) ([]*aip.
 		return nil, aip.ErrThreadNotFound
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, thread_id, role, content, token_count, created_at
+		`SELECT id, thread_id, role, content, token_count,
+		        tool_calls, COALESCE(tool_call_id, ''), COALESCE(tool_name, ''),
+		        created_at
 		 FROM aip_messages WHERE thread_id = $1 ORDER BY id ASC`, threadID)
 	if err != nil {
 		return nil, err
@@ -184,8 +196,15 @@ func (s *pgAIPStore) ListMessages(ctx context.Context, threadID string) ([]*aip.
 	var out []*aip.Message
 	for rows.Next() {
 		var m aip.Message
-		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.TokenCount, &m.CreatedAt); err != nil {
+		var toolCallsJSON []byte
+		if err := rows.Scan(&m.ID, &m.ThreadID, &m.Role, &m.Content, &m.TokenCount,
+			&toolCallsJSON, &m.ToolCallID, &m.ToolName, &m.CreatedAt); err != nil {
 			return nil, err
+		}
+		if len(toolCallsJSON) > 0 {
+			if err := json.Unmarshal(toolCallsJSON, &m.ToolCalls); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, &m)
 	}

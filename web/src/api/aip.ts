@@ -12,13 +12,27 @@ export interface AIPThread {
   updatedAt: string;
 }
 
-// AIPMessage mirrors pkg/aip.Message on the wire.
+// AIPToolCall mirrors pkg/aip.ToolCall on the wire. Present on
+// assistant messages that requested function invocations (US-284).
+export interface AIPToolCall {
+  id: string;
+  name: string;
+  arguments?: unknown;
+}
+
+// AIPMessage mirrors pkg/aip.Message on the wire. Tool-call fields
+// (toolCalls / toolCallId / toolName) are populated on rows produced
+// by the function-calling chain (US-284) and absent on regular
+// system / user / assistant text turns.
 export interface AIPMessage {
   id: number;
   threadId: string;
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   tokenCount?: number;
+  toolCalls?: AIPToolCall[];
+  toolCallId?: string;
+  toolName?: string;
   createdAt: string;
 }
 
@@ -52,6 +66,12 @@ export interface SendMessageRequest {
 export interface SendMessageResponse {
   userMessage: AIPMessage;
   assistantMessage: AIPMessage;
+  // toolMessages carries every RoleTool result the function-calling
+  // chain produced (US-284). Absent / empty on plain chat turns.
+  toolMessages?: AIPMessage[];
+  // iterations is the number of Provider.Complete cycles the
+  // SendMessage loop performed (1 for plain chat).
+  iterations?: number;
 }
 
 export function listThreads(): Promise<ListThreadsResponse> {

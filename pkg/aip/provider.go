@@ -2,6 +2,7 @@ package aip
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,28 +13,68 @@ import (
 // full conversation context the LLM should see, including any system
 // anchor messages and prior assistant responses. Implementations must
 // not mutate the slice or its elements.
+//
+// Tools (US-284) declares the function-calling toolbox the model is
+// allowed to invoke; an empty slice means the request is plain chat
+// without function-calling. Providers that don't support tool calling
+// MUST ignore the field and return ToolCalls=nil.
 type ChatRequest struct {
 	Model       string
 	Messages    []ChatMessage
 	Temperature float64
 	MaxTokens   int
+	Tools       []ToolDef
 }
 
 // ChatMessage is one role/content pair the provider receives. The Role
-// values match RoleSystem / RoleUser / RoleAssistant from thread.go.
+// values match RoleSystem / RoleUser / RoleAssistant / RoleTool from
+// thread.go. ToolCalls is set on assistant rows that requested function
+// invocations; ToolCallID + ToolName are set on RoleTool rows that
+// carry a tool's result back to the model.
 type ChatMessage struct {
-	Role    string
-	Content string
+	Role       string
+	Content    string
+	ToolCalls  []ToolCall
+	ToolCallID string
+	ToolName   string
 }
 
 // ChatResponse is the result returned by Provider.Complete. Content is
 // the assistant's reply; Model echoes back the model that produced it
 // so callers can persist it on the assistant Message row alongside an
-// optional token count for ledger / quota purposes.
+// optional token count for ledger / quota purposes. ToolCalls (US-284)
+// is non-empty when the model wants to invoke one or more tools before
+// producing its final reply; in that case Content is typically empty
+// and the caller is expected to execute the tools, append the results
+// as RoleTool messages, and call Complete again.
 type ChatResponse struct {
 	Content    string
 	Model      string
 	TokenCount int
+	ToolCalls  []ToolCall
+}
+
+// ToolDef is a single function/tool the model may invoke during
+// Complete. Parameters is a JSON Schema object describing the tool's
+// arguments; the provider serialises it verbatim so the format is
+// whatever the upstream LLM API accepts (currently a JSON Schema
+// fragment is the universal shape across OpenAI / Anthropic / etc.).
+type ToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// ToolCall is one tool invocation requested by the model. ID is the
+// opaque correlation handle the model uses to match the tool result
+// back to the call (mirrors OpenAI's `tool_call_id`); callers MUST
+// preserve it on the corresponding RoleTool message. Arguments is the
+// raw JSON object the model produced for this call — providers do not
+// validate it against ToolDef.Parameters.
+type ToolCall struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
 // ErrProviderNotConfigured is returned by SendMessage when a thread is

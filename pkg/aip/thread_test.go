@@ -70,7 +70,7 @@ func TestValidateRole(t *testing.T) {
 		{"system", false},
 		{"user", false},
 		{"assistant", false},
-		{"tool", true},
+		{"tool", false},
 		{"", true},
 		{"USER", true},
 	}

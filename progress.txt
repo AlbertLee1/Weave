@@ -3176,3 +3176,43 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - `{{context}}` + `{{query}}` placeholders match the de-facto LangChain / LlamaIndex convention. Keeping the syntax identical means existing prompt libraries can be ported in unchanged. Don't invent a new `${context}` or `<<context>>` notation just to be different — the cost (every cookbook needs translating) dwarfs the benefit (none).
   - `panic(...)` in NewRetriever for nil deps vs returning an error: fail-fast at boot is correct for THIS surface because the wiring is once-per-process at startup. Returning `(nil, error)` would force every call site into err-checking ceremony for an invariant that's static — the boot path either has the deps or it doesn't. Reserve `error` returns for runtime input validation (`Retrieve(req RetrieveRequest)` IS validated by error return — different surface, different handling).
 ---
+
+## 2026-04-28 - US-284 Function Calling Chain
+- Implemented an LLM function-calling loop in `pkg/aip.Handler.SendMessage`. Each iteration: build chat history → call `Provider.Complete` with `ChatRequest.Tools` from the registry → if response has `ToolCalls`, persist the assistant turn (carrying `tool_calls`), execute every tool via `ToolRegistry.Get`, append a `RoleTool` result message per call, and recurse. Loop hard-capped at `MaxToolCallIterations = 8`; exceed → `AIPToolLoopExceeded` 500.
+- New persistence:
+  - `migrations/000068_aip_messages_tool_calls` adds `tool_calls JSONB` (assistant rows), `tool_call_id TEXT NOT NULL DEFAULT ''` and `tool_name TEXT NOT NULL DEFAULT ''` (tool rows). Drops the old `aip_messages_role_check` and replaces it with `aip_messages_role_check_v2` admitting `tool` alongside `system/user/assistant`.
+  - `pkg/aip.Message` extended with `ToolCalls`, `ToolCallID`, `ToolName` (all `omitempty`).
+  - `MemoryStore` deep-copies `ToolCalls` slices on Append + List so callers don't share mutable state.
+  - `cmd/server/aip_store.go` (PG impl) marshals/unmarshals `ToolCalls` JSON and `COALESCE(...,'')` reads for the two text columns.
+- Provider surface:
+  - `ChatRequest.Tools []ToolDef` declares the toolbox; `ChatResponse.ToolCalls []ToolCall` carries model-issued invocations. `ChatMessage` gained `ToolCalls / ToolCallID / ToolName` so providers see the full function-calling history.
+  - `pkg/aip.MockProvider` now exhibits a deterministic two-turn handshake when `Tools` is non-empty: turn-1 returns a tool call to the first declared tool with `{"text": <last user content>}`; turn-2 (after a `RoleTool` message lands) returns a final assistant text containing the tool result.
+- Wiring & SDK:
+  - `pkg/aip.ToolRegistry` (narrow interface) + `pkg/aip.ToolHandler` + `EchoToolHandler` ship in `tool.go`. `cmd/server/main.go::ServerDeps` gains `AIPTools *aip.ToolRegistry`; PG-backed deployments seed it with the echo handler. `Handler.SetToolRegistry` is the wire point so degraded-mode test routers leave it nil and observe the legacy single-turn contract.
+  - `web/src/api/aip.ts` mirrors the new fields (`AIPToolCall`, `toolCalls?`, `toolCallId?`, `toolName?`, `toolMessages?`, `iterations?`) and broadens `AIPMessage.role` to include `tool`.
+- Tests:
+  - `pkg/aip/tool_test.go` covers Register / Get / nil-safety / Definitions sort / EchoToolHandler.
+  - `pkg/aip/function_chain_test.go` drives the full loop with a `scriptedProvider`: one-tool-call happy path, tool-result-fed-back-on-next-turn, max-iteration cap → `AIPToolLoopExceeded`, unknown tool → `AIPToolNotFound`, no-tool-registry single-turn fallback, `ChatRequest.Tools` actually forwarded, and a Mock-provider round-trip test.
+- Files changed:
+  - `migrations/000068_aip_messages_tool_calls.up.sql` / `.down.sql` (new)
+  - `pkg/aip/provider.go` (Tools / ToolDef / ToolCall + ChatMessage extensions)
+  - `pkg/aip/thread.go` (`RoleTool` constant + Message tool fields + ValidateRole accepts tool)
+  - `pkg/aip/thread_test.go` (ValidateRole table fix)
+  - `pkg/aip/store.go` (deep-copy of ToolCalls)
+  - `pkg/aip/handlers.go` (SendMessage loop + buildChatRequest carries new fields)
+  - `pkg/aip/mock_provider.go` (function-calling round-trip)
+  - `pkg/aip/tool.go` (new ToolHandler + ToolRegistry)
+  - `pkg/aip/tool_test.go` (new)
+  - `pkg/aip/function_chain_test.go` (new)
+  - `cmd/server/aip_store.go` (PG persistence of tool fields)
+  - `cmd/server/main.go` (deps.AIPTools wiring + Handler.SetToolRegistry)
+  - `web/src/api/aip.ts` (TS types mirror the new fields)
+  - `prd.json` (US-284 passes=true)
+- **Learnings for future iterations:**
+  - Function-calling needs THREE wire-level shapes to round-trip: (1) `ChatRequest.Tools` (declared toolbox forwarded into the provider), (2) assistant rows carrying `ToolCalls` (the model's issued calls), (3) `RoleTool` rows carrying `ToolCallID + ToolName + Content` (the tool's response). Skipping any one of them breaks providers that re-derive their internal state from the message history (Anthropic's wire form especially). Persist all three on both the wire and the store from day one so a future "send the WHOLE history to a different provider" path stays faithful.
+  - Tool-loop termination: ALWAYS persist the assistant turn FIRST inside each loop iteration — even when ToolCalls is non-empty and Content is empty. That row is what the next iteration's `ListMessages` needs to feed back so the provider doesn't see the user message twice. Skipping the persist on tool-call turns produces a 2x duplicated user-prompt in the next call.
+  - Loop-exceeded vs loop-aborted: when the loop hits the cap, return a structured error (`AIPToolLoopExceeded`) AFTER all the partial assistant + tool messages are already persisted. The thread reflects exactly what the model + tools produced; the operator sees a clear cap-hit error; SDKs can surface "loop didn't terminate, partial state in the thread". Truncating early without persisting partial state would lose audit detail; overwriting / rolling back would mask the actual model behaviour.
+  - Mock-provider tool round-trip rule of thumb: `len(req.Tools) > 0 && !hasToolResult(req.Messages)` ⇒ emit a tool call; otherwise produce final text. This shape is enough to drive the full loop deterministically without HTTP transport, and it generalises to any handshake protocol with a "I'm not done yet, give me X first" turn. Don't try to hardcode the iteration count — drive the state machine off message-history shape so the same mock works for 1-tool-call and N-tool-call test scenarios alike.
+  - `OMIT_NULL` JSONB ↔ Go nil-slice round-trip: pgx encodes a nil `[]byte` argument as SQL NULL, which is the correct shape for "no tool calls on this row". On the read side, `len(toolCallsJSON) > 0` guard avoids `json.Unmarshal(nil, &dst)` returning the zero-value `*[]ToolCall`, which would mask a malformed payload as "no tool calls" silently. Always pair the write-side nil check with a read-side length guard.
+  - Constraint rename via DROP-old + ADD-new (vs ALTER): the role CHECK constraint is widened from `(system|user|assistant)` to `(system|user|assistant|tool)` by dropping `aip_messages_role_check` and adding `aip_messages_role_check_v2`. PG's CHECK has no `IF NOT EXISTS` shorthand for narrowing/widening, but the DROP + ADD pair inside `DO $$ ... END$$` blocks is idempotent and forward-compat (no column drops, only constraint surgery). The `_v2` suffix preserves audit trail / migration history without confusing anyone re-applying earlier migrations.
+---

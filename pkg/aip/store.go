@@ -158,6 +158,9 @@ func (s *MemoryStore) AppendMessage(_ context.Context, m *Message) error {
 		m.CreatedAt = time.Now().UTC()
 	}
 	cp := *m
+	if len(m.ToolCalls) > 0 {
+		cp.ToolCalls = append([]ToolCall(nil), m.ToolCalls...)
+	}
 	s.messages[m.ThreadID] = append(s.messages[m.ThreadID], &cp)
 	t.UpdatedAt = m.CreatedAt
 	return nil
@@ -176,6 +179,9 @@ func (s *MemoryStore) ListMessages(_ context.Context, threadID string) ([]*Messa
 	out := make([]*Message, 0, len(src))
 	for _, m := range src {
 		cp := *m
+		if len(m.ToolCalls) > 0 {
+			cp.ToolCalls = append([]ToolCall(nil), m.ToolCalls...)
+		}
 		out = append(out, &cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
