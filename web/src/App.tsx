@@ -24,6 +24,7 @@ import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
+import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,6 +64,7 @@ export default function App() {
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="threads" element={<ThreadsPage />} />
+              <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />

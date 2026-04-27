@@ -1202,8 +1202,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 83,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "@xyflow/react v12 (the renamed reactflow) added at web/package.json; new web/src/components/aiplogic/LogicFlowsPage.tsx renders three-pane layout (flow list + ReactFlow canvas + node config panel); node-config panel exposes per-type fields (LLM provider/model/promptTemplate/systemPrompt, Tool name + JSON params, If condition, Output keys); toolbar adds new nodes / saves / runs the flow with JSON input; canvas position persisted into config.__editorPosition (backend ignores unknown keys); /logic-flows route + 'AIP Logic' sidebar entry; api/aipLogic.ts + hooks/useAIPLogicFlows.ts mirror pkg/aip/logic wire types; 9 RTL tests pass (mocking @xyflow/react to bypass jsdom layout limits); typecheck + production vite build green; web-side full vitest suite 514/514."
     },
     {
       "id": "US-283",
