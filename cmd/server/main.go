@@ -51,6 +51,7 @@ import (
 	"github.com/liyang/weave/pkg/pipeline/quality"
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
+	"github.com/liyang/weave/pkg/actiontemplates"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -318,6 +319,11 @@ type ServerDeps struct {
 	// /api/v2/saved-searches/* routes stay unmounted and the SPA's
 	// SavedSearchesPanel hides itself when the list endpoint 404s.
 	SavedSearchesStore savedsearches.Store
+	// US-320: Action parameter templates per-user CRUD store. nil in
+	// degraded mode so /api/v2/action-templates/* routes stay unmounted
+	// and the Action Console's templates panel hides itself when the
+	// list endpoint 404s.
+	ActionTemplatesStore actiontemplates.Store
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1122,6 +1128,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.SavedSearchesStore != nil {
 			savedsearches.NewHandler(deps.SavedSearchesStore).RegisterRoutes(api)
 		}
+
+		// US-320: Action parameter templates per-user CRUD. Same
+		// degraded-mode shape as saved searches — the SPA hides the
+		// templates panel when the list endpoint 404s.
+		if deps.ActionTemplatesStore != nil {
+			actiontemplates.NewHandler(deps.ActionTemplatesStore).RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1472,6 +1485,11 @@ func main() {
 		// /api/v2/saved-searches/* routes used by the Browser page.
 		deps.SavedSearchesStore = newPGSavedSearchesStore(pool)
 		log.Printf("[savedsearches] store wired")
+
+		// US-320: Action parameter templates store. Backs the
+		// /api/v2/action-templates/* routes used by the Action Console.
+		deps.ActionTemplatesStore = newPGActionTemplatesStore(pool)
+		log.Printf("[actiontemplates] store wired")
 
 		// US-289: Pipeline cron scheduler. Walks the store at boot and
 		// arms a robfig/cron entry for every enabled pipeline carrying a

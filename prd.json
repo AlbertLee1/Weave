@@ -1736,8 +1736,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 121,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000075 action_parameter_templates table + pkg/actiontemplates (model/Store/MemoryStore/Handler) + cmd/server pgActionTemplatesStore wired via deps.ActionTemplatesStore (degraded-mode skip). Per-(owner, actionType, name) uniqueness; shared flag widens read access only (Update/Delete remain owner-only — non-owners 404 even on shared rows). Cross-user private GET 404 to prevent id leak. Frontend: web/src/api/actionTemplates.ts + useActionTemplates hooks + ActionTemplatesPanel mounted in ActionConsolePage right column. 6 RTL tests + 4 Go test cases (handler 4 + store 1 + IDshape 1). vitest 618/618; tsc clean; vite build clean; eslint clean; go test -short ./... green; contract trio green (no OpenAPI change — same routing-without-spec pattern as savedsearches/featureflags/aip-threads). dev-browser skill not available in this harness — manual browser verification still owed."
     },
     {
       "id": "US-321",

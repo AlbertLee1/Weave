@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { useParams } from 'react-router';
 import {
   useActionTypes,
@@ -10,9 +10,11 @@ import type { ActionType, ActionApplyResponse } from '../../api/types';
 import { ApiRequestError } from '../../api/client';
 import { ParameterForm } from './ParameterForm';
 import { ActionResult } from './ActionResult';
+import { ActionTemplatesPanel } from './ActionTemplatesPanel';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { useToastStore } from '../../stores/toastStore';
+import { AuthContext } from '../../auth/AuthContext';
 
 export function ActionConsolePage() {
   const { ontology } = useParams<{ ontology: string }>();
@@ -21,6 +23,13 @@ export function ActionConsolePage() {
   const revertMutation = useRevertActionLog(ontology ?? '');
   const pushToast = useToastStore((s) => s.push);
   const dismissToast = useToastStore((s) => s.dismiss);
+  // Use the AuthContext directly (rather than useAuth) so unit tests
+  // mounting this page without an AuthProvider don't have to grow a
+  // wrapper. Templates owned by the authenticated caller gain a
+  // delete affordance; without a context the panel still works for
+  // load-and-save against the caller's id (decided server-side).
+  const authCtx = useContext(AuthContext);
+  const currentUserId = authCtx?.user?.id;
 
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
@@ -232,6 +241,16 @@ export function ActionConsolePage() {
                 )}
               </div>
             </div>
+
+            {/* Parameter templates panel — save / load named parameter sets. */}
+            <ActionTemplatesPanel
+              ontology={ontology}
+              actionType={selectedAction.apiName}
+              currentParameters={paramValues}
+              hasCurrentState={Object.keys(paramValues).length > 0}
+              onLoad={(parameters) => setParamValues({ ...parameters })}
+              currentUserId={currentUserId}
+            />
 
             {/* Parameters form */}
             <div>

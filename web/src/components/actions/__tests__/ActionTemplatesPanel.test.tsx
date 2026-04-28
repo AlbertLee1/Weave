@@ -1,0 +1,240 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createElement } from 'react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ActionTemplatesPanel } from '../ActionTemplatesPanel';
+import * as api from '../../../api/actionTemplates';
+import type { ActionTemplate } from '../../../api/actionTemplates';
+
+function makeWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
+  });
+  return ({ children }: { children: React.ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children);
+}
+
+function renderWithProviders(ui: React.ReactElement) {
+  const Wrapper = makeWrapper();
+  return render(ui, { wrapper: Wrapper });
+}
+
+const OWN_ROW: ActionTemplate = {
+  id: 'tmpl-1',
+  name: 'Daily Reorder',
+  ontology: 'main',
+  actionType: 'createOrder',
+  createdBy: 'user:alice',
+  shared: false,
+  parameters: { qty: 1, sku: 'WIDGET' },
+  createdAt: '2026-04-28T00:00:00Z',
+  updatedAt: '2026-04-28T00:00:00Z',
+};
+
+const SHARED_ROW: ActionTemplate = {
+  id: 'tmpl-2',
+  name: 'Team Default',
+  ontology: 'main',
+  actionType: 'createOrder',
+  createdBy: 'user:bob',
+  shared: true,
+  parameters: { qty: 5 },
+  createdAt: '2026-04-28T00:00:00Z',
+  updatedAt: '2026-04-28T00:00:00Z',
+};
+
+describe('ActionTemplatesPanel', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows empty state when there are no templates', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [],
+    });
+
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{}}
+        hasCurrentState={false}
+        onLoad={() => {}}
+        currentUserId="user:alice"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('action-templates-empty')).toBeInTheDocument(),
+    );
+  });
+
+  it('renders own + shared rows; loading delivers parameters to onLoad', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [OWN_ROW, SHARED_ROW],
+    });
+    const onLoad = vi.fn();
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{}}
+        hasCurrentState={false}
+        onLoad={onLoad}
+        currentUserId="user:alice"
+      />,
+    );
+
+    // Own row: load button + delete button visible.
+    await screen.findByTestId(`action-template-load-${OWN_ROW.id}`);
+    expect(
+      screen.queryByTestId(`action-template-delete-${OWN_ROW.id}`),
+    ).toBeInTheDocument();
+
+    // Shared row: load button visible, delete button hidden (non-owner).
+    expect(
+      screen.getByTestId(`action-template-load-${SHARED_ROW.id}`),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`action-template-delete-${SHARED_ROW.id}`),
+    ).toBeNull();
+    expect(
+      screen.getByTestId(`action-template-shared-badge-${SHARED_ROW.id}`),
+    ).toBeInTheDocument();
+
+    // Click load on a shared row → onLoad gets bob's parameters.
+    fireEvent.click(screen.getByTestId(`action-template-load-${SHARED_ROW.id}`));
+    expect(onLoad).toHaveBeenCalledWith({ qty: 5 });
+  });
+
+  it('save button is disabled when no parameters are filled in', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [],
+    });
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{}}
+        hasCurrentState={false}
+        onLoad={() => {}}
+        currentUserId="user:alice"
+      />,
+    );
+    const btn = await screen.findByTestId('action-template-save');
+    expect(btn).toBeDisabled();
+  });
+
+  it('save flow opens dialog, posts to API with shared flag', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [],
+    });
+    const created: ActionTemplate = {
+      ...OWN_ROW,
+      id: 'tmpl-3',
+      name: 'Express',
+      shared: true,
+    };
+    const createSpy = vi
+      .spyOn(api, 'createActionTemplate')
+      .mockResolvedValue(created);
+
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{ qty: 2 }}
+        hasCurrentState={true}
+        onLoad={() => {}}
+        currentUserId="user:alice"
+      />,
+    );
+
+    const saveBtn = await screen.findByTestId('action-template-save');
+    fireEvent.click(saveBtn);
+
+    const nameInput = await screen.findByTestId('action-template-name-input');
+    await act(async () => {
+      fireEvent.change(nameInput, { target: { value: 'Express' } });
+    });
+    const sharedCheckbox = screen.getByTestId('action-template-shared-input');
+    await act(async () => {
+      fireEvent.click(sharedCheckbox);
+    });
+
+    const confirm = screen.getByTestId('action-template-confirm');
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+
+    await waitFor(() => expect(createSpy).toHaveBeenCalled());
+    expect(createSpy.mock.calls[0][0]).toMatchObject({
+      name: 'Express',
+      ontology: 'main',
+      actionType: 'createOrder',
+      shared: true,
+      parameters: { qty: 2 },
+    });
+  });
+
+  it('delete button calls API after window.confirm true', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [OWN_ROW],
+    });
+    const delSpy = vi
+      .spyOn(api, 'deleteActionTemplate')
+      .mockResolvedValue(undefined as void);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{}}
+        hasCurrentState={false}
+        onLoad={() => {}}
+        currentUserId="user:alice"
+      />,
+    );
+
+    const delBtn = await screen.findByTestId(
+      `action-template-delete-${OWN_ROW.id}`,
+    );
+    await act(async () => {
+      fireEvent.click(delBtn);
+    });
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => expect(delSpy).toHaveBeenCalledWith(OWN_ROW.id));
+  });
+
+  it('hides delete affordance when currentUserId is undefined', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [OWN_ROW],
+    });
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{}}
+        hasCurrentState={false}
+        onLoad={() => {}}
+      />,
+    );
+    await screen.findByTestId(`action-template-load-${OWN_ROW.id}`);
+    expect(
+      screen.queryByTestId(`action-template-delete-${OWN_ROW.id}`),
+    ).toBeNull();
+  });
+});
