@@ -112,6 +112,7 @@ export function Sidebar() {
 
   const navItems: NavItem[] = [
     { to: '/', label: 'Dashboard', icon: 'grid' },
+    { to: '/dashboards', label: 'Dashboards', icon: 'bar-chart' },
     {
       to: activeOntology ? `/objectsets/${activeOntology}` : '/',
       label: 'Query Builder',

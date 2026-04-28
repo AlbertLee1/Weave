@@ -1834,8 +1834,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 128,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DashboardEditorPage 挂在 /dashboards 路由（Shell Sidebar 加 'Dashboards' 链接 — 与 'Dashboard' 完整字串区分），12-column × 60px-row CSS-grid 布局承载 Widget 集。沿用 US-324/325/326 同款决策：PRD 字面提 react-grid-layout，库未装且 react-resizable + react-draggable 全套 ~80KB 没有其他消费方 — 改用原生 HTML5 DnD（DND_MIME='application/x-weave-dashboard'），dataTransfer 序列化 {id, kind:'move'|'resize', offsetX, offsetY}。Move：snap top-left 到 cursor - dragStart offset；Resize：bottom-right anchor，新 w/h = (cursor - widget origin) / cell。clamp x∈[0, 12-w]、w∈[1, 12-x]、h≥1。Widget shape: {id, type:'text', title, content, x, y, w, h}（type 字面只有 'text'，US-328 引入 chart/table/stat/map）。Add Widget 按 findFirstFreeRow 把新 widget 落在最末行；Remove 走 setState filter；Configure 内联展开 title + content textarea，关闭后渲染回只读视图（占位文 'Click ⚙ to configure'）。8 RTL 测试覆盖 empty placeholder/add/y-stack/configure-roundtrip/remove/drag-move/resize/clamp。fireEvent.drop 不传 clientX 是 RTL 已知问题，用 createEvent.<type>(target) + Object.defineProperty 注入 clientX/Y 是支持的解；新 helper fireDragWithCoords 是后续 DnD 类故事的可复用件。vitest 96/657（+8 from 649），tsc 0 errors，eslint 0 warnings，vite build 2.61s 无新告警。Browser 手测仍欠款（dev-browser skill 在本 harness 不可用）。"
     },
     {
       "id": "US-328",
