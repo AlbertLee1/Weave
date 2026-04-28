@@ -133,6 +133,11 @@ export function Sidebar() {
       icon: 'check',
     });
   }
+  navItems.push({
+    to: '/schema/infer',
+    label: 'Schema Inference',
+    icon: 'compass',
+  });
 
   const adminItems: NavItem[] = activeOntology
     ? [

@@ -1315,8 +1315,8 @@
         "Tests pass"
       ],
       "priority": 91,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/pipeline/schema: connector-agnostic InferCSV / InferJSON / InferNDJSON walking a 1000-row sample (DefaultSampleRows; MaxSampleRows=100k cap, SampleValueLimit=5 retained per field). Per-column candidate-narrow lattice: integer (32-bit) → long (>int32) → double (any '.'/exp), boolean (true/false), date (YYYY-MM-DD only — slash forms rejected to avoid locale ambiguity), timestamp (RFC3339 + space separator + nanos), with any conflict widening to string and sticking. NULL detection covers blanks + 'NULL'/'null'/'\\N' sentinels and mid-row absence in JSON; backfilled into prior rows when a key first appears late. CSV reader honours custom delimiter (comma default, tab/semicolon/pipe), tolerates ragged rows by null-padding/truncating with a WarningCount, and detects truncation by attempting one extra read past the budget. JSON path uses json.Decoder + UseNumber so int-vs-float distinction survives; NDJSON uses bufio.Scanner with 1MiB line cap and skips blank lines silently. POST /api/v2/pipelines/schema/infer (gated on PipelineStore wired — same convention as the rest of the pipeline surface so contract-trio routers stay silent), inline-sample body capped at 8MiB via http.MaxBytesReader → SampleTooLarge 400, with MissingSample / UnsupportedFormat / InvalidDelimiter typed errors. Frontend: web/src/api/schemaInference.ts client + SchemaInferencePage at /schema/infer with drag-drop (auto-detects format from file suffix .csv/.tsv/.json/.ndjson/.jsonl + body shape), paste fallback, per-column rename / type-override (string/integer/long/double/boolean/date/timestamp) / nullable-toggle / include-skip, and Download schema.json button. Sidebar 'Schema Inference' nav entry uses the compass icon. 32 backend tests (22 inference + 10 handler) + 5 RTL UI tests; total vitest 510 pass; go test ./... clean; go vet ./pkg/pipeline/schema clean."
     },
     {
       "id": "US-291",

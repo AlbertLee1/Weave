@@ -47,6 +47,7 @@ import (
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/pipeline"
+	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -1048,6 +1049,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				pipelineHandler.SetScheduler(deps.PipelineScheduler)
 			}
 			pipelineHandler.RegisterRoutes(api)
+
+			// US-290: Schema inference preview. Stateless and
+			// gated on PG-mode (PipelineStore wired) so the
+			// contract router (which does not wire it) stays
+			// silent on this route — same pattern as the rest of
+			// the pipeline authoring surface.
+			pipelineschema.NewHandler().RegisterRoutes(api)
 		}
 	})
 

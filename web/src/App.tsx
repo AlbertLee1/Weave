@@ -22,6 +22,7 @@ import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
+import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
 import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
@@ -70,6 +71,7 @@ export default function App() {
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="import/:ontology" element={<ImportWizardPage />} />
+              <Route path="schema/infer" element={<SchemaInferencePage />} />
               <Route path="developer/playground" element={<PlaygroundPage />} />
               <Route path="developer/metrics" element={<MetricsPage />} />
               <Route
