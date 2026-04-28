@@ -1875,8 +1875,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 131,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/lib/objectSetDiff.ts 纯函数 diffObjectSets(a,b) 按 __primaryKey 归类 onlyInA / onlyInB / changed (字段级 fieldChanges)，envelope 键 __rid/__primaryKey/__apiName 不参与字段比较，object/array 走 deepEqual，数字与字符串 PK 通过 String() 归一。新页 ObjectSetDiffPage 走 /objectsets/:ontology/diff 路由：用户从 useSavedObjectSets 选 A/B 两份 saved ObjectSet，先 GET objectTypes/{root} 拿全部属性做 select，再 Promise.all 两次 loadObjectSet (pageSize=500)，前端跑 diff，三段式渲染 (data-testid=diff-only-in-a / diff-only-in-b / diff-changed)，changed 段用 rowSpan 在第一字段行显示 PK，其余字段并列显示 A/B 值。ObjectSetPage header 右侧加 'Diff' 链接做导航。staticRootType helper 复用 ObjectSetComposer 的解析规则，遇到 searchAround / interfaceLinkSearchAround 等无法静态解析的类型直接抛错让用户重选。新增 13 个单元测试 (12 lib + 4 page)，全 frontend 套件 689 通过、tsc 0、go build 0。dev-browser skill 在当前 harness 不可用，浏览器手测仍待跟进。"
     },
     {
       "id": "US-331",

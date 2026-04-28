@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
 import {
   useCreateTemporaryObjectSet,
@@ -127,6 +127,12 @@ export function ObjectSetPage() {
             {ontologyApiName}
           </p>
         </div>
+        <Link
+          to={`/objectsets/${ontologyApiName}/diff`}
+          className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+        >
+          Diff
+        </Link>
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[2fr_3fr] overflow-hidden">
