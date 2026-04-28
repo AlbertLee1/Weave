@@ -129,11 +129,22 @@ func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, proper
 			// contributions revert correctly even when an update moves an
 			// object out of scope).
 			if sub.Aggregator.Apply(state, objectType, primaryKey, properties) {
+				if !conn.allowEvent() {
+					conn.markOverflow(sub.ID)
+					continue
+				}
 				sendAggregationChanged(conn, sub.ID, sub.Aggregator.Snapshot())
 			}
 			continue
 		}
 		if !sub.matches(objectType, primaryKey, properties) {
+			continue
+		}
+		// US-308: per-connection event rate limit. Excess events drop and
+		// surface to the client via the existing onOutOfDate path so the
+		// client can resync rather than silently miss state.
+		if !conn.allowEvent() {
+			conn.markOverflow(sub.ID)
 			continue
 		}
 		projected := sub.ProjectProperties(properties)
@@ -183,6 +194,12 @@ func (h *Hub) handleSubscribe(c *Connection, raw json.RawMessage) Message {
 			Error: "maximum subscriptions per connection reached (10)",
 		}
 	}
+	if !h.reserveUserSubLocked(c.userID) {
+		return Message{
+			Type:  "error",
+			Error: "maximum subscriptions per user reached",
+		}
+	}
 
 	sub := NewSubscription(req)
 	c.subscriptions[sub.ID] = sub
@@ -217,6 +234,7 @@ func (h *Hub) handleUnsubscribe(c *Connection, raw json.RawMessage) Message {
 	}
 	delete(c.subscriptions, req.SubscriptionID)
 	h.removeFromIndexLocked(sub)
+	h.releaseUserSubsLocked(c.userID, 1)
 
 	return Message{
 		Type:           "unsubscribed",

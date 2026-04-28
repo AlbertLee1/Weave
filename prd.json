@@ -1567,8 +1567,8 @@
         "Tests pass"
       ],
       "priority": 109,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Per-user subscription quota (HubConfig.MaxSubscriptionsPerUser, default 50) enforced across user connections, with per-connection event rate limit (HubConfig.EventRateLimit, default 100/sec) backed by a rolling-window FIFO and onOutOfDate fall-through."
     },
     {
       "id": "US-309",

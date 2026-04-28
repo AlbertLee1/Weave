@@ -546,6 +546,14 @@ func (h *Hub) handleSubscribeAggregation(c *Connection, raw json.RawMessage) Mes
 			Error: "maximum subscriptions per connection reached (10)",
 		}
 	}
+	if !h.reserveUserSubLocked(c.userID) {
+		c.subMu.Unlock()
+		h.mu.Unlock()
+		return Message{
+			Type:  "error",
+			Error: "maximum subscriptions per user reached",
+		}
+	}
 	sub := newAggregationSubscription(req, agg)
 	c.subscriptions[sub.ID] = sub
 	h.addToIndexLocked(c, sub)

@@ -36,18 +36,22 @@ func NewHandler(hub *Hub, validate TokenValidator) *Handler {
 }
 
 // ServeHTTP implements http.Handler. It checks the ?token= query parameter
-// against the validator (if configured) before upgrading to WebSocket.
+// against the validator (if configured) before upgrading to WebSocket. The
+// userID returned by the validator is forwarded to HandleWSWithUser so the
+// per-user subscription quota tracks every connection the user holds open.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var userID string
 	if h.validate != nil {
 		token := r.URL.Query().Get("token")
-		_, err := h.validate(token)
+		uid, err := h.validate(token)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewUnauthorized("InvalidToken", map[string]string{
 				"reason": "Bearer token in ?token= query parameter is required",
 			}))
 			return
 		}
+		userID = uid
 	}
 
-	h.hub.HandleWS(w, r)
+	h.hub.HandleWSWithUser(w, r, userID)
 }

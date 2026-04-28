@@ -205,6 +205,12 @@ func (h *Hub) handleSubscribeObjectSet(c *Connection, raw json.RawMessage) Messa
 			Error: "maximum subscriptions per connection reached (10)",
 		}
 	}
+	if !h.reserveUserSubLocked(c.userID) {
+		return Message{
+			Type:  "error",
+			Error: "maximum subscriptions per user reached",
+		}
+	}
 
 	sub := newObjectSetSubscription(def, req.Select)
 	c.subscriptions[sub.ID] = sub

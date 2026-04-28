@@ -31,6 +31,22 @@ type HubConfig struct {
 	HeartbeatTimeout     time.Duration // pong deadline; default 60s
 	SendBufferSize       int           // per-connection outbound buffer; default 64
 	AggregationScanLimit int           // initial scan size for aggregation subscriptions; default 10000
+
+	// MaxSubscriptionsPerUser caps how many active subscriptions a single
+	// authenticated user may hold across ALL their open connections. Zero
+	// disables the per-user cap entirely (the per-connection cap still
+	// applies). Anonymous / dev-mode connections (empty userID) bypass the
+	// cap regardless. Default: 50.
+	MaxSubscriptionsPerUser int
+
+	// EventRateLimit is the maximum number of outbound change-event messages
+	// pushed to a single connection within EventRateWindow. Excess events
+	// are dropped and the affected subscription is marked out-of-date so the
+	// client can resync. Zero disables rate limiting. Default: 100.
+	EventRateLimit int
+	// EventRateWindow is the rolling window over which EventRateLimit is
+	// counted. Default: 1 second.
+	EventRateWindow time.Duration
 }
 
 func (cfg *HubConfig) applyDefaults() {
@@ -46,16 +62,26 @@ func (cfg *HubConfig) applyDefaults() {
 	if cfg.AggregationScanLimit == 0 {
 		cfg.AggregationScanLimit = 10000
 	}
+	if cfg.MaxSubscriptionsPerUser == 0 {
+		cfg.MaxSubscriptionsPerUser = 50
+	}
+	if cfg.EventRateLimit == 0 {
+		cfg.EventRateLimit = 100
+	}
+	if cfg.EventRateWindow == 0 {
+		cfg.EventRateWindow = time.Second
+	}
 }
 
 // Connection wraps a single WebSocket connection with its metadata and a
 // buffered outbound message channel. The read and write goroutines are
 // managed by the Hub.
 type Connection struct {
-	id   string
-	conn *websocket.Conn
-	send chan Message
-	done chan struct{} // closed when the connection's goroutines have exited
+	id     string
+	userID string // authenticated user ID; empty for anonymous / dev-mode connections
+	conn   *websocket.Conn
+	send   chan Message
+	done   chan struct{} // closed when the connection's goroutines have exited
 
 	// Subscription management (US-133). Protected by subMu.
 	subMu         sync.Mutex
@@ -65,6 +91,52 @@ type Connection struct {
 	// Overflow tracking (US-134). Protected by overflowMu.
 	overflowMu   sync.Mutex
 	overflowSubs map[string]bool
+
+	// Rate limiting (US-308). Protected by rateMu. Rolling FIFO of recent
+	// outbound event timestamps; admit checks evict expired entries before
+	// deciding whether the next event fits within the window. nil rate
+	// limiter (limit<=0 || window<=0) is a pass-through.
+	rateMu     sync.Mutex
+	rateLimit  int
+	rateWindow time.Duration
+	rateStamps []time.Time
+	nowFunc    func() time.Time
+}
+
+// allowEvent reports whether one more outbound event may be pushed to this
+// connection right now. A zero / disabled limiter always allows. Otherwise
+// timestamps older than the window are evicted and the call is admitted iff
+// the surviving bucket is below the limit.
+func (c *Connection) allowEvent() bool {
+	if c == nil || c.rateLimit <= 0 || c.rateWindow <= 0 {
+		return true
+	}
+	c.rateMu.Lock()
+	defer c.rateMu.Unlock()
+
+	now := c.now()
+	cutoff := now.Add(-c.rateWindow)
+	keep := 0
+	for _, t := range c.rateStamps {
+		if t.After(cutoff) {
+			c.rateStamps[keep] = t
+			keep++
+		}
+	}
+	c.rateStamps = c.rateStamps[:keep]
+
+	if len(c.rateStamps) >= c.rateLimit {
+		return false
+	}
+	c.rateStamps = append(c.rateStamps, now)
+	return true
+}
+
+func (c *Connection) now() time.Time {
+	if c.nowFunc != nil {
+		return c.nowFunc()
+	}
+	return time.Now()
 }
 
 // markOverflow records that a subscription missed events due to buffer overflow.
@@ -103,6 +175,7 @@ type Hub struct {
 	mu              sync.Mutex
 	conns           map[string]*Connection
 	subIndex        map[string][]*indexedSub // objectType → routing fanout list (US-306)
+	userSubs        map[string]int           // authenticated userID → live subscription count (US-308)
 	ctx             context.Context
 	stop            context.CancelFunc
 	config          HubConfig
@@ -123,6 +196,7 @@ func NewHubWithConfig(cfg HubConfig) *Hub {
 	return &Hub{
 		conns:    make(map[string]*Connection),
 		subIndex: make(map[string][]*indexedSub),
+		userSubs: make(map[string]int),
 		ctx:      ctx,
 		stop:     stop,
 		config:   cfg,
@@ -171,8 +245,17 @@ func (h *Hub) ConnectionCount() int {
 
 // HandleWS is the HTTP handler that upgrades an HTTP request to a WebSocket
 // connection and registers it with the Hub. It blocks for the lifetime of
-// the connection.
+// the connection. Anonymous variant — for authenticated callers prefer
+// HandleWSWithUser so the per-user subscription quota applies.
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	h.HandleWSWithUser(w, r, "")
+}
+
+// HandleWSWithUser is the user-scoped variant of HandleWS. The userID is
+// recorded on the connection and used to enforce HubConfig.MaxSubscriptionsPerUser
+// across every connection the user holds open. An empty userID falls back to
+// the anonymous-quota-bypassed path.
+func (h *Hub) HandleWSWithUser(w http.ResponseWriter, r *http.Request, userID string) {
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // origin check handled at routing layer
 	})
@@ -189,12 +272,15 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	connID := uuid.New().String()
 	c := &Connection{
 		id:            connID,
+		userID:        userID,
 		conn:          wsConn,
 		send:          make(chan Message, h.config.SendBufferSize),
 		done:          make(chan struct{}),
 		subscriptions: make(map[string]*Subscription),
 		overflowSubs:  make(map[string]bool),
 		hub:           h,
+		rateLimit:     h.config.EventRateLimit,
+		rateWindow:    h.config.EventRateWindow,
 	}
 
 	h.register(c)
@@ -314,8 +400,65 @@ func (h *Hub) unregister(connID string) {
 	defer h.mu.Unlock()
 	if c, ok := h.conns[connID]; ok {
 		h.removeConnectionFromIndexLocked(c)
+		// Decrement the per-user counter by however many subscriptions the
+		// connection still held at disconnect time so the user's allowance
+		// reopens cleanly.
+		if c.userID != "" {
+			c.subMu.Lock()
+			h.releaseUserSubsLocked(c.userID, len(c.subscriptions))
+			c.subMu.Unlock()
+		}
 	}
 	delete(h.conns, connID)
+}
+
+// reserveUserSubLocked attempts to claim one subscription slot for userID
+// against MaxSubscriptionsPerUser. Returns true on success. Empty userID or
+// MaxSubscriptionsPerUser <= 0 always succeeds without bookkeeping (anonymous
+// / dev-mode connections bypass the per-user cap). Caller must hold h.mu.
+func (h *Hub) reserveUserSubLocked(userID string) bool {
+	if userID == "" || h.config.MaxSubscriptionsPerUser <= 0 {
+		return true
+	}
+	if h.userSubs == nil {
+		h.userSubs = make(map[string]int)
+	}
+	if h.userSubs[userID] >= h.config.MaxSubscriptionsPerUser {
+		return false
+	}
+	h.userSubs[userID]++
+	return true
+}
+
+// releaseUserSubsLocked returns n subscription slots to userID's allowance.
+// Caller must hold h.mu. Empty userID is a no-op.
+func (h *Hub) releaseUserSubsLocked(userID string, n int) {
+	if userID == "" || n <= 0 {
+		return
+	}
+	if h.userSubs == nil {
+		return
+	}
+	cur := h.userSubs[userID]
+	cur -= n
+	if cur <= 0 {
+		delete(h.userSubs, userID)
+		return
+	}
+	h.userSubs[userID] = cur
+}
+
+// UserSubscriptionCount reports the live subscription count for an
+// authenticated user across every open connection. Returns 0 for unknown or
+// empty userIDs. Used by tests; callers should not rely on the value being
+// monotonic across concurrent subscribe/unsubscribe traffic.
+func (h *Hub) UserSubscriptionCount(userID string) int {
+	if userID == "" {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.userSubs[userID]
 }
 
 // writePump writes messages from the connection's send channel to the
