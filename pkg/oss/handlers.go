@@ -56,6 +56,11 @@ type Handler struct {
 	// metric.field reference properties outside the caller's allow list.
 	// Wired via SetPropertyFilterProvider from main.go. Nil => no gate.
 	propertyFilter PropertyFilterProvider
+	// activityStore backs the object-path activity-timeline endpoint
+	// (/objects/{type}/{pk}/activity). When nil, the route returns
+	// ActivityStoreNotConfigured. Wired via SetActivityStore from main.go
+	// after construction.
+	activityStore oms.ObjectActivityStore
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -80,6 +85,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count", h.CountObjects)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}", h.GetLinkedObject)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}", h.ListLinkedObjects)
+
+	// Per-object activity timeline (US-312). Walks the object_history tail
+	// for one (objectType, primaryKey) tuple with cursor-based pagination so
+	// the ObjectDetail UI can render a paginated change-log without
+	// over-fetching.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/activity", h.GetObjectActivity)
 
 	// AttachmentProperty read endpoints (Foundry OSv2). The static /content
 	// segment must come before the wildcard {attachmentRid} so chi resolves

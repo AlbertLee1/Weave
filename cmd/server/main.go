@@ -103,6 +103,12 @@ type ServerDeps struct {
 	// /api/v2/objects/{rid}/lineage handler returns 404
 	// LineageNotConfigured when the route is hit.
 	LineageStore oms.LineageStore
+	// US-312: per-object activity-timeline store. Wired from the uncached
+	// *PGRepository so the cursor-paginated history endpoint always reads
+	// the authoritative tail; nil in degraded mode leaves the
+	// /objects/{type}/{pk}/activity route returning 500
+	// ActivityStoreNotConfigured.
+	ActivityStore oms.ObjectActivityStore
 	// US-210: Link Properties. LinkPropertyStore holds the edge-property
 	// schema (new link_properties table); LinkEdgeStore is the narrow CRUD
 	// surface over link_edges used by the PUT edges/properties endpoint and
@@ -683,6 +689,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.CipherDecryptor != nil {
 				ossHandler.SetCipherDecryptor(deps.CipherDecryptor)
 			}
+			if deps.ActivityStore != nil {
+				ossHandler.SetActivityStore(deps.ActivityStore)
+			}
 			ossHandler.RegisterRoutes(api)
 		}
 
@@ -1249,6 +1258,11 @@ func main() {
 		// Create/GetObjectSetSnapshot methods live on *PGRepository, not
 		// on the cached metadata Repository.
 		deps.ObjectSetSnapshotStore = pgRepo
+		// US-312: per-object activity timeline reads from the uncached
+		// *PGRepository's ListObjectHistoryPage so the cursor-paginated
+		// endpoint always observes the authoritative tail (the metadata
+		// cache decorator does not wrap ObjectActivityStore methods).
+		deps.ActivityStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		// US-265: optional SIEM exporter tees every persisted event onto
 		// stdout/syslog/S3 via a BatchedExporter. Disabled by default so

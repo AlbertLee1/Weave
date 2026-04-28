@@ -1966,6 +1966,67 @@ func (r *PGRepository) LatestUserEditAt(ctx context.Context, objectTypeRID, prim
 	return ts, true, nil
 }
 
+// ListObjectHistoryPage returns up to `limit` history rows for a given
+// (objectTypeRID, primaryKey) tuple, ordered by version DESC. When
+// beforeVersion > 0 the result is constrained to rows with
+// `version < beforeVersion`, enabling cursor-based pagination that walks the
+// timeline backwards in time. Pass beforeVersion=0 to fetch the newest page.
+func (r *PGRepository) ListObjectHistoryPage(ctx context.Context, objectTypeRID, primaryKey string, beforeVersion int64, limit int) ([]ObjectHistory, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if beforeVersion > 0 {
+		rows, err = r.pool.Query(ctx,
+			`SELECT id, object_type_rid, primary_key, version,
+			        prev_state, new_state, edit_type,
+			        COALESCE(source, 'user'),
+			        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
+			        recorded_at
+			 FROM object_history
+			 WHERE object_type_rid = $1 AND primary_key = $2 AND version < $3
+			 ORDER BY version DESC
+			 LIMIT $4`,
+			objectTypeRID, primaryKey, beforeVersion, limit)
+	} else {
+		rows, err = r.pool.Query(ctx,
+			`SELECT id, object_type_rid, primary_key, version,
+			        prev_state, new_state, edit_type,
+			        COALESCE(source, 'user'),
+			        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
+			        recorded_at
+			 FROM object_history
+			 WHERE object_type_rid = $1 AND primary_key = $2
+			 ORDER BY version DESC
+			 LIMIT $3`,
+			objectTypeRID, primaryKey, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []ObjectHistory
+	for rows.Next() {
+		var h ObjectHistory
+		var prev, next []byte
+		if err := rows.Scan(&h.ID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
+			&prev, &next, &h.EditType, &h.Source,
+			&h.ActionLogRID, &h.UserID, &h.RecordedAt); err != nil {
+			return nil, err
+		}
+		if len(prev) > 0 {
+			h.PrevState = append(h.PrevState[:0], prev...)
+		}
+		if len(next) > 0 {
+			h.NewState = append(h.NewState[:0], next...)
+		}
+		result = append(result, h)
+	}
+	return result, rows.Err()
+}
+
 // ListObjectHistory returns the most recent `limit` history rows for a given
 // (objectTypeRID, primaryKey) tuple, ordered by version DESC.
 func (r *PGRepository) ListObjectHistory(ctx context.Context, objectTypeRID, primaryKey string, limit int) ([]ObjectHistory, error) {

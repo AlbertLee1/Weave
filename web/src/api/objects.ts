@@ -2,6 +2,7 @@ import { request } from './client';
 import type {
   ObjectPage,
   ObjectHistoryResponse,
+  ObjectActivityResponse,
   WireObject,
   WhereClause,
   CountObjectsResponse,
@@ -109,6 +110,31 @@ export function getLinkedObject(
   return request<WireObject>(
     'GET',
     `/api/v2/ontologies/${ontologyApiName}/objects/${objectType}/${primaryKey}/links/${linkType}/${linkedObjectPrimaryKey}`,
+  );
+}
+
+export interface GetObjectActivityParams {
+  ontologyApiName: string;
+  objectType: string;
+  primaryKey: string;
+  pageSize?: number;
+  pageToken?: string;
+}
+
+// US-312: cursor-paginated activity timeline for a single object. Each
+// entry is an object_history snapshot pair (prevState/newState); the
+// server orders rows by version DESC and emits an opaque nextPageToken
+// for cursoring backwards.
+export function getObjectActivity(
+  params: GetObjectActivityParams,
+): Promise<ObjectActivityResponse> {
+  const query = new URLSearchParams();
+  if (params.pageSize) query.set('pageSize', String(params.pageSize));
+  if (params.pageToken) query.set('pageToken', params.pageToken);
+  const qs = query.toString();
+  return request<ObjectActivityResponse>(
+    'GET',
+    `/api/v2/ontologies/${params.ontologyApiName}/objects/${params.objectType}/${params.primaryKey}/activity${qs ? `?${qs}` : ''}`,
   );
 }
 

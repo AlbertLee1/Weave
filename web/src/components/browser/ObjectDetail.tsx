@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import type { DataType, ObjectType, WireObject } from '../../api/types';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { LinkedObjectsTab } from './LinkedObjectsTab';
 import { TimeSeriesChart } from '../common/TimeSeriesChart';
 import { MediaUploadZone } from './MediaUploadZone';
+import { ObjectActivityPanel } from './ObjectActivityPanel';
 
 function baseTypeOf(dt: DataType): string {
   if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
@@ -31,6 +33,13 @@ interface ObjectDetailProps {
   ontologyApiName: string;
 }
 
+type DetailTab = 'properties' | 'activity';
+
+const TABS: { key: DetailTab; label: string }[] = [
+  { key: 'properties', label: 'Properties' },
+  { key: 'activity', label: 'Activity' },
+];
+
 export function ObjectDetail({
   object,
   objectType,
@@ -43,6 +52,8 @@ export function ObjectDetail({
     objectType.apiName,
   );
 
+  const [activeTab, setActiveTab] = useState<DetailTab>('properties');
+
   const title = object
     ? `${objectType.displayName} - ${String(object.__primaryKey)}`
     : objectType.displayName;
@@ -50,99 +61,139 @@ export function ObjectDetail({
   return (
     <SlidePanel open={open} onClose={onClose} title={title}>
       {object && (
-        <div className="space-y-6">
-          {/* Property key-value pairs */}
-          <section>
-            <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
-              Properties
-            </h3>
-            <dl className="space-y-2">
-              {/* Primary key first */}
-              <div className="flex items-start gap-3">
-                <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
-                  {objectType.primaryKey}
-                </dt>
-                <dd className="flex-1 text-xs font-mono text-accent-cyan break-all">
-                  {String(object.__primaryKey ?? '')}
-                </dd>
-              </div>
+        <div className="space-y-4" data-testid="object-detail-tabs">
+          <div
+            className="flex border-b border-border"
+            role="tablist"
+            aria-label="Object detail tabs"
+          >
+            {TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`px-3 py-2 text-xs font-mono transition-colors border-b-2 ${
+                  activeTab === tab.key
+                    ? 'border-accent-cyan text-accent-cyan'
+                    : 'border-transparent text-text-secondary hover:text-text-primary'
+                }`}
+                data-testid={`object-detail-tab-${tab.key}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-              {/* Remaining properties (non-timeseries, non-media) */}
+          {activeTab === 'properties' && (
+            <div className="space-y-6" data-testid="object-detail-properties">
+              {/* Property key-value pairs */}
+              <section>
+                <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
+                  Properties
+                </h3>
+                <dl className="space-y-2">
+                  {/* Primary key first */}
+                  <div className="flex items-start gap-3">
+                    <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
+                      {objectType.primaryKey}
+                    </dt>
+                    <dd className="flex-1 text-xs font-mono text-accent-cyan break-all">
+                      {String(object.__primaryKey ?? '')}
+                    </dd>
+                  </div>
+
+                  {/* Remaining properties (non-timeseries, non-media) */}
+                  {objectType.properties &&
+                    Object.entries(objectType.properties)
+                      .filter(([name]) => name !== objectType.primaryKey)
+                      .filter(
+                        ([, prop]) =>
+                          baseTypeOf(prop.dataType) !== 'timeseries' &&
+                          baseTypeOf(prop.dataType) !== 'media',
+                      )
+                      .map(([name]) => {
+                        const val = object[name];
+                        let display: string;
+                        if (val === null || val === undefined) {
+                          display = '-';
+                        } else if (typeof val === 'object') {
+                          display = JSON.stringify(val, null, 2);
+                        } else {
+                          display = String(val);
+                        }
+                        return (
+                          <div key={name} className="flex items-start gap-3">
+                            <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
+                              {name}
+                            </dt>
+                            <dd className="flex-1 text-xs font-mono text-text-primary break-all whitespace-pre-wrap">
+                              {display}
+                            </dd>
+                          </div>
+                        );
+                      })}
+                </dl>
+              </section>
+
+              {/* Time-series properties: one chart per property */}
               {objectType.properties &&
                 Object.entries(objectType.properties)
-                  .filter(([name]) => name !== objectType.primaryKey)
                   .filter(
-                    ([, prop]) =>
-                      baseTypeOf(prop.dataType) !== 'timeseries' &&
-                      baseTypeOf(prop.dataType) !== 'media',
+                    ([, prop]) => baseTypeOf(prop.dataType) === 'timeseries',
                   )
-                  .map(([name]) => {
-                    const val = object[name];
-                    let display: string;
-                    if (val === null || val === undefined) {
-                      display = '-';
-                    } else if (typeof val === 'object') {
-                      display = JSON.stringify(val, null, 2);
-                    } else {
-                      display = String(val);
-                    }
-                    return (
-                      <div key={name} className="flex items-start gap-3">
-                        <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
-                          {name}
-                        </dt>
-                        <dd className="flex-1 text-xs font-mono text-text-primary break-all whitespace-pre-wrap">
-                          {display}
-                        </dd>
-                      </div>
-                    );
-                  })}
-            </dl>
-          </section>
+                  .map(([name]) => (
+                    <section key={`ts-${name}`}>
+                      <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
+                        {name}
+                      </h3>
+                      <TimeSeriesChart
+                        ontologyApiName={ontologyApiName}
+                        objectType={objectType.apiName}
+                        primaryKey={String(object.__primaryKey)}
+                        property={name}
+                        label={name}
+                      />
+                    </section>
+                  ))}
 
-          {/* Time-series properties: one chart per property */}
-          {objectType.properties &&
-            Object.entries(objectType.properties)
-              .filter(([, prop]) => baseTypeOf(prop.dataType) === 'timeseries')
-              .map(([name]) => (
-                <section key={`ts-${name}`}>
+              {/* Media properties: dropzone upload + thumbnails + delete */}
+              {objectType.properties &&
+                Object.entries(objectType.properties)
+                  .filter(([, prop]) => baseTypeOf(prop.dataType) === 'media')
+                  .map(([name, prop]) => (
+                    <MediaUploadZone
+                      key={`media-${name}`}
+                      propertyName={name}
+                      values={coerceMediaValues(object[name])}
+                      multiple={isArrayType(prop.dataType)}
+                    />
+                  ))}
+
+              {/* Linked objects section */}
+              {linkTypes && linkTypes.length > 0 && (
+                <section>
                   <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
-                    {name}
+                    Linked Objects
                   </h3>
-                  <TimeSeriesChart
+                  <LinkedObjectsTab
                     ontologyApiName={ontologyApiName}
                     objectType={objectType.apiName}
                     primaryKey={String(object.__primaryKey)}
-                    property={name}
-                    label={name}
+                    linkTypes={linkTypes}
                   />
                 </section>
-              ))}
+              )}
+            </div>
+          )}
 
-          {/* Media properties: dropzone upload + thumbnails + delete */}
-          {objectType.properties &&
-            Object.entries(objectType.properties)
-              .filter(([, prop]) => baseTypeOf(prop.dataType) === 'media')
-              .map(([name, prop]) => (
-                <MediaUploadZone
-                  key={`media-${name}`}
-                  propertyName={name}
-                  values={coerceMediaValues(object[name])}
-                  multiple={isArrayType(prop.dataType)}
-                />
-              ))}
-
-          {/* Linked objects section */}
-          {linkTypes && linkTypes.length > 0 && (
-            <section>
-              <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
-                Linked Objects
-              </h3>
-              <LinkedObjectsTab
+          {activeTab === 'activity' && (
+            <section data-testid="object-detail-activity">
+              <ObjectActivityPanel
                 ontologyApiName={ontologyApiName}
                 objectType={objectType.apiName}
                 primaryKey={String(object.__primaryKey)}
-                linkTypes={linkTypes}
               />
             </section>
           )}

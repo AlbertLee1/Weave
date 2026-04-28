@@ -1,6 +1,7 @@
 package oms
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -41,4 +42,15 @@ type ObjectHistory struct {
 	ActionLogRID  string          `json:"actionLogRid,omitempty"`
 	UserID        string          `json:"userId,omitempty"`
 	RecordedAt    time.Time       `json:"recordedAt"`
+}
+
+// ObjectActivityStore is the narrow read surface backing the per-object
+// activity-timeline endpoint (US-312). It sits outside Repository so the
+// many mock implementations scattered through the test tree do not have
+// to grow new stub methods — same pattern as ComputedPropertyStore /
+// MediaAssetStore. ListObjectHistoryPage extends the existing
+// Repository.ListObjectHistory limit-only listing with a beforeVersion
+// cursor so the UI can page backwards through long histories.
+type ObjectActivityStore interface {
+	ListObjectHistoryPage(ctx context.Context, objectTypeRID, primaryKey string, beforeVersion int64, limit int) ([]ObjectHistory, error)
 }

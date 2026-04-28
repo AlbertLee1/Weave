@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   listObjects,
   searchObjects,
   getObject,
   listLinkedObjects,
+  getObjectActivity,
   type ListObjectsParams,
   type SearchObjectsParams,
   type ListLinkedObjectsParams,
@@ -37,6 +38,40 @@ export function useGetObject(
     queryKey: ['objects', 'get', ontologyApiName, objectType, primaryKey],
     queryFn: () => getObject({ ontologyApiName, objectType, primaryKey }),
     enabled: !!ontologyApiName && !!objectType && !!primaryKey,
+  });
+}
+
+// US-312: per-object activity timeline. Cursor-paginated via the server's
+// opaque nextPageToken; `pageSize` is fixed at the call site so React
+// Query can dedupe identically-shaped queries.
+export function useObjectActivity(params: {
+  ontologyApiName: string;
+  objectType: string;
+  primaryKey: string;
+  pageSize?: number;
+}) {
+  const { ontologyApiName, objectType, primaryKey, pageSize = 50 } = params;
+  const enabled = Boolean(ontologyApiName && objectType && primaryKey);
+  return useInfiniteQuery({
+    queryKey: [
+      'objects',
+      'activity',
+      ontologyApiName,
+      objectType,
+      primaryKey,
+      pageSize,
+    ],
+    queryFn: ({ pageParam }) =>
+      getObjectActivity({
+        ontologyApiName,
+        objectType,
+        primaryKey,
+        pageSize,
+        pageToken: pageParam || undefined,
+      }),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.nextPageToken || undefined,
+    enabled,
   });
 }
 

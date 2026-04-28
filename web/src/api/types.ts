@@ -115,6 +115,28 @@ export interface ObjectHistoryResponse {
   totalVersions: number;
 }
 
+// US-312: per-object activity timeline. The wire shape mirrors the Go
+// oms.ObjectHistory record one-to-one; pagination is cursor-based on the
+// monotonically increasing per-PK `version` column.
+export interface ObjectActivityEntry {
+  id: string;
+  objectTypeRid: string;
+  primaryKey: string;
+  version: number;
+  prevState?: Record<string, unknown> | null;
+  newState?: Record<string, unknown> | null;
+  editType: 'CREATE' | 'MODIFY' | 'DELETE';
+  source?: string;
+  actionLogRid?: string;
+  userId?: string;
+  recordedAt: string;
+}
+
+export interface ObjectActivityResponse {
+  data: ObjectActivityEntry[];
+  nextPageToken?: string;
+}
+
 export interface WireObject {
   __rid: string;
   __primaryKey: string | number;

@@ -6151,6 +6151,59 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/activity:
+    get:
+      operationId: getObjectActivity
+      summary: Get the activity timeline for a single object
+      description: |
+        Returns the change history for one (objectType, primaryKey) tuple,
+        ordered version-DESC, with cursor-based pagination so the
+        ObjectDetail UI can stream long timelines without over-fetching.
+        Each entry is a snapshot-pair: `prevState` is the JSONB before the
+        edit (absent for CREATE rows) and `newState` is the JSONB after
+        (absent for DELETE rows). `pageToken` is opaque — pass the
+        `nextPageToken` from the previous response back as `pageToken` to
+        fetch the next (older) page; absence of `nextPageToken` indicates
+        the final page. The endpoint relies on the per-object
+        `object_history` tail; in degraded mode (no PG bootstrap) it
+        responds 500 ActivityStoreNotConfigured.
+      tags: [Objects]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectType"
+        - $ref: "#/components/parameters/PrimaryKey"
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: pageToken
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Activity timeline page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  nextPageToken:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/links/{linkType}/{linkedObjectPrimaryKey}:
     get:
       operationId: getLinkedObject

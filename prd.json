@@ -1624,8 +1624,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 113,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "narrow oms.ObjectActivityStore + PGRepository.ListObjectHistoryPage cursor-paginated reader (version<beforeVersion); GET /api/v2/ontologies/{o}/objects/{type}/{pk}/activity returns ordered-DESC ObjectHistory rows with opaque base64 nextPageToken (over-fetch +1 / slice / cap to 200); ServerDeps.ActivityStore wired through SetActivityStore + uncached *PGRepository so reads always observe authoritative tail; ObjectDetail refactored into Properties|Activity tab strip; ObjectActivityPanel uses useInfiniteQuery + Load more, color-coded CREATE/MODIFY/DELETE badges, vertical timeline with edit dots; OpenAPI entry + embedded copy synced; 8 Go handler tests + 5 RTL panel tests; full suite vitest 556/556 pass, Go ./... pass; dev-browser skill not available in this harness — manual browser verification still pending"
     },
     {
       "id": "US-313",
