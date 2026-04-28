@@ -266,15 +266,26 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	// US-057: parse the Last-Event-ID header for Server-Sent Events replay.
-	// The header carries the NATS stream sequence the client last observed;
+	// US-057 / US-307: parse the resume cursor for Server-Sent Events replay.
+	// The cursor carries the NATS stream sequence the client last observed;
 	// the hub replays any buffered events with Sequence > fromSeq before
-	// attaching the live subscription. Malformed header values degrade to
-	// fromSeq == 0 so a broken cursor never silently disables replay by
-	// erroring out the request.
+	// attaching the live subscription. Two channels are accepted:
+	//   1. Last-Event-ID HTTP header — the SSE-protocol-canonical channel
+	//      browsers send automatically on EventSource auto-reconnect.
+	//   2. ?lastEventId= query parameter — the manual fallback the web
+	//      client uses when it explicitly recreates the EventSource (where
+	//      the browser cannot set a custom header on the first connect).
+	// The header wins when both are present so a stale URL never overrides
+	// a fresher header value. Malformed values degrade to fromSeq == 0 so a
+	// broken cursor never silently disables replay by erroring out the
+	// request.
 	var fromSeq uint64
-	if headerVal := r.Header.Get("Last-Event-ID"); headerVal != "" {
-		if parsed, err := strconv.ParseUint(headerVal, 10, 64); err == nil {
+	cursorVal := r.Header.Get("Last-Event-ID")
+	if cursorVal == "" {
+		cursorVal = r.URL.Query().Get("lastEventId")
+	}
+	if cursorVal != "" {
+		if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
 			fromSeq = parsed
 		}
 	}

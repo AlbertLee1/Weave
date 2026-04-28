@@ -1553,8 +1553,8 @@
         "Tests pass"
       ],
       "priority": 108,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "funnel.Broadcast 维护 1024 容量的有序 ring buffer (DefaultBroadcastReplayCapacity)，SubscribeWithReplay 在同一把 hub.mu 下完成 ring 快照 + live 订阅注册，确保 replay 尾与 live 头之间不漏事件。SubscribeSSEHandler 读取 Last-Event-ID header（SSE 协议规范，浏览器 EventSource 自动重连时携带）；US-307 补足 ?lastEventId= query 回退路径，因为浏览器 EventSource 在显式重建连接时无法设置自定义 header，前端 useObjectSetSubscription hook 通过 query param 传递 cursor。Header 优先级高于 query，避免陈旧 URL 覆盖新鲜 header；非数字 cursor (header 或 query) 退化为 fromSeq=0 触发完整 replay 而非报错。新增 3 个测试：TestSSEReplayFromLastEventIDQueryParam（query 回退）、TestSSEReplayHeaderOverridesQueryParam（优先级）、TestSSEMalformedLastEventIDDegradesToZero（容错）。"
     },
     {
       "id": "US-308",

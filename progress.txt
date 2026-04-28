@@ -3886,3 +3886,21 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Routing-index removal by Subscription pointer identity (`e.sub != sub`) is safer than by SubscriptionID string match: the subscription struct's address is unique across the Hub's lifetime (NewSubscription mints fresh structs and the hub holds the only pointer chain), and pointer equality is allocation-free. ID-based removal would force every test that constructs a hand-rolled subscription to also stamp a unique ID.
   - Filtering a slice in place with `bucket[:0]` + append-keep-if-not-match is the lightest deletion idiom for a small per-bucket list. When the surviving slice would be empty, `delete(map, key)` (instead of leaving an empty slice) keeps the map clean so `len(h.subIndex[key])` doubles as a "anything subscribed?" check without an explicit zero-check.
   - Hub-level routing index is single-machine state — multi-replica fan-out for cross-pod subscriptions would need a pub/sub broadcast (NATS subject) on top, with each replica running its own per-instance index. Document the constraint when wiring multi-pod deployments.
+- SSE Last-Event-ID resume cursor: ALWAYS accept BOTH the `Last-Event-ID` HTTP header AND a `?lastEventId=` query-param fallback. Browser EventSource sends the header on its OWN auto-reconnect cycle, but cannot set custom headers when application code explicitly recreates the EventSource (e.g. backoff retry after a manual close) — query param is the only channel available for that path. Header wins when both are present so a stale URL never overrides a fresh header. Malformed values (non-numeric strconv.ParseUint failure) MUST degrade to fromSeq=0 (full ring replay) rather than 4xx — a broken cursor should never silently disable replay. Single source: `pkg/oss/subscribe_sse.go::ServeHTTP` cursor block, US-307.
+
+## 2026-04-28 12:21 - US-307 SSE 重连与恢复
+- 验证 funnel.Broadcast 的 ring buffer 与 SubscribeWithReplay 已在 US-057 落地，SubscribeSSEHandler 已读取 Last-Event-ID HTTP header；ring buffer 容量 1024 (DefaultBroadcastReplayCapacity)，replay 与 live 订阅在同一 hub.mu 下原子完成。
+- 发现真实 gap：前端 useObjectSetSubscription hook 通过 ?lastEventId= query param 传递 cursor（浏览器 EventSource 不允许在显式重建连接时设置自定义 header），但服务端只读 header，导致前端的 replay 路径 silent no-op。
+- pkg/oss/subscribe_sse.go: 在 header miss 时回退读取 r.URL.Query().Get("lastEventId")。Header 优先以避免陈旧 URL 覆盖新鲜 header；仅当两者都为空才视为无 cursor。
+- pkg/oss/subscribe_sse_test.go: 新增 3 个 RTL 风格测试：
+  - TestSSEReplayFromLastEventIDQueryParam — 仅传 query param 时 replay 也生效
+  - TestSSEReplayHeaderOverridesQueryParam — header 与 query 同时存在时 header 赢
+  - TestSSEMalformedLastEventIDDegradesToZero — 非数字 cursor (header 或 query) 退化为 fromSeq=0 触发完整 replay 而非 4xx
+- Files changed: pkg/oss/subscribe_sse.go, pkg/oss/subscribe_sse_test.go, prd.json, progress.txt
+- Quality checks: go vet ./... 干净; go build ./... 干净; pkg/oss + pkg/funnel + cmd/server 全绿; make test 全仓库绿。
+- **Learnings for future iterations:**
+  - 浏览器 EventSource API 的 Last-Event-ID 行为：自动重连（连接 idle/server timeout 后浏览器内部重试）会自动携带 Last-Event-ID header；但前端代码主动 close + new EventSource 重建时 header 不会被重新发送（fetch/XHR 不允许 EventSource 接受自定义 header init）。前端只能通过 URL query param 传递 cursor。后端为浏览器友好需同时接受 header 和 query。
+  - SSE cursor 容错原则：非数字字符串 strconv.ParseUint 失败时退化为 fromSeq=0（完整 replay）而不是 4xx 拒绝请求。一个 broken cursor 不应该让客户端永远收不到事件。
+  - PRD 中已被前序 user story 隐式实现的 "passes: false" 条目：先跑现有测试 / 检查代码再决定是否真的需要新写代码。US-057 注释 + Broadcast.SubscribeWithReplay + handler.Last-Event-ID 解析早就存在，但 query param 回退是真正的 gap，必须实测前端 hook 才能发现。
+  - Header-vs-query precedence 设计：选择 header 优先而不是 query 优先，因为 EventSource 自动重连时 header 总是最新观察到的 cursor，而 URL 一旦 mount 就是常量。query 只作为浏览器无法设 header 的 fallback。
+---

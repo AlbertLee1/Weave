@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -486,6 +487,289 @@ func TestSSEReplayFromLastEventID(t *testing.T) {
 	case unexpected := <-framesCh:
 		t.Errorf("unexpected extra event: %+v", unexpected)
 	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+// TestSSEReplayFromLastEventIDQueryParam is the US-307 acceptance test for
+// the query-param fallback. Browser EventSource cannot set the Last-Event-ID
+// HTTP header on an explicitly recreated connection (only on its own
+// auto-reconnect cycle), so the canonical web client passes the cursor as
+// `?lastEventId=` instead. The server MUST honour either source, and when
+// both are supplied the explicit header wins so a malformed query param
+// from a stale URL never overrides a fresh header value.
+func TestSSEReplayFromLastEventIDQueryParam(t *testing.T) {
+	const rid = "rid-order-replay-qp"
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
+
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	for seq := uint64(20); seq <= 22; seq++ {
+		b.Publish(funnel.BroadcastEvent{
+			Type:       "CREATE",
+			ObjectType: "order",
+			PrimaryKey: "o-" + strconv.FormatUint(seq, 10),
+			Sequence:   seq,
+			Properties: map[string]interface{}{"status": "NEW"},
+			EditedAt:   time.Now(),
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v2/ontologies/northwind/objectSets/"+rid+"/subscribe?lastEventId=20", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	// NB: NO Last-Event-ID header — verifying the query-param fallback path.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	framesCh := make(chan sseIDFrame, 16)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(resp.Body)
+		var currentID string
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "id: ") {
+				currentID = strings.TrimPrefix(line, "id: ")
+				continue
+			}
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			var evt sseEventFrame
+			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+				return
+			}
+			select {
+			case framesCh <- sseIDFrame{ID: currentID, Event: evt}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	first := expectIDFrame(t, framesCh, 2*time.Second)
+	if first.ID != "21" {
+		t.Errorf("first id = %q, want 21", first.ID)
+	}
+	second := expectIDFrame(t, framesCh, 2*time.Second)
+	if second.ID != "22" {
+		t.Errorf("second id = %q, want 22", second.ID)
+	}
+
+	select {
+	case unexpected := <-framesCh:
+		t.Errorf("unexpected extra event: %+v", unexpected)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+// TestSSEReplayHeaderOverridesQueryParam verifies the precedence rule when a
+// caller supplies both the Last-Event-ID header AND the ?lastEventId= query
+// param: the header wins, because the header is the SSE-protocol-canonical
+// channel and EventSource always sends the freshest known cursor on its own
+// auto-reconnects, while a stale URL carrying the query param can outlive a
+// browser-initiated retry.
+func TestSSEReplayHeaderOverridesQueryParam(t *testing.T) {
+	const rid = "rid-order-replay-precedence"
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
+
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	for seq := uint64(30); seq <= 33; seq++ {
+		b.Publish(funnel.BroadcastEvent{
+			Type:       "CREATE",
+			ObjectType: "order",
+			PrimaryKey: "o-" + strconv.FormatUint(seq, 10),
+			Sequence:   seq,
+			Properties: map[string]interface{}{},
+			EditedAt:   time.Now(),
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Header asks for replay from 32; query param (a stale URL) asks from 30.
+	// Header MUST win → only seq 33 is replayed, NOT 31, 32.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v2/ontologies/northwind/objectSets/"+rid+"/subscribe?lastEventId=30", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", "32")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	framesCh := make(chan sseIDFrame, 16)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(resp.Body)
+		var currentID string
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "id: ") {
+				currentID = strings.TrimPrefix(line, "id: ")
+				continue
+			}
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			var evt sseEventFrame
+			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+				return
+			}
+			select {
+			case framesCh <- sseIDFrame{ID: currentID, Event: evt}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	got := expectIDFrame(t, framesCh, 2*time.Second)
+	if got.ID != "33" {
+		t.Errorf("only id = %q, want 33", got.ID)
+	}
+
+	select {
+	case unexpected := <-framesCh:
+		t.Errorf("unexpected extra event after seq 33: %+v", unexpected)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+// TestSSEMalformedLastEventIDDegradesToZero verifies the documented "broken
+// cursor never silently disables replay" guarantee. A client supplying a
+// non-numeric Last-Event-ID header (or query param) should still receive the
+// full ring buffer — fromSeq degrades to 0 rather than the request failing.
+func TestSSEMalformedLastEventIDDegradesToZero(t *testing.T) {
+	const rid = "rid-order-replay-malformed"
+	lookup := &stubObjectSetLookup{byRid: map[string]SubscriptionSpec{
+		rid: {ObjectType: "order"},
+	}}
+
+	b := funnel.NewBroadcast()
+	handler := NewSubscribeSSEHandler(lookup, b)
+
+	r := chi.NewRouter()
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", handler.ServeHTTP)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	b.Publish(funnel.BroadcastEvent{
+		Type: "CREATE", ObjectType: "order", PrimaryKey: "o-40", Sequence: 40,
+		Properties: map[string]interface{}{}, EditedAt: time.Now(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v2/ontologies/northwind/objectSets/"+rid+"/subscribe?lastEventId=not-a-number", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", "also-garbage")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (malformed cursor must degrade, not fail)", resp.StatusCode)
+	}
+
+	framesCh := make(chan sseIDFrame, 16)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(resp.Body)
+		var currentID string
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "id: ") {
+				currentID = strings.TrimPrefix(line, "id: ")
+				continue
+			}
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimPrefix(line, "data: ")
+			var evt sseEventFrame
+			if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+				return
+			}
+			select {
+			case framesCh <- sseIDFrame{ID: currentID, Event: evt}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	got := expectIDFrame(t, framesCh, 2*time.Second)
+	if got.ID != "40" {
+		t.Errorf("replay id = %q, want 40 (malformed cursor → fromSeq=0)", got.ID)
 	}
 
 	cancel()

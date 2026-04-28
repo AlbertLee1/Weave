@@ -6603,6 +6603,20 @@ paths:
         ObjectSet are delivered. Where-clause filtering, Last-Event-ID
         replay, heartbeats and per-user connection limits are layered on
         by follow-up stories (US-056 ~ US-058).
+
+        US-307 reconnect/replay: each event carries an `id:` line whose
+        value is the originating NATS stream sequence. Reconnecting
+        clients pass that sequence as the resume cursor through EITHER
+        the `Last-Event-ID` HTTP header (browsers' canonical SSE channel,
+        sent automatically by EventSource on its own auto-reconnect cycle)
+        OR the `?lastEventId=` query parameter (the manual fallback for
+        application code that explicitly recreates the EventSource — the
+        browser API forbids custom headers on those connects). When both
+        are supplied the header wins. The server replays any buffered
+        events with `Sequence > cursor` from a 1024-event ring buffer
+        before attaching the live stream so no event falls between the
+        replay tail and the live head. Malformed cursors degrade to
+        fromSeq=0 (full ring replay) rather than 4xx.
       tags: [ObjectSets]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -6612,6 +6626,28 @@ paths:
           schema:
             type: string
           description: The RID of the ObjectSet to subscribe to.
+        - in: query
+          name: lastEventId
+          required: false
+          schema:
+            type: string
+          description: |
+            US-307 resume cursor — last NATS sequence the client observed.
+            Only consulted when the `Last-Event-ID` header is absent (the
+            header wins when both are present). Browsers that recreate
+            EventSource explicitly cannot set the header, so this query
+            param is the only resume channel for that path. Non-numeric
+            values degrade to a full ring replay rather than 4xx.
+        - in: header
+          name: Last-Event-ID
+          required: false
+          schema:
+            type: string
+          description: |
+            US-307 resume cursor — last NATS sequence the client observed.
+            Sent automatically by browsers on EventSource auto-reconnect.
+            Wins over `?lastEventId=` query param when both are present.
+            Non-numeric values degrade to a full ring replay rather than 4xx.
       responses:
         "200":
           description: SSE stream. Response body is an unbounded sequence of `data:` lines carrying JSON event payloads.
