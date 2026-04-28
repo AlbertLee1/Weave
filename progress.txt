@@ -4999,3 +4999,49 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - **vitest cwd matters**: running `npx vitest run` from project root (instead of from `web/`) silently uses jsdom-less env and every test fails with `document is not defined`. Always cd into `web/` first.
 
 ---
+
+## 2026-04-28 - US-342 Emoji 反应
+- Added per-(user, target, emoji) reaction toggle persistence and the SPA ReactionBar that renders the aggregate (emoji → count) view + toggle picker on top of every ObjectDetail panel.
+- Migration: `migrations/000080_reactions.{up,down}.sql` — `reactions(id UUID PK, user_id TEXT, target_rid TEXT, emoji TEXT, created_at TIMESTAMPTZ DEFAULT NOW())`. Two CHECKs (RID prefix, emoji length 1..32) wrapped in `DO $$ ... END$$` guards for idempotent re-apply (same shape as US-046 / US-339). UNIQUE INDEX on (user_id, target_rid, emoji) keeps Toggle idempotent — `INSERT … ON CONFLICT DO NOTHING` plus a follow-up SELECT returns the canonical row regardless of insert/conflict path. Secondary INDEX on (target_rid, emoji) backs the aggregate GROUP BY.
+- New `pkg/reactions` package:
+  - `model.go`: `Reaction{ID, UserID, TargetRID, Emoji, CreatedAt}` wire shape; `EmojiCount{Emoji, Count, Mine}` aggregate bucket; `Summary{TargetRID, Emojis}` GET response. `MaxEmojiByteLength=32`, `MaxEmojiRuneLength=16`. `ValidateEmoji` rejects empty / leading or trailing whitespace / over-byte / over-rune / control chars; `ValidateTargetRID` mirrors comments/watches.
+  - `store.go`: narrow `Store` interface (`Create`, `Delete`, `AggregateForTarget`) + `MemoryStore` for tests/degraded mode. `ErrNotFound` sentinel maps to 404 ReactionNotFound at the handler. AggregateForTarget orders buckets by descending count then ascending emoji for deterministic wire shape; the same convention is enforced on the PG side via `ORDER BY total DESC, emoji ASC`.
+  - `handlers.go`: chi handler exposing `GET /api/v2/reactions?targetRid=…` (aggregate + caller's mine flag), `POST /api/v2/reactions` body `{targetRid, emoji}` (idempotent toggle-on), `DELETE /api/v2/reactions?targetRid=&emoji=` (toggle-off). Standard `requireAuth` / `requireStore` split — nil store returns 500 ReactionsUnavailable so degraded-mode test routers can keep the /api/v2 prefix mounted. Distinct typed errorNames for invalid target / invalid emoji / not-found / generic server error so the SPA can pattern-match precisely.
+  - 17 tests in `pkg/reactions/{store,handlers}_test.go` cover: idempotent create, delete-not-found, delete-roundtrip, aggregate ordering + mine flag, empty aggregate, ValidateEmoji table (8 valid + 8 invalid cases), ValidateTargetRID, full create→aggregate→delete handler roundtrip, idempotent re-create returns same id, invalid input table (4 reasons), DELETE missing/bad query, GET missing target, degraded-mode 500 across 3 methods, anon GET 401.
+- cmd/server adapters:
+  - `cmd/server/reactions_store.go`: `pgReactionsStore` satisfying `reactions.Store`. Aggregate is one query: `SELECT emoji, COUNT(*)::int AS total, BOOL_OR(user_id = $1) AS mine FROM reactions WHERE target_rid = $2 GROUP BY emoji ORDER BY total DESC, emoji ASC`. The `BOOL_OR(user_id = $1)` collapses the per-emoji "did the caller react" probe into the single GROUP BY pass — no second round-trip and no client-side scan over the bucket list.
+  - `cmd/server/main.go`: `ServerDeps.ReactionsStore` field; mount in `NewFullRouter` is gated on `ReactionsStore != nil`; PG-mode boot wires `newPGReactionsStore(pool)` alongside the existing watches/comments stores.
+- Frontend:
+  - `web/src/api/reactions.ts`: typed wire shape (`Reaction`, `EmojiCount`, `ReactionSummary`) + 3 helpers (`getReactionSummary`, `createReaction`, `deleteReaction`) routed through the shared `request<T>` JSON-only client.
+  - `web/src/hooks/useReactions.ts`: `useReactionSummary` short-circuits 404 / `ReactionsUnavailable` to `{emojis: [], available: false}` so the bar can hide itself in degraded-mode (same shape as `useWatchStatus`); `useCreateReaction` / `useDeleteReaction` mutations invalidate the (`reactions`, `summary`, targetRid) cache key.
+  - `web/src/components/browser/ReactionBar.tsx`: renders one pressed/unpressed pill per existing emoji (aria-pressed mirrors mine, click toggles), plus a `+ 😊` button that opens an inline picker with 8 default emojis (👍 ❤️ 🎉 🚀 👀 😄 😢 🙏) and a custom-input form for any other emoji or short shortcode. Returns null on no targetRid OR `available === false`.
+  - `web/src/components/browser/ObjectDetail.tsx`: mounts `<ReactionBar targetRid={object.__rid} />` directly under the WatchButton row so reactions sit above the tabs (consistent with the toolbar slot pattern from US-337).
+- 7 RTL tests in `web/src/components/browser/__tests__/ReactionBar.test.tsx`: null-target render no-op, degraded-mode hide on 404, aggregate counts + pressed state, click-to-POST on not-mine pill, click-to-DELETE on mine=true pill, `+` button opens picker → POST default emoji + closes picker, custom-input form submits typed emoji.
+- Files changed:
+  - migrations/000080_reactions.{up,down}.sql (NEW)
+  - pkg/reactions/{model,store,store_test,handlers,handlers_test}.go (NEW)
+  - cmd/server/reactions_store.go (NEW)
+  - cmd/server/main.go (import + ServerDeps.ReactionsStore + handler mount + PG boot wiring)
+  - web/src/api/reactions.ts (NEW)
+  - web/src/hooks/useReactions.ts (NEW)
+  - web/src/components/browser/ReactionBar.tsx (NEW)
+  - web/src/components/browser/__tests__/ReactionBar.test.tsx (NEW)
+  - web/src/components/browser/ObjectDetail.tsx (mount ReactionBar)
+  - prd.json (US-342 → passes:true + notes)
+  - progress.txt (this entry)
+- Verification:
+  - `go test ./pkg/reactions/... ./cmd/server/... -count=1` → all green
+  - `go test ./... -count=1` → 80+ packages OK, 0 failures (every prior package still green; reactions added)
+  - `go vet ./...` + `go build ./...` + `CGO_ENABLED=0 go build ./...` clean (Dockerfile invariant)
+  - `npx tsc --noEmit -p tsconfig.app.json` → 2 pre-existing errors unchanged (objectsets test + lib/objectSetUrl Buffer typing); my new files compile cleanly
+  - `npx vitest run` → 108 files / 768 tests pass (761 baseline + 7 new)
+  - `npx eslint src/api/reactions.ts src/hooks/useReactions.ts src/components/browser/ReactionBar.tsx src/components/browser/__tests__/ReactionBar.test.tsx src/components/browser/ObjectDetail.tsx` → clean (no new findings)
+  - dev-browser skill not available in this harness — manual browser verification of the ReactionBar still pending.
+- **Learnings for future iterations:**
+  - Aggregate "did the caller react" alongside count in ONE GROUP BY: `COUNT(*)::int AS total, BOOL_OR(user_id = $1) AS mine` per emoji. Beats the alternative of issuing a second per-target SELECT for mine flags or doing a client-side intersect against List output. Pattern generalises to any "user has reacted/voted/upvoted" surface where the wire shape needs both global stats and the caller's pressed state in one round-trip.
+  - Per-(user, target, emoji) toggle is a 3-column unique index — same shape as watches but with one extra column. Reusable for any future "user has tagged/labelled/categorised target with X" surface (kanban swimlanes, custom labels, etc.). The `INSERT … ON CONFLICT DO NOTHING + SELECT` idempotent-create pattern works identically; only the unique-index column count changes.
+  - Composite-key DELETE via TWO query-string params (`?targetRid=&emoji=`) instead of a path-id: when the natural caller-side handle is the (target, emoji) pair (not the row id), keep the URL shape consistent across STATUS/POST/DELETE — POST takes the same triple in the body, DELETE in query, GET in query. The SPA never has to juggle ids; reactions and watches both follow this convention. Generalises to any toggle keyed on a small composite handle.
+  - Aggregate endpoint that returns a "mine" bool per bucket is materially better UX than a separate "list my reactions on this target" probe. Clients can render pressed state without a second query AND without intersecting two lists. Pattern works for any aggregation that wants per-caller affinity inline with global counts (e.g. "did I mark this as a favourite", "have I voted on this poll option").
+  - Emoji validation: trim-equals-input AND no control chars AND byte cap AND rune cap. ValidateEmoji's "trim != original ⇒ error" guard catches `' 👍'` / `'👍 '` cleanly; bare `strings.TrimSpace` would silently accept and corrupt the unique-index key (server stores trimmed form, client sends padded form ⇒ different rows for the same intent). 32-byte cap matches the migration CHECK; 16-rune cap is belt-and-braces against pathological grapheme spam.
+  - Mounting the ReactionBar above the tabs (alongside WatchButton) is the right slot for "cross-tab affordances" — reactions belong to the object as a whole, not to any single tab. Same shape as the WatchButton row added in US-337. New cross-tab features (pinning, share-this, follow-thread, etc.) should land here, not inside any single tab body.
+---

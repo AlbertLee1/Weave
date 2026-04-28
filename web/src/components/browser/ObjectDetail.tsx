@@ -12,6 +12,7 @@ import { ObjectDiffPanel } from './ObjectDiffPanel';
 import { RelationshipGraph } from './RelationshipGraph';
 import { CommentsTab } from './CommentsTab';
 import { WatchButton } from './WatchButton';
+import { ReactionBar } from './ReactionBar';
 import { MarkdownPreview } from '../common/MarkdownEditor';
 import { InlineEditField } from '../common/InlineEditField';
 import { findModifyActionForProperty } from './findModifyAction';
@@ -139,6 +140,9 @@ export function ObjectDetail({
             data-testid="object-detail-actions"
           >
             <WatchButton targetRid={object.__rid ?? null} />
+          </div>
+          <div data-testid="object-detail-reactions">
+            <ReactionBar targetRid={object.__rid ?? null} />
           </div>
           <div
             className="flex border-b border-border"

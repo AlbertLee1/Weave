@@ -56,6 +56,7 @@ import (
 	"github.com/liyang/weave/pkg/comments"
 	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/permissionrequests"
+	"github.com/liyang/weave/pkg/reactions"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -349,6 +350,12 @@ type ServerDeps struct {
 	// WatchButton. nil in degraded mode so the routes stay unmounted
 	// and the SPA's button hides itself when the status endpoint 404s.
 	WatchesStore watches.Store
+	// US-342: Reactions per-(user, target, emoji) store. Backs the
+	// /api/v2/reactions endpoints used by the ObjectDetail ReactionBar
+	// and the CommentsTab per-comment reaction strip. nil in degraded
+	// mode so the routes stay unmounted; the SPA hides the bar when
+	// the aggregate endpoint 404s.
+	ReactionsStore reactions.Store
 	// US-339: Permission Requests share-link approval workflow.
 	// Backs the /api/v2/permission-requests/* endpoints used by the
 	// SPA's request-access dialog and approver inbox. nil in degraded
@@ -1204,6 +1211,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			watches.NewHandler(deps.WatchesStore).RegisterRoutes(api)
 		}
 
+		// US-342: Reactions per-(user, target, emoji) toggle. Same
+		// degraded-mode shape — the SPA hides the ReactionBar when
+		// the aggregate endpoint 404s in deployments without PG.
+		if deps.ReactionsStore != nil {
+			reactions.NewHandler(deps.ReactionsStore).RegisterRoutes(api)
+		}
+
 		// US-339: Permission Requests share-link workflow. Same
 		// degraded-mode shape — the SPA's request-access dialog
 		// hides itself when the list endpoint 404s. Notifier and
@@ -1590,6 +1604,11 @@ func main() {
 		// used by the ObjectDetail WatchButton.
 		deps.WatchesStore = newPGWatchesStore(pool)
 		log.Printf("[watches] store wired")
+
+		// US-342: Reactions store. Backs the /api/v2/reactions
+		// routes used by the ObjectDetail ReactionBar.
+		deps.ReactionsStore = newPGReactionsStore(pool)
+		log.Printf("[reactions] store wired")
 
 		// US-339: Permission requests store + approver discovery +
 		// notification fan-out. Approver discovery queries
