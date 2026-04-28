@@ -63,6 +63,7 @@ import (
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
+	"github.com/liyang/weave/pkg/watches"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -341,6 +342,11 @@ type ServerDeps struct {
 	// through to plain-text input.
 	MentionUserDirectory comments.MentionUserDirectory
 	MentionNotifier      comments.MentionNotifier
+	// US-337: Watch / Follow per-user store. Backs the
+	// /api/v2/watches/* endpoints used by the ObjectDetail
+	// WatchButton. nil in degraded mode so the routes stay unmounted
+	// and the SPA's button hides itself when the status endpoint 404s.
+	WatchesStore watches.Store
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1178,6 +1184,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			commentsHandler.RegisterRoutes(api)
 		}
+
+		// US-337: Watch / Follow per-user CRUD. Same degraded-mode
+		// shape as comments/savedsearches — the SPA hides the
+		// WatchButton when the status endpoint 404s in deployments
+		// without PG.
+		if deps.WatchesStore != nil {
+			watches.NewHandler(deps.WatchesStore).RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1543,6 +1557,11 @@ func main() {
 		// routes used by the ObjectDetail Comments tab.
 		deps.CommentsStore = newPGCommentsStore(pool)
 		log.Printf("[comments] store wired")
+
+		// US-337: Watches store. Backs the /api/v2/watches/* routes
+		// used by the ObjectDetail WatchButton.
+		deps.WatchesStore = newPGWatchesStore(pool)
+		log.Printf("[watches] store wired")
 
 		// US-336: @mention autocomplete + notifications. The user
 		// directory adapter wraps the existing PG users repo; the

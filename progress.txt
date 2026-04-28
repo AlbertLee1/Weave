@@ -4803,3 +4803,44 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - mouseDown vs onClick on suggestion rows: the textarea's onBlur fires before onClick on the suggestion li, so the dropdown unmounts before the click handler runs and selection silently fails. Use `onMouseDown` (fires before blur) with `e.preventDefault()` (prevents focus loss). The 100ms `setTimeout` in the textarea's onBlur defers the close enough that mouseDown lands first as a belt-and-braces.
   - oms.Notification deep-link convention for cross-feature surfaces (mentions, watches, future approvals): use a top-level `/<surface>?<query>` URL (`/mentions?rid=<targetRid>&commentId=<id>`), NOT `/explorer/<ontology>/<objectType>/<pk>` because the notification creator doesn't know the ontology API name from a bare RID. The SPA's notification-click router can resolve the deep link to the correct page. Same shape works for `/watches`, `/approvals`, etc.
 ---
+
+## 2026-04-28 19:30 - US-337 Watch / Follow
+- Backend: pkg/watches package (model.go / store.go / handlers.go) with the narrow-Store + MemoryStore + cmd/server/watches_store.go pgxpool adapter trio. Same dep-direction trick as comments / savedsearches / dashboards — pkg/watches stays pgx-free. Watch row carries (id UUID, userId, targetRid, createdAt). Validation centralised in ValidateTargetRID (delegates to rid.IsRID). 4 endpoints registered together:
+  - GET /api/v2/watches → caller's watchlist (DESC by createdAt)
+  - GET /api/v2/watches/status?targetRid=… → single boolean probe for the WatchButton
+  - POST /api/v2/watches with body {targetRid} → idempotent Create returns 201 + the canonical Watch row
+  - DELETE /api/v2/watches?targetRid=… → unwatch
+  - Status route REGISTERED BEFORE the catch-all DELETE so chi dispatches the static segment first (US-216 prior art).
+- Migration 000078_watches.{up,down}.sql adds the `watches` table + UNIQUE INDEX (user_id, target_rid) for the idempotent toggle invariant + secondary index on target_rid for the upcoming US-338 fan-out join + the canonical `target_rid LIKE 'ri.%'` CHECK constraint. PG store uses `INSERT ... ON CONFLICT (user_id, target_rid) DO NOTHING` followed by a SELECT to return the canonical row, so the second click reuses the original id and timestamp.
+- Wiring: ServerDeps.WatchesStore (new field), boot wires `newPGWatchesStore(pool)` next to CommentsStore, `if deps.WatchesStore != nil { watches.NewHandler(deps.WatchesStore).RegisterRoutes(api) }` next to the comments handler in the auth-gated router group. Degraded-mode test routers leave the field nil so the routes stay unmounted and the SPA's hook treats the 404 as "watches unavailable, hide the button".
+- Frontend: web/src/api/watches.ts (typed wrappers: listWatches / getWatchStatus / createWatch / deleteWatch). web/src/hooks/useWatches.ts (useWatchStatus / useWatches / useCreateWatch / useDeleteWatch). useWatchStatus surfaces an `available` field that goes false on 404/WatchesUnavailable so the WatchButton renders as null in degraded-mode deployments. web/src/components/browser/WatchButton.tsx — small ☆/★ toggle with aria-pressed + data-watching attr. Mounts in ObjectDetail above the tab strip on every open object via `<WatchButton targetRid={object.__rid ?? null} />`.
+- Files changed:
+  - pkg/watches/{model,store,handlers,store_test,handlers_test}.go (NEW)
+  - migrations/000078_watches.{up,down}.sql (NEW)
+  - cmd/server/watches_store.go (NEW)
+  - cmd/server/main.go (import + ServerDeps.WatchesStore + boot wiring + route registration)
+  - web/src/api/watches.ts (NEW)
+  - web/src/hooks/useWatches.ts (NEW)
+  - web/src/components/browser/WatchButton.tsx (NEW)
+  - web/src/components/browser/__tests__/WatchButton.test.tsx (NEW)
+  - web/src/components/browser/ObjectDetail.tsx (import + render WatchButton)
+  - prd.json (US-337 → passes:true + notes)
+  - progress.txt (this entry)
+- Verification:
+  - `go test ./pkg/watches/...` → all pass (TestMemoryStore_CreateListDeleteIsWatching, TestValidateTargetRID, TestHandler_CreateListStatusDelete, TestHandler_CrossUserIsolation, TestHandler_DegradedModeNoStore, TestHandler_RequiresAuth)
+  - `go test ./cmd/server/... -run TestContract` → 3/3 (no openapi entries needed for now since the contract router doesn't wire WatchesStore — same pattern as savedsearches/dashboards)
+  - `go test ./...` → ALL packages green
+  - `go build ./...` → clean
+  - `npx vitest run src/components/browser/__tests__/WatchButton.test.tsx` → 4/4
+  - `npx vitest run` → 104 files / 740 tests pass (+4 from 736 baseline post-US-336)
+  - `npx tsc --noEmit` → 0 errors
+  - `npx eslint src/components/browser/WatchButton.tsx src/components/browser/__tests__/WatchButton.test.tsx src/api/watches.ts src/hooks/useWatches.ts` → 0 issues
+- Browser手测仍欠款 (dev-browser skill not available in this harness — same standing gap as US-205/US-309/US-313/US-314/US-315/US-316/US-317/US-318/US-319/US-320/US-321/US-322/US-323/US-324/US-325/US-326/US-327/US-328/US-329/US-336).
+- **Learnings for future iterations:**
+  - Per-user binary toggle (follow/like/star/pin/bookmark/...) reduces to (id UUID, user_id, target_rid, created_at) + UNIQUE INDEX (user_id, target_rid) + `INSERT ... ON CONFLICT DO NOTHING` for idempotent Create. The four-endpoint pattern (LIST / STATUS / TOGGLE-ON / TOGGLE-OFF) — with STATUS being a separate single-row probe rather than a derived "is this RID in the LIST?" client-side scan — keeps the WatchButton's initial-render React Query independent of the broader watchlist query so opening a panel for a single object doesn't pull every row the user follows. Reusable for any future "user has favorited / pinned / subscribed to RID" surface.
+  - DELETE keyed by query string (`?targetRid=…`) rather than path id when the natural caller-side handle is the target, not the row id. Saves the SPA from juggling watch ids across mount/unmount cycles — the WatchButton only ever needs `object.__rid`, and STATUS / DELETE both key on the same handle. Same shape would work for "unfavorite this object", "unpin this dashboard", etc.
+  - PG idempotent toggle: `INSERT ... ON CONFLICT (user_id, target_rid) DO NOTHING` then a follow-up SELECT to return the canonical row. tag.RowsAffected() doesn't distinguish "conflicted" from "inserted" but we don't care — we always want the existing row's id back. The SELECT is one cheap planar lookup on the unique index, so the cost is one extra round-trip on the create path (vs `INSERT ... RETURNING *` which silently returns 0 rows on conflict and forces an exception path that's harder to pattern-match across pgx versions). Same shape works for any "create-or-return-existing" idempotent endpoint.
+  - RTL test pattern for "click only fires when async data has loaded": `await waitFor(() => expect(screen.getByTestId('button')).not.toBeDisabled())` is materially more correct than waiting for a data attribute to settle to the EXPECTED value, because data-attrs reflecting `??=false` defaults match the loading state too. Test 3 of US-337 hit this — the click was firing while the WatchButton was still in `disabled={status.isLoading}` and the mutation never ran. Wait for `not.toBeDisabled()` AND THEN assert on the actual data. Generalises to any toggle/button that gates clicks on a query's loaded state.
+  - degraded-mode short-circuit pattern (`{available: false}` field on the hook return value): instead of duplicating the 404→[] branch in every consumer, the useWatchStatus hook returns `{targetRid, watching, available}` where `available=false` on 404/WatchesUnavailable. The consuming WatchButton renders null on `!available` — no try/catch in the component, no special "is the feature configured?" prop drilling. Same shape generalises to any per-feature "is this surface mounted on this deployment?" UI gate.
+  - Toolbar slot above tabs in a slide-out detail panel: small `<div className="flex justify-end -mt-2"><FeatureButton/></div>` row above the role="tablist" gives every cross-tab affordance (watch, share, favorite, ...) a stable home without crowding the tab buttons themselves. Uses negative margin to hug the panel header tightly so the tabs still read as primary navigation. ObjectDetail.tsx is the model — add new cross-tab buttons here, not inside any single tab body.
+---

@@ -1974,8 +1974,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 138,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend: pkg/watches/{model,store,handlers}.go ships a narrow Store interface with MemoryStore + a UUID-keyed Watch row. Idempotent Create matches the comments/savedsearches dep-direction trick — pkg/watches stays free of pgx, cmd/server/watches_store.go adapts pgxpool with `INSERT ... ON CONFLICT (user_id, target_rid) DO NOTHING` then re-SELECTs the canonical row so re-toggles return the same id. New endpoints: GET /api/v2/watches, GET /api/v2/watches/status?targetRid=, POST /api/v2/watches, DELETE /api/v2/watches?targetRid=. Status route registers BEFORE chi catch-all so the static segment dispatches correctly. Migration 000078 adds `watches` (id UUID PK, user_id, target_rid, created_at) + UNIQUE INDEX (user_id, target_rid) for the idempotent invariant + secondary index on target_rid for the future US-338 fan-out join. Frontend: web/src/api/watches.ts + hooks/useWatches.ts (status / list / create / delete with degraded-mode 404→{available:false} short-circuit) + components/browser/WatchButton.tsx (☆/★ toggle, aria-pressed, hides itself when targetRid is null OR endpoint unavailable). Mounted at the top of ObjectDetail's tabs panel for every selected object. 4 RTL tests for WatchButton + 7 Go tests across pkg/watches/{store,handlers}_test.go. go test ./... clean; vitest 740/740 (+4); tsc 0 errors; eslint clean. Dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-338",

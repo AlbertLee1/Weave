@@ -11,6 +11,7 @@ import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
 import { RelationshipGraph } from './RelationshipGraph';
 import { CommentsTab } from './CommentsTab';
+import { WatchButton } from './WatchButton';
 import { MarkdownPreview } from '../common/MarkdownEditor';
 import { InlineEditField } from '../common/InlineEditField';
 import { findModifyActionForProperty } from './findModifyAction';
@@ -133,6 +134,12 @@ export function ObjectDetail({
     <SlidePanel open={open} onClose={onClose} title={title}>
       {object && (
         <div className="space-y-4" data-testid="object-detail-tabs">
+          <div
+            className="flex justify-end -mt-2"
+            data-testid="object-detail-actions"
+          >
+            <WatchButton targetRid={object.__rid ?? null} />
+          </div>
           <div
             className="flex border-b border-border"
             role="tablist"
