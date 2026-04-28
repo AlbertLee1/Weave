@@ -164,6 +164,7 @@ type Executor struct {
 	atomicLogStore     AtomicActionLogStore
 	jobStore           ActionJobStore
 	approvalStore      ActionApprovalStore
+	actionLogStore     ActionLogStore
 	progressPub        ProgressPublisher
 	lineageStore       oms.LineageStore
 	paramSchemas       *ParameterSchemaValidator
@@ -246,6 +247,19 @@ func (e *Executor) SetLineageStore(s oms.LineageStore) {
 // internals.
 func (e *Executor) LineageStore() oms.LineageStore {
 	return e.lineageStore
+}
+
+// SetActionLogStore attaches the read-side ActionLogStore used by the
+// /actions/history handlers (US-317). When nil the list endpoint degrades
+// to an empty page and the detail endpoint returns 404 — same shape as
+// SetActionJobStore / SetActionApprovalStore. Safe to call once at boot.
+func (e *Executor) SetActionLogStore(s ActionLogStore) {
+	e.actionLogStore = s
+}
+
+// ActionLogStore returns the wired action-log read store (may be nil).
+func (e *Executor) ActionLogStore() ActionLogStore {
+	return e.actionLogStore
 }
 
 // SetActionApprovalStore attaches the approval-workflow store used by the

@@ -721,6 +721,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// /api/v2/objects/{rid}/lineage. Returns 404
 			// ImpactNotConfigured when no LineageStore is wired.
 			api.Get("/api/v2/actions/{rid}/impact", actionHandler.Impact)
+			// US-317: action 执行历史 — paginated, ontology-scoped list of
+			// ActionLog rows + per-row detail with parameters / edits /
+			// prevEdits. Always registered when the executor is wired;
+			// degraded mode without an ActionLogStore returns an empty
+			// page + 404 detail.
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/history", actionHandler.ListHistory)
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/history/{logId}", actionHandler.GetHistoryEntry)
 		}
 
 		// US-061/062: Stream ingest endpoint — bypasses Action rules, publishes
@@ -2079,6 +2086,13 @@ func main() {
 			// other catalog hook reuses; degraded-mode (no PG) routers leave
 			// the hook unset and the executor silently skips recording.
 			deps.ActionExecutor.SetLineageStore(oms.NewPGRepository(deps.PGPool))
+			// US-317: /actions/history list + detail. The read-side store is
+			// the same uncached *PGRepository the rest of these hooks reuse —
+			// list/count walk action_logs JOIN action_types, detail uses the
+			// existing GetActionLog. Degraded mode (no PG) leaves the hook
+			// unset; the handler returns an empty page + 404 detail without
+			// erroring so SDK contracts stay stable for tests.
+			deps.ActionExecutor.SetActionLogStore(oms.NewPGRepository(deps.PGPool))
 		}
 		// US-241: progress reporter publishes to NATS on actions.progress.<jobId>
 		// when the JS action calls weave.reportProgress(percent, message). The

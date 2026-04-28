@@ -6800,6 +6800,119 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/history:
+    get:
+      operationId: listActionHistory
+      summary: List action execution history (US-317)
+      description: |
+        Returns the action_logs rows scoped to a single ontology, paginated
+        and ordered by created_at DESC. All filter parameters are optional;
+        when present they AND together. Unknown actionType apiNames return
+        an empty page rather than 404 so the UI dropdown can render "no
+        results" without distinguishing "wrong name" from "no executions".
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: actionType
+          required: false
+          description: Filter by ActionType apiName.
+          schema:
+            type: string
+        - in: query
+          name: status
+          required: false
+          description: Filter by execution status (SUCCESS or FAILED).
+          schema:
+            type: string
+            enum: [SUCCESS, FAILED]
+        - in: query
+          name: userId
+          required: false
+          description: Filter by the executing user ID.
+          schema:
+            type: string
+        - in: query
+          name: since
+          required: false
+          description: RFC3339 lower bound (inclusive) on created_at.
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: until
+          required: false
+          description: RFC3339 upper bound (exclusive) on created_at.
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          required: false
+          description: Page size, 1..500 (default 50).
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          required: false
+          description: Result offset, ≥0 (default 0).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Action history page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ActionLog"
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+                  nextOffset:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/history/{logId}:
+    get:
+      operationId: getActionHistoryEntry
+      summary: Get a single action_log row (US-317)
+      description: |
+        Returns one action_log row including parameters, edits, and
+        prevEdits so a detail panel can render the full audit trail without
+        paging the list. Cross-ontology access is denied (404) — the URL's
+        ontology must match the row's ActionType.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: logId
+          required: true
+          description: BIGSERIAL id of the action_log row.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Single ActionLog row.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionLog"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actions/approvals:
     get:
       operationId: listActionApprovals

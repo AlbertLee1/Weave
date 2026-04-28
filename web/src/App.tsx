@@ -9,6 +9,7 @@ import { DashboardPage } from './components/dashboard/DashboardPage';
 import { ExplorerPage } from './components/explorer/ExplorerPage';
 import { BrowserPage } from './components/browser/BrowserPage';
 import { ActionConsolePage } from './components/actions/ActionConsolePage';
+import { ActionHistoryPage } from './components/actions/ActionHistoryPage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
 import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
@@ -66,6 +67,8 @@ export default function App() {
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
+              <Route path="actions/:ontology/history" element={<ActionHistoryPage />} />
+              <Route path="actions/history" element={<ActionHistoryPage />} />
               <Route path="threads" element={<ThreadsPage />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="pipelines" element={<PipelinesPage />} />

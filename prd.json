@@ -1694,8 +1694,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 118,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend GET /api/v2/ontologies/{ontologyApiName}/actions/history (list + filters: actionType/status/userId/since/until/limit/offset) and /actions/history/{logId} (detail with parameters/edits/prevEdits). New narrow ActionLogStore on Executor (PG impl on *PGRepository: ListActionLogsByOntology, GetActionLogByOntology, CountActionLogsByOntology — JOIN action_types for ontology scoping; cross-ontology lookups return ErrNotFound). Frontend ActionHistoryPage at /actions/:ontology/history with Filter sidebar (action type dropdown, status tabs, user id input), table view, and Modal detail panel (Parameters / Edits / Previous State JSON blocks). Wired into Sidebar for ontology-scoped navigation. 14 Go tests + 5 RTL tests. dev-browser skill not available in this harness — manual browser verification still owed."
     },
     {
       "id": "US-318",

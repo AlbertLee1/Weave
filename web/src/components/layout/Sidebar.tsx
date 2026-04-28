@@ -135,6 +135,11 @@ export function Sidebar() {
       label: 'Approvals',
       icon: 'check',
     });
+    navItems.push({
+      to: `/actions/${activeOntology}/history`,
+      label: 'Action History',
+      icon: 'clock',
+    });
   }
   navItems.push({
     to: '/schema/infer',
