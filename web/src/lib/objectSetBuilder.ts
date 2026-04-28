@@ -79,11 +79,39 @@ export interface NearestNeighborsNode extends NodeBase {
   };
 }
 
+// US-332: each saved ObjectSet carries a list of named/timestamped versions
+// so users can iterate on a query without losing earlier shapes. The legacy
+// shape (`def` + `createdAt` only) is still accepted by readSaved and lifted
+// into a single-entry `versions` array on first read so existing local data
+// keeps working.
+export interface ObjectSetVersion {
+  versionId: string;
+  def: ObjectSetDefinition;
+  createdAt: string;
+  note?: string;
+}
+
 export interface SavedObjectSet {
   id: string;
   name: string;
+  // def mirrors the active version's definition so existing call sites
+  // (`s.def`) keep working. Version-aware code should read
+  // `findActiveVersion(s)` instead.
   def: ObjectSetDefinition;
   createdAt: string;
+  versions: ObjectSetVersion[];
+  activeVersionId: string;
+}
+
+export function findActiveVersion(saved: SavedObjectSet): ObjectSetVersion | undefined {
+  return (
+    saved.versions.find((v) => v.versionId === saved.activeVersionId) ??
+    saved.versions[0]
+  );
+}
+
+export function newVersionId(): string {
+  return `v-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 let idCounter = 0;

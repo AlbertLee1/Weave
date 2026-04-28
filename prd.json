@@ -1903,8 +1903,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 133,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "SavedObjectSet now carries versions[] + activeVersionId; useSavedObjectSets exposes addVersion / setActiveVersion / removeVersion with legacy-shape migration on read; SavedObjectSetsPage at /objectsets/:ontology/saved lists saved sets with expand-to-show-versions, switch active, delete one version, delete the whole saved set; ObjectSetPage Save modal grew a 'save as new version of: …' picker; vitest 717/717 + tsc clean. Dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-333",

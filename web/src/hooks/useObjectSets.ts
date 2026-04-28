@@ -12,7 +12,10 @@ import type {
   OrderBy,
 } from '../api/types';
 import {
+  findActiveVersion,
   localStorageKey,
+  newVersionId,
+  type ObjectSetVersion,
   type SavedObjectSet,
 } from '../lib/objectSetBuilder';
 
@@ -124,11 +127,19 @@ export function useSavedObjectSets(ontologyApiName: string) {
 
   const save = useCallback(
     (name: string, def: ObjectSetDefinition): SavedObjectSet => {
+      const now = new Date().toISOString();
+      const version: ObjectSetVersion = {
+        versionId: newVersionId(),
+        def,
+        createdAt: now,
+      };
       const entry: SavedObjectSet = {
         id: `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
         name,
         def,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        versions: [version],
+        activeVersionId: version.versionId,
       };
       persist([entry, ...items]);
       return entry;
@@ -143,11 +154,104 @@ export function useSavedObjectSets(ontologyApiName: string) {
     [items, persist],
   );
 
+  // US-332: append a new named version to an existing saved ObjectSet and
+  // make it the active version. Returns the updated saved set.
+  const addVersion = useCallback(
+    (
+      id: string,
+      def: ObjectSetDefinition,
+      note?: string,
+    ): SavedObjectSet | undefined => {
+      const idx = items.findIndex((it) => it.id === id);
+      if (idx === -1) return undefined;
+      const existing = items[idx];
+      const version: ObjectSetVersion = {
+        versionId: newVersionId(),
+        def,
+        createdAt: new Date().toISOString(),
+        ...(note ? { note } : {}),
+      };
+      const updated: SavedObjectSet = {
+        ...existing,
+        def,
+        versions: [version, ...existing.versions],
+        activeVersionId: version.versionId,
+      };
+      const next = items.slice();
+      next[idx] = updated;
+      persist(next);
+      return updated;
+    },
+    [items, persist],
+  );
+
+  // US-332: switch which version of a saved set is the active one. Other
+  // surfaces (composer, diff page) read `def` and load the active version.
+  const setActiveVersion = useCallback(
+    (id: string, versionId: string): SavedObjectSet | undefined => {
+      const idx = items.findIndex((it) => it.id === id);
+      if (idx === -1) return undefined;
+      const existing = items[idx];
+      const target = existing.versions.find((v) => v.versionId === versionId);
+      if (!target) return undefined;
+      const updated: SavedObjectSet = {
+        ...existing,
+        def: target.def,
+        activeVersionId: versionId,
+      };
+      const next = items.slice();
+      next[idx] = updated;
+      persist(next);
+      return updated;
+    },
+    [items, persist],
+  );
+
+  // US-332: drop a single version from a saved set. Refuses to drop the
+  // last remaining version (callers should `remove` the whole saved set
+  // instead). If the active version is dropped the most recent remaining
+  // version becomes active.
+  const removeVersion = useCallback(
+    (id: string, versionId: string): SavedObjectSet | undefined => {
+      const idx = items.findIndex((it) => it.id === id);
+      if (idx === -1) return undefined;
+      const existing = items[idx];
+      if (existing.versions.length <= 1) return undefined;
+      const remaining = existing.versions.filter(
+        (v) => v.versionId !== versionId,
+      );
+      const nextActiveId =
+        existing.activeVersionId === versionId
+          ? remaining[0].versionId
+          : existing.activeVersionId;
+      const nextActive = remaining.find((v) => v.versionId === nextActiveId)!;
+      const updated: SavedObjectSet = {
+        ...existing,
+        def: nextActive.def,
+        versions: remaining,
+        activeVersionId: nextActiveId,
+      };
+      const next = items.slice();
+      next[idx] = updated;
+      persist(next);
+      return updated;
+    },
+    [items, persist],
+  );
+
   const clear = useCallback(() => {
     persist([]);
   }, [persist]);
 
-  return { items, save, remove, clear };
+  return {
+    items,
+    save,
+    remove,
+    addVersion,
+    setActiveVersion,
+    removeVersion,
+    clear,
+  };
 }
 
 function readSaved(ontologyApiName: string): SavedObjectSet[] {
@@ -157,15 +261,47 @@ function readSaved(ontologyApiName: string): SavedObjectSet[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (x): x is SavedObjectSet =>
-        typeof x === 'object' &&
-        x !== null &&
-        typeof (x as SavedObjectSet).id === 'string' &&
-        typeof (x as SavedObjectSet).name === 'string' &&
-        typeof (x as SavedObjectSet).def === 'object',
-    );
+    return parsed
+      .filter(
+        (x) =>
+          typeof x === 'object' &&
+          x !== null &&
+          typeof (x as { id?: unknown }).id === 'string' &&
+          typeof (x as { name?: unknown }).name === 'string' &&
+          typeof (x as { def?: unknown }).def === 'object',
+      )
+      .map((x) => migrateLegacy(x as Partial<SavedObjectSet>));
   } catch {
     return [];
   }
 }
+
+// US-332: legacy entries (before versions support) carry only def + createdAt;
+// promote them into a single-entry versions array so version-aware code can
+// iterate uniformly without per-call-site shape checks.
+function migrateLegacy(raw: Partial<SavedObjectSet>): SavedObjectSet {
+  if (
+    Array.isArray(raw.versions) &&
+    raw.versions.length > 0 &&
+    typeof raw.activeVersionId === 'string'
+  ) {
+    return raw as SavedObjectSet;
+  }
+  const createdAt = raw.createdAt ?? new Date().toISOString();
+  const version: ObjectSetVersion = {
+    versionId: newVersionId(),
+    def: raw.def!,
+    createdAt,
+  };
+  return {
+    id: raw.id!,
+    name: raw.name!,
+    def: raw.def!,
+    createdAt,
+    versions: [version],
+    activeVersionId: version.versionId,
+  };
+}
+
+// Re-export for callers that need to resolve the active version.
+export { findActiveVersion };

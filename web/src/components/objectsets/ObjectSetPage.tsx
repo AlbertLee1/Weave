@@ -70,9 +70,18 @@ export function ObjectSetPage() {
   );
 
   // Saved object sets
-  const { items: savedObjectSets, save, remove } = useSavedObjectSets(ontologyApiName);
+  const {
+    items: savedObjectSets,
+    save,
+    remove,
+    addVersion,
+  } = useSavedObjectSets(ontologyApiName);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState('');
+  // US-332: when saving, optionally append as a new version to an existing
+  // saved set instead of creating a new one. Empty string = "create new".
+  const [saveTargetId, setSaveTargetId] = useState<string>('');
+  const [saveNote, setSaveNote] = useState('');
 
   // Share link via createTemporary
   const createTempMut = useCreateTemporaryObjectSet(ontologyApiName);
@@ -104,15 +113,22 @@ export function ObjectSetPage() {
 
   const handleSaveAs = useCallback(() => {
     setSaveName('');
+    setSaveTargetId('');
+    setSaveNote('');
     setSaveModalOpen(true);
   }, []);
 
   const handleSaveConfirm = useCallback(() => {
+    if (saveTargetId) {
+      addVersion(saveTargetId, def, saveNote.trim() || undefined);
+      setSaveModalOpen(false);
+      return;
+    }
     const name = saveName.trim();
     if (!name) return;
     save(name, def);
     setSaveModalOpen(false);
-  }, [saveName, def, save]);
+  }, [saveTargetId, saveName, saveNote, def, save, addVersion]);
 
   const handleLoadSaved = useCallback((s: SavedObjectSet) => {
     setDef(s.def);
@@ -157,12 +173,20 @@ export function ObjectSetPage() {
             {ontologyApiName}
           </p>
         </div>
-        <Link
-          to={`/objectsets/${ontologyApiName}/diff`}
-          className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
-        >
-          Diff
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            to={`/objectsets/${ontologyApiName}/saved`}
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+          >
+            Saved
+          </Link>
+          <Link
+            to={`/objectsets/${ontologyApiName}/diff`}
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+          >
+            Diff
+          </Link>
+        </div>
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[2fr_3fr] overflow-hidden">
@@ -195,14 +219,51 @@ export function ObjectSetPage() {
         title="Save Object Set"
       >
         <div className="flex flex-col gap-3">
-          <label className="text-xs font-sans text-text-secondary">Name</label>
-          <input
-            value={saveName}
-            onChange={(e) => setSaveName(e.target.value)}
-            placeholder="My query"
+          <label className="text-xs font-sans text-text-secondary">
+            Save as
+          </label>
+          <select
+            value={saveTargetId}
+            onChange={(e) => setSaveTargetId(e.target.value)}
             className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none"
-            autoFocus
-          />
+            aria-label="save target"
+          >
+            <option value="">New saved Object Set</option>
+            {savedObjectSets.map((s) => (
+              <option key={s.id} value={s.id}>
+                Version of: {s.name}
+              </option>
+            ))}
+          </select>
+          {saveTargetId === '' ? (
+            <>
+              <label className="text-xs font-sans text-text-secondary">
+                Name
+              </label>
+              <input
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                placeholder="My query"
+                className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none"
+                autoFocus
+                aria-label="save name"
+              />
+            </>
+          ) : (
+            <>
+              <label className="text-xs font-sans text-text-secondary">
+                Note (optional)
+              </label>
+              <input
+                value={saveNote}
+                onChange={(e) => setSaveNote(e.target.value)}
+                placeholder="What changed in this version?"
+                className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none"
+                autoFocus
+                aria-label="version note"
+              />
+            </>
+          )}
           <div className="flex justify-end gap-2 mt-2">
             <button
               type="button"
@@ -214,7 +275,7 @@ export function ObjectSetPage() {
             <button
               type="button"
               onClick={handleSaveConfirm}
-              disabled={!saveName.trim()}
+              disabled={saveTargetId === '' && !saveName.trim()}
               className="px-3 py-1.5 bg-accent-cyan text-bg-primary rounded text-xs font-mono font-medium disabled:opacity-40"
             >
               Save

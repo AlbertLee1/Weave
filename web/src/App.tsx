@@ -13,6 +13,7 @@ import { ActionHistoryPage } from './components/actions/ActionHistoryPage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
 import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { ObjectSetDiffPage } from './components/objectsets/ObjectSetDiffPage';
+import { SavedObjectSetsPage } from './components/objectsets/SavedObjectSetsPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 import { PlaygroundPage } from './components/developer/PlaygroundPage';
 import { MetricsPage } from './components/developer/MetricsPage';
@@ -99,6 +100,7 @@ export default function App() {
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
+              <Route path="objectsets/:ontology/saved" element={<SavedObjectSetsPage />} />
               <Route path="objectsets/:ontology/diff" element={<ObjectSetDiffPage />} />
               <Route path="import/:ontology" element={<ImportWizardPage />} />
               <Route path="schema/infer" element={<SchemaInferencePage />} />
