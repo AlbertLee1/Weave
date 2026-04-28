@@ -152,6 +152,11 @@ export function Sidebar() {
     label: 'Permission Requests',
     icon: 'shield',
   });
+  navItems.push({
+    to: '/mentions',
+    label: 'Mentions',
+    icon: 'chat',
+  });
 
   const adminItems: NavItem[] = activeOntology
     ? [

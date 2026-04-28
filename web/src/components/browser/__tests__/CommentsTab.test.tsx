@@ -341,4 +341,43 @@ describe('CommentsTab (US-335)', () => {
       expect(deleted).toBe(true);
     });
   });
+
+  it('highlights the targeted comment when highlightCommentId is set (US-340)', async () => {
+    const ts = '2026-04-28T12:00:00Z';
+    server.use(
+      listHandler([
+        {
+          id: 'c1',
+          targetRid,
+          body: 'parent',
+          author: 'alice',
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: 'c2',
+          targetRid,
+          body: 'a reply',
+          author: 'bob',
+          parentId: 'c1',
+          createdAt: ts,
+          updatedAt: ts,
+        },
+      ]),
+    );
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
+    render(
+      <CommentsTab targetRid={targetRid} highlightCommentId="c2" />,
+      { wrapper: makeWrapper() },
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('comment-row-c2')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('comment-row-c2').getAttribute('data-highlight')).toBe('true');
+    expect(screen.getByTestId('comment-row-c1').getAttribute('data-highlight')).toBe('false');
+    await waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalled();
+    });
+  });
 });

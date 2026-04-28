@@ -33,6 +33,7 @@ import { PipelinesPage } from './components/pipelines/PipelinesPage';
 import { LineagePage } from './components/lineage/LineagePage';
 import { DashboardEditorPage } from './components/dashboards/DashboardEditorPage';
 import { PermissionRequestsPage } from './components/permissionrequests/PermissionRequestsPage';
+import { MentionsPage } from './components/notifications/MentionsPage';
 import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
@@ -100,6 +101,7 @@ export default function App() {
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="permission-requests" element={<PermissionRequestsPage />} />
+              <Route path="mentions" element={<MentionsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="objectsets/:ontology/saved" element={<SavedObjectSetsPage />} />

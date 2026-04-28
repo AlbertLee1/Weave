@@ -88,6 +88,8 @@ function NotificationRow({ notification, onClick }: NotificationRowProps) {
       : 'border-border bg-bg-primary hover:bg-bg-elevated',
   ].join(' ');
 
+  const typeBadge = renderTypeBadge(notification.type);
+
   const content = (
     <>
       <div className="flex items-start justify-between gap-2">
@@ -99,6 +101,7 @@ function NotificationRow({ notification, onClick }: NotificationRowProps) {
               aria-hidden="true"
             />
           )}
+          {typeBadge}
           <span className="text-sm font-medium text-text-primary truncate">
             {notification.title}
           </span>
@@ -121,6 +124,7 @@ function NotificationRow({ notification, onClick }: NotificationRowProps) {
         to={notification.link}
         data-testid={`notification-item-${notification.id}`}
         data-unread={isUnread ? 'true' : 'false'}
+        data-type={notification.type}
         className={className}
         onClick={() => onClick(notification)}
       >
@@ -135,6 +139,7 @@ function NotificationRow({ notification, onClick }: NotificationRowProps) {
       tabIndex={0}
       data-testid={`notification-item-${notification.id}`}
       data-unread={isUnread ? 'true' : 'false'}
+      data-type={notification.type}
       className={className}
       onClick={() => onClick(notification)}
       onKeyDown={(e) => {
@@ -147,4 +152,26 @@ function NotificationRow({ notification, onClick }: NotificationRowProps) {
       {content}
     </div>
   );
+}
+
+// renderTypeBadge surfaces a short, type-aware glyph next to the row
+// title. Currently the only typed treatment is `mention` (US-340) — the
+// `@` glyph plus accent border keeps mentions visually distinct from
+// the watch / approval / system traffic sharing the same dropdown.
+// Unknown / untyped notifications render no badge to preserve the
+// pre-US-340 layout for legacy automation alerts.
+function renderTypeBadge(type: string): React.ReactNode {
+  if (type === 'mention') {
+    return (
+      <span
+        data-testid="notification-type-badge-mention"
+        className="inline-flex items-center justify-center w-5 h-5 text-[10px] font-mono font-bold rounded-full bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/40 flex-shrink-0"
+        aria-label="Mention"
+        title="Mention"
+      >
+        @
+      </span>
+    );
+  }
+  return null;
 }

@@ -2015,8 +2015,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 141,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "NotificationCenter renders a type-aware @-badge for type='mention' items (data-type+data-testid='notification-type-badge-mention'); the mention notification's link points at /mentions?rid=<targetRid>&commentId=<id> (already stamped by cmd/server/comments_mentions.buildMentionLink). New /mentions route + MentionsPage (web/src/components/notifications/MentionsPage.tsx) reads rid+commentId from the URL, renders the source thread via CommentsTab (extended with highlightCommentId — scroll-into-view + ring on the matching row, data-highlight=true), and lists the caller's mention notifications in a sidebar inbox. Optional ?id=<notificationId> auto-marks-read on landing so the bell badge clears without a second click. Sidebar gets a 'Mentions' nav entry. 4 RTL tests for MentionsPage + 1 for CommentsTab highlight + 2 for NotificationCenter badge — vitest 760/760 pass; go test ./... green. dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-341",

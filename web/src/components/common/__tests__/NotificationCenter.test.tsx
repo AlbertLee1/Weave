@@ -196,4 +196,43 @@ describe('NotificationCenter', () => {
     const n2 = screen.getByTestId('notification-item-n2');
     expect(n2.tagName).not.toBe('A');
   });
+
+  it('mention-typed notification renders an @ badge and links to /mentions deep link (US-340)', async () => {
+    const mention = {
+      id: 'm1',
+      userId: 'dev-user',
+      title: 'alice@example.com mentioned you',
+      body: 'cc @bob can you review',
+      type: 'mention',
+      link: '/mentions?rid=ri.phonograph2-objects.main.object.emp1&commentId=c-42',
+      read: false,
+      createdAt: new Date(NOW.getTime() - 60_000).toISOString(),
+    };
+    setupFetchStub({ items: [mention] });
+    renderPanel(true);
+    await waitFor(() => {
+      expect(
+        screen.getByText('alice@example.com mentioned you'),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId('notification-type-badge-mention'),
+    ).toBeInTheDocument();
+    const row = screen.getByTestId('notification-item-m1');
+    expect(row.getAttribute('data-type')).toBe('mention');
+    expect(row.tagName).toBe('A');
+    expect(row.getAttribute('href')).toContain('/mentions?');
+    expect(row.getAttribute('href')).toContain('commentId=c-42');
+  });
+
+  it('non-mention notifications do not render the @ badge', async () => {
+    setupFetchStub({ items: notifications });
+    renderPanel(true);
+    await waitFor(() => {
+      expect(screen.getByText('Inventory low')).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId('notification-type-badge-mention'),
+    ).not.toBeInTheDocument();
+  });
 });

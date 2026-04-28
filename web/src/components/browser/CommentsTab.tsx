@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useComments,
   useCreateComment,
@@ -13,6 +13,11 @@ import { MentionTextarea } from './MentionTextarea';
 
 interface CommentsTabProps {
   targetRid: string;
+  // highlightCommentId opts the rendered thread into a one-shot
+  // scroll-into-view + ring-glow on the matching comment row. Used by
+  // the /mentions deep link (US-340) so a notification click lands on
+  // the exact comment instead of the top of the thread.
+  highlightCommentId?: string;
 }
 
 interface ThreadNode {
@@ -89,7 +94,7 @@ function buildThreads(comments: Comment[]): ThreadNode[] {
   }));
 }
 
-export function CommentsTab({ targetRid }: CommentsTabProps) {
+export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps) {
   const { user } = useAuth();
   const meId = user?.id ?? '';
   const { data, isLoading, error } = useComments({
@@ -113,6 +118,21 @@ export function CommentsTab({ targetRid }: CommentsTabProps) {
     () => (data ? buildThreads(data.comments) : []),
     [data],
   );
+
+  // One-shot scroll-into-view when the deep-link target lands. Tracks the
+  // latest highlightCommentId so callers can re-target without remounting.
+  const scrolledForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightCommentId || !data) return;
+    if (scrolledForRef.current === highlightCommentId) return;
+    const el = document.querySelector(
+      `[data-testid="comment-row-${highlightCommentId}"]`,
+    );
+    if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+      (el as HTMLElement).scrollIntoView({ block: 'center' });
+    }
+    scrolledForRef.current = highlightCommentId;
+  }, [highlightCommentId, data]);
 
   if (!targetRid) {
     return (
@@ -232,6 +252,7 @@ export function CommentsTab({ targetRid }: CommentsTabProps) {
                   }}
                   updating={updateMut.isPending}
                   canReply
+                  highlight={highlightCommentId === node.comment.id}
                 />
 
                 {node.children.length > 0 && (
@@ -263,6 +284,7 @@ export function CommentsTab({ targetRid }: CommentsTabProps) {
                           }}
                           updating={updateMut.isPending}
                           canReply={false}
+                          highlight={highlightCommentId === reply.id}
                         />
                       </li>
                     ))}
@@ -398,6 +420,7 @@ interface CommentRowProps {
   onEditCancel: () => void;
   updating: boolean;
   canReply: boolean;
+  highlight?: boolean;
 }
 
 function CommentRow({
@@ -413,12 +436,20 @@ function CommentRow({
   onEditCancel,
   updating,
   canReply,
+  highlight = false,
 }: CommentRowProps) {
   const tombstoned = !!comment.deletedAt;
   const isMine = !tombstoned && comment.author === meId && meId !== '';
+  const highlightClass = highlight
+    ? 'rounded-sm ring-2 ring-accent-cyan/60 ring-offset-2 ring-offset-bg-elevated'
+    : '';
 
   return (
-    <div data-testid={`comment-row-${comment.id}`}>
+    <div
+      data-testid={`comment-row-${comment.id}`}
+      data-highlight={highlight ? 'true' : 'false'}
+      className={highlightClass}
+    >
       <div className="flex items-baseline justify-between gap-2">
         <span
           className="text-xs font-mono text-accent-cyan"
