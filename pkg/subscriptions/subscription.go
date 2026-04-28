@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/oss/where"
 )
 
@@ -23,10 +24,17 @@ type SubscribeRequest struct {
 // Subscription is an active subscription on a connection. It stores the
 // filter criteria and projection fields so the Hub can evaluate incoming
 // change events against it.
+//
+// A subscription is in one of two modes:
+//   - ObjectType + Where: the legacy single-type filter ({type:"subscribe"}).
+//   - Definition: an ObjectSet membership filter ({type:"subscribeObjectSet"})
+//     whose Matches walks the Definition tree per change event. When
+//     Definition is non-nil it supersedes ObjectType + Where.
 type Subscription struct {
 	ID         string
 	ObjectType string
 	Where      *where.WhereClause
+	Definition *objectset.Definition
 	Select     []string
 }
 
@@ -48,8 +56,20 @@ func NewSubscription(req SubscribeRequest) *Subscription {
 }
 
 // Matches returns true if the given objectType and properties satisfy
-// this subscription's filter criteria.
+// this subscription's filter criteria. ObjectSet subscriptions evaluate
+// membership via matchesDefinition; legacy single-type subscriptions fall
+// back to the ObjectType + Where pair.
 func (s *Subscription) Matches(objectType string, properties map[string]interface{}) bool {
+	return s.matches(objectType, "", properties)
+}
+
+// matches is the primaryKey-aware variant of Matches; used by HandleObjectChange
+// for ObjectSet definitions whose membership depends on the primary key
+// (notably "static" sets).
+func (s *Subscription) matches(objectType, primaryKey string, properties map[string]interface{}) bool {
+	if s.Definition != nil {
+		return matchesDefinition(s.Definition, objectType, primaryKey, properties)
+	}
 	if s.ObjectType != objectType {
 		return false
 	}
@@ -111,7 +131,7 @@ func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, proper
 
 	for _, cs := range targets {
 		for _, sub := range cs.subs {
-			if !sub.Matches(objectType, properties) {
+			if !sub.matches(objectType, primaryKey, properties) {
 				continue
 			}
 			projected := sub.ProjectProperties(properties)

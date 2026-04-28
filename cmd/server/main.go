@@ -1903,6 +1903,12 @@ func main() {
 	// 7b. WebSocket subscription hub (US-132). Created before the NATS
 	// consumer so the SetOnChange callback can safely reference it.
 	deps.WebSocketHub = subscriptions.NewHub()
+	// US-304: subscribeObjectSet may reference a stored ObjectSet by id; the
+	// in-memory ObjectSet store is the canonical resolver. Inline-definition
+	// subscriptions still work without it.
+	if deps.ObjSetStore != nil {
+		deps.WebSocketHub.SetObjectSetResolver(deps.ObjSetStore)
+	}
 
 	// 7. NATS
 	var publisher *funnel.Publisher

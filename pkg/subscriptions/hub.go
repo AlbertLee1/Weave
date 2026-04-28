@@ -96,11 +96,12 @@ func (c *Connection) drainOverflow(ctx context.Context) {
 // Hub manages active WebSocket connections and routes messages to them.
 // It is safe for concurrent use.
 type Hub struct {
-	mu     sync.Mutex
-	conns  map[string]*Connection
-	ctx    context.Context
-	stop   context.CancelFunc
-	config HubConfig
+	mu       sync.Mutex
+	conns    map[string]*Connection
+	ctx      context.Context
+	stop     context.CancelFunc
+	config   HubConfig
+	resolver ObjectSetResolver // optional; nil means subscribeObjectSet rejects {objectSetRid}
 }
 
 // NewHub creates a new Hub ready to accept WebSocket connections with
@@ -119,6 +120,22 @@ func NewHubWithConfig(cfg HubConfig) *Hub {
 		stop:   stop,
 		config: cfg,
 	}
+}
+
+// SetObjectSetResolver wires the resolver used by subscribeObjectSet to
+// translate an objectSetRid into a Definition. Inline-definition subscriptions
+// work without a resolver. Passing nil detaches the hook.
+func (h *Hub) SetObjectSetResolver(r ObjectSetResolver) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.resolver = r
+}
+
+// objectSetResolver returns the currently wired resolver, or nil.
+func (h *Hub) objectSetResolver() ObjectSetResolver {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.resolver
 }
 
 // ConnectionCount returns the number of active connections.
@@ -319,6 +336,8 @@ func (c *Connection) readPump(ctx context.Context) {
 		switch envelope.Type {
 		case "subscribe":
 			resp = c.hub.handleSubscribe(c, envelope.Data)
+		case "subscribeObjectSet":
+			resp = c.hub.handleSubscribeObjectSet(c, envelope.Data)
 		case "unsubscribe":
 			resp = c.hub.handleUnsubscribe(c, envelope.Data)
 		default:

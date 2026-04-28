@@ -1511,8 +1511,8 @@
         "Tests pass"
       ],
       "priority": 105,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/subscriptions/objectset.go: new {type:\"subscribeObjectSet\"} message accepts inline definition or objectSetRid (resolved via injected ObjectSetResolver — pkg/oss/objectset.Store satisfies it directly). Pure-data matchesDefinition walks base/filter/union/intersect/subtract/static/asType/withProperties; executor-driven types (searchAround/nearestNeighbors/sample/interfaceBase/etc.) rejected at subscribe time via supportedDefinitionType. Subscription struct gained Definition field; matches() is primaryKey-aware so static-set membership routes correctly. Hub.SetObjectSetResolver setter wired in cmd/server/main.go alongside existing WebSocketHub bootstrap. 26 unit + integration tests cover matcher, validator, resolver, and end-to-end EditBatch routing through HandleObjectChange (filter / static / select projection). Existing subscribe / unsubscribe / overflow / heartbeat tests untouched and still green."
     },
     {
       "id": "US-305",
