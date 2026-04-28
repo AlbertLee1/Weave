@@ -197,8 +197,15 @@ func (m *mockOmsRepo) DeleteQueryType(_ context.Context, _ string) error        
 
 // ActionLog stubs
 func (m *mockOmsRepo) InsertActionLog(_ context.Context, log *oms.ActionLog) error {
+	if m.insertLogErr != nil {
+		return m.insertLogErr
+	}
+	// Back-fill an auto-incrementing ID so callers depending on the row's
+	// primary-key (e.g. lineage upstream RID) can read a non-zero value
+	// from the same pointer they handed to this stub.
+	log.ID = int64(len(m.insertedLogs)) + 1
 	m.insertedLogs = append(m.insertedLogs, log)
-	return m.insertLogErr
+	return nil
 }
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
 	return nil, nil

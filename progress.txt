@@ -3634,3 +3634,35 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Cross-parent leakage on detail GET is a real bug worth a dedicated test: SELECT scoped to BOTH (id, parentID), 404 RunNotFound rather than returning the row, so an attacker who knows a global run id can't leak existence across pipelines they don't own. The handler-layer `lookupPipelineOwned` already gates on parent-ownership; the inner GetPipelineRun is belt-and-braces.
   - GET /runs accepts `?limit` and `?cursor` query params; non-numeric values reject as typed 400 with distinct errorNames (InvalidPipelineRunLimit / InvalidPipelineRunCursor / InvalidPipelineRunID). Three distinct names so SDK callers can localize messages by error class without parsing free-form `reason` strings.
 ---
+
+## 2026-04-28 10:29 CST - US-299
+- Lineage 元数据模型: directed provenance graph linking upstream sources (action-log / pipeline-run / dataset / ...) to downstream objects so callers can answer "where did this object come from?".
+- Migration 000073_lineage_edges (+ down counterpart): BIGSERIAL id PK, upstream_rid TEXT, downstream_rid TEXT, operation TEXT default '', ts TIMESTAMPTZ default NOW(); covering indexes on `(downstream_rid, ts DESC)` and `(upstream_rid, ts DESC)` so the two natural retrieval directions don't seq-scan.
+- pkg/oms:
+  - `lineage.go` — `LineageEdge` model, `LineageStore` interface (InsertLineageEdge / ListUpstreamLineage / ListDownstreamLineage), `ActionLogLineageRID(id)` helper (`ri.actions.main.action-log.<id>`), `ObjectLineageRID(objectType, primaryKey)` helper (mirrors oss.FormatObject's `ri.phonograph2-objects.main.object.<...>` shape with optional objectType segment).
+  - `pg_repository_lineage.go` — `*PGRepository` impl of all three LineageStore methods. Insert back-fills id+ts; Insert with caller-stamped non-zero ts writes verbatim, zero ts falls through to column DEFAULT NOW(). List paths order by `ts DESC, id DESC` (id tiebreaker for same-tick rows) and default to limit=200 when limit<=0.
+  - `lineage_test.go` — helper assertions (zero/negative id → empty; objectType-optional formatting).
+- pkg/actions:
+  - `executor.go` — Executor gains `lineageStore oms.LineageStore` field + `SetLineageStore(s)` setter. New `recordLineage(ctx, actionLogID, edits)` method appends one edge per CREATE/MODIFY/DELETE edit (link edits skipped — link_edges already records that relation). Both commit paths invoke it after the action log row's id is back-filled: CommitBatch does it inline after each `InsertActionLog` (continuing on log insert failure), commitBatchAtomicTx loops over `prepared[i] / logs[i]` after `WriteActionLogsAtomic` returns. Errors are logged but NEVER abort the apply — lineage is best-effort observability, not a write barrier.
+  - `lineage_test.go` — 4 cases: (1) Apply with a modifyObject rule writes one edge whose upstream is the back-filled action log RID and downstream is `ObjectLineageRID(objectType, primaryKey)`; (2) executor without a wired LineageStore (default) succeeds with no panic and no implicit recording; (3) failing LineageStore does not abort the apply (validates the best-effort contract); (4) link-only action writes zero lineage edges.
+  - `actions_test.go` — `mockOmsRepo.InsertActionLog` now back-fills an auto-incrementing `log.ID` (was always 0), keeping every existing assertion happy AND letting new lineage tests pin the upstream RID against the persisted log row's id.
+- cmd/server/main.go — `deps.ActionExecutor.SetLineageStore(oms.NewPGRepository(deps.PGPool))` inside the existing `if deps.PGPool != nil` block (line ~1990), alongside SetAtomicActionLogStore / SetActionJobStore / SetActionApprovalStore. Degraded-mode (no PG) routers leave the hook unset and the executor silently skips recording.
+- Tests: pkg/oms + pkg/actions + pkg/funnel + cmd/server contract trio green; full `go test ./...` (incl. chinook/northwind integration) green.
+- Files changed:
+  - `migrations/000073_lineage_edges.up.sql` (new)
+  - `migrations/000073_lineage_edges.down.sql` (new)
+  - `pkg/oms/lineage.go` (new)
+  - `pkg/oms/lineage_test.go` (new)
+  - `pkg/oms/pg_repository_lineage.go` (new)
+  - `pkg/actions/lineage_test.go` (new)
+  - `pkg/actions/executor.go` (Executor field + setter + recordLineage; both commit paths)
+  - `pkg/actions/actions_test.go` (mockOmsRepo.InsertActionLog id back-fill)
+  - `cmd/server/main.go` (PG-gated SetLineageStore wiring)
+  - `prd.json` (US-299 passes=true)
+- **Learnings for future iterations:**
+  - Best-effort observability hooks (lineage, history, embeddings, PII auto-tag, marking propagation) ALL share the same shape: narrow interface in the owning package, setter-injected on the consumer/executor, errors logged + swallowed, nil-receiver / unwired short-circuit. New ones should follow the same playbook so degraded-mode routers and unit-test harnesses stay byte-identical.
+  - `mockOmsRepo.InsertActionLog` previously left `log.ID` at zero, masking any test that checked the persisted id. Back-filling an incrementing id matches the PG repo's `RETURNING id` semantics and makes lineage / future audit tests trivial. Existing call sites that only counted `len(insertedLogs)` are unchanged. Worth checking other in-memory stubs for the same gap — silent zeros are easy to miss.
+  - Object RID convention is split: oss.FormatObject (the wire format that lands in `__rid`) uses ONLY the primary key (`ri.phonograph2-objects.main.object.<pk>`), but cross-objectType uniqueness only holds because of historical UUID-shaped PKs. New cross-cutting subsystems (lineage being the first) should produce a 2-segment composite (`ri.phonograph2-objects.main.object.<objectType>.<pk>`) so future ObjectTypes with non-UUID PKs are self-disambiguating. The new `oms.ObjectLineageRID` helper accepts both shapes (objectType="" falls back to legacy single-segment) so callers without objectType context can still produce a non-empty RID.
+  - When writing an edge per persisted edit, the natural place to hook is AFTER the action_log id is back-filled — both commit paths do this inline (CommitBatch via per-row InsertActionLog, commitBatchAtomicTx via `logs[i].ID` after WriteActionLogsAtomic). Putting the hook BEFORE the log insert (or inside the funnel consumer) loses the action_log id (consumer doesn't know it).
+  - Link edits MUST be skipped from object-lineage. Including them produces double-counted relations because link_edges already records source→target separately, and a LINK_CREATE edit has no `ObjectType` field at all (the consumer dispatches on LinkTypeRID instead) — `ObjectLineageRID("","pk")` would still emit a single-segment RID but the resulting edge has no semantic value.
+---

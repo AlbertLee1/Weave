@@ -2000,6 +2000,11 @@ func main() {
 			// store — degraded-mode (no PG) routers keep the sync-apply
 			// contract stable for unit tests.
 			deps.ActionExecutor.SetActionApprovalStore(newPGActionApprovalStore(deps.PGPool))
+			// US-299: lineage edges (lineage_edges) record where each object
+			// came from. The store is the same uncached *PGRepository every
+			// other catalog hook reuses; degraded-mode (no PG) routers leave
+			// the hook unset and the executor silently skips recording.
+			deps.ActionExecutor.SetLineageStore(oms.NewPGRepository(deps.PGPool))
 		}
 		// US-241: progress reporter publishes to NATS on actions.progress.<jobId>
 		// when the JS action calls weave.reportProgress(percent, message). The

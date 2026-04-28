@@ -165,6 +165,7 @@ type Executor struct {
 	jobStore           ActionJobStore
 	approvalStore      ActionApprovalStore
 	progressPub        ProgressPublisher
+	lineageStore       oms.LineageStore
 	paramSchemas       *ParameterSchemaValidator
 }
 
@@ -225,6 +226,18 @@ func (e *Executor) SetActionJobStore(s ActionJobStore) {
 // gracefully without reaching into the Executor's internals.
 func (e *Executor) ActionJobStore() ActionJobStore {
 	return e.jobStore
+}
+
+// SetLineageStore attaches the lineage edge store used by both commit paths
+// (CommitBatch + commitBatchAtomicTx) to record one upstream→downstream edge
+// per persisted CREATE/MODIFY/DELETE edit. Upstream is the action-log row's
+// canonical RID; downstream is the affected object's RID. Link edits do not
+// produce object-level lineage. Failures are logged but never abort the
+// commit — lineage is best-effort observability, not a write barrier. Pass
+// nil to disable. Safe to call once at boot before the executor is shared
+// with handlers.
+func (e *Executor) SetLineageStore(s oms.LineageStore) {
+	e.lineageStore = s
 }
 
 // SetActionApprovalStore attaches the approval-workflow store used by the
@@ -771,7 +784,12 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 		}
 		if logErr := e.omsRepo.InsertActionLog(ctx, logRow); logErr != nil {
 			log.Printf("actions: failed to write action log for action %d: %v", i, logErr)
+			continue
 		}
+		// US-299: record one lineage edge per persisted object edit so the
+		// platform can answer "where did this object come from?" later.
+		// Link edits skip — they live in link_edges already.
+		e.recordLineage(ctx, logRow.ID, p.Edits)
 	}
 
 	// Fire per-action side effects (best-effort, non-blocking).
@@ -1033,6 +1051,13 @@ func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName stri
 		r.Offset = offset
 	}
 
+	// US-299: record lineage edges for every persisted object edit. The
+	// atomic-tx path back-fills logs[i].ID inside WriteActionLogsAtomic, so
+	// the parallel `prepared` slice carries the per-action edits to credit.
+	for i, p := range prepared {
+		e.recordLineage(ctx, logs[i].ID, p.Edits)
+	}
+
 	// Per-action side effects (best-effort, non-blocking). Mirrors CommitBatch.
 	for i, p := range prepared {
 		ExecuteSideEffects(p.ActionType.SideEffects, ActionResult{
@@ -1043,6 +1068,42 @@ func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName stri
 	}
 
 	return result, nil
+}
+
+// recordLineage appends one lineage edge per object-level edit to the wired
+// LineageStore. Link edits (LINK_CREATE / LINK_DELETE) are skipped — the
+// link table already records the relation. A nil LineageStore short-
+// circuits to a no-op so degraded-mode test routers behave unchanged.
+// Errors are logged but never returned: lineage is best-effort observability,
+// not a write barrier.
+func (e *Executor) recordLineage(ctx context.Context, actionLogID int64, edits []funnel.Edit) {
+	if e.lineageStore == nil || len(edits) == 0 {
+		return
+	}
+	upstream := oms.ActionLogLineageRID(actionLogID)
+	if upstream == "" {
+		return
+	}
+	for _, edit := range edits {
+		switch edit.Type {
+		case funnel.EditTypeCreate, funnel.EditTypeModify, funnel.EditTypeDelete:
+		default:
+			continue
+		}
+		downstream := oms.ObjectLineageRID(edit.ObjectType, edit.PrimaryKey)
+		if downstream == "" {
+			continue
+		}
+		row := &oms.LineageEdge{
+			UpstreamRID:   upstream,
+			DownstreamRID: downstream,
+			Operation:     string(edit.Type),
+		}
+		if err := e.lineageStore.InsertLineageEdge(ctx, row); err != nil {
+			log.Printf("actions: failed to record lineage for %s/%s: %v",
+				edit.ObjectType, edit.PrimaryKey, err)
+		}
+	}
 }
 
 // checkExpectedVersion enforces the US-023 optimistic concurrency contract
