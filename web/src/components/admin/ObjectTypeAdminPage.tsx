@@ -24,6 +24,7 @@ import { toApiName, toPluralName } from '../../utils/naming';
 import { Modal } from '../common/Modal';
 import { Badge, statusVariant } from '../common/Badge';
 import { LoadingSpinner } from '../common/LoadingSpinner';
+import { MarkdownEditor } from '../common/MarkdownEditor';
 import { PropertiesEditor } from './PropertiesEditor';
 
 type StatusFilter =
@@ -448,13 +449,14 @@ function CreateObjectTypeModal({
           />
         </Field>
         <Field label="Description">
-          <textarea
+          <MarkdownEditor
             value={form.description}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, description: e.target.value }))
+            onChange={(next) =>
+              setForm((f) => ({ ...f, description: next }))
             }
-            rows={3}
-            className={inputClass}
+            placeholder="Describe this object type — Markdown supported"
+            ariaLabel="Description (Markdown)"
+            testId="object-type-description-editor"
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
@@ -670,13 +672,14 @@ function EditObjectTypeModal({
           />
         </Field>
         <Field label="Description">
-          <textarea
+          <MarkdownEditor
             value={form.description}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, description: e.target.value }))
+            onChange={(next) =>
+              setForm((f) => ({ ...f, description: next }))
             }
-            rows={3}
-            className={inputClass}
+            placeholder="Describe this object type — Markdown supported"
+            ariaLabel="Description (Markdown)"
+            testId="object-type-description-editor-edit"
           />
         </Field>
         <Field label="Title Property">

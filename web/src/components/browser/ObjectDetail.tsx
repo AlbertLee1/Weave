@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { DataType, ObjectType, WireObject } from '../../api/types';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
+import { useProperties } from '../../hooks/useProperties';
 import { LinkedObjectsTab } from './LinkedObjectsTab';
 import { TimeSeriesChart } from '../common/TimeSeriesChart';
 import { MediaUploadZone } from './MediaUploadZone';
 import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
+import { MarkdownPreview } from '../common/MarkdownEditor';
 
 function baseTypeOf(dt: DataType): string {
   if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
@@ -15,6 +17,15 @@ function baseTypeOf(dt: DataType): string {
 
 function isArrayType(dt: DataType): boolean {
   return dt.type === 'array';
+}
+
+// Recognise `typeConfig.format === "markdown"` on a string-typed property as
+// a hint to render values with the Markdown preview component instead of raw
+// monospace text. typeConfig is JSONB; treat it permissively.
+function isMarkdownFormat(typeConfig: unknown): boolean {
+  if (!typeConfig || typeof typeConfig !== 'object') return false;
+  const tc = typeConfig as Record<string, unknown>;
+  return tc.format === 'markdown';
 }
 
 function coerceMediaValues(val: unknown): string[] {
@@ -53,6 +64,22 @@ export function ObjectDetail({
     ontologyApiName,
     objectType.apiName,
   );
+
+  // Pull the rich Property metadata (typeConfig included) so we can detect
+  // markdown-formatted string properties. Only loaded while the panel is open
+  // to avoid spurious fetches for every row hover. Empty fallback keeps the
+  // detail panel functional when the property list endpoint is unreachable.
+  const { data: properties } = useProperties(ontologyApiName, objectType.rid);
+  const markdownNames = useMemo(() => {
+    const set = new Set<string>();
+    if (!properties) return set;
+    for (const p of properties) {
+      if (p.baseType === 'string' && isMarkdownFormat(p.typeConfig)) {
+        set.add(p.apiName);
+      }
+    }
+    return set;
+  }, [properties]);
 
   const [activeTab, setActiveTab] = useState<DetailTab>('properties');
 
@@ -117,6 +144,7 @@ export function ObjectDetail({
                       )
                       .map(([name]) => {
                         const val = object[name];
+                        const isMarkdown = markdownNames.has(name);
                         let display: string;
                         if (val === null || val === undefined) {
                           display = '-';
@@ -130,8 +158,17 @@ export function ObjectDetail({
                             <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
                               {name}
                             </dt>
-                            <dd className="flex-1 text-xs font-mono text-text-primary break-all whitespace-pre-wrap">
-                              {display}
+                            <dd className="flex-1 min-w-0">
+                              {isMarkdown && typeof val === 'string' && val !== '' ? (
+                                <MarkdownPreview
+                                  source={val}
+                                  testId={`markdown-property-${name}`}
+                                />
+                              ) : (
+                                <span className="block text-xs font-mono text-text-primary break-all whitespace-pre-wrap">
+                                  {display}
+                                </span>
+                              )}
                             </dd>
                           </div>
                         );

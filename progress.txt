@@ -4102,3 +4102,35 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - jsdom does NOT need any new polyfills for this story — the `ResizeObserver` + `scrollIntoView` shims added by US-309 (cmdk) cover the diff lib too. The mock keeps test runtime snappy regardless.
   - The activity entries returned by `/api/v2/.../activity` (US-312) have `newState` as the canonical "snapshot at this version" handle. There's no need to compose `prevState` chains; the per-version snapshot is self-contained. CREATE → newState is the initial state; MODIFY → newState is post-modification; DELETE → newState is null (rendered as empty pane).
 ---
+
+## 2026-04-28 - US-314 Rich Text / Markdown Editor
+- Added `@uiw/react-md-editor@^4.1.0` (pure JS, peer-compatible with React 19; library already pulls `@uiw/react-markdown-preview` for the rendered side).
+- New `web/src/components/common/MarkdownEditor.tsx` exports two components:
+  - `MarkdownEditor({ value, onChange, placeholder?, height?, initialPreview?, ariaLabel?, testId? })`: thin wrapper around `MDEditor` with a 3-button segmented preview-mode toggle (Edit / Live / Preview, `aria-pressed` reflects state) sitting above the editor body. Library's built-in toolbar carries the shortcut buttons (bold / italic / headings / list / code / link / image) for free. `data-color-mode="dark"` is hard-wired so the editor blends with the rest of the dark-mode UI.
+  - `MarkdownPreview({ source, testId? })`: read-only renderer using `MDEditor.Markdown`. Used wherever stored Markdown needs to render without an editor (e.g. ObjectDetail).
+- Wired `MarkdownEditor` into `web/src/components/admin/ObjectTypeAdminPage.tsx` Create + Edit forms — the Description field now provides Markdown editing with live preview instead of a plain `<textarea rows=3>`. Two separate `testId`s (`object-type-description-editor` / `-edit`) so tests can address each form independently.
+- Wired `MarkdownPreview` into `web/src/components/browser/ObjectDetail.tsx` Properties tab. Pulls richer Property metadata via `useProperties(ontologyApiName, objectType.rid)`; any string property whose `typeConfig.format === "markdown"` renders its value through `MarkdownPreview` instead of the default monospace span. The `dd` cell switched from a flex item with `flex-1 text-xs font-mono ...` to `flex-1 min-w-0` wrapping either the markdown preview block or a plain span fallback, so layout still works with both shapes.
+- Tests: new `web/src/components/common/__tests__/MarkdownEditor.test.tsx` (7 cases) — defaults to `edit` mode, switches preview mode on toggle click, honours `initialPreview` prop, forwards `value`/`onChange`, threads `placeholder` + `aria-label` through to the underlying textarea, MarkdownPreview renders source through MDEditor.Markdown, custom testId honoured. `@uiw/react-md-editor` is `vi.mock`-stubbed so jsdom doesn't have to render the real CodeMirror surface (same pattern as US-313 stubbing `react-diff-viewer-continued`).
+- Quality gates:
+  - `npx vitest run` → 84 files / 568 tests pass (was 561, +7 new).
+  - `npx tsc -b` → clean.
+  - `npx vite build` → 2.37s, only the pre-existing 500KB chunk warning (no new warnings).
+  - `npx eslint <changed files>` → clean.
+  - `go build ./...` → clean.
+  - dev-browser skill not available in this harness; manual browser verification still owed.
+- Files changed:
+  - `web/package.json` (add @uiw/react-md-editor)
+  - `web/package-lock.json` (auto)
+  - `web/src/components/common/MarkdownEditor.tsx` (new)
+  - `web/src/components/common/__tests__/MarkdownEditor.test.tsx` (new)
+  - `web/src/components/admin/ObjectTypeAdminPage.tsx` (Description textarea → MarkdownEditor in Create + Edit forms)
+  - `web/src/components/browser/ObjectDetail.tsx` (useProperties + isMarkdownFormat detection + MarkdownPreview rendering for typeConfig.format='markdown' properties)
+- **Learnings for future iterations:**
+  - `@uiw/react-md-editor` is the right Markdown editor for this stack: pure JS (no CGO concerns), React 19-compatible peer range, ships its own preview pipeline via `MDEditor.Markdown` so we don't need a separate react-markdown setup, and the toolbar's shortcut buttons + keybindings come for free. `MDEditor` exposes `preview` as a string union (`'edit' | 'live' | 'preview'`) — control it from outer state and the toggle is one `setState` away.
+  - Keeping Editor + Preview in one file (`MarkdownEditor.tsx` exports both) avoids needing two thin modules; `MarkdownPreview` is a 5-line wrapper and lives next to the editor it's the read-only counterpart of. Future "I just want to render some Markdown" callers should reuse `MarkdownPreview` rather than `import MDEditor from '@uiw/react-md-editor'` directly — the wrapper gives us a single chokepoint for `data-color-mode` + container styling.
+  - `vi.mock('@uiw/react-md-editor', ...)` to stub the editor in tests is the right pattern — same shape as US-313 stubbing `react-diff-viewer-continued`. The mock surfaces the props we depend on (value, onChange, preview, textareaProps) so behavioural assertions stay honest without exercising the real CodeMirror/HighlightJS surface in jsdom. Mocks must register BEFORE the component import in source order; vitest hoists the call but readers expect the mock to be visible above the import.
+  - `JSX.Element` is no longer importable as a global namespace under the React 19 + tsc 5.9 config in this repo (`src/components/common/__tests__/MarkdownEditor.test.tsx` initially errored with `TS2503: Cannot find namespace 'JSX'`). Use `ReturnType<typeof createElement>` (or `React.ReactNode` / `React.ReactElement`) for the return type of an inline functional mock — keeps the mock's return inferred from the runtime API instead of relying on the global namespace.
+  - Mapping a feature hint onto the property metadata: the rich Property metadata (`typeConfig`) is NOT on `objectType.properties[name]` — that's a thinned `{ dataType, rid }` shape. Need to call `useProperties(ontologyApiName, objectType.rid)` from the component that wants the hint, then build a Set<apiName> of markdown-flagged properties memoised over the fetched list. Codebase pattern: add a `Property[]` lookup directly inside the consuming component when the parent already has the ontology + rid; don't drill it down as a prop unless multiple sibling components need it.
+  - For "swap a textarea for a richer editor" the only structural concern is form state ergonomics — Markdown is just text on the wire, so the existing `description: string` form field requires zero shape changes. Submission still goes through `form.description.trim() || undefined` and the API stores it as the same TEXT column. No migration / API change is needed for this kind of UX upgrade.
+  - 'Width-bound' content in a flex `dd` cell needs `min-w-0` so the markdown preview can wrap correctly inside `flex: 1 1 0`. Switching from `flex-1 break-all` to `flex-1 min-w-0` keeps long URLs and code blocks from forcing the row to expand horizontally past the slide-panel viewport.
+---

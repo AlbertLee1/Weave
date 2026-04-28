@@ -1652,8 +1652,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 115,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/components/common/MarkdownEditor.tsx wraps @uiw/react-md-editor v4.1.0 with Edit/Live/Preview segmented toggle + built-in toolbar shortcut buttons (bold/italic/headings/list/code/link/image); MarkdownPreview re-uses MDEditor.Markdown for read-only rendering. Wired into ObjectType admin Create+Edit description fields (replacing plain textarea) and into ObjectDetail Properties tab — string properties whose typeConfig.format === \"markdown\" render via MarkdownPreview, others stay raw mono text. Tests mock @uiw/react-md-editor to keep jsdom snappy. 568 vitest passes (was 561, +7)."
     },
     {
       "id": "US-315",
