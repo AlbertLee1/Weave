@@ -4242,3 +4242,61 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - JSON wire 字段全部 omitempty + 前端 `?? '(none)'` fallback：ActionLog.Parameters / Edits / PrevEdits 都是 `json.RawMessage`，序列化空对象/空数组也是合法 JSON，前端 `<DetailJsonBlock value={entry.prevEdits} />` 在 `value === undefined || null` 时显示 "(none)"；这种 "render even when missing" 的细节让用户在 Modal 里看到的是结构化空状态，而不是 React 的 "{}" 或 "[]" 杂音。
   - chi 路由设计：`actions/history` / `actions/jobs/...` / `actions/approvals/...` 都跟 `actions/{action}/apply` 平级而不冲突，因为字面量 segment 在 chi 里总是先于 `{param}` 匹配。新加 fixed-segment 子路由不需要给 router 做特殊声明，跟着既有 jobs / approvals 的 pattern 走就是。
 ---
+
+## 2026-04-28 - US-318 Batch Action 进度
+- 后端：新增 `?async=true` 异步 batch apply 入口 + cancel endpoint + WebSocket 进度订阅。
+  - `pkg/actions/handlers.go::serveAsyncApplyBatch` + `runAsyncApplyBatch`：复用现有 `ActionJobStore`（US-240），先 `CreateActionJob` 写 PENDING 行 → 返回 202 `AsyncApplyResponse{jobId}` → `cmd/server` 的 detached goroutine 用 `context.WithCancel(copyAuthContext(...))` 起子 ctx 并把 cancel 注册进 `Executor.cancelRegistry`。worker 一个一个调用 `exec.Apply(ctx, ...)`，每步算 `percentForStep(done, total)` 写回 store + emit `ProgressEvent`。Async batch 显式声明为非原子 — 谁要 atomic / saga 走同步路径，那两条契约（rollback 语义）跟 per-step progress fanout 互斥。
+  - 取消寄存器：`pkg/actions/cancel.go::jobCancelRegistry`（sync.Map jobID → context.CancelFunc）+ `Executor.RegisterJobCancel/UnregisterJobCancel/CancelJob`。runner 用 `defer exec.UnregisterJobCancel(jobID); defer cancel()` 双层兜底，panic / 正常退出都释放 entry。`POST /actions/jobs/{id}/cancel` → `Handler.CancelJob` 先查 store（404 / 终态 → 409 ActionJobAlreadyTerminal）→ 调 `exec.CancelJob(jobID)`，未注册返回 409 ActionJobNotCancelable（多副本场景先用 409 占位，将来可以加 NATS broadcast）。
+  - 新增 `ActionJobStatusCanceled = "CANCELED"` 终态常量 + `isTerminalJobStatus` predicate；前端通过 status 区分 cancel vs fail。worker 的 cancel 检测两层：迭代边界 `ctx.Err()` + 单次 Apply 内 `errors.Is(err, context.Canceled)` —— 两个分支都把进度写到 `context.Background()` store 上（cancelled ctx 写不进去）。
+  - WebSocket 路由：`pkg/subscriptions/job.go` 新增 `subscribeActionJob` 消息类型 + `ActionJobProgressEvent` + `Hub.HandleActionJobProgress(jobID, evt)`。复用现有 `Hub.HandleObjectChange` 的 lock + overflow + rate-limit 机制，单独的 `jobIndex map[string][]*indexedSub` 路由（与 `subIndex` 并行避免 namespace 冲突）。`Subscription.JobID` 字段标记新的订阅模式，`removeFromIndexLocked` / `removeJobSubLocked` 双调用清理订阅时两个 index 都过一遍。`removeConnectionFromIndexLocked` 用通用 helper 同时清 subIndex + jobIndex。
+  - 进度 fanout publisher：`cmd/server/action_progress_publisher.go::progressFanoutPublisher` 把 `actions.ProgressPublisher` 接口拆成 NATS + Hub 两路 fanout — NATS 给 CLI/SDK 订阅 `actions.progress.<jobId>` 主题，Hub 给浏览器同一份事件解码后走 WebSocket。`jobIDFromProgressSubject` 从 `actions.progress.<jobId>` subject 还原 jobID（Hub 路由 key），无前缀的 subject 静默跳过 Hub fanout 不影响 NATS 转发。
+  - main.go 改两处：`SetProgressPublisher(newProgressFanoutPublisher(deps.NATSConn, deps.WebSocketHub))`（NATS 或 Hub 任一存在就连，两者都 nil 退化为 no-op）+ 新增 `POST /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}/cancel` 路由注册。
+  - OpenAPI canonical/embedded 同步：在 `actions/jobs/{jobId}` GET 之后插入 `cancelActionJob` POST + 给 `applyActionBatch` 加 `async` query param + 202 `AsyncApplyActionResponse` 响应。`cp api/openapi.yaml cmd/server/openapi_spec.yaml`；contract trio 三连绿。
+- 前端：
+  - `web/src/api/actions.ts`：新增 `applyBatchAsync` (POST `?async=true`，body `{actions:...}` ——这个 wire shape 跟服务端 `actions:` JSON tag 对齐，跟 legacy `requests:` 路径区分；future PR 可以把 sync `applyBatch` 也迁过来) + `getActionJob` + `cancelActionJob` + 类型 `ActionJob` / `ActionJobStatus` / `AsyncApplyResponse` / `AsyncBatchApplyRequest`。
+  - `web/src/hooks/useActionJobProgress.ts`：单 jobID WebSocket hook。打开 `/api/v2/ontologies/{ontology}/subscriptions/ws` → 收 welcome → 发 `{type:"subscribeActionJob", data:{jobId}}` → 收 `actionJobProgress` → setState；指数 backoff 1s/2s/.../30s 自动重连。终态 (SUCCEEDED/FAILED/CANCELED) 触发 onTerminal 回调 + 主动 `ws.close(1000)`（normal close 不再重连）。Render-phase trackingKey reset 处理 jobId 切换（progress.txt:109 的 react-hooks/set-state-in-effect 规避）；onTerminal ref 用 useLayoutEffect 写避免 react-hooks/refs 报错。
+  - `web/src/components/actions/BatchProgressModal.tsx`：进度条 + 状态 badge + 消息行 + 取消按钮 + 关闭按钮。`jobId === null` 时显示 "Scheduling…" 占位（async POST in-flight）；`isTerminal` 时隐藏 cancel + 启用 close。Cancel 按钮调 `cancelActionJob` 后等待 WebSocket 把 status 更新到 CANCELED；本地 cancelError state 处理失败回退。
+  - `web/src/components/browser/BulkActionToolbar.tsx`：bulk delete 改走 async — handleConfirmDelete 先关闭 confirm modal 再开 progress modal（jobId 还没拿到时显示 scheduling）→ `await applyBatchAsync` → 填 jobId。失败回滚到 confirm modal + errorMsg。`onClear` / `onDeleted` 推迟到 progress modal 关闭时（用户主动 dismiss 终态后）。
+- 测试：
+  - Backend `pkg/actions/cancel_test.go` (4 case)：register/cancel/unregister + empty-id 边界 + 重复 cancel false。
+  - Backend `pkg/actions/async_batch_test.go` (6 case)：async batch 完整流（含 progress events）、degraded mode 退化到 sync 200、cancel-mid-batch（用 `blockingFunnelPublisher` 把 worker 卡在 publish 上 → cancel → release → CANCELED）、cancel 404 / 409 终态、`percentForStep` 数值边界。
+  - Backend `pkg/subscriptions/job_test.go` (5 case)：subscribeActionJob 接受请求、jobId 必填、HandleActionJobProgress 把事件 fan 给订阅者、空订阅静默 drop、unsubscribe 清掉 jobIndex。
+  - Frontend `web/src/components/actions/__tests__/BatchProgressModal.test.tsx` (6 case)：scheduling placeholder / 进度条 + percent / cancel API + 终态隐藏按钮 / FAILED 错误 tile / cancel API reject 回退 / Close 按钮在终态前 disabled。`useActionJobProgress` 整体被 mock 成 setState-driven 的桩，用 progressInvocation.setEvent 同步推事件。
+  - Frontend `web/src/components/browser/__tests__/BulkActionToolbar.test.tsx` 现有 case 改写：confirm 后断 body.actions（不是 legacy body.requests），断 BatchProgressModal 出现，断 onClear 还没调用（推迟到 modal close）。
+  - `go test -short ./...` 全绿（test/northwind 跑 152s 是已知慢测，不是回归）；`go vet ./pkg/actions ./pkg/subscriptions ./cmd/server` 干净。
+  - `npx vitest run` 89 files / 600 tests 全绿（+5 新 case）。`npx tsc -b` 干净；`npx eslint <changed files>` 干净；`npx vite build` 2.42s 无新警告。
+  - 浏览器手测仍欠款（dev-browser MCP 在本 harness 中不可用，跟 US-205/US-309/US-313/US-314/US-315/US-316/US-317 一致欠款）。
+- 文件改动：
+  - `pkg/actions/cancel.go` (新)
+  - `pkg/actions/cancel_test.go` (新)
+  - `pkg/actions/async_batch_test.go` (新)
+  - `pkg/actions/async_job.go` (+ ActionJobStatusCanceled)
+  - `pkg/actions/executor.go` (+ cancelRegistry 字段)
+  - `pkg/actions/handlers.go` (+ serveAsyncApplyBatch / runAsyncApplyBatch / percentForStep / CancelJob / isTerminalJobStatus + ApplyBatch 加 ?async=true 分支)
+  - `pkg/subscriptions/job.go` (新)
+  - `pkg/subscriptions/job_test.go` (新)
+  - `pkg/subscriptions/subscription.go` (+ Subscription.JobID + handleUnsubscribe 调 removeJobSubLocked)
+  - `pkg/subscriptions/hub.go` (+ Hub.jobIndex + readPump 分发 subscribeActionJob)
+  - `pkg/subscriptions/routing.go` (removeConnectionFromIndexLocked 同时清 subIndex + jobIndex)
+  - `cmd/server/action_progress_publisher.go` (+ progressFanoutPublisher / jobIDFromProgressSubject)
+  - `cmd/server/main.go` (SetProgressPublisher 用 fanout + 注册 cancel 路由)
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (+ cancelActionJob path + applyActionBatch async query + 202)
+  - `web/src/api/actions.ts` (+ applyBatchAsync / getActionJob / cancelActionJob + 类型)
+  - `web/src/hooks/useActionJobProgress.ts` (新)
+  - `web/src/components/actions/BatchProgressModal.tsx` (新)
+  - `web/src/components/actions/__tests__/BatchProgressModal.test.tsx` (新)
+  - `web/src/components/browser/BulkActionToolbar.tsx` (改走 async + 装 BatchProgressModal)
+  - `web/src/components/browser/__tests__/BulkActionToolbar.test.tsx` (断 actions 而非 requests + 断 modal 出现)
+  - `prd.json` (US-318 passes=true)
+- **Learnings for future iterations:**
+  - WebSocket Hub 加新订阅类型：(1) Subscription struct 加 mode 字段（这次是 JobID）— 不要用 union type，加字段后未用到的订阅模式默认是零值，路由 helper 看 nil/空字符串就跳过；(2) Hub 加并行的 `xxxIndex map[string][]*indexedSub`，键是该订阅模式的路由 key（jobId / objectType / 等）；(3) `addXxxSubLocked` / `removeXxxSubLocked` / `xxxSubscriptionsLocked` 三连工具函数；(4) `removeConnectionFromIndexLocked` 用 closure-over-map helper 一次清所有 index；(5) handleUnsubscribe 显式调 `removeXxxSubLocked` 配对（per-mode helper 对非匹配 sub 静默 noop）；(6) readPump 加 case 分支分发到 `handleSubscribeXxx`；(7) 新 helper `Hub.HandleXxxEvent(key, evt)` 是事件入口（HandleObjectChange / HandleActionJobProgress 同源）。每加一个订阅模式约 150 行 + 5-6 个测试 case。
+  - 异步任务取消寄存器：`sync.Map[jobID]context.CancelFunc` + `RegisterJobCancel / UnregisterJobCancel / CancelJob` 三方法是 in-process 取消的最小实现。Cancel 必须 `LoadAndDelete`（一次性消费，避免 worker 已退出又被外部 cancel 触发 nil deref）。Worker 用 `defer exec.UnregisterJobCancel(jobID); defer cancel()` 双层兜底（panic-safe）。Multi-replica 部署需要 NATS broadcast — 现在的 `ActionJobNotCancelable` 409 占位让 SDK 区分"已结束"和"在别的副本上"。
+  - 异步 batch worker cancellation 检测两层：(1) 迭代边界 `ctx.Err()` 检查 — 防止 cancel 信号刚发但 Apply 已经开跑；(2) Apply 调用之后 `errors.Is(err, context.Canceled)` 检查 — 抓住 ctx 在 Apply 内传播的情况。两个分支都用 `context.Background()` 写 store update，因为 cancelled ctx 写不进去（SQL/NATS/Bleve 都会拒绝）。
+  - `percentForStep(done, total)` 故意在 `done < total` 时把 100% clamp 到 99%：保留 100 严格表达"全部完成 + SUCCEEDED"，让 UI 可以靠百分比单维度区分"in-flight tail"和"terminal"，无需配套读 status。同 PR 的 `done * 100 / total` 整除自然产生 100 的边界（199/200 = 99.5 → 99 而非 100），clamp 让这个 case 安全。
+  - WebSocket 测试用 `httptest.NewServer + websocket.Dial + wsjson.Read` 的 boilerplate 抽到 `dialWelcome(t, srv, ctx)` helper 里能把每个 test 缩到 15 行；不要 inline 重复 dial+welcome read 序列。Hub 端 `JobSubscriptionCount(jobID)` 这种暴露内部 invariant 的访问器只供测试用，但放 production code 里不算违规——比把 mu/jobIndex 暴露成 public 强得多。
+  - Frontend "scheduling..." placeholder 模式：modal open 状态和 jobId 状态分开 → progressOpen=true && jobId=null 时显示"Scheduling…"占位 → 一旦 async POST 返回 jobId 才开 WebSocket 订阅。这个 two-step state 让用户从点 "Delete N" 到看到进度条之间的空白窗口被填满，比让 confirm modal 卡在 "Deleting..." spinner 上 UX 好得多。同样适用于任何"先返回 job handle 再异步执行"的场景。
+  - 终态 WS 拆订阅模式：useActionJobProgress hook 在收到 `isTerminalStatus(status)` 事件后立即 `ws.close(1000)`（normal closure），onclose handler 看到 code==1000 就 NOT reconnect，自然落到"订阅完成"的语义。callsite 不需要手动 unsubscribe — 终态本身就是终止信号。Cancel 按钮调 cancelActionJob 后用户看到的不是按钮立即变化，而是等服务端 emit CANCELED 事件才隐藏 — 严格"server-state-driven UI"。
+  - `react-hooks/set-state-in-effect` ESLint rule 在 hook 内 reset state 时 fire — 用 progress.txt:109 的 render-phase compare 模式（trackingKey + prevKey + setState during render）规避。同样 `react-hooks/refs` 在 effect/render 之外写 ref 时 fire — 用 useLayoutEffect 同步 ref 写比 useEffect 早一拍，正好赶上下次 effect 触发前。这两条是 React 19 + 当前 lint 配置下做"prop-driven 内部状态重置"的标准答案。
+  - `npx vitest` 在新 hook 里测 setState 流要么 (1) mock 整个 hook 用 useState 实现一个轻量化版（这次 BatchProgressModal.test.tsx 走法），要么 (2) 真起 WebSocket（`vi.spyOn(window, 'WebSocket')` + 手 push event），太重。第一种适合 component 测试，第二种适合 hook 自身的契约测试 — 这次没单独写 hook 测试，靠 component 测试覆盖 props → state 转换。
+  - Frontend `applyBatch` 现有 wire shape 是 `requests:`（client/test 都这么写），但服务端 JSON tag 是 `actions:` —— 这是 pre-existing 不一致（sync batch path 在 production 应该一直没被 BulkActionToolbar 实际打通过）。新加的 `applyBatchAsync` 走 `actions:` 与服务端对齐；把 sync 路径的命名修正留给独立的 wire-shape PR 做（这次不能扩 scope，但需要 future cleanup 留 ticket）。
+  - OpenAPI 加新 endpoint 的常规 4 步：(1) 在 canonical `api/openapi.yaml` 对应路径下加 path entry（注意 chi 字面量先于 param 匹配的顺序）；(2) 引用现有 schema（这次复用 `AsyncApplyActionResponse` + `ConflictError`）— 不要重复定义；(3) `cp api/openapi.yaml cmd/server/openapi_spec.yaml` 同步嵌入版；(4) 跑 `TestContract_*` 三连验证。漏掉嵌入版会被 EmbeddedSpecMatchesCanonical 抓到，漏掉 path 注册会被 AllRoutesDocumented 抓到。

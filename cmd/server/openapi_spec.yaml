@@ -6800,6 +6800,41 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}/cancel:
+    post:
+      operationId: cancelActionJob
+      summary: Cancel an in-flight async action job (US-318)
+      description: |
+        Signals the in-flight worker for jobId to stop. The runner observes
+        ctx cancellation at the next iteration boundary and marks the job
+        CANCELED. Returns 202 Accepted with the current job row when a
+        runner was signalled, 404 when the jobId is unknown, and 409
+        ActionJobAlreadyTerminal when the job has already reached SUCCEEDED
+        / FAILED / CANCELED. Browser clients should subscribe to live
+        progress via the WebSocket subscribeActionJob channel; this endpoint
+        is the imperative side of that flow.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: jobId
+          required: true
+          description: Async job ID to cancel.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Cancel signal accepted; runner will mark the job CANCELED.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionJob"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actions/history:
     get:
       operationId: listActionHistory
@@ -7105,6 +7140,12 @@ paths:
           description: "US-239: when true, route through the saga coordinator. On any prepare/commit failure, previously-prepared actions' compensators fire in reverse declaration order."
           schema:
             type: boolean
+        - in: query
+          name: async
+          required: false
+          description: "US-318: when true, run the batch asynchronously and return 202 {jobId}. Each action runs sequentially with progress reported via the WebSocket subscribeActionJob channel and persisted to GET /actions/jobs/{jobId}. Cancel mid-flight via POST /actions/jobs/{jobId}/cancel. Async batches are non-atomic by construction; combine with ?atomic=true / ?saga=true is rejected (the sync paths own those semantics)."
+          schema:
+            type: boolean
       requestBody:
         required: true
         content:
@@ -7118,6 +7159,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BatchApplyActionResponseV2"
+        "202":
+          description: "US-318: async batch accepted. Returns the new job's id; subscribe via WebSocket subscribeActionJob or poll GET /actions/jobs/{jobId}."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsyncApplyActionResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":

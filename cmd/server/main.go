@@ -709,6 +709,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// US-240: async-apply polling endpoint. Always registered when the
 			// executor is wired; returns 404 if no job store is attached.
 			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}", actionHandler.GetJob)
+			// US-318: cancel an in-flight async action job. Always registered
+			// when the executor is wired; degraded mode (no job store) returns
+			// 404 ActionJobNotFound. Already-terminal jobs report 409
+			// ActionJobAlreadyTerminal so callers don't silently accept a no-op.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}/cancel", actionHandler.CancelJob)
 			// US-242: approval-workflow endpoints. Always registered when the
 			// executor is wired; return 404 if no approval store is attached.
 			// US-243: ListApprovals backs the /approvals UI page.
@@ -2100,8 +2105,13 @@ func main() {
 		// requires a NATS connection. Publisher is setter-injected so handler
 		// tests without NATS / PG keep working — mirrors the AtomicActionLogStore
 		// / ActionJobStore wiring pattern.
-		if deps.NATSConn != nil {
-			deps.ActionExecutor.SetProgressPublisher(newNATSActionProgressPublisher(deps.NATSConn))
+		// US-318: progress events also fan out to the WebSocket Hub so
+		// browser clients can subscribe to live job progress without a
+		// separate NATS bridge. The composed publisher dispatches to
+		// whichever sides are wired (Hub-only / NATS-only / both); both nil
+		// collapses to a no-op.
+		if deps.NATSConn != nil || deps.WebSocketHub != nil {
+			deps.ActionExecutor.SetProgressPublisher(newProgressFanoutPublisher(deps.NATSConn, deps.WebSocketHub))
 		}
 		// US-214: polymorphic invoke forwards to the ActionExecutor via a
 		// narrow adapter so pkg/oms stays free of a pkg/actions import.

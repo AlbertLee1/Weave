@@ -168,6 +168,7 @@ type Executor struct {
 	progressPub        ProgressPublisher
 	lineageStore       oms.LineageStore
 	paramSchemas       *ParameterSchemaValidator
+	cancelRegistry     jobCancelRegistry
 }
 
 // NewExecutor creates a new action executor. The publisher may be nil in unit

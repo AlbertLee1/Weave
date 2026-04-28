@@ -1708,8 +1708,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 119,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend: ApplyBatch ?async=true persists an action_job, runs the batch one-action-at-a-time in a detached goroutine (per-step ProgressEvent fanout), POST /actions/jobs/{jobId}/cancel signals the worker via a sync.Map cancellation registry on Executor (CANCELED status). Frontend: BatchProgressModal subscribes via new WebSocket message type subscribeActionJob (Hub.jobIndex + HandleActionJobProgress, mirrors aggregation routing); cancel button POSTs cancelActionJob and the WS feed flips to CANCELED. Production fanout publisher composes NATS + Hub so CLI/SDK callers and browser clients see identical wire payloads. dev-browser skill not available in this harness — manual browser verification still owed."
     },
     {
       "id": "US-319",

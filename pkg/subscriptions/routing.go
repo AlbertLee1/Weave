@@ -110,22 +110,29 @@ func (h *Hub) removeFromIndexLocked(sub *Subscription) {
 // c. Used at disconnect time when the per-connection subscriptions map is no
 // longer trustworthy. Caller must hold h.mu.
 func (h *Hub) removeConnectionFromIndexLocked(c *Connection) {
-	if h.subIndex == nil || c == nil {
+	if c == nil {
 		return
 	}
-	for k, bucket := range h.subIndex {
-		filtered := bucket[:0]
-		for _, e := range bucket {
-			if e.conn != c {
-				filtered = append(filtered, e)
+	dropConn := func(idx map[string][]*indexedSub) {
+		if idx == nil {
+			return
+		}
+		for k, bucket := range idx {
+			filtered := bucket[:0]
+			for _, e := range bucket {
+				if e.conn != c {
+					filtered = append(filtered, e)
+				}
+			}
+			if len(filtered) == 0 {
+				delete(idx, k)
+			} else {
+				idx[k] = filtered
 			}
 		}
-		if len(filtered) == 0 {
-			delete(h.subIndex, k)
-		} else {
-			h.subIndex[k] = filtered
-		}
 	}
+	dropConn(h.subIndex)
+	dropConn(h.jobIndex)
 }
 
 // subscriptionsForObjectTypeLocked snapshots the current routing entries for

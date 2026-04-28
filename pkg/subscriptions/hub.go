@@ -175,6 +175,7 @@ type Hub struct {
 	mu              sync.Mutex
 	conns           map[string]*Connection
 	subIndex        map[string][]*indexedSub // objectType → routing fanout list (US-306)
+	jobIndex        map[string][]*indexedSub // jobID → action-job-progress fanout list (US-318)
 	userSubs        map[string]int           // authenticated userID → live subscription count (US-308)
 	ctx             context.Context
 	stop            context.CancelFunc
@@ -196,6 +197,7 @@ func NewHubWithConfig(cfg HubConfig) *Hub {
 	return &Hub{
 		conns:    make(map[string]*Connection),
 		subIndex: make(map[string][]*indexedSub),
+		jobIndex: make(map[string][]*indexedSub),
 		userSubs: make(map[string]int),
 		ctx:      ctx,
 		stop:     stop,
@@ -510,6 +512,8 @@ func (c *Connection) readPump(ctx context.Context) {
 			resp = c.hub.handleSubscribeObjectSet(c, envelope.Data)
 		case "subscribeAggregation":
 			resp = c.hub.handleSubscribeAggregation(c, envelope.Data)
+		case "subscribeActionJob":
+			resp = c.hub.handleSubscribeActionJob(c, envelope.Data)
 		case "unsubscribe":
 			resp = c.hub.handleUnsubscribe(c, envelope.Data)
 		default:

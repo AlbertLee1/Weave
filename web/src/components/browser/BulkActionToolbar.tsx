@@ -7,6 +7,8 @@ import type {
 import { useActionTypes, useApplyBatch } from '../../hooks/useActions';
 import { Modal } from '../common/Modal';
 import { toCsv, toJsonEnvelope, triggerDownload } from '../../lib/exportObjects';
+import { applyBatchAsync } from '../../api/actions';
+import { BatchProgressModal } from '../actions/BatchProgressModal';
 
 interface BulkActionToolbarProps {
   ontologyApiName: string;
@@ -70,6 +72,14 @@ export function BulkActionToolbar({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  // US-318: when async submit succeeds we open the BatchProgressModal and
+  // hand it the jobId. progressOpen flips first (so the modal appears with
+  // a "scheduling…" placeholder), then progressJobId fills in once the 202
+  // returns. The two-step state lets the modal cover the entire request
+  // window — the user never stares at a frozen confirm dialog.
+  const [progressOpen, setProgressOpen] = useState(false);
+  const [progressJobId, setProgressJobId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const deleteAction = useMemo(() => {
     if (!actions) return null;
@@ -87,19 +97,36 @@ export function BulkActionToolbar({
   const handleConfirmDelete = async () => {
     if (!deleteAction || !deletePkParam) return;
     setErrorMsg(null);
+    setSubmitting(true);
+    // Open the progress modal eagerly so the user sees "scheduling…" while
+    // the async POST is in flight; jobId fills in once the 202 returns.
+    setProgressJobId(null);
+    setProgressOpen(true);
+    setConfirmOpen(false);
     try {
-      await applyBatch.mutateAsync({
-        action: deleteAction.apiName,
-        requests: selectedRows.map((row) => ({
+      const resp = await applyBatchAsync(ontologyApiName, deleteAction.apiName, {
+        actions: selectedRows.map((row) => ({
           parameters: { [deletePkParam]: row.__primaryKey },
         })),
       });
-      setConfirmOpen(false);
-      onDeleted?.();
-      onClear();
+      setProgressJobId(resp.jobId);
     } catch (err) {
+      // Async submit failed before we even got a jobId — close the
+      // progress modal and surface the error in the confirm dialog the
+      // user just dismissed.
+      setProgressOpen(false);
       setErrorMsg(err instanceof Error ? err.message : 'Delete failed');
+      setConfirmOpen(true);
+    } finally {
+      setSubmitting(false);
     }
+  };
+
+  const handleProgressClose = () => {
+    setProgressOpen(false);
+    setProgressJobId(null);
+    onDeleted?.();
+    onClear();
   };
 
   const handleExport = (format: 'csv' | 'json') => {
@@ -139,7 +166,7 @@ export function BulkActionToolbar({
             setErrorMsg(null);
             setConfirmOpen(true);
           }}
-          disabled={applyBatch.isPending}
+          disabled={applyBatch.isPending || submitting || progressOpen}
           title={deleteAction ? 'Delete selected' : 'No deleteObject action configured'}
           data-testid="bulk-delete"
           className="px-3 py-1.5 rounded text-xs font-sans text-accent-error border border-accent-error/40 hover:bg-accent-error/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -223,15 +250,22 @@ export function BulkActionToolbar({
             <button
               type="button"
               onClick={handleConfirmDelete}
-              disabled={!deleteAction || applyBatch.isPending}
+              disabled={!deleteAction || applyBatch.isPending || submitting}
               data-testid="bulk-delete-confirm"
               className="px-3 py-2 rounded text-xs font-sans text-white bg-accent-error hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {applyBatch.isPending ? 'Deleting...' : `Delete ${count}`}
+              {submitting || applyBatch.isPending ? 'Deleting...' : `Delete ${count}`}
             </button>
           </div>
         </div>
       </Modal>
+
+      <BatchProgressModal
+        ontologyApiName={ontologyApiName}
+        jobId={progressJobId}
+        open={progressOpen}
+        onClose={handleProgressClose}
+      />
     </>
   );
 }

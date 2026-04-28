@@ -82,13 +82,21 @@ function renderToolbar(opts?: {
 beforeEach(() => {
   applyBatchSpy = vi.fn(async () => ({}));
   server.listen();
+  // BulkActionToolbar's bulk delete now routes through the async path
+  // (POST /applyBatch?async=true → 202 {jobId}). Match the URL with the
+  // query string so the spy fires for the async submit; legacy sync
+  // applyBatch callers still work because the path matcher ignores the
+  // query string in MSW.
   server.use(
     http.post(
       '/api/v2/ontologies/:ontology/actions/:action/applyBatch',
       async ({ request }) => {
         const body = (await request.json()) as unknown;
         applyBatchSpy(body);
-        return HttpResponse.json({});
+        return HttpResponse.json(
+          { jobId: 'job-test-1', status: 'PENDING' },
+          { status: 202 },
+        );
       },
     ),
   );
@@ -111,9 +119,10 @@ describe('BulkActionToolbar', () => {
     expect(screen.getByTestId('selected-count')).toHaveTextContent('2 selected');
   });
 
-  it('opens confirmation modal and calls applyBatch with delete requests', async () => {
+  it('opens confirmation modal and submits async batch with actions[]', async () => {
     const onClear = vi.fn();
-    renderToolbar({ onClear });
+    const onDeleted = vi.fn();
+    renderToolbar({ onClear, onDeleted });
 
     fireEvent.click(screen.getByTestId('bulk-delete'));
     expect(screen.getByText(/Delete selected objects/i)).toBeInTheDocument();
@@ -128,16 +137,22 @@ describe('BulkActionToolbar', () => {
     await waitFor(() => {
       expect(applyBatchSpy).toHaveBeenCalled();
     });
+    // US-318: the async batch wire shape is `actions:` (matches the server's
+    // canonical key) — distinct from the legacy sync `requests:` body shape
+    // some callers still pass to applyBatch.
     const body = applyBatchSpy.mock.calls[0][0] as {
-      requests: Array<{ parameters: Record<string, unknown> }>;
+      actions: Array<{ parameters: Record<string, unknown> }>;
     };
-    expect(body.requests).toHaveLength(2);
-    expect(body.requests[0].parameters).toEqual({ primaryKey: '1' });
-    expect(body.requests[1].parameters).toEqual({ primaryKey: '2' });
+    expect(body.actions).toHaveLength(2);
+    expect(body.actions[0].parameters).toEqual({ primaryKey: '1' });
+    expect(body.actions[1].parameters).toEqual({ primaryKey: '2' });
 
+    // Progress modal opens after the 202; selection is preserved until the
+    // user closes the modal so they can review the live progress feed.
     await waitFor(() => {
-      expect(onClear).toHaveBeenCalled();
+      expect(screen.getByTestId('batch-progress-modal')).toBeInTheDocument();
     });
+    expect(onClear).not.toHaveBeenCalled();
   });
 
   it('shows "no delete action" message when no deleteObject action exists', async () => {

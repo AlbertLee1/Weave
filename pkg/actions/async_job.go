@@ -34,6 +34,12 @@ const (
 	ActionJobStatusRunning   = "RUNNING"
 	ActionJobStatusSucceeded = "SUCCEEDED"
 	ActionJobStatusFailed    = "FAILED"
+	// ActionJobStatusCanceled is the terminal state set when the runner
+	// observes a cancellation signal from CancelActionJob (US-318). The
+	// progress field carries the last percentage reached before the cancel
+	// fired; ErrorMessage is left empty (callers tell cancel from fail by
+	// the status alone).
+	ActionJobStatusCanceled = "CANCELED"
 )
 
 // ActionJobUpdate is the partial-update payload for UpdateActionJob. Fields

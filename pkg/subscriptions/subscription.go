@@ -25,7 +25,7 @@ type SubscribeRequest struct {
 // filter criteria and projection fields so the Hub can evaluate incoming
 // change events against it.
 //
-// A subscription is in one of three modes:
+// A subscription is in one of four modes:
 //   - ObjectType + Where: the legacy single-type filter ({type:"subscribe"}).
 //   - Definition: an ObjectSet membership filter ({type:"subscribeObjectSet"})
 //     whose Matches walks the Definition tree per change event. When
@@ -33,12 +33,16 @@ type SubscribeRequest struct {
 //   - Aggregator: an incremental aggregation ({type:"subscribeAggregation"})
 //     whose Apply mutates the running totals on every matching change event
 //     and emits "aggregationChanged" messages instead of "objectChanged".
+//   - JobID: an action-job progress feed ({type:"subscribeActionJob"}) whose
+//     events are dispatched by Hub.HandleActionJobProgress instead of the
+//     change-event router. Indexed under the jobIndex map. US-318.
 type Subscription struct {
 	ID         string
 	ObjectType string
 	Where      *where.WhereClause
 	Definition *objectset.Definition
 	Aggregator *IncrementalAggregator
+	JobID      string
 	Select     []string
 }
 
@@ -234,6 +238,7 @@ func (h *Hub) handleUnsubscribe(c *Connection, raw json.RawMessage) Message {
 	}
 	delete(c.subscriptions, req.SubscriptionID)
 	h.removeFromIndexLocked(sub)
+	h.removeJobSubLocked(sub)
 	h.releaseUserSubsLocked(c.userID, 1)
 
 	return Message{

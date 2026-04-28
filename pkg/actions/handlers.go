@@ -278,6 +278,260 @@ func copyAuthContext(dst, src context.Context) context.Context {
 	return dst
 }
 
+// serveAsyncApplyBatch persists a PENDING ActionJob, kicks off a detached
+// goroutine that walks the batch one action at a time, and returns 202
+// Accepted carrying {jobId}. Per-action progress is reported into the job
+// row + the executor's ProgressPublisher so WebSocket subscribers see live
+// updates. US-318.
+func (h *Handler) serveAsyncApplyBatch(w http.ResponseWriter, r *http.Request, ontologyRID, action string, reqs []ApplyRequest, returnEdits string) {
+	store := h.executor.ActionJobStore()
+	job := &ActionJob{
+		JobID:          uuid.New().String(),
+		OntologyAPI:    ontologyRID,
+		ActionTypeName: action,
+		Status:         ActionJobStatusPending,
+		Progress:       0,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if u := auth.UserFromContext(r.Context()); u != nil {
+		job.CreatedBy = u.ID
+	}
+	if err := store.CreateActionJob(r.Context(), job); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ActionJobCreateFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+
+	bgCtx := copyAuthContext(context.Background(), r.Context())
+	cancelCtx, cancel := context.WithCancel(bgCtx)
+	h.executor.RegisterJobCancel(job.JobID, cancel)
+
+	// Snapshot reqs for the goroutine — the slice is owned by the caller's
+	// request body which would otherwise be GC'd once the handler returns.
+	reqsCopy := make([]ApplyRequest, len(reqs))
+	copy(reqsCopy, reqs)
+
+	go runAsyncApplyBatch(cancelCtx, h.executor, store, job.JobID, ontologyRID, action, reqsCopy, returnEdits, cancel)
+
+	httputil.WriteJSON(w, http.StatusAccepted, &AsyncApplyResponse{
+		JobID:  job.JobID,
+		Status: ActionJobStatusPending,
+	})
+}
+
+// runAsyncApplyBatch is the detached worker for async batch apply. It walks
+// the action list one-by-one calling exec.Apply, accumulating edits, and
+// stamping per-action progress into the job row + NATS/WebSocket fanout.
+// On context cancellation (POST /actions/jobs/{id}/cancel) it stops the loop
+// and marks the job CANCELED; already-applied actions are NOT rolled back
+// (async-batch is non-atomic by construction — callers wanting strict
+// rollback semantics use the saga / atomic-tx paths which run synchronously).
+func runAsyncApplyBatch(ctx context.Context, exec *Executor, store ActionJobStore, jobID, ontologyRID, action string, reqs []ApplyRequest, returnEdits string, cancel context.CancelFunc) {
+	defer exec.UnregisterJobCancel(jobID)
+	defer cancel()
+
+	publisher := exec.ProgressPublisher()
+	emitProgress := func(percent int, message string) {
+		if publisher == nil {
+			return
+		}
+		evt := ProgressEvent{
+			JobID:      jobID,
+			Ontology:   ontologyRID,
+			ActionType: action,
+			Percent:    percent,
+			Message:    message,
+			ReportedAt: time.Now(),
+		}
+		data, err := json.Marshal(&evt)
+		if err != nil {
+			log.Printf("actions: async batch %s: marshal progress failed: %v", jobID, err)
+			return
+		}
+		if err := publisher.PublishProgress(ProgressSubject(jobID), data); err != nil {
+			log.Printf("actions: async batch %s: publish progress failed: %v", jobID, err)
+		}
+	}
+
+	// PENDING → RUNNING with 0% to signal the worker has picked it up.
+	startProg := 0
+	if err := store.UpdateActionJob(ctx, jobID, ActionJobUpdate{
+		Status:   ActionJobStatusRunning,
+		Progress: &startProg,
+	}); err != nil {
+		log.Printf("actions: async batch %s: failed to mark RUNNING: %v", jobID, err)
+	}
+	emitProgress(0, "starting")
+
+	total := len(reqs)
+	if total == 0 {
+		// Empty batch is a no-op success.
+		resp := &BatchApplyActionResponseV2{}
+		if returnEdits != "NONE" {
+			resp.Edits = countEdits(nil)
+		}
+		resultJSON, _ := json.Marshal(resp)
+		doneProg := 100
+		_ = store.UpdateActionJob(ctx, jobID, ActionJobUpdate{
+			Status:   ActionJobStatusSucceeded,
+			Progress: &doneProg,
+			Result:   resultJSON,
+		})
+		emitProgress(100, "done")
+		return
+	}
+
+	for i, req := range reqs {
+		// Cancellation check at every iteration boundary. Mid-Apply
+		// cancellation is honoured by the underlying ctx propagating into
+		// PG / NATS / Bleve calls — this gate stops us from STARTING a new
+		// action after cancel was signalled.
+		if err := ctx.Err(); err != nil {
+			lastProg := percentForStep(i, total)
+			cancelMsg := "canceled"
+			_ = store.UpdateActionJob(context.Background(), jobID, ActionJobUpdate{
+				Status:       ActionJobStatusCanceled,
+				Progress:     &lastProg,
+				ErrorMessage: &cancelMsg,
+			})
+			emitProgress(lastProg, "canceled")
+			return
+		}
+
+		reqCopy := req
+		_, err := exec.Apply(ctx, ontologyRID, &reqCopy)
+		if err != nil {
+			// Distinguish cancellation-mid-Apply from genuine failure: a
+			// cancel during the underlying Apply surfaces as
+			// context.Canceled which we treat as CANCELED, not FAILED.
+			if errors.Is(err, context.Canceled) {
+				lastProg := percentForStep(i, total)
+				cancelMsg := "canceled"
+				_ = store.UpdateActionJob(context.Background(), jobID, ActionJobUpdate{
+					Status:       ActionJobStatusCanceled,
+					Progress:     &lastProg,
+					ErrorMessage: &cancelMsg,
+				})
+				emitProgress(lastProg, "canceled")
+				return
+			}
+			msg := err.Error()
+			failProg := percentForStep(i, total)
+			_ = store.UpdateActionJob(context.Background(), jobID, ActionJobUpdate{
+				Status:       ActionJobStatusFailed,
+				Progress:     &failProg,
+				ErrorMessage: &msg,
+			})
+			emitProgress(failProg, msg)
+			return
+		}
+
+		done := i + 1
+		percent := percentForStep(done, total)
+		p := percent
+		if err := store.UpdateActionJob(ctx, jobID, ActionJobUpdate{
+			Status:   ActionJobStatusRunning,
+			Progress: &p,
+		}); err != nil {
+			log.Printf("actions: async batch %s: failed to mark RUNNING progress=%d: %v", jobID, percent, err)
+		}
+		emitProgress(percent, "")
+	}
+
+	resp := &BatchApplyActionResponseV2{}
+	if returnEdits != "NONE" {
+		resp.Edits = &ActionResults{Type: "edits"}
+	}
+	resultJSON, _ := json.Marshal(resp)
+	doneProg := 100
+	if err := store.UpdateActionJob(ctx, jobID, ActionJobUpdate{
+		Status:   ActionJobStatusSucceeded,
+		Progress: &doneProg,
+		Result:   resultJSON,
+	}); err != nil {
+		log.Printf("actions: async batch %s: failed to mark SUCCEEDED: %v", jobID, err)
+	}
+	emitProgress(100, "done")
+}
+
+// percentForStep maps a 0..total step count onto the 0..100 percentage range.
+// Reserves 100 for "all steps complete" so an in-flight 99% never collides
+// with the terminal SUCCEEDED state's 100%.
+func percentForStep(done, total int) int {
+	if total <= 0 {
+		return 100
+	}
+	if done >= total {
+		return 100
+	}
+	if done <= 0 {
+		return 0
+	}
+	p := done * 100 / total
+	if p >= 100 {
+		// Reserve 100 strictly for "all done" so callers can distinguish
+		// the terminal SUCCEEDED state from the last in-flight tick.
+		return 99
+	}
+	return p
+}
+
+// CancelJob handles POST /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}/cancel.
+// Signals the worker for jobID to stop. Returns 202 Accepted with the current
+// job row when a runner was signalled, 404 when no in-flight job matches.
+// Already-terminal jobs (SUCCEEDED / FAILED / CANCELED) report 409 Conflict so
+// callers don't silently accept a no-op cancel. US-318.
+func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "jobId")
+	if jobID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingJobId", nil))
+		return
+	}
+	store := h.executor.ActionJobStore()
+	if store == nil {
+		apierror.WriteJSON(w, apierror.NewNotFound("ActionJobNotFound",
+			map[string]string{"jobId": jobID}))
+		return
+	}
+	job, err := store.GetActionJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ActionJobNotFound",
+				map[string]string{"jobId": jobID}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionJobLoadFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	if isTerminalJobStatus(job.Status) {
+		apierror.WriteJSON(w, apierror.NewConflict("ActionJobAlreadyTerminal",
+			map[string]string{"jobId": jobID, "status": job.Status}))
+		return
+	}
+	if !h.executor.CancelJob(jobID) {
+		// No registered cancel — runner has finished but status hasn't yet
+		// been flushed (race), or a future multi-host setup landed the
+		// runner on a different replica. Surface a 409 either way so the
+		// caller knows to re-poll.
+		apierror.WriteJSON(w, apierror.NewConflict("ActionJobNotCancelable",
+			map[string]string{"jobId": jobID, "status": job.Status}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusAccepted, job)
+}
+
+// isTerminalJobStatus reports whether a job status is terminal (no further
+// transitions possible). SUCCEEDED, FAILED, and CANCELED are all terminal.
+func isTerminalJobStatus(s string) bool {
+	switch s {
+	case ActionJobStatusSucceeded, ActionJobStatusFailed, ActionJobStatusCanceled:
+		return true
+	}
+	return false
+}
+
 // GetJob handles GET /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}.
 // Returns the current ActionJob row as JSON. 404 if the job does not exist.
 // When no ActionJobStore is wired (degraded mode) the endpoint returns 404 so
@@ -477,6 +731,20 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 	// per batch regardless of what the client put in the body.
 	for i := range reqs.Actions {
 		reqs.Actions[i].ActionType = action
+	}
+
+	// US-318: opt-in async batch via ?async=true. When an ActionJobStore is
+	// wired we persist a PENDING job row, return 202 {jobId}, and run the
+	// batch in a detached goroutine that updates the row + emits per-action
+	// progress events. Caller can subscribe via WebSocket subscribeActionJob
+	// or poll GET /actions/jobs/{id}; cancellation routes through
+	// POST /actions/jobs/{id}/cancel which signals the worker's ctx.
+	// Async batch is non-atomic by construction — we apply actions one-by-one
+	// so progress can advance per step; the saga / atomic-tx paths handle
+	// strict-rollback semantics and are not eligible for ?async=true.
+	if r.URL.Query().Get("async") == "true" && h.executor.ActionJobStore() != nil {
+		h.serveAsyncApplyBatch(w, r, ontologyRID, action, reqs.Actions, returnEdits)
+		return
 	}
 
 	// US-239: opt-in saga coordination via ?saga=true. Walks the batch in
