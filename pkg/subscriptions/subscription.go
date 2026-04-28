@@ -25,23 +25,27 @@ type SubscribeRequest struct {
 // filter criteria and projection fields so the Hub can evaluate incoming
 // change events against it.
 //
-// A subscription is in one of two modes:
+// A subscription is in one of three modes:
 //   - ObjectType + Where: the legacy single-type filter ({type:"subscribe"}).
 //   - Definition: an ObjectSet membership filter ({type:"subscribeObjectSet"})
 //     whose Matches walks the Definition tree per change event. When
 //     Definition is non-nil it supersedes ObjectType + Where.
+//   - Aggregator: an incremental aggregation ({type:"subscribeAggregation"})
+//     whose Apply mutates the running totals on every matching change event
+//     and emits "aggregationChanged" messages instead of "objectChanged".
 type Subscription struct {
 	ID         string
 	ObjectType string
 	Where      *where.WhereClause
 	Definition *objectset.Definition
+	Aggregator *IncrementalAggregator
 	Select     []string
 }
 
 // ObjectChangeEvent is the data payload for a { type: "objectChanged" }
 // message pushed from server to client.
 type ObjectChangeEvent struct {
-	State  string                 `json:"state"`  // ADDED_OR_UPDATED | DELETED
+	State  string                 `json:"state"` // ADDED_OR_UPDATED | DELETED
 	Object map[string]interface{} `json:"object"`
 }
 
@@ -131,6 +135,17 @@ func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, proper
 
 	for _, cs := range targets {
 		for _, sub := range cs.subs {
+			if sub.Aggregator != nil {
+				// US-305: incremental aggregation subscriptions consume every
+				// event for their objectType (the Where filter is applied
+				// inside Apply against both the previous snapshot and the new
+				// payload so contributions revert correctly even when an
+				// update moves an object out of scope).
+				if sub.Aggregator.Apply(state, objectType, primaryKey, properties) {
+					sendAggregationChanged(cs.conn, sub.ID, sub.Aggregator.Snapshot())
+				}
+				continue
+			}
 			if !sub.matches(objectType, primaryKey, properties) {
 				continue
 			}

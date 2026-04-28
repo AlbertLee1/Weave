@@ -1525,8 +1525,8 @@
         "Tests pass"
       ],
       "priority": 106,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/subscriptions/aggregation.go: new {type:\"subscribeAggregation\"} message accepts {objectType, where?, metric:{type:count|sum|avg|min|max, field?, name?}, groupBy?:fieldName}; the IncrementalAggregator owns per-PK snapshots + per-bucket running state and applies delta math on every ChangeEvent (revert prior contribution, re-apply new) so totals never re-scan Bleve. Initial state is seeded once at subscribe time from Manager.GetIndex() — full Bleve scan with `*` field projection — and incrementalised after that. min/max use a multiset (map[float64]int64) so reverting an addition cannot invalidate the cached extremum. Hub.SetIndexResolver(IndexResolver) wires *pkg/index.Manager directly; aggregation subs work without a resolver too, starting empty and growing from change events. Subscription struct gained an Aggregator field and HandleObjectChange branches on it (Apply→Snapshot→sendAggregationChanged). The hub readPump now treats Type=='' as a 'handler pushed its own response sequence' sentinel so handleSubscribeAggregation can emit subscribed → aggregationChanged in correct order. 22 new tests cover IncrementalAggregator (count/sum/avg/min/max, where moves out of scope, null bucket, wrong-objectType passthrough, delete-unknown-PK, Seed from Bleve, validateAggMetric) + WebSocket integration (initial snapshot from index, incremental updates with intermixed wrong-objectType events, invalid metric rejected, missing objectType, where-move-out-of-scope decrements). cmd/server/main.go wires deps.IndexMgr → deps.WebSocketHub.SetIndexResolver alongside the existing ObjectSet resolver wire."
     },
     {
       "id": "US-306",

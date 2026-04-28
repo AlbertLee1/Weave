@@ -307,7 +307,7 @@ type ServerDeps struct {
 	// can audit pipeline data hygiene. nil in degraded mode — callers
 	// decide whether to fail-soft or fail-hard when the store is missing.
 	QualityViolationStore quality.ViolationStore
-	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
+	CORSOrigins           []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -1908,6 +1908,13 @@ func main() {
 	// subscriptions still work without it.
 	if deps.ObjSetStore != nil {
 		deps.WebSocketHub.SetObjectSetResolver(deps.ObjSetStore)
+	}
+	// US-305: subscribeAggregation seeds its initial state from the per-objectType
+	// Bleve index. The IndexManager exposes GetIndex(objectType) which directly
+	// satisfies the resolver contract; aggregation subscriptions still work
+	// without a resolver (initial state is empty, change events grow the totals).
+	if deps.IndexMgr != nil {
+		deps.WebSocketHub.SetIndexResolver(deps.IndexMgr)
 	}
 
 	// 7. NATS

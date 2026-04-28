@@ -27,9 +27,10 @@ type Message struct {
 
 // HubConfig holds configurable parameters for the Hub.
 type HubConfig struct {
-	HeartbeatInterval time.Duration // ping interval; default 30s
-	HeartbeatTimeout  time.Duration // pong deadline; default 60s
-	SendBufferSize    int           // per-connection outbound buffer; default 64
+	HeartbeatInterval    time.Duration // ping interval; default 30s
+	HeartbeatTimeout     time.Duration // pong deadline; default 60s
+	SendBufferSize       int           // per-connection outbound buffer; default 64
+	AggregationScanLimit int           // initial scan size for aggregation subscriptions; default 10000
 }
 
 func (cfg *HubConfig) applyDefaults() {
@@ -41,6 +42,9 @@ func (cfg *HubConfig) applyDefaults() {
 	}
 	if cfg.SendBufferSize == 0 {
 		cfg.SendBufferSize = 64
+	}
+	if cfg.AggregationScanLimit == 0 {
+		cfg.AggregationScanLimit = 10000
 	}
 }
 
@@ -96,12 +100,13 @@ func (c *Connection) drainOverflow(ctx context.Context) {
 // Hub manages active WebSocket connections and routes messages to them.
 // It is safe for concurrent use.
 type Hub struct {
-	mu       sync.Mutex
-	conns    map[string]*Connection
-	ctx      context.Context
-	stop     context.CancelFunc
-	config   HubConfig
-	resolver ObjectSetResolver // optional; nil means subscribeObjectSet rejects {objectSetRid}
+	mu              sync.Mutex
+	conns           map[string]*Connection
+	ctx             context.Context
+	stop            context.CancelFunc
+	config          HubConfig
+	resolver        ObjectSetResolver // optional; nil means subscribeObjectSet rejects {objectSetRid}
+	indexResolverFn IndexResolver     // optional; nil means subscribeAggregation seeds with empty state
 }
 
 // NewHub creates a new Hub ready to accept WebSocket connections with
@@ -136,6 +141,23 @@ func (h *Hub) objectSetResolver() ObjectSetResolver {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.resolver
+}
+
+// SetIndexResolver wires the resolver used by subscribeAggregation to seed an
+// aggregator's initial state from a per-objectType Bleve index. Aggregation
+// subscriptions still work without a resolver — they simply start empty and
+// grow as change events arrive. Passing nil detaches the hook.
+func (h *Hub) SetIndexResolver(r IndexResolver) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.indexResolverFn = r
+}
+
+// indexResolver returns the currently wired index resolver, or nil.
+func (h *Hub) indexResolver() IndexResolver {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.indexResolverFn
 }
 
 // ConnectionCount returns the number of active connections.
@@ -338,12 +360,21 @@ func (c *Connection) readPump(ctx context.Context) {
 			resp = c.hub.handleSubscribe(c, envelope.Data)
 		case "subscribeObjectSet":
 			resp = c.hub.handleSubscribeObjectSet(c, envelope.Data)
+		case "subscribeAggregation":
+			resp = c.hub.handleSubscribeAggregation(c, envelope.Data)
 		case "unsubscribe":
 			resp = c.hub.handleUnsubscribe(c, envelope.Data)
 		default:
 			resp = Message{Type: "error", Error: "unknown message type: " + envelope.Type}
 		}
 
+		// Type=="" is the sentinel handlers use to opt out of the default
+		// dispatch — they pushed their own response sequence directly to
+		// c.send (e.g. handleSubscribeAggregation needs subscribed before
+		// the initial snapshot).
+		if resp.Type == "" {
+			continue
+		}
 		select {
 		case c.send <- resp:
 		default:
