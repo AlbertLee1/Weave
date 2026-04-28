@@ -10,6 +10,7 @@ import { MediaUploadZone } from './MediaUploadZone';
 import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
 import { RelationshipGraph } from './RelationshipGraph';
+import { CommentsTab } from './CommentsTab';
 import { MarkdownPreview } from '../common/MarkdownEditor';
 import { InlineEditField } from '../common/InlineEditField';
 import { findModifyActionForProperty } from './findModifyAction';
@@ -49,13 +50,14 @@ interface ObjectDetailProps {
   ontologyApiName: string;
 }
 
-type DetailTab = 'properties' | 'relationships' | 'activity' | 'diff';
+type DetailTab = 'properties' | 'relationships' | 'activity' | 'diff' | 'comments';
 
 const TABS: { key: DetailTab; label: string }[] = [
   { key: 'properties', label: 'Properties' },
   { key: 'relationships', label: 'Relationships' },
   { key: 'activity', label: 'Activity' },
   { key: 'diff', label: 'Diff' },
+  { key: 'comments', label: 'Comments' },
 ];
 
 export function ObjectDetail({
@@ -313,6 +315,12 @@ export function ObjectDetail({
                 objectType={objectType.apiName}
                 primaryKey={String(object.__primaryKey)}
               />
+            </section>
+          )}
+
+          {activeTab === 'comments' && (
+            <section data-testid="object-detail-comments">
+              <CommentsTab targetRid={object.__rid ?? ''} />
             </section>
           )}
         </div>

@@ -1945,8 +1945,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 136,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/api/comments.ts (list/create/update/delete REST client) + web/src/hooks/useComments.ts (TanStack Query hooks: useComments / useCreateComment / useUpdateComment / useDeleteComment, all keyed on ['comments','list',targetRid] for shared invalidation); web/src/components/browser/CommentsTab.tsx renders one-deep thread (US-334 enforces reply-of-reply rejection so a single buildThreads pass is enough), tombstoned rows show '[deleted]' author + '[comment deleted]' italic body and lose their edit/delete/reply controls, edit/delete buttons render only when comment.author === user.id (auth pulled via useAuth), Reply expands a per-row textarea form, Delete routes through the shared Modal for confirmation; ObjectDetail.tsx adds DetailTab='comments' (5th tab) wired to <CommentsTab targetRid={object.__rid ?? ''}/>, falls back to 'no rid' state for objects without a __rid; 8 RTL tests cover empty / threaded / tombstone / new / reply-scoped-to-parent / per-author edit-delete visibility / inline edit save / delete-confirm cancel-vs-confirm; vitest 731/731 + tsc clean (3 pre-existing errors unrelated). Dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-336",
