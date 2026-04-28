@@ -1371,8 +1371,8 @@
         "Tests pass"
       ],
       "priority": 95,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/pipeline/connector/rest: net/http-only polling connector behind narrow HTTPDoer interface for httptest stubbing; PaginationNone/Page/Offset/Cursor strategies share the (rows, nextCursor, hasMore) shape with JDBC/S3; AuthNone/Basic/Bearer/Header via SetBasicAuth + Authorization / custom header; minimal dotted JSONPath walker (data.items, $.data.items, items.0) with strict (records) + tolerant (cursor token) variants; HTTPError typed for 4xx/5xx with bounded body preview; CGO_ENABLED=0 invariant preserved (stdlib only); 49 unit tests via httptest.Server cover validation, drain loops, MaxPages cap, numeric cursors, ctx cancellation, error paths"
     },
     {
       "id": "US-295",
