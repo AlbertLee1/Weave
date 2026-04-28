@@ -9,6 +9,7 @@ import type { Comment } from '../../api/comments';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { Modal } from '../common/Modal';
 import { useAuth } from '../../auth/useAuth';
+import { MentionTextarea } from './MentionTextarea';
 
 interface CommentsTabProps {
   targetRid: string;
@@ -26,6 +27,41 @@ function formatTimestamp(value: string): string {
   } catch {
     return value;
   }
+}
+
+// MENTION_RENDER_REGEX matches `@<email>` mentions written by the
+// MentionTextarea autocomplete or hand-typed by users. Mirrors the
+// backend extractor's accepted shape (pkg/comments/mentions.go) — keep
+// the two in sync so what we highlight matches what we notify on.
+const MENTION_RENDER_REGEX =
+  /@([A-Za-z0-9._+%-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+)/g;
+
+function renderBodyWithMentions(body: string): React.ReactNode {
+  if (!body) return body;
+  const out: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  MENTION_RENDER_REGEX.lastIndex = 0;
+  while ((match = MENTION_RENDER_REGEX.exec(body)) !== null) {
+    if (match.index > lastIndex) {
+      out.push(body.slice(lastIndex, match.index));
+    }
+    out.push(
+      <span
+        key={`m${match.index}`}
+        className="text-accent-cyan font-medium"
+        data-mention={match[1]}
+        data-testid={`mention-link-${match[1]}`}
+      >
+        @{match[1]}
+      </span>,
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < body.length) {
+    out.push(body.slice(lastIndex));
+  }
+  return out;
 }
 
 // Group flat comment list into a one-deep thread (root + replies). The
@@ -238,9 +274,9 @@ export function CommentsTab({ targetRid }: CommentsTabProps) {
                     className="mt-3 space-y-2"
                     data-testid={`comment-reply-form-${node.comment.id}`}
                   >
-                    <textarea
+                    <MentionTextarea
                       value={replyDraft}
-                      onChange={(e) => setReplyDraft(e.target.value)}
+                      onChange={setReplyDraft}
                       rows={2}
                       placeholder="Write a reply…"
                       aria-label="Reply body"
@@ -287,12 +323,12 @@ export function CommentsTab({ targetRid }: CommentsTabProps) {
         >
           Add a comment
         </label>
-        <textarea
+        <MentionTextarea
           id="comment-new-body"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={setDraft}
           rows={3}
-          placeholder="Share something about this object…"
+          placeholder="Share something about this object…  Type @ to mention a teammate."
           className="w-full text-xs font-mono px-2 py-1.5 rounded border border-border bg-bg-base text-text-primary"
           data-testid="comment-new-input"
         />
@@ -432,7 +468,7 @@ function CommentRow({
           }`}
           data-testid={`comment-body-${comment.id}`}
         >
-          {tombstoned ? '[comment deleted]' : comment.body}
+          {tombstoned ? '[comment deleted]' : renderBodyWithMentions(comment.body)}
         </p>
       )}
 

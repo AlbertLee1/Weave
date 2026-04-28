@@ -13,6 +13,15 @@ import (
 )
 
 func newTestRouter(store Store, user *auth.User) http.Handler {
+	return newTestRouterWithMentions(store, user, nil, nil)
+}
+
+func newTestRouterWithMentions(
+	store Store,
+	user *auth.User,
+	dir MentionUserDirectory,
+	notifier MentionNotifier,
+) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -23,7 +32,14 @@ func newTestRouter(store Store, user *auth.User) http.Handler {
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})
-	NewHandler(store).RegisterRoutes(r)
+	h := NewHandler(store)
+	if dir != nil {
+		h.SetMentionUserDirectory(dir)
+	}
+	if notifier != nil {
+		h.SetMentionNotifier(notifier)
+	}
+	h.RegisterRoutes(r)
 	return r
 }
 
@@ -240,5 +256,101 @@ func TestHandler_FullCRUDFlow(t *testing.T) {
 	withAlice.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("re-delete: want 404, got %d", w.Code)
+	}
+}
+
+func TestHandler_CreateFiresMentionNotifications(t *testing.T) {
+	store := NewMemoryStore()
+	dir := &stubDirectory{
+		byEmail: map[string]MentionUser{
+			"bob@example.com": {ID: "user:bob@example.com", Email: "bob@example.com", Name: "Bob"},
+		},
+	}
+	notif := &stubNotifier{}
+	r := newTestRouterWithMentions(store, &auth.User{ID: "user:alice@example.com"}, dir, notif)
+	body := mustEncode(t, map[string]any{
+		"targetRid": targetRID,
+		"body":      "ping @bob@example.com please review",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/comments", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: want 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	got := notif.snapshot()
+	if len(got) != 1 || got[0].RecipientID != "user:bob@example.com" {
+		t.Fatalf("expected one notification for bob, got %+v", got)
+	}
+	if got[0].AuthorID != "user:alice@example.com" {
+		t.Fatalf("notification author wrong: %+v", got[0])
+	}
+}
+
+func TestHandler_SearchMentions_AuthRequired(t *testing.T) {
+	r := newTestRouterWithMentions(nil, nil, &stubDirectory{}, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/mentions/search?q=alice", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anon search: want 401, got %d", w.Code)
+	}
+}
+
+func TestHandler_SearchMentions_UnavailableWithoutDirectory(t *testing.T) {
+	r := newTestRouterWithMentions(nil, &auth.User{ID: "user:alice"}, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/mentions/search?q=alice", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("no directory: want 500, got %d", w.Code)
+	}
+}
+
+func TestHandler_SearchMentions_EmptyQueryReturnsEmpty(t *testing.T) {
+	dir := &stubDirectory{
+		search: []MentionUser{
+			{ID: "user:alice@example.com", Email: "alice@example.com", Name: "Alice"},
+		},
+	}
+	r := newTestRouterWithMentions(nil, &auth.User{ID: "user:alice"}, dir, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/mentions/search?q=", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty q: want 200, got %d", w.Code)
+	}
+	var resp MentionSearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Users) != 0 {
+		t.Fatalf("empty q should return empty users, got %+v", resp.Users)
+	}
+}
+
+func TestHandler_SearchMentions_ReturnsUsers(t *testing.T) {
+	dir := &stubDirectory{
+		search: []MentionUser{
+			{ID: "user:alice@example.com", Email: "alice@example.com", Name: "Alice"},
+			{ID: "user:bob@example.com", Email: "bob@example.com", Name: "Bob"},
+		},
+	}
+	r := newTestRouterWithMentions(nil, &auth.User{ID: "user:carol"}, dir, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/mentions/search?q=al&limit=5", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search: want 200, got %d", w.Code)
+	}
+	var resp MentionSearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Users) != 2 {
+		t.Fatalf("want 2 users, got %d", len(resp.Users))
+	}
+	if resp.Users[0].Email != "alice@example.com" {
+		t.Fatalf("unexpected first user: %+v", resp.Users[0])
 	}
 }

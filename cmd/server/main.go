@@ -335,6 +335,12 @@ type ServerDeps struct {
 	// Comments tab. nil in degraded mode so the routes stay unmounted
 	// and the SPA hides the tab when the list endpoint 404s.
 	CommentsStore comments.Store
+	// US-336: @mention autocomplete + notification fan-out. Wired
+	// alongside CommentsStore in PG mode; either field may stay nil in
+	// degraded mode so the SPA's @mention dropdown silently falls
+	// through to plain-text input.
+	MentionUserDirectory comments.MentionUserDirectory
+	MentionNotifier      comments.MentionNotifier
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1159,9 +1165,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// US-334: Comments per-RID CRUD with soft-delete +
 		// pagination. Same degraded-mode shape as saved searches —
 		// the SPA hides the Comments tab when the list endpoint
-		// 404s.
+		// 404s. US-336: when MentionUserDirectory + MentionNotifier
+		// are wired the same handler also serves /api/v2/mentions/
+		// search and fans @mentions out to the notification center.
 		if deps.CommentsStore != nil {
-			comments.NewHandler(deps.CommentsStore).RegisterRoutes(api)
+			commentsHandler := comments.NewHandler(deps.CommentsStore)
+			if deps.MentionUserDirectory != nil {
+				commentsHandler.SetMentionUserDirectory(deps.MentionUserDirectory)
+			}
+			if deps.MentionNotifier != nil {
+				commentsHandler.SetMentionNotifier(deps.MentionNotifier)
+			}
+			commentsHandler.RegisterRoutes(api)
 		}
 	})
 
@@ -1528,6 +1543,20 @@ func main() {
 		// routes used by the ObjectDetail Comments tab.
 		deps.CommentsStore = newPGCommentsStore(pool)
 		log.Printf("[comments] store wired")
+
+		// US-336: @mention autocomplete + notifications. The user
+		// directory adapter wraps the existing PG users repo; the
+		// notifier writes through the OMS notifications table so
+		// resolved @mentions surface in the existing Notification
+		// Center next to action / approval events.
+		if pgUserRepo, ok := deps.UserRepo.(*auth.PGUserRepository); ok && pgUserRepo != nil {
+			deps.MentionUserDirectory = newMentionUserDirectoryAdapter(pgUserRepo)
+			log.Printf("[comments] mention directory wired")
+		}
+		if deps.OmsRepo != nil {
+			deps.MentionNotifier = newCommentMentionNotifier(deps.OmsRepo)
+			log.Printf("[comments] mention notifier wired")
+		}
 
 		// US-289: Pipeline cron scheduler. Walks the store at boot and
 		// arms a robfig/cron entry for every enabled pipeline carrying a

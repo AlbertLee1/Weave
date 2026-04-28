@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -164,6 +165,82 @@ func (r *PGUserRepository) DeleteUser(ctx context.Context, userID string) (int, 
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// MentionUserRow is the projection used by the @mention autocomplete
+// endpoint (US-336). Lives on PGUserRepository directly rather than the
+// `UserRepository` interface so the cascade of in-memory stubs does not
+// have to grow new no-op methods (cf US-251 UserRoleRevoker).
+type MentionUserRow struct {
+	ID    string
+	Email string
+	Name  string
+}
+
+// SearchUsers returns up to limit non-disabled users whose email or
+// display name contain query (case-insensitive). Used by the comments
+// @mention autocomplete; the wire envelope strips PasswordHash and
+// other identity-bearing columns. Empty query returns no rows so
+// callers that fail to scope their request never see the entire
+// directory.
+func (r *PGUserRepository) SearchUsers(ctx context.Context, query string, limit int) ([]MentionUserRow, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	pattern := "%" + strings.ToLower(q) + "%"
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, COALESCE(email, ''), COALESCE(name, '')
+		   FROM users
+		  WHERE disabled_at IS NULL
+		    AND (
+		           LOWER(COALESCE(email, '')) LIKE $1
+		        OR LOWER(COALESCE(name,  '')) LIKE $1
+		        )
+		  ORDER BY COALESCE(name, ''), COALESCE(email, '')
+		  LIMIT $2`,
+		pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MentionUserRow
+	for rows.Next() {
+		var u MentionUserRow
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// LookupUserByEmailForMention returns the public mention projection for
+// the supplied email, case-insensitively. Disabled users are excluded
+// so revoked accounts cannot be tagged. Returns ErrUserNotFound when no
+// row matches; the comments resolver translates that into "skip this
+// mention" without surfacing an error to the client.
+func (r *PGUserRepository) LookupUserByEmailForMention(ctx context.Context, email string) (MentionUserRow, error) {
+	e := strings.TrimSpace(email)
+	if e == "" {
+		return MentionUserRow{}, ErrUserNotFound
+	}
+	var u MentionUserRow
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, COALESCE(email, ''), COALESCE(name, '')
+		   FROM users
+		  WHERE disabled_at IS NULL AND LOWER(email) = LOWER($1)`,
+		e).Scan(&u.ID, &u.Email, &u.Name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MentionUserRow{}, ErrUserNotFound
+		}
+		return MentionUserRow{}, err
+	}
+	return u, nil
 }
 
 // SetPassword writes the bcrypt password_hash for the given user. Returns

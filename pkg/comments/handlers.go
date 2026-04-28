@@ -17,25 +17,40 @@ import (
 	"github.com/liyang/weave/pkg/httputil"
 )
 
-// Handler implements the /api/v2/comments/* CRUD endpoints (US-334).
+// Handler implements the /api/v2/comments/* CRUD endpoints (US-334) and
+// the /api/v2/mentions/search autocomplete endpoint (US-336).
 //
 //	GET    /api/v2/comments?targetRid=&parentId=&limit=&offset=
 //	POST   /api/v2/comments
 //	GET    /api/v2/comments/{id}
 //	PUT    /api/v2/comments/{id}
-//	DELETE /api/v2/comments/{id}    (soft-delete)
+//	DELETE /api/v2/comments/{id}            (soft-delete)
+//	GET    /api/v2/mentions/search?q=&limit=
 //
 // Read endpoints are open to any authenticated user — comments are not
 // per-user private (cf savedsearches). Mutation endpoints (PUT/DELETE)
 // are gated on Author == caller.UserID; cross-user attempts get a 403.
 type Handler struct {
-	store Store
+	store         Store
+	userDirectory MentionUserDirectory
+	notifier      MentionNotifier
 }
 
 // NewHandler constructs a Handler. nil store leaves every endpoint
 // reporting CommentsUnavailable so degraded-mode test routers (no PG)
 // can keep their /api/v2 prefix mounted without 500s.
 func NewHandler(store Store) *Handler { return &Handler{store: store} }
+
+// SetMentionUserDirectory wires the optional user directory used by
+// /api/v2/mentions/search and the post-write mention resolver. When
+// unset the search endpoint reports MentionsUnavailable and post-write
+// mention notifications are silently skipped.
+func (h *Handler) SetMentionUserDirectory(d MentionUserDirectory) { h.userDirectory = d }
+
+// SetMentionNotifier wires the optional notifier invoked once per
+// resolved @mention after a Create/Update succeeds. When unset the
+// resolver runs but produces no notifications.
+func (h *Handler) SetMentionNotifier(n MentionNotifier) { h.notifier = n }
 
 // RegisterRoutes mounts every endpoint on r. The router is expected to
 // already enforce auth presence; the requireAuth check below is
@@ -47,6 +62,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/comments/{id}", h.Get)
 	r.Put("/api/v2/comments/{id}", h.Update)
 	r.Delete("/api/v2/comments/{id}", h.Delete)
+	r.Get("/api/v2/mentions/search", h.SearchMentions)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
@@ -140,6 +156,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		stored = row
 	}
+	processMentions(r.Context(), h.userDirectory, h.notifier, stored)
 	httputil.WriteJSON(w, http.StatusCreated, stored)
 }
 
@@ -266,6 +283,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	processMentions(r.Context(), h.userDirectory, h.notifier, row)
 	httputil.WriteJSON(w, http.StatusOK, row)
 }
 
@@ -296,6 +314,55 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// MentionSearchResponse is the wire shape returned by /mentions/search.
+type MentionSearchResponse struct {
+	Users []MentionUser `json:"users"`
+}
+
+// SearchMentions GET /api/v2/mentions/search?q=&limit=. Backs the
+// in-comment @mention autocomplete (US-336). Returns up to limit users
+// whose email or display name contains q (case-insensitive); empty q
+// returns an empty list rather than the entire user table.
+func (h *Handler) SearchMentions(w http.ResponseWriter, r *http.Request) {
+	if user := h.requireAuth(w, r); user == nil {
+		return
+	}
+	if h.userDirectory == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MentionsUnavailable", map[string]string{
+			"reason": "mention directory is not configured on this deployment",
+		}))
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	limit := 10
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	const maxLimit = 25
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	resp := MentionSearchResponse{Users: []MentionUser{}}
+	if q == "" {
+		httputil.WriteJSON(w, http.StatusOK, resp)
+		return
+	}
+	users, err := h.userDirectory.SearchMentionUsers(r.Context(), q, limit)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("MentionSearchFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if users == nil {
+		users = []MentionUser{}
+	}
+	resp.Users = users
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // newCommentID returns a uuid-shaped identifier for a new comment row.

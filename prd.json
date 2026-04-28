@@ -1960,8 +1960,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 137,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend: pkg/comments/mentions.go extracts `@<email>` tokens (case-insensitive dedup) + narrow MentionUserDirectory / MentionNotifier interfaces; Handler.Create+Update fan out to notifier on success (best-effort, log+swallow); new GET /api/v2/mentions/search?q=&limit= autocomplete endpoint; auth.PGUserRepository gains SearchUsers + LookupUserByEmailForMention (NOT widened on the UserRepository interface — same cascade-stub trick as US-251 UserRoleRevoker); cmd/server/comments_mentions.go adapts both halves and wires through ServerDeps (degraded-mode test routers leave MentionUserDirectory/MentionNotifier nil so /mentions/search 500s cleanly + post-write fan-out silently skips). Frontend: web/src/api/mentions.ts + MentionTextarea wraps a textarea with a debounced (150ms) autocomplete dropdown driven by `@<query>` detection at the caret, ArrowUp/Down/Enter/Tab navigation, Escape dismiss, mouseDown insert. CommentsTab swaps both new-comment + reply textareas for MentionTextarea and renders rendered comment bodies with `@<email>` highlighted via renderBodyWithMentions. 5 RTL tests for MentionTextarea (no-@, dropdown opens, insert, empty-@-skips-search, Escape closes); 5 mention unit tests + 4 mention HTTP tests in pkg/comments. vitest 736/736 + go test ./... clean. tsc reports the same 3 pre-existing errors unrelated to this change. Dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-337",
