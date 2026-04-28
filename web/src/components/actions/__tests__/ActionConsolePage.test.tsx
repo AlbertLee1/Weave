@@ -49,6 +49,15 @@ function renderPage() {
   );
 }
 
+// fillRequiredParam fills the lone required `newName` text input on the
+// fake action so handleSubmit clears the Zod resolver and downstream
+// applyMutation actually fires.
+function fillRequiredParam(value = 'Alice') {
+  fireEvent.change(screen.getByLabelText(/^newName/i), {
+    target: { value },
+  });
+}
+
 describe('ActionConsolePage — optimistic concurrency (US-024)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -82,6 +91,8 @@ describe('ActionConsolePage — optimistic concurrency (US-024)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('object-version')).toHaveTextContent('3'),
     );
+
+    fillRequiredParam();
 
     // Execute
     fireEvent.click(screen.getByText('Execute Action'));
@@ -127,6 +138,8 @@ describe('ActionConsolePage — optimistic concurrency (US-024)', () => {
       expect(screen.getByTestId('object-version')).toHaveTextContent('2'),
     );
 
+    fillRequiredParam();
+
     fireEvent.click(screen.getByText('Execute Action'));
 
     await waitFor(() =>
@@ -167,6 +180,7 @@ describe('ActionConsolePage Undo toast (US-319)', () => {
     renderPage();
 
     fireEvent.click(await screen.findByText('updateEmployee'));
+    fillRequiredParam();
     fireEvent.click(screen.getByText('Execute Action'));
 
     const toastAction = await screen.findByTestId('toast-action');
@@ -183,6 +197,7 @@ describe('ActionConsolePage Undo toast (US-319)', () => {
     renderPage();
 
     fireEvent.click(await screen.findByText('updateEmployee'));
+    fillRequiredParam();
     fireEvent.click(screen.getByText('Execute Action'));
 
     // Wait until the result section actually renders, then assert no toast.
@@ -207,6 +222,7 @@ describe('ActionConsolePage Undo toast (US-319)', () => {
     renderPage();
 
     fireEvent.click(await screen.findByText('updateEmployee'));
+    fillRequiredParam();
     fireEvent.click(screen.getByText('Execute Action'));
 
     const undoBtn = await screen.findByTestId('toast-action');
@@ -220,5 +236,59 @@ describe('ActionConsolePage Undo toast (US-319)', () => {
         screen.getByText(/Action "Update Employee" reverted/),
       ).toBeInTheDocument(),
     );
+  });
+});
+
+describe('ActionConsolePage — dynamic form validation (US-322)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(ontologiesApi, 'listActionTypes').mockResolvedValue([fakeAction]);
+    vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
+      history: [],
+      totalVersions: 0,
+    });
+  });
+
+  it('blocks Execute and shows a field-level Required error when newName is empty', async () => {
+    const applySpy = vi
+      .spyOn(actionsApi, 'applyAction')
+      .mockResolvedValue({ edits: undefined });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByText('updateEmployee'));
+    fireEvent.click(screen.getByText('Execute Action'));
+
+    const error = await screen.findByRole('alert');
+    expect(error).toHaveTextContent(/required/i);
+    expect(applySpy).not.toHaveBeenCalled();
+  });
+
+  it('maps a 422 WEAVE_VALIDATION_SCHEMA response onto the corresponding field error', async () => {
+    const violations = [
+      { field: 'newName', reason: 'must be at least 3 characters', keyword: 'minLength' },
+    ];
+    const schemaError = new ApiRequestError({
+      errorCode: 'WEAVE_VALIDATION_SCHEMA',
+      errorName: 'ParameterSchemaViolation',
+      errorInstanceId: 'instance-2',
+      parameters: {
+        field: 'newName',
+        reason: 'must be at least 3 characters',
+        keyword: 'minLength',
+        violations: JSON.stringify(violations),
+      },
+      statusCode: 422,
+    });
+    vi.spyOn(actionsApi, 'applyAction').mockRejectedValue(schemaError);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByText('updateEmployee'));
+    fillRequiredParam('Al');
+    fireEvent.click(screen.getByText('Execute Action'));
+
+    const error = await screen.findByRole('alert');
+    expect(error).toHaveTextContent(/at least 3 characters/i);
   });
 });

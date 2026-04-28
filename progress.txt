@@ -4389,3 +4389,33 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Status filter tabs + "mine only" toggle is the canonical shape for any reviewer/approver queue UI: `STATUS_OPTIONS: { value: 'PENDING'|'APPROVED'|'REJECTED'|'ALL'; label: string }[]` + role="tab"/aria-selected for a11y + a `mine` boolean that maps to the backend's caller-scoped filter. Reusable for any future "queue of items the caller has permission on" enumeration (action approvals, function approvals, dataset reviews, schema-change reviews, etc.).
   - Modal-driven approve/reject with optional reason + ApiRequestError surfacing is the right ergonomic for any "decision with audit trail" UX: textarea optional (placeholder hints LGTM vs rejection reason), error stays inline in the modal (modal stays open on failure), success closes the modal AND triggers list refetch via TanStack Query mutation onSuccess. Keep `reason.trim() || undefined` on submit so the wire payload omits the field when blank — matches the backend's "reason is optional metadata" contract.
 ---
+
+## 2026-04-28 16:35 - US-322 动态表单验证
+- 给 ActionConsolePage 接入 react-hook-form + zod，字段级实时校验 + 422 服务端错误映射回字段。
+  - `web/package.json` 加三个 deps：`react-hook-form ^7.74` / `zod ^4.3` / `@hookform/resolvers ^5.2`。@hookform/resolvers v5 已支持 zod v4，无需额外 transitive 折腾。
+  - `web/src/components/actions/parameterSchema.ts`（新）：`buildParameterZodSchema(parameters)` 把 `Record<string, ActionParameterV2>` 翻译成 `z.object({...})`，按 `dataType.type` 走分支（string/integer/double/boolean/array），required→`.min(1, 'Required')` / non-required→`.optional()`；boolean 永远 `.optional()`（checkbox 必有值，required 没意义）。`buildParameterDefaults` 给 form `defaultValues` 用 — string→`''`、integer/double→`undefined`、boolean→`false`、array→`[]`，跟 schema 的接受值匹配。`parseSchemaViolations(params)` 镜像 pkg/actions/parameter_schema.go::APIError() 的 wire 形：先看 `parameters.violations`（JSON-encoded `[{field,reason,keyword}]` 数组），fallback 看 `parameters.field`+`parameters.reason` 单条。
+  - `web/src/components/actions/ParameterForm.tsx`：API 从 `(parameters, values, onChange)` 改成只接 `parameters`，组件靠 `useFormContext()` 读 register/watch/errors。string/number 用 `register(key, { setValueAs })` — 空字符串 → required 字段 `''` / 非 required `undefined`；number 自己跑 `parseInt`/`parseFloat` 把 NaN 也降级成 `undefined`。array 仍是 controlled（comma-split → string[]）：用 `setValue(key, arr, {shouldValidate:true})` 推进 RHF state，blur 时触发 validation。每个字段加 `aria-invalid` + `aria-describedby` + `<span role="alert">{errorMessage}</span>`，错误时换边框 `border-accent-error`。
+  - `web/src/components/actions/ActionConsolePage.tsx`：原本 `paramValues` 本地 state 拆掉，改成 `useForm({resolver: zodResolver(formSchema), mode: 'onBlur'})`。`useMemo([selectedAction])` 重算 schema + defaults；`useEffect([formDefaults]) form.reset(defaults)` 在切换 action 时同步重置（first-render 后 defaultValues 不再起作用，必须 reset）。Execute 按钮 type="submit"，外层 `<form onSubmit={form.handleSubmit(executeWithValues)}>` —— RHF 校验失败 onValid 不跑，applyAction 自然不发。executeWithValues 里 `Object.entries(...).filter(v !== undefined)` 把 optional 字段从 wire payload 剥掉。`onError` 增加 422 分支：`err.statusCode === 422 && err.errorCode === 'WEAVE_VALIDATION_SCHEMA'` → `parseSchemaViolations` → `form.setError(field, {type:'server', message:reason})` 逐条挂回字段。ActionTemplatesPanel 的 `currentParameters` 改用 `form.watch()`，`hasCurrentState` 判定改成"任一字段非 undefined / 非 ''"。`onLoad` 改成 `form.reset({...formDefaults, ...parameters})` 而不是 setState。
+- 测试：
+  - `ParameterForm.test.tsx` 重写 — 加 `Harness` 组件包 `FormProvider + useForm + zodResolver`，验：(1) string/number/boolean input 渲染，(2) 填入后 submit 拿到 typed values（age 是 number 而非 string），(3) required 字段空 + submit → role=alert 出 Required 文案 + onSubmit 不被调用。
+  - `ActionConsolePage.test.tsx` 现有 5 个 case 全部加 `fillRequiredParam('Alice')` —— 旧的 paramValues=={} 直接 click Execute 现在被 RHF 拦住，必须先填 newName 才能让 applyAction mock 跑起来。新增 `US-322` 两个 case：(1) newName 空时 click Execute → role=alert 出 "required" + applySpy.not.toHaveBeenCalled，(2) 422 WEAVE_VALIDATION_SCHEMA + violations 数组 → mock 后填值 + execute → 字段下 alert 出对应 reason。
+  - `npx vitest run` 91 files / 621 tests 全绿（+3 from 618: 2 个 US-322 case + 1 个 ParameterForm Required case），`npx tsc -b` 干净，`npx eslint src/components/actions/` 干净，`npx vite build` 2.50s 无新警告。
+  - `go test -short ./...` 全绿（缓存命中 — 后端零改动）。
+  - 浏览器手测仍欠款（dev-browser MCP 在本 harness 中不可用，跟 US-205/US-309/US-313/US-314/US-315/US-316/US-317/US-318/US-319/US-320 一致欠款）。
+- 文件改动：
+  - `web/package.json` (+ react-hook-form + zod + @hookform/resolvers)
+  - `web/package-lock.json` (lock update)
+  - `web/src/components/actions/parameterSchema.ts` (新)
+  - `web/src/components/actions/ParameterForm.tsx` (改 — RHF context 取代 controlled props)
+  - `web/src/components/actions/ActionConsolePage.tsx` (改 — useForm + FormProvider + 422 → setError)
+  - `web/src/components/actions/__tests__/ParameterForm.test.tsx` (重写带 Harness)
+  - `web/src/components/actions/__tests__/ActionConsolePage.test.tsx` (现有 5 case 加 fillRequiredParam，+ US-322 两 case)
+  - `prd.json` (US-322 passes=true + notes)
+- **Learnings for future iterations:**
+  - **RHF 配 zod-resolver v5 + zod v4 在 React 19 没坑** —— `@hookform/resolvers/zod` 直接吃 `z.object({...})`，v5 已经修了 v4 schema 的 standardSchema 接入。如果之后还要给其他表单（admin CRUD / pipeline config）加客户端校验，复制 ParameterForm 的 `useFormContext` 模板即可，不用再自研 Zustand-formstore 那种轮子。
+  - **服务端验证错误 → 客户端字段错误** 的标准映射：(1) 后端约定 `parameters.violations` 是 JSON-encoded `[{field, reason, keyword}]` 数组（pkg/actions/parameter_schema.go::APIError() 是 prior art），(2) 前端 `parseSchemaViolations` 优先解析这个数组，fallback 单条 field/reason，(3) `form.setError(field, {type: 'server', message: reason})` 逐条注入。`type: 'server'` 让 RHF 知道这是服务端来的 — 用户编辑该字段时 RHF 会自动清掉错误（onChange 后下一次校验如果通过就消失），不需要手动 `clearErrors()`。任何"客户端做格式校验 + 服务端做语义/唯一性校验"的表单都该走这个模式。
+  - **Action parameter form schema 是动态的**（每个 ActionType.parameters 不同）：用 `useMemo([selectedAction])` 重算 zodSchema + defaults + `useEffect([defaults]) form.reset(defaults)`。RHF 的 `defaultValues` 只在第一次 render 生效，后续切换 action 必须 `reset()`。`form.reset(defaults)` 也清掉之前的 server-side errors 和 dirty state。
+  - **Test harness for RHF-coupled components**：测组件本身，不要 mock `useForm`。包一层 `<FormProvider {...useForm(...)}>` 的 Harness 比 mock RHF 实用得多 —— 测试代码就是真实使用方式的最小复刻，能抓到 register/setValue/watch 行为变化。Mock 整个 useForm 只在 hook 本身的契约测试里才必要（这次没单独写 hook 测试，靠 component 测试覆盖）。
+  - **`type="submit"` + `<form onSubmit={form.handleSubmit(...)}>`** 比 `onClick` 调 mutation 更对：RHF resolver 失败 onValid 不跑，applyMutation 自然不发；同时 Enter 键提交也免费支持。把 Reload 那种"非提交"按钮显式标 `type="button"` 防止 form 误提交（HTML form 默认 button.type = submit）。
+  - **每 action 切换 → form reset** 触发清错；422 错误注入 → `type: 'server'` 让用户编辑后自动清除。两条规则配合刚好覆盖"用户改了字段就该清掉错误"的全部场景，不需要手动管理 errors state。
+---

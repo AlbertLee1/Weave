@@ -1,5 +1,7 @@
-import { useContext, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router';
+import { FormProvider, useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   useActionTypes,
   useApplyAction,
@@ -15,6 +17,11 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { useToastStore } from '../../stores/toastStore';
 import { AuthContext } from '../../auth/AuthContext';
+import {
+  buildParameterDefaults,
+  buildParameterZodSchema,
+  parseSchemaViolations,
+} from './parameterSchema';
 
 export function ActionConsolePage() {
   const { ontology } = useParams<{ ontology: string }>();
@@ -32,13 +39,39 @@ export function ActionConsolePage() {
   const currentUserId = authCtx?.user?.id;
 
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
-  const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
   const [result, setResult] = useState<ActionApplyResponse | null>(null);
   const [targetObjectType, setTargetObjectType] = useState('');
   const [targetPrimaryKey, setTargetPrimaryKey] = useState('');
   const [staleConflict, setStaleConflict] = useState<null | {
     currentVersion?: string;
   }>(null);
+
+  // Build the Zod schema + defaults from the selected action's parameters.
+  // The schema is rebuilt whenever the user picks a different action; an
+  // empty schema is used as a placeholder when no action is selected.
+  const formSchema = useMemo(
+    () => buildParameterZodSchema(selectedAction?.parameters ?? {}),
+    [selectedAction],
+  );
+  const formDefaults = useMemo(
+    () => buildParameterDefaults(selectedAction?.parameters ?? {}),
+    [selectedAction],
+  );
+
+  const form = useForm<Record<string, unknown>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: formDefaults,
+    mode: 'onBlur',
+  });
+
+  // Reset form whenever the selected action changes so the new schema
+  // governs the inputs and stale values from a previous action don't leak.
+  useEffect(() => {
+    form.reset(formDefaults);
+    // form is stable; depending on it would loop. Reset must run when the
+    // selected action's defaults change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formDefaults]);
 
   const versionQuery = useObjectVersion({
     ontologyApiName: ontology ?? '',
@@ -48,19 +81,24 @@ export function ActionConsolePage() {
 
   function handleSelectAction(action: ActionType) {
     setSelectedAction(action);
-    setParamValues({});
     setResult(null);
     setStaleConflict(null);
   }
 
-  function handleExecute() {
+  function executeWithValues(paramValues: Record<string, unknown>) {
     if (!selectedAction) return;
     setStaleConflict(null);
     const expectedVersion = versionQuery.version;
+    // Strip undefined entries so optional fields don't surface as
+    // explicit-null on the wire.
+    const cleanedParams: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(paramValues)) {
+      if (v !== undefined) cleanedParams[k] = v;
+    }
     applyMutation.mutate(
       {
         action: selectedAction.apiName,
-        parameters: paramValues,
+        parameters: cleanedParams,
         ...(expectedVersion !== undefined
           ? { options: { expectedVersion } }
           : {}),
@@ -76,14 +114,26 @@ export function ActionConsolePage() {
           }
         },
         onError: (err) => {
-          if (
-            err instanceof ApiRequestError &&
-            err.statusCode === 409 &&
-            err.errorName === 'StaleObject'
-          ) {
-            setStaleConflict({
-              currentVersion: err.parameters?.currentVersion,
-            });
+          if (err instanceof ApiRequestError) {
+            if (err.statusCode === 409 && err.errorName === 'StaleObject') {
+              setStaleConflict({
+                currentVersion: err.parameters?.currentVersion,
+              });
+              return;
+            }
+            // US-322: surface 422 schema violations as field-level errors
+            // on the corresponding form inputs.
+            if (err.statusCode === 422 && err.errorCode === 'WEAVE_VALIDATION_SCHEMA') {
+              const violations = parseSchemaViolations(err.parameters);
+              if (violations.length > 0) {
+                for (const v of violations) {
+                  if (v.field) {
+                    form.setError(v.field, { type: 'server', message: v.reason });
+                  }
+                }
+                return;
+              }
+            }
           }
         },
       },
@@ -138,6 +188,10 @@ export function ActionConsolePage() {
     );
   }
 
+  // Watching the form values keeps the templates panel and the Save button
+  // gating in sync as the user edits inputs.
+  const watchedValues = form.watch();
+
   return (
     <div className="flex h-full">
       {/* Left panel: action types list */}
@@ -182,128 +236,133 @@ export function ActionConsolePage() {
             />
           </div>
         ) : (
-          <div className="max-w-2xl flex flex-col gap-6">
-            {/* Action info */}
-            <div>
-              <h2 className="text-sm font-medium text-text-primary">{selectedAction.displayName}</h2>
-              <div className="text-xs font-mono text-text-secondary mt-1">{selectedAction.apiName}</div>
-              {selectedAction.description && (
-                <p className="text-xs text-text-secondary mt-2">{selectedAction.description}</p>
-              )}
-            </div>
+          <FormProvider {...form}>
+            <form
+              className="max-w-2xl flex flex-col gap-6"
+              onSubmit={form.handleSubmit(executeWithValues)}
+              noValidate
+            >
+              {/* Action info */}
+              <div>
+                <h2 className="text-sm font-medium text-text-primary">{selectedAction.displayName}</h2>
+                <div className="text-xs font-mono text-text-secondary mt-1">{selectedAction.apiName}</div>
+                {selectedAction.description && (
+                  <p className="text-xs text-text-secondary mt-2">{selectedAction.description}</p>
+                )}
+              </div>
 
-            {/* Target object (optional) — used for optimistic concurrency */}
-            <div>
-              <h3 className="text-xs font-medium text-text-primary mb-3">Target Object (optional)</h3>
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col">
-                  <label
-                    htmlFor="target-object-type"
-                    className="text-xs text-text-secondary font-sans mb-1"
-                  >
-                    Target object type
-                  </label>
-                  <input
-                    id="target-object-type"
-                    type="text"
-                    value={targetObjectType}
-                    onChange={(e) => setTargetObjectType(e.target.value)}
-                    className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
-                    placeholder="Employee"
-                  />
-                </div>
-                <div className="flex flex-col">
-                  <label
-                    htmlFor="target-primary-key"
-                    className="text-xs text-text-secondary font-sans mb-1"
-                  >
-                    Target primary key
-                  </label>
-                  <input
-                    id="target-primary-key"
-                    type="text"
-                    value={targetPrimaryKey}
-                    onChange={(e) => setTargetPrimaryKey(e.target.value)}
-                    className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
-                    placeholder="E1"
-                  />
-                </div>
-                {versionQuery.version !== undefined && (
-                  <div className="text-xs text-text-secondary">
-                    Current version:{' '}
-                    <span
-                      data-testid="object-version"
-                      className="font-mono text-accent-cyan"
+              {/* Target object (optional) — used for optimistic concurrency */}
+              <div>
+                <h3 className="text-xs font-medium text-text-primary mb-3">Target Object (optional)</h3>
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col">
+                    <label
+                      htmlFor="target-object-type"
+                      className="text-xs text-text-secondary font-sans mb-1"
                     >
-                      {versionQuery.version}
-                    </span>
+                      Target object type
+                    </label>
+                    <input
+                      id="target-object-type"
+                      type="text"
+                      value={targetObjectType}
+                      onChange={(e) => setTargetObjectType(e.target.value)}
+                      className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
+                      placeholder="Employee"
+                    />
+                  </div>
+                  <div className="flex flex-col">
+                    <label
+                      htmlFor="target-primary-key"
+                      className="text-xs text-text-secondary font-sans mb-1"
+                    >
+                      Target primary key
+                    </label>
+                    <input
+                      id="target-primary-key"
+                      type="text"
+                      value={targetPrimaryKey}
+                      onChange={(e) => setTargetPrimaryKey(e.target.value)}
+                      className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
+                      placeholder="E1"
+                    />
+                  </div>
+                  {versionQuery.version !== undefined && (
+                    <div className="text-xs text-text-secondary">
+                      Current version:{' '}
+                      <span
+                        data-testid="object-version"
+                        className="font-mono text-accent-cyan"
+                      >
+                        {versionQuery.version}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Parameter templates panel — save / load named parameter sets. */}
+              <ActionTemplatesPanel
+                ontology={ontology}
+                actionType={selectedAction.apiName}
+                currentParameters={watchedValues}
+                hasCurrentState={Object.keys(watchedValues).some(
+                  (k) => watchedValues[k] !== undefined && watchedValues[k] !== '',
+                )}
+                onLoad={(parameters) => form.reset({ ...formDefaults, ...parameters })}
+                currentUserId={currentUserId}
+              />
+
+              {/* Parameters form */}
+              <div>
+                <h3 className="text-xs font-medium text-text-primary mb-3">Parameters</h3>
+                <ParameterForm parameters={selectedAction.parameters} />
+              </div>
+
+              {/* Stale-object conflict banner */}
+              {staleConflict && (
+                <div
+                  role="alert"
+                  className="border border-accent-error rounded p-3 bg-accent-error/10"
+                >
+                  <div className="text-xs text-text-primary font-medium">
+                    This object was updated elsewhere
+                  </div>
+                  <div className="text-xs text-text-secondary mt-1">
+                    Reload to continue
+                    {staleConflict.currentVersion &&
+                      ` (current version: ${staleConflict.currentVersion})`}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleReload}
+                    className="mt-2 bg-accent-error text-bg-primary px-3 py-1 rounded text-xs font-medium hover:bg-accent-error/80"
+                  >
+                    Reload
+                  </button>
+                </div>
+              )}
+
+              {/* Execute button */}
+              <div>
+                <button
+                  type="submit"
+                  disabled={applyMutation.isPending}
+                  className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
+                >
+                  {applyMutation.isPending ? 'Executing...' : 'Execute Action'}
+                </button>
+                {applyMutation.isError && !staleConflict && (
+                  <div className="mt-2 text-xs text-accent-error">
+                    Error: {applyMutation.error instanceof Error ? applyMutation.error.message : 'Action failed'}
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* Parameter templates panel — save / load named parameter sets. */}
-            <ActionTemplatesPanel
-              ontology={ontology}
-              actionType={selectedAction.apiName}
-              currentParameters={paramValues}
-              hasCurrentState={Object.keys(paramValues).length > 0}
-              onLoad={(parameters) => setParamValues({ ...parameters })}
-              currentUserId={currentUserId}
-            />
-
-            {/* Parameters form */}
-            <div>
-              <h3 className="text-xs font-medium text-text-primary mb-3">Parameters</h3>
-              <ParameterForm
-                parameters={selectedAction.parameters}
-                values={paramValues}
-                onChange={setParamValues}
-              />
-            </div>
-
-            {/* Stale-object conflict banner */}
-            {staleConflict && (
-              <div
-                role="alert"
-                className="border border-accent-error rounded p-3 bg-accent-error/10"
-              >
-                <div className="text-xs text-text-primary font-medium">
-                  This object was updated elsewhere
-                </div>
-                <div className="text-xs text-text-secondary mt-1">
-                  Reload to continue
-                  {staleConflict.currentVersion &&
-                    ` (current version: ${staleConflict.currentVersion})`}
-                </div>
-                <button
-                  onClick={handleReload}
-                  className="mt-2 bg-accent-error text-bg-primary px-3 py-1 rounded text-xs font-medium hover:bg-accent-error/80"
-                >
-                  Reload
-                </button>
-              </div>
-            )}
-
-            {/* Execute button */}
-            <div>
-              <button
-                onClick={handleExecute}
-                disabled={applyMutation.isPending}
-                className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
-              >
-                {applyMutation.isPending ? 'Executing...' : 'Execute Action'}
-              </button>
-              {applyMutation.isError && !staleConflict && (
-                <div className="mt-2 text-xs text-accent-error">
-                  Error: {applyMutation.error instanceof Error ? applyMutation.error.message : 'Action failed'}
-                </div>
-              )}
-            </div>
-
-            {/* Result */}
-            <ActionResult result={result} />
-          </div>
+              {/* Result */}
+              <ActionResult result={result} />
+            </form>
+          </FormProvider>
         )}
       </div>
     </div>

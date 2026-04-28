@@ -1764,8 +1764,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 123,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ParameterForm 改用 RHF + zodResolver；buildParameterZodSchema 从 ActionParameterV2 动态生成 Zod schema；mode='onBlur' 字段级实时反馈；422 WEAVE_VALIDATION_SCHEMA → form.setError 映射（解析 parameters.violations JSON 数组 + 单条 field/reason fallback）；ParameterForm.test.tsx 重写 + ActionConsolePage.test.tsx 加 US-322 两 case。Browser 手测仍欠款（dev-browser skill 在本 harness 不可用）"
     },
     {
       "id": "US-323",
