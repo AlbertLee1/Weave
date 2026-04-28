@@ -1357,8 +1357,8 @@
         "Tests pass"
       ],
       "priority": 94,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/pipeline/connector/s3: aws-sdk-go-v2 + parquet-go behind narrow ObjectClient interface (List/Get); MinIO-compatible via custom Endpoint + UsePathStyle; CSV (RFC 4180 + opts) + Parquet decoders; opaque base64-JSON cursor over {queue, listToken}; one object per ReadPage; 22 unit tests (CSV + parquet write/read round-trip via in-memory client); CGO_ENABLED=0 invariant preserved (parquet-go is pure Go)"
     },
     {
       "id": "US-294",
