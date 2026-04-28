@@ -6,6 +6,7 @@ import { LinkedObjectsTab } from './LinkedObjectsTab';
 import { TimeSeriesChart } from '../common/TimeSeriesChart';
 import { MediaUploadZone } from './MediaUploadZone';
 import { ObjectActivityPanel } from './ObjectActivityPanel';
+import { ObjectDiffPanel } from './ObjectDiffPanel';
 
 function baseTypeOf(dt: DataType): string {
   if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
@@ -33,11 +34,12 @@ interface ObjectDetailProps {
   ontologyApiName: string;
 }
 
-type DetailTab = 'properties' | 'activity';
+type DetailTab = 'properties' | 'activity' | 'diff';
 
 const TABS: { key: DetailTab; label: string }[] = [
   { key: 'properties', label: 'Properties' },
   { key: 'activity', label: 'Activity' },
+  { key: 'diff', label: 'Diff' },
 ];
 
 export function ObjectDetail({
@@ -191,6 +193,16 @@ export function ObjectDetail({
           {activeTab === 'activity' && (
             <section data-testid="object-detail-activity">
               <ObjectActivityPanel
+                ontologyApiName={ontologyApiName}
+                objectType={objectType.apiName}
+                primaryKey={String(object.__primaryKey)}
+              />
+            </section>
+          )}
+
+          {activeTab === 'diff' && (
+            <section data-testid="object-detail-diff">
+              <ObjectDiffPanel
                 ontologyApiName={ontologyApiName}
                 objectType={objectType.apiName}
                 primaryKey={String(object.__primaryKey)}

@@ -1638,8 +1638,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 114,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "react-diff-viewer-continued v4.2.2 wired through new ObjectDiffPanel: useObjectActivity feeds two version selectors (default = latest two), state is canonicalised JSON (sorted keys + 2-space indent) so field-level line diff highlights only real value changes; Diff added as a third tab in ObjectDetail; vitest mock keeps jsdom out of emotion+ResizeObserver path; 5 RTL tests cover insufficient/default/canonical-key-order/same-version/CREATE-prevState; vitest 561/561 pass; tsc -b clean; vite build clean; dev-browser skill not available in this harness — manual browser verification still pending"
     },
     {
       "id": "US-314",

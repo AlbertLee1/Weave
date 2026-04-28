@@ -26,6 +26,7 @@
     "js-yaml": "^4.1.1",
     "leaflet": "^1.9.4",
     "react": "^19.2.4",
+    "react-diff-viewer-continued": "^4.2.2",
     "react-dom": "^19.2.4",
     "react-dropzone": "^15.0.0",
     "react-leaflet": "^5.0.0",
