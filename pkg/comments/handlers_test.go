@@ -1,0 +1,244 @@
+package comments
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/liyang/weave/pkg/auth"
+)
+
+func newTestRouter(store Store, user *auth.User) http.Handler {
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := req.Context()
+			if user != nil {
+				ctx = auth.WithUser(ctx, user)
+			}
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+	NewHandler(store).RegisterRoutes(r)
+	return r
+}
+
+func mustEncode(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+const targetRID = "ri.ontology.main.object.t1"
+
+func TestHandler_CreateRequiresAuth(t *testing.T) {
+	store := NewMemoryStore()
+	r := newTestRouter(store, nil) // anonymous
+	body := mustEncode(t, map[string]any{"targetRid": targetRID, "body": "hi"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/comments", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("anon create: want 401, got %d", w.Code)
+	}
+}
+
+func TestHandler_CreateUnavailableWhenStoreNil(t *testing.T) {
+	r := newTestRouter(nil, &auth.User{ID: "user:alice"})
+	body := mustEncode(t, map[string]any{"targetRid": targetRID, "body": "hi"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/comments", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("nil store: want 500, got %d", w.Code)
+	}
+}
+
+func TestHandler_FullCRUDFlow(t *testing.T) {
+	store := NewMemoryStore()
+	alice := &auth.User{ID: "user:alice"}
+	bob := &auth.User{ID: "user:bob"}
+
+	// Alice posts a top-level comment.
+	withAlice := newTestRouter(store, alice)
+	createBody := mustEncode(t, map[string]any{
+		"targetRid": targetRID,
+		"body":      "first",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/comments", bytes.NewReader(createBody))
+	w := httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("alice POST: want 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	var top Comment
+	if err := json.Unmarshal(w.Body.Bytes(), &top); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if top.Author != alice.ID || top.Body != "first" || top.ID == "" {
+		t.Fatalf("create returned wrong shape: %+v", top)
+	}
+
+	// Empty body → 400.
+	req = httptest.NewRequest(http.MethodPost, "/api/v2/comments",
+		bytes.NewReader(mustEncode(t, map[string]any{"targetRid": targetRID, "body": ""})))
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty body: want 400, got %d", w.Code)
+	}
+
+	// Bad target RID → 400.
+	req = httptest.NewRequest(http.MethodPost, "/api/v2/comments",
+		bytes.NewReader(mustEncode(t, map[string]any{"targetRid": "not-a-rid", "body": "x"})))
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad target: want 400, got %d", w.Code)
+	}
+
+	// Bob replies to alice's comment.
+	withBob := newTestRouter(store, bob)
+	replyBody := mustEncode(t, map[string]any{
+		"targetRid": targetRID,
+		"body":      "reply",
+		"parentId":  top.ID,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/v2/comments", bytes.NewReader(replyBody))
+	w = httptest.NewRecorder()
+	withBob.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("bob reply: want 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	var reply Comment
+	_ = json.Unmarshal(w.Body.Bytes(), &reply)
+	if reply.ParentID != top.ID || reply.Author != bob.ID {
+		t.Fatalf("reply shape wrong: %+v", reply)
+	}
+
+	// Bob cannot reply to a non-existent parent → 400.
+	req = httptest.NewRequest(http.MethodPost, "/api/v2/comments",
+		bytes.NewReader(mustEncode(t, map[string]any{
+			"targetRid": targetRID, "body": "x", "parentId": "nope"})))
+	w = httptest.NewRecorder()
+	withBob.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad parent: want 400, got %d", w.Code)
+	}
+
+	// LIST scoped to target.
+	req = httptest.NewRequest(http.MethodGet, "/api/v2/comments?targetRid="+targetRID, nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: want 200, got %d", w.Code)
+	}
+	var listResp listResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if listResp.Total != 2 || len(listResp.Comments) != 2 {
+		t.Fatalf("list: want 2 total, got %d (rows=%d)", listResp.Total, len(listResp.Comments))
+	}
+
+	// LIST without targetRid → 400.
+	req = httptest.NewRequest(http.MethodGet, "/api/v2/comments", nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing targetRid: want 400, got %d", w.Code)
+	}
+
+	// LIST scoped to parent.
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/v2/comments?targetRid="+targetRID+"&parentId="+top.ID, nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list-parent: want 200, got %d", w.Code)
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &listResp)
+	if listResp.Total != 1 || listResp.Comments[0].ID != reply.ID {
+		t.Fatalf("list-parent wrong: %+v", listResp)
+	}
+
+	// GET single.
+	req = httptest.NewRequest(http.MethodGet, "/api/v2/comments/"+top.ID, nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get: want 200, got %d", w.Code)
+	}
+
+	// GET unknown → 404.
+	req = httptest.NewRequest(http.MethodGet, "/api/v2/comments/nope", nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("get-missing: want 404, got %d", w.Code)
+	}
+
+	// EDIT by author.
+	editBody := mustEncode(t, map[string]any{"body": "first (edited)"})
+	req = httptest.NewRequest(http.MethodPut, "/api/v2/comments/"+top.ID, bytes.NewReader(editBody))
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("edit-author: want 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	var edited Comment
+	_ = json.Unmarshal(w.Body.Bytes(), &edited)
+	if edited.Body != "first (edited)" {
+		t.Fatalf("edit didn't persist: %q", edited.Body)
+	}
+
+	// EDIT by non-author → 403.
+	req = httptest.NewRequest(http.MethodPut, "/api/v2/comments/"+top.ID, bytes.NewReader(editBody))
+	w = httptest.NewRecorder()
+	withBob.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("edit-non-author: want 403, got %d", w.Code)
+	}
+
+	// DELETE by non-author → 403.
+	req = httptest.NewRequest(http.MethodDelete, "/api/v2/comments/"+top.ID, nil)
+	w = httptest.NewRecorder()
+	withBob.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("delete-non-author: want 403, got %d", w.Code)
+	}
+
+	// DELETE by author → 204, then GET returns tombstone (body empty + deletedAt set).
+	req = httptest.NewRequest(http.MethodDelete, "/api/v2/comments/"+top.ID, nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete: want 204, got %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v2/comments/"+top.ID, nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get-tombstone: want 200, got %d", w.Code)
+	}
+	var tomb Comment
+	_ = json.Unmarshal(w.Body.Bytes(), &tomb)
+	if tomb.Body != "" || tomb.DeletedAt == nil {
+		t.Fatalf("tombstone not redacted: %+v", tomb)
+	}
+
+	// Re-DELETE by author → 404.
+	req = httptest.NewRequest(http.MethodDelete, "/api/v2/comments/"+top.ID, nil)
+	w = httptest.NewRecorder()
+	withAlice.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("re-delete: want 404, got %d", w.Code)
+	}
+}

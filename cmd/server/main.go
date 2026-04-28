@@ -52,6 +52,7 @@ import (
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/actiontemplates"
+	"github.com/liyang/weave/pkg/comments"
 	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
@@ -329,6 +330,11 @@ type ServerDeps struct {
 	// sharing. nil in degraded mode so /api/v2/dashboards/* routes stay
 	// unmounted; the Dashboard Editor falls back to ephemeral state.
 	DashboardsStore dashboards.Store
+	// US-334: Comments per-RID threaded store. Backs the
+	// /api/v2/comments/* CRUD endpoints used by the ObjectDetail
+	// Comments tab. nil in degraded mode so the routes stay unmounted
+	// and the SPA hides the tab when the list endpoint 404s.
+	CommentsStore comments.Store
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1149,6 +1155,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.DashboardsStore != nil {
 			dashboards.NewHandler(deps.DashboardsStore).RegisterRoutes(api)
 		}
+
+		// US-334: Comments per-RID CRUD with soft-delete +
+		// pagination. Same degraded-mode shape as saved searches —
+		// the SPA hides the Comments tab when the list endpoint
+		// 404s.
+		if deps.CommentsStore != nil {
+			comments.NewHandler(deps.CommentsStore).RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1509,6 +1523,11 @@ func main() {
 		// routes used by the Dashboard Editor for save / load / share.
 		deps.DashboardsStore = newPGDashboardsStore(pool)
 		log.Printf("[dashboards] store wired")
+
+		// US-334: Comments store. Backs the /api/v2/comments/*
+		// routes used by the ObjectDetail Comments tab.
+		deps.CommentsStore = newPGCommentsStore(pool)
+		log.Printf("[comments] store wired")
 
 		// US-289: Pipeline cron scheduler. Walks the store at boot and
 		// arms a robfig/cron entry for every enabled pipeline carrying a

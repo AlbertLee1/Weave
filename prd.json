@@ -1931,8 +1931,8 @@
         "Tests pass"
       ],
       "priority": 135,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000077 comments table (UUID PK + target_rid + body + author + parent_id self-FK + created_at/updated_at/deleted_at + body length + RID-prefix CHECKs + (target_rid, created_at) / parent_id partial / author indexes); pkg/comments package with narrow Store interface + MemoryStore + Handler exposing GET/POST/GET-by-id/PUT/DELETE on /api/v2/comments; one-deep replies enforced (reply-of-reply rejected with ErrInvalidParent), reply target must match parent target; soft-delete redacts body on read but keeps the row so the SPA can render [deleted] tombstones and reply chains stay intact; only the author may edit/delete (403 CommentForbidden via two-step PG lookup, prior art US-249); pagination via limit/offset (default 50, cap 200) with total surfaced for the SPA pager; ErrInvalidParent / ErrNotFound / ErrForbidden sentinels; cmd/server/comments_store.go is the pgxpool adapter (kept off pkg/comments to keep the package pgx-free, same dep-direction trick as pgSavedSearchesStore); deps.CommentsStore wires conditionally so degraded-mode (no PG) silently unmounts the routes and contract tests stay quiet; 7/7 unit tests pass (handler auth/store-nil + full CRUD flow + memory store soft-delete/depth/pagination + body/RID validation); go test ./... passes; go vet clean."
     },
     {
       "id": "US-335",
