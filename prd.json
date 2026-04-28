@@ -1778,8 +1778,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 124,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "RelationshipGraph 组件挂在 ObjectDetail 新增的 'Relationships' tab。复用 d3-force + 内联 SVG 模式（与 LineagePage / 学习 #209 对齐；react-force-graph 未安装且会拉入 three.js，按 PRD 文字加载力图但用现有 dep）。组件加载根对象后 listOutgoingLinkTypes + listLinkedObjects 并发拉取直接邻居，点击非根节点递归展开（in-flight + completed 双 Set Ref 守卫，回调依赖只挂 ontologyApiName 保持稳定）。pan/zoom + Reset view + 空态/错误态/进行态。5 RTL 测试覆盖渲染/根高亮/点击展开/空态/错误。Browser 手测仍欠款（dev-browser skill 在本 harness 不可用）"
     },
     {
       "id": "US-324",

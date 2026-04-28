@@ -9,6 +9,7 @@ import { TimeSeriesChart } from '../common/TimeSeriesChart';
 import { MediaUploadZone } from './MediaUploadZone';
 import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
+import { RelationshipGraph } from './RelationshipGraph';
 import { MarkdownPreview } from '../common/MarkdownEditor';
 import { InlineEditField } from '../common/InlineEditField';
 import { findModifyActionForProperty } from './findModifyAction';
@@ -48,10 +49,11 @@ interface ObjectDetailProps {
   ontologyApiName: string;
 }
 
-type DetailTab = 'properties' | 'activity' | 'diff';
+type DetailTab = 'properties' | 'relationships' | 'activity' | 'diff';
 
 const TABS: { key: DetailTab; label: string }[] = [
   { key: 'properties', label: 'Properties' },
+  { key: 'relationships', label: 'Relationships' },
   { key: 'activity', label: 'Activity' },
   { key: 'diff', label: 'Diff' },
 ];
@@ -282,6 +284,16 @@ export function ObjectDetail({
                 </section>
               )}
             </div>
+          )}
+
+          {activeTab === 'relationships' && (
+            <section data-testid="object-detail-relationships">
+              <RelationshipGraph
+                ontologyApiName={ontologyApiName}
+                rootObjectType={objectType.apiName}
+                rootPrimaryKey={String(object.__primaryKey)}
+              />
+            </section>
           )}
 
           {activeTab === 'activity' && (

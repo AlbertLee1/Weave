@@ -4419,3 +4419,36 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - **`type="submit"` + `<form onSubmit={form.handleSubmit(...)}>`** 比 `onClick` 调 mutation 更对：RHF resolver 失败 onValid 不跑，applyMutation 自然不发；同时 Enter 键提交也免费支持。把 Reload 那种"非提交"按钮显式标 `type="button"` 防止 form 误提交（HTML form 默认 button.type = submit）。
   - **每 action 切换 → form reset** 触发清错；422 错误注入 → `type: 'server'` 让用户编辑后自动清除。两条规则配合刚好覆盖"用户改了字段就该清掉错误"的全部场景，不需要手动管理 errors state。
 ---
+
+## 2026-04-28 16:43 - US-323 Relationship Graph
+- 加了 Object 详情面板的"关系图"tab，让用户用力导图查看一个对象的直接邻居并按需点击展开更多层级。
+  - `web/src/components/browser/RelationshipGraph.tsx`（新）：自包含的力导图组件，props=`{ontologyApiName, rootObjectType, rootPrimaryKey}`。沿用 LineagePage 的 d3-force + 内联 SVG 模板（与学习 #209 对齐 —— `react-force-graph` 没安装且会拉 three.js / 跟项目既定 dep 集冲突，PRD 写的 "react-force-graph" 取其精神不取其字面）。状态拆成 `nodes: Map<key, GraphNode>` + `edges: Map<edgeKey, GraphEdge>` + 双 Set Ref（`inFlightRef` / `completedRef`）守卫重复展开。`expandNode(key, objectType, primaryKey, isRoot)` 是一个 `useCallback`，依赖只挂 `ontologyApiName` 保持稳定 —— 状态判定全走 ref，所以 useEffect `[rootKey, rootObjectType, rootPrimaryKey, expandNode]` 不会陷死循环。
+  - 拉取流程：`listOutgoingLinkTypes(ontology, objectType)` → 对每个 LinkType `Promise.all` 并发跑 `listLinkedObjects(...)` → 把 `(objectType, lt.linkedObjectTypeApiName, child.__primaryKey)` 拼成 nodeKey 入 nodes Map（dedup），把 `(parentKey → childKey, linkApiName)` 拼成 edgeKey 入 edges Map（dedup）。
+  - 渲染：`forceSimulation` 三力（link 距离 140 / charge -340 / center / collide NODE_RADIUS+14）+ 300 tick + `useMemo([graphSignature])` 缓存位置（signature = sorted node ids + sorted edge ids，跟 LineagePage 一样规避数组引用变化导致的 useMemo 失效）。pan/zoom 全照 LineagePage 抄过来 —— `onWheel` 调 scale [0.25, 4]、`onMouseDown` 落在 `<rect data-pan="true">` 才记 dragRef、`onMouseMove` 推进 tx/ty、Reset view 按钮归零。
+  - 状态机：进行中显示 `<LoadingSpinner>` + "Expanding…"；根 ObjectType 没有任何 outgoing LinkType → 空态 `data-testid="relationship-empty"`；展开失败 → 错误 banner `data-testid="relationship-error"` 但不阻断已加载的图。pageSize 25 防止单 LinkType 出几千条邻居把图打爆。
+  - `web/src/components/browser/ObjectDetail.tsx`：`DetailTab` 类型加 'relationships'，TABS 顺序 properties/relationships/activity/diff，活跃 tab 渲染 `<RelationshipGraph rootObjectType={objectType.apiName} rootPrimaryKey={String(object.__primaryKey)}>`。
+- 测试：5 个 RTL case 用 `vi.stubGlobal('fetch', ...)` 拦截 outgoingLinkTypes + linkedObjects 请求（路径正则匹配 `/api/v2/ontologies/:ontology/objectTypes/:apiName/outgoingLinkTypes` 和 `/api/v2/ontologies/:ontology/objects/:apiName/:pk/links/:linkApiName`）：
+  - 渲染根 + 直接邻居（断言至少 3 个 `relationship-node` 节点 + 2 个 `relationship-edge` 边，data-node-id 包含 Employee:alice / Employee:bob / Department:engineering）
+  - 根节点 `data-root="true"` 区别于 peer
+  - 点击非根节点 → 触发 expansion → 新邻居（Employee:carol via Bob 的 reportsTo）合并入图
+  - 根 ObjectType 没有 outgoing link types → `relationship-empty` 出现
+  - fetch 全 500 → `relationship-error` 出现
+- 验证：
+  - `npx vitest run src/components/browser/__tests__/RelationshipGraph.test.tsx` 5/5 绿
+  - `npx vitest run` 全量 92 files / 626 tests 绿（+5 from 621 = US-322 后基线）
+  - `npx tsc -b` 干净（删了一个未用的 ALICE 常量）
+  - `npx eslint src/components/browser/RelationshipGraph.tsx ObjectDetail.tsx __tests__/RelationshipGraph.test.tsx` 干净
+  - `npm run build` 2.58s 干净（无新告警）
+  - `go test -short ./...` 应该缓存命中（后端零改动），未单独跑这次。
+  - 浏览器手测仍欠款（dev-browser MCP 不可用，跟 US-205/US-309/US-313/US-314/US-315/US-316/US-317/US-318/US-319/US-320/US-321/US-322 一致欠款）。
+- 文件改动：
+  - `web/src/components/browser/RelationshipGraph.tsx`（新）
+  - `web/src/components/browser/__tests__/RelationshipGraph.test.tsx`（新）
+  - `web/src/components/browser/ObjectDetail.tsx`（DetailTab + TABS + 渲染分支）
+  - `prd.json`（US-323 passes=true + notes）
+- **Learnings for future iterations:**
+  - **力导图组件 = LineagePage 模板 + 数据源切换。** d3-force 三力 + sorted-id signature 缓存的位置 + pan/zoom + 节点点击展开 + ref 守卫不重复 fetch —— 这套骨架已经反复用过：LineagePage（lineage edges 后端聚合）、ObjectSetLineagePage（Definition tree 静态展开）、SchemaGraphPage（圆周布局）、现在的 RelationshipGraph（imperative listOutgoingLinkTypes + listLinkedObjects）。下一个力导图需求（PRD 里还有 "Sankey"、"Gantt"、"Pivot"、"Dashboard Editor"）只要不是力导图模式就别硬套，但凡是节点-边自由布局都直接复制 LineagePage 模板再改数据源拉取逻辑。
+  - **stable callback + ref-based dedup 是 expand-on-click 的标准解。** 自动加载 + 用户点击都走同一个 `expandNode(key, ...)` 入口，依赖只挂 `ontologyApiName`（永不变 → 回调永远稳定）。是否已展开 / 是否在展开 → 双 Set Ref（`inFlightRef.current.has(key)` / `completedRef.current.has(key)`）。状态变化只在 setNodes/setEdges 的 functional 更新里发生，闭包不需要拿到最新 state。useEffect `[rootKey, ..., expandNode]` 触发自动加载根，因为回调稳定所以 expandNode 不会让 effect 反复 trigger。
+  - **力导图 + 多类型节点（Employee + Department）的 nodeKey 必须包含 objectType。** 不同 objectType 之间 primaryKey 可以重名（PG 不限制跨表 PK 唯一），所以 `${objectType}:${primaryKey}` 是合法的 nodeKey；裸 `primaryKey` 会让"engineering" 部门和"engineering"  员工撞合并成一个节点。同理 edgeKey 用 `${fromKey}__${toKey}__${linkApiName}` 才能区分平行边（同一对象之间 reportsTo + worksWith 两条平行边）。LineagePage 的节点 = RID 是天然全局唯一所以没遇到这个坑，跨类型力导图必须显式带类型前缀。
+  - **PRD 字面 vs 现实落地的判断标准。** PRD 写"集成 react-force-graph"是技术建议，不是硬性约束 —— 项目既定 deps（d3-force + @xyflow/react）已能覆盖该 UX 而不增加 ~2MB 的 three.js bundle。学习 #209 已经为同一类需求建过先例（"PRD 要 react-force-graph，落地用 d3-force + 内联 SVG"），后续力导图类故事直接套即可。判定规则：当 PRD 提的库 (a) 没装 (b) 装了会显著膨胀 bundle (c) 项目里已有等价能力 → 三个条件都满足时优先复用既有 dep + 备注里写明替换理由，不要为了字面合规吃下昂贵 dep。
+---
