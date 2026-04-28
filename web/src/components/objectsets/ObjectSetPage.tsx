@@ -7,6 +7,11 @@ import {
 } from '../../hooks/useObjectSets';
 import type { ObjectSetDefinition } from '../../api/types';
 import type { SavedObjectSet } from '../../lib/objectSetBuilder';
+import {
+  OBJECT_SET_URL_PARAM,
+  encodeDefinitionToParam,
+  parseDefinitionFromSearch,
+} from '../../lib/objectSetUrl';
 import { ObjectSetComposer } from './ObjectSetComposer';
 import { ObjectSetResults, type ShareInfo } from './ObjectSetResults';
 import { Modal } from '../common/Modal';
@@ -14,6 +19,19 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 
 const TEMP_TTL_MS = 60 * 60 * 1000; // backend in-memory TTL is 1 hour
+
+function readDefinitionFromLocation(): ObjectSetDefinition | null {
+  if (typeof window === 'undefined') return null;
+  return parseDefinitionFromSearch(window.location.search);
+}
+
+function writeDefinitionToLocation(def: ObjectSetDefinition): void {
+  if (typeof window === 'undefined') return;
+  const params = new URLSearchParams(window.location.search);
+  params.set(OBJECT_SET_URL_PARAM, encodeDefinitionToParam(def));
+  const url = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+  window.history.replaceState(window.history.state, '', url);
+}
 
 export function ObjectSetPage() {
   const { ontology } = useParams<{ ontology: string }>();
@@ -25,11 +43,11 @@ export function ObjectSetPage() {
     [objectTypes],
   );
 
-  // Tree state mirrors the wire definition.
-  const [def, setDef] = useState<ObjectSetDefinition>(() => ({
-    type: 'base',
-    objectType: '',
-  }));
+  // Tree state mirrors the wire definition. Restore from `?def=` on first
+  // mount so a shared URL reproduces the composer state.
+  const [def, setDef] = useState<ObjectSetDefinition>(
+    () => readDefinitionFromLocation() ?? { type: 'base', objectType: '' },
+  );
 
   // Initialise base object type once available.
   useEffect(() => {
@@ -43,8 +61,13 @@ export function ObjectSetPage() {
   }, [def, objectTypeNames]);
 
   // executeKey forces the results pane to refetch on Execute click.
-  const [executeKey, setExecuteKey] = useState(0);
-  const [executingDef, setExecutingDef] = useState<ObjectSetDefinition | null>(null);
+  // If we restored from a URL, auto-execute once on mount.
+  const [executeKey, setExecuteKey] = useState(() =>
+    readDefinitionFromLocation() ? 1 : 0,
+  );
+  const [executingDef, setExecutingDef] = useState<ObjectSetDefinition | null>(
+    () => readDefinitionFromLocation(),
+  );
 
   // Saved object sets
   const { items: savedObjectSets, save, remove } = useSavedObjectSets(ontologyApiName);
@@ -58,6 +81,13 @@ export function ObjectSetPage() {
   const handleExecute = useCallback(() => {
     setExecutingDef(def);
     setExecuteKey((k) => k + 1);
+    // Persist the full definition to the URL query string so the page can be
+    // re-opened verbatim from a shared link.
+    try {
+      writeDefinitionToLocation(def);
+    } catch {
+      // ignore — non-browser environment
+    }
     // Auto-share: createTemporary so URL hash can carry the ref.
     createTempMut.mutate(def, {
       onSuccess: (resp) => {

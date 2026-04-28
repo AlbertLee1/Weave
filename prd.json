@@ -1889,8 +1889,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 132,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/lib/objectSetUrl.ts encodes/decodes ObjectSetDefinition as base64url JSON in `?def=` param; ObjectSetPage initialises state from window.location.search and writes back via history.replaceState on Execute; auto-executes once on mount when restored; vitest 12 unit tests + 2 page tests; typecheck + 703/703 vitest pass"
     },
     {
       "id": "US-332",
