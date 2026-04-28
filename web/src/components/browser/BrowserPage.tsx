@@ -14,6 +14,7 @@ import { SavedSearchesPanel } from './SavedSearchesPanel';
 import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
 import { MapView } from './MapView';
 import { GanttChart } from './GanttChart';
+import { SankeyDiagram } from './SankeyDiagram';
 import { ObjectDetail } from './ObjectDetail';
 import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
@@ -67,8 +68,10 @@ export function BrowserPage() {
     () => new Map(),
   );
 
-  // View mode: table | map | gantt
-  const [viewMode, setViewMode] = useState<'table' | 'map' | 'gantt'>('table');
+  // View mode: table | map | gantt | sankey
+  const [viewMode, setViewMode] = useState<
+    'table' | 'map' | 'gantt' | 'sankey'
+  >('table');
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -470,6 +473,20 @@ export function BrowserPage() {
             >
               Gantt
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('sankey')}
+              aria-pressed={viewMode === 'sankey'}
+              data-testid="view-mode-sankey"
+              className={[
+                'px-2 py-1 text-xs font-mono transition-colors border-l border-border',
+                viewMode === 'sankey'
+                  ? 'bg-accent-cyan/10 text-accent-cyan'
+                  : 'text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              Sankey
+            </button>
           </div>
           <ExportButton
             objectType={objectType}
@@ -583,6 +600,14 @@ export function BrowserPage() {
 
             {viewMode === 'gantt' && (
               <GanttChart
+                objectType={objectType}
+                data={page.data}
+                onRowClick={handleRowClick}
+              />
+            )}
+
+            {viewMode === 'sankey' && (
+              <SankeyDiagram
                 objectType={objectType}
                 data={page.data}
                 onRowClick={handleRowClick}

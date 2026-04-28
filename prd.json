@@ -1806,8 +1806,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 126,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "SankeyDiagram 组件挂在 BrowserPage 第四个 viewMode (table | map | gantt | sankey)。沿用 #324 模式：echarts 未安装且会拉入 ~1MB extra dep，PRD 文字按现有 dep 实现 — 内联 SVG 双列 Sankey + 立方贝塞尔流带 + 自动检测 (source, target) 字段对（source/target → from/to → origin/destination → fromCountry/toCountry → ... → 回退到声明顺序前两个非主键 string|boolean 属性）。空态分两种：no-pair（类型缺少两个非主键 categorical 属性）和 no-data（有字段但聚合后无可用流）。flow path 可点击/键盘激活打开第一行的 ObjectDetail。7 RTL 测试覆盖 no-pair 空态、no-data 空态、典型 source/target 聚合（含按 source+target 计数）、节点 per-side 渲染、回退检测、点击转发首行、空值跳过；vitest 640/640 pass，typecheck 0 errors，eslint 0 new errors。Browser 手测仍欠款（dev-browser skill 在本 harness 不可用）"
     },
     {
       "id": "US-326",
