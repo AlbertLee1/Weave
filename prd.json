@@ -1485,6 +1485,7 @@
       "priority": 103,
       "passes": true,
       "notes": "web/src/components/lineage/LineagePage.tsx + useLineage hook + api/lineage.ts; force-directed SVG rendering via d3-force (codebase has d3-force already; react-force-graph not in deps — followed SchemaGraphPage prior art); direction (upstream/downstream/both) + depth controls re-fetch via TanStack Query; clicking a non-root node calls GET /api/v2/objects/{rid}/lineage and merges nodes+edges into the graph; 8 RTL tests cover heading/nodes/edges/direction/depth/expand/truncated/empty/error; dev-browser skill not available — manual browser verification still pending"
+    },
     {
       "id": "US-303",
       "title": "跨 ObjectSet 血缘",
@@ -1496,8 +1497,8 @@
         "Tests pass"
       ],
       "priority": 104,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/oss/objectset/handler_lineage.go walks the stored Definition tree to emit (nodes, edges) operation chain; edges point input→derived with operation = parent's Type so callers see filter/union/intersect/subtract/searchAround/withProperties/sample chains; withProperties surfaces DerivedProperties (count/sum/avg/min/max/formula = aggregation step); 7 RTL-style Go tests cover base/filter/union/withProperties-aggregation/searchAround/nested/404; route registered at GET /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/lineage BEFORE the wildcard /{objectSetRid} to avoid chi swallowing the suffix; OpenAPI canonical+embedded spec updated; contract trio green"
     },
     {
       "id": "US-304",

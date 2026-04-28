@@ -817,6 +817,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// match correctly.
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/snapshot", objSetHandler.CreateSnapshot)
 			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/snapshots/{snapshotRid}", objSetHandler.GetSnapshot)
+			// US-303: cross-ObjectSet lineage. Walks the stored Definition
+			// tree to surface filter/union/withProperties/searchAround/...
+			// derivation chains so callers can render the operation graph
+			// before executing the set.
+			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/lineage", objSetHandler.GetObjectSetLineage)
 			api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}", objSetHandler.GetObjectSet)
 
 			// US-055: SSE ObjectSet subscribe scaffold. Wire only when a

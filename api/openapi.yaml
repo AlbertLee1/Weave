@@ -6500,6 +6500,96 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/lineage:
+    get:
+      operationId: getObjectSetLineage
+      summary: Read the derivation lineage (filter / union / aggregation chain) of an ObjectSet
+      description: |
+        US-303. Walks the stored Definition tree referenced by `{objectSetRid}`
+        and emits a directed acyclic graph of the operations that produce the
+        final set. Each operation step (base / filter / union / intersect /
+        subtract / searchAround / withProperties / sample / nearestNeighbors /
+        ...) becomes one node; edges point from each input ObjectSet to the
+        enclosing operation, so callers can render the chain or compute
+        downstream impact without executing the set.
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectSetRid
+          required: true
+          schema:
+            type: string
+          description: The RID of the ObjectSet whose derivation tree should be returned.
+      responses:
+        "200":
+          description: ObjectSet lineage graph.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rid, root, nodes, edges]
+                properties:
+                  rid:
+                    type: string
+                    description: Echo of the ObjectSet RID supplied in the path parameter.
+                  root:
+                    type: string
+                    description: Synthetic id of the node representing the requested ObjectSet (always present in `nodes`).
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, type]
+                      properties:
+                        id: { type: string }
+                        type:
+                          type: string
+                          description: ObjectSet definition type (`base`, `filter`, `union`, `withProperties`, ...).
+                        objectType: { type: string }
+                        where:
+                          type: object
+                          additionalProperties: true
+                        link: { type: string }
+                        direction: { type: string }
+                        path:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              link: { type: string }
+                              direction: { type: string }
+                              expectedObjectType: { type: string }
+                        reference: { type: string }
+                        interfaceType: { type: string }
+                        interfaceLink: { type: string }
+                        input: { type: string }
+                        size: { type: integer }
+                        seed: { type: integer }
+                        derivedProperties:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name: { type: string }
+                              link: { type: string }
+                              direction: { type: string }
+                              metric: { type: string }
+                              field: { type: string }
+                              formula: { type: string }
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      required: [from, to, operation]
+                      properties:
+                        from: { type: string }
+                        to: { type: string }
+                        operation: { type: string }
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe:
     get:
       operationId: subscribeObjectSet
