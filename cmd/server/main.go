@@ -288,6 +288,12 @@ type ServerDeps struct {
 	// /api/v2/pipelines/* CRUD routes are silently unmounted; tests
 	// can inject pipeline.NewMemoryStore() to exercise the handler.
 	PipelineStore pipeline.Store
+	// US-289: Pipeline cron scheduler. Started against PipelineStore at
+	// boot when a Pipeline runtime runner is configured; nil otherwise so
+	// degraded-mode tests don't spin background goroutines. The handler
+	// wires Register / Unregister hooks on every CRUD success when this is
+	// non-nil so schedule edits take effect without a restart.
+	PipelineScheduler *pipeline.Scheduler
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1038,6 +1044,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// off the same store later.
 		if deps.PipelineStore != nil {
 			pipelineHandler := pipeline.NewHandler(deps.PipelineStore)
+			if deps.PipelineScheduler != nil {
+				pipelineHandler.SetScheduler(deps.PipelineScheduler)
+			}
 			pipelineHandler.RegisterRoutes(api)
 		}
 	})
@@ -1369,6 +1378,24 @@ func main() {
 		// (US-289) ride on top of the same row.
 		deps.PipelineStore = newPGPipelineStore(pool)
 		log.Printf("[pipeline] store wired")
+
+		// US-289: Pipeline cron scheduler. Walks the store at boot and
+		// arms a robfig/cron entry for every enabled pipeline carrying a
+		// non-empty Schedule. The runner is a logging placeholder until a
+		// later story (Pipeline runtime / connector catalogue) wires the
+		// real DAG executor — for now, scheduled ticks land in the server
+		// log so operators can verify the cron entry is alive.
+		pipelineSched := pipeline.NewScheduler(deps.PipelineStore, pipeline.PipelineRunnerFunc(func(_ context.Context, p *pipeline.Pipeline) error {
+			log.Printf("[pipeline] schedule tick: id=%s schedule=%q", p.ID, p.Schedule)
+			return nil
+		}))
+		if err := pipelineSched.Start(ctx); err != nil {
+			log.Printf("warning: pipeline scheduler start failed: %v", err)
+		} else {
+			deps.PipelineScheduler = pipelineSched
+			defer pipelineSched.Stop()
+			log.Printf("[pipeline] scheduler started: entries=%d", len(pipelineSched.Entries()))
+		}
 
 		// Bootstrap initial admin from env (idempotent). If a password is also
 		// supplied, set it via bcrypt so the user can immediately log in via

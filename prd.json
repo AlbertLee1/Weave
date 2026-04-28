@@ -1301,8 +1301,8 @@
         "Tests pass"
       ],
       "priority": 90,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/pipeline/scheduler.go: NewScheduler(store, runner) wraps robfig/cron/v3 with SecondOptional|Minute|...|Descriptor parser (5/6-field cron + @every / @hourly / etc.); Start() walks Store and registers enabled+scheduled rows, Stop() waits via cron.Stop()-returned ctx; Register/Unregister/Reload keep the in-process map in sync; PipelineRunner / PipelineRunnerFunc indirection so the cron tick lands in a pluggable runner (logger placeholder until a real DAG runtime ships). pipeline.Handler.SetScheduler hooks Create/Update/Delete to Register/Unregister so admin schedule edits take effect without a restart. cmd/server/main.go wires deps.PipelineScheduler with a logging runner when PG-mode and Stops it on shutdown. 10 unit tests (-race clean): start-loads-enabled+scheduled, cron tick fires runner, register-add+replace, register-disabled-or-empty-unregisters, register-rejects-invalid-cron, unregister, reload-syncs-store, stop-idempotent+pre-start-safe, runner-error-logged-not-fatal, nil-store-or-runner-at-construct, stop-waits-for-inflight-run."
     },
     {
       "id": "US-290",

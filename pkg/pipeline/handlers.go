@@ -23,7 +23,8 @@ import (
 // pipelines they themselves created — matches the AIP Logic Flow
 // scoping rule.
 type Handler struct {
-	store Store
+	store     Store
+	scheduler *Scheduler
 }
 
 // NewHandler wires a Handler. store may be nil — every endpoint then
@@ -31,6 +32,15 @@ type Handler struct {
 // silently 404.
 func NewHandler(store Store) *Handler {
 	return &Handler{store: store}
+}
+
+// SetScheduler attaches an optional cron Scheduler (US-289). When non-nil,
+// every successful Create / Update / Delete keeps the in-process registry
+// in sync via Register / Unregister so schedule edits take effect without
+// a server restart. Tests and degraded-mode deployments may leave it
+// unset — the handler then short-circuits the propagation.
+func (h *Handler) SetScheduler(s *Scheduler) {
+	h.scheduler = s
 }
 
 // RegisterRoutes mounts every handler endpoint on r.
@@ -146,6 +156,7 @@ func (h *Handler) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		stored = p
 	}
+	h.syncScheduler(stored)
 	httputil.WriteJSON(w, http.StatusCreated, stored)
 }
 
@@ -270,6 +281,7 @@ func (h *Handler) UpdatePipeline(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	h.syncScheduler(stored)
 	httputil.WriteJSON(w, http.StatusOK, stored)
 }
 
@@ -296,7 +308,22 @@ func (h *Handler) DeletePipeline(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	if h.scheduler != nil {
+		h.scheduler.Unregister(id)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// syncScheduler propagates the latest pipeline state into the cron
+// scheduler when one is wired. Errors are intentionally swallowed —
+// returning 5xx after the persistence-layer write has already succeeded
+// would mislead callers about the state of their pipeline. The next
+// admin write or scheduler.Reload() will reconcile.
+func (h *Handler) syncScheduler(p *Pipeline) {
+	if h.scheduler == nil || p == nil {
+		return
+	}
+	_ = h.scheduler.Register(p)
 }
 
 func (h *Handler) pipelineIDParam(w http.ResponseWriter, r *http.Request) (string, bool) {
