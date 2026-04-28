@@ -10,6 +10,7 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
 import { Modal } from '../common/Modal';
 import { useAuth } from '../../auth/useAuth';
 import { MentionTextarea } from './MentionTextarea';
+import { CommentBody } from './CommentBody';
 
 interface CommentsTabProps {
   targetRid: string;
@@ -32,41 +33,6 @@ function formatTimestamp(value: string): string {
   } catch {
     return value;
   }
-}
-
-// MENTION_RENDER_REGEX matches `@<email>` mentions written by the
-// MentionTextarea autocomplete or hand-typed by users. Mirrors the
-// backend extractor's accepted shape (pkg/comments/mentions.go) — keep
-// the two in sync so what we highlight matches what we notify on.
-const MENTION_RENDER_REGEX =
-  /@([A-Za-z0-9._+%-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+)/g;
-
-function renderBodyWithMentions(body: string): React.ReactNode {
-  if (!body) return body;
-  const out: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  MENTION_RENDER_REGEX.lastIndex = 0;
-  while ((match = MENTION_RENDER_REGEX.exec(body)) !== null) {
-    if (match.index > lastIndex) {
-      out.push(body.slice(lastIndex, match.index));
-    }
-    out.push(
-      <span
-        key={`m${match.index}`}
-        className="text-accent-cyan font-medium"
-        data-mention={match[1]}
-        data-testid={`mention-link-${match[1]}`}
-      >
-        @{match[1]}
-      </span>,
-    );
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < body.length) {
-    out.push(body.slice(lastIndex));
-  }
-  return out;
 }
 
 // Group flat comment list into a one-deep thread (root + replies). The
@@ -492,15 +458,20 @@ function CommentRow({
             </button>
           </div>
         </div>
-      ) : (
+      ) : tombstoned ? (
         <p
-          className={`mt-1 text-xs whitespace-pre-wrap break-words ${
-            tombstoned ? 'italic text-text-secondary' : 'text-text-primary'
-          }`}
+          className="mt-1 text-xs whitespace-pre-wrap break-words italic text-text-secondary"
           data-testid={`comment-body-${comment.id}`}
         >
-          {tombstoned ? '[comment deleted]' : renderBodyWithMentions(comment.body)}
+          [comment deleted]
         </p>
+      ) : (
+        <div className="mt-1">
+          <CommentBody
+            body={comment.body}
+            testId={`comment-body-${comment.id}`}
+          />
+        </div>
       )}
 
       {!isEditing && !tombstoned && (

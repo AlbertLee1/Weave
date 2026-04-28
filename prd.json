@@ -2029,8 +2029,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 142,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New web/src/components/browser/CommentBody.tsx renders comment bodies through react-markdown (no rehype-raw → raw HTML escaped, defaultUrlTransform strips javascript: links) with components overrides for a (target=_blank + rel=noopener noreferrer), p/li/strong/em (decorateMentions retains the @<email> badge alongside markdown formatting), code/pre (cyan inline + bordered fenced block, mentions kept LITERAL inside code spans). Dropped remark-gfm — its autolink-literal extension was eating @email@domain.com into mailto: anchors, and CommonMark already covers fenced code blocks; tables/strikethrough are not in scope for comments. CommentsTab.tsx now delegates the body render to <CommentBody> for non-tombstoned rows; tombstone branch keeps the plain <p>[comment deleted]</p>. 8 new RTL tests for CommentBody (markdown bold/em/code, fenced block, link target/rel, raw <script> escaped + window.__pwn untouched, javascript: URL stripped, <img onerror> dropped, mention badges, mention+markdown coexist) — vitest 761/761 pass; go test ./... clean. dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-342",
