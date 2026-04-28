@@ -1483,9 +1483,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 103,
-      "passes": false,
-      "notes": ""
-    },
+      "passes": true,
+      "notes": "web/src/components/lineage/LineagePage.tsx + useLineage hook + api/lineage.ts; force-directed SVG rendering via d3-force (codebase has d3-force already; react-force-graph not in deps — followed SchemaGraphPage prior art); direction (upstream/downstream/both) + depth controls re-fetch via TanStack Query; clicking a non-root node calls GET /api/v2/objects/{rid}/lineage and merges nodes+edges into the graph; 8 RTL tests cover heading/nodes/edges/direction/depth/expand/truncated/empty/error; dev-browser skill not available — manual browser verification still pending"
     {
       "id": "US-303",
       "title": "跨 ObjectSet 血缘",

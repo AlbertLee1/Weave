@@ -27,6 +27,7 @@ import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
 import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
+import { LineagePage } from './components/lineage/LineagePage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="threads" element={<ThreadsPage />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="pipelines" element={<PipelinesPage />} />
+              <Route path="lineage/:rid" element={<LineagePage />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
