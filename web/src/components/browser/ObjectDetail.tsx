@@ -1,14 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { DataType, ObjectType, WireObject } from '../../api/types';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { useProperties } from '../../hooks/useProperties';
+import { useActionTypes, useApplyAction } from '../../hooks/useActions';
 import { LinkedObjectsTab } from './LinkedObjectsTab';
 import { TimeSeriesChart } from '../common/TimeSeriesChart';
 import { MediaUploadZone } from './MediaUploadZone';
 import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
 import { MarkdownPreview } from '../common/MarkdownEditor';
+import { InlineEditField } from '../common/InlineEditField';
+import { findModifyActionForProperty } from './findModifyAction';
 
 function baseTypeOf(dt: DataType): string {
   if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
@@ -81,6 +84,41 @@ export function ObjectDetail({
     return set;
   }, [properties]);
 
+  // Inline editing wires through a discovered modifyObject ActionType. Without
+  // a matching action the field stays read-only — same shape as the bulk
+  // delete toolbar's deleteObject discovery.
+  const { data: actionTypes } = useActionTypes(ontologyApiName);
+  const applyAction = useApplyAction(ontologyApiName);
+  const buildSaveHandler = useCallback(
+    (propertyName: string) => {
+      if (!object || !actionTypes) return null;
+      const match = findModifyActionForProperty(
+        actionTypes,
+        objectType.apiName,
+        propertyName,
+      );
+      if (!match) return null;
+      return async (next: string) => {
+        const params: Record<string, unknown> = {
+          [match.primaryKeyParam]: String(object.__primaryKey ?? ''),
+        };
+        // Non-edited bound properties default to their current value so the
+        // modifyObject rule doesn't blank them out.
+        for (const [boundProp, paramId] of Object.entries(match.propertyParams)) {
+          if (boundProp === propertyName) continue;
+          const cur = object[boundProp];
+          if (cur !== undefined && cur !== null) params[paramId] = cur;
+        }
+        params[match.propertyParams[propertyName]] = next;
+        await applyAction.mutateAsync({
+          action: match.action.apiName,
+          parameters: params,
+        });
+      };
+    },
+    [object, actionTypes, objectType.apiName, applyAction],
+  );
+
   const [activeTab, setActiveTab] = useState<DetailTab>('properties');
 
   const title = object
@@ -142,7 +180,7 @@ export function ObjectDetail({
                           baseTypeOf(prop.dataType) !== 'timeseries' &&
                           baseTypeOf(prop.dataType) !== 'media',
                       )
-                      .map(([name]) => {
+                      .map(([name, prop]) => {
                         const val = object[name];
                         const isMarkdown = markdownNames.has(name);
                         let display: string;
@@ -153,6 +191,17 @@ export function ObjectDetail({
                         } else {
                           display = String(val);
                         }
+                        // Inline editing: scalar string properties get an
+                        // InlineEditField whenever a matching modifyObject
+                        // ActionType is registered. Markdown-formatted, array,
+                        // and non-string scalars keep the read-only render.
+                        const editable =
+                          baseTypeOf(prop.dataType) === 'string' &&
+                          !isArrayType(prop.dataType) &&
+                          !isMarkdown;
+                        const onSave = editable
+                          ? buildSaveHandler(name)
+                          : null;
                         return (
                           <div key={name} className="flex items-start gap-3">
                             <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
@@ -163,6 +212,14 @@ export function ObjectDetail({
                                 <MarkdownPreview
                                   source={val}
                                   testId={`markdown-property-${name}`}
+                                />
+                              ) : onSave ? (
+                                <InlineEditField
+                                  value={typeof val === 'string' ? val : ''}
+                                  onSave={onSave}
+                                  testId={`inline-edit-${name}`}
+                                  ariaLabel={`Edit ${name}`}
+                                  placeholder="-"
                                 />
                               ) : (
                                 <span className="block text-xs font-mono text-text-primary break-all whitespace-pre-wrap">

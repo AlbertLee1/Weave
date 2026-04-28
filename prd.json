@@ -1666,8 +1666,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 116,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "InlineEditField (click→edit, Enter save, Esc cancel, blur saves-or-cancels) with optimistic update + error rollback. ObjectDetail discovers a modifyObject ActionType for the property via findModifyActionForProperty (same shape as BulkActionToolbar's deleteObject discovery), supplies primaryKey + new value while preserving sibling property bindings from current values. dev-browser skill not available in this harness — manual browser verification still owed."
     },
     {
       "id": "US-316",
