@@ -202,3 +202,176 @@ describe('DashboardEditorPage', () => {
     expect(Number(moved.getAttribute('data-widget-x'))).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe('DashboardEditorPage widget library (US-328)', () => {
+  it('exposes type-specific add buttons for chart / table / stat / map alongside text', () => {
+    render(<DashboardEditorPage />);
+    expect(screen.getByTestId('dashboard-widget-add')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-widget-add-chart')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-widget-add-table')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-widget-add-stat')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-widget-add-map')).toBeInTheDocument();
+  });
+
+  it('appends a Chart widget with default chartType=bar', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widgets = getWidgets();
+    expect(widgets).toHaveLength(1);
+    expect(widgets[0].getAttribute('data-widget-type')).toBe('chart');
+    const chart = within(widgets[0]).getByTestId('dashboard-widget-chart');
+    expect(chart).toHaveAttribute('data-chart-type', 'bar');
+  });
+
+  it('appends a Table widget with a header / body grid', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-table'));
+    const widget = getWidgets()[0];
+    expect(widget.getAttribute('data-widget-type')).toBe('table');
+    expect(within(widget).getByTestId('dashboard-widget-table')).toBeInTheDocument();
+  });
+
+  it('appends a Stat widget that renders the value and label', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    const widget = getWidgets()[0];
+    expect(widget.getAttribute('data-widget-type')).toBe('stat');
+    expect(within(widget).getByTestId('dashboard-widget-stat')).toBeInTheDocument();
+  });
+
+  it('appends a Map widget with default coordinates', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-map'));
+    const widget = getWidgets()[0];
+    expect(widget.getAttribute('data-widget-type')).toBe('map');
+    expect(within(widget).getByTestId('dashboard-widget-map')).toBeInTheDocument();
+  });
+
+  it('chart config panel persists chartType and values', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widget = getWidgets()[0];
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-chart-type-select'),
+      { target: { value: 'pie' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-chart-values-input'),
+      { target: { value: '10, 20, 30, 40' } },
+    );
+
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    const chart = within(widget).getByTestId('dashboard-widget-chart');
+    expect(chart).toHaveAttribute('data-chart-type', 'pie');
+    expect(chart).toHaveAttribute('data-chart-values', '10,20,30,40');
+  });
+
+  it('table config panel persists columns and rows', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-table'));
+    const widget = getWidgets()[0];
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-table-columns-input'),
+      { target: { value: 'Name, Score' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-table-rows-input'),
+      { target: { value: 'Alice, 92\nBob, 85' } },
+    );
+
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    const table = within(widget).getByTestId('dashboard-widget-table');
+    expect(within(table).getByText('Name')).toBeInTheDocument();
+    expect(within(table).getByText('Score')).toBeInTheDocument();
+    expect(within(table).getByText('Alice')).toBeInTheDocument();
+    expect(within(table).getByText('92')).toBeInTheDocument();
+    expect(within(table).getByText('Bob')).toBeInTheDocument();
+    expect(within(table).getByText('85')).toBeInTheDocument();
+  });
+
+  it('stat config panel persists value, label, and trend', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    const widget = getWidgets()[0];
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-stat-value-input'),
+      { target: { value: '$42k' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-stat-label-input'),
+      { target: { value: 'Q4 Revenue' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-stat-trend-select'),
+      { target: { value: 'up' } },
+    );
+
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    const stat = within(widget).getByTestId('dashboard-widget-stat');
+    expect(stat).toHaveAttribute('data-stat-trend', 'up');
+    expect(within(stat).getByText('$42k')).toBeInTheDocument();
+    expect(within(stat).getByText('Q4 Revenue')).toBeInTheDocument();
+  });
+
+  it('map config panel persists latitude / longitude / zoom', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-map'));
+    const widget = getWidgets()[0];
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-map-lat-input'),
+      { target: { value: '37.7749' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-map-lng-input'),
+      { target: { value: '-122.4194' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-map-zoom-input'),
+      { target: { value: '12' } },
+    );
+
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    const map = within(widget).getByTestId('dashboard-widget-map');
+    expect(map).toHaveAttribute('data-map-lat', '37.7749');
+    expect(map).toHaveAttribute('data-map-lng', '-122.4194');
+    expect(map).toHaveAttribute('data-map-zoom', '12');
+  });
+
+  it('chart widget tolerates malformed values input by skipping non-numeric tokens', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widget = getWidgets()[0];
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-chart-values-input'),
+      { target: { value: '5, abc, 12, , 7' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    const chart = within(widget).getByTestId('dashboard-widget-chart');
+    expect(chart).toHaveAttribute('data-chart-values', '5,12,7');
+  });
+
+  it('mixes widget types on the same dashboard and stacks them on successive rows', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add'));
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    const widgets = getWidgets();
+    expect(widgets).toHaveLength(3);
+    expect(widgets[0].getAttribute('data-widget-type')).toBe('text');
+    expect(widgets[1].getAttribute('data-widget-type')).toBe('chart');
+    expect(widgets[2].getAttribute('data-widget-type')).toBe('stat');
+    // Default h=2 ⇒ each new widget lands two rows below the previous.
+    expect(widgets[0].getAttribute('data-widget-y')).toBe('0');
+    expect(widgets[1].getAttribute('data-widget-y')).toBe('2');
+    expect(widgets[2].getAttribute('data-widget-y')).toBe('4');
+  });
+});

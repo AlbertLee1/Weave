@@ -1848,8 +1848,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 129,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DashboardEditorPage 重构成 discriminated union Widget = TextWidget | ChartWidget | TableWidget | StatWidget | MapWidget。Header 上的 + Add Widget 单按钮换成五枚类型按钮（dashboard-widget-add 仍然 = + Text 兼容 US-327 的既有测试，外加 -chart/-table/-stat/-map 四枚同 testId 命名）。每种类型有 makeWidget(type, y) 默认值（chart=bar/[12,19,8,15,22]，table=Name|Value/Alpha-Beta，stat=0/Metric/neutral，map=0,0/zoom=2）+ 独立 Display 子组件 + 独立 Config 子组件，统一通过 WidgetDisplay/WidgetConfig 调度器选派。Display：Chart=纯 SVG 比例条形（max 归一化 + 5%/2px 最小可见高度），Table=语义 <table>，Stat=大数字 + label + ▲/▼/— 趋势符号，Map=占位 div + 📍 + 角标 (lat,lng,zoom)。Config：每个面板 TitleInput 复用，类型字段独立 testid（chart-type-select/chart-values-input/table-columns-input/table-rows-input/stat-value-input/stat-label-input/stat-trend-select/map-lat-input/map-lng-input/map-zoom-input）。values/columns/rows 的解析放进纯函数（parseValuesInput skip 非数字 token + Number.isFinite，parseColumnsInput trim+filter，parseRowsInput 按 \\n 分行再按 , 分 cell）以便宽容 'abc'/空白/混杂输入。chart/table/map 的 input 用 defaultValue 而非 value 避免 onChange 重渲染输入框光标跳；stat 走 controlled 因为 value/label 是用户连续可读字符串。updateWidget 改名 patchWidget(id, Partial<Widget>)，类型断言一次集中。11 个新 RTL 用例覆盖：5 类型 add 按钮、4 类型 add+default 渲染、4 类型 config 面板 round-trip、chart 宽容输入（'5, abc, 12, , 7' → '5,12,7'）、3 类型混合堆叠（y=0/2/4）。vitest 668/668（+19 from 649，US-327 8 个原始 + 11 个新）。tsc / eslint / vite build 全干净。Browser 手测仍欠款（dev-browser skill not available）。"
     },
     {
       "id": "US-329",

@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 
-// US-327 Dashboard Editor.
+// US-327 Dashboard Editor + US-328 Widget Library.
 // PRD asked for react-grid-layout; the lib isn't installed and depends on
 // react-resizable + react-draggable (~80KB) which would be the only consumer.
 // Following the US-324/US-325/US-326 pattern (and learning #209 in
 // progress.txt) — when the proposed lib is uninstalled and would add a heavy
 // dep that's only used here, we ship a small native HTML5 DnD layout instead.
+//
+// Widget types live inline as a discriminated union; each type owns a small
+// display + config sub-component and a sensible default-factory.
 
 const COLUMN_COUNT = 12;
 const DEFAULT_W = 4;
@@ -13,18 +16,51 @@ const DEFAULT_H = 2;
 const ROW_HEIGHT_PX = 60;
 const DND_MIME = 'application/x-weave-dashboard';
 
-type WidgetType = 'text';
+type ChartType = 'bar' | 'line' | 'pie';
+type StatTrend = 'up' | 'down' | 'neutral';
 
-interface Widget {
+interface BaseWidget {
   id: string;
-  type: WidgetType;
   title: string;
-  content: string;
   x: number;
   y: number;
   w: number;
   h: number;
 }
+
+interface TextWidget extends BaseWidget {
+  type: 'text';
+  content: string;
+}
+
+interface ChartWidget extends BaseWidget {
+  type: 'chart';
+  chartType: ChartType;
+  values: number[];
+}
+
+interface TableWidget extends BaseWidget {
+  type: 'table';
+  columns: string[];
+  rows: string[][];
+}
+
+interface StatWidget extends BaseWidget {
+  type: 'stat';
+  value: string;
+  label: string;
+  trend: StatTrend;
+}
+
+interface MapWidget extends BaseWidget {
+  type: 'map';
+  latitude: number;
+  longitude: number;
+  zoom: number;
+}
+
+type Widget = TextWidget | ChartWidget | TableWidget | StatWidget | MapWidget;
+type WidgetType = Widget['type'];
 
 type DragKind = 'move' | 'resize';
 
@@ -54,24 +90,87 @@ function findFirstFreeRow(widgets: Widget[]): number {
   return widgets.reduce((acc, w) => Math.max(acc, w.y + w.h), 0);
 }
 
+function makeWidget(type: WidgetType, y: number): Widget {
+  const base = {
+    id: nextWidgetId(),
+    x: 0,
+    y,
+    w: DEFAULT_W,
+    h: DEFAULT_H,
+  };
+  switch (type) {
+    case 'text':
+      return { ...base, type: 'text', title: 'New Widget', content: '' };
+    case 'chart':
+      return {
+        ...base,
+        type: 'chart',
+        title: 'Chart',
+        chartType: 'bar',
+        values: [12, 19, 8, 15, 22],
+      };
+    case 'table':
+      return {
+        ...base,
+        type: 'table',
+        title: 'Table',
+        columns: ['Name', 'Value'],
+        rows: [
+          ['Alpha', '1'],
+          ['Beta', '2'],
+        ],
+      };
+    case 'stat':
+      return {
+        ...base,
+        type: 'stat',
+        title: 'Stat',
+        value: '0',
+        label: 'Metric',
+        trend: 'neutral',
+      };
+    case 'map':
+      return {
+        ...base,
+        type: 'map',
+        title: 'Map',
+        latitude: 0,
+        longitude: 0,
+        zoom: 2,
+      };
+  }
+}
+
+function parseValuesInput(raw: string): number[] {
+  return raw
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n));
+}
+
+function parseRowsInput(raw: string): string[][] {
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split(',').map((c) => c.trim()));
+}
+
+function parseColumnsInput(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+}
+
 export function DashboardEditorPage() {
   const [widgets, setWidgets] = useState<Widget[]>([]);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
 
-  const addTextWidget = useCallback(() => {
-    setWidgets((prev) => {
-      const widget: Widget = {
-        id: nextWidgetId(),
-        type: 'text',
-        title: 'New Widget',
-        content: '',
-        x: 0,
-        y: findFirstFreeRow(prev),
-        w: DEFAULT_W,
-        h: DEFAULT_H,
-      };
-      return [...prev, widget];
-    });
+  const addWidget = useCallback((type: WidgetType) => {
+    setWidgets((prev) => [...prev, makeWidget(type, findFirstFreeRow(prev))]);
   }, []);
 
   const removeWidget = useCallback((id: string) => {
@@ -79,27 +178,21 @@ export function DashboardEditorPage() {
     setConfiguringId((cur) => (cur === id ? null : cur));
   }, []);
 
-  const updateWidget = useCallback(
-    (id: string, patch: Partial<Pick<Widget, 'title' | 'content'>>) => {
-      setWidgets((prev) =>
-        prev.map((w) => (w.id === id ? { ...w, ...patch } : w)),
-      );
-    },
-    [],
-  );
+  const patchWidget = useCallback((id: string, patch: Partial<Widget>) => {
+    setWidgets((prev) =>
+      prev.map((w) => (w.id === id ? ({ ...w, ...patch } as Widget) : w)),
+    );
+  }, []);
 
-  const moveWidget = useCallback(
-    (id: string, x: number, y: number) => {
-      setWidgets((prev) =>
-        prev.map((w) => {
-          if (w.id !== id) return w;
-          const maxX = Math.max(0, COLUMN_COUNT - w.w);
-          return { ...w, x: clamp(x, 0, maxX), y: Math.max(0, y) };
-        }),
-      );
-    },
-    [],
-  );
+  const moveWidget = useCallback((id: string, x: number, y: number) => {
+    setWidgets((prev) =>
+      prev.map((w) => {
+        if (w.id !== id) return w;
+        const maxX = Math.max(0, COLUMN_COUNT - w.w);
+        return { ...w, x: clamp(x, 0, maxX), y: Math.max(0, y) };
+      }),
+    );
+  }, []);
 
   const resizeWidget = useCallback((id: string, w: number, h: number) => {
     setWidgets((prev) =>
@@ -182,14 +275,48 @@ export function DashboardEditorPage() {
             corner.
           </p>
         </div>
-        <button
-          type="button"
-          data-testid="dashboard-widget-add"
-          onClick={addTextWidget}
-          className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
-        >
-          + Add Widget
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="dashboard-widget-add"
+            onClick={() => addWidget('text')}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            + Text
+          </button>
+          <button
+            type="button"
+            data-testid="dashboard-widget-add-chart"
+            onClick={() => addWidget('chart')}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            + Chart
+          </button>
+          <button
+            type="button"
+            data-testid="dashboard-widget-add-table"
+            onClick={() => addWidget('table')}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            + Table
+          </button>
+          <button
+            type="button"
+            data-testid="dashboard-widget-add-stat"
+            onClick={() => addWidget('stat')}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            + Stat
+          </button>
+          <button
+            type="button"
+            data-testid="dashboard-widget-add-map"
+            onClick={() => addWidget('map')}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            + Map
+          </button>
+        </div>
       </div>
 
       <div
@@ -214,7 +341,7 @@ export function DashboardEditorPage() {
           >
             <p className="text-sm">No widgets yet.</p>
             <p className="text-xs font-mono mt-1">
-              Click &ldquo;+ Add Widget&rdquo; to drop your first widget on the grid.
+              Pick a widget type to drop your first widget on the grid.
             </p>
           </div>
         )}
@@ -227,8 +354,7 @@ export function DashboardEditorPage() {
               setConfiguringId((cur) => (cur === widget.id ? null : widget.id))
             }
             onRemove={() => removeWidget(widget.id)}
-            onTitleChange={(title) => updateWidget(widget.id, { title })}
-            onContentChange={(content) => updateWidget(widget.id, { content })}
+            onPatch={(patch) => patchWidget(widget.id, patch)}
             onDragStart={handleDragStart}
           />
         ))}
@@ -242,8 +368,7 @@ interface DashboardWidgetProps {
   isConfiguring: boolean;
   onConfigureToggle: () => void;
   onRemove: () => void;
-  onTitleChange: (title: string) => void;
-  onContentChange: (content: string) => void;
+  onPatch: (patch: Partial<Widget>) => void;
   onDragStart: (e: React.DragEvent, payload: DragPayload) => void;
 }
 
@@ -252,8 +377,7 @@ function DashboardWidget({
   isConfiguring,
   onConfigureToggle,
   onRemove,
-  onTitleChange,
-  onContentChange,
+  onPatch,
   onDragStart,
 }: DashboardWidgetProps) {
   return (
@@ -320,39 +444,9 @@ function DashboardWidget({
       </div>
       <div className="flex-1 p-2 overflow-auto">
         {isConfiguring ? (
-          <div className="flex flex-col gap-2">
-            <label className="text-[10px] uppercase tracking-wider text-text-secondary font-mono">
-              Title
-              <input
-                data-testid="dashboard-widget-title-input"
-                type="text"
-                value={widget.title}
-                onChange={(e) => onTitleChange(e.target.value)}
-                className="mt-1 w-full px-2 py-1 rounded border border-border bg-bg-secondary text-xs text-text-primary"
-              />
-            </label>
-            <label className="text-[10px] uppercase tracking-wider text-text-secondary font-mono">
-              Content
-              <textarea
-                data-testid="dashboard-widget-content-input"
-                value={widget.content}
-                onChange={(e) => onContentChange(e.target.value)}
-                rows={3}
-                className="mt-1 w-full px-2 py-1 rounded border border-border bg-bg-secondary text-xs text-text-primary font-mono"
-              />
-            </label>
-          </div>
+          <WidgetConfig widget={widget} onPatch={onPatch} />
         ) : (
-          <div
-            data-testid="dashboard-widget-content"
-            className="text-xs whitespace-pre-wrap text-text-primary"
-          >
-            {widget.content || (
-              <span className="text-text-secondary italic">
-                Click ⚙ to configure
-              </span>
-            )}
-          </div>
+          <WidgetDisplay widget={widget} />
         )}
       </div>
       <div
@@ -373,6 +467,411 @@ function DashboardWidget({
             'linear-gradient(135deg, transparent 50%, rgba(245,158,11,0.4) 50%)',
         }}
       />
+    </div>
+  );
+}
+
+function WidgetDisplay({ widget }: { widget: Widget }) {
+  switch (widget.type) {
+    case 'text':
+      return <TextDisplay widget={widget} />;
+    case 'chart':
+      return <ChartDisplay widget={widget} />;
+    case 'table':
+      return <TableDisplay widget={widget} />;
+    case 'stat':
+      return <StatDisplay widget={widget} />;
+    case 'map':
+      return <MapDisplay widget={widget} />;
+  }
+}
+
+function WidgetConfig({
+  widget,
+  onPatch,
+}: {
+  widget: Widget;
+  onPatch: (patch: Partial<Widget>) => void;
+}) {
+  switch (widget.type) {
+    case 'text':
+      return <TextConfig widget={widget} onPatch={onPatch} />;
+    case 'chart':
+      return <ChartConfig widget={widget} onPatch={onPatch} />;
+    case 'table':
+      return <TableConfig widget={widget} onPatch={onPatch} />;
+    case 'stat':
+      return <StatConfig widget={widget} onPatch={onPatch} />;
+    case 'map':
+      return <MapConfig widget={widget} onPatch={onPatch} />;
+  }
+}
+
+const labelClass =
+  'text-[10px] uppercase tracking-wider text-text-secondary font-mono';
+const inputClass =
+  'mt-1 w-full px-2 py-1 rounded border border-border bg-bg-secondary text-xs text-text-primary';
+const monoInputClass = `${inputClass} font-mono`;
+
+function TitleInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <label className={labelClass}>
+      Title
+      <input
+        data-testid="dashboard-widget-title-input"
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={inputClass}
+      />
+    </label>
+  );
+}
+
+function TextDisplay({ widget }: { widget: TextWidget }) {
+  return (
+    <div
+      data-testid="dashboard-widget-content"
+      className="text-xs whitespace-pre-wrap text-text-primary"
+    >
+      {widget.content || (
+        <span className="text-text-secondary italic">
+          Click ⚙ to configure
+        </span>
+      )}
+    </div>
+  );
+}
+
+function TextConfig({
+  widget,
+  onPatch,
+}: {
+  widget: TextWidget;
+  onPatch: (patch: Partial<TextWidget>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TitleInput
+        value={widget.title}
+        onChange={(title) => onPatch({ title })}
+      />
+      <label className={labelClass}>
+        Content
+        <textarea
+          data-testid="dashboard-widget-content-input"
+          value={widget.content}
+          onChange={(e) => onPatch({ content: e.target.value })}
+          rows={3}
+          className={monoInputClass}
+        />
+      </label>
+    </div>
+  );
+}
+
+function ChartDisplay({ widget }: { widget: ChartWidget }) {
+  const max = widget.values.length === 0 ? 0 : Math.max(...widget.values, 0);
+  return (
+    <div
+      data-testid="dashboard-widget-chart"
+      data-chart-type={widget.chartType}
+      data-chart-values={widget.values.join(',')}
+      className="w-full h-full flex items-end justify-around gap-1"
+    >
+      {widget.values.length === 0 && (
+        <span className="text-text-secondary italic text-xs self-center">
+          No values
+        </span>
+      )}
+      {widget.values.map((v, i) => {
+        const ratio = max > 0 ? Math.max(0.05, v / max) : 0.05;
+        return (
+          <div
+            key={i}
+            data-testid="dashboard-widget-chart-bar"
+            className="flex-1 bg-accent-primary/70 rounded-sm"
+            style={{ height: `${Math.round(ratio * 100)}%`, minHeight: 2 }}
+            title={String(v)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function ChartConfig({
+  widget,
+  onPatch,
+}: {
+  widget: ChartWidget;
+  onPatch: (patch: Partial<ChartWidget>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TitleInput
+        value={widget.title}
+        onChange={(title) => onPatch({ title })}
+      />
+      <label className={labelClass}>
+        Chart Type
+        <select
+          data-testid="dashboard-widget-chart-type-select"
+          value={widget.chartType}
+          onChange={(e) =>
+            onPatch({ chartType: e.target.value as ChartType })
+          }
+          className={inputClass}
+        >
+          <option value="bar">bar</option>
+          <option value="line">line</option>
+          <option value="pie">pie</option>
+        </select>
+      </label>
+      <label className={labelClass}>
+        Values (comma-separated)
+        <input
+          data-testid="dashboard-widget-chart-values-input"
+          type="text"
+          defaultValue={widget.values.join(', ')}
+          onChange={(e) => onPatch({ values: parseValuesInput(e.target.value) })}
+          className={monoInputClass}
+        />
+      </label>
+    </div>
+  );
+}
+
+function TableDisplay({ widget }: { widget: TableWidget }) {
+  return (
+    <table
+      data-testid="dashboard-widget-table"
+      className="w-full text-xs border-collapse"
+    >
+      <thead>
+        <tr>
+          {widget.columns.map((col, i) => (
+            <th
+              key={`col-${i}`}
+              className="text-left px-1 py-0.5 border-b border-border font-mono text-[10px] uppercase tracking-wider text-text-secondary"
+            >
+              {col}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {widget.rows.map((row, ri) => (
+          <tr key={`row-${ri}`}>
+            {row.map((cell, ci) => (
+              <td
+                key={`cell-${ri}-${ci}`}
+                className="px-1 py-0.5 border-b border-border/40 text-text-primary"
+              >
+                {cell}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function TableConfig({
+  widget,
+  onPatch,
+}: {
+  widget: TableWidget;
+  onPatch: (patch: Partial<TableWidget>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TitleInput
+        value={widget.title}
+        onChange={(title) => onPatch({ title })}
+      />
+      <label className={labelClass}>
+        Columns (comma-separated)
+        <input
+          data-testid="dashboard-widget-table-columns-input"
+          type="text"
+          defaultValue={widget.columns.join(', ')}
+          onChange={(e) =>
+            onPatch({ columns: parseColumnsInput(e.target.value) })
+          }
+          className={monoInputClass}
+        />
+      </label>
+      <label className={labelClass}>
+        Rows (one per line, comma-separated cells)
+        <textarea
+          data-testid="dashboard-widget-table-rows-input"
+          defaultValue={widget.rows.map((r) => r.join(', ')).join('\n')}
+          onChange={(e) => onPatch({ rows: parseRowsInput(e.target.value) })}
+          rows={3}
+          className={monoInputClass}
+        />
+      </label>
+    </div>
+  );
+}
+
+function StatDisplay({ widget }: { widget: StatWidget }) {
+  const trendSymbol =
+    widget.trend === 'up' ? '▲' : widget.trend === 'down' ? '▼' : '—';
+  const trendClass =
+    widget.trend === 'up'
+      ? 'text-accent-success'
+      : widget.trend === 'down'
+        ? 'text-accent-error'
+        : 'text-text-secondary';
+  return (
+    <div
+      data-testid="dashboard-widget-stat"
+      data-stat-trend={widget.trend}
+      className="w-full h-full flex flex-col items-center justify-center text-center"
+    >
+      <div className="text-2xl font-semibold text-text-primary">
+        {widget.value}
+      </div>
+      <div className="text-[10px] uppercase tracking-wider text-text-secondary mt-1">
+        {widget.label}
+      </div>
+      <div className={`text-xs mt-1 ${trendClass}`}>{trendSymbol}</div>
+    </div>
+  );
+}
+
+function StatConfig({
+  widget,
+  onPatch,
+}: {
+  widget: StatWidget;
+  onPatch: (patch: Partial<StatWidget>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TitleInput
+        value={widget.title}
+        onChange={(title) => onPatch({ title })}
+      />
+      <label className={labelClass}>
+        Value
+        <input
+          data-testid="dashboard-widget-stat-value-input"
+          type="text"
+          value={widget.value}
+          onChange={(e) => onPatch({ value: e.target.value })}
+          className={inputClass}
+        />
+      </label>
+      <label className={labelClass}>
+        Label
+        <input
+          data-testid="dashboard-widget-stat-label-input"
+          type="text"
+          value={widget.label}
+          onChange={(e) => onPatch({ label: e.target.value })}
+          className={inputClass}
+        />
+      </label>
+      <label className={labelClass}>
+        Trend
+        <select
+          data-testid="dashboard-widget-stat-trend-select"
+          value={widget.trend}
+          onChange={(e) => onPatch({ trend: e.target.value as StatTrend })}
+          className={inputClass}
+        >
+          <option value="neutral">neutral</option>
+          <option value="up">up</option>
+          <option value="down">down</option>
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function MapDisplay({ widget }: { widget: MapWidget }) {
+  return (
+    <div
+      data-testid="dashboard-widget-map"
+      data-map-lat={widget.latitude}
+      data-map-lng={widget.longitude}
+      data-map-zoom={widget.zoom}
+      className="w-full h-full flex items-center justify-center bg-bg-secondary/40 text-xs font-mono text-text-secondary relative"
+    >
+      <span className="absolute top-1 left-1">
+        {widget.latitude.toFixed(4)}, {widget.longitude.toFixed(4)} · z
+        {widget.zoom}
+      </span>
+      <span className="text-base text-accent-primary">📍</span>
+    </div>
+  );
+}
+
+function MapConfig({
+  widget,
+  onPatch,
+}: {
+  widget: MapWidget;
+  onPatch: (patch: Partial<MapWidget>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <TitleInput
+        value={widget.title}
+        onChange={(title) => onPatch({ title })}
+      />
+      <label className={labelClass}>
+        Latitude
+        <input
+          data-testid="dashboard-widget-map-lat-input"
+          type="text"
+          inputMode="decimal"
+          defaultValue={String(widget.latitude)}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isFinite(n)) onPatch({ latitude: n });
+          }}
+          className={monoInputClass}
+        />
+      </label>
+      <label className={labelClass}>
+        Longitude
+        <input
+          data-testid="dashboard-widget-map-lng-input"
+          type="text"
+          inputMode="decimal"
+          defaultValue={String(widget.longitude)}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isFinite(n)) onPatch({ longitude: n });
+          }}
+          className={monoInputClass}
+        />
+      </label>
+      <label className={labelClass}>
+        Zoom
+        <input
+          data-testid="dashboard-widget-map-zoom-input"
+          type="text"
+          inputMode="numeric"
+          defaultValue={String(widget.zoom)}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isFinite(n)) onPatch({ zoom: n });
+          }}
+          className={monoInputClass}
+        />
+      </label>
     </div>
   );
 }
