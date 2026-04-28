@@ -1820,8 +1820,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 127,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PivotTable 组件挂在 BrowserPage 第五个 viewMode (table | map | gantt | sankey | pivot)。沿用 #324 / #325 的 'PRD 文字按现有 dep 实现' 模式 — react-pivottable + react-dnd 会拉入 ~700KB extra dep 且依赖 React 16 风格的 ReactDOM.unstable_batchedUpdates，与本仓库 React 19 不兼容；改用原生 HTML5 drag-and-drop（draggable + dataTransfer + DND_MIME='application/x-weave-pivot'）。布局：四列 DropZone (Available / Rows / Columns / Values)，每个 zone 拒收语义不匹配的字段（Rows/Columns 仅接受 categorical=string/boolean/date/datetime/timestamp，Values 任意字段都接受 — count 工作于一切类型；numeric 字段拖入 Values 时默认 sum，否则默认 count）。聚合：count/sum/avg/min/max；avg 输出两位小数；非数值/缺失值在 numeric 聚合中静默跳过。Pivot 引擎：先按 rowFields 和 colFields 分别 groupBy（key 用 ␟ U+241F 分隔），cells 由两个分组交集后再 aggregate；rowTotals = 行内汇总（跨所有列）、colTotals = 列内汇总（跨所有行）、grandTotal = 全数据集 — 三者各自独立 aggregate，避免 sum-of-sums 的浮点漂移并且让 avg/min/max 在汇总轴上仍然正确。空态：rowFields+colFields 为空 OR valueSpecs 为空 → pivot-empty placeholder；valueSpecs 字段无数据时单元格留空。点击行转发首行 row 给 onRowClick（与 SankeyDiagram 一致语义）。9 RTL 测试：empty placeholder、available 列出非 PK 字段、单维度 sum row totals (NA=35, EU=37)、行×列交叉 (NA/Books=30 等)、avg 切换重算两位小数、行点击转发首行 PK、× 移除返还 Available、numeric 字段拒收 Rows zone、grand total 列总计 (Books=60, Music=12, total=72)。jsdom 不实现 DataTransfer，提供 makeDataTransfer() stub round-trip dataTransfer.getData/setData + types[] 同步以让 dragOver 接受逻辑触发；vitest 649/649 pass，typecheck 0 errors，eslint 0 new errors。Browser 手测仍欠款（dev-browser skill 在本 harness 不可用）"
     },
     {
       "id": "US-327",

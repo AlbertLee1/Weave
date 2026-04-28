@@ -15,6 +15,7 @@ import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
 import { MapView } from './MapView';
 import { GanttChart } from './GanttChart';
 import { SankeyDiagram } from './SankeyDiagram';
+import { PivotTable } from './PivotTable';
 import { ObjectDetail } from './ObjectDetail';
 import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
@@ -68,9 +69,9 @@ export function BrowserPage() {
     () => new Map(),
   );
 
-  // View mode: table | map | gantt | sankey
+  // View mode: table | map | gantt | sankey | pivot
   const [viewMode, setViewMode] = useState<
-    'table' | 'map' | 'gantt' | 'sankey'
+    'table' | 'map' | 'gantt' | 'sankey' | 'pivot'
   >('table');
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
@@ -487,6 +488,20 @@ export function BrowserPage() {
             >
               Sankey
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('pivot')}
+              aria-pressed={viewMode === 'pivot'}
+              data-testid="view-mode-pivot"
+              className={[
+                'px-2 py-1 text-xs font-mono transition-colors border-l border-border',
+                viewMode === 'pivot'
+                  ? 'bg-accent-cyan/10 text-accent-cyan'
+                  : 'text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              Pivot
+            </button>
           </div>
           <ExportButton
             objectType={objectType}
@@ -608,6 +623,14 @@ export function BrowserPage() {
 
             {viewMode === 'sankey' && (
               <SankeyDiagram
+                objectType={objectType}
+                data={page.data}
+                onRowClick={handleRowClick}
+              />
+            )}
+
+            {viewMode === 'pivot' && (
+              <PivotTable
                 objectType={objectType}
                 data={page.data}
                 onRowClick={handleRowClick}
