@@ -31,6 +31,12 @@ type Store interface {
 	// IsWatching is a single-row probe that backs the WatchButton's
 	// initial-state query without forcing a List walk on the SPA.
 	IsWatching(ctx context.Context, userID, targetRID string) (bool, error)
+	// WatchersFor returns userIDs grouped by targetRID for the requested
+	// targets. Targets with no watchers are absent from the map (callers
+	// iterate). Backs the US-338 activity-notification fan-out — given a
+	// batch of changed object RIDs, ask "who has subscribed?" in one
+	// query rather than N IsWatching probes.
+	WatchersFor(ctx context.Context, targetRIDs []string) (map[string][]string, error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -122,4 +128,33 @@ func (m *MemoryStore) IsWatching(_ context.Context, userID, targetRID string) (b
 		}
 	}
 	return false, nil
+}
+
+// WatchersFor returns userIDs grouped by targetRID for every requested
+// target that has at least one row. Targets with zero watchers are
+// absent from the returned map so the activity-fanout caller can range
+// over the result without nil-checking each bucket. UserIDs inside a
+// bucket are sorted lexicographically so the wire shape is deterministic
+// for tests.
+func (m *MemoryStore) WatchersFor(_ context.Context, targetRIDs []string) (map[string][]string, error) {
+	if len(targetRIDs) == 0 {
+		return map[string][]string{}, nil
+	}
+	wanted := make(map[string]struct{}, len(targetRIDs))
+	for _, t := range targetRIDs {
+		wanted[t] = struct{}{}
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := map[string][]string{}
+	for _, row := range m.rows {
+		if _, ok := wanted[row.TargetRID]; !ok {
+			continue
+		}
+		out[row.TargetRID] = append(out[row.TargetRID], row.UserID)
+	}
+	for k := range out {
+		sort.Strings(out[k])
+	}
+	return out, nil
 }

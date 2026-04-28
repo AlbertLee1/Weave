@@ -66,10 +66,19 @@ type EditBatch struct {
 }
 
 // ChangeEvent is emitted after edits are applied to notify subscribers.
+//
+// ActorID + OntologyAPIName carry the per-batch context downstream so
+// hooks like the US-338 watch fan-out can identify the editor (to skip
+// self-notifications) and the originating ontology (for deep links)
+// without re-deriving them from the batch on each callback. Both are
+// omitempty so legacy tests + replayed events without these fields
+// still decode cleanly.
 type ChangeEvent struct {
-	ObjectType string                 `json:"objectType"`
-	PrimaryKey string                 `json:"primaryKey"`
-	EditType   EditType               `json:"editType"`
-	Offset     uint64                 `json:"offset"` // NATS sequence number
-	Properties map[string]interface{} `json:"properties,omitempty"`
+	ObjectType      string                 `json:"objectType"`
+	PrimaryKey      string                 `json:"primaryKey"`
+	EditType        EditType               `json:"editType"`
+	Offset          uint64                 `json:"offset"` // NATS sequence number
+	Properties      map[string]interface{} `json:"properties,omitempty"`
+	ActorID         string                 `json:"actorId,omitempty"`
+	OntologyAPIName string                 `json:"ontologyApiName,omitempty"`
 }

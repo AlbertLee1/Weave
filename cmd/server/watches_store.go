@@ -104,3 +104,36 @@ func (s *pgWatchesStore) IsWatching(ctx context.Context, userID, targetRID strin
 	}
 	return true, nil
 }
+
+// WatchersFor returns userIDs grouped by targetRID for every target in
+// the input slice that has at least one watcher. Single-query fan-out
+// for the US-338 activity consumer; the secondary index on target_rid
+// (migration 000078) keeps the WHERE … = ANY(...) lookup an index scan.
+func (s *pgWatchesStore) WatchersFor(ctx context.Context, targetRIDs []string) (map[string][]string, error) {
+	if len(targetRIDs) == 0 {
+		return map[string][]string{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT target_rid, user_id
+		   FROM watches
+		   WHERE target_rid = ANY($1)
+		   ORDER BY target_rid, user_id`,
+		targetRIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var target, userID string
+		if err := rows.Scan(&target, &userID); err != nil {
+			return nil, err
+		}
+		out[target] = append(out[target], userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

@@ -377,11 +377,13 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 		if c.onChange != nil {
 			for _, edit := range batch.Edits {
 				c.onChange(ChangeEvent{
-					ObjectType: edit.ObjectType,
-					PrimaryKey: edit.PrimaryKey,
-					EditType:   edit.Type,
-					Offset:     meta.Sequence.Stream,
-					Properties: edit.Properties,
+					ObjectType:      edit.ObjectType,
+					PrimaryKey:      edit.PrimaryKey,
+					EditType:        edit.Type,
+					Offset:          meta.Sequence.Stream,
+					Properties:      edit.Properties,
+					ActorID:         batch.UserID,
+					OntologyAPIName: batch.OntologyAPIName,
 				})
 			}
 		}

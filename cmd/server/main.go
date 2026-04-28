@@ -43,6 +43,7 @@ import (
 	"github.com/liyang/weave/pkg/mcp"
 	"github.com/liyang/weave/pkg/media"
 	"github.com/liyang/weave/pkg/metrics"
+	"github.com/liyang/weave/pkg/notifications"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
@@ -2100,6 +2101,25 @@ func main() {
 		// matching funnel.EditType, which the SSE handler collapses to
 		// ADDED_OR_UPDATED / DELETED on the wire.
 		deps.FunnelBroadcast = funnel.NewBroadcast()
+
+		// US-338: fan applied edits out to subscribed watchers as
+		// platform notifications (and optionally email). Wired only
+		// when both an OMS repo (for the notifications table) and a
+		// watches store (for the watcher lookup) are available; degraded
+		// deployments leave fanout nil and the SetOnChange callback
+		// silently skips the fan-out branch.
+		var activityFanout *notifications.Fanout
+		if deps.OmsRepo != nil && deps.WatchesStore != nil {
+			activityFanout = notifications.New(deps.WatchesStore, newNotificationCreatorAdapter(deps.OmsRepo))
+			if mailer := buildSMTPMailerFromEnv(); mailer != nil {
+				if resolver := newUserEmailResolverAdapter(deps.UserRepo); resolver != nil {
+					activityFanout = activityFanout.WithMailer(mailer, resolver)
+					log.Printf("[notifications] SMTP mailer wired host=%s", mailer.Host)
+				}
+			}
+			log.Printf("[notifications] activity fanout wired")
+		}
+
 		deps.FunnelConsumer.SetOnChange(func(e funnel.ChangeEvent) {
 			// US-057: carry the NATS stream sequence forward as the
 			// BroadcastEvent.Sequence so SSE subscribers can use it as the
@@ -2116,6 +2136,23 @@ func main() {
 			deps.WebSocketHub.HandleObjectChange(
 				e.ObjectType, e.PrimaryKey, string(e.EditType), e.Properties,
 			)
+
+			// US-338: dispatch the activity fan-out for follower
+			// notifications + optional email. Best-effort — failures
+			// are logged inside HandleActivity and never block other
+			// downstream consumers (broadcast / websocket / etc.).
+			if activityFanout != nil {
+				if err := activityFanout.HandleActivity(context.Background(), notifications.Activity{
+					OntologyAPIName: e.OntologyAPIName,
+					ObjectType:      e.ObjectType,
+					PrimaryKey:      e.PrimaryKey,
+					EditType:        string(e.EditType),
+					ActorID:         e.ActorID,
+					Properties:      e.Properties,
+				}); err != nil {
+					log.Printf("[notifications] fanout error: %v", err)
+				}
+			}
 		})
 
 		// US-261: marking inheritance via LinkType.PropagateMarkings. The

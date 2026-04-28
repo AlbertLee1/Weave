@@ -1988,8 +1988,8 @@
         "Tests pass"
       ],
       "priority": 139,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/notifications/{fanout,smtp}.go: Fanout takes a WatcherLister + NotificationCreator + optional Mailer/EmailResolver, dispatches one in-app notification per non-actor watcher per CREATE/MODIFY/DELETE edit (LINK_* + unknown silently no-op). ComputeTargetRID mirrors oss.FormatObject's `ri.phonograph2-objects.main.object.<pk>` shape so the watches lookup matches what the SPA's WatchButton stored. Per-recipient errors logged and swallowed; only the WatcherLister failure surfaces. SMTPMailer is a thin net/smtp wrapper with sendMail injection seam for tests, RFC 5322 plain-text envelope, defaults port 25, Host=='' is the disabled state. pkg/watches.Store grew WatchersFor([]targetRIDs)→map[string][]string for batched fan-out; PG impl uses target_rid = ANY($1) backed by the existing watches_target_idx (migration 000078). pkg/funnel.ChangeEvent gained ActorID + OntologyAPIName (omitempty) so the consumer's per-edit callback carries the editor's userID; Consumer.handleMessage propagates batch.UserID. cmd/server: notificationCreatorAdapter (oms.Repository → CreateNotification) + userEmailResolverAdapter (auth.UserRepository → email) + buildSMTPMailerFromEnv (WEAVE_SMTP_HOST/PORT/FROM/USER/PASS) plumbed through SetOnChange when both OmsRepo and WatchesStore are wired. 11 tests in pkg/notifications + 2 in pkg/watches; go test ./... clean; vitest 740/740; tsc 0 errors; eslint baseline unchanged (pre-existing 31 issues)."
     },
     {
       "id": "US-339",
