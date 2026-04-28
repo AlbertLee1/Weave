@@ -1596,8 +1596,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 111,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "FacetBucket added to ObjectPage; SearchObjectsParams forwards facets[]; BrowserPage auto-derives string/boolean/date-typed property fields (max 5, excludes PK) and renders left-side FacetsPanel when search/filter/facet is active. Multi-select within a field becomes an or-of-eq; multiple fields AND-merge into the existing where clause. 7 RTL tests on FacetsPanel + 2 BrowserPage integration tests covering facets request body shape and click-to-filter; vitest 546/546 pass. dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-311",

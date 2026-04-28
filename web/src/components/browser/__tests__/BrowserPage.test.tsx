@@ -286,6 +286,102 @@ describe('BrowserPage realtime mode', () => {
   });
 });
 
+describe('BrowserPage facets', () => {
+  function setup(searchHandler: Parameters<typeof http.post>[1]) {
+    server.use(
+      http.post(
+        '/api/v2/ontologies/:ontology/objects/:objectType/search',
+        searchHandler,
+      ),
+    );
+    return renderBrowserPage();
+  }
+
+  it('forwards facet field names from the object type properties to the search request body', async () => {
+    let capturedBody: unknown = null;
+    setup(async ({ request }) => {
+      capturedBody = await request.json();
+      return HttpResponse.json({
+        data: [
+          { __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice' },
+        ],
+        totalCount: '1',
+        facets: {
+          name: [
+            { value: 'Alice', count: 3 },
+            { value: 'Bob', count: 2 },
+          ],
+        },
+      });
+    });
+
+    // Trigger a search by typing in the search input
+    const input = await screen.findByTestId('search-input');
+    fireEvent.change(input, { target: { value: 'al' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // Wait for the panel to render
+    await waitFor(() => {
+      expect(screen.getByTestId('facets-panel')).toBeInTheDocument();
+    });
+
+    // Body should include `facets: ["name"]` (id is the primary key, so excluded)
+    expect(capturedBody).toMatchObject({ facets: ['name'] });
+
+    // Bucket values + counts visible
+    expect(screen.getByLabelText('name: Alice')).toBeInTheDocument();
+    expect(screen.getByText('Bob')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  it('AND-merges a clicked facet into the where clause and re-fires search', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    setup(async ({ request }) => {
+      const body = (await request.json()) as Record<string, unknown>;
+      requestBodies.push(body);
+      return HttpResponse.json({
+        data: [
+          { __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice' },
+        ],
+        totalCount: '1',
+        facets: {
+          name: [
+            { value: 'Alice', count: 3 },
+            { value: 'Bob', count: 1 },
+          ],
+        },
+      });
+    });
+
+    const input = await screen.findByTestId('search-input');
+    fireEvent.change(input, { target: { value: 'al' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('facets-panel')).toBeInTheDocument(),
+    );
+
+    const beforeCount = requestBodies.length;
+    fireEvent.click(screen.getByLabelText('name: Alice'));
+
+    await waitFor(() => {
+      expect(requestBodies.length).toBeGreaterThan(beforeCount);
+    });
+
+    const lastBody = requestBodies[requestBodies.length - 1];
+    // The where clause should now include an `and` of the prior text-search and
+    // the facet `eq` clause for name=Alice.
+    expect(lastBody).toMatchObject({
+      where: {
+        type: 'and',
+        value: expect.arrayContaining([
+          expect.objectContaining({ type: 'eq', field: 'name', value: 'Alice' }),
+        ]),
+      },
+    });
+  });
+});
+
 describe('BrowserPage view-mode toggle', () => {
   it('defaults to table view and hides the map', async () => {
     renderBrowserPage();

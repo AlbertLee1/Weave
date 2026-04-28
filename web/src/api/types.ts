@@ -122,10 +122,16 @@ export interface WireObject {
   [property: string]: unknown;
 }
 
+export interface FacetBucket {
+  value: string;
+  count: number;
+}
+
 export interface ObjectPage {
   data: WireObject[];
   nextPageToken?: string;
   totalCount?: string;
+  facets?: Record<string, FacetBucket[]>;
 }
 
 export interface AggregationRequest {

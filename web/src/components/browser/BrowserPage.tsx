@@ -9,6 +9,7 @@ import { useWebSocketSubscription } from '../../hooks/useWebSocketSubscription';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
+import { FacetsPanel, type FacetSelection } from './FacetsPanel';
 import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
 import { MapView } from './MapView';
 import { ObjectDetail } from './ObjectDetail';
@@ -16,9 +17,17 @@ import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
-import type { WireObject } from '../../api/types';
+import type { WhereClause, WireObject } from '../../api/types';
 
 const PAGE_SIZE = 25;
+const MAX_FACET_FIELDS = 5;
+const FACETABLE_BASE_TYPES = new Set([
+  'string',
+  'boolean',
+  'date',
+  'datetime',
+  'timestamp',
+]);
 
 export function BrowserPage() {
   const { ontology = '', objectType: objectTypeParam = '' } = useParams<{
@@ -38,6 +47,7 @@ export function BrowserPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [sortField, setSortField] = useState<string | undefined>();
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [selectedFacets, setSelectedFacets] = useState<FacetSelection>({});
 
   // Pagination state
   const [pageTokens, setPageTokens] = useState<string[]>([]);
@@ -106,8 +116,31 @@ export function BrowserPage() {
     }, [invalidateObjects]),
   });
 
+  // Compute the set of facet-able fields from the object type's properties.
+  // Picks string/boolean/date-typed fields, excludes the primary key, and caps
+  // at MAX_FACET_FIELDS so the response stays bounded.
+  const facetFields = useMemo<string[]>(() => {
+    if (!objectType?.properties) return [];
+    const out: string[] = [];
+    for (const [name, prop] of Object.entries(objectType.properties)) {
+      if (name === objectType.primaryKey) continue;
+      const t = prop.dataType?.type?.toLowerCase?.() ?? '';
+      if (FACETABLE_BASE_TYPES.has(t)) {
+        out.push(name);
+        if (out.length >= MAX_FACET_FIELDS) break;
+      }
+    }
+    return out;
+  }, [objectType]);
+
+  const hasFacetSelection = useMemo(
+    () => Object.values(selectedFacets).some((vs) => vs.length > 0),
+    [selectedFacets],
+  );
+
   // Determine whether we need to use search or list
-  const hasActiveSearch = searchText.trim().length > 0 || filters.length > 0;
+  const hasActiveSearch =
+    searchText.trim().length > 0 || filters.length > 0 || hasFacetSelection;
 
   // Build where clause for search
   const whereClause = useMemo(() => {
@@ -128,8 +161,32 @@ export function BrowserPage() {
       }
     }
 
-    return buildWhereClause(allFilters);
-  }, [filters, searchText, objectType]);
+    const baseWhere = buildWhereClause(allFilters);
+
+    // Apply selected facets as an AND of (OR-of-eq) per field. Backend `where`
+    // doesn't expose an `in` operator, so multi-select within one field uses
+    // a disjunction of `eq` clauses.
+    const facetClauses: WhereClause[] = [];
+    for (const [field, values] of Object.entries(selectedFacets)) {
+      if (!values || values.length === 0) continue;
+      const eqs: WhereClause[] = values.map((v) => ({
+        type: 'eq',
+        field,
+        value: v,
+      }));
+      facetClauses.push(
+        eqs.length === 1 ? eqs[0] : { type: 'or', value: eqs },
+      );
+    }
+
+    if (facetClauses.length === 0) return baseWhere;
+    const combined: WhereClause[] = baseWhere
+      ? [baseWhere, ...facetClauses]
+      : facetClauses;
+    return combined.length === 1
+      ? combined[0]
+      : { type: 'and', value: combined };
+  }, [filters, searchText, objectType, selectedFacets]);
 
   // List objects (no filters/search)
   const listResult = useListObjects({
@@ -159,6 +216,7 @@ export function BrowserPage() {
       ? { field: sortField, direction: sortDirection }
       : undefined,
     select: selectFields,
+    facets: facetFields,
     enabled: hasActiveSearch,
   });
 
@@ -174,6 +232,26 @@ export function BrowserPage() {
 
   const handleFiltersChange = useCallback((newFilters: FilterCondition[]) => {
     setFilters(newFilters);
+    setPageTokens([]);
+    setCurrentPage(1);
+  }, []);
+
+  const handleToggleFacet = useCallback((field: string, value: string) => {
+    setSelectedFacets((prev) => {
+      const cur = prev[field] ?? [];
+      const next = cur.includes(value)
+        ? cur.filter((v) => v !== value)
+        : [...cur, value];
+      const out = { ...prev, [field]: next };
+      if (next.length === 0) delete out[field];
+      return out;
+    });
+    setPageTokens([]);
+    setCurrentPage(1);
+  }, []);
+
+  const handleClearFacets = useCallback(() => {
+    setSelectedFacets({});
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
@@ -404,32 +482,57 @@ export function BrowserPage() {
         </div>
       )}
 
-      {/* Table */}
-      {!isLoading && page && page.data.length > 0 && viewMode === 'table' && (
-        <ObjectTable
-          ontologyApiName={ontology}
-          objectType={objectType}
-          data={page.data}
-          onRowClick={handleRowClick}
-          onSort={handleSort}
-          pageSize={PAGE_SIZE}
-          totalCount={page.totalCount}
-          hasNextPage={!!page.nextPageToken}
-          hasPrevPage={currentPage > 1}
-          onNextPage={handleNextPage}
-          onPrevPage={handlePrevPage}
-          currentPage={currentPage}
-          selection={tableSelection}
-        />
-      )}
+      {/* Results area: Facets sidebar + Table/Map/Empty */}
+      {!isLoading && page && (
+        <div className="flex gap-4">
+          {hasActiveSearch && facetFields.length > 0 && (
+            <FacetsPanel
+              fields={facetFields}
+              facets={page.facets}
+              selected={selectedFacets}
+              onToggle={handleToggleFacet}
+              onClear={handleClearFacets}
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            {page.data.length > 0 && viewMode === 'table' && (
+              <ObjectTable
+                ontologyApiName={ontology}
+                objectType={objectType}
+                data={page.data}
+                onRowClick={handleRowClick}
+                onSort={handleSort}
+                pageSize={PAGE_SIZE}
+                totalCount={page.totalCount}
+                hasNextPage={!!page.nextPageToken}
+                hasPrevPage={currentPage > 1}
+                onNextPage={handleNextPage}
+                onPrevPage={handlePrevPage}
+                currentPage={currentPage}
+                selection={tableSelection}
+              />
+            )}
 
-      {/* Map */}
-      {!isLoading && page && viewMode === 'map' && (
-        <MapView
-          objectType={objectType}
-          data={page.data}
-          onRowClick={handleRowClick}
-        />
+            {viewMode === 'map' && (
+              <MapView
+                objectType={objectType}
+                data={page.data}
+                onRowClick={handleRowClick}
+              />
+            )}
+
+            {page.data.length === 0 && (
+              <EmptyState
+                title="No objects found"
+                description={
+                  hasActiveSearch
+                    ? 'Try adjusting your search or filters.'
+                    : 'This object type has no data yet.'
+                }
+              />
+            )}
+          </div>
+        </div>
       )}
 
       {/* Bulk-action floating toolbar (rendered only when selection is non-empty) */}
@@ -439,18 +542,6 @@ export function BrowserPage() {
         selectedRows={selectedRows}
         onClear={handleClearSelection}
       />
-
-      {/* Empty state */}
-      {!isLoading && page && page.data.length === 0 && (
-        <EmptyState
-          title="No objects found"
-          description={
-            hasActiveSearch
-              ? 'Try adjusting your search or filters.'
-              : 'This object type has no data yet.'
-          }
-        />
-      )}
 
       {/* Detail slide panel */}
       <ObjectDetail

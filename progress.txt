@@ -214,6 +214,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Sub-linear fan-out via key-bucketed routing index (US-306 Hub.subIndex, future tenancy-keyed event routing / org-keyed audit fan-out / ontology-keyed CDC dispatch): replace "iterate every connection × every subscription" with `map[key][]*indexedSub` keyed on the natural partition (objectType, tenant, ontology). Subscribe / unsubscribe / disconnect MUST all maintain the index under the same Hub-level mutex; dispatch snapshots `bucket[:]` under the lock then iterates with the lock released. Lock order: hub.mu → conn.subMu in every mutating handler so HandleObjectChange's bucket lookup never deadlocks against an in-flight subscribe. For composite filters (ObjectSet definitions in our case) collect a SUPERSET of candidate keys via recursive walk and let the precise predicate gate at dispatch time — a false positive costs one wasted match call, a false NEGATIVE drops events silently. Pointer-identity removal (`bucket[i].sub != target`) is allocation-free and unique across the Hub's lifetime; ID-string removal forces every test fixture to stamp unique IDs. Slice in place with `bucket[:0]` + filter-keep + `delete(m, k)` when empty so `len(m[k])` is a clean "anything routed here?" probe.
 - cmdk + jsdom test pattern (US-309 CommandPalette, future shadcn/Radix-based components): jsdom does NOT implement `ResizeObserver` or `Element.prototype.scrollIntoView`, both of which cmdk's `Command.Input` calls synchronously on mount (ResizeObserver to track input width, scrollIntoView to scroll the active item into view as selection changes). Without polyfills, every test that mounts a `<Command>` blows up at the effects phase with `ReferenceError: ResizeObserver is not defined` then `TypeError: i.scrollIntoView is not a function` and the entire component tree fails to render. Add no-op stubs ONCE in `web/src/test/setup.ts` (already imported globally by Vitest config). Same polyfill pair applies to any future Radix/Headless-UI/Floating-UI primitive that measures itself on mount.
 - React 19 hooks-rules with conditional render (US-309 CommandPalette): when a portal-style component does `if (!open) return null` you cannot legally call `useState` / `useEffect` AFTER the early return, AND ESLint (`react-hooks/set-state-in-effect`) will reject any `setState` inside an effect to "reset state when open transitions". The clean fix is the inner-component pattern: outer `Component({open, ...props})` is a thin guard that returns null OR `<ComponentInner {...props}/>`; ALL hooks live in `ComponentInner`, which mounts/unmounts on each open transition so internal state (search query, focus, transient UI) resets naturally without effects. Outer is `<3 lines, pure, no hooks; inner has full freedom. Reusable for any modal/dialog/popover with internal state that should reset on each open.
+- Multi-select facet → where clause shape (US-310, future "filter result set by enum-valued field"): the OSv2 `pkg/oss/where` converter has NO `in` operator — `eq`/`and`/`or` only. So same-field multi-select MUST be `{type:"or", value:[{type:"eq",field,value:v1},{type:"eq",field,value:v2}, ...]}`, and cross-field ANDs the per-field disjunctions together (`{type:"and", value:[orForOwner, orForCategory, ...]}`). Empty selections are dropped before composition so a partial state never leaks an empty `or` (which Bleve would reject). Combine with any existing where (FilterBuilder + searchText `containsAnyTerm`) by collecting all clauses into one slice and picking single-entry passthrough vs `and`-wrap based on length — same shape as `whereBuilder.buildWhereClause` but applied at the BrowserPage `useMemo` site. Generalises to any future "checkbox-list-of-values feeds into a Bleve query" surface.
+- Auto-deriving facetable fields from ObjectType.properties: walk `objectType.properties` once, keep fields whose `dataType.type` is in {string, boolean, date, datetime, timestamp}, EXCLUDE the primary key (one bucket per row = useless and explodes response size), cap at MAX_FACET_FIELDS=5 so the response stays bounded regardless of schema size. Backend silently returns empty buckets for fields with no data, so over-requesting is safe; under-requesting silently drops a useful facet. Same shape generalises to any UI surface that needs to "pick interesting fields from a heterogeneous schema" — column-mask presets, default-visible-property selection, etc. Note: this client-side heuristic is independent of the backend's `IsSearchable` flag; if a future story wants admin-controlled facet allowlists, plumb a per-property `isFacetable` boolean through to `Property` rather than tightening the UI heuristic.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -3955,4 +3957,38 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - cmdk `Command.Item` 的 `value` 是过滤索引：把 group 名 + displayName + apiName 全拼进 value（`"objectType Customer customer"`）就让单一输入框跨多个分类同时模糊匹配；不要试图自己写 useState filter，cmdk 内部的 fuzzy matcher（Sublime-style）已经够用。
   - 全局快捷键 hook 必须挡住 `e.altKey || e.shiftKey`，否则浏览器原生 Cmd+Shift+K（Firefox web 控制台）/ Cmd+Alt+K 等也会触发。`e.preventDefault()` 防止 macOS Safari 在 Cmd+K 时弹原生地址栏聚焦。
   - 在 `Shell` 中读 `useParams()` 得到 `:ontology`，再 fallback 到 `useOntologyStore.selectedOntology`，可以让 palette 在任何页面（含 `/dashboard` 这种 URL 里没有 ontology 段）都能继续呈现 "Object Types in <last visited ontology>" —— 与 Sidebar 的 activeOntology 解析逻辑保持一致，避免两个地方对同一概念给出不同答案。
+---
+
+## 2026-04-28 - US-310 搜索 Facets UI
+- 后端 `/objects/{ot}/search` 在 US-236 已能返回 `facets` map；本故事补齐前端，把 facet 选择面板挂到 BrowserPage 搜索结果上。
+- `web/src/api/types.ts`：新增 `FacetBucket` 类型，给 `ObjectPage` 加 `facets?: Record<string, FacetBucket[]>`。
+- `web/src/api/objects.ts`：`SearchObjectsParams` 加 `facets?: string[]`，`searchObjects` 在请求体里仅在非空时透传 facets，避免空数组污染缓存键。
+- 新增 `web/src/components/browser/FacetsPanel.tsx`：纯展示组件，按字段分组显示 buckets（值 + 计数）+ checkbox 多选；超过 8 个值时折叠，"Show N more" 展开；至少一个选中时显示 Clear 按钮。
+- `BrowserPage.tsx`：
+  - 新增 `selectedFacets: FacetSelection` 与 `facetFields` （从 `objectType.properties` 自动取最多 5 个 string/boolean/date 类型且非主键的字段）。
+  - 把 `facets: facetFields` 透传给 `useSearchObjects`；用户在 Facet 上的勾选作用为 `where` clause：同字段多选 = `or` of `eq`，跨字段 = `and`，再与原有 `containsAnyTerm` / FilterBuilder 子句 AND 合并。
+  - 选中任何 facet 也会触发 `hasActiveSearch=true`，使搜索路径接管列表路径，并重置分页。
+  - 渲染层把 Table/Map/Empty 包进一个 flex 行，左侧条件渲染 FacetsPanel（仅当 search/filter/facet 激活且 `facetFields` 非空）。
+- 测试：
+  - `web/src/components/browser/__tests__/FacetsPanel.test.tsx`：7 个用例覆盖空 fields、buckets 渲染、空字段占位、checked 状态、onToggle 回调、Clear 按钮可见性 + 行为、Show more 折叠展开。
+  - `BrowserPage.test.tsx` 新增 facets describe block 2 个用例：(a) 输入搜索后请求体 `facets:["name"]`（id 是主键被排除），且面板渲染出 buckets/计数；(b) 点击 facet 的 checkbox 后请求体 `where` 变成 `and`-merged 的 `eq` clause，证明多选→过滤的闭环。
+- 文件改动：
+  - `web/src/api/types.ts`（FacetBucket + ObjectPage.facets）
+  - `web/src/api/objects.ts`（SearchObjectsParams.facets + 透传）
+  - `web/src/components/browser/FacetsPanel.tsx`（新）
+  - `web/src/components/browser/__tests__/FacetsPanel.test.tsx`（新）
+  - `web/src/components/browser/BrowserPage.tsx`（state + where 合成 + 渲染）
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`（新增 facets describe）
+  - `prd.json`（US-310 passes=true）
+- 质量门：
+  - `npx tsc -p tsconfig.json --noEmit` → 干净
+  - `npx vitest run` → 80 files / 546 tests 全绿
+  - `go build ./...` → 干净（本故事零 Go 改动，跑一次确保 import path 没动）
+  - 浏览器手测仍待人工进行（dev-browser MCP 未在本 harness 中可用，与 US-205/US-309 同样口径）。
+- **Learnings for future iterations:**
+  - 后端 `pkg/oss/where` 的 converter 没有 `in` 运算符。前端做"同字段多选 = OR"时正确的 wire shape 是 `{ type:"or", value:[{type:"eq",field,value}, ...] }`；想偷懒写成 `{ type:"in", field, value:[...]}` 会被后端 converter 直接拒。跨字段才是 `and`。
+  - 自动从 `objectType.properties` 派生 facetable 字段时记得排掉 `primaryKey`：把主键放进 facets 里，bleve 会给你回每行一个 bucket，对前端没意义还会撑爆响应体。`MAX_FACET_FIELDS=5` 的硬上限同样保护这个。
+  - Facets buckets 的回退 `facets?.[field] ?? []` 对 panel 行为很关键：后端在字段无数据时不回该 key（不是 `[]`），所以解构时一定要带空数组兜底，否则 React 会爆 `Cannot read properties of undefined (reading 'map')`。
+  - BrowserPage 把"何时跑 search 而非 list"的判断扩展到包含 facet 选择 (`hasFacetSelection`)，是因为最初版本 `searchResult.enabled = hasActiveSearch`，用户即使勾选了 facet 也只命中 list 路径，请求体里完全没有 where；这种"功能加上去但回路没通"的回归只能在 RTL 集成测试里才看得见，单元测试单看 FacetsPanel 不会暴露。
+  - Empty state 的渲染分支挪进了新的 flex 容器内 `flex-1` div；要保证 `!isLoading && page` 这个外层 guard 仍然守住"page undefined 时什么都不渲染"，否则 page=undefined 时还会渲染一个空 flex 行。原来的代码因为每个分支都各自带 `page && ...` guard 不会错，但合并到一个父级后必须把 guard 提到父级。
 ---
