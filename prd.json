@@ -1750,8 +1750,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 122,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ApprovalsPage already shipped as part of US-243's frontend wave: web/src/components/approvals/ApprovalsPage.tsx (status-tab filter PENDING/APPROVED/REJECTED/ALL + 'Only rows I can review' mine toggle + per-card detail with parameters/approvers/timestamps + Modal-based review w/ optional reason + ApiRequestError surfacing) backed by web/src/api/approvals.ts and web/src/hooks/useApprovals.ts. Routes /approvals and /approvals/:ontology mounted in App.tsx; Sidebar entry under active ontology. 6 RTL tests cover render/approve/reject/empty/filter-switch/error. vitest 618/618 green; tsc clean; eslint clean (approvals scope); vite build clean; go test -short ./... green. dev-browser skill not available in this harness — manual browser verification still owed."
     },
     {
       "id": "US-322",
