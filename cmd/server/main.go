@@ -51,6 +51,7 @@ import (
 	"github.com/liyang/weave/pkg/pipeline/quality"
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
+	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
 	"github.com/liyang/weave/pkg/sqlqueries"
@@ -307,7 +308,11 @@ type ServerDeps struct {
 	// can audit pipeline data hygiene. nil in degraded mode — callers
 	// decide whether to fail-soft or fail-hard when the store is missing.
 	QualityViolationStore quality.ViolationStore
-	CORSOrigins           []string // Allowed CORS origins (empty = disabled)
+	// US-311: Saved Searches per-user CRUD store. nil in degraded mode so
+	// /api/v2/saved-searches/* routes stay unmounted and the SPA's
+	// SavedSearchesPanel hides itself when the list endpoint 404s.
+	SavedSearchesStore savedsearches.Store
+	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -1088,6 +1093,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// the pipeline authoring surface.
 			pipelineschema.NewHandler().RegisterRoutes(api)
 		}
+
+		// US-311: Saved Searches per-user CRUD. Mounts only when the
+		// backing store is wired (PG mode); degraded-mode deployments
+		// leave the /api/v2/saved-searches/* routes unregistered so
+		// the SPA gracefully hides the panel.
+		if deps.SavedSearchesStore != nil {
+			savedsearches.NewHandler(deps.SavedSearchesStore).RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1428,6 +1441,11 @@ func main() {
 		// callers may fail-soft when the store is nil.
 		deps.QualityViolationStore = newPGQualityViolationStore(pool)
 		log.Printf("[pipeline] quality violation store wired")
+
+		// US-311: Saved Searches per-user CRUD store. Backs the
+		// /api/v2/saved-searches/* routes used by the Browser page.
+		deps.SavedSearchesStore = newPGSavedSearchesStore(pool)
+		log.Printf("[savedsearches] store wired")
 
 		// US-289: Pipeline cron scheduler. Walks the store at boot and
 		// arms a robfig/cron entry for every enabled pipeline carrying a

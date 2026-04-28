@@ -10,6 +10,7 @@ import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
 import { FacetsPanel, type FacetSelection } from './FacetsPanel';
+import { SavedSearchesPanel } from './SavedSearchesPanel';
 import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
 import { MapView } from './MapView';
 import { ObjectDetail } from './ObjectDetail';
@@ -18,6 +19,7 @@ import { BulkActionToolbar } from './BulkActionToolbar';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import type { WhereClause, WireObject } from '../../api/types';
+import type { SavedSearchDefinition } from '../../api/savedSearches';
 
 const PAGE_SIZE = 25;
 const MAX_FACET_FIELDS = 5;
@@ -266,6 +268,40 @@ export function BrowserPage() {
     [objectType],
   );
 
+  // Saved-searches integration: serialise the current view into a
+  // round-trippable definition, and accept a loaded definition by
+  // resetting every controlled field. The definition deliberately
+  // mirrors the BrowserPage's local state — no derived/server-only
+  // values (whereClause, pageTokens) so a load is a clean re-mount of
+  // the user-visible filters.
+  const currentDefinition = useMemo<SavedSearchDefinition>(() => {
+    return {
+      searchText: searchText.trim() || undefined,
+      filters: filters.length > 0 ? filters : undefined,
+      facets: hasFacetSelection ? selectedFacets : undefined,
+      sort: sortField ? { field: sortField, direction: sortDirection } : null,
+    };
+  }, [searchText, filters, hasFacetSelection, selectedFacets, sortField, sortDirection]);
+
+  const handleApplySavedSearch = useCallback(
+    (def: SavedSearchDefinition) => {
+      setSearchText(def.searchText ?? '');
+      setFilters(def.filters ?? []);
+      setSelectedFacets(def.facets ?? {});
+      if (def.sort) {
+        setSortField(def.sort.field);
+        setSortDirection(def.sort.direction);
+      } else {
+        setSortField(undefined);
+        setSortDirection('asc');
+      }
+      setShowFilters((def.filters ?? []).length > 0);
+      setPageTokens([]);
+      setCurrentPage(1);
+    },
+    [],
+  );
+
   const handleNextPage = useCallback(() => {
     if (page?.nextPageToken) {
       setPageTokens((prev) => {
@@ -482,18 +518,27 @@ export function BrowserPage() {
         </div>
       )}
 
-      {/* Results area: Facets sidebar + Table/Map/Empty */}
+      {/* Results area: Saved searches + Facets sidebar + Table/Map/Empty */}
       {!isLoading && page && (
         <div className="flex gap-4">
-          {hasActiveSearch && facetFields.length > 0 && (
-            <FacetsPanel
-              fields={facetFields}
-              facets={page.facets}
-              selected={selectedFacets}
-              onToggle={handleToggleFacet}
-              onClear={handleClearFacets}
+          <div className="flex flex-col gap-4">
+            <SavedSearchesPanel
+              ontology={ontology}
+              objectType={objectTypeParam}
+              currentDefinition={currentDefinition}
+              hasCurrentState={hasActiveSearch}
+              onLoad={handleApplySavedSearch}
             />
-          )}
+            {hasActiveSearch && facetFields.length > 0 && (
+              <FacetsPanel
+                fields={facetFields}
+                facets={page.facets}
+                selected={selectedFacets}
+                onToggle={handleToggleFacet}
+                onClear={handleClearFacets}
+              />
+            )}
+          </div>
           <div className="flex-1 min-w-0">
             {page.data.length > 0 && viewMode === 'table' && (
               <ObjectTable

@@ -1610,8 +1610,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 112,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000074_saved_searches; pkg/savedsearches package (model+memory store+handlers) with per-(createdBy,name) uniqueness; PG store adapter in cmd/server/saved_searches_store.go wired through ServerDeps.SavedSearchesStore; handler registers /api/v2/saved-searches/* CRUD inside the auth.MiddlewareFull group, gated on the store being non-nil; frontend api/savedSearches.ts + useSavedSearches hook + SavedSearchesPanel react-component; BrowserPage left rail now stacks SavedSearchesPanel above FacetsPanel and load applies definition (searchText/filters/facets/sort) back into local state; 5 RTL tests on the panel + Go store + handler tests; vitest 551/551 pass; dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-312",

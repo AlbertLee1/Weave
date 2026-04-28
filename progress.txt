@@ -216,6 +216,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - React 19 hooks-rules with conditional render (US-309 CommandPalette): when a portal-style component does `if (!open) return null` you cannot legally call `useState` / `useEffect` AFTER the early return, AND ESLint (`react-hooks/set-state-in-effect`) will reject any `setState` inside an effect to "reset state when open transitions". The clean fix is the inner-component pattern: outer `Component({open, ...props})` is a thin guard that returns null OR `<ComponentInner {...props}/>`; ALL hooks live in `ComponentInner`, which mounts/unmounts on each open transition so internal state (search query, focus, transient UI) resets naturally without effects. Outer is `<3 lines, pure, no hooks; inner has full freedom. Reusable for any modal/dialog/popover with internal state that should reset on each open.
 - Multi-select facet → where clause shape (US-310, future "filter result set by enum-valued field"): the OSv2 `pkg/oss/where` converter has NO `in` operator — `eq`/`and`/`or` only. So same-field multi-select MUST be `{type:"or", value:[{type:"eq",field,value:v1},{type:"eq",field,value:v2}, ...]}`, and cross-field ANDs the per-field disjunctions together (`{type:"and", value:[orForOwner, orForCategory, ...]}`). Empty selections are dropped before composition so a partial state never leaks an empty `or` (which Bleve would reject). Combine with any existing where (FilterBuilder + searchText `containsAnyTerm`) by collecting all clauses into one slice and picking single-entry passthrough vs `and`-wrap based on length — same shape as `whereBuilder.buildWhereClause` but applied at the BrowserPage `useMemo` site. Generalises to any future "checkbox-list-of-values feeds into a Bleve query" surface.
 - Auto-deriving facetable fields from ObjectType.properties: walk `objectType.properties` once, keep fields whose `dataType.type` is in {string, boolean, date, datetime, timestamp}, EXCLUDE the primary key (one bucket per row = useless and explodes response size), cap at MAX_FACET_FIELDS=5 so the response stays bounded regardless of schema size. Backend silently returns empty buckets for fields with no data, so over-requesting is safe; under-requesting silently drops a useful facet. Same shape generalises to any UI surface that needs to "pick interesting fields from a heterogeneous schema" — column-mask presets, default-visible-property selection, etc. Note: this client-side heuristic is independent of the backend's `IsSearchable` flag; if a future story wants admin-controlled facet allowlists, plumb a per-property `isFacetable` boolean through to `Property` rather than tightening the UI heuristic.
+- Per-user named-state CRUD (US-311 saved searches, future column-visibility presets, dashboard layouts, alert subscriptions): UNIQUE INDEX `(created_by, name)` so different users may pick the same name without colliding; cross-user `Get`/`Update`/`Delete` returns ErrNotFound (NOT 403) so id existence under another user can't be probed; serve admins via the same per-user scope unless the PRD explicitly calls for cross-user visibility — admin override is opt-in, not the default. The wire-form `definition` field is opaque JSONB; the FE owns the schema and the BE round-trips it untouched, so adding new keys (e.g. column visibility) needs zero backend changes. Same dep-direction trick as featureflags / aip / tenants: narrow Store interface in the leaf package, MemoryStore alongside, PG impl in cmd/server. Mounts inside the auth.MiddlewareFull group, gated on `deps.XStore != nil` so degraded-mode (no PG) leaves the routes unmounted and the SPA panel hides itself when the list endpoint 404s.
+- Saved-view round-trip pattern (US-311 SavedSearchesPanel + BrowserPage): serialise the user-visible filter state (searchText, filters, facets, sort) into a wire envelope at SAVE time, deserialise back into the SAME controlled-state setters at LOAD time. Pure user-state only — derived/server-only values (whereClause, pageTokens, currentPage) are NOT in the envelope; they're recomputed via the existing useMemo + reset on apply. Avoids the "saved view re-injects a stale page token" trap. Apply MUST `setPageTokens([]) + setCurrentPage(1)` so the new filters paginate from page 1; same reset every other filter-change handler does. Frontend hides the panel cleanly on 404/SavedSearchesUnavailable by short-circuiting to `[]` inside the queryFn, so the degraded-mode (no-PG) deployment stays usable.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -3991,4 +3993,47 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Facets buckets 的回退 `facets?.[field] ?? []` 对 panel 行为很关键：后端在字段无数据时不回该 key（不是 `[]`），所以解构时一定要带空数组兜底，否则 React 会爆 `Cannot read properties of undefined (reading 'map')`。
   - BrowserPage 把"何时跑 search 而非 list"的判断扩展到包含 facet 选择 (`hasFacetSelection`)，是因为最初版本 `searchResult.enabled = hasActiveSearch`，用户即使勾选了 facet 也只命中 list 路径，请求体里完全没有 where；这种"功能加上去但回路没通"的回归只能在 RTL 集成测试里才看得见，单元测试单看 FacetsPanel 不会暴露。
   - Empty state 的渲染分支挪进了新的 flex 容器内 `flex-1` div；要保证 `!isLoading && page` 这个外层 guard 仍然守住"page undefined 时什么都不渲染"，否则 page=undefined 时还会渲染一个空 flex 行。原来的代码因为每个分支都各自带 `page && ...` guard 不会错，但合并到一个父级后必须把 guard 提到父级。
+---
+
+## 2026-04-28 - US-311 Saved Searches
+- 新增迁移 `migrations/000074_saved_searches.up.sql`：`(id UUID, name, ontology, object_type, created_by, definition JSONB, created_at, updated_at)`，`(created_by, name)` UNIQUE INDEX 保证每个用户名字唯一但跨用户不冲突，`(created_by, ontology, object_type)` 普通索引加速 Browser tab 内的 List。
+- 新建 `pkg/savedsearches/`：`model.go`（SavedSearch wire 模型 + ValidateName/ValidateScope，128 字符上限和 CHECK 约束保持一致）、`store.go`（Store 接口 + MemoryStore 全功能实现，跨用户访问统一返回 ErrNotFound 防 id 探测）、`handlers.go`（5 个 REST 端点，登录态 + Store 注入双 guard，409/404 错误映射）。
+- PG 适配器在 `cmd/server/saved_searches_store.go`：`pgSavedSearchesStore` 走 pgxpool；`isSavedSearchUniqueViolation` 在 SQLSTATE 23505 上把 PG 错误翻译成 `ErrNameConflict`；JSONB 写入端用 `definitionForWrite` 把 `nil json.RawMessage` 归一为 `{}`，避免 pgx 把 nil 编码成字符串 `null`（参考 US-216 normaliseSignatureForWrite）。
+- 在 `cmd/server/main.go` 添加 `ServerDeps.SavedSearchesStore` + 路由注册 + bootstrap 一行 `deps.SavedSearchesStore = newPGSavedSearchesStore(pool)`；与 featureflags/tenant_quotas/aip 的退化模式一致，nil-store 时路由不挂载，前端 panel 自动隐藏。
+- 前端：
+  - `web/src/api/savedSearches.ts`：`SavedSearchDefinition`（searchText/filters/facets/sort）+ List/Create/Update/Delete 类型化 client。
+  - `web/src/hooks/useSavedSearches.ts`：TanStack Query hooks；queryFn 把 404/`SavedSearchesUnavailable` 短路为 `[]`，让 panel 在退化模式下平滑隐藏。
+  - `web/src/components/browser/SavedSearchesPanel.tsx`：左栏组件（与 FacetsPanel 同侧栏宽度），保存对话框走 `Modal` + 受控 input，删除经过 `window.confirm` 二次确认；保存按钮在 `hasCurrentState=false` 时禁用。
+  - `BrowserPage.tsx` 集成：把左栏改成 `flex flex-col gap-4` 容器，从上到下 `SavedSearchesPanel + FacetsPanel`；新增 `currentDefinition` useMemo 与 `handleApplySavedSearch` 把保存的 definition 应用回 `searchText/filters/selectedFacets/sortField/sortDirection`，同时重置分页。
+- 测试：
+  - Go: `pkg/savedsearches/store_test.go`（CRUD + 跨用户 ErrNotFound + 跨用户重名 + 删除后名字可复用 + ValidateName/ValidateScope）+ `handlers_test.go`（HTTP CRUD + 409 重名 + 404 跨用户 + 401 匿名 + 500 退化模式）。
+  - 前端: `SavedSearchesPanel.test.tsx` 5 个 case：empty、加载点击触发 onLoad、Save 按钮 disabled 状态、完整保存对话框流程（filled name → confirm → API call）、删除 + window.confirm。
+  - `npx vitest run` → 81 files / 551 tests 全绿。
+  - `go test -short ./pkg/... ./cmd/...` 全绿。
+  - `go test ./internal/upgrade/...`：新迁移 `IF NOT EXISTS` + 没有 NOT NULL 无默认 + 不含 destructive 操作，前向兼容自检通过。
+  - `npx tsc --noEmit` + `npx eslint <changed files>` 干净。
+  - 浏览器手测仍待人工进行（dev-browser MCP 在本 harness 中不可用）。
+- 文件改动：
+  - `migrations/000074_saved_searches.up.sql` (新)
+  - `migrations/000074_saved_searches.down.sql` (新)
+  - `pkg/savedsearches/model.go` (新)
+  - `pkg/savedsearches/store.go` (新)
+  - `pkg/savedsearches/store_test.go` (新)
+  - `pkg/savedsearches/handlers.go` (新)
+  - `pkg/savedsearches/handlers_test.go` (新)
+  - `cmd/server/saved_searches_store.go` (新)
+  - `cmd/server/main.go` (import + ServerDeps 字段 + handler 注册 + bootstrap)
+  - `web/src/api/savedSearches.ts` (新)
+  - `web/src/hooks/useSavedSearches.ts` (新)
+  - `web/src/components/browser/SavedSearchesPanel.tsx` (新)
+  - `web/src/components/browser/__tests__/SavedSearchesPanel.test.tsx` (新)
+  - `web/src/components/browser/BrowserPage.tsx` (左栏栈式排列 + currentDefinition + handleApplySavedSearch)
+- **Learnings for future iterations:**
+  - `definition JSONB` 这种"FE 拥有 schema、BE 只做存储"的字段是这类 saved-state 功能的黄金 shape：BE 完全不需要知道里面有什么 key，未来加 `columnVisibility` / `pinnedRows` / 任何 UI 状态都不需要 migration；只要在 wire 类型上 + 一个键就行。代价是不要在 BE 端做 definition 校验 — 让 FE 自己读自己写，BE 当 blob 即可。
+  - `(created_by, name)` 而非 `name` 全局唯一是关键。一开始想得太轻松，约束打到 `name` 上之后两个用户无法并行用同样直觉名（"My View"），和 SaaS 用户预期完全相反。`UNIQUE (created_by, name)` + 跨用户 lookup 返回 ErrNotFound 这两条配合起来还自带 id-存在性反探测保护。
+  - 跨用户访问统一返回 404 而不是 403：403 等同于"是的，这个 id 存在但不属于你"，把 id 列举攻击的 oracle 又递回去了。前端体感上 404 和 403 区别不大，安全性差很多。同样适用于将来写各种 personal-resource 端点（标记夹、提醒、模板）。
+  - JSONB column 写入 nil `json.RawMessage` → pgx 编码成字符串 "null" → DB 接受但回读是 `null` 不是 `{}`，破坏了"空=`{}`"的回路。`definitionForWrite` 在写入侧把 nil 归一成 `[]byte("{}")` 是 US-216 normaliseSignatureForWrite 的同族方案，凡是后续写 JSONB 列都该走这个。
+  - 前端"saved view"序列化只保存"用户可见受控状态"（searchText/filters/facets/sort），不保存任何派生量（whereClause）或服务器侧分页 token；apply 时分页一律重置为 page 1。把 pageTokens 也保存进去会出现"加载一个 saved view 立刻拿到一个失效的 nextPageToken"的诡异 bug。这条规则可以推广到任何 saved-state UI（dashboard 配置、CSV export 模板等）。
+  - 退化模式下前端的"列表 hook 把 404/ErrName 短路成 `[]`"是让 SPA 在 no-PG 部署里仍能跑的关键。否则 panel 会一直亮红色错误。同样 pattern 用在 useNotifications 等任何"后端可选"的列表 hook 上。
+  - 这个 PRD 写的是"侧栏列表"，左侧栏现在装了两个 panel（SavedSearchesPanel + FacetsPanel）；用 `flex flex-col gap-4` 的纵向栈而不是再加一个组件抽象，因为两个 panel 业务上是独立的，强行抽 `LeftRail` 反而增加耦合。后续如果出现第三个左栏 panel（layouts、columns 设置）继续加进来即可。
 ---
