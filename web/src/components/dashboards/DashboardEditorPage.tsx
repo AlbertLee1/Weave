@@ -1,6 +1,13 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  createDashboard,
+  getDashboard,
+  listDashboards,
+  updateDashboard,
+  type Dashboard,
+} from '../../api/dashboards';
 
-// US-327 Dashboard Editor + US-328 Widget Library.
+// US-327 Dashboard Editor + US-328 Widget Library + US-329 Save/Share.
 // PRD asked for react-grid-layout; the lib isn't installed and depends on
 // react-resizable + react-draggable (~80KB) which would be the only consumer.
 // Following the US-324/US-325/US-326 pattern (and learning #209 in
@@ -9,6 +16,12 @@ import { useCallback, useMemo, useState } from 'react';
 //
 // Widget types live inline as a discriminated union; each type owns a small
 // display + config sub-component and a sensible default-factory.
+//
+// Persistence (US-329): the editor accepts an optional `id` prop. When set,
+// the matching dashboard is loaded on mount; Save then PUTs back to the same
+// row. When absent, Save POSTs a new row and notifies the host via onSaved
+// (the App.tsx route wrapper translates this into a navigation to
+// /dashboards/{id} so the URL becomes a shareable link).
 
 const COLUMN_COUNT = 12;
 const DEFAULT_W = 4;
@@ -165,9 +178,124 @@ function parseColumnsInput(raw: string): string[] {
     .filter((c) => c.length > 0);
 }
 
-export function DashboardEditorPage() {
+export interface DashboardEditorPageProps {
+  // When present, the editor loads the matching dashboard on mount and
+  // routes Save through PUT. When absent, the editor starts empty and
+  // routes Save through POST → onSaved.
+  id?: string;
+  // Fired with the freshly-created id after a successful POST. The
+  // route wrapper navigates to /dashboards/{id}; tests can observe the
+  // call directly. No-op by default.
+  onSaved?: (id: string) => void;
+}
+
+export function DashboardEditorPage({
+  id,
+  onSaved,
+}: DashboardEditorPageProps = {}) {
   const [widgets, setWidgets] = useState<Widget[]>([]);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
+  const [name, setName] = useState('Untitled Dashboard');
+  const [savedId, setSavedId] = useState<string | null>(id ?? null);
+  const [isPublic, setIsPublic] = useState(false);
+  const [savedDashboards, setSavedDashboards] = useState<Dashboard[]>([]);
+  const [saveStatus, setSaveStatus] = useState<
+    'idle' | 'saving' | 'saved' | 'error'
+  >('idle');
+  const [shareStatus, setShareStatus] = useState<'idle' | 'copied'>('idle');
+
+  // Load on mount when an id was passed in (the SPA's /dashboards/:id
+  // route wrapper supplies it). Failures fall back to the empty editor
+  // — the SPA shows a generic toast and the user can always start over.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    getDashboard(id)
+      .then((d) => {
+        if (cancelled) return;
+        setName(d.name);
+        setIsPublic(d.isPublic);
+        const loaded = Array.isArray(d.definition?.widgets)
+          ? (d.definition.widgets as Widget[])
+          : [];
+        setWidgets(loaded);
+        setSavedId(d.id);
+      })
+      .catch(() => {
+        // Silent fallback to ephemeral editor — the wider page chrome
+        // is responsible for surfacing a toast in production.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  // Eagerly fetch the caller's saved dashboards so the "Load" picker is
+  // populated on first render. 404 (degraded mode) is treated as "no
+  // saved dashboards" — same shape as the SavedSearches panel.
+  useEffect(() => {
+    let cancelled = false;
+    listDashboards()
+      .then((resp) => {
+        if (cancelled) return;
+        setSavedDashboards(resp.dashboards ?? []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSavedDashboards([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedId]);
+
+  const handleSave = useCallback(async () => {
+    setSaveStatus('saving');
+    try {
+      const definition = { widgets };
+      if (savedId) {
+        const updated = await updateDashboard({
+          id: savedId,
+          name,
+          definition,
+          isPublic,
+        });
+        setIsPublic(updated.isPublic);
+      } else {
+        const created = await createDashboard({
+          name,
+          definition,
+          isPublic,
+        });
+        setSavedId(created.id);
+        setIsPublic(created.isPublic);
+        onSaved?.(created.id);
+      }
+      setSaveStatus('saved');
+    } catch {
+      setSaveStatus('error');
+    }
+  }, [name, widgets, savedId, isPublic, onSaved]);
+
+  const handleShare = useCallback(async () => {
+    if (!savedId) return;
+    const url = `${window.location.origin}/dashboards/${savedId}`;
+    try {
+      // navigator.clipboard isn't always available in tests / older
+      // browsers; the visible href on the share button is the reliable
+      // fallback for a manual copy.
+      await navigator.clipboard?.writeText(url);
+      setShareStatus('copied');
+      window.setTimeout(() => setShareStatus('idle'), 1500);
+    } catch {
+      // Even if writeText fails (e.g. insecure context), the link is
+      // visible to the user as the share button's href.
+    }
+  }, [savedId]);
+
+  const shareUrl = savedId
+    ? `${window.location.origin}/dashboards/${savedId}`
+    : '';
 
   const addWidget = useCallback((type: WidgetType) => {
     setWidgets((prev) => [...prev, makeWidget(type, findFirstFreeRow(prev))]);
@@ -264,7 +392,11 @@ export function DashboardEditorPage() {
   }, [widgets]);
 
   return (
-    <div data-testid="dashboard-editor-page" className="min-h-full p-6">
+    <div
+      data-testid="dashboard-editor-page"
+      data-dashboard-id={savedId ?? ''}
+      className="min-h-full p-6"
+    >
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-text-primary tracking-tight">
@@ -317,6 +449,91 @@ export function DashboardEditorPage() {
             + Map
           </button>
         </div>
+      </div>
+
+      <div
+        data-testid="dashboard-toolbar"
+        className="flex flex-wrap items-center gap-2 mb-3"
+      >
+        <input
+          type="text"
+          data-testid="dashboard-name-input"
+          aria-label="Dashboard name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="px-2 py-1 rounded border border-border bg-bg-secondary text-sm text-text-primary"
+        />
+        <label className="flex items-center gap-1 text-xs text-text-secondary font-mono">
+          <input
+            type="checkbox"
+            data-testid="dashboard-public-toggle"
+            checked={isPublic}
+            onChange={(e) => setIsPublic(e.target.checked)}
+          />
+          Public
+        </label>
+        <button
+          type="button"
+          data-testid="dashboard-save"
+          onClick={() => {
+            void handleSave();
+          }}
+          className="px-3 py-1.5 rounded border border-border bg-accent-primary/20 text-sm text-text-primary hover:border-accent-primary"
+        >
+          {savedId ? 'Save' : 'Save New'}
+        </button>
+        {saveStatus !== 'idle' && (
+          <span
+            data-testid="dashboard-save-status"
+            data-save-status={saveStatus}
+            className="text-xs font-mono text-text-secondary"
+          >
+            {saveStatus === 'saving' && 'Saving…'}
+            {saveStatus === 'saved' && 'Saved'}
+            {saveStatus === 'error' && 'Save failed'}
+          </span>
+        )}
+        {savedId && (
+          <button
+            type="button"
+            data-testid="dashboard-share"
+            onClick={() => {
+              void handleShare();
+            }}
+            title={shareUrl}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            {shareStatus === 'copied' ? 'Link copied' : 'Share Link'}
+          </button>
+        )}
+        {savedId && (
+          <span
+            data-testid="dashboard-share-url"
+            className="text-xs font-mono text-text-secondary truncate"
+          >
+            {shareUrl}
+          </span>
+        )}
+        {savedDashboards.length > 0 && (
+          <select
+            data-testid="dashboard-load-select"
+            aria-label="Load saved dashboard"
+            value={savedId ?? ''}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (!next) return;
+              onSaved?.(next);
+            }}
+            className="px-2 py-1 rounded border border-border bg-bg-secondary text-xs text-text-primary"
+          >
+            <option value="">Load saved…</option>
+            {savedDashboards.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div

@@ -30,6 +30,7 @@ import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
 import { LineagePage } from './components/lineage/LineagePage';
 import { DashboardEditorPage } from './components/dashboards/DashboardEditorPage';
+import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -39,6 +40,23 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// US-329: route wrapper that pulls the dashboard id from the URL and
+// navigates to the new id after a fresh save so the URL becomes a
+// shareable link. Keeping this here avoids react-router's hooks
+// inside DashboardEditorPage so the component is unit-testable
+// without a Router wrapper.
+function DashboardEditorRoute() {
+  const params = useParams<{ id?: string }>();
+  const navigate = useNavigate();
+  return (
+    <DashboardEditorPage
+      key={params.id ?? '__new__'}
+      id={params.id}
+      onSaved={(id) => navigate(`/dashboards/${id}`)}
+    />
+  );
+}
 
 function AdminGuard({ children }: { children: React.ReactNode }) {
   return (
@@ -74,7 +92,8 @@ export default function App() {
               <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="pipelines" element={<PipelinesPage />} />
               <Route path="lineage/:rid" element={<LineagePage />} />
-              <Route path="dashboards" element={<DashboardEditorPage />} />
+              <Route path="dashboards" element={<DashboardEditorRoute />} />
+              <Route path="dashboards/:id" element={<DashboardEditorRoute />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />

@@ -1,11 +1,28 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   render,
   screen,
   fireEvent,
   within,
   createEvent,
+  waitFor,
+  act,
 } from '@testing-library/react';
+
+// Mock the dashboards API module so tests don't issue real network
+// requests. Default impl resolves to empty/no-op so the existing US-327
+// / US-328 tests that don't care about persistence still pass without
+// modification — they were authored before US-329 added the API call.
+const apiMocks = vi.hoisted(() => ({
+  listDashboards: vi.fn(),
+  getDashboard: vi.fn(),
+  createDashboard: vi.fn(),
+  updateDashboard: vi.fn(),
+  deleteDashboard: vi.fn(),
+}));
+
+vi.mock('../../../api/dashboards', () => apiMocks);
+
 import { DashboardEditorPage } from '../DashboardEditorPage';
 
 // jsdom doesn't fully model DataTransfer; supply a minimal stub so drag events
@@ -76,6 +93,16 @@ function stubGridRect(grid: HTMLElement, width = 1200, height = 600) {
 function getWidgets() {
   return screen.queryAllByTestId('dashboard-widget');
 }
+
+beforeEach(() => {
+  apiMocks.listDashboards.mockReset();
+  apiMocks.getDashboard.mockReset();
+  apiMocks.createDashboard.mockReset();
+  apiMocks.updateDashboard.mockReset();
+  apiMocks.deleteDashboard.mockReset();
+  apiMocks.listDashboards.mockResolvedValue({ dashboards: [] });
+  apiMocks.getDashboard.mockRejectedValue(new Error('not configured'));
+});
 
 describe('DashboardEditorPage', () => {
   it('renders an empty placeholder and an Add Widget affordance on first mount', () => {
@@ -373,5 +400,146 @@ describe('DashboardEditorPage widget library (US-328)', () => {
     expect(widgets[0].getAttribute('data-widget-y')).toBe('0');
     expect(widgets[1].getAttribute('data-widget-y')).toBe('2');
     expect(widgets[2].getAttribute('data-widget-y')).toBe('4');
+  });
+
+  // ---------------------------------------------------------------
+  // US-329 Save / Load / Share
+  // ---------------------------------------------------------------
+
+  it('Save creates a new dashboard, surfaces "Saved", and exposes a share link', async () => {
+    apiMocks.createDashboard.mockResolvedValue({
+      id: 'dash-1',
+      name: 'My Dashboard',
+      createdBy: 'user:alice',
+      isPublic: false,
+      definition: { widgets: [] },
+      createdAt: '2026-04-28T00:00:00Z',
+      updatedAt: '2026-04-28T00:00:00Z',
+    });
+    const onSaved = vi.fn();
+    render(<DashboardEditorPage onSaved={onSaved} />);
+    fireEvent.change(screen.getByTestId('dashboard-name-input'), {
+      target: { value: 'My Dashboard' },
+    });
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dashboard-save'));
+    });
+    expect(apiMocks.createDashboard).toHaveBeenCalledTimes(1);
+    expect(apiMocks.createDashboard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'My Dashboard',
+        definition: expect.objectContaining({
+          widgets: expect.arrayContaining([
+            expect.objectContaining({ type: 'stat' }),
+          ]),
+        }),
+      }),
+    );
+    expect(onSaved).toHaveBeenCalledWith('dash-1');
+    expect(screen.getByTestId('dashboard-save-status')).toHaveAttribute(
+      'data-save-status',
+      'saved',
+    );
+    expect(screen.getByTestId('dashboard-share')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-share-url').textContent).toContain(
+      '/dashboards/dash-1',
+    );
+  });
+
+  it('updates an existing saved dashboard via PUT instead of POST', async () => {
+    apiMocks.getDashboard.mockResolvedValue({
+      id: 'dash-2',
+      name: 'Loaded',
+      createdBy: 'user:alice',
+      isPublic: true,
+      definition: {
+        widgets: [
+          {
+            id: 'w-1',
+            type: 'text',
+            title: 'Hello',
+            content: 'Hi',
+            x: 0,
+            y: 0,
+            w: 4,
+            h: 2,
+          },
+        ],
+      },
+      createdAt: '2026-04-28T00:00:00Z',
+      updatedAt: '2026-04-28T00:00:00Z',
+    });
+    apiMocks.updateDashboard.mockResolvedValue({
+      id: 'dash-2',
+      name: 'Loaded',
+      createdBy: 'user:alice',
+      isPublic: true,
+      definition: { widgets: [] },
+      createdAt: '2026-04-28T00:00:00Z',
+      updatedAt: '2026-04-28T00:00:01Z',
+    });
+    render(<DashboardEditorPage id="dash-2" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-widget')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('dashboard-name-input')).toHaveValue('Loaded');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dashboard-save'));
+    });
+    expect(apiMocks.createDashboard).not.toHaveBeenCalled();
+    expect(apiMocks.updateDashboard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'dash-2', name: 'Loaded', isPublic: true }),
+    );
+  });
+
+  it('renders the share link copy affordance only after a dashboard has an id', () => {
+    render(<DashboardEditorPage />);
+    expect(screen.queryByTestId('dashboard-share')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('dashboard-share-url')).not.toBeInTheDocument();
+  });
+
+  it('exposes the saved id on the page wrapper for the route to inspect', async () => {
+    apiMocks.getDashboard.mockResolvedValue({
+      id: 'dash-3',
+      name: 'X',
+      createdBy: 'user:alice',
+      isPublic: false,
+      definition: { widgets: [] },
+      createdAt: '2026-04-28T00:00:00Z',
+      updatedAt: '2026-04-28T00:00:00Z',
+    });
+    render(<DashboardEditorPage id="dash-3" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-editor-page')).toHaveAttribute(
+        'data-dashboard-id',
+        'dash-3',
+      );
+    });
+  });
+
+  it('populates a Load picker from listDashboards()', async () => {
+    apiMocks.listDashboards.mockResolvedValue({
+      dashboards: [
+        {
+          id: 'dash-a',
+          name: 'Alpha',
+          createdBy: 'user:alice',
+          isPublic: false,
+          definition: { widgets: [] },
+          createdAt: '2026-04-28T00:00:00Z',
+          updatedAt: '2026-04-28T00:00:00Z',
+        },
+      ],
+    });
+    const onSaved = vi.fn();
+    render(<DashboardEditorPage onSaved={onSaved} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-load-select')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('dashboard-load-select'), {
+      target: { value: 'dash-a' },
+    });
+    expect(onSaved).toHaveBeenCalledWith('dash-a');
   });
 });

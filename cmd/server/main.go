@@ -52,6 +52,7 @@ import (
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/actiontemplates"
+	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -324,6 +325,10 @@ type ServerDeps struct {
 	// and the Action Console's templates panel hides itself when the
 	// list endpoint 404s.
 	ActionTemplatesStore actiontemplates.Store
+	// US-329: Dashboards per-user CRUD store with optional public
+	// sharing. nil in degraded mode so /api/v2/dashboards/* routes stay
+	// unmounted; the Dashboard Editor falls back to ephemeral state.
+	DashboardsStore dashboards.Store
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1135,6 +1140,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.ActionTemplatesStore != nil {
 			actiontemplates.NewHandler(deps.ActionTemplatesStore).RegisterRoutes(api)
 		}
+
+		// US-329: Dashboards per-user CRUD with optional public
+		// sharing. Mounts only when the backing store is wired (PG
+		// mode); degraded-mode deployments leave the
+		// /api/v2/dashboards/* routes unregistered and the Dashboard
+		// Editor falls back to ephemeral in-memory state.
+		if deps.DashboardsStore != nil {
+			dashboards.NewHandler(deps.DashboardsStore).RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1490,6 +1504,11 @@ func main() {
 		// /api/v2/action-templates/* routes used by the Action Console.
 		deps.ActionTemplatesStore = newPGActionTemplatesStore(pool)
 		log.Printf("[actiontemplates] store wired")
+
+		// US-329: Dashboards store. Backs the /api/v2/dashboards/*
+		// routes used by the Dashboard Editor for save / load / share.
+		deps.DashboardsStore = newPGDashboardsStore(pool)
+		log.Printf("[dashboards] store wired")
 
 		// US-289: Pipeline cron scheduler. Walks the store at boot and
 		// arms a robfig/cron entry for every enabled pipeline carrying a
