@@ -103,6 +103,15 @@ export function ExportButton({ objectType, query }: ExportButtonProps) {
           >
             Export as JSON
           </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => handleExport('xlsx')}
+            data-testid="export-xlsx"
+            className="block w-full text-left px-3 py-2 text-xs font-sans text-text-primary hover:bg-bg-secondary transition-colors"
+          >
+            Export as Excel
+          </button>
         </div>
       )}
 

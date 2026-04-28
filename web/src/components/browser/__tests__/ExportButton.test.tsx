@@ -51,12 +51,13 @@ describe('ExportButton', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows dropdown with CSV and JSON options when clicked', () => {
+  it('shows dropdown with CSV, JSON, and Excel options when clicked', () => {
     renderButton();
     expect(screen.queryByTestId('export-csv')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('export-button'));
     expect(screen.getByTestId('export-csv')).toBeInTheDocument();
     expect(screen.getByTestId('export-json')).toBeInTheDocument();
+    expect(screen.getByTestId('export-xlsx')).toBeInTheDocument();
   });
 
   it('invokes exportObjects with "csv" when CSV option clicked', async () => {
@@ -94,6 +95,25 @@ describe('ExportButton', () => {
     await waitFor(() => {
       expect(exportObjects).toHaveBeenCalledWith(
         'json',
+        expect.anything(),
+        objectType,
+        expect.any(Function),
+      );
+    });
+  });
+
+  it('invokes exportObjects with "xlsx" when Excel option clicked', async () => {
+    vi.mocked(exportObjects).mockResolvedValue({
+      filename: 'Employee-export.xlsx',
+      count: 0,
+    });
+    renderButton();
+    fireEvent.click(screen.getByTestId('export-button'));
+    fireEvent.click(screen.getByTestId('export-xlsx'));
+
+    await waitFor(() => {
+      expect(exportObjects).toHaveBeenCalledWith(
+        'xlsx',
         expect.anything(),
         objectType,
         expect.any(Function),

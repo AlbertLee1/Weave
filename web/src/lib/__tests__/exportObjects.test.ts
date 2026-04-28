@@ -7,7 +7,10 @@ import {
   fetchAllForExport,
   exportObjects,
   triggerDownload,
+  buildXlsxWorkbook,
+  computeAggregationSheet,
 } from '../exportObjects';
+import * as XLSX from 'xlsx';
 import type { ObjectType, WireObject } from '../../api/types';
 
 vi.mock('../../api/objects', () => ({
@@ -270,6 +273,213 @@ describe('exportObjects (integration)', () => {
     expect(parsed.metadata.objectType).toBe('Employee');
     expect(parsed.metadata.count).toBe(1);
     expect(typeof parsed.metadata.exportedAt).toBe('string');
+  });
+});
+
+describe('computeAggregationSheet', () => {
+  const objectType: ObjectType = {
+    rid: 'ri',
+    apiName: 'Employee',
+    displayName: 'Employee',
+    primaryKey: 'id',
+    status: 'ACTIVE',
+    visibility: 'NORMAL',
+    properties: {
+      id: { dataType: { type: 'string' }, rid: 'ri.id' },
+      name: { dataType: { type: 'string' }, rid: 'ri.name' },
+      salary: { dataType: { type: 'integer' }, rid: 'ri.salary' },
+    },
+  };
+
+  it('returns count + non-null + distinct for every column', () => {
+    const rows: WireObject[] = [
+      { __rid: 'r1', __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice', salary: 100 },
+      { __rid: 'r2', __primaryKey: '2', __apiName: 'Employee', id: '2', name: 'Bob', salary: null },
+      { __rid: 'r3', __primaryKey: '3', __apiName: 'Employee', id: '3', name: 'Alice', salary: 200 },
+    ];
+    const sheet = computeAggregationSheet(rows, ['id', 'name', 'salary'], objectType);
+    // Header row
+    expect(sheet[0]).toEqual([
+      'column',
+      'count',
+      'nonNull',
+      'distinct',
+      'min',
+      'max',
+      'sum',
+      'avg',
+    ]);
+    const byCol = new Map(sheet.slice(1).map((r) => [r[0], r]));
+    expect(byCol.get('id')?.slice(1, 4)).toEqual([3, 3, 3]);
+    // string-typed name has count/nonNull/distinct only; numeric stats blank
+    expect(byCol.get('name')).toEqual(['name', 3, 3, 2, '', '', '', '']);
+    // numeric salary computes min/max/sum/avg over non-null values
+    expect(byCol.get('salary')).toEqual(['salary', 3, 2, 2, 100, 200, 300, 150]);
+  });
+
+  it('emits empty stats when no rows are exported', () => {
+    const sheet = computeAggregationSheet([], ['id', 'salary'], objectType);
+    expect(sheet[0][0]).toBe('column');
+    expect(sheet).toHaveLength(3);
+    expect(sheet[1]).toEqual(['id', 0, 0, 0, '', '', '', '']);
+    expect(sheet[2]).toEqual(['salary', 0, 0, 0, '', '', '', '']);
+  });
+});
+
+describe('buildXlsxWorkbook', () => {
+  const objectType: ObjectType = {
+    rid: 'ri',
+    apiName: 'Employee',
+    displayName: 'Employee',
+    primaryKey: 'id',
+    status: 'ACTIVE',
+    visibility: 'NORMAL',
+    properties: {
+      id: { dataType: { type: 'string' }, rid: 'ri.id' },
+      name: { dataType: { type: 'string' }, rid: 'ri.name' },
+      salary: { dataType: { type: 'integer' }, rid: 'ri.salary' },
+    },
+  };
+
+  it('produces a workbook with a Data sheet and a Summary sheet', () => {
+    const rows: WireObject[] = [
+      { __rid: 'r1', __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice', salary: 100 },
+      { __rid: 'r2', __primaryKey: '2', __apiName: 'Employee', id: '2', name: 'Bob', salary: 200 },
+    ];
+    const wb = buildXlsxWorkbook(rows, ['id', 'name', 'salary'], objectType);
+    expect(wb.SheetNames).toEqual(['Data', 'Summary']);
+
+    const dataSheet = wb.Sheets['Data'];
+    const dataRows = XLSX.utils.sheet_to_json(dataSheet, { header: 1 }) as unknown[][];
+    expect(dataRows[0]).toEqual(['id', 'name', 'salary']);
+    expect(dataRows).toHaveLength(3);
+    expect(dataRows[1]).toEqual(['1', 'Alice', 100]);
+
+    const summarySheet = wb.Sheets['Summary'];
+    const summaryRows = XLSX.utils.sheet_to_json(summarySheet, { header: 1 }) as unknown[][];
+    expect(summaryRows[0]).toEqual([
+      'column',
+      'count',
+      'nonNull',
+      'distinct',
+      'min',
+      'max',
+      'sum',
+      'avg',
+    ]);
+    const salaryRow = summaryRows.find((r) => r[0] === 'salary');
+    expect(salaryRow).toEqual(['salary', 2, 2, 2, 100, 200, 300, 150]);
+  });
+
+  it('serialises object/array cells as JSON text in the Data sheet', () => {
+    const rows: WireObject[] = [
+      {
+        __rid: 'r1',
+        __primaryKey: '1',
+        __apiName: 'Employee',
+        id: '1',
+        tags: ['a', 'b'],
+        meta: { k: 1 },
+      } as WireObject,
+    ];
+    const ot: ObjectType = {
+      ...objectType,
+      properties: {
+        id: { dataType: { type: 'string' }, rid: 'ri.id' },
+        tags: { dataType: { type: 'array', itemType: { type: 'string' } }, rid: 'ri.tags' },
+        meta: { dataType: { type: 'struct' }, rid: 'ri.meta' },
+      },
+    };
+    const wb = buildXlsxWorkbook(rows, ['id', 'tags', 'meta'], ot);
+    const dataRows = XLSX.utils.sheet_to_json(wb.Sheets['Data'], { header: 1 }) as unknown[][];
+    expect(dataRows[1]).toEqual(['1', '["a","b"]', '{"k":1}']);
+  });
+});
+
+describe('exportObjects xlsx', () => {
+  let createdUrls: string[] = [];
+  const blobs: Blob[] = [];
+  const createdObjectUrl = vi.fn((blob: Blob) => {
+    const fakeUrl = `blob:fake-${createdUrls.length}`;
+    createdUrls.push(fakeUrl);
+    blobs.push(blob);
+    return fakeUrl;
+  });
+  const revokeObjectUrl = vi.fn();
+  const anchors: HTMLAnchorElement[] = [];
+
+  beforeEach(() => {
+    vi.mocked(listObjects).mockReset();
+    vi.mocked(searchObjects).mockReset();
+    createdUrls = [];
+    blobs.length = 0;
+    anchors.length = 0;
+
+    vi.stubGlobal('URL', {
+      createObjectURL: createdObjectUrl,
+      revokeObjectURL: revokeObjectUrl,
+    });
+
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const el = origCreate(tagName) as HTMLAnchorElement;
+      if (tagName === 'a') {
+        anchors.push(el);
+        el.click = vi.fn();
+      }
+      return el;
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const objectType: ObjectType = {
+    rid: 'ri',
+    apiName: 'Employee',
+    displayName: 'Employee',
+    primaryKey: 'id',
+    status: 'ACTIVE',
+    visibility: 'NORMAL',
+    properties: {
+      id: { dataType: { type: 'string' }, rid: 'ri.id' },
+      name: { dataType: { type: 'string' }, rid: 'ri.name' },
+    },
+  };
+
+  it('produces a Data + Summary workbook for the xlsx format', async () => {
+    vi.mocked(listObjects).mockResolvedValueOnce({
+      data: [
+        { __rid: 'r1', __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice' },
+      ],
+    });
+
+    const result = await exportObjects(
+      'xlsx',
+      {
+        ontologyApiName: 'ont',
+        objectType: 'Employee',
+        select: ['id', 'name'],
+        hasActiveSearch: false,
+      },
+      objectType,
+    );
+
+    expect(result.filename).toBe('Employee-export.xlsx');
+    expect(result.count).toBe(1);
+    expect(anchors[0].download).toBe('Employee-export.xlsx');
+
+    expect(blobs).toHaveLength(1);
+    const buf = await blobs[0].arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    expect(wb.SheetNames).toEqual(['Data', 'Summary']);
+    const dataRows = XLSX.utils.sheet_to_json(wb.Sheets['Data'], {
+      header: 1,
+    }) as unknown[][];
+    expect(dataRows[0]).toEqual(['id', 'name']);
+    expect(dataRows[1]).toEqual(['1', 'Alice']);
   });
 });
 

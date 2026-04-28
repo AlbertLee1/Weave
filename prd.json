@@ -1917,8 +1917,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 134,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "xlsx@0.18.5 SheetJS in web/package.json; exportObjects 'xlsx' format builds workbook with two sheets — Data (rows, headers from objectType.properties; object/array cells JSON-stringified) + Summary (column,count,nonNull,distinct,min,max,sum,avg; numeric stats only on integer/long/short/byte/double/float/decimal). buildXlsxWorkbook + computeAggregationSheet exported for unit tests. ExportButton dropdown gained an 'Export as Excel' menuitem (data-testid=export-xlsx). vitest 723/723 + tsc clean (3 pre-existing errors unrelated). Dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-334",
