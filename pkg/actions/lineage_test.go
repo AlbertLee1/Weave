@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
@@ -27,13 +28,22 @@ func (f *fakeLineageStore) InsertLineageEdge(_ context.Context, edge *oms.Lineag
 		return f.err
 	}
 	cp := *edge
+	if cp.Timestamp.IsZero() {
+		// Match the LineageStore contract: implementations back-fill a
+		// non-zero Timestamp when callers leave it zero.
+		cp.Timestamp = time.Now()
+	}
 	f.edges = append(f.edges, cp)
+	edge.Timestamp = cp.Timestamp
 	return nil
 }
 
 func (f *fakeLineageStore) ListUpstreamLineage(_ context.Context, downstream string, _ int) ([]oms.LineageEdge, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
 	var out []oms.LineageEdge
 	for _, e := range f.edges {
 		if e.DownstreamRID == downstream {
@@ -46,6 +56,9 @@ func (f *fakeLineageStore) ListUpstreamLineage(_ context.Context, downstream str
 func (f *fakeLineageStore) ListDownstreamLineage(_ context.Context, upstream string, _ int) ([]oms.LineageEdge, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
 	var out []oms.LineageEdge
 	for _, e := range f.edges {
 		if e.UpstreamRID == upstream {
@@ -53,6 +66,21 @@ func (f *fakeLineageStore) ListDownstreamLineage(_ context.Context, upstream str
 		}
 	}
 	return out, nil
+}
+
+// addEdge is a setup helper used by impact tests (US-301) to seed lineage
+// rows directly without threading a context through every call site. The
+// shape mirrors lineage_test.go's snapshot — guarded by the same mutex so
+// concurrent test setup stays race-free under -race. Defaults Timestamp
+// to time.Now() to match the LineageStore contract for callers that omit
+// it.
+func (f *fakeLineageStore) addEdge(e oms.LineageEdge) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e.Timestamp.IsZero() {
+		e.Timestamp = time.Now()
+	}
+	f.edges = append(f.edges, e)
 }
 
 func (f *fakeLineageStore) snapshot() []oms.LineageEdge {

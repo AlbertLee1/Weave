@@ -7875,6 +7875,104 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/actions/{rid}/impact:
+    get:
+      operationId: getActionImpact
+      summary: List objects affected by a specific action invocation
+      description: |
+        Returns the impact summary for the action-log row identified by
+        `{rid}`. Each row in `lineage_edges` whose `upstream_rid` matches
+        is rendered as one ImpactObject describing the affected object,
+        the operation (CREATE / MODIFY / DELETE), and when the edge was
+        recorded.
+
+        When the action-log row can be loaded (parsed id from the RID's
+        suffix) it is returned under `actionLog` so callers can correlate
+        the action with its parameters and timestamp without a second
+        roundtrip. A missing log silently omits the field — the lineage
+        view is the authoritative answer.
+      tags: [Actions, Lineage]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          schema:
+            type: string
+          description: |
+            Action-log RID — must match the prefix
+            `ri.actions.main.action-log.` produced by the executor when
+            it stamps a lineage edge. Other RID shapes are rejected with
+            `InvalidActionRID` 400.
+      responses:
+        "200":
+          description: Impact summary rooted at the action-log RID.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [actionRid, objects]
+                properties:
+                  actionRid:
+                    type: string
+                    description: Echo of the path RID.
+                  actionLog:
+                    type: object
+                    description: |
+                      The underlying action-log row (best-effort
+                      enrichment). Omitted when the row cannot be loaded.
+                  objects:
+                    type: array
+                    description: |
+                      One entry per `lineage_edges` row whose
+                      `upstream_rid` matches the action-log RID. Always
+                      a non-null array so SDKs can read `len(objects)`
+                      without a nil-check.
+                    items:
+                      type: object
+                      required: [rid, timestamp]
+                      properties:
+                        rid:
+                          type: string
+                          description: downstream_rid of the lineage edge.
+                        objectType:
+                          type: string
+                          description: |
+                            Decoded ObjectType API name when the RID
+                            matches the canonical
+                            `ri.phonograph2-objects.main.object.<type>.<pk>`
+                            shape. Empty string for legacy / non-object
+                            downstream RIDs.
+                        primaryKey:
+                          type: string
+                          description: |
+                            Decoded primary key (may itself contain
+                            dots when composite keys are in play).
+                        operation:
+                          type: string
+                          description: |
+                            Free-form operation discriminator
+                            (CREATE / MODIFY / DELETE / ...).
+                        timestamp:
+                          type: string
+                          format: date-time
+                  truncated:
+                    type: boolean
+                    description: |
+                      Set when the per-request edge fanout hit its
+                      window limit (200). Additional impacted objects
+                      may exist beyond what is reported here.
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Lineage store is not configured (degraded mode without PostgreSQL).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/admin/auditEvents:
     get:
       operationId: listAuditEvents

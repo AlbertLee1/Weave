@@ -240,6 +240,14 @@ func (e *Executor) SetLineageStore(s oms.LineageStore) {
 	e.lineageStore = s
 }
 
+// LineageStore returns the wired lineage store (may be nil in degraded
+// mode). Exported so the impact handler (US-301) can detect "no store
+// wired" and degrade gracefully without reaching into the Executor's
+// internals.
+func (e *Executor) LineageStore() oms.LineageStore {
+	return e.lineageStore
+}
+
 // SetActionApprovalStore attaches the approval-workflow store used by the
 // Apply handler to enqueue pending approvals when ActionType.RequiresApproval
 // is set (US-242). When nil the RequiresApproval flag is ignored and the

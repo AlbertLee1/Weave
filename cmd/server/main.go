@@ -701,6 +701,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/approvals", actionHandler.ListApprovals)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/approve", actionHandler.ApproveAction)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/approvals/{approvalId}/reject", actionHandler.RejectAction)
+			// US-301: Action 变更追踪. Top-level (not nested under
+			// {ontologyApiName}) because the action-log RID is self-
+			// describing — same shape as the lineage handler at
+			// /api/v2/objects/{rid}/lineage. Returns 404
+			// ImpactNotConfigured when no LineageStore is wired.
+			api.Get("/api/v2/actions/{rid}/impact", actionHandler.Impact)
 		}
 
 		// US-061/062: Stream ingest endpoint — bypasses Action rules, publishes
