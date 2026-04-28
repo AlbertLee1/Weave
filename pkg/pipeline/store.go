@@ -26,6 +26,11 @@ type Store interface {
 	ListPipelines(ctx context.Context, createdBy string) ([]*Pipeline, error)
 	UpdatePipeline(ctx context.Context, id string, upd PipelineUpdate) error
 	DeletePipeline(ctx context.Context, id string) error
+
+	// US-298 — Pipeline 执行历史 API.
+	AppendPipelineRun(ctx context.Context, run *PipelineRun) error
+	GetPipelineRun(ctx context.Context, pipelineID string, runID int64) (*PipelineRun, error)
+	ListPipelineRuns(ctx context.Context, pipelineID string, opts ListRunsOptions) (*ListRunsPage, error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -33,6 +38,8 @@ type Store interface {
 type MemoryStore struct {
 	mu        sync.RWMutex
 	pipelines map[string]*Pipeline
+	runs      []*PipelineRun
+	lastRunID int64
 }
 
 // NewMemoryStore returns an empty MemoryStore.
@@ -130,6 +137,9 @@ func (s *MemoryStore) UpdatePipeline(_ context.Context, id string, upd PipelineU
 }
 
 // DeletePipeline removes the row. ErrPipelineNotFound when missing.
+// Cascades into the run history so re-creating a pipeline under the same
+// id starts with an empty run list — mirrors the ON DELETE CASCADE FK on
+// the PG pipeline_runs table.
 func (s *MemoryStore) DeletePipeline(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,5 +147,14 @@ func (s *MemoryStore) DeletePipeline(_ context.Context, id string) error {
 		return ErrPipelineNotFound
 	}
 	delete(s.pipelines, id)
+	if len(s.runs) > 0 {
+		kept := s.runs[:0]
+		for _, r := range s.runs {
+			if r.PipelineID != id {
+				kept = append(kept, r)
+			}
+		}
+		s.runs = kept
+	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -50,6 +51,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/pipelines/{pipelineId}", h.GetPipeline)
 	r.Put("/api/v2/pipelines/{pipelineId}", h.UpdatePipeline)
 	r.Delete("/api/v2/pipelines/{pipelineId}", h.DeletePipeline)
+
+	// US-298 — Pipeline 执行历史 API.
+	r.Get("/api/v2/pipelines/{pipelineId}/runs", h.ListPipelineRuns)
+	r.Get("/api/v2/pipelines/{pipelineId}/runs/{runId}", h.GetPipelineRun)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
@@ -380,4 +385,137 @@ func userHasAdminRole(u *auth.User) bool {
 		}
 	}
 	return false
+}
+
+// listPipelineRunsResponse is the wire shape for the run-history list
+// endpoint. NextCursor is a string (encoded run id) so SDK callers can
+// treat it as opaque — the handler keeps the rule that "non-empty means
+// more pages remain".
+type listPipelineRunsResponse struct {
+	Runs       []*PipelineRun `json:"runs"`
+	NextCursor string         `json:"nextCursor,omitempty"`
+}
+
+// ListPipelineRuns GET /api/v2/pipelines/{pipelineId}/runs.
+func (h *Handler) ListPipelineRuns(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id, ok := h.pipelineIDParam(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := h.lookupPipelineOwned(r.Context(), w, id, user); !ok {
+		return
+	}
+	limit, ok := parseRunLimit(w, r.URL.Query().Get("limit"))
+	if !ok {
+		return
+	}
+	cursor, ok := parseRunCursor(w, r.URL.Query().Get("cursor"))
+	if !ok {
+		return
+	}
+	page, err := h.store.ListPipelineRuns(r.Context(), id, ListRunsOptions{Limit: limit, Cursor: cursor})
+	if err != nil {
+		if errors.Is(err, ErrPipelineNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("PipelineNotFound", map[string]string{"id": id}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("PipelineRunListFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	resp := listPipelineRunsResponse{Runs: page.Runs}
+	if resp.Runs == nil {
+		resp.Runs = []*PipelineRun{}
+	}
+	if page.NextCursor != 0 {
+		resp.NextCursor = strconv.FormatInt(page.NextCursor, 10)
+	}
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// GetPipelineRun GET /api/v2/pipelines/{pipelineId}/runs/{runId}.
+func (h *Handler) GetPipelineRun(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id, ok := h.pipelineIDParam(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := h.lookupPipelineOwned(r.Context(), w, id, user); !ok {
+		return
+	}
+	runID, ok := parseRunID(w, chi.URLParam(r, "runId"))
+	if !ok {
+		return
+	}
+	run, err := h.store.GetPipelineRun(r.Context(), id, runID)
+	if err != nil {
+		if errors.Is(err, ErrPipelineRunNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("PipelineRunNotFound", map[string]string{
+				"pipelineId": id,
+				"runId":      strconv.FormatInt(runID, 10),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("PipelineRunLookupFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, run)
+}
+
+// parseRunLimit parses an optional ?limit= query parameter. Empty string
+// = use the store-level default; out-of-range = typed 400.
+func parseRunLimit(w http.ResponseWriter, raw string) (int, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 || v > maxRunPageSize {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidPipelineRunLimit", map[string]string{
+			"reason": "limit must be a non-negative integer no greater than " + strconv.Itoa(maxRunPageSize),
+			"limit":  raw,
+		}))
+		return 0, false
+	}
+	return v, true
+}
+
+// parseRunCursor parses an optional ?cursor= query parameter. Empty
+// string = no cursor; non-numeric or non-positive = typed 400.
+func parseRunCursor(w http.ResponseWriter, raw string) (int64, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v <= 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidPipelineRunCursor", map[string]string{
+			"reason": "cursor must be a positive integer",
+			"cursor": raw,
+		}))
+		return 0, false
+	}
+	return v, true
+}
+
+// parseRunID parses the path-bound {runId} segment. Non-numeric or
+// non-positive = typed 400.
+func parseRunID(w http.ResponseWriter, raw string) (int64, bool) {
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v <= 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidPipelineRunID", map[string]string{
+			"reason": "runId must be a positive integer",
+			"runId":  raw,
+		}))
+		return 0, false
+	}
+	return v, true
 }

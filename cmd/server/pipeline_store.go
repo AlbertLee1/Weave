@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -226,6 +227,160 @@ func (s *pgPipelineStore) DeletePipeline(ctx context.Context, id string) error {
 		return pipeline.ErrPipelineNotFound
 	}
 	return nil
+}
+
+// AppendPipelineRun inserts one execution row and stamps run.ID +
+// run.CreatedAt back onto the caller's pointer. Returns
+// pipeline.ErrPipelineNotFound on FK violation so the caller can route
+// to a 404.
+func (s *pgPipelineStore) AppendPipelineRun(ctx context.Context, run *pipeline.PipelineRun) error {
+	if run == nil {
+		return errors.New("pipeline: run is nil")
+	}
+	resultJSON, err := json.Marshal(run.Result)
+	if err != nil {
+		return err
+	}
+	if len(resultJSON) == 0 || string(resultJSON) == "null" {
+		resultJSON = []byte("{}")
+	}
+	startedAt := run.StartedAt
+	if startedAt.IsZero() {
+		startedAt = run.CreatedAt
+	}
+	err = s.pool.QueryRow(ctx,
+		`INSERT INTO pipeline_runs
+		   (pipeline_id, status, started_at, finished_at, error_message, run_result, triggered_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, created_at, started_at`,
+		run.PipelineID, run.Status, startedAt, run.FinishedAt,
+		run.ErrorMessage, resultJSON, run.TriggeredBy,
+	).Scan(&run.ID, &run.CreatedAt, &run.StartedAt)
+	if err != nil {
+		if strings.Contains(err.Error(), "violates foreign key constraint") {
+			return pipeline.ErrPipelineNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// GetPipelineRun fetches one run scoped to pipelineID.
+// pipeline.ErrPipelineRunNotFound when missing OR when the row exists
+// under a different pipeline (don't leak existence across pipelines).
+func (s *pgPipelineStore) GetPipelineRun(ctx context.Context, pipelineID string, runID int64) (*pipeline.PipelineRun, error) {
+	var (
+		run         pipeline.PipelineRun
+		resultRaw   []byte
+		finishedAt  *time.Time
+		startedAt   time.Time
+		createdAt   time.Time
+		errMessage  string
+		triggeredBy string
+		status      string
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, pipeline_id, COALESCE(status, ''), started_at, finished_at,
+		        COALESCE(error_message, ''),
+		        COALESCE(run_result, '{}'::jsonb),
+		        COALESCE(triggered_by, ''), created_at
+		 FROM pipeline_runs WHERE id = $1 AND pipeline_id = $2`, runID, pipelineID).
+		Scan(&run.ID, &run.PipelineID, &status, &startedAt, &finishedAt,
+			&errMessage, &resultRaw, &triggeredBy, &createdAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, pipeline.ErrPipelineRunNotFound
+		}
+		return nil, err
+	}
+	run.Status = status
+	run.StartedAt = startedAt
+	run.FinishedAt = finishedAt
+	run.ErrorMessage = errMessage
+	run.TriggeredBy = triggeredBy
+	run.CreatedAt = createdAt
+	if len(resultRaw) > 0 && string(resultRaw) != "{}" {
+		var rr pipeline.RunResult
+		if err := json.Unmarshal(resultRaw, &rr); err == nil {
+			run.Result = &rr
+		}
+	}
+	return &run, nil
+}
+
+// ListPipelineRuns returns runs for pipelineID newest-first (descending
+// id). Cursor is exclusive: when non-zero, only rows with id < cursor
+// are returned. pipeline.ErrPipelineNotFound when the pipeline does not
+// exist.
+func (s *pgPipelineStore) ListPipelineRuns(ctx context.Context, pipelineID string, opts pipeline.ListRunsOptions) (*pipeline.ListRunsPage, error) {
+	// Confirm the pipeline exists so an empty result is unambiguous to
+	// the handler (404 vs 200 + []).
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM pipelines WHERE id = $1)`, pipelineID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, pipeline.ErrPipelineNotFound
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	// Fetch limit+1 so we can compute hasMore without an extra COUNT.
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	q := `SELECT id, pipeline_id, COALESCE(status, ''), started_at, finished_at,
+	             COALESCE(error_message, ''),
+	             COALESCE(run_result, '{}'::jsonb),
+	             COALESCE(triggered_by, ''), created_at
+	      FROM pipeline_runs WHERE pipeline_id = $1`
+	if opts.Cursor > 0 {
+		rows, err = s.pool.Query(ctx,
+			q+` AND id < $2 ORDER BY id DESC LIMIT $3`,
+			pipelineID, opts.Cursor, limit+1)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			q+` ORDER BY id DESC LIMIT $2`,
+			pipelineID, limit+1)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	page := &pipeline.ListRunsPage{Runs: make([]*pipeline.PipelineRun, 0, limit)}
+	for rows.Next() {
+		var (
+			run        pipeline.PipelineRun
+			resultRaw  []byte
+			finishedAt *time.Time
+		)
+		if err := rows.Scan(&run.ID, &run.PipelineID, &run.Status, &run.StartedAt, &finishedAt,
+			&run.ErrorMessage, &resultRaw, &run.TriggeredBy, &run.CreatedAt); err != nil {
+			return nil, err
+		}
+		run.FinishedAt = finishedAt
+		if len(resultRaw) > 0 && string(resultRaw) != "{}" {
+			var rr pipeline.RunResult
+			if err := json.Unmarshal(resultRaw, &rr); err == nil {
+				run.Result = &rr
+			}
+		}
+		page.Runs = append(page.Runs, &run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(page.Runs) > limit {
+		page.Runs = page.Runs[:limit]
+		page.NextCursor = page.Runs[len(page.Runs)-1].ID
+	}
+	return page, nil
 }
 
 func coalesceInputs(in []pipeline.Input) []pipeline.Input {

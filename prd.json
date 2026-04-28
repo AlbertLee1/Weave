@@ -1427,8 +1427,8 @@
         "Tests pass"
       ],
       "priority": 99,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented pipeline_runs table (migration 000072), Store interface methods (Append/Get/List), keyset-paginated GET /api/v2/pipelines/{pipelineId}/runs and detail GET /api/v2/pipelines/{pipelineId}/runs/{runId}; PG store + memory store both pass."
     },
     {
       "id": "US-299",
