@@ -192,6 +192,10 @@ func (h *Hub) handleSubscribeObjectSet(c *Connection, raw json.RawMessage) Messa
 		return Message{Type: "error", Error: err.Error()}
 	}
 
+	// Lock order: hub.mu → conn.subMu (resolver lookup ran first so we don't
+	// re-enter h.mu).
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
 
@@ -204,6 +208,7 @@ func (h *Hub) handleSubscribeObjectSet(c *Connection, raw json.RawMessage) Messa
 
 	sub := newObjectSetSubscription(def, req.Select)
 	c.subscriptions[sub.ID] = sub
+	h.addToIndexLocked(c, sub)
 
 	return Message{
 		Type:           "subscribed",

@@ -1539,8 +1539,8 @@
         "Tests pass"
       ],
       "priority": 107,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Hub gains an objectType-keyed subIndex (map[string][]*indexedSub). Subscribe / unsubscribe / disconnect all maintain the index under hub.mu so HandleObjectChange snapshots only the bucket for the event's objectType — dispatch is O(K) where K is subs registered for that single type, not O(total connections × subs). Lock order is hub.mu → conn.subMu in every mutating handler (handleSubscribe / handleSubscribeObjectSet / handleSubscribeAggregation / handleUnsubscribe) matching the order HandleObjectChange uses, so the cross-pair never deadlocks. ObjectSet definition subscriptions register under the deduped UNION of every leaf objectType reachable through base/static/asType/filter/withProperties/union/intersect/subtract — superset routing keeps matchesDefinition responsible for the precise gate while routing stays a single hash lookup. unregister also removes routing entries when a connection drops. 7 new unit + integration tests verify (1) subscriptionObjectTypes returns the expected key set per subscription shape, (2) subscribe/unsubscribe/disconnect leave the index empty, (3) 50 connections each on a unique objectType see exactly one event for the targeted type with zero leakage to others, (4) union definition routes to BOTH child types AND ignores non-routed types."
     },
     {
       "id": "US-307",

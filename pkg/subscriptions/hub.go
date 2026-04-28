@@ -102,6 +102,7 @@ func (c *Connection) drainOverflow(ctx context.Context) {
 type Hub struct {
 	mu              sync.Mutex
 	conns           map[string]*Connection
+	subIndex        map[string][]*indexedSub // objectType → routing fanout list (US-306)
 	ctx             context.Context
 	stop            context.CancelFunc
 	config          HubConfig
@@ -120,10 +121,11 @@ func NewHubWithConfig(cfg HubConfig) *Hub {
 	cfg.applyDefaults()
 	ctx, stop := context.WithCancel(context.Background())
 	return &Hub{
-		conns:  make(map[string]*Connection),
-		ctx:    ctx,
-		stop:   stop,
-		config: cfg,
+		conns:    make(map[string]*Connection),
+		subIndex: make(map[string][]*indexedSub),
+		ctx:      ctx,
+		stop:     stop,
+		config:   cfg,
 	}
 }
 
@@ -310,6 +312,9 @@ func (h *Hub) register(c *Connection) {
 func (h *Hub) unregister(connID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if c, ok := h.conns[connID]; ok {
+		h.removeConnectionFromIndexLocked(c)
+	}
 	delete(h.conns, connID)
 }
 

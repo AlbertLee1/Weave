@@ -532,9 +532,15 @@ func (h *Hub) handleSubscribeAggregation(c *Connection, raw json.RawMessage) Mes
 		}
 	}
 
+	// Lock order: hub.mu → conn.subMu so the routing index update and
+	// HandleObjectChange dispatch agree on lock acquisition order. Both
+	// indexResolver() and the seed call ran before this so we don't re-enter
+	// h.mu.
+	h.mu.Lock()
 	c.subMu.Lock()
 	if len(c.subscriptions) >= MaxSubscriptionsPerConnection {
 		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per connection reached (10)",
@@ -542,7 +548,9 @@ func (h *Hub) handleSubscribeAggregation(c *Connection, raw json.RawMessage) Mes
 	}
 	sub := newAggregationSubscription(req, agg)
 	c.subscriptions[sub.ID] = sub
+	h.addToIndexLocked(c, sub)
 	c.subMu.Unlock()
+	h.mu.Unlock()
 
 	// Push the subscribed reply BEFORE the initial snapshot so clients see
 	// "subscribed → aggregationChanged" in order. Returning Message{} signals

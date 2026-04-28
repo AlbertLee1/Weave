@@ -107,68 +107,54 @@ func editTypeToState(editType string) string {
 	}
 }
 
-// HandleObjectChange evaluates a change event against all active subscriptions
-// and pushes matching events to their connections. Properties are projected
-// per subscription's Select clause.
+// HandleObjectChange evaluates a change event against the subscriptions
+// indexed under objectType and pushes matching events to their connections.
+// Properties are projected per subscription's Select clause. Dispatch cost is
+// O(K) where K is the number of subscriptions registered for this specific
+// objectType — independent of the total active subscription count (US-306).
 func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, properties map[string]interface{}) {
 	state := editTypeToState(editType)
 
 	h.mu.Lock()
-	// Snapshot connections to avoid holding the lock during writes.
-	type connSubs struct {
-		conn *Connection
-		subs []*Subscription
-	}
-	var targets []connSubs
-	for _, c := range h.conns {
-		c.subMu.Lock()
-		if len(c.subscriptions) > 0 {
-			subs := make([]*Subscription, 0, len(c.subscriptions))
-			for _, sub := range c.subscriptions {
-				subs = append(subs, sub)
-			}
-			targets = append(targets, connSubs{conn: c, subs: subs})
-		}
-		c.subMu.Unlock()
-	}
+	entries := h.subscriptionsForObjectTypeLocked(objectType)
 	h.mu.Unlock()
 
-	for _, cs := range targets {
-		for _, sub := range cs.subs {
-			if sub.Aggregator != nil {
-				// US-305: incremental aggregation subscriptions consume every
-				// event for their objectType (the Where filter is applied
-				// inside Apply against both the previous snapshot and the new
-				// payload so contributions revert correctly even when an
-				// update moves an object out of scope).
-				if sub.Aggregator.Apply(state, objectType, primaryKey, properties) {
-					sendAggregationChanged(cs.conn, sub.ID, sub.Aggregator.Snapshot())
-				}
-				continue
+	for _, e := range entries {
+		sub := e.sub
+		conn := e.conn
+		if sub.Aggregator != nil {
+			// US-305: incremental aggregation subscriptions consume every
+			// event for their objectType (the Where filter is applied inside
+			// Apply against both the previous snapshot and the new payload so
+			// contributions revert correctly even when an update moves an
+			// object out of scope).
+			if sub.Aggregator.Apply(state, objectType, primaryKey, properties) {
+				sendAggregationChanged(conn, sub.ID, sub.Aggregator.Snapshot())
 			}
-			if !sub.matches(objectType, primaryKey, properties) {
-				continue
-			}
-			projected := sub.ProjectProperties(properties)
-			evt := ObjectChangeEvent{
-				State:  state,
-				Object: projected,
-			}
-			data, err := json.Marshal(evt)
-			if err != nil {
-				continue
-			}
-			msg := Message{
-				Type:           "objectChanged",
-				SubscriptionID: sub.ID,
-				Data:           data,
-			}
-			select {
-			case cs.conn.send <- msg:
-			default:
-				// Buffer full — mark subscription as out of date
-				cs.conn.markOverflow(sub.ID)
-			}
+			continue
+		}
+		if !sub.matches(objectType, primaryKey, properties) {
+			continue
+		}
+		projected := sub.ProjectProperties(properties)
+		evt := ObjectChangeEvent{
+			State:  state,
+			Object: projected,
+		}
+		data, err := json.Marshal(evt)
+		if err != nil {
+			continue
+		}
+		msg := Message{
+			Type:           "objectChanged",
+			SubscriptionID: sub.ID,
+			Data:           data,
+		}
+		select {
+		case conn.send <- msg:
+		default:
+			// Buffer full — mark subscription as out of date
+			conn.markOverflow(sub.ID)
 		}
 	}
 }
@@ -184,6 +170,10 @@ func (h *Hub) handleSubscribe(c *Connection, raw json.RawMessage) Message {
 		return Message{Type: "error", Error: "objectType is required"}
 	}
 
+	// Lock order: hub.mu → conn.subMu, matching HandleObjectChange so routing
+	// index updates and dispatch never deadlock.
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
 
@@ -196,6 +186,7 @@ func (h *Hub) handleSubscribe(c *Connection, raw json.RawMessage) Message {
 
 	sub := NewSubscription(req)
 	c.subscriptions[sub.ID] = sub
+	h.addToIndexLocked(c, sub)
 
 	return Message{
 		Type:           "subscribed",
@@ -215,13 +206,17 @@ func (h *Hub) handleUnsubscribe(c *Connection, raw json.RawMessage) Message {
 		return Message{Type: "error", Error: "subscriptionId is required"}
 	}
 
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
 
-	if _, ok := c.subscriptions[req.SubscriptionID]; !ok {
+	sub, ok := c.subscriptions[req.SubscriptionID]
+	if !ok {
 		return Message{Type: "error", Error: "subscription not found: " + req.SubscriptionID}
 	}
 	delete(c.subscriptions, req.SubscriptionID)
+	h.removeFromIndexLocked(sub)
 
 	return Message{
 		Type:           "unsubscribed",
