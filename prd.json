@@ -1413,8 +1413,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 98,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/api/pipelines.ts + usePipelines hooks against GET /api/v2/pipelines{,/{id}}; PipelinesPage at /pipelines wires list + SVG-rendered DAG (input/transform/output kind columns, longest-path layout, click-to-select) + side log panel surfacing schedule/enabled/node config; sidebar entry 'Pipelines' uses new pipeline icon; 5 RTL tests pass (515/515 vitest); typecheck + vite build pass; dev-browser skill not available — manual browser verification still pending"
     },
     {
       "id": "US-298",

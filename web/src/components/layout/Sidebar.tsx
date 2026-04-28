@@ -25,6 +25,8 @@ const iconPaths: Record<string, string> = {
   chat: 'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z',
   workflow:
     'M5 5h4v4H5zM15 5h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4zM9 7h6M7 9v6M17 9v6M9 17h6',
+  pipeline:
+    'M3 7h6M15 7h6M3 17h6M15 17h6M9 7a3 3 0 003 3 3 3 0 003-3M9 17a3 3 0 013-3 3 3 0 013 3M12 10v4',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -117,6 +119,7 @@ export function Sidebar() {
     },
     { to: '/threads', label: 'AIP Threads', icon: 'chat' },
     { to: '/logic-flows', label: 'AIP Logic', icon: 'workflow' },
+    { to: '/pipelines', label: 'Pipelines', icon: 'pipeline' },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];

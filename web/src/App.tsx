@@ -26,6 +26,7 @@ import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
 import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
+import { PipelinesPage } from './components/pipelines/PipelinesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="threads" element={<ThreadsPage />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
+              <Route path="pipelines" element={<PipelinesPage />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
