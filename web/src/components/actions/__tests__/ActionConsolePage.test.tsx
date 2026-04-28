@@ -8,6 +8,8 @@ import * as actionsApi from '../../../api/actions';
 import * as objectsApi from '../../../api/objects';
 import { ApiRequestError } from '../../../api/client';
 import type { ActionType } from '../../../api/types';
+import { Toaster } from '../../common/Toaster';
+import { useToastStore } from '../../../stores/toastStore';
 
 const fakeAction: ActionType = {
   rid: 'ri.action.main.action-type.update-emp',
@@ -32,7 +34,15 @@ function renderPage() {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/actions/default"]}>
         <Routes>
-          <Route path="/actions/:ontology" element={<ActionConsolePage />} />
+          <Route
+            path="/actions/:ontology"
+            element={
+              <>
+                <ActionConsolePage />
+                <Toaster />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -133,5 +143,82 @@ describe('ActionConsolePage — optimistic concurrency (US-024)', () => {
       expect(screen.getByTestId('object-version')).toHaveTextContent('9'),
     );
     expect(historySpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ActionConsolePage Undo toast (US-319)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useToastStore.getState().clear();
+    vi.spyOn(ontologiesApi, 'listActionTypes').mockResolvedValue([fakeAction]);
+    vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
+      history: [],
+      totalVersions: 0,
+    });
+  });
+
+  it('shows an Undo toast carrying actionLogId after a successful apply', async () => {
+    vi.spyOn(actionsApi, 'applyAction').mockResolvedValue({
+      operationId: 'op-1',
+      actionLogId: 42,
+      edits: undefined,
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByText('updateEmployee'));
+    fireEvent.click(screen.getByText('Execute Action'));
+
+    const toastAction = await screen.findByTestId('toast-action');
+    expect(toastAction).toHaveTextContent('Undo');
+    expect(screen.getByText(/Action "Update Employee" applied/)).toBeInTheDocument();
+  });
+
+  it('does NOT push an Undo toast when actionLogId is absent (validate-only / no-op)', async () => {
+    vi.spyOn(actionsApi, 'applyAction').mockResolvedValue({
+      operationId: 'op-noop',
+      edits: undefined,
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByText('updateEmployee'));
+    fireEvent.click(screen.getByText('Execute Action'));
+
+    // Wait until the result section actually renders, then assert no toast.
+    await waitFor(() =>
+      expect(screen.queryByText('Execute Action')?.hasAttribute('disabled')).toBe(
+        false,
+      ),
+    );
+    expect(screen.queryByTestId('toast-action')).not.toBeInTheDocument();
+  });
+
+  it('clicking Undo on the toast invokes revertActionLog and replaces the toast with a "reverted" message', async () => {
+    vi.spyOn(actionsApi, 'applyAction').mockResolvedValue({
+      operationId: 'op-1',
+      actionLogId: 99,
+      edits: undefined,
+    });
+    const revertSpy = vi
+      .spyOn(actionsApi, 'revertActionLog')
+      .mockResolvedValue({ operationId: 'reverse-batch' });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByText('updateEmployee'));
+    fireEvent.click(screen.getByText('Execute Action'));
+
+    const undoBtn = await screen.findByTestId('toast-action');
+    fireEvent.click(undoBtn);
+
+    await waitFor(() =>
+      expect(revertSpy).toHaveBeenCalledWith('default', 99),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Action "Update Employee" reverted/),
+      ).toBeInTheDocument(),
+    );
   });
 });

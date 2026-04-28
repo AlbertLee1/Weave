@@ -121,3 +121,30 @@ export function cancelActionJob(
     `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actions/jobs/${encodeURIComponent(jobId)}/cancel`,
   );
 }
+
+// revertActionLog reverses a persisted action by publishing a reverse
+// EditBatch (CREATE→DELETE, MODIFY→MODIFY-with-prevState, DELETE→CREATE,
+// LINK_CREATE↔LINK_DELETE). The original action_logs row is marked REVERTED;
+// a second call returns 409 AlreadyReverted. US-319 wires this to the toast
+// Undo button and the Action History per-row Undo affordance.
+//
+//   POST /api/v2/ontologies/{ontology}/actions/revert
+//   body: { actionLogId }
+//
+// Response shape mirrors apply's SyncApplyActionResponseV2 — operationId is
+// the reverse batch id, edits is the standard counts envelope.
+export interface RevertActionResponse {
+  operationId?: string;
+  edits?: import('./types').ActionResults;
+}
+
+export function revertActionLog(
+  ontologyApiName: string,
+  actionLogId: number,
+): Promise<RevertActionResponse> {
+  return request<RevertActionResponse>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actions/revert`,
+    { actionLogId },
+  );
+}

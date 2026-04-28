@@ -1722,8 +1722,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 120,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend already had POST /actions/revert (US-104). Plumbed actionLogId from ApplyResult into SyncApplyActionResponseV2 so the apply response carries the persisted log id (zero on validate-only / noop). Added /api/actions/revertActionLog client + useRevertActionLog hook (invalidates ['objects'] + ['actionHistory']). Built a minimal toast system (stores/toastStore + components/common/Toaster, mounted once in Shell) — bottom-right stack with 5s default ttl, optional inline action button. ActionConsolePage pushes a 'success + Undo' toast on apply when actionLogId is set; clicking Undo calls revert, dismisses, and pushes a 'reverted' info toast. ActionHistoryPage renders an Undo button only on SUCCESS rows; on click it reverts and pushes a toast (AlreadyReverted maps to a friendly message). 13 new Vitest cases (Toaster: 6, ActionHistoryPage: 3, ActionConsolePage: 3) + new TestHandler_Apply_ResponseEnvelope_HasActionLogId Go case. dev-browser skill not available in this harness — manual browser verification still owed."
     },
     {
       "id": "US-320",

@@ -162,6 +162,7 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	// Build SyncApplyActionResponseV2 envelope.
 	resp := &SyncApplyActionResponseV2{
 		OperationID: result.BatchID,
+		ActionLogID: result.ActionLogID,
 	}
 	if returnEdits != "NONE" {
 		resp.Edits = countEdits(result.Edits)

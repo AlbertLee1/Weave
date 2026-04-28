@@ -246,6 +246,56 @@ func TestHandler_Apply_ResponseEnvelope_ModifyObject_Counts(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// US-319: SyncApplyActionResponseV2.ActionLogID — surfaces the persisted
+// action_logs row id so the toast Undo button can call POST /actions/revert
+// with {actionLogId} during its 5-second window.
+// ---------------------------------------------------------------------------
+
+func TestHandler_Apply_ResponseEnvelope_HasActionLogId(t *testing.T) {
+	repo := &mockOmsRepo{
+		actionTypes: []oms.ActionType{
+			newTestActionType("createEmployee", []ParameterDef{
+				{ID: "name", Type: "string", Required: true},
+			}, []Rule{
+				{Type: "createObject", ObjectType: "Employee",
+					PropertyBindings: map[string]PropertyBinding{
+						"name": {Type: "parameter", Value: "name"},
+					}},
+			}),
+		},
+	}
+	pub := &fakePublisher{offset: 1}
+	exec := NewExecutor(repo, pub)
+	handler := NewHandler(exec)
+	router := setupRouter(handler)
+
+	body := mustJSON(map[string]interface{}{
+		"parameters": map[string]interface{}{"name": "Alice"},
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/ont-1/actions/createEmployee/apply",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp SyncApplyActionResponseV2
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ActionLogID == 0 {
+		t.Fatalf("expected non-zero actionLogId in response, got %#v", resp)
+	}
+	if got, want := resp.ActionLogID, repo.insertedLogs[0].ID; got != want {
+		t.Fatalf("actionLogId mismatch: response=%d, persisted=%d", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // US-002: Batch Apply — BatchApplyActionResponseV2 envelope
 // ---------------------------------------------------------------------------
 

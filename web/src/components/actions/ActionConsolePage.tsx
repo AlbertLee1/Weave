@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { useParams } from 'react-router';
-import { useActionTypes, useApplyAction } from '../../hooks/useActions';
+import {
+  useActionTypes,
+  useApplyAction,
+  useRevertActionLog,
+} from '../../hooks/useActions';
 import { useObjectVersion } from '../../hooks/useObjectVersion';
 import type { ActionType, ActionApplyResponse } from '../../api/types';
 import { ApiRequestError } from '../../api/client';
@@ -8,11 +12,15 @@ import { ParameterForm } from './ParameterForm';
 import { ActionResult } from './ActionResult';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
+import { useToastStore } from '../../stores/toastStore';
 
 export function ActionConsolePage() {
   const { ontology } = useParams<{ ontology: string }>();
   const { data: actionTypes, isLoading } = useActionTypes(ontology ?? '');
   const applyMutation = useApplyAction(ontology ?? '');
+  const revertMutation = useRevertActionLog(ontology ?? '');
+  const pushToast = useToastStore((s) => s.push);
+  const dismissToast = useToastStore((s) => s.dismiss);
 
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
@@ -49,7 +57,15 @@ export function ActionConsolePage() {
           : {}),
       },
       {
-        onSuccess: (data) => setResult(data),
+        onSuccess: (data) => {
+          setResult(data);
+          // US-319: 5-second Undo toast. Only fires when the apply path
+          // produced a persisted action_logs row (validate-only and noop
+          // edits skip the log entirely so actionLogId is absent).
+          if (data.actionLogId) {
+            pushUndoToast(data.actionLogId, selectedAction.displayName ?? selectedAction.apiName);
+          }
+        },
         onError: (err) => {
           if (
             err instanceof ApiRequestError &&
@@ -63,6 +79,41 @@ export function ActionConsolePage() {
         },
       },
     );
+  }
+
+  function pushUndoToast(actionLogId: number, label: string) {
+    const toastId = pushToast({
+      message: `Action "${label}" applied`,
+      severity: 'success',
+      ttlMs: 5000,
+      actionLabel: 'Undo',
+      onAction: () => {
+        revertMutation.mutate(actionLogId, {
+          onSuccess: () => {
+            dismissToast(toastId);
+            pushToast({
+              message: `Action "${label}" reverted`,
+              severity: 'info',
+              ttlMs: 4000,
+            });
+          },
+          onError: (err) => {
+            dismissToast(toastId);
+            const message =
+              err instanceof ApiRequestError && err.errorName === 'AlreadyReverted'
+                ? `Action already reverted`
+                : err instanceof Error
+                  ? `Undo failed: ${err.message}`
+                  : 'Undo failed';
+            pushToast({
+              message,
+              severity: 'error',
+              ttlMs: 4000,
+            });
+          },
+        });
+      },
+    });
   }
 
   function handleReload() {

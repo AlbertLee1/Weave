@@ -5,9 +5,12 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { ActionHistoryPage } from '../ActionHistoryPage';
 import * as actionHistoryApi from '../../../api/actionHistory';
 import * as ontologiesApi from '../../../api/ontologies';
+import * as actionsApi from '../../../api/actions';
 import type { ActionHistoryEntry } from '../../../api/actionHistory';
 import type { ActionType } from '../../../api/types';
 import { ApiRequestError } from '../../../api/client';
+import { Toaster } from '../../common/Toaster';
+import { useToastStore } from '../../../stores/toastStore';
 
 const successEntry: ActionHistoryEntry = {
   id: 1,
@@ -55,7 +58,12 @@ function renderPage(initial = '/actions/default/history') {
         <Routes>
           <Route
             path="/actions/:ontology/history"
-            element={<ActionHistoryPage />}
+            element={
+              <>
+                <ActionHistoryPage />
+                <Toaster />
+              </>
+            }
           />
         </Routes>
       </MemoryRouter>
@@ -182,6 +190,79 @@ describe('ActionHistoryPage (US-317)', () => {
 
     await waitFor(() =>
       expect(screen.getByText('No action executions')).toBeInTheDocument(),
+    );
+  });
+});
+
+describe('ActionHistoryPage Undo button (US-319)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useToastStore.getState().clear();
+    vi.spyOn(ontologiesApi, 'listActionTypes').mockResolvedValue(actionTypes);
+  });
+
+  it('renders an Undo button only on SUCCESS rows', async () => {
+    vi.spyOn(actionHistoryApi, 'listActionHistory').mockResolvedValue({
+      data: [successEntry, failedEntry],
+      total: 2,
+    });
+
+    renderPage();
+
+    const rows = await screen.findAllByTestId('action-history-row');
+    expect(within(rows[0]).getByTestId('undo-btn')).toBeInTheDocument();
+    expect(
+      within(rows[1]).queryByTestId('undo-btn'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('calls revertActionLog and shows a success toast when Undo is clicked', async () => {
+    vi.spyOn(actionHistoryApi, 'listActionHistory').mockResolvedValue({
+      data: [successEntry],
+      total: 1,
+    });
+    const revertSpy = vi
+      .spyOn(actionsApi, 'revertActionLog')
+      .mockResolvedValue({ operationId: 'reverse-batch' });
+
+    renderPage();
+
+    const undoBtn = await screen.findByTestId('undo-btn');
+    fireEvent.click(undoBtn);
+
+    await waitFor(() =>
+      expect(revertSpy).toHaveBeenCalledWith('default', successEntry.id),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(`Action #${successEntry.id} reverted`),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it('shows an "already reverted" toast on 409 AlreadyReverted', async () => {
+    vi.spyOn(actionHistoryApi, 'listActionHistory').mockResolvedValue({
+      data: [successEntry],
+      total: 1,
+    });
+    vi.spyOn(actionsApi, 'revertActionLog').mockRejectedValue(
+      new ApiRequestError({
+        statusCode: 409,
+        errorCode: 'CONFLICT',
+        errorName: 'AlreadyReverted',
+        errorInstanceId: 'test',
+        parameters: { actionLogId: String(successEntry.id) },
+      }),
+    );
+
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId('undo-btn'));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(`Action #${successEntry.id} was already reverted`),
+      ).toBeInTheDocument(),
     );
   });
 });

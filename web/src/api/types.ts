@@ -215,8 +215,12 @@ export interface CountObjectsResponse {
 }
 
 // SyncApplyActionResponseV2 — Foundry OSv2 response envelope for single apply.
+// US-319: actionLogId surfaces the persisted action_logs row id so the toast
+// Undo button can call POST /actions/revert with the right id during its
+// 5-second window.
 export interface ActionApplyResponse {
   operationId?: string;
+  actionLogId?: number;
   validation?: { result: string };
   edits?: ActionResults;
 }

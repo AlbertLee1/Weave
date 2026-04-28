@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listActionTypes } from '../api/ontologies';
-import { applyAction, applyBatch } from '../api/actions';
+import { applyAction, applyBatch, revertActionLog } from '../api/actions';
 import type { ActionApplyOptions } from '../api/types';
 
 export function useActionTypes(ontologyApiName: string) {
@@ -49,6 +49,25 @@ export function useApplyBatch(ontologyApiName: string) {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['objects'] });
+    },
+  });
+}
+
+// useRevertActionLog wraps POST /actions/revert. Used by the toast Undo
+// button (5s window after apply, US-319) and the Action History per-row
+// Undo button. On success, invalidate ['objects'] (the reverse edits flow
+// through the funnel consumer just like an apply) and ['actionHistory'] /
+// ['actionHistoryEntry'] so the row's Status flips to REVERTED in the UI
+// without a manual refresh.
+export function useRevertActionLog(ontologyApiName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (actionLogId: number) =>
+      revertActionLog(ontologyApiName, actionLogId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['objects'] });
+      queryClient.invalidateQueries({ queryKey: ['actionHistory', ontologyApiName] });
+      queryClient.invalidateQueries({ queryKey: ['actionHistoryEntry', ontologyApiName] });
     },
   });
 }

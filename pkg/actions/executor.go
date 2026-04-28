@@ -67,6 +67,12 @@ type ApplyResult struct {
 	Edits     []funnel.Edit `json:"-"`
 	BatchID   string        `json:"-"`
 	Offset    uint64        `json:"-"`
+	// ActionLogID is the persisted action_logs row id for this action.
+	// Surfaced in SyncApplyActionResponseV2 so the toast Undo button (US-319)
+	// can call POST /actions/revert with the right log id. Zero when the
+	// action_logs write failed (best-effort) or the executor ran without an
+	// OMS repo wired.
+	ActionLogID int64 `json:"-"`
 }
 
 // ActionResults is the Foundry OSv2 edit summary returned in response envelopes.
@@ -80,8 +86,14 @@ type ActionResults struct {
 }
 
 // SyncApplyActionResponseV2 is the Foundry OSv2 response envelope for single apply.
+//
+// US-319 surfaces ActionLogID alongside the existing OperationID/Edits so the
+// toast Undo button can POST /actions/revert with the right log id during its
+// 5-second window. Zero when the executor ran without persisting an action
+// log (no OMS repo wired, best-effort write failed, or noop empty edit set).
 type SyncApplyActionResponseV2 struct {
 	OperationID string            `json:"operationId,omitempty"`
+	ActionLogID int64             `json:"actionLogId,omitempty"`
 	Validation  *ValidationResult `json:"validation,omitempty"`
 	Edits       *ActionResults    `json:"edits,omitempty"`
 }
@@ -808,6 +820,11 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 		if logErr := e.omsRepo.InsertActionLog(ctx, logRow); logErr != nil {
 			log.Printf("actions: failed to write action log for action %d: %v", i, logErr)
 			continue
+		}
+		// US-319: surface the persisted action_logs row id on the per-action
+		// result so SyncApplyActionResponseV2 can carry it back to the caller.
+		if i < len(result.Results) {
+			result.Results[i].ActionLogID = logRow.ID
 		}
 		// US-299: record one lineage edge per persisted object edit so the
 		// platform can answer "where did this object come from?" later.

@@ -4,11 +4,13 @@ import {
   useActionHistory,
   useActionHistoryEntry,
 } from '../../hooks/useActionHistory';
-import { useActionTypes } from '../../hooks/useActions';
+import { useActionTypes, useRevertActionLog } from '../../hooks/useActions';
 import { useOntologyStore } from '../../stores/ontologyStore';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { Modal } from '../common/Modal';
+import { useToastStore } from '../../stores/toastStore';
+import { ApiRequestError } from '../../api/client';
 import type { ActionHistoryEntry } from '../../api/actionHistory';
 
 type StatusFilter = 'ALL' | 'SUCCESS' | 'FAILED';
@@ -22,6 +24,7 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
 const STATUS_BADGE_STYLE: Record<string, string> = {
   SUCCESS: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30',
   FAILED: 'bg-rose-500/10 text-rose-400 border border-rose-500/30',
+  REVERTED: 'bg-amber-500/10 text-amber-400 border border-amber-500/30',
 };
 
 export function ActionHistoryPage() {
@@ -33,6 +36,7 @@ export function ActionHistoryPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [userIdFilter, setUserIdFilter] = useState<string>('');
   const [detailLogId, setDetailLogId] = useState<number | null>(null);
+  const [pendingUndoId, setPendingUndoId] = useState<number | null>(null);
 
   const actionTypesQuery = useActionTypes(activeOntology);
   const historyQuery = useActionHistory(activeOntology, {
@@ -42,6 +46,31 @@ export function ActionHistoryPage() {
   });
 
   const detailQuery = useActionHistoryEntry(activeOntology, detailLogId);
+  const revertMutation = useRevertActionLog(activeOntology);
+  const pushToast = useToastStore((s) => s.push);
+
+  function handleUndo(logId: number) {
+    setPendingUndoId(logId);
+    revertMutation.mutate(logId, {
+      onSettled: () => setPendingUndoId(null),
+      onSuccess: () => {
+        pushToast({
+          message: `Action #${logId} reverted`,
+          severity: 'info',
+          ttlMs: 4000,
+        });
+      },
+      onError: (err) => {
+        const message =
+          err instanceof ApiRequestError && err.errorName === 'AlreadyReverted'
+            ? `Action #${logId} was already reverted`
+            : err instanceof Error
+              ? `Undo failed: ${err.message}`
+              : 'Undo failed';
+        pushToast({ message, severity: 'error', ttlMs: 4000 });
+      },
+    });
+  }
 
   const apiNameByRid = useMemo(() => {
     const map: Record<string, string> = {};
@@ -199,14 +228,32 @@ export function ActionHistoryPage() {
                     {entry.id}
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setDetailLogId(entry.id)}
-                      className="rounded-md border border-border/60 px-3 py-1 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-                      data-testid="view-detail-btn"
-                    >
-                      View
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      {entry.status === 'SUCCESS' && (
+                        <button
+                          type="button"
+                          onClick={() => handleUndo(entry.id)}
+                          disabled={
+                            revertMutation.isPending && pendingUndoId === entry.id
+                          }
+                          className="rounded-md border border-amber-500/40 px-3 py-1 text-xs text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
+                          data-testid="undo-btn"
+                          data-log-id={entry.id}
+                        >
+                          {revertMutation.isPending && pendingUndoId === entry.id
+                            ? 'Undoing…'
+                            : 'Undo'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setDetailLogId(entry.id)}
+                        className="rounded-md border border-border/60 px-3 py-1 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                        data-testid="view-detail-btn"
+                      >
+                        View
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -3,6 +3,7 @@ import { Outlet, useParams } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { CommandPalette } from '../common/CommandPalette';
+import { Toaster } from '../common/Toaster';
 import { useCommandPaletteShortcut } from '../../hooks/useCommandPaletteShortcut';
 import { useOntologyStore } from '../../stores/ontologyStore';
 
@@ -44,6 +45,7 @@ export function Shell() {
         onClose={() => setPaletteOpen(false)}
         activeOntology={activeOntology}
       />
+      <Toaster />
     </div>
   );
 }
