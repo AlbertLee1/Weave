@@ -212,6 +212,8 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - PRD JSON validation gap: ralph.sh / ralph harness does not currently re-validate `prd.json` after the agent updates it, and a missing `},` between adjacent stories silently passes the bash commit but breaks the next iteration's `python -m json.tool` / `jq` parse. Pre-commit guard worth adding: `jq empty prd.json || exit 1` (or python equivalent) so a syntax break gets caught at the iteration boundary instead of the next read. US-303 hit this and had to repair the US-302 commit's break before continuing — a one-character fix, but discovered hours later.
 - Per-connection rolling-window rate limiter (US-308 WebSocket event cap, future per-stream throttles): keep the limiter state on the Connection itself (not a hub-keyed map) so the disabled path is a free pointer-or-zero check (`limit<=0 || window<=0 → allow`) and concurrent calls only touch the connection's own mutex — no contention with other connections. Same FIFO eviction shape as `pkg/functions/quota.Limiter` but with the bucket co-located with its owner. Per-user counters, by contrast, DO live in a hub-keyed map (`userSubs map[string]int`) because the same userID may span multiple connections — that's the natural partition for "across connections" enforcement. When the rate limit fires, fall through to the existing `markOverflow → onOutOfDate` path instead of inventing a new error name; SDKs already resync on overflow so no client surface change is needed. Anonymous (empty userID) connections must bypass the per-user cap entirely so dev-mode + internal tooling that uses `HandleWS` directly stay unaffected — the empty-userID short-circuit is the contract.
 - Sub-linear fan-out via key-bucketed routing index (US-306 Hub.subIndex, future tenancy-keyed event routing / org-keyed audit fan-out / ontology-keyed CDC dispatch): replace "iterate every connection × every subscription" with `map[key][]*indexedSub` keyed on the natural partition (objectType, tenant, ontology). Subscribe / unsubscribe / disconnect MUST all maintain the index under the same Hub-level mutex; dispatch snapshots `bucket[:]` under the lock then iterates with the lock released. Lock order: hub.mu → conn.subMu in every mutating handler so HandleObjectChange's bucket lookup never deadlocks against an in-flight subscribe. For composite filters (ObjectSet definitions in our case) collect a SUPERSET of candidate keys via recursive walk and let the precise predicate gate at dispatch time — a false positive costs one wasted match call, a false NEGATIVE drops events silently. Pointer-identity removal (`bucket[i].sub != target`) is allocation-free and unique across the Hub's lifetime; ID-string removal forces every test fixture to stamp unique IDs. Slice in place with `bucket[:0]` + filter-keep + `delete(m, k)` when empty so `len(m[k])` is a clean "anything routed here?" probe.
+- cmdk + jsdom test pattern (US-309 CommandPalette, future shadcn/Radix-based components): jsdom does NOT implement `ResizeObserver` or `Element.prototype.scrollIntoView`, both of which cmdk's `Command.Input` calls synchronously on mount (ResizeObserver to track input width, scrollIntoView to scroll the active item into view as selection changes). Without polyfills, every test that mounts a `<Command>` blows up at the effects phase with `ReferenceError: ResizeObserver is not defined` then `TypeError: i.scrollIntoView is not a function` and the entire component tree fails to render. Add no-op stubs ONCE in `web/src/test/setup.ts` (already imported globally by Vitest config). Same polyfill pair applies to any future Radix/Headless-UI/Floating-UI primitive that measures itself on mount.
+- React 19 hooks-rules with conditional render (US-309 CommandPalette): when a portal-style component does `if (!open) return null` you cannot legally call `useState` / `useEffect` AFTER the early return, AND ESLint (`react-hooks/set-state-in-effect`) will reject any `setState` inside an effect to "reset state when open transitions". The clean fix is the inner-component pattern: outer `Component({open, ...props})` is a thin guard that returns null OR `<ComponentInner {...props}/>`; ALL hooks live in `ComponentInner`, which mounts/unmounts on each open transition so internal state (search query, focus, transient UI) resets naturally without effects. Outer is `<3 lines, pure, no hooks; inner has full freedom. Reusable for any modal/dialog/popover with internal state that should reset on each open.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -3921,4 +3923,36 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - Rate-limited events fall through to `markOverflow` so the existing `onOutOfDate` resync contract from US-134 covers both buffer-full AND rate-cap drops uniformly; the SDK doesn't need a new error name.
   - Anonymous (empty userID) connections bypass MaxSubscriptionsPerUser entirely — only the per-connection cap applies. This protects the dev-mode default (no AUTH_MODE) and any internal tooling that uses HandleWS directly.
   - Quota counter is per-Hub, in-memory: multi-replica deployments need a shared store (Redis) to enforce a true cross-replica per-user cap. Document the constraint when adding replicas; pattern is the same as RowPolicyEngine's per-replica reload (US-256).
+---
+
+## 2026-04-28 12:56 - US-309 Cmd+K 全局搜索
+- 安装 cmdk@^1.1.1 并新增 `web/src/components/common/CommandPalette.tsx` + `web/src/hooks/useCommandPaletteShortcut.ts`，在 `Shell` 中挂载并绑定 `Cmd+K` / `Ctrl+K` 全局快捷键。
+- CommandPalette 三组数据：
+  - Pages: 静态路由列表（Dashboard / AIP Threads / AIP Logic / Pipelines / API Playground / API Metrics / Schema Inference / Markings）
+  - Ontologies: `useOntologies()` 拉取，回车跳转 `/explorer/<apiName>`
+  - Object Types in {ontology}: 当 `Shell` 解析到 active ontology（URL `:ontology` 或 `useOntologyStore.selectedOntology`）时拉取 `useObjectTypes`，回车跳转 `/browser/<ontology>/<apiName>`。
+- 跨 ObjectType 搜索由 cmdk 的 `shouldFilter` + `Command.Item.value` 自动实现：value 同时包含 displayName / apiName / 分类前缀，输入 `cust` 立即过滤掉 Product，仅留 Customer。
+- 键盘导航：`Command` 自带 ↑↓/Enter；`Esc` 通过 keydown 监听关闭；点击 overlay 关闭；底部状态栏展示 `↑↓ navigate / ↵ select / ⌘K toggle`。
+- jsdom 缺 `ResizeObserver` 与 `Element.scrollIntoView`，在 `web/src/test/setup.ts` 加 no-op polyfill；cmdk 内部在 mount 时同步使用两者，否则任何包含 `<Command>` 的测试会抛 ReferenceError / TypeError。
+- 文件改动：
+  - web/package.json + package-lock.json（cmdk 依赖）
+  - web/src/components/common/CommandPalette.tsx（新）
+  - web/src/components/common/__tests__/CommandPalette.test.tsx（新，9 个用例）
+  - web/src/hooks/useCommandPaletteShortcut.ts（新）
+  - web/src/hooks/__tests__/useCommandPaletteShortcut.test.ts（新，5 个用例）
+  - web/src/test/setup.ts（ResizeObserver + scrollIntoView polyfill）
+  - web/src/components/layout/Shell.tsx（挂载 CommandPalette + 快捷键 + 解析 activeOntology）
+  - prd.json (US-309 passes=true)
+- Quality checks:
+  - `npx vitest run` → 79 files / 537 tests 全绿
+  - `npx tsc -b` 干净
+  - `npm run lint` 在改动文件上 0 错（预先存在的 lint warning 不在本 PR 触及的文件中）
+  - `npm run build` 干净
+  - `go vet ./...` 干净
+- **Learnings for future iterations:**
+  - jsdom 测试任何使用 cmdk 的组件前必须 polyfill `ResizeObserver` AND `Element.prototype.scrollIntoView`：cmdk 在 `Command.Input` mount 时同步使用 ResizeObserver 测自身宽度并在选中态变化时滚动 active item 进视口。两个都缺会导致 effects 阶段抛错并使整棵组件树无法挂载，错误只在控制台显示一次但每个用例都失败。
+  - CommandPalette 用 `if (!open) return null` 提前 return 时不能在外层组件内部继续 `useState` / `useEffect`（违反 hooks rules）。正确做法：写一个 `CommandPaletteInner` 子组件持有所有 hooks，外层 `CommandPalette` 仅做 open 守卫与 props 透传。同样的 React 19 ESLint 规则（react-hooks/set-state-in-effect）禁止 effect 内同步 setState 重置 query —— 用 inner 组件每次 open 完整 mount 一次即可天然重置 query state，无需 effect。
+  - cmdk `Command.Item` 的 `value` 是过滤索引：把 group 名 + displayName + apiName 全拼进 value（`"objectType Customer customer"`）就让单一输入框跨多个分类同时模糊匹配；不要试图自己写 useState filter，cmdk 内部的 fuzzy matcher（Sublime-style）已经够用。
+  - 全局快捷键 hook 必须挡住 `e.altKey || e.shiftKey`，否则浏览器原生 Cmd+Shift+K（Firefox web 控制台）/ Cmd+Alt+K 等也会触发。`e.preventDefault()` 防止 macOS Safari 在 Cmd+K 时弹原生地址栏聚焦。
+  - 在 `Shell` 中读 `useParams()` 得到 `:ontology`，再 fallback 到 `useOntologyStore.selectedOntology`，可以让 palette 在任何页面（含 `/dashboard` 这种 URL 里没有 ontology 段）都能继续呈现 "Object Types in <last visited ontology>" —— 与 Sidebar 的 activeOntology 解析逻辑保持一致，避免两个地方对同一概念给出不同答案。
 ---

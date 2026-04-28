@@ -1,8 +1,21 @@
-import { Outlet } from 'react-router';
+import { useCallback, useState } from 'react';
+import { Outlet, useParams } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { CommandPalette } from '../common/CommandPalette';
+import { useCommandPaletteShortcut } from '../../hooks/useCommandPaletteShortcut';
+import { useOntologyStore } from '../../stores/ontologyStore';
 
 export function Shell() {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const togglePalette = useCallback(() => setPaletteOpen((v) => !v), []);
+  useCommandPaletteShortcut(togglePalette);
+
+  const params = useParams();
+  const selectedOntology = useOntologyStore((s) => s.selectedOntology);
+  const activeOntology =
+    (params.ontology as string | undefined) ?? selectedOntology ?? null;
+
   return (
     <div className="flex h-screen bg-bg-primary text-text-primary font-sans">
       {/* Top accent line: 1px gradient amber → teal → transparent */}
@@ -26,6 +39,11 @@ export function Shell() {
           <Outlet />
         </main>
       </div>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        activeOntology={activeOntology}
+      />
     </div>
   );
 }
