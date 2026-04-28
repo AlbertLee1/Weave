@@ -163,6 +163,53 @@ describe('MediaUploadZone', () => {
     expect(images[0]).toHaveAttribute('alt', 'first.png');
   });
 
+  it('cancels an in-flight upload via the cancel button', async () => {
+    let lastSignal: AbortSignal | undefined;
+    let rejectFn: ((reason?: unknown) => void) | undefined;
+    vi.spyOn(mediaApi, 'uploadMedia').mockImplementation(
+      (_file, opts): Promise<mediaApi.MediaAsset> => {
+        lastSignal = opts?.signal;
+        return new Promise<mediaApi.MediaAsset>((_resolve, reject) => {
+          rejectFn = reject;
+          opts?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+        });
+      },
+    );
+
+    const onChange = vi.fn();
+    renderWithProviders(
+      <MediaUploadZone propertyName="avatar" values={[]} onChange={onChange} />,
+    );
+
+    const input = screen.getByTestId('dropzone-input') as HTMLInputElement;
+    const file = new File(['x'.repeat(50)], 'cancel-me.bin', {
+      type: 'application/octet-stream',
+    });
+    await act(async () => {
+      dropFilesOnInput(input, [file]);
+    });
+
+    expect(screen.getByText('cancel-me.bin')).toBeInTheDocument();
+    const cancelBtn = screen.getByRole('button', {
+      name: /Cancel cancel-me\.bin/,
+    });
+
+    await act(async () => {
+      fireEvent.click(cancelBtn);
+    });
+
+    expect(lastSignal?.aborted).toBe(true);
+    // The aborted promise resolves the mock too so we don't leak a pending one.
+    rejectFn?.(new DOMException('Aborted', 'AbortError'));
+
+    await waitFor(() =>
+      expect(screen.queryByText('cancel-me.bin')).not.toBeInTheDocument(),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('opens a confirmation dialog before deleting', async () => {
     const deleteSpy = vi.spyOn(mediaApi, 'deleteMedia').mockResolvedValue();
     const onChange = vi.fn();

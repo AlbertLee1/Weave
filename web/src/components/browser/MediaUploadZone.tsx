@@ -39,6 +39,7 @@ interface InFlightUpload {
   total: number;
   status: 'uploading' | 'error';
   errorMessage?: string;
+  controller?: AbortController;
 }
 
 function formatBytes(n: number): string {
@@ -102,6 +103,7 @@ export function MediaUploadZone({
 
       for (const file of files) {
         const id = crypto.randomUUID();
+        const controller = new AbortController();
         setUploads((prev) => [
           ...prev,
           {
@@ -110,12 +112,14 @@ export function MediaUploadZone({
             loaded: 0,
             total: file.size,
             status: 'uploading',
+            controller,
           },
         ]);
         try {
           const asset = await uploadMutation.mutateAsync({
             file,
             realm,
+            signal: controller.signal,
             onProgress: (p: UploadProgress) => {
               patchUpload(id, { loaded: p.loaded, total: p.total });
             },
@@ -124,9 +128,19 @@ export function MediaUploadZone({
           const next = multiple ? [...values, asset.rid] : [asset.rid];
           onChange?.(next);
         } catch (err) {
+          // Cancelled uploads disappear silently; everything else stays as a
+          // visible error tile so the user can see what failed.
+          if (
+            controller.signal.aborted ||
+            (err instanceof DOMException && err.name === 'AbortError')
+          ) {
+            setUploads((prev) => prev.filter((u) => u.id !== id));
+            continue;
+          }
           patchUpload(id, {
             status: 'error',
             errorMessage: err instanceof Error ? err.message : 'Upload failed',
+            controller: undefined,
           });
         }
       }
@@ -141,6 +155,16 @@ export function MediaUploadZone({
       maxSize: maxBytes,
       noKeyboard: false,
     });
+
+  const cancelUpload = useCallback((id: string) => {
+    setUploads((prev) => {
+      const target = prev.find((u) => u.id === id);
+      target?.controller?.abort();
+      // Optimistically drop the row; the catch branch in dropHandler will
+      // also be a no-op once it observes the aborted signal.
+      return prev.filter((u) => u.id !== id);
+    });
+  }, []);
 
   const handleConfirmDelete = useCallback(async () => {
     if (!confirmDelete) return;
@@ -270,11 +294,29 @@ export function MediaUploadZone({
                   <span className="truncate" title={u.file.name}>
                     {u.file.name}
                   </span>
-                  <span className="text-text-muted shrink-0 ml-2">
-                    {u.status === 'error'
-                      ? '失败'
-                      : `${pct}%`}
-                  </span>
+                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                    <span className="text-text-muted">
+                      {u.status === 'error' ? '失败' : `${pct}%`}
+                    </span>
+                    {u.status === 'uploading' && (
+                      <button
+                        type="button"
+                        onClick={() => cancelUpload(u.id)}
+                        className="text-text-muted hover:text-accent-error transition-colors"
+                        aria-label={`Cancel ${u.file.name}`}
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 6L6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-1 h-1 bg-bg-tertiary rounded overflow-hidden">
                   <div

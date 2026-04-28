@@ -10,6 +10,7 @@ export interface UploadMediaVariables {
   file: File;
   realm?: string;
   onProgress?: (progress: UploadProgress) => void;
+  signal?: AbortSignal;
 }
 
 /** Mutation hook around POST /api/v2/media. Invalidates `objects` so any
@@ -21,6 +22,7 @@ export function useUploadMedia() {
       uploadMedia(vars.file, {
         realm: vars.realm,
         onProgress: vars.onProgress,
+        signal: vars.signal,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['objects'] });

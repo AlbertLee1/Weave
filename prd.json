@@ -1680,8 +1680,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 117,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "MediaUploadZone (US-205 react-dropzone + progress) extended with per-upload AbortController; new × cancel button on each in-flight row triggers controller.abort(), api/media.uploadMedia already piped signal into XHR.abort() so request actually terminates. Catch branch checks signal.aborted / DOMException AbortError to drop the row silently; tests cover abort fires + row vanishes + onChange not called. dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-317",
