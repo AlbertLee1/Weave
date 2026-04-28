@@ -1399,8 +1399,8 @@
         "Tests pass"
       ],
       "priority": 97,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/pipeline/quality Rule DSL (5 types) + Checker + ViolationStore (memory + cmd/server PG adapter); migration 000071_quality_violations table with rule_type CHECK; ServerDeps.QualityViolationStore wired against PG"
     },
     {
       "id": "US-297",

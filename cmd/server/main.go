@@ -47,6 +47,7 @@ import (
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
 	"github.com/liyang/weave/pkg/pipeline"
+	"github.com/liyang/weave/pkg/pipeline/quality"
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
@@ -295,6 +296,11 @@ type ServerDeps struct {
 	// wires Register / Unregister hooks on every CRUD success when this is
 	// non-nil so schedule edits take effect without a restart.
 	PipelineScheduler *pipeline.Scheduler
+	// US-296: Pipeline data-quality violation store. Persists rows that
+	// failed a Rule (notNull/range/unique/regex/foreign_key) so operators
+	// can audit pipeline data hygiene. nil in degraded mode — callers
+	// decide whether to fail-soft or fail-hard when the store is missing.
+	QualityViolationStore quality.ViolationStore
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1386,6 +1392,13 @@ func main() {
 		// (US-289) ride on top of the same row.
 		deps.PipelineStore = newPGPipelineStore(pool)
 		log.Printf("[pipeline] store wired")
+
+		// US-296: Pipeline data-quality violation store. Persists rows
+		// that failed a Rule (notNull/range/unique/regex/foreign_key)
+		// to quality_violations. Fully optional — handlers/runner
+		// callers may fail-soft when the store is nil.
+		deps.QualityViolationStore = newPGQualityViolationStore(pool)
+		log.Printf("[pipeline] quality violation store wired")
 
 		// US-289: Pipeline cron scheduler. Walks the store at boot and
 		// arms a robfig/cron entry for every enabled pipeline carrying a
