@@ -32,6 +32,7 @@ import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
 import { LineagePage } from './components/lineage/LineagePage';
 import { DashboardEditorPage } from './components/dashboards/DashboardEditorPage';
+import { PermissionRequestsPage } from './components/permissionrequests/PermissionRequestsPage';
 import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
@@ -98,6 +99,7 @@ export default function App() {
               <Route path="dashboards/:id" element={<DashboardEditorRoute />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
+              <Route path="permission-requests" element={<PermissionRequestsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="objectsets/:ontology/saved" element={<SavedObjectSetsPage />} />

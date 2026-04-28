@@ -147,6 +147,11 @@ export function Sidebar() {
     label: 'Schema Inference',
     icon: 'compass',
   });
+  navItems.push({
+    to: '/permission-requests',
+    label: 'Permission Requests',
+    icon: 'shield',
+  });
 
   const adminItems: NavItem[] = activeOntology
     ? [

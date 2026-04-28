@@ -2001,8 +2001,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 140,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000079_permission_requests + pkg/permissionrequests/{model,store,handlers}.go with MemoryStore + 24 tests; handler exposes POST/GET /api/v2/permission-requests, GET/POST /api/v2/permission-requests/{id}, POST /{id}/approve|/reject; PG store + approver-discovery (user_roles WHERE role IN admin/ontology-owner) + notification fan-out adapter (oms.Notification type=approval, deep-link to /permission-requests?id=) wired in cmd/server/permission_requests_{store,notifier}.go; SPA web/src/api/permissionRequests.ts + hooks/usePermissionRequests.ts + components/permissionrequests/PermissionRequestsPage.tsx with request-access dialog + approver inbox (status tabs / mine toggle / Approve+Reject modals); 6 RTL tests; route mounted at /permission-requests + Sidebar nav entry. Approver gate defaults to PermSecurityPolicyManage; non-approvers are silently scoped to their own rows. dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-340",

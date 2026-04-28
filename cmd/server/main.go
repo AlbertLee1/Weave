@@ -55,6 +55,7 @@ import (
 	"github.com/liyang/weave/pkg/actiontemplates"
 	"github.com/liyang/weave/pkg/comments"
 	"github.com/liyang/weave/pkg/dashboards"
+	"github.com/liyang/weave/pkg/permissionrequests"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -348,6 +349,15 @@ type ServerDeps struct {
 	// WatchButton. nil in degraded mode so the routes stay unmounted
 	// and the SPA's button hides itself when the status endpoint 404s.
 	WatchesStore watches.Store
+	// US-339: Permission Requests share-link approval workflow.
+	// Backs the /api/v2/permission-requests/* endpoints used by the
+	// SPA's request-access dialog and approver inbox. nil in degraded
+	// mode so the routes stay unmounted; Notifier and Approvers are
+	// independently optional — a wired Store with nil fan-out hooks
+	// still serves the workflow but produces no notifications.
+	PermissionRequestsStore     permissionrequests.Store
+	PermissionRequestsNotifier  permissionrequests.Notifier
+	PermissionRequestsApprovers permissionrequests.ApproverLister
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1193,6 +1203,23 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		if deps.WatchesStore != nil {
 			watches.NewHandler(deps.WatchesStore).RegisterRoutes(api)
 		}
+
+		// US-339: Permission Requests share-link workflow. Same
+		// degraded-mode shape — the SPA's request-access dialog
+		// hides itself when the list endpoint 404s. Notifier and
+		// Approvers are independently optional: when both are wired,
+		// new requests fan out to every approver and decisions fan
+		// back to the requester via the existing Notification Center.
+		if deps.PermissionRequestsStore != nil {
+			prHandler := permissionrequests.NewHandler(deps.PermissionRequestsStore)
+			if deps.PermissionRequestsNotifier != nil {
+				prHandler.SetNotifier(deps.PermissionRequestsNotifier)
+			}
+			if deps.PermissionRequestsApprovers != nil {
+				prHandler.SetApproverLister(deps.PermissionRequestsApprovers)
+			}
+			prHandler.RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1563,6 +1590,20 @@ func main() {
 		// used by the ObjectDetail WatchButton.
 		deps.WatchesStore = newPGWatchesStore(pool)
 		log.Printf("[watches] store wired")
+
+		// US-339: Permission requests store + approver discovery +
+		// notification fan-out. Approver discovery queries
+		// user_roles for users with admin/ontology-owner; the
+		// notifier writes through the OMS notifications table so
+		// requests/decisions surface in the existing Notification
+		// Center. Both fan-out hooks are independently nil-safe.
+		deps.PermissionRequestsStore = newPGPermissionRequestsStore(pool)
+		log.Printf("[permission-requests] store wired")
+		deps.PermissionRequestsApprovers = newPermissionRequestApproverLister(pool)
+		if deps.OmsRepo != nil {
+			deps.PermissionRequestsNotifier = newPermissionRequestNotifier(deps.OmsRepo)
+			log.Printf("[permission-requests] notifier wired")
+		}
 
 		// US-336: @mention autocomplete + notifications. The user
 		// directory adapter wraps the existing PG users repo; the
