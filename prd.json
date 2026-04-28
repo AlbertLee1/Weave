@@ -1792,8 +1792,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 125,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "GanttChart 组件挂在 BrowserPage 第三个 viewMode (table | map | gantt)。沿用 #209 模式：frappe-gantt / gantt-task-react 都未安装且会拉入额外 dep，PRD 文字按现有 dep 实现 — 内联 SVG + 自动检测起止字段对（startDate/endDate, start/end, fromDate/toDate, ... → 回退到声明顺序前两个 temporal 字段）。空态分两种：no-pair（类型本身没有时间属性）和 no-data（有字段但当前结果集无可解析行）。bar 行可点击/键盘激活打开 ObjectDetail，复用 handleRowClick。7 RTL 测试覆盖 no-pair 空态、no-data 空态、典型 startDate/endDate 渲染、回退检测、点击转发、轴 tick 渲染、titleProperty / 主键标签回退；vitest 633/633 pass，typecheck + eslint clean。Browser 手测仍欠款（dev-browser skill 在本 harness 不可用）"
     },
     {
       "id": "US-325",

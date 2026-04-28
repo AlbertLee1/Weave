@@ -13,6 +13,7 @@ import { FacetsPanel, type FacetSelection } from './FacetsPanel';
 import { SavedSearchesPanel } from './SavedSearchesPanel';
 import { ObjectTable, type ObjectTableSelection } from './ObjectTable';
 import { MapView } from './MapView';
+import { GanttChart } from './GanttChart';
 import { ObjectDetail } from './ObjectDetail';
 import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
@@ -66,8 +67,8 @@ export function BrowserPage() {
     () => new Map(),
   );
 
-  // View mode: table | map
-  const [viewMode, setViewMode] = useState<'table' | 'map'>('table');
+  // View mode: table | map | gantt
+  const [viewMode, setViewMode] = useState<'table' | 'map' | 'gantt'>('table');
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -455,6 +456,20 @@ export function BrowserPage() {
             >
               Map
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('gantt')}
+              aria-pressed={viewMode === 'gantt'}
+              data-testid="view-mode-gantt"
+              className={[
+                'px-2 py-1 text-xs font-mono transition-colors border-l border-border',
+                viewMode === 'gantt'
+                  ? 'bg-accent-cyan/10 text-accent-cyan'
+                  : 'text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              Gantt
+            </button>
           </div>
           <ExportButton
             objectType={objectType}
@@ -560,6 +575,14 @@ export function BrowserPage() {
 
             {viewMode === 'map' && (
               <MapView
+                objectType={objectType}
+                data={page.data}
+                onRowClick={handleRowClick}
+              />
+            )}
+
+            {viewMode === 'gantt' && (
+              <GanttChart
                 objectType={objectType}
                 data={page.data}
                 onRowClick={handleRowClick}
