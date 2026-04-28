@@ -1952,6 +1952,19 @@ func main() {
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)
 		}
+
+		// US-291: optional CDC receiver. Subscribes to a PostgreSQL
+		// logical replication slot, decodes pgoutput events through the
+		// configured TableMappings into funnel.EditBatches, and
+		// publishes them onto the same JetStream stream the rest of the
+		// system already drains. Disabled unless WEAVE_CDC_DSN +
+		// WEAVE_CDC_MAPPINGS are set; misconfigured wiring logs a
+		// warning and continues so the rest of the server stays up.
+		if cdcStop, err := startCDCReceiver(ctx, publisher); err != nil {
+			log.Printf("warning: cdc receiver start: %v", err)
+		} else {
+			defer cdcStop()
+		}
 	}
 
 	// 8. Action Executor
