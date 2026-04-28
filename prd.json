@@ -1455,8 +1455,8 @@
         "Tests pass"
       ],
       "priority": 101,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/lineage.Handler exposes GET /api/v2/objects/{rid}/lineage; depth-bounded BFS over oms.LineageStore with direction=upstream|downstream|both, depth 1..10 (default 1), per-step page limit surfaces truncated=true; nodes+edges deduped; degraded mode (no PG) returns 404 LineageNotConfigured; OpenAPI + embedded spec synced"
     },
     {
       "id": "US-301",

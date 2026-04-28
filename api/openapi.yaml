@@ -7763,6 +7763,118 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/objects/{rid}/lineage:
+    get:
+      operationId: getObjectLineage
+      summary: Read upstream / downstream lineage from a root RID
+      description: |
+        Returns the depth-bounded lineage graph rooted at `{rid}`. Each
+        edge in `lineage_edges` records one upstream (action-log /
+        pipeline-run / dataset / ...) → downstream (object) relation
+        written by the action executor or pipeline ingest.
+
+        Direction semantics:
+          * `upstream`   — walk back via `downstream_rid` (default).
+          * `downstream` — walk forward via `upstream_rid`.
+          * `both`       — explore both directions in lockstep.
+
+        Depth defaults to 1 and is capped at 10. The response sets
+        `truncated: true` when any node's neighbour list hit the
+        per-step page limit so callers can re-query with a smaller fan
+        if completeness matters more than freshness.
+      tags: [Lineage]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          schema:
+            type: string
+          description: |
+            Root RID. Any well-formed `ri.{service}.{realm}.{type}.{...}`
+            handle is accepted — typically an object RID (`ri.phonograph2-objects.main.object.<type>.<pk>`)
+            but action-log / pipeline-run RIDs are valid roots too.
+        - in: query
+          name: direction
+          required: false
+          schema:
+            type: string
+            enum: [upstream, downstream, both]
+            default: upstream
+          description: Traversal direction relative to the root.
+        - in: query
+          name: depth
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 1
+          description: BFS depth from the root. Capped at 10.
+      responses:
+        "200":
+          description: Lineage graph rooted at `{rid}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [root, direction, depth, nodes, edges]
+                properties:
+                  root:
+                    type: string
+                    description: Echo of the path RID.
+                  direction:
+                    type: string
+                    enum: [upstream, downstream, both]
+                  depth:
+                    type: integer
+                  truncated:
+                    type: boolean
+                    description: |
+                      Set when any node's neighbour list hit the per-step
+                      page limit. The graph is still valid — additional
+                      edges simply exist beyond the BFS frontier.
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                      required: [rid]
+                      properties:
+                        rid:
+                          type: string
+                        type:
+                          type: string
+                          description: Resource type segment of the RID (e.g. `object`, `action-log`, `run`).
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      required: [from, to, timestamp]
+                      properties:
+                        from:
+                          type: string
+                          description: upstream_rid
+                        to:
+                          type: string
+                          description: downstream_rid
+                        operation:
+                          type: string
+                          description: |
+                            Free-form operation discriminator (CREATE / MODIFY / DELETE / ...).
+                        timestamp:
+                          type: string
+                          format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Lineage store is not configured (degraded mode without PostgreSQL).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/admin/auditEvents:
     get:
       operationId: listAuditEvents

@@ -3666,3 +3666,51 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - When writing an edge per persisted edit, the natural place to hook is AFTER the action_log id is back-filled — both commit paths do this inline (CommitBatch via per-row InsertActionLog, commitBatchAtomicTx via `logs[i].ID` after WriteActionLogsAtomic). Putting the hook BEFORE the log insert (or inside the funnel consumer) loses the action_log id (consumer doesn't know it).
   - Link edits MUST be skipped from object-lineage. Including them produces double-counted relations because link_edges already records source→target separately, and a LINK_CREATE edit has no `ObjectType` field at all (the consumer dispatches on LinkTypeRID instead) — `ObjectLineageRID("","pk")` would still emit a single-segment RID but the resulting edge has no semantic value.
 ---
+
+## 2026-04-28 10:45 - US-300
+- Added pkg/lineage.Handler exposing GET /api/v2/objects/{rid}/lineage with
+  depth-bounded BFS over oms.LineageStore.
+- Direction modes: upstream (default, walks via downstream_rid back to source),
+  downstream (walks via upstream_rid forward), both (lockstep both directions).
+- Depth defaults to 1, capped at MaxDepth=10. Per-step page limit (200) sets
+  Truncated=true so callers know unseen edges exist beyond the BFS frontier.
+- Wire shape: {root, direction, depth, truncated, nodes:[{rid,type}], edges:[{from,to,operation,timestamp}]}.
+  NodeType extracts the resource-type segment from `ri.{svc}.{realm}.<type>.{...}`.
+- ServerDeps grew a LineageStore field; PG bootstrap wires it from the same
+  uncached *PGRepository the action executor writes through, so reads and
+  writes share the same backing store. Degraded mode (no PG) leaves it nil
+  and the handler returns 404 LineageNotConfigured.
+- OpenAPI: new path /api/v2/objects/{rid}/lineage with inline schemas.
+  cmd/server/openapi_spec.yaml synced from canonical.
+- Files changed:
+  - pkg/lineage/handler.go (new)
+  - pkg/lineage/handler_test.go (new, 12 tests covering defaults, depth, both,
+    invalid direction, invalid depth, store error, no-store, dedupe,
+    truncated flag, NodeType extraction)
+  - cmd/server/main.go (LineageStore field + handler mount + PG wiring)
+  - api/openapi.yaml (new path entry)
+  - cmd/server/openapi_spec.yaml (synced from canonical)
+  - prd.json (US-300 passes:true)
+- **Learnings for future iterations:**
+  - Global `/api/v2/...` routes that are NOT scoped to {ontology} mount inside
+    the auth-protected api group (same place as media handler) — see the
+    `lineageHandler.RegisterRoutes(api)` call site for the canonical shape.
+  - When a new route is unconditionally registered (not gated on a deps
+    field), the contract test (TestContract_AllRoutesDocumented) DEMANDS a
+    matching openapi.yaml entry. Conditional routes (like media) skip the
+    spec because the contract router doesn't wire the dep — but unconditional
+    routes do not have that escape hatch.
+  - Inline schemas inside a `paths` entry are sufficient for the contract test;
+    you do NOT need to add components/schemas entries unless you want to share
+    the schema across multiple paths.
+  - chi treats RIDs (with dots, dashes, colons) as opaque {param} segments —
+    `/api/v2/objects/{rid}/lineage` accepts `ri.phonograph2-objects.main.object.X.Y`
+    verbatim with no URL encoding required.
+  - BFS over a graph store: track visited NODES and visited EDGES separately
+    (an edge with a fresh node still adds value even when the from/to has been
+    visited from another path). Use a struct{from,to,op,ts} key for edges so
+    duplicate rows from the same store call don't double-emit.
+  - Degraded-mode (no PG) handler shape: return 404 with a typed errorName
+    like LineageNotConfigured rather than panicking on a nil store. Mirrors
+    how SqlQueries reports SqlQueryEngineNotConfigured.
+---

@@ -37,6 +37,7 @@ import (
 	"github.com/liyang/weave/pkg/gdpr"
 	"github.com/liyang/weave/pkg/geotemporal"
 	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/lineage"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/masking"
 	"github.com/liyang/weave/pkg/mcp"
@@ -96,6 +97,11 @@ type ServerDeps struct {
 	// catalog is nil and the routes are not registered.
 	MediaStore   *media.Store
 	MediaCatalog oms.MediaAssetStore
+	// US-300: lineage_edges read surface. Wired from the uncached
+	// *PGRepository in the PG bootstrap; nil in degraded mode so the
+	// /api/v2/objects/{rid}/lineage handler returns 404
+	// LineageNotConfigured when the route is hit.
+	LineageStore oms.LineageStore
 	// US-210: Link Properties. LinkPropertyStore holds the edge-property
 	// schema (new link_properties table); LinkEdgeStore is the narrow CRUD
 	// surface over link_edges used by the PUT edges/properties endpoint and
@@ -732,6 +738,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			mediaHandler.RegisterRoutes(api)
 		}
 
+		// US-300: Object 溯源 API. The handler is always registered so the
+		// route is discoverable; in degraded mode (no PG) the LineageStore
+		// is nil and the handler returns 404 LineageNotConfigured. We do
+		// not gate on LineageStore!=nil so degraded-mode SDKs / curl can
+		// still discover the contract — same shape as sqlqueries.
+		lineageHandler := lineage.NewHandler(deps.LineageStore)
+		lineageHandler.RegisterRoutes(api)
+
 		// OntologyTransaction experimental edits endpoint (US-041).
 		// Gated behind ?preview=true — only "append edits" is exposed.
 		if deps.TransactionStore != nil {
@@ -1190,6 +1204,10 @@ func main() {
 		// metadata cache decorator does not wrap MediaAssetStore methods, and
 		// upload/delete are infrequent enough that direct PG hits are fine.
 		deps.MediaCatalog = pgRepo
+		// US-300: lineage_edges read surface. Same uncached *PGRepository
+		// the action executor writes through in SetLineageStore below — keeps
+		// the read and write paths trivially consistent.
+		deps.LineageStore = pgRepo
 		// US-210: link-property schema + link-edge value stores. Same reason
 		// as MediaCatalog — these narrow stores are not on oms.Repository, so
 		// the CachedRepository decorator does not wrap them.
