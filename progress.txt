@@ -5460,3 +5460,90 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
     invalidation already live. Pushing API caching into the SW
     creates two sources of truth that disagree on what "fresh" means.
 ---
+
+## 2026-05-02 - US-355 Python async client
+- Implemented:
+  - `sdk/python/weave_client/_async_http.py` — `AsyncTransport` thin wrapper
+    around `httpx.AsyncClient`; mirrors `Transport.request` and
+    `Transport.stream_lines` with `async def` + `aiter_lines`. Reuses the
+    sync `HTTPResponse` value type so the response handler can be shared
+    verbatim.
+  - `sdk/python/weave_client/async_client.py` — single-file home for
+    `WeaveAsyncClient` plus the five async API namespaces
+    (`AsyncOntologiesAPI`, `AsyncObjectsAPI`, `AsyncActionsAPI`,
+    `AsyncObjectSetsAPI`, `AsyncFunctionsAPI`). Every sync method has a
+    direct async sibling: same signature, awaitable body, identical URL
+    construction.
+  - `WeaveAsyncClient` is `async with`-friendly (`__aenter__` /
+    `__aexit__` close the underlying httpx pool); `iter_all` is an async
+    generator (`async for row in c.objects.iter_all(...)`);
+    `execute_stream` is a regular `async def` that returns an
+    `AsyncIterator` — pre-execution failures (4xx/5xx) raise during the
+    `await` BEFORE the caller's `async for` loop begins, matching the
+    sync SDK contract.
+  - `__init__.py` exports `WeaveAsyncClient` alongside `Client`.
+  - `tests/test_async_client.py` (23 new tests, all green) reuses the
+    sync test suite's `_StubServer` / `_NDJSONServer` loopback servers
+    against the real `httpx.AsyncClient` socket path. Coverage: header
+    propagation, auth/404/500 mapping, login/logout token lifecycle,
+    objects.list/iter_all/search/count, actions.apply, objectsets.load
+    + aggregate, functions.execute + execute_stream (happy path,
+    terminal-error mid-stream, pre-execution 400, empty stream).
+  - README expanded with an async usage section and a quickstart
+    snippet.
+- Files changed:
+  - sdk/python/weave_client/__init__.py (export WeaveAsyncClient)
+  - sdk/python/weave_client/_async_http.py (new)
+  - sdk/python/weave_client/async_client.py (new)
+  - sdk/python/tests/test_async_client.py (new)
+  - sdk/python/README.md (async usage section)
+  - prd.json (US-355 → passes:true)
+- Tests: 101/101 pass under
+  `PYTHONPATH=. python3 -m unittest discover -s tests -p 'test_*.py'`
+  (was 78 before US-355).
+- **Learnings for future iterations:**
+  - **`async def` returning an iterator vs async generator** — for the
+    "errors raise before iteration begins" contract used by the streaming
+    SDKs, define the entry point as a REGULAR `async def` whose body
+    `await`s the HTTP send and CONDITIONALLY raises a typed error before
+    `return _consume_ndjson_async(...)`. If the entry point itself
+    contained `yield`, Python would make it an async generator and the
+    body would only execute after the first `__anext__` call —
+    pre-execution errors would surface inside the `async for` loop, not
+    at the call site. Same shape used by the sync `execute_stream` (see
+    progress.txt entry on "SDK iterator methods"). Test it: a 400-stub
+    must raise `WeaveError` from `await client.functions.execute_stream(...)`,
+    NOT from inside the `async for`.
+  - **httpx async streaming response cleanup**: `client.send(req,
+    stream=True)` returns a response that owns an open socket; `aread`
+    +`aclose` for error paths, `try: ... async for line in
+    resp.aiter_lines() ... finally: await resp.aclose()` for the happy
+    path. Skipping `aclose` leaks the connection back to the pool in a
+    half-read state and the next request on the same client can hang.
+  - **Reuse, don't fork, the sync `HTTPResponse` + response handler**:
+    by importing `weave_client._http.HTTPResponse` into the async
+    transport and re-implementing `_handle` as a free function in
+    `async_client.py`, the async path inherits the same exception
+    mapping (401/403→Auth, 404→NotFound, else→Error) without drift. A
+    single sync↔async semantics divergence (e.g. one mapping 403 and
+    the other not) would silently break SDK consumers that try-except
+    on the typed errors.
+  - **Sync HTTPServer + async client in the same test** is fine: the
+    stdlib `HTTPServer` runs on a background thread, `httpx.AsyncClient`
+    talks to it from the event loop. The asyncio "took 0.500 seconds"
+    runner warnings come from HTTPServer's keep-alive idle-close timer,
+    not from the SDK — they're noise, not failures.
+  - **Async unittest pattern for this repo**:
+    `unittest.IsolatedAsyncioTestCase` is the right base class — gives
+    you `async def test_xxx` with no third-party dependency
+    (`pytest-asyncio` is optional in pyproject.toml but the suite must
+    run under stdlib unittest per README). Each `IsolatedAsyncioTestCase`
+    spins up a fresh event loop per test method, so cross-test loop
+    leakage is impossible.
+  - **Single-file async API namespaces** (`async_client.py` carrying all
+    five `Async*` classes) is acceptable here because each namespace
+    method is a 5-10 line URL+body builder. Splitting into one file per
+    namespace would 5x the file count for zero readability gain. The
+    sync SDK's per-namespace files exist for historical reasons
+    (incremental US adds), not architectural ones.
+---

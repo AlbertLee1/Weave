@@ -2226,8 +2226,8 @@
         "Tests pass"
       ],
       "priority": 156,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "weave_client/_async_http.AsyncTransport 包装 httpx.AsyncClient + stream_lines async 迭代; weave_client/async_client.WeaveAsyncClient 暴露 ontologies/objects/actions/objectsets/functions 五个 Async* 命名空间, 每个方法都 await 透传; 复用同一 _handle 翻译器 + 同一 WeaveError 家族; async 上下文管理器 (__aenter__/__aexit__) + iter_all 改为 async generator + execute_stream 预执行错误在 await 时早期抛出 (非 async generator); 23 个 IsolatedAsyncioTestCase 全跑通 (101/101 总数)."
     },
     {
       "id": "US-356",

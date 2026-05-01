@@ -8,10 +8,23 @@ Quickstart::
     for ontology in weave.ontologies.list():
         print(ontology.api_name)
 
+Async siblings (US-355)::
+
+    import asyncio
+    from weave_client import WeaveAsyncClient
+
+    async def main():
+        async with WeaveAsyncClient("http://localhost:9117", access_token="...") as c:
+            for ontology in await c.ontologies.list():
+                print(ontology.api_name)
+
+    asyncio.run(main())
+
 The SDK is intentionally thin: it returns Pydantic models for metadata
 endpoints and plain ``dict`` payloads for object endpoints, where the schema
 varies per object type.
 """
+from .async_client import WeaveAsyncClient
 from .client import Client
 from .exceptions import (
     WeaveAuthError,
@@ -38,6 +51,7 @@ from .types import (
 
 __all__ = [
     "Client",
+    "WeaveAsyncClient",
     "WeaveError",
     "WeaveAuthError",
     "WeaveNotFoundError",

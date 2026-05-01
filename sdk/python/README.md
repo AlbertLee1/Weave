@@ -79,6 +79,43 @@ weave.login("admin@example.com", "password")
 weave.ontologies.list()  # now authenticated
 ```
 
+## Async client (US-355)
+
+For event-loop-driven applications, `WeaveAsyncClient` mirrors the sync
+`Client` API method-for-method on top of `httpx.AsyncClient`. Every method
+is awaitable and the client doubles as an `async with` context manager:
+
+```python
+import asyncio
+from weave_client import WeaveAsyncClient
+
+async def main():
+    async with WeaveAsyncClient("http://localhost:9117", access_token="…") as c:
+        # 1. Browse ontologies.
+        for ontology in await c.ontologies.list():
+            print(ontology.api_name)
+
+        # 2. Page through every customer.
+        async for customer in c.objects.iter_all("northwind", "Customer"):
+            print(customer["__primaryKey"])
+
+        # 3. Apply an action.
+        result = await c.actions.apply("northwind", "createCustomer", {
+            "customerId": "WEAVE",
+            "companyName": "Weave Co",
+        })
+
+        # 4. Stream a function's NDJSON output.
+        it = await c.functions.execute_stream("northwind", "topProducts", {"limit": 100})
+        async for item in it:
+            print(item)
+
+asyncio.run(main())
+```
+
+Errors raised by the async client are the same `WeaveError` /
+`WeaveAuthError` / `WeaveNotFoundError` hierarchy as the sync client.
+
 ## Errors
 
 Non-2xx responses raise typed exceptions:
