@@ -85,6 +85,15 @@ const zhCN = {
     networkError: '网络异常，请检查连接后重试',
     unknownError: '未知错误',
   },
+  hotkeys: {
+    groupGlobal: '全局',
+    groupNavigation: '导航',
+    commandPalette: '打开命令面板',
+    goDashboard: '前往仪表盘',
+    goObjectsets: '前往对象集',
+    goPipelines: '前往数据管道',
+    goApprovals: '前往审批',
+  },
 } as const;
 
 export default zhCN;

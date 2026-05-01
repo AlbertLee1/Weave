@@ -79,6 +79,15 @@ const en = {
     networkError: 'Network error, please check your connection and retry.',
     unknownError: 'Unknown error',
   },
+  hotkeys: {
+    groupGlobal: 'Global',
+    groupNavigation: 'Navigation',
+    commandPalette: 'Open command palette',
+    goDashboard: 'Go to Dashboard',
+    goObjectsets: 'Go to Object Sets',
+    goPipelines: 'Go to Pipelines',
+    goApprovals: 'Go to Approvals',
+  },
 } as const;
 
 export default en;

@@ -2127,8 +2127,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 149,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "react-hotkeys-hook@5.3.0 + web/src/hotkeys/registry.ts (HOTKEYS list + HotkeyId/Group types + getHotkey lookup) + useShortcut hook (one call per binding for rules-of-hooks safety, enabled gate inside callback closure since v5 doesn't re-subscribe on options change); 5 entries (commandPalette mod+k, goDashboard/goObjectsets/goPipelines/goApprovals as g>x sequences); Shell.tsx wires all 5; legacy useCommandPaletteShortcut deleted; 10 tests (registry shape + sequence + meta+k + ctrl+k + bare-k negative + enabled toggle + cleanup); zh-CN/en i18n keys for hotkeys.* group; dev-browser skill not available — manual browser verification still pending"
     },
     {
       "id": "US-349",

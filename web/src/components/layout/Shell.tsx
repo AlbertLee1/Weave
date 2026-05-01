@@ -1,21 +1,33 @@
 import { useCallback, useState } from 'react';
-import { Outlet, useParams } from 'react-router';
+import { Outlet, useNavigate, useParams } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { CommandPalette } from '../common/CommandPalette';
 import { Toaster } from '../common/Toaster';
-import { useCommandPaletteShortcut } from '../../hooks/useCommandPaletteShortcut';
+import { useShortcut } from '../../hotkeys';
 import { useOntologyStore } from '../../stores/ontologyStore';
 
 export function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const togglePalette = useCallback(() => setPaletteOpen((v) => !v), []);
-  useCommandPaletteShortcut(togglePalette);
+  const navigate = useNavigate();
 
   const params = useParams();
   const selectedOntology = useOntologyStore((s) => s.selectedOntology);
   const activeOntology =
     (params.ontology as string | undefined) ?? selectedOntology ?? null;
+
+  useShortcut('commandPalette', togglePalette);
+  useShortcut('goDashboard', () => navigate('/'));
+  useShortcut(
+    'goObjectsets',
+    () => {
+      if (activeOntology) navigate(`/objectsets/${activeOntology}`);
+    },
+    { enabled: !!activeOntology },
+  );
+  useShortcut('goPipelines', () => navigate('/pipelines'));
+  useShortcut('goApprovals', () => navigate('/approvals'));
 
   return (
     <div className="flex h-screen bg-bg-primary text-text-primary font-sans">
