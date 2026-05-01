@@ -263,6 +263,7 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Global keyboard shortcut registry (US-348, future US-349 help panel / per-page shortcuts): single source of truth in `web/src/hotkeys/registry.ts` — typed `HotkeyId` union + `HOTKEYS` array (id / keys / i18nKey / group). One `useShortcut(id, handler, { enabled? })` call per binding keeps the rules-of-hooks invariant trivial; a parent registers N shortcuts by writing N call sites, never a `Partial<Record<HotkeyId, () => void>>` map looped over inside a hook. Two react-hotkeys-hook v5 traps to bake into any future shortcut hook: (1) the effect deps strip `enabled` / `preventDefault` / `ignoreEventWhen` before comparing, so toggling `options.enabled` after mount does NOT re-subscribe — gate enabled INSIDE the callback closure (and put it in the `dependencies` array so the callback ref refreshes), letting useHotkeys subscribe permanently and the closure decide; (2) jsdom keyboard events MUST carry `code: 'KeyX'` (e.g. `code: 'KeyK'` for `meta+k`) — the library's keydown handler short-circuits when `a.code` is undefined, so a bare `fireEvent.keyDown(document, { key: 'k', metaKey: true })` silently never fires. Sequences use `>` (`g>d`) and a single string can't mix `+` and `>` (library logs and skips). Keep i18n dynamic via `t(def.i18nKey)` and accept the `UNUSED` flag from `extract-i18n.mjs` — the audit is informational, not fatal, and the keys ARE statically defined in zh-CN/en.
 - Dual-layer ErrorBoundary pattern (US-352, future SPA-wide guarded surfaces): `react-error-boundary` ships ONE `<ErrorBoundary>` primitive — wire two instances. (1) **GlobalErrorBoundary OUTSIDE the provider tree** (in App.tsx wrapping QueryClientProvider/Router/AuthProvider). Its fallback MUST avoid any hook depending on those providers (no `useTranslation` / `useQueryClient` / `useAuth` / `useNavigate`) — a provider crash means those hooks throw too and the outer boundary has nothing to render. Hardcode bilingual strings ("应用发生错误 / Something went wrong"). (2) **RouteErrorBoundary INSIDE Shell** wrapping `<Outlet />`. Shell stays usable so the user can navigate away; fallback uses `useTranslation()` (i18n is provider-tree-internal, guaranteed available here). Pass `resetKeys={[location.pathname]}` so route changes auto-reset the boundary — without it, navigating away from a crashed page leaves the user stuck on the fallback until they hit Retry. `react-error-boundary@6` widened the `onError(error, info)` first param from `Error` to `unknown` (TS2322 if you keep v5's signature); transparently forward `unknown` to the reporter and let the reporter coerce via `error instanceof Error ? error : new Error(String(error))`. Reporter must NEVER throw upstream — wrap custom reporter calls in `try {} catch {}` and `.catch(() => {})` around fetch/sendBeacon, or you risk a re-entrant boundary catch loop. `navigator.sendBeacon` (with `fetch({ keepalive: true })` jsdom fallback) is the right primitive for fire-and-forget client error POSTs because it survives unload. Prior art: `web/src/components/common/ErrorBoundary.tsx` + `web/src/lib/errorReporter.ts`.
 - Offline support (US-354, future per-page offline shells / sync queues): three pieces, in order — (1) tiny in-house IDB key/value at `web/src/lib/offlineCache.ts` mirroring localforage's `getItem`/`setItem`/`removeItem`/`clear`/`keys` surface (~80 LOC, in-memory fallback when `indexedDB` is undefined so jsdom + private-mode browsers don't blow up; "PRD says localforage" does NOT mandate the npm dep when the surface is this small — same anti-dep posture as US-326 declining react-pivottable / react-dnd); (2) `useOnlineStatus` hook + `OfflineIndicator` component pinned ABOVE Topbar inside Shell, three states (hidden / amber-offline / teal-reconnected-2.5s-pulse) — render-phase setState (`if (online !== prevOnline) { setPrevOnline(online); if (...) setShowReconnected(true) }`, progress.txt:119 prior art) detects the offline → online transition without tripping `react-hooks/set-state-in-effect`, separate `[showReconnected]` effect owns the timer; (3) Shell's reconnect watcher calls `queryClient.invalidateQueries()` on every offline → online transition — TanStack Query's `refetchOnReconnect: true` already resumes paused queries, but the explicit invalidate makes auto-sync deterministic for views the user was browsing while offline. Service Worker registration (`web/src/lib/serviceWorker.ts` + `web/public/sw.js`) is production-only — `import.meta.env.DEV` gate is mandatory because Vite HMR + SW interception are mutually exclusive (intercepting the dev server breaks module reloads). SW scope is **application-data-blind**: shell precache + stale-while-revalidate for `/assets/*`, network-first navigations w/ shell fallback, pass-through for API GETs. Data-level caching lives in the SPA (TanStack Query + offlineCache) where staleness rules already live; pushing API caching into the SW creates two sources of truth.
+- Interactive REPL recipe (US-356 weave repl, future debug shells / ralph repl / etc.): split entry into TTY vs batch branches by `term.IsTerminal` on stdin.fd. TTY uses `golang.org/x/term`'s Terminal — raw mode + line editing + Tab autocomplete via AutoCompleteCallback (only fire on `\t`, return `(newLine, newPos, true)` for unique match with trailing space, longest-common-prefix without trailing space for ambiguous-but-extensible, `("", 0, false)` for "no change"). Batch (non-TTY) uses bufio.Scanner — one command per line, no prompt, deterministic for tests + pipes. Persist every accepted command to a flat history file under configDir() with append-only writes + trim-to-N after each insert; in-session ↑↓ recall is whatever term.Terminal builds in its private ring buffer (the History field is unexported — you can NOT pre-populate it). Dispatch reuses the existing top-level `runX(args, stdout, stderr)` helpers (not via `run()` itself, which would allow nested REPL recursion); explicitly reject `repl` inside the REPL with a clean error. splitREPLArgs is a 50-line shell-like tokenizer (whitespace + `"`/`'` quoting + backslash escape) that returns typed errors for unterminated quotes — beats parsing via `os/exec` or pulling in a third-party shellwords dep. Make `run()` take an `io.Reader` stdin so the REPL is exercisable end-to-end from tests with `strings.NewReader("...")`; one cascading change to the existing `runCLIWith` helper passes an empty reader for non-REPL tests. The whole feature is one new file (`cmd_repl.go`) + one new test file + 5 lines in main.go — no new top-level deps because `golang.org/x/term` was already in go.sum as an indirect; `go mod tidy` cleanly promoted it.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -5546,4 +5547,56 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
     namespace would 5x the file count for zero readability gain. The
     sync SDK's per-namespace files exist for historical reasons
     (incremental US adds), not architectural ones.
+---
+
+## 2026-05-02 - US-356 CLI REPL
+- Added `weave repl` interactive command that wraps the existing dispatch
+  surface with line-editing, tab-completion and history. Reuses the proven
+  runOntology / runObject / runAuth / runConfig / runAdmin functions for
+  every command — no duplicate parsing.
+- TTY mode: `golang.org/x/term` (already transitively in go.sum, promoted
+  to a direct require) provides raw-mode line editing + in-session ↑↓
+  history via term.Terminal. AutoCompleteCallback fires only on Tab.
+- Non-TTY mode (pipes / tests): bufio.Scanner reads one command per line.
+  No prompt, no banner, deterministic for CI.
+- Tab completion has two layers — top-level commands and per-command
+  subcommands (sourced from each cmd_*.go's switch statement). Unique
+  match auto-completes with trailing space; multi-match extends to longest
+  common prefix without trailing space; no-extension ambiguity returns
+  `ok=false` so the terminal beeps.
+- History persists to `$WEAVE_CONFIG_DIR/history` via append-only writes,
+  trimmed to the most recent 1000 lines after each accepted command.
+  Comments (`#`) and blank lines are skipped from history.
+- splitREPLArgs is a small shell-like tokenizer (whitespace + single/double
+  quotes + backslash escape) that returns typed errors for unterminated
+  quotes — beats os/exec.Command splitting for one of these.
+- run() now takes io.Reader stdin so the REPL can be exercised end-to-end
+  from tests with strings.NewReader; the existing runCLIWith helper in
+  cli_test.go was updated to pass an empty reader for non-REPL tests.
+- Files changed:
+  - cmd/weave-cli/main.go (added "repl" case + stdin parameter)
+  - cmd/weave-cli/cmd_repl.go (new — REPL implementation)
+  - cmd/weave-cli/cmd_repl_test.go (new — 17 tests)
+  - cmd/weave-cli/cli_test.go (runCLIWith helper updated for new stdin arg)
+  - go.mod (golang.org/x/term promoted from indirect to direct)
+- **Learnings for future iterations:**
+  - `golang.org/x/term` was already in go.sum as an indirect dep (pulled
+    by go-oidc / pgx / etc.). `go mod tidy` cleanly promotes it on first
+    direct import — no version pinning headache.
+  - `term.Terminal.History` is unexported; you can NOT pre-populate the
+    in-session history ring buffer from a file. The compromise: persist
+    every accepted command to a flat history file (great for cross-session
+    grep / audit) AND let the in-session ring buffer build naturally from
+    the user's typing within one session. Operators who want full-history
+    recall across sessions can bind a wrapper script that `tail`s the file
+    into stdin at startup — it's a 5-line shell function, not a code change.
+  - Test the REPL via NON-TTY path with bufio.Scanner; spinning up a real
+    PTY in tests is enormous scaffolding for zero coverage gain over the
+    pure-function autoCompleteREPL + dispatchREPLLine entry points.
+  - Adding a stdin parameter to `run()` cascaded into one helper update
+    (`runCLIWith` in cli_test.go) and main.go. Took ~2 minutes — much
+    cheaper than the alternative of having repl read os.Stdin directly
+    (untestable) or via an env-var seam (gross).
+- **Codebase Pattern added (top of progress.txt):**
+  - Interactive REPL recipe (weave repl, future ralph repl / debug shell).
 ---

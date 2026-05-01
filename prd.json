@@ -2240,8 +2240,8 @@
         "Tests pass"
       ],
       "priority": 157,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cmd/weave-cli/cmd_repl.go 新增 weave repl: TTY 模式用 golang.org/x/term 提供 raw-mode 行编辑/Tab 补全/会话内 history 环；非 TTY 模式 bufio 一行一令便于管道 + 测试. 补全分两层 (top-level command + 二级 subcommand), 仅在 Tab 触发, 唯一匹配自动加空格, 多匹配延伸到 longest common prefix. 所有被接受的命令追加到 ~/.config/weave/history (跨会话 grep 友好), 自动裁剪到最近 1000 行. dispatchREPLLine 直接路由到 runOntology/runObject/runAuth/runConfig/runAdmin, 拒绝嵌套 repl, 错误命令不退出 REPL. splitREPLArgs 支持单/双引号 + 反斜杠转义并对未闭合引号返回类型化错误. 17 个新单测 (cmd_repl_test.go) 含 batch 分发 / history 写入+裁剪 / tokenizer / 补全 4 个分支 / EOF / 嵌套 repl / 主调度. 全部 ./cmd/weave-cli/... 测试通过, CGO_ENABLED=0 通过 Dockerfile 不变量."
     },
     {
       "id": "US-357",

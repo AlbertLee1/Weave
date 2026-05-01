@@ -12,12 +12,12 @@ import (
 )
 
 func main() {
-	exit := run(os.Args[1:], os.Stdout, os.Stderr)
+	exit := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	os.Exit(exit)
 }
 
 // run is the testable entry point. It returns a process exit code.
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printRootUsage(stdout)
 		return 2
@@ -38,6 +38,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConfig(rest, stdout, stderr)
 	case "admin":
 		return runAdmin(rest, stdout, stderr)
+	case "repl":
+		return runREPL(rest, stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "weave: unknown command %q\n\n", cmd)
 		printRootUsage(stderr)
@@ -57,6 +59,7 @@ Commands:
   auth       Authenticate against the server (login, logout, status)
   config     Read and write the local config file (~/.config/weave/config.toml)
   admin      Server administration (index rebuild, ...)
+  repl       Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)
 }

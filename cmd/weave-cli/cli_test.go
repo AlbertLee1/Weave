@@ -31,7 +31,7 @@ func runCLIWith(t *testing.T, configDir string, args ...string) (stdout, stderr 
 	t.Helper()
 	t.Setenv("WEAVE_CONFIG_DIR", configDir)
 	var stdoutBuf, stderrBuf bytes.Buffer
-	exit = run(args, &stdoutBuf, &stderrBuf)
+	exit = run(args, strings.NewReader(""), &stdoutBuf, &stderrBuf)
 	return stdoutBuf.String(), stderrBuf.String(), exit
 }
 
