@@ -1,0 +1,4 @@
+# Install the in-repo SDK in editable mode:
+#   pip install -e ../../sdk/python
+# This file is provided for tooling that prefers `pip install -r requirements.txt`.
+-e ../../sdk/python
