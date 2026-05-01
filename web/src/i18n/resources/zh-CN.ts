@@ -86,9 +86,13 @@ const zhCN = {
     unknownError: '未知错误',
   },
   hotkeys: {
+    helpTitle: '键盘快捷键',
+    or: '或',
+    then: '然后',
     groupGlobal: '全局',
     groupNavigation: '导航',
     commandPalette: '打开命令面板',
+    help: '显示快捷键帮助',
     goDashboard: '前往仪表盘',
     goObjectsets: '前往对象集',
     goPipelines: '前往数据管道',

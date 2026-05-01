@@ -5218,3 +5218,39 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - jsdom 不分发"cmd 系键码"差异，`fireEvent.keyDown(document, { key: 'k', code: 'KeyK', metaKey: true })` 即足以触发 `meta+k`，无需手动分发 KeyboardEvent 构造器。`code` 字段必须给 ——react-hotkeys-hook 的 `B = (a) => { a.code !== void 0 && (z(L(a.code)), ...) }` 在 a.code 为 undefined 时直接 short-circuit 返回，导致 `fireEvent.keyDown` 默认不带 code 的简化写法对它无效。所有快捷键测试都应显式带 `code: 'KeyX'`（或对应 `KeyG`/`KeyD` 等）。
   - 序列快捷键 (`g>d`) 的两次按键之间默认 1000ms 超时（`sequenceTimeoutMs`）。在测试里 `act` 内连续 fireEvent 即可命中，无需 fake timer；library 内部用真实 setTimeout 但因为我们在同一同步循环里压两个键，不会触及超时分支。如果未来需要测"超时后第二个键不触发"，则要 `vi.useFakeTimers()` + `vi.advanceTimersByTime(1100)` 介入。
 ---
+
+## 2026-05-01 - US-349 (快捷键配置面板)
+- 在 hotkeys 注册表新增 `showHelp` 条目（keys: `shift+slash`，i18nKey: `hotkeys.help`，group: `global`）—— `?` 是 Shift+/ 在 US/EN 键盘上的产物，react-hotkeys-hook 默认走 `e.code` 匹配（`L(code)`：`Slash` → `slash`），所以绑定 `shift+slash` 比 `?` 更稳定；要直接用 `?` 需要在 useHotkeys 上开 `useKey:true` 让它读 `e.key`，本项目共享的 useShortcut 不暴露该开关，因此显式绑定 code 是更小手术。
+- 新增 `web/src/components/common/HotkeyHelpModal.tsx`：复用既有 Modal（自带 Esc + overlay-click 关闭），按 `GROUP_ORDER = ['global','navigation']` 输出 `<section>` 列表 → `<ul>` → 每行一个 `data-testid=\`hotkey-row-${id}\`` 单元（左侧 `t(def.i18nKey)` 描述、右侧 KeyPattern 键帽）。
+- KeyPattern/KeySequence/KeyCombo 三层渐进解析键串：
+  - `,` 切顶层 alternative，相邻插 `t('hotkeys.or')` 分隔（命令面板的 `meta+k, ctrl+k`）；
+  - `>` 切 step，相邻插 `t('hotkeys.then')` 分隔（导航类 `g>d`）；
+  - `+` 切组合键并入同一 `<kbd>` 簇（`shift+slash`）。
+  - `KEY_GLYPH` 把 meta/ctrl/shift/alt/slash/escape/enter/tab/backspace/方向键 → `⌘ Ctrl ⇧ ⌥ / Esc Enter Tab Bksp ↑↓←→`；单字符 (`k`/`d`) 大写、其余原样小写。结果是 `Cmd+K or Ctrl+K`、`G then D`、`⇧ + /` 这种语义化输出，不需要复杂的平台判定（meta 永远显示 `⌘`，Linux/Win 用户读 `Ctrl K` 那一支也合理）。
+- Shell.tsx wire：新增 `helpOpen` state + `toggleHelp = useCallback(() => setHelpOpen(v=>!v))` + `useShortcut('showHelp', toggleHelp)` + `<HotkeyHelpModal open={helpOpen} onClose={...} />`。toggle 语义 = 再次按 `?` 关闭面板，跟命令面板对称。
+- i18n: zh-CN.ts / en.ts 同步新增 `hotkeys.{helpTitle, help, or, then}`（4 键 × 2 locale = 8 条），全部 literal `t(...)` 引用所以 extract-i18n 静态可达，parity 通过 `OK: zh-CN and en trees are consistent and every referenced key is defined`。`hotkeys.help` 自身经 `t(def.i18nKey)` 动态访问仍 UNUSED（与 US-348 同款行为，预期）。
+- Files changed:
+  - web/src/hotkeys/registry.ts（HotkeyId 联合追加 'showHelp'，HOTKEYS 数组新增条目）
+  - web/src/components/common/HotkeyHelpModal.tsx（新增，~145 行）
+  - web/src/components/common/__tests__/HotkeyHelpModal.test.tsx（新增，5 用例）
+  - web/src/components/layout/Shell.tsx（helpOpen state + toggleHelp + useShortcut('showHelp', toggleHelp) + 挂载 HotkeyHelpModal）
+  - web/src/hotkeys/__tests__/useShortcut.test.tsx（+1 用例：shift+slash 触发 showHelp）
+  - web/src/i18n/resources/zh-CN.ts + en.ts（hotkeys 命名空间 +4 键）
+  - prd.json US-349 → passes:true + notes
+  - progress.txt（本条）
+- Verification:
+  - `npx vitest run` → 113 文件 / 828 测试通过（baseline 112/822 from US-348 → +1 文件 / +6 用例：HotkeyHelpModal 5 + useShortcut 1）。
+  - `npx tsc -b` → 仍 3 处 pre-existing baseline 错误（ObjectSetComposer.test.tsx + objectSetUrl.ts × 2），与本故事无关。
+  - `npx vite build` → 1488 modules，CSS 135.12 kB / 26.80 kB gzip，JS 3.04 MB / 926 kB gzip，干净。
+  - `node web/scripts/extract-i18n.mjs` → "OK: zh-CN and en trees are consistent and every referenced key is defined"。
+  - `npx eslint <changed files>` → 干净，零新增告警。
+  - `CGO_ENABLED=0 go build ./...` → 干净；`go test -short ./pkg/... ./cmd/... ./internal/... ./test/...` 全绿。
+  - dev-browser skill 在当前 harness 仍不可用，按 `?` 打开 / Esc 关闭 / 切语言重渲染的浏览器手测欠付。
+- **Learnings for future iterations:**
+  - react-hotkeys-hook 默认匹配 `e.code` 而非 `e.key`：parser `L(e.code)` 把 `Slash` → `slash`、`KeyK` → `k`、`Digit1` → `1`，然后跟 `keys` 数组逐项对比。修饰键 (shift/ctrl/meta/alt/mod) 走独立的 boolean 字段。所以**任何与"打字符号"相关的快捷键** (`?`、`!`、`>`、`*` 等) 都应该绑定 code 形式 (`shift+slash`、`shift+1`、`shift+period`、`shift+8`)，而不是直接绑符号。直接绑 `?` 仅在 `useKey:true` 时工作（让 library 走 `e.key.toLowerCase()` 比较分支），但需要扩展我们共享的 useShortcut 接口暴露该选项 —— 没必要为单一 case 改公共 API。写注释把这个约束钉死在 registry 里。
+  - 键帽视觉化 KEY_GLYPH map 是个一次性投资 —— 后续每多一条快捷键，要么命中已有映射，要么自然落到 "单字符大写" 默认分支，几乎零维护。**不要尝试用 `Intl.DisplayNames` 或 `navigator.platform` 自动选 ⌘ vs Ctrl 的渲染** —— 我们已经在 `meta+k, ctrl+k` 的 `, ` 分隔 alternative 里同时展示两侧，让用户自己识别。平台判定逻辑会带来 SSR/jsdom 差异 + macOS-only 用户群和 Win 用户在切设备时迷惑（同一份 UI 截图能在两边都自洽更重要）。
+  - Modal 二次复用模式：传 `open`/`onClose`/`title` 即得 Esc + overlay-click + 关闭按钮 + a11y 焦点框架。HotkeyHelpModal、ConfirmDialog（US-205）、未来的 ShortcutEditor、SettingsDialog 都可以拼装在同一 Modal shell 上，避免每个 modal 重新实现 Esc 处理。如果未来需要更细粒度的关闭语义（"Esc 仅在搜索框为空时关"），那是 Modal 的扩展点，不是再写一个 modal。
+  - i18n 静态可达性 vs 动态 `t(def.i18nKey)`：HotkeyHelpModal 的描述列调用 `t(def.i18nKey)` 是动态键，extract-i18n 抓不到所以会以 UNUSED 上报 —— 这跟 US-348 的 hotkey 注册表本身一样是预期。但 Modal 自己的 4 个标题/分隔符键 (`hotkeys.helpTitle`, `hotkeys.or`, `hotkeys.then`, group titles 经 GROUP_I18N map) 都是 literal `t('hotkeys.helpTitle')` 形式，extract-i18n 能直接抓到 —— 这是为啥保持 GROUP_I18N 用 `Record<HotkeyGroup, string>` 而不是动态拼 `\`hotkeys.group${capitalize(group)}\`` 的原因之一：前者把字符串字面量留在源码里给静态分析器抓。
+  - 测试 i18n 要切回默认 locale：beforeEach 把 i18n.language 强制重置为 'en'（jsdom 的 navigator.language 默认是 en-US，未受其他测试干扰时本来也是 'en'，但 i18n singleton 跨 file 共享，之前的 test 可能把它切到 zh-CN 没复位），afterEach 还原 DEFAULT_LOCALE。LanguageSwitcher.test.tsx 里同款写法。这避免了"单跑 PASS、加入 suite 跑 FAIL"的诡异 flake。
+  - HotkeyHelpModal 用 `data-testid="hotkey-row-{id}"` 标记每行而不是 `getByText(description)` —— 后者跟 i18n bundle 紧耦合，每次翻译微调（"Open command palette" → "Open Command Palette"）都会让测试断言失效。`data-testid` 把可寻址性从"翻译串"解耦成"hotkey id"，是稳定的语义层；行内文本用 `.textContent` 子串匹配（`toContain('⌘')` / `toContain('K')`）做轻断言，既不锁死翻译串又能验证关键键帽出现。
+---

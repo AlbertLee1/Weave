@@ -2141,8 +2141,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 150,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "registry 新增 showHelp (shift+slash, group=global, i18nKey=hotkeys.help) — `?` 是 Shift+/，react-hotkeys-hook 默认按 e.code 匹配，所以绑定 `shift+slash` 而非 `?`（除非启用 useKey:true，本项目共享 hook 不暴露该开关）；HotkeyHelpModal 复用 Modal（自带 Esc 关闭）按 GROUP_ORDER=['global','navigation'] 渲染，每行 `t(def.i18nKey)` + KeyPattern（split ',' 为 alt → ' or ' / split '>' 为 step → ' then ' / split '+' 为组合 → kbd chip）；KEY_GLYPH 把 meta/ctrl/shift/alt/slash/方向键 等映射成视觉键帽（⌘ ⇧ ⌥ / ↑↓←→），单字符大写、其余小写；Shell.tsx 新增 helpOpen state + toggleHelp + useShortcut('showHelp', toggleHelp) + 挂载 HotkeyHelpModal；i18n 在 zh-CN.ts/en.ts 同步新增 hotkeys.{helpTitle,help,or,then}（parity 通过 extract-i18n 验证）；6 用例（关闭不渲染 / 打开渲染分组+标题 / 每条目一行 + chip 内容 / zh-CN 切换 / 关闭按钮）+ useShortcut shift+/ 用例 1 个；vitest 113/828 pass、tsc -b 仅 3 处 pre-existing baseline 错误、vite build 干净、go test -short 全绿、CGO_ENABLED=0 go build ./... 干净；dev-browser skill 在当前 harness 不可用，浏览器手测仍欠付。"
     },
     {
       "id": "US-350",

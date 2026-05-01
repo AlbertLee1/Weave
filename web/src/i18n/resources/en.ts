@@ -80,9 +80,13 @@ const en = {
     unknownError: 'Unknown error',
   },
   hotkeys: {
+    helpTitle: 'Keyboard Shortcuts',
+    or: 'or',
+    then: 'then',
     groupGlobal: 'Global',
     groupNavigation: 'Navigation',
     commandPalette: 'Open command palette',
+    help: 'Show keyboard shortcut help',
     goDashboard: 'Go to Dashboard',
     goObjectsets: 'Go to Object Sets',
     goPipelines: 'Go to Pipelines',

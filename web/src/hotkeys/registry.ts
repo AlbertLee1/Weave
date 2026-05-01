@@ -12,6 +12,7 @@ export type HotkeyGroup = 'global' | 'navigation';
 
 export type HotkeyId =
   | 'commandPalette'
+  | 'showHelp'
   | 'goDashboard'
   | 'goObjectsets'
   | 'goPipelines'
@@ -29,6 +30,16 @@ export const HOTKEYS: readonly HotkeyDef[] = [
     id: 'commandPalette',
     keys: 'meta+k, ctrl+k',
     i18nKey: 'hotkeys.commandPalette',
+    group: 'global',
+  },
+  {
+    // `?` is Shift+/ on US/EN layouts. react-hotkeys-hook matches the
+    // event's keyboard `code` rather than `key`, so bind to `shift+slash`
+    // explicitly — `?` as a key string would only match if useKey:true
+    // were set, which we don't expose on the shared hook.
+    id: 'showHelp',
+    keys: 'shift+slash',
+    i18nKey: 'hotkeys.help',
     group: 'global',
   },
   {

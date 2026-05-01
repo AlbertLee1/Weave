@@ -3,13 +3,16 @@ import { Outlet, useNavigate, useParams } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { CommandPalette } from '../common/CommandPalette';
+import { HotkeyHelpModal } from '../common/HotkeyHelpModal';
 import { Toaster } from '../common/Toaster';
 import { useShortcut } from '../../hotkeys';
 import { useOntologyStore } from '../../stores/ontologyStore';
 
 export function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const togglePalette = useCallback(() => setPaletteOpen((v) => !v), []);
+  const toggleHelp = useCallback(() => setHelpOpen((v) => !v), []);
   const navigate = useNavigate();
 
   const params = useParams();
@@ -18,6 +21,7 @@ export function Shell() {
     (params.ontology as string | undefined) ?? selectedOntology ?? null;
 
   useShortcut('commandPalette', togglePalette);
+  useShortcut('showHelp', toggleHelp);
   useShortcut('goDashboard', () => navigate('/'));
   useShortcut(
     'goObjectsets',
@@ -57,6 +61,7 @@ export function Shell() {
         onClose={() => setPaletteOpen(false)}
         activeOntology={activeOntology}
       />
+      <HotkeyHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       <Toaster />
     </div>
   );

@@ -75,4 +75,17 @@ describe('useShortcut', () => {
     });
     expect(onTrigger).toHaveBeenCalledTimes(1);
   });
+
+  it('fires showHelp on shift+/ (the `?` keystroke)', () => {
+    const onTrigger = vi.fn();
+    renderHook(() => useShortcut('showHelp', onTrigger));
+    act(() => {
+      fireEvent.keyDown(document, {
+        key: '?',
+        code: 'Slash',
+        shiftKey: true,
+      });
+    });
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+  });
 });
