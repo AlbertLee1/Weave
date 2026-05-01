@@ -38,6 +38,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runConfig(rest, stdout, stderr)
 	case "admin":
 		return runAdmin(rest, stdout, stderr)
+	case "fixtures":
+		return runFixtures(rest, stdout, stderr)
 	case "repl":
 		return runREPL(rest, stdin, stdout, stderr)
 	default:
@@ -59,6 +61,7 @@ Commands:
   auth       Authenticate against the server (login, logout, status)
   config     Read and write the local config file (~/.config/weave/config.toml)
   admin      Server administration (index rebuild, ...)
+  fixtures   Generate synthetic test data for an ObjectType (generate)
   repl       Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)

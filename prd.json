@@ -2311,8 +2311,8 @@
         "Tests pass"
       ],
       "priority": 162,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/fixtures (PropertyDef + Generate + PropertyDefsFromWire) drives a deterministic, seed-stable RNG; cmd/weave-cli new 'fixtures generate' subcommand fetches /objectTypes/{X}/fullMetadata and emits NDJSON or a JSON array. Constraints honoured: regex (via regexp/syntax tree synthesizer for OpCharClass/OpRepeat/OpConcat/OpAlternate), minLength/maxLength, min/max, enum, isArray, isNullable + nullRatio. Primary keys forced unique (sequential ints; alphanum with collision-retry + suffix fallback). 26 unit tests across pkg/fixtures + cmd/weave-cli; CGO_ENABLED=0 verified."
     },
     {
       "id": "US-362",
