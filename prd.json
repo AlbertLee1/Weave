@@ -2325,8 +2325,8 @@
         "Tests pass"
       ],
       "priority": 163,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/contract is a CGO-free, zero-new-deps Pact-style harness — Pact / Interaction / Request / Response / MatcherRule (match: exact|type|regex|presence|ignore) + LoadPact{,Bytes} loaders + MatchBody walker with $.dot.path matchers (forward-compat by default; Strict mode rejects extra keys) + VerifyInteraction / VerifyPact runners (httptest.NewRequest replay against any http.Handler, opts.SetAuth hook for bearer-auth surfaces). Provider verifier `cmd/server/contract_pact_test.go` discovers `cmd/server/testdata/pacts/*.pact.json` and replays each consumer pact through `newContractTestRouter` — three checked-in consumer pacts cover Python SDK health probes, web-client readiness with type matchers, and TS SDK openapi.yaml fetch. CI gets a dedicated `make test-contract` step in `.github/workflows/ci.yml` that runs `go test ./pkg/contract/... + ./cmd/server/ -run TestContract` so SDK contract drift surfaces unambiguously in build logs. 30+ unit tests + 3 provider verifications passing under -race."
     },
     {
       "id": "US-363",

@@ -1,0 +1,28 @@
+{
+  "consumer": {"name": "weave-web-client"},
+  "provider": {"name": "weave-server"},
+  "metadata": {
+    "pactSpecification": "weave-pact-1",
+    "documents": "The SPA polls /health/ready on the dashboard to surface degraded mode. Body shape uses matchers because the per-dependency status varies by deployment (skipped when degraded, ok when wired, error string on failure)."
+  },
+  "interactions": [
+    {
+      "description": "GET /health/ready returns readiness summary with per-dependency check map",
+      "request": {
+        "method": "GET",
+        "path": "/health/ready"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "status": "ready",
+          "checks": {}
+        },
+        "matchers": {
+          "$.status": {"match": "type", "value": "string"},
+          "$.checks": {"match": "type", "value": "object"}
+        }
+      }
+    }
+  ]
+}

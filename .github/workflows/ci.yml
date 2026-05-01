@@ -52,6 +52,13 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
+      # US-362: Pact-style consumer-driven contract tests. Surfaced as a
+      # dedicated CI step (rather than relying on the implicit `go test ./...`
+      # pass above) so a failing consumer interaction is unambiguously
+      # attributed to SDK / web-client contract drift in the build log.
+      - name: Contract tests (Pact-style)
+        run: make test-contract
+
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 

@@ -1,0 +1,20 @@
+{
+  "consumer": {"name": "weave-ts-sdk"},
+  "provider": {"name": "weave-server"},
+  "metadata": {
+    "pactSpecification": "weave-pact-1",
+    "documents": "TS SDK fetches /api/openapi.yaml at boot so generated clients can self-validate against the running server. We pin the status code; the body is YAML so it's not parsed by the JSON-aware matcher."
+  },
+  "interactions": [
+    {
+      "description": "GET /api/openapi.yaml exposes the canonical spec",
+      "request": {
+        "method": "GET",
+        "path": "/api/openapi.yaml"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

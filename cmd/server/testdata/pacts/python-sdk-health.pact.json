@@ -1,0 +1,33 @@
+{
+  "consumer": {"name": "weave-python-sdk"},
+  "provider": {"name": "weave-server"},
+  "metadata": {
+    "pactSpecification": "weave-pact-1",
+    "documents": "Python SDK probes /health on connect to confirm reachability."
+  },
+  "interactions": [
+    {
+      "description": "GET /health returns liveness payload",
+      "request": {
+        "method": "GET",
+        "path": "/health"
+      },
+      "response": {
+        "status": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": {"status": "alive"}
+      }
+    },
+    {
+      "description": "GET /health/live is the canonical k8s liveness alias",
+      "request": {
+        "method": "GET",
+        "path": "/health/live"
+      },
+      "response": {
+        "status": 200,
+        "body": {"status": "alive"}
+      }
+    }
+  ]
+}

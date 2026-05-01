@@ -1,0 +1,20 @@
+{
+  "consumer": {"name": "weave-contract-test-suite"},
+  "provider": {"name": "weave-server"},
+  "metadata": {
+    "pactSpecification": "weave-pact-1"
+  },
+  "interactions": [
+    {
+      "description": "GET /health returns ok",
+      "request": {
+        "method": "GET",
+        "path": "/health"
+      },
+      "response": {
+        "status": 200,
+        "body": {"status": "ok"}
+      }
+    }
+  ]
+}

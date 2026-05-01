@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity
 
 test: test-unit
 
@@ -7,6 +7,10 @@ test-unit:
 
 test-integration:
 	go test -tags integration ./...
+
+test-contract: ## Run Pact-style consumer-driven contract tests (US-362)
+	go test ./pkg/contract/... -count=1
+	go test ./cmd/server/ -run TestContract -count=1
 
 test-integration-phase6:
 	go test -tags integration ./test/integration/phase6/... -v
