@@ -2071,8 +2071,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 145,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New `useTheme` hook (web/src/hooks/useTheme.ts) reads/writes localStorage key `weave:theme` (values 'dark'|'light', default 'dark'), toggles `dark`/`light` class on <html>. main.tsx now bootstraps the persisted theme synchronously before React mounts so the first paint already carries the right palette (no dark↔light flash). styles/index.css opts into class-based Tailwind v4 dark mode via `@custom-variant dark (&:where(.dark, .dark *))` and adds a `:where(.light){ --color-bg-*, --color-text-*, --color-border }` token shadow so every utility built off CSS vars (bg-bg-primary, text-text-primary, border-border, accent-*) inverts automatically — accent hues stay constant so the brand reads identically in both modes. Body's radial-dot background flips to a darker dot on light mode for the same texture density. Topbar grew a sun/moon toggle button (aria-label='Toggle theme', aria-pressed reflects state, data-testid='theme-toggle') sitting left of the bell. RTL test count: 13 (5 prior Topbar + 6 new useTheme + 2 new Topbar) covering default-to-dark, persistence read, toggleTheme/setTheme writes, unknown-value fallback, applyThemeToDocument class flip, button render + click round-trip with localStorage assertions. tsc 3 pre-existing errors unchanged (objectsets test + lib/objectSetUrl Buffer typing — none of my files); vitest 783/783 pass (775 prior + 8 new); go test -short ./... PASS across pkg + cmd/server + internal + test/{northwind,chinook,e2e,foundry_parity}; CGO_ENABLED=0 go build + go vet clean; vite build succeeds (134.76 kB CSS). dev-browser skill not available in this harness — manual browser verification of the toggle still pending."
     },
     {
       "id": "US-345",

@@ -1,7 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
+/* Class-based dark variant: utilities like `dark:bg-bg-secondary` activate
+ * whenever the `.dark` class is set on (or above) the element. The default
+ * Tailwind v4 dark variant is media-query based; we override to make the
+ * theme switch driven by JS + localStorage rather than OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
+  /* ─── Dark theme tokens (default, also active under .dark) ─── */
+
   /* Background — deep indigo scale */
   --color-bg-primary: #080B16;
   --color-bg-secondary: #0D1117;
@@ -32,6 +40,24 @@
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
+/* ─── Light theme tokens (active when <html class="light">) ─────
+ * These shadow the @theme defaults at runtime; every utility built off
+ * --color-bg-* / --color-text-* / --color-border / --color-accent-* picks
+ * them up automatically. Accent hues stay constant so brand colours read
+ * the same in both modes. */
+:where(.light) {
+  --color-bg-primary: #FAFAF7;
+  --color-bg-secondary: #F1EEE6;
+  --color-bg-tertiary: #E7E2D5;
+  --color-bg-elevated: #FFFFFF;
+
+  --color-text-primary: #1A1F2C;
+  --color-text-secondary: #4B5563;
+  --color-text-muted: #9CA3AF;
+
+  --color-border: #D1D5DB;
+}
+
 /* ─── Base ─────────────────────────────────────────────────── */
 
 *,
@@ -50,9 +76,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+:where(.light) body {
+  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+}
+
 ::selection {
   background-color: rgba(245, 158, 11, 0.25);
-  color: #F0EDE6;
+  color: var(--color-text-primary);
 }
 
 /* ─── Scrollbar ─────────────────────────────────────────────── */

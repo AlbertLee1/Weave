@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { NotificationCenter } from '../common/NotificationCenter';
 import { useNotifications } from '../../hooks/useNotifications';
+import { useTheme } from '../../hooks/useTheme';
 
 function pathToBreadcrumbs(pathname: string): string[] {
   const segments = pathname.split('/').filter(Boolean);
@@ -20,6 +21,8 @@ export function Topbar() {
     [data],
   );
   const badgeLabel = unreadCount > 9 ? '9+' : String(unreadCount);
+
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <header
@@ -56,7 +59,53 @@ export function Topbar() {
         ))}
       </div>
 
-      <div className="ml-auto flex items-center">
+      <div className="ml-auto flex items-center gap-1">
+        <button
+          type="button"
+          aria-label="Toggle theme"
+          aria-pressed={theme === 'dark'}
+          data-testid="theme-toggle"
+          data-theme={theme}
+          onClick={toggleTheme}
+          className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
+          title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+        >
+          {theme === 'dark' ? (
+            <svg
+              className="w-5 h-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2" />
+              <path d="M12 20v2" />
+              <path d="m4.93 4.93 1.41 1.41" />
+              <path d="m17.66 17.66 1.41 1.41" />
+              <path d="M2 12h2" />
+              <path d="M20 12h2" />
+              <path d="m6.34 17.66-1.41 1.41" />
+              <path d="m19.07 4.93-1.41 1.41" />
+            </svg>
+          ) : (
+            <svg
+              className="w-5 h-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
+        </button>
         <button
           type="button"
           aria-label="Notifications"

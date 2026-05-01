@@ -121,3 +121,41 @@ describe('Topbar notifications', () => {
     expect(screen.getByTestId('slide-panel')).toHaveTextContent(/notifications/i);
   });
 });
+
+describe('Topbar theme toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.classList.remove('dark', 'light');
+    stubNotifications([]);
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.classList.remove('dark', 'light');
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('renders a theme toggle button', () => {
+    renderTopbar();
+    expect(
+      screen.getByRole('button', { name: /toggle theme/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('toggles between dark and light when clicked, persisting to localStorage', async () => {
+    const user = userEvent.setup();
+    renderTopbar();
+    const button = screen.getByRole('button', { name: /toggle theme/i });
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+
+    await user.click(button);
+    expect(window.localStorage.getItem('weave:theme')).toBe('light');
+    expect(document.documentElement.classList.contains('light')).toBe(true);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+
+    await user.click(button);
+    expect(window.localStorage.getItem('weave:theme')).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  });
+});
