@@ -2254,8 +2254,8 @@
         "Tests pass"
       ],
       "priority": 158,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "TS: gen_ts.go template adds FetchHandler + Middleware types, HttpClient.use(mw)/private middlewares, request() builds the chain around fetch() walking middlewares.reverse() so the first registered ends up outermost; WeaveClient.use delegates. Go: gen_go.go adds RoundTripFunc + Middleware types, Client.middlewares slice, Client.Use, do() composes the chain in reverse around httpClient.Do — generated file still gofmt-clean (TestGoGenerator_IsGofmtFormatted passes). Integration: TestTypescriptSDK_TSCNoEmit + TestGoSDK_GoVet green; full ./pkg/sdkgen/... + ./pkg/oms/... + go build ./... pass."
     },
     {
       "id": "US-358",

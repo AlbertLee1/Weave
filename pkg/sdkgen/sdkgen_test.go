@@ -740,6 +740,70 @@ func TestGoGenerator_ApplyActionMethod(t *testing.T) {
 	}
 }
 
+// --- Request interceptor / middleware tests (US-357) ---
+
+func TestTSGenerator_RequestInterceptor(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client, ok := filesByPath(files)["src/client.ts"]
+	if !ok {
+		t.Fatal("expected src/client.ts in output")
+	}
+	// Public Middleware type, FetchHandler alias, and use() on both HttpClient and WeaveClient.
+	for _, want := range []string{
+		"export type FetchHandler",
+		"export type Middleware",
+		"use(mw: Middleware): void",
+		"private middlewares: Middleware[] = [];",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q\n%s", want, client)
+		}
+	}
+	// WeaveClient must delegate use() to its HttpClient.
+	if !strings.Contains(client, "this.http.use(mw)") {
+		t.Errorf("WeaveClient.use must delegate to HttpClient.use\n%s", client)
+	}
+	// Chain must be built around fetch and walked in reverse so the first registered
+	// middleware ends up at the OUTERMOST layer (canonical chain semantics).
+	if !strings.Contains(client, ".reverse()") {
+		t.Errorf("middleware chain must walk middlewares in reverse so first-use is outermost\n%s", client)
+	}
+}
+
+func TestGoGenerator_RequestInterceptor(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client, ok := filesByPath(files)["client.go"]
+	if !ok {
+		t.Fatal("expected client.go in output")
+	}
+	for _, want := range []string{
+		"type RoundTripFunc func(*http.Request) (*http.Response, error)",
+		"type Middleware func(req *http.Request, next RoundTripFunc) (*http.Response, error)",
+		"func (c *Client) Use(mw Middleware)",
+		"middlewares []Middleware",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.go missing %q\n%s", want, client)
+		}
+	}
+	// Generated Go must still gofmt cleanly with the new additions.
+	formatted, err := format.Source([]byte(client))
+	if err != nil {
+		t.Fatalf("client.go failed to parse: %v\n%s", err, client)
+	}
+	if string(formatted) != client {
+		t.Errorf("client.go is not gofmt-formatted")
+	}
+}
+
 func TestGoGenerator_IsGofmtFormatted(t *testing.T) {
 	g, _ := sdkgen.GetGenerator("go")
 	files, err := g.Generate(context.Background(), testSchema())

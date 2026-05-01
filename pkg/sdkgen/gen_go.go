@@ -140,17 +140,35 @@ type ListResult[T any] struct {
 	NextPageToken string ` + "`json:\"nextPageToken,omitempty\"`" + `
 }
 
+// RoundTripFunc is the inner step of the middleware chain.
+type RoundTripFunc func(*http.Request) (*http.Response, error)
+
+// Middleware wraps the request pipeline. Implementations receive the prepared
+// *http.Request plus the next handler; they may inspect / mutate the request,
+// short-circuit by returning a synthetic response, or transform the response on
+// the way back. Typical uses: auth header injection, structured logging, retry,
+// telemetry.
+type Middleware func(req *http.Request, next RoundTripFunc) (*http.Response, error)
+
 // Client is the Weave SDK client.
 type Client struct {
-	BaseURL  string
-	Ontology string
-	Token    string
-	HTTP     *http.Client
+	BaseURL     string
+	Ontology    string
+	Token       string
+	HTTP        *http.Client
+	middlewares []Middleware
 }
 
 // NewClient constructs a Client with sensible defaults.
 func NewClient(baseURL, ontology, token string) *Client {
 	return &Client{BaseURL: baseURL, Ontology: ontology, Token: token, HTTP: http.DefaultClient}
+}
+
+// Use registers a middleware. The first middleware registered ends up at the
+// OUTERMOST layer of the chain — it sees the original request first and the
+// final response last.
+func (c *Client) Use(mw Middleware) {
+	c.middlewares = append(c.middlewares, mw)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out interface{}) error {
@@ -180,7 +198,17 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	resp, err := httpClient.Do(req)
+	next := RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return httpClient.Do(r)
+	})
+	for i := len(c.middlewares) - 1; i >= 0; i-- {
+		mw := c.middlewares[i]
+		prev := next
+		next = func(r *http.Request) (*http.Response, error) {
+			return mw(r, prev)
+		}
+	}
+	resp, err := next(req)
 	if err != nil {
 		return err
 	}

@@ -153,19 +153,45 @@ export interface ListResult<T> {
   nextPageToken?: string;
 }
 
+// FetchHandler is the inner step of the middleware chain — it sends the request
+// and returns the response. The terminal handler delegates to global ` + "`fetch`" + `.
+export type FetchHandler = (req: Request) => Promise<Response>;
+
+// Middleware wraps the request pipeline. Implementations receive the prepared
+// Request plus the next handler in the chain; they may inspect / mutate the
+// Request, short-circuit by returning a synthetic Response, or transform the
+// Response on the way back. Common uses: auth header injection, structured
+// logging, retry, caching, telemetry.
+export type Middleware = (req: Request, next: FetchHandler) => Promise<Response>;
+
 export class HttpClient {
+  private middlewares: Middleware[] = [];
+
   constructor(
     public readonly baseUrl: string,
     public readonly ontology: string,
     public readonly headers: Record<string, string>,
   ) {}
 
+  // use registers a middleware. The first middleware registered ends up at the
+  // OUTERMOST layer of the chain — it sees the original request first and the
+  // final response last (analogous to Express.use).
+  use(mw: Middleware): void {
+    this.middlewares.push(mw);
+  }
+
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(` + "`" + `${this.baseUrl}${path}` + "`" + `, {
+    const req = new Request(` + "`" + `${this.baseUrl}${path}` + "`" + `, {
       method,
-      headers: this.headers,
+      headers: { ...this.headers },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+    let chain: FetchHandler = (r) => fetch(r);
+    for (const mw of [...this.middlewares].reverse()) {
+      const next = chain;
+      chain = (r) => mw(r, next);
+    }
+    const res = await chain(req);
     if (!res.ok) {
       throw new Error(` + "`" + `Weave API error: ${res.status} ${res.statusText}` + "`" + `);
     }
@@ -236,6 +262,13 @@ export class WeaveClient {
 {{range .ObjectTypes}}
     this.{{ .APIName }} = new {{ .APIName }}Repository(this.http);
 {{- end}}
+  }
+
+  // use installs a request interceptor / middleware. Forwards to the underlying
+  // HttpClient so consumers can register cross-cutting behaviour (auth refresh,
+  // logging, retry, telemetry) once on the WeaveClient.
+  use(mw: Middleware): void {
+    this.http.use(mw);
   }
 {{range .ActionTypes}}
   async apply{{ pascalCase .APIName }}({{if .Parameters}}params: {{ pascalCase .APIName }}Params{{end}}): Promise<void> {
