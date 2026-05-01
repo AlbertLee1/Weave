@@ -2283,8 +2283,8 @@
         "Tests pass"
       ],
       "priority": 160,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "TelemetryHooks {onRequest,onResponse,onError} shape unified across TS interface / Go struct / Python dataclass; OnRequest's return value threads through to OnResponse + OnError so a span can carry across the call. TS+Go layered as a Middleware factory over the US-357 use(...) seam (telemetryMiddleware + useTelemetry sugar); Python wired via single _send helper that every method routes through. examples/telemetry-otel.{ts,go,py} ship with each generated SDK — Go example uses //go:build ignore + templated module import path; Python example imports TelemetryHooks via __init__.py re-export. Verified by tsc --noEmit + go vet + mypy integration tests."
     },
     {
       "id": "US-360",

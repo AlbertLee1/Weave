@@ -601,7 +601,9 @@ func TestPythonGenerator_InitExports(t *testing.T) {
 		t.Fatal("expected weave_sdk/__init__.py in output")
 	}
 	for _, want := range []string{
-		"from .client import WeaveClient",
+		"from .client import",
+		"WeaveClient",
+		"TelemetryHooks",
 		"from .models import (",
 		"Employee,",
 		"Department,",
@@ -1149,4 +1151,107 @@ func containsString(s []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// --- Telemetry hooks tests (US-359) ---
+
+func TestTSGenerator_TelemetryHooks(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	client, ok := by["src/client.ts"]
+	if !ok {
+		t.Fatal("expected src/client.ts in output")
+	}
+	for _, want := range []string{
+		"export interface TelemetryHooks",
+		"onRequest?:",
+		"onResponse?:",
+		"onError?:",
+		"export function telemetryMiddleware",
+		"useTelemetry(hooks: TelemetryHooks)",
+		// The middleware MUST thread the value returned by onRequest into both
+		// onResponse and onError so users can carry a span/context across the call.
+		"hooks.onRequest",
+		"hooks.onResponse",
+		"hooks.onError",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q\n%s", want, client)
+		}
+	}
+	// Example instrumenter ships alongside the SDK so users see the wiring shape.
+	if _, ok := by["examples/telemetry-otel.ts"]; !ok {
+		t.Error("expected examples/telemetry-otel.ts example instrumenter")
+	}
+}
+
+func TestGoGenerator_TelemetryHooks(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	client, ok := by["client.go"]
+	if !ok {
+		t.Fatal("expected client.go in output")
+	}
+	for _, want := range []string{
+		"type TelemetryHooks struct",
+		"OnRequest",
+		"OnResponse",
+		"OnError",
+		"func TelemetryMiddleware(hooks TelemetryHooks) Middleware",
+		"func (c *Client) UseTelemetry(hooks TelemetryHooks)",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.go missing %q\n%s", want, client)
+		}
+	}
+	// Generated Go must remain gofmt-clean.
+	formatted, err := format.Source([]byte(client))
+	if err != nil {
+		t.Fatalf("client.go failed to parse: %v\n%s", err, client)
+	}
+	if string(formatted) != client {
+		t.Errorf("client.go is not gofmt-formatted")
+	}
+	if _, ok := by["examples/telemetry_otel.go"]; !ok {
+		t.Error("expected examples/telemetry_otel.go example instrumenter")
+	}
+}
+
+func TestPythonGenerator_TelemetryHooks(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("python")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+	client, ok := by["weave_sdk/client.py"]
+	if !ok {
+		t.Fatal("expected weave_sdk/client.py in output")
+	}
+	for _, want := range []string{
+		"class TelemetryHooks",
+		"on_request",
+		"on_response",
+		"on_error",
+		"def use_telemetry(self, hooks: TelemetryHooks)",
+		// Constructor must accept telemetry= so callers can wire on construction.
+		"telemetry: Optional[TelemetryHooks]",
+		// Every HTTP call routes through a single helper so the hooks fire uniformly.
+		"def _send(self,",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.py missing %q\n%s", want, client)
+		}
+	}
+	if _, ok := by["examples/telemetry_otel.py"]; !ok {
+		t.Error("expected examples/telemetry_otel.py example instrumenter")
+	}
 }

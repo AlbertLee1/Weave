@@ -32,6 +32,11 @@ func (g *goGenerator) Generate(_ context.Context, schema OntologySchema) ([]Gene
 	files = append(files, GeneratedFile{Path: "client.go", Content: client})
 
 	files = append(files, GeneratedFile{Path: "go.mod", Content: g.generateGoMod(modName)})
+	example, err := g.generateTelemetryExample(modName)
+	if err != nil {
+		return nil, fmt.Errorf("generate telemetry example: %w", err)
+	}
+	files = append(files, GeneratedFile{Path: "examples/telemetry_otel.go", Content: example})
 
 	files = appendVersionFiles(files, schema, g.Language())
 	return files, nil
@@ -361,6 +366,55 @@ func (c *Client) UseRetry(policy RetryPolicy) {
 	c.Use(RetryMiddleware(policy))
 }
 
+// TelemetryHooks plugs OpenTelemetry-style instrumentation into the request
+// pipeline. Every hook is optional; whatever OnRequest returns is threaded
+// through to OnResponse / OnError so a single span (or any per-request value)
+// can be carried across the call without per-call state. See
+// examples/telemetry_otel.go for a complete OpenTelemetry wiring.
+type TelemetryHooks struct {
+	// OnRequest fires BEFORE the request is dispatched. Return a span / context /
+	// opaque token; whatever you return is handed back to OnResponse / OnError.
+	OnRequest func(req *http.Request) any
+	// OnResponse fires AFTER the response is received (regardless of HTTP status).
+	// span is the value previously returned from OnRequest, or nil.
+	OnResponse func(req *http.Request, resp *http.Response, span any)
+	// OnError fires when next() returns a non-nil error (transport error, ctx
+	// canceled, etc).
+	OnError func(req *http.Request, err error, span any)
+}
+
+// TelemetryMiddleware builds a Middleware that invokes the supplied hooks
+// around each request. Install it once on the client:
+//
+//	client.Use(sdk.TelemetryMiddleware(hooks))
+//
+// Or use the sugar form c.UseTelemetry(hooks).
+func TelemetryMiddleware(hooks TelemetryHooks) Middleware {
+	return func(req *http.Request, next RoundTripFunc) (*http.Response, error) {
+		var span any
+		if hooks.OnRequest != nil {
+			span = hooks.OnRequest(req)
+		}
+		resp, err := next(req)
+		if err != nil {
+			if hooks.OnError != nil {
+				hooks.OnError(req, err, span)
+			}
+			return nil, err
+		}
+		if hooks.OnResponse != nil {
+			hooks.OnResponse(req, resp, span)
+		}
+		return resp, nil
+	}
+}
+
+// UseTelemetry installs the built-in telemetry middleware on this client.
+// See examples/telemetry_otel.go for an OpenTelemetry instrumenter.
+func (c *Client) UseTelemetry(hooks TelemetryHooks) {
+	c.Use(TelemetryMiddleware(hooks))
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body, out interface{}) error {
 	var reqBody *bytes.Buffer
 	if body != nil {
@@ -495,6 +549,18 @@ func (g *goGenerator) generateGoMod(modName string) []byte {
 	return []byte(fmt.Sprintf("module %s\n\ngo 1.21\n", modName))
 }
 
+// generateTelemetryExample emits an OpenTelemetry-style example instrumenter
+// at examples/telemetry_otel.go. The file is build-tagged ` + "`ignore`" + ` so it does
+// not enter the SDK's regular build / vet path — users copy it into a real
+// project, drop the build-ignore line, and replace the inline Tracer stub with
+// the OpenTelemetry one. The import path is templated against the SDK's go.mod
+// module so the example references the same Client / TelemetryHooks types
+// downstream consumers see.
+func (g *goGenerator) generateTelemetryExample(modName string) ([]byte, error) {
+	src := fmt.Sprintf(goTelemetryExampleTmpl, modName)
+	return format.Source([]byte(src))
+}
+
 func resolveGoType(baseType string, isArray bool) string {
 	mapped, ok := goTypeMap[types.BaseType(baseType)]
 	if !ok {
@@ -505,6 +571,85 @@ func resolveGoType(baseType string, isArray bool) string {
 	}
 	return mapped
 }
+
+// goTelemetryExampleTmpl is the source body of examples/telemetry_otel.go.
+// It expects a single %s substitution: the SDK module path (matches go.mod).
+// The build tag keeps the file out of normal builds so the example need not
+// pull in OpenTelemetry as a real dependency — copy it into your project,
+// drop the build-ignore line, and replace the stub Tracer with the OTel one.
+const goTelemetryExampleTmpl = `//go:build ignore
+// +build ignore
+
+// Example: wire the Weave Go SDK telemetry hooks into OpenTelemetry.
+//
+// Replace the inline Tracer/Span stubs with go.opentelemetry.io/otel/api/trace
+// in real use, then ` + "`client.UseTelemetry(otelHooks)`" + `.
+package main
+
+import (
+	"fmt"
+	"net/http"
+
+	sdk "%s"
+)
+
+type span interface {
+	SetAttribute(key string, value any)
+	RecordError(err error)
+	End()
+}
+
+type tracer interface {
+	StartSpan(name string, attrs map[string]any) span
+}
+
+type stubSpan struct{ name string }
+
+func (s *stubSpan) SetAttribute(k string, v any) { fmt.Printf("[span:attr] %%s %%s=%%v\n", s.name, k, v) }
+func (s *stubSpan) RecordError(err error)        { fmt.Printf("[span:err] %%s %%v\n", s.name, err) }
+func (s *stubSpan) End()                         { fmt.Printf("[span:end] %%s\n", s.name) }
+
+type stubTracer struct{}
+
+func (stubTracer) StartSpan(name string, _ map[string]any) span { return &stubSpan{name: name} }
+
+// Replace stubTracer{} with otel.Tracer("weave-sdk").
+var tr tracer = stubTracer{}
+
+func otelHooks() sdk.TelemetryHooks {
+	return sdk.TelemetryHooks{
+		OnRequest: func(req *http.Request) any {
+			s := tr.StartSpan("weave.http_request", map[string]any{
+				"http.method": req.Method,
+				"http.url":    req.URL.String(),
+			})
+			return s
+		},
+		OnResponse: func(_ *http.Request, resp *http.Response, sp any) {
+			s, ok := sp.(span)
+			if !ok || s == nil {
+				return
+			}
+			s.SetAttribute("http.status_code", resp.StatusCode)
+			s.End()
+		},
+		OnError: func(_ *http.Request, err error, sp any) {
+			s, ok := sp.(span)
+			if !ok || s == nil {
+				return
+			}
+			s.RecordError(err)
+			s.End()
+		},
+	}
+}
+
+func main() {
+	c := sdk.NewClient("http://localhost:9117", "myOntology", "")
+	c.UseTelemetry(otelHooks())
+	_ = c
+}
+`
 
 // exportedFieldName converts a camelCase API name to an exported Go field name.
 // Trailing "Id" is rewritten to "ID" per Go's initialism convention.

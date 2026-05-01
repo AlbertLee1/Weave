@@ -32,6 +32,7 @@ func (g *tsGenerator) Generate(_ context.Context, schema OntologySchema) ([]Gene
 	files = append(files, GeneratedFile{Path: "src/index.ts", Content: g.generateIndex(schema)})
 	files = append(files, GeneratedFile{Path: "package.json", Content: g.generatePackageJSON(schema)})
 	files = append(files, GeneratedFile{Path: "tsconfig.json", Content: g.generateTSConfig()})
+	files = append(files, GeneratedFile{Path: "examples/telemetry-otel.ts", Content: []byte(tsTelemetryExample)})
 
 	files = appendVersionFiles(files, schema, g.Language())
 	return files, nil
@@ -250,6 +251,42 @@ export function retryMiddleware(policy: RetryPolicy = {}): Middleware {
   };
 }
 
+// TelemetryHooks plugs OpenTelemetry-style instrumentation into the request
+// pipeline. Every hook is optional; whatever the implementation returns from
+// onRequest is threaded through to onResponse / onError so a single span
+// (or any per-request value) can be carried across the call without per-call
+// state. See examples/telemetry-otel.ts for a complete OpenTelemetry wiring.
+export interface TelemetryHooks {
+  // onRequest fires BEFORE the request is dispatched. Return a span / context
+  // / opaque token; whatever you return is handed back to onResponse / onError.
+  onRequest?: (req: Request) => unknown;
+  // onResponse fires AFTER the response is received (regardless of HTTP status).
+  // ` + "`span`" + ` is the value previously returned from onRequest, or undefined.
+  onResponse?: (req: Request, res: Response, span: unknown) => void;
+  // onError fires when next() throws (transport error, abort, etc).
+  onError?: (req: Request, err: unknown, span: unknown) => void;
+}
+
+// telemetryMiddleware builds a Middleware that invokes the supplied hooks
+// around each request. Install it once on the client:
+//
+//   client.use(telemetryMiddleware({ onRequest, onResponse, onError }));
+//
+// Or use the sugar form ` + "`client.useTelemetry({...})`" + `.
+export function telemetryMiddleware(hooks: TelemetryHooks): Middleware {
+  return async (req, next) => {
+    const span = hooks.onRequest ? hooks.onRequest(req) : undefined;
+    try {
+      const res = await next(req);
+      if (hooks.onResponse) hooks.onResponse(req, res, span);
+      return res;
+    } catch (err) {
+      if (hooks.onError) hooks.onError(req, err, span);
+      throw err;
+    }
+  };
+}
+
 export class HttpClient {
   private middlewares: Middleware[] = [];
 
@@ -362,6 +399,13 @@ export class WeaveClient {
   useRetry(policy: RetryPolicy = {}): void {
     this.http.use(retryMiddleware(policy));
   }
+
+  // useTelemetry installs the built-in telemetry middleware. Equivalent to
+  // ` + "`client.use(telemetryMiddleware(hooks))`" + ` but reads better at the call site.
+  // See examples/telemetry-otel.ts for an OpenTelemetry instrumenter.
+  useTelemetry(hooks: TelemetryHooks): void {
+    this.http.use(telemetryMiddleware(hooks));
+  }
 {{range .ActionTypes}}
   async apply{{ pascalCase .APIName }}({{if .Parameters}}params: {{ pascalCase .APIName }}Params{{end}}): Promise<void> {
     await this.http.request<void>(
@@ -436,3 +480,78 @@ func pascalCase(s string) string {
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
 }
+
+// tsTelemetryExample is shipped at examples/telemetry-otel.ts so users see the
+// full wiring from OpenTelemetry tracer to TelemetryHooks. The file declares a
+// minimal Tracer/Span surface inline so it compiles standalone — replace the
+// stubs with `import { trace } from '@opentelemetry/api'` in real use.
+const tsTelemetryExample = `// Example: wire WeaveClient telemetry hooks into OpenTelemetry.
+//
+// Install @opentelemetry/api in your project, then replace ` + "`mockTracer`" + ` with
+// ` + "`trace.getTracer('weave-sdk')`" + `. The minimal Tracer / Span surface is
+// declared inline here so this file compiles against the SDK alone.
+
+import { TelemetryHooks, WeaveClient } from '../src';
+
+interface Span {
+  setAttribute(key: string, value: string | number): void;
+  recordException(err: unknown): void;
+  setStatus(status: { code: number; message?: string }): void;
+  end(): void;
+}
+
+interface Tracer {
+  startSpan(name: string, options?: { attributes?: Record<string, string | number> }): Span;
+}
+
+// Replace this stub with ` + "`trace.getTracer('weave-sdk')`" + ` from @opentelemetry/api.
+const mockTracer: Tracer = {
+  startSpan(name) {
+    // eslint-disable-next-line no-console
+    console.debug('[span:start]', name);
+    return {
+      setAttribute() {},
+      recordException(err) {
+        // eslint-disable-next-line no-console
+        console.debug('[span:exception]', err);
+      },
+      setStatus() {},
+      end() {
+        // eslint-disable-next-line no-console
+        console.debug('[span:end]', name);
+      },
+    };
+  },
+};
+
+export const otelHooks: TelemetryHooks = {
+  onRequest(req) {
+    const span = mockTracer.startSpan('weave.http_request', {
+      attributes: { 'http.method': req.method, 'http.url': req.url },
+    });
+    return span;
+  },
+  onResponse(_req, res, span) {
+    const s = span as Span | undefined;
+    if (!s) return;
+    s.setAttribute('http.status_code', res.status);
+    if (res.status >= 400) {
+      s.setStatus({ code: 2, message: ` + "`HTTP ${res.status}`" + ` });
+    } else {
+      s.setStatus({ code: 1 });
+    }
+    s.end();
+  },
+  onError(_req, err, span) {
+    const s = span as Span | undefined;
+    if (!s) return;
+    s.recordException(err);
+    s.setStatus({ code: 2, message: String(err) });
+    s.end();
+  },
+};
+
+export function instrument(client: WeaveClient): void {
+  client.useTelemetry(otelHooks);
+}
+`
