@@ -2099,8 +2099,8 @@
         "Tests pass"
       ],
       "priority": 147,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "i18next@^26 + react-i18next@^17 bootstrap (web/src/i18n/index.ts) initialised synchronously with both zh-CN + en bundles; locale precedence is localStorage 'weave:locale' → navigator.language (zh-* / en-* normalised) → DEFAULT_LOCALE 'zh-CN'; resources keyed under DEFAULT_NAMESPACE 'translation' so callers reference flat dotted keys (`common.cancel`, `nav.dashboard`, `dashboard.ontologyCount` w/ count). Plurals: zh-CN ships only `_other` (CLDR rule for Chinese), en ships `_one` + `_other`; extraction script + parity test strip the suffix before comparing. main.tsx imports './i18n' before React mounts so Suspense-free `useTranslation()` is ready on first paint. extract-i18n.mjs (npm run i18n:extract) static-scans src for `t('foo.bar')` / `<Trans i18nKey=\"...\">` and reports MISSING/UNTRANSLATED/EXTRA-IN-EN/UNUSED; exits non-zero on drift (zero deps, runs without node_modules). 18 vitest cases cover init, translate, fallback to zh-CN when en missing key, interpolation, plurals (count=1 vs count=5 in both locales), persist, normaliseLocale collapses zh-* → zh-CN / en-* → en, detectInitialLocale precedence, persistLocale quota-failure no-throw, resource parity. tsc 3 pre-existing errors unchanged; vitest 110 files / 811 tests pass (793 baseline + 18 new); vite build clean (CSS 134.80 kB); go test -short ./... + CGO_ENABLED=0 go build clean."
     },
     {
       "id": "US-347",
