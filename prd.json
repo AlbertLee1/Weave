@@ -2085,8 +2085,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 146,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "useTheme hook extended with `ThemePreference = 'dark'|'light'|'system'`. Storage key `weave:theme` now accepts those three values; legacy 'dark'/'light' values keep working. New exports: `readPersistedPreference`, `readSystemTheme`, `resolveTheme` (concrete) + `readPersistedTheme` (concrete, used by main.tsx synchronous bootstrap to keep first-paint flash-free). System mode subscribes to `window.matchMedia('(prefers-color-scheme: dark)')` only while preference==='system' (skip when concrete) — handler resyncs `setSystemTheme(mql.matches ? 'dark':'light')` on subscribe so OS-level changes that happened while paused are picked up; falls back to addListener/removeListener for older Safari/jsdom. matchMedia missing → readSystemTheme returns 'dark'. Topbar replaces the prior single toggle button with an aria-haspopup='menu' trigger button (data-testid='theme-menu-trigger') plus a `role='menu'` popover containing three `role='menuitemradio'` items (light/dark/system) tagged with aria-checked tracking the current preference; click outside closes (mousedown listener pattern from ExportButton). The trigger keeps the sun/moon icon driven by the EFFECTIVE theme so 'system' resolves visually. New testids: theme-menu-trigger, theme-menu, theme-option-{light,dark,system}. Test count growth: useTheme 14 (6 prior + 8 new system-mode + edge-case branches), Topbar 10 (5 prior + 5 dropdown). Full vitest 793/793 pass (was 783); tsc 3 pre-existing errors unchanged (objectsets test + lib/objectSetUrl Buffer typing — none of my files); CGO_ENABLED=0 go build clean; go test -short ./... PASS across pkg + cmd/server + internal + test/{northwind,chinook,e2e,foundry_parity}; vite build succeeds (134.80 kB CSS). dev-browser skill not available in this harness — manual browser verification of the new dropdown still pending."
     },
     {
       "id": "US-346",

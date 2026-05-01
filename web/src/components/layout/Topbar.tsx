@@ -1,8 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { NotificationCenter } from '../common/NotificationCenter';
 import { useNotifications } from '../../hooks/useNotifications';
-import { useTheme } from '../../hooks/useTheme';
+import { useTheme, type ThemePreference } from '../../hooks/useTheme';
+
+const THEME_OPTIONS: Array<{
+  value: ThemePreference;
+  label: string;
+  description: string;
+}> = [
+  { value: 'light', label: 'Light', description: '浅色' },
+  { value: 'dark', label: 'Dark', description: '深色' },
+  { value: 'system', label: 'System', description: '跟随系统' },
+];
 
 function pathToBreadcrumbs(pathname: string): string[] {
   const segments = pathname.split('/').filter(Boolean);
@@ -22,7 +32,20 @@ export function Topbar() {
   );
   const badgeLabel = unreadCount > 9 ? '9+' : String(unreadCount);
 
-  const { theme, toggleTheme } = useTheme();
+  const { theme, preference, setPreference } = useTheme();
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!themeMenuRef.current?.contains(e.target as Node)) {
+        setThemeMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [themeMenuOpen]);
 
   return (
     <header
@@ -60,52 +83,89 @@ export function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-1">
-        <button
-          type="button"
-          aria-label="Toggle theme"
-          aria-pressed={theme === 'dark'}
-          data-testid="theme-toggle"
-          data-theme={theme}
-          onClick={toggleTheme}
-          className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
-          title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-        >
-          {theme === 'dark' ? (
-            <svg
-              className="w-5 h-5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+        <div ref={themeMenuRef} className="relative">
+          <button
+            type="button"
+            aria-label="Theme"
+            aria-haspopup="menu"
+            aria-expanded={themeMenuOpen}
+            data-testid="theme-menu-trigger"
+            data-theme={theme}
+            data-preference={preference}
+            onClick={() => setThemeMenuOpen((v) => !v)}
+            className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
+            title="主题"
+          >
+            {theme === 'dark' ? (
+              <svg
+                className="w-5 h-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+                <path d="m4.93 4.93 1.41 1.41" />
+                <path d="m17.66 17.66 1.41 1.41" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="m6.34 17.66-1.41 1.41" />
+                <path d="m19.07 4.93-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg
+                className="w-5 h-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
+          {themeMenuOpen && (
+            <div
+              role="menu"
+              aria-label="Theme"
+              data-testid="theme-menu"
+              className="absolute right-0 mt-1 min-w-[160px] rounded border border-border bg-bg-primary shadow-lg z-10"
             >
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2" />
-              <path d="M12 20v2" />
-              <path d="m4.93 4.93 1.41 1.41" />
-              <path d="m17.66 17.66 1.41 1.41" />
-              <path d="M2 12h2" />
-              <path d="M20 12h2" />
-              <path d="m6.34 17.66-1.41 1.41" />
-              <path d="m19.07 4.93-1.41 1.41" />
-            </svg>
-          ) : (
-            <svg
-              className="w-5 h-5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-            </svg>
+              {THEME_OPTIONS.map((opt) => {
+                const active = preference === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={active}
+                    data-testid={`theme-option-${opt.value}`}
+                    onClick={() => {
+                      setPreference(opt.value);
+                      setThemeMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between px-3 py-2 text-xs font-sans transition-colors ${
+                      active
+                        ? 'text-accent-cyan'
+                        : 'text-text-primary hover:bg-bg-secondary'
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                    <span className="ml-3 text-text-muted">{opt.description}</span>
+                  </button>
+                );
+              })}
+            </div>
           )}
-        </button>
+        </div>
         <button
           type="button"
           aria-label="Notifications"

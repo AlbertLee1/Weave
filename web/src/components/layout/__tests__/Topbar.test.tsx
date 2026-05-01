@@ -122,7 +122,49 @@ describe('Topbar notifications', () => {
   });
 });
 
-describe('Topbar theme toggle', () => {
+function installMatchMedia(initialMatches: boolean) {
+  const listeners: Array<(ev: MediaQueryListEvent) => void> = [];
+  const mql = {
+    matches: initialMatches,
+    media: '(prefers-color-scheme: dark)',
+    onchange: null,
+    addEventListener: (_e: string, cb: (ev: MediaQueryListEvent) => void) => {
+      listeners.push(cb);
+    },
+    removeEventListener: (_e: string, cb: (ev: MediaQueryListEvent) => void) => {
+      const i = listeners.indexOf(cb);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+    addListener: (cb: (ev: MediaQueryListEvent) => void) => {
+      listeners.push(cb);
+    },
+    removeListener: (cb: (ev: MediaQueryListEvent) => void) => {
+      const i = listeners.indexOf(cb);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+    dispatchEvent: () => true,
+  };
+  const original = window.matchMedia;
+  window.matchMedia = vi.fn().mockReturnValue(mql) as unknown as typeof window.matchMedia;
+  return {
+    fire(matches: boolean) {
+      mql.matches = matches;
+      for (const cb of [...listeners]) {
+        cb({ matches } as MediaQueryListEvent);
+      }
+    },
+    cleanup() {
+      if (original) {
+        window.matchMedia = original;
+      } else {
+        // @ts-expect-error allow cleanup in environments without native matchMedia
+        delete window.matchMedia;
+      }
+    },
+  };
+}
+
+describe('Topbar theme selector', () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.classList.remove('dark', 'light');
@@ -136,26 +178,68 @@ describe('Topbar theme toggle', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders a theme toggle button', () => {
+  it('renders a theme selector trigger button', () => {
     renderTopbar();
     expect(
-      screen.getByRole('button', { name: /toggle theme/i }),
+      screen.getByRole('button', { name: /theme/i }),
     ).toBeInTheDocument();
   });
 
-  it('toggles between dark and light when clicked, persisting to localStorage', async () => {
+  it('opens a menu of light / dark / system options', async () => {
     const user = userEvent.setup();
     renderTopbar();
-    const button = screen.getByRole('button', { name: /toggle theme/i });
+    const trigger = screen.getByRole('button', { name: /theme/i });
+    await user.click(trigger);
+
+    expect(
+      screen.getByRole('menuitemradio', { name: /light/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitemradio', { name: /dark/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitemradio', { name: /system/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('selecting "light" applies the light class and persists', async () => {
+    const user = userEvent.setup();
+    renderTopbar();
     expect(document.documentElement.classList.contains('dark')).toBe(true);
 
-    await user.click(button);
+    await user.click(screen.getByRole('button', { name: /theme/i }));
+    await user.click(screen.getByRole('menuitemradio', { name: /light/i }));
+
     expect(window.localStorage.getItem('weave:theme')).toBe('light');
     expect(document.documentElement.classList.contains('light')).toBe(true);
     expect(document.documentElement.classList.contains('dark')).toBe(false);
+  });
 
-    await user.click(button);
-    expect(window.localStorage.getItem('weave:theme')).toBe('dark');
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  it('selecting "system" follows prefers-color-scheme', async () => {
+    const mm = installMatchMedia(false);
+    try {
+      const user = userEvent.setup();
+      renderTopbar();
+      await user.click(screen.getByRole('button', { name: /theme/i }));
+      await user.click(screen.getByRole('menuitemradio', { name: /system/i }));
+
+      expect(window.localStorage.getItem('weave:theme')).toBe('system');
+      expect(document.documentElement.classList.contains('light')).toBe(true);
+    } finally {
+      mm.cleanup();
+    }
+  });
+
+  it('marks the active option with aria-checked', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem('weave:theme', 'light');
+    renderTopbar();
+    await user.click(screen.getByRole('button', { name: /theme/i }));
+    expect(
+      screen.getByRole('menuitemradio', { name: /light/i }),
+    ).toHaveAttribute('aria-checked', 'true');
+    expect(
+      screen.getByRole('menuitemradio', { name: /dark/i }),
+    ).toHaveAttribute('aria-checked', 'false');
   });
 });
