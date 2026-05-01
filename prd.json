@@ -2297,8 +2297,8 @@
         "Tests pass"
       ],
       "priority": 161,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/mockserver parses OpenAPI 3.x via gopkg.in/yaml.v3 (already a dep), walks paths × verbs into a flat Operation slice, picks the lowest 2xx response status per op so 200 wins over 204, and synthesises a sample body via JSON-Schema walk (example > enum > type-default; $ref into components/schemas with per-call cycle detection so self-referential models stay finite). chi router mounts each operation at its OpenAPI {param} template — chi uses identical syntax so paths pass through unchanged. Custom responses via two seams: (1) Options.Overrides slice / overrides JSON file at boot (single object OR array), (2) opt-in admin endpoints POST/DELETE/GET /__mock/overrides for runtime tweaking (off by default — admin leaks the mock's existence). Override key is 'METHOD path-template' so the same handler dispatches both baseline and overridden responses. cmd/weave-mock is the standalone binary: --spec, --addr, --overrides, --admin, --default-status flags; gracefully shuts down on SIGINT/SIGTERM. CGO_ENABLED=0 verified. 17 unit tests + real-spec smoke test (loads api/openapi.yaml unmodified)."
     },
     {
       "id": "US-361",
