@@ -111,6 +111,10 @@ const en = {
     loading: 'Loading preferences…',
     unavailable: 'Preference persistence is not enabled on this deployment; changes only apply locally.',
   },
+  errorBoundary: {
+    title: 'This page hit an error',
+    description: 'The error has been logged. Click retry to re-render this page, or navigate elsewhere.',
+  },
 } as const;
 
 export default en;

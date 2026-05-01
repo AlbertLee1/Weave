@@ -117,6 +117,10 @@ const zhCN = {
     loading: '正在加载偏好…',
     unavailable: '当前部署未启用偏好持久化，更改仅保存在本地。',
   },
+  errorBoundary: {
+    title: '此页面发生了错误',
+    description: '我们已记录该错误。点击重试可重新渲染此页面，或前往其他菜单。',
+  },
 } as const;
 
 export default zhCN;

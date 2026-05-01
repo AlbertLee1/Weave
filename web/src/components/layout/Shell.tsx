@@ -5,6 +5,7 @@ import { Topbar } from './Topbar';
 import { CommandPalette } from '../common/CommandPalette';
 import { HotkeyHelpModal } from '../common/HotkeyHelpModal';
 import { Toaster } from '../common/Toaster';
+import { RouteErrorBoundary } from '../common/ErrorBoundary';
 import { useShortcut } from '../../hotkeys';
 import { useOntologyStore } from '../../stores/ontologyStore';
 
@@ -53,7 +54,9 @@ export function Shell() {
               'linear-gradient(135deg, rgba(245,158,11,0.02) 0%, transparent 40%, rgba(20,184,166,0.02) 100%)',
           }}
         >
-          <Outlet />
+          <RouteErrorBoundary>
+            <Outlet />
+          </RouteErrorBoundary>
         </main>
       </div>
       <CommandPalette

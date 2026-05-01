@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { GlobalErrorBoundary } from './components/common/ErrorBoundary';
 import { AuthProvider } from './auth/AuthContext';
 import { LoginPage } from './auth/LoginPage';
 import { ProtectedRoute } from './auth/ProtectedRoute';
@@ -73,10 +74,11 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <Routes>
+    <GlobalErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <AuthProvider>
+            <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route
               element={
@@ -172,6 +174,7 @@ export default function App() {
           </Routes>
         </AuthProvider>
       </BrowserRouter>
-    </QueryClientProvider>
+      </QueryClientProvider>
+    </GlobalErrorBoundary>
   );
 }

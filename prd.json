@@ -2184,8 +2184,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 153,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "react-error-boundary@6.1.1 dep + dual-layer wiring: GlobalErrorBoundary OUTSIDE QueryClientProvider/BrowserRouter/AuthProvider in App.tsx (catches provider-tree crashes; bilingual hardcoded fallback so it never depends on i18n which itself may have crashed) + RouteErrorBoundary INSIDE Shell <main> wrapping <Outlet/> (route-scoped fallback uses i18n via useTranslation, sidebar/topbar stay usable; resetKeys=[location.pathname] auto-clears on navigation). FallbackProps onError handler typed (error: unknown, info) — react-error-boundary v6 widened error to unknown vs v5's Error. Reporter (web/src/lib/errorReporter.ts): always console.error + optional setErrorReporter(fn) custom hook (for Sentry/Datadog wiring) + best-effort navigator.sendBeacon to window.__WEAVE_ERROR_REPORT_URL__ when set, fetch fallback with keepalive:true; reporter wrapped in try/catch so a throwing reporter never escalates past the boundary. errorBoundary.title/description i18n keys added to both zh-CN.ts + en.ts; extract-i18n parity check clean. Tests: 7 ErrorBoundary tests + 6 errorReporter tests = 13/13 (catches global+route errors, retry resets, reporter receives payload incl componentStack, reporter throw doesn't escalate, sendBeacon fires when URL set, pathname-change auto-reset). Full vitest 852/852 (was 839 + 13 new), tsc -b 3 pre-existing baseline errors unchanged, vite build clean. Manual browser verification still needed (dev-browser skill not available in this environment)."
     },
     {
       "id": "US-353",
