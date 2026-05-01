@@ -41,18 +41,20 @@ export function SearchBar({ onSearch, onToggleFilters }: SearchBarProps) {
           <path d="M21 21l-4.35-4.35" />
         </svg>
         <input
-          type="text"
+          type="search"
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder="Search objects..."
-          className="w-full pl-10 pr-3 py-2 bg-bg-primary border border-border rounded text-sm font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan transition-colors"
+          aria-label="Search objects"
+          className="w-full pl-10 pr-3 py-2 bg-bg-primary border border-border rounded text-sm font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50 transition-colors"
           data-testid="search-input"
         />
       </div>
       <button
+        type="button"
         onClick={onToggleFilters}
-        className="flex items-center gap-1.5 px-3 py-2 bg-bg-primary border border-border rounded text-xs font-sans text-text-secondary hover:text-text-primary hover:border-accent-cyan transition-colors"
+        className="flex items-center gap-1.5 px-3 py-2 bg-bg-primary border border-border rounded text-xs font-sans text-text-secondary hover:text-text-primary hover:border-accent-cyan focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/50 transition-colors"
         data-testid="toggle-filters"
       >
         <svg
@@ -61,6 +63,8 @@ export function SearchBar({ onSearch, onToggleFilters }: SearchBarProps) {
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
+          aria-hidden="true"
+          focusable="false"
         >
           <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
         </svg>

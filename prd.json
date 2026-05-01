@@ -2170,8 +2170,8 @@
         "Tests pass"
       ],
       "priority": 152,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "axe-core@4.x devDep + web/src/test/axe.ts (runAxe + expectNoCriticalViolations, scopes to wcag2a/2aa/21a/21aa, disables color-contrast which jsdom can't evaluate, fails-loud on critical/serious impact); 6 axe tests in web/src/components/__tests__/Accessibility.test.tsx covering Dashboard, Explorer (ontology-only + objectType-detail), Browser (default + filter-builder open), and an OntologyCard role+name spot-check; SearchBar input gained aria-label='Search objects' (was placeholder-only — confirmed axe FAILS without it via temporary revert), type=search, focus-visible ring + decorative svg aria-hidden + button type='button'; FilterBuilder selects/input gained aria-label + focus-visible ring; OntologyCard button gained aria-label='Open ontology <name>' + focus-visible ring + aria-hidden on chevron; TypeTree nav gained aria-label='Object types' + per-button aria-current='page' for selected + focus-visible ring; vitest 839/839 (was 833 + 6 new) + tsc -b (3 pre-existing baseline errors unchanged) + CGO_ENABLED=0 go build ./... clean."
     },
     {
       "id": "US-352",

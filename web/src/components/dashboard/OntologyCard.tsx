@@ -9,8 +9,10 @@ interface OntologyCardProps {
 export function OntologyCard({ ontology, objectTypeCount, onClick }: OntologyCardProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="relative w-full text-left rounded-xl p-5 group focus:outline-none transition-all duration-200"
+      aria-label={`Open ontology ${ontology.displayName}`}
+      className="relative w-full text-left rounded-xl p-5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/50 transition-all duration-200"
       style={{
         background: 'rgba(13,17,23,0.8)',
         border: '1px solid rgba(31,41,55,0.8)',
@@ -74,7 +76,7 @@ export function OntologyCard({ ontology, objectTypeCount, onClick }: OntologyCar
           style={{ color: '#14B8A6' }}
         >
           Explore
-          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" focusable="false">
             <path d="M5 12h14M12 5l7 7-7 7" />
           </svg>
         </span>

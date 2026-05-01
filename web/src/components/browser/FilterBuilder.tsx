@@ -88,7 +88,8 @@ export function FilterBuilder({
         <select
           value={selectedField}
           onChange={(e) => setSelectedField(e.target.value)}
-          className="px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan"
+          aria-label="Filter field"
+          className="px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
           data-testid="filter-field-select"
         >
           {propertyNames.map((name) => (
@@ -101,7 +102,8 @@ export function FilterBuilder({
         <select
           value={selectedOp}
           onChange={(e) => setSelectedOp(e.target.value)}
-          className="px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan"
+          aria-label="Filter operator"
+          className="px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
           data-testid="filter-op-select"
         >
           {OPERATORS.map((op) => (
@@ -117,7 +119,8 @@ export function FilterBuilder({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Value"
-          className="flex-1 px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan"
+          aria-label="Filter value"
+          className="flex-1 px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
           data-testid="filter-value-input"
         />
 
