@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useOntologies } from '../../hooks/useOntologies';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
 import type { Ontology } from '../../api/types';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonCard } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 import { OntologyCard } from './OntologyCard';
 import { StatsBar } from './StatsBar';
@@ -30,8 +30,18 @@ export function DashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <LoadingSpinner size="lg" />
+      <div
+        className="min-h-screen bg-bg-primary p-6 pb-16"
+        data-testid="dashboard-loading"
+      >
+        <div
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+          aria-label={t('dashboardPage.loadingOntologies', { defaultValue: 'Loading ontologies' })}
+        >
+          {Array.from({ length: 6 }, (_, i) => (
+            <SkeletonCard key={i} bodyLines={2} />
+          ))}
+        </div>
       </div>
     );
   }

@@ -73,6 +73,7 @@ const en = {
     failedToLoad: 'Failed to load ontologies: {{message}}',
     statOntologies: 'Ontologies',
     statObjectTypes: 'Object Types',
+    loadingOntologies: 'Loading ontologies',
   },
   errors: {
     loadFailed: 'Failed to load: {{message}}',

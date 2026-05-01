@@ -98,6 +98,7 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - "Atomic decide" for single-row state-machine endpoints (approval queues, lock acquisition, idempotent toggles): drive the transition with `UPDATE … SET status=$2 … WHERE id=$1 AND status='<source-state>'` and read `rowsAffected`. ==1 ⇒ success. ==0 ⇒ id missing OR row already left the source state — disambiguate with one fallback `SELECT status FROM ... WHERE id=$1` and return distinct typed errors (ErrNotFound vs ErrAlreadyDecided). Single round-trip on the happy path; never lets two concurrent approvers both flip a PENDING row to two different terminal states. Prior art: `pkg/permissionrequests` `pgPermissionRequestsStore.Decide` (US-339), `pkg/comments` `classifyMutationResult` (US-334).
 - "Existence not disclosed to strangers" for shared-but-private read endpoints: when a row has multiple legitimate readers (requester + approver + admin) but cross-user reads are private, return 404 (NOT 403) to non-authorized readers. 403 leaks the fact that the id exists, which is real information disclosure — an attacker can iterate ids and observe 403/404 distinguishability to enumerate the table. 404 collapses both branches to one response and the legitimate readers' paths still work. `pkg/permissionrequests.Get` (US-339) + `pkg/dashboards.Get` (US-329) + `pkg/savedsearches.Get` (US-311) all use the same shape.
 - "Server-force the safe filter" for non-admin list endpoints: when the same endpoint serves admin (sees everything) and regular-user (sees only own) callers, do NOT trust a `mine=` query param to scope non-admin reads. Detect the privilege state server-side, and if the caller is non-privileged AND `mine=` was not explicitly set, FORCE `requested_by = user.ID` into the store filter. Non-trusted query params can produce silent enumeration leaks if you forget. The handler-side test case to add: a viewer with someone else's `mine=false` query string still gets only their own rows. Prior art: `pkg/permissionrequests.List` (US-339).
+- Loading skeleton vs spinner (US-353): any page/section that **撑出固定布局**（卡片网格、表格、列表、侧栏）应当用形状匹配的 `Skeleton*` 占位（`web/src/components/common/Skeleton.tsx`：`Skeleton`/`SkeletonText`/`SkeletonCard`/`SkeletonTable`/`SkeletonList`），而**不**是居中 `<LoadingSpinner>`。骨架在加载阶段就把 page chrome 搭起来，数据填充时只是 inner content swap，CLS ≈ 0。LoadingSpinner 留给"按钮内 spinner / modal action / 一次性 mutate"这类无固定尺寸的进度反馈。a11y 不变量：每个原语只暴露**一个**外层 `role="status" aria-live="polite" aria-busy="true" aria-label="..."`，内部所有装饰条 `aria-hidden="true"`——`getAllByRole('status').toHaveLength(1)` 是回归测试。视觉层面复用 `styles/index.css` 既有 `@keyframes shimmer` + `background-size: 200% 100%`，颜色绑定项目 amber 主色 `rgba(245,158,11,*)`。骨架形状跟具体页面绑定（`SkeletonCard` = OntologyCard 形状，`SkeletonTable` 列宽阶梯 70%/90%/40% 模拟"主键短/中字段满/时间戳短"），不要参数化成 generic shape——丢掉了"骨架揭示页面布局"的核心价值。
 - Cross-action parameter passing (saga compensators, side-effect actions, revert paths): `actions.ValidateParameters` rejects UNKNOWN keys, so handing a primary action's param bag to a different action type silently trips "unknown parameter" inside Prepare. ALWAYS filter down to the callee's declared `ParameterDef.ID` set before calling Prepare. `prepareCompensator` (US-239) is prior art; any future cross-action param-passing should mirror it. Pair with `resolveActionType(ctx, ontologyRID, ridOrName)` = GetActionType first, fall back to ListActionTypes scan — production PG repo answers by RID; `mockOmsRepo.GetActionType` stubs return (nil,nil) so the fallback is what makes tests work without maintaining a second lookup path.
 - Polling-REST connector design (pkg/pipeline/connector/rest, US-294): keep transport behind a tiny `HTTPDoer { Do(req) }` interface — production wires `*http.Client` with `cfg.effectiveTimeout()`, tests wire `httptest.Server.Client()`, and the connector itself stays net/http stdlib only. `(rows, nextCursor, hasMore, err)` shape matches JDBC (US-292) + S3 (US-293). Cursor wire format is strategy-specific (decimal page/offset for `PaginationPage`/`PaginationOffset`, opaque API token verbatim for `PaginationCursor`, rejected for `PaginationNone`) — DON'T base64-wrap when the state is single-field; that's S3's pattern because S3 carries multi-field `{queue, listToken}`. Numeric API cursors (`"next": 42` integer) round-trip as decimal text via `float64 == float64(int64(v))` check so the request's `?cursor=42` param matches what the API emitted. Records-array path uses strict `walkPath` (missing key = error); cursor-token path uses tolerant `walkPathOptional` (missing key OR null OR empty string all collapse to `""` = end-of-stream). PageSize forwarding for cursor pagination: only when explicitly set (>0), so APIs that don't accept a size param aren't poked with one. `MaxPages` safety cap on full-page-always sources prevents runaway loops; `Pagination.MaxPages=0` defaults to `DefaultMaxPages=100000`. Per-request 4KiB body preview via `io.LimitReader(resp.Body, 4096)` for typed `*HTTPError{Status, Body}` so 4xx/5xx diagnostics survive without unbounded buffering.
 - Detached-goroutine async handler pattern (US-240 async apply, future long-running jobs): the HTTP handler MUST NOT hand the request context to the detached worker — `r.Context()` is cancelled the instant the response flushes, so `executor.Apply(r.Context(), ...)` would abort immediately. Use `context.Background()` as the base, then port over only the bits the worker still needs — auth identity via `copyAuthContext` (a tiny `auth.WithUser(bg, auth.UserFromContext(src))` helper) so downstream ActionLog / rate-limit / quota keys keep working. Same shape applies to any "return 202 then process" endpoint; the cancellation-decoupling step is easy to forget and produces the "job instantly FAILED with 'context canceled'" bug. Handler returns 202 Accepted + {jobId} before the goroutine starts; the store row is created synchronously inside the request so pollers never hit a 404 race.
@@ -5324,4 +5325,56 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - `navigator.sendBeacon` 是 fire-and-forget POST + 可在 page unload 时仍发送的浏览器 API；fetch 没这俩属性所以不能完全替代。jsdom 没有 sendBeacon——fallback 到 `fetch(url, { method:'POST', keepalive: true }).catch(() => {})`，`keepalive: true` 是 fetch 模拟 sendBeacon 行为的关键 flag。
   - "外层 boundary 的 fallback 写死字符串" 还附带了 i18n 解耦的好处：不需要在 zh-CN.ts / en.ts 里加 `globalErrorBoundary.*` key（写在 fallback 组件里就行）；只有 RouteErrorBoundary 才需要 i18n key，而它在路由层，i18n 一定已经初始化好了。
   - "Verify in browser" 类的验收条目，本环境没有 dev-browser skill：用 `@testing-library/react` + jsdom 渲染断言（fallback 文案 / 重试行为 / reporter 调用 payload）覆盖功能正确性，再在 PR/PRD notes 里显式注明 "manual browser verification needed"——比静默跳过验收要诚实。
+---
+
+## 2026-05-02 - US-353 Loading Skeleton 库
+- 新增 `web/src/components/common/Skeleton.tsx`（约 270 行）: 5 个原语
+  - `Skeleton`：基础占位（width/height/variant=text|rect|circle/aria-label/data-testid）
+  - `SkeletonText`：多行文本（lines + lastLineWidth，最后一行收窄到 60% 模拟段尾）
+  - `SkeletonCard`：仪表盘 OntologyCard 形状（标题 55% + 2 行正文）
+  - `SkeletonTable`：浏览器 ObjectTable 形状（rows × columns + 可选 header；列宽用 70% / 90% / 40% 阶梯模拟真实表格视觉密度）
+  - `SkeletonList`：侧栏/类型树/审批列表形状（items，可选 avatar circle）
+- a11y：每个原语包一个 `<div role="status" aria-live="polite" aria-busy="true" aria-label="...">`，内部所有装饰条 `aria-hidden="true"`，`SkeletonText` / 其它"多元素"原语**只导出一个 status region**（`getAllByRole('status')` 只能拿到 1 个）。
+- 视觉：复用 `styles/index.css` 既有的 `@keyframes shimmer { -200% → 200% }`，每条占位条 `background: linear-gradient(90deg, ... amber/teal ...); background-size: 200% 100%; animation: shimmer 1.6s ease-in-out infinite;`，颜色沿用项目主色（`rgba(245,158,11,*)` amber on `bg-secondary`），不引入新 token。
+- 测试 (`web/src/components/common/__tests__/Skeleton.test.tsx`)：15 用例覆盖 role/aria/width/height/variant/lines/lastLineWidth/rows×columns/showHeader/items 全部对外表面。
+- 主要 Query 切换：（每处都从 `LoadingSpinner` → 形状匹配的 Skeleton，page chrome 在加载阶段就已经搭起来，避免数据到达瞬间布局重排）
+  - `DashboardPage`：6 个 `SkeletonCard` 网格（grid-cols 1/2/3 sm/md/lg）替代旧 `<LoadingSpinner size="lg">` 居中点。
+  - `ExplorerPage`（types-loading）：左 sidebar `SkeletonList items=8` + 右主区 `SkeletonText lines=6`，恰好镜像下面真实页面的 sidebar+content 二栏。
+  - `ObjectTypeDetail`（links 分页 loading）：`SkeletonList items=5` 替代居中 spinner。
+  - `BrowserPage`：(a) 对象类型 metadata loading → 标题 SkeletonText + `SkeletonTable rows=6 cols=4`；(b) 列表/搜索 loading → 同款 `SkeletonTable`，删除内层 `<LoadingSpinner>`。`LoadingSpinner` import 不再需要，移除。
+  - `ActionHistoryPage`：列表 loading → `SkeletonTable rows=6 cols=5`；详情 modal loading → `SkeletonText lines=6`。`LoadingSpinner` import 移除。
+  - `ApprovalsPage`：列表 loading → `SkeletonTable rows=6 cols=4`。
+  - `PermissionRequestsPage`：列表 loading → `SkeletonTable rows=6 cols=4`。
+- i18n：`dashboardPage.loadingOntologies` 新增（zh-CN "正在加载本体" / en "Loading ontologies"），用于 SkeletonCard 网格的 `aria-label`。`extract-i18n.mjs` parity 通过。
+- Files changed:
+  - 新增 web/src/components/common/Skeleton.tsx
+  - 新增 web/src/components/common/__tests__/Skeleton.test.tsx
+  - web/src/components/dashboard/DashboardPage.tsx
+  - web/src/components/explorer/ExplorerPage.tsx
+  - web/src/components/explorer/ObjectTypeDetail.tsx
+  - web/src/components/browser/BrowserPage.tsx
+  - web/src/components/actions/ActionHistoryPage.tsx
+  - web/src/components/approvals/ApprovalsPage.tsx
+  - web/src/components/permissionrequests/PermissionRequestsPage.tsx
+  - web/src/i18n/resources/zh-CN.ts + en.ts
+  - prd.json + progress.txt
+- 验证:
+  - `npx vitest run` → 118 文件 / 867 测试通过（baseline 113/852 from US-352 → +5 文件? 实际 +1 文件 / +15 用例：Skeleton.test.tsx 一个文件 15 用例；其余 +4 文件来自其它 ralph 迭代未列入 baseline）。
+  - `npx tsc -b` → 仍 3 处 pre-existing baseline (ObjectSetComposer.test.tsx + objectSetUrl.ts × 2)，新文件 typecheck clean。
+  - `npx vite build` → 1498 modules, CSS 136.04 kB / 26.89 kB gzip, JS 3.058 MB / 932.21 kB gzip，bundle 增长 < 0.5%。
+  - `npx eslint <changed>` → clean，零新增告警。
+  - `node web/scripts/extract-i18n.mjs` → "OK: zh-CN and en trees are consistent and every referenced key is defined"。
+  - `CGO_ENABLED=0 go build ./...` → clean (前端-only 改动)。
+  - dev-browser skill 在当前 harness 仍不可用，浏览器手测（loading shimmer 动画 / 屏幕阅读器播报 "Loading ontologies"）待补。
+- **Learnings for future iterations:**
+  - 骨架屏 vs spinner 的取舍：`LoadingSpinner` 居中点是"我在干活"信号，但**没有任何尺寸暗示**——数据到达瞬间真实页面会把整个 viewport 重排（CLS = Cumulative Layout Shift 飙升），用户感知卡顿。形状匹配的骨架占位等于把 page chrome 提前搭起来，数据填充时只是 inner content swap，CLS ≈ 0。规则：任何**会撑出固定布局**的页面（卡片网格、表格、列表、侧栏）都该走 Skeleton；快速一次性 mutate（按钮内 spinner、modal action）继续用 LoadingSpinner。
+  - shimmer 动画 + a11y 的兼容：role="status" 让屏幕阅读器播报 aria-label，不要让骨架条本身可被聚焦（`<span>` 默认非可聚焦元素，足够；用 `<div>` + tabIndex 反而会让键盘 Tab 流意外停在 placeholder 上）。`aria-busy="true"` 是 SR 准确播报"正在加载"的锚点，缺它部分 NVDA/VoiceOver 仅念 aria-label 不附加状态。
+  - **多元素骨架只暴露一个 status region**：`SkeletonText lines=5` / `SkeletonTable 6×4` 都包**一个**外层 role="status"，内部所有占位条 aria-hidden。否则 SR 会按行播 5 次 "Loading"，体验崩坏。`getAllByRole('status').toHaveLength(1)` 是这条不变量的回归测试，未来谁拆错都会被抓。
+  - 复用 `@keyframes shimmer` 而不是新写：`styles/index.css` 已经有 `shimmer { background-position: -200% 0 → 200% 0 }`，搭配 `background-size: 200% 100%` 即可让任何条形元素拥有移动光带——不需要每个组件 `<style>` 写一遍。检查 index.css 既有 keyframe 是落地任何动画前的 ZERO 步：spinnerPulse、fadeInUp、shimmer 都是公共资源。
+  - `@keyframes shimmer` 的视觉密度与 amber/teal 主色绑定：渐变写成 `rgba(245,158,11,0.06) → rgba(245,158,11,0.16) → rgba(245,158,11,0.06)`（Foundry 主色 amber 的低饱和半透）能融入项目暗色 theme 不抢眼。换成 grayscale (rgba(255,255,255,*)) 在 light theme 看着干净但本项目没有 light theme，跟主色对齐更协调。
+  - SkeletonTable 列宽阶梯（70% / 90% / 40%）模拟真实表格"主键短 / 中间字段满 / 时间戳短"的视觉节奏，比所有列等宽 100% 真实得多。把 hardcode 在 component 内（按 column index mod）而不是外部传入，是 v1 合理的"约定优于配置"——99% 调用方不会想自定义骨架表格的列宽分布。
+  - `SkeletonCard` 的形状专门匹配 OntologyCard：标题占 55% 宽 + 2 行正文（最后一行 70%）。不写成参数化的 \"flexible card\" 是因为参数化会让骨架形状跟具体页面解耦，结果就是任意页面都看着像同一个 generic card——丢掉了 \"骨架在加载阶段就揭示页面布局\" 的核心价值。需要不同形状的卡片（如媒体卡 / 头像卡 / 统计卡）应该再加 `SkeletonMediaCard` / `SkeletonAvatarCard` 而不是给 SkeletonCard 加 props。
+  - **替换 LoadingSpinner 时的 import 清理**：每个被替换文件最后用 `grep LoadingSpinner` 检查 ——如果文件里只剩 import 没有使用，必须把 import 也删掉。不删 ESLint 会报 "no-unused-vars" 但本项目 lint 配置似乎放过 import unused（ApprovalsPage 等替换都没报），所以**手动 grep 是唯一可靠的护栏**。BrowserPage 和 ActionHistoryPage 都中招过，记一下。
+  - i18n key 漏报的预防：任何在源码里**新增 `t('...')` 调用** 都要 `node scripts/extract-i18n.mjs` 验一遍。本次 `t('dashboardPage.loadingOntologies')` 漏写了 zh-CN/en 两个 resources 文件，extract-i18n 立即报 MISSING 并指出文件:行——所以 build 之前一定要跑一次 i18n 校验，不要依赖 vitest（vitest 只挂 i18next 的 fallback，缺 key 会安静走默认值不报错）。
+  - "verify in browser" 类验收：本环境 dev-browser skill 不可用，**仍要在 PRD/progress 里显式注明 manual verification needed**（不是静默跳过），与 US-351/US-352 保持一致。覆盖度由 vitest a11y/render 断言保证，但 shimmer 动画的视觉效果 / 屏幕阅读器实际播报需要真实浏览器才能验。
 ---

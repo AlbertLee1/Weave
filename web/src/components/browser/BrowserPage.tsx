@@ -19,7 +19,7 @@ import { PivotTable } from './PivotTable';
 import { ObjectDetail } from './ObjectDetail';
 import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonTable, SkeletonText } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 import type { WhereClause, WireObject } from '../../api/types';
 import type { SavedSearchDefinition } from '../../api/savedSearches';
@@ -391,11 +391,16 @@ export function BrowserPage() {
     [selectedRowMap],
   );
 
-  // Loading state for object type
+  // Loading state for object type metadata: shows the page chrome that the
+  // table will eventually fill, so the layout doesn't reflow on data arrival.
   if (isLoadingType) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
+      <div
+        className="flex flex-col gap-4 p-6 bg-bg-primary min-h-full"
+        data-testid="browser-loading"
+      >
+        <SkeletonText lines={2} lineHeight={14} aria-label="Loading object type" />
+        <SkeletonTable rows={6} columns={4} aria-label="Loading objects" />
       </div>
     );
   }
@@ -558,11 +563,9 @@ export function BrowserPage() {
         </div>
       )}
 
-      {/* Loading */}
+      {/* Loading — show a table skeleton matching the future layout */}
       {isLoading && (
-        <div className="flex items-center justify-center h-32">
-          <LoadingSpinner />
-        </div>
+        <SkeletonTable rows={6} columns={4} aria-label="Loading objects" />
       )}
 
       {/* Results area: Saved searches + Facets sidebar + Table/Map/Empty */}

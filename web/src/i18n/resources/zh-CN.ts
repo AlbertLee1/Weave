@@ -79,6 +79,7 @@ const zhCN = {
     failedToLoad: '加载本体失败：{{message}}',
     statOntologies: '本体',
     statObjectTypes: '对象类型',
+    loadingOntologies: '正在加载本体',
   },
   errors: {
     loadFailed: '加载失败：{{message}}',

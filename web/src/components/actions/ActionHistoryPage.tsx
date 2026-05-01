@@ -6,7 +6,7 @@ import {
 } from '../../hooks/useActionHistory';
 import { useActionTypes, useRevertActionLog } from '../../hooks/useActions';
 import { useOntologyStore } from '../../stores/ontologyStore';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonTable, SkeletonText } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 import { Modal } from '../common/Modal';
 import { useToastStore } from '../../stores/toastStore';
@@ -164,9 +164,7 @@ export function ActionHistoryPage() {
       </section>
 
       {historyQuery.isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <LoadingSpinner />
-        </div>
+        <SkeletonTable rows={6} columns={5} aria-label="Loading action history" />
       ) : historyQuery.isError ? (
         <EmptyState
           title="Failed to load action history"
@@ -273,9 +271,7 @@ export function ActionHistoryPage() {
         size="xl"
       >
         {detailQuery.isLoading ? (
-          <div className="flex items-center justify-center py-10">
-            <LoadingSpinner />
-          </div>
+          <SkeletonText lines={6} aria-label="Loading execution detail" />
         ) : detailQuery.isError ? (
           <div role="alert" className="text-sm text-rose-300">
             Failed to load:{' '}

@@ -4,6 +4,7 @@ import { TypeTree } from './TypeTree';
 import { ObjectTypeDetail } from './ObjectTypeDetail';
 import { SchemaGraph } from './SchemaGraph';
 import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonList, SkeletonText } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 
 export function ExplorerPage() {
@@ -53,8 +54,20 @@ export function ExplorerPage() {
 
   if (typesLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <LoadingSpinner size="lg" />
+      <div
+        className="flex h-full bg-bg-primary"
+        data-testid="explorer-loading"
+      >
+        <aside className="w-64 shrink-0 border-r border-border bg-bg-secondary p-3">
+          <SkeletonList items={8} aria-label="Loading object types" />
+        </aside>
+        <main className="flex-1 overflow-hidden p-6">
+          <SkeletonText
+            lines={6}
+            lineHeight={14}
+            aria-label="Loading schema"
+          />
+        </main>
       </div>
     );
   }

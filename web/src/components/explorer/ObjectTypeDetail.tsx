@@ -3,7 +3,7 @@ import type { ObjectType } from '../../api/types';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { PropertiesTable } from './PropertiesTable';
 import { LinkTypesPanel } from './LinkTypesPanel';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonList } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 
 interface ObjectTypeDetailProps {
@@ -71,7 +71,7 @@ export function ObjectTypeDetail({ ontologyApiName, objectType }: ObjectTypeDeta
 
         {activeTab === 'links' && (
           linksLoading
-            ? <div className="flex items-center justify-center py-12"><LoadingSpinner /></div>
+            ? <SkeletonList items={5} aria-label="Loading link types" />
             : <LinkTypesPanel linkTypes={linkTypes ?? []} />
         )}
 

@@ -10,7 +10,7 @@ import {
   usePermissionRequests,
   useRejectPermissionRequest,
 } from '../../hooks/usePermissionRequests';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonTable } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 import { Modal } from '../common/Modal';
 
@@ -199,9 +199,7 @@ export function PermissionRequestsPage() {
       </section>
 
       {listQuery.isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <LoadingSpinner />
-        </div>
+        <SkeletonTable rows={6} columns={4} aria-label="Loading permission requests" />
       ) : listQuery.isError ? (
         <EmptyState
           title="Failed to load permission requests"

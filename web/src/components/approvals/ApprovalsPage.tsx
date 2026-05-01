@@ -7,7 +7,7 @@ import {
   useApproveAction,
   useRejectAction,
 } from '../../hooks/useApprovals';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonTable } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
 import { Modal } from '../common/Modal';
 import { useOntologyStore } from '../../stores/ontologyStore';
@@ -154,9 +154,7 @@ export function ApprovalsPage() {
       </section>
 
       {listQuery.isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <LoadingSpinner />
-        </div>
+        <SkeletonTable rows={6} columns={4} aria-label="Loading approvals" />
       ) : listQuery.isError ? (
         <EmptyState
           title="Failed to load approvals"

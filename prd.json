@@ -2197,8 +2197,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 154,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "在 web/src/components/common/Skeleton.tsx 落地 5 个原语 (Skeleton/SkeletonText/SkeletonCard/SkeletonTable/SkeletonList) + 15 个 RTL 测试。复用 styles/index.css 既有 @keyframes shimmer。Dashboard/Explorer/ObjectTypeDetail/Browser/ActionHistory/Approvals/PermissionRequests 主要 Query 全切到形状匹配的骨架占位。dev-browser harness 暂不可用，浏览器手测待补 (vitest 覆盖了行为)。"
     },
     {
       "id": "US-354",
