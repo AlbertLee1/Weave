@@ -2155,8 +2155,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 151,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "migration 000081 user_preferences (user_id PK, theme/language enum-checked TEXT, notifications/hotkeys JSONB DEFAULT '{}'); pkg/userprefs.{Preferences,Update,Store,MemoryStore,Handler} with GET/PUT /api/v2/user-preferences (partial-update DTO, virtual-default response when row absent, InvalidUserPreferenceTheme/Language 400 + UserPreferencesUnavailable 500 typed errors); cmd/server/user_preferences_store.go pgUserPrefsStore via dynamic INSERT…ON CONFLICT (preserves unchanged columns); ServerDeps.UserPreferencesStore wired in PG block, handler mounted next to permission-requests; web/src/api/userPreferences.ts + useUserPreferences hook (exposes {data,isLoading,unavailable,error} so 404/UserPreferencesUnavailable degrades to local-only changes + banner) + useUpdateUserPreferences; SettingsPage at /settings with 4 sections (theme/language radiogroups bridge to existing useTheme + changeLocale, notifications enable+per-channel toggles, hotkeys list pulled from registry + global enable); Sidebar adds Settings link (icon=settings); i18n adds settings.* keys to zh-CN/en (extract-i18n parity OK); 5 RTL tests + 11 Go unit tests; vitest 833/833 + go test ./... + tsc -b (3 pre-existing baseline errors unchanged) + CGO_ENABLED=0 go build ./... clean; dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-351",

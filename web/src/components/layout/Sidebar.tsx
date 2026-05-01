@@ -157,6 +157,11 @@ export function Sidebar() {
     label: 'Mentions',
     icon: 'chat',
   });
+  navItems.push({
+    to: '/settings',
+    label: 'Settings',
+    icon: 'settings',
+  });
 
   const adminItems: NavItem[] = activeOntology
     ? [

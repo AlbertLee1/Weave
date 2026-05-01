@@ -98,6 +98,25 @@ const zhCN = {
     goPipelines: '前往数据管道',
     goApprovals: '前往审批',
   },
+  settings: {
+    title: '设置',
+    subtitle: '管理你的主题、语言、通知和快捷键偏好。',
+    sectionTheme: '主题',
+    sectionLanguage: '语言',
+    sectionNotifications: '通知',
+    sectionHotkeys: '快捷键',
+    notificationsEnabled: '启用通知',
+    notificationsEnabledHint: '关闭后将不再收到任何通知提示。',
+    notificationChannelMentions: '@ 提及',
+    notificationChannelApprovals: '审批',
+    notificationChannelWatches: '关注的对象',
+    hotkeysEnabled: '启用快捷键',
+    hotkeysEnabledHint: '关闭后所有键盘快捷键将停止响应。',
+    saved: '已保存',
+    saveFailed: '保存失败：{{message}}',
+    loading: '正在加载偏好…',
+    unavailable: '当前部署未启用偏好持久化，更改仅保存在本地。',
+  },
 } as const;
 
 export default zhCN;

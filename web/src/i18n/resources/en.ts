@@ -92,6 +92,25 @@ const en = {
     goPipelines: 'Go to Pipelines',
     goApprovals: 'Go to Approvals',
   },
+  settings: {
+    title: 'Settings',
+    subtitle: 'Manage your theme, language, notifications, and hotkey preferences.',
+    sectionTheme: 'Theme',
+    sectionLanguage: 'Language',
+    sectionNotifications: 'Notifications',
+    sectionHotkeys: 'Hotkeys',
+    notificationsEnabled: 'Enable notifications',
+    notificationsEnabledHint: 'When off, no notification toasts or badges will appear.',
+    notificationChannelMentions: '@ Mentions',
+    notificationChannelApprovals: 'Approvals',
+    notificationChannelWatches: 'Watched objects',
+    hotkeysEnabled: 'Enable hotkeys',
+    hotkeysEnabledHint: 'When off, all keyboard shortcuts stop responding.',
+    saved: 'Saved',
+    saveFailed: 'Save failed: {{message}}',
+    loading: 'Loading preferences…',
+    unavailable: 'Preference persistence is not enabled on this deployment; changes only apply locally.',
+  },
 } as const;
 
 export default en;

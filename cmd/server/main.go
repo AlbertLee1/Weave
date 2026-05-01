@@ -66,6 +66,7 @@ import (
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
+	"github.com/liyang/weave/pkg/userprefs"
 	"github.com/liyang/weave/pkg/watches"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -370,6 +371,12 @@ type ServerDeps struct {
 	PermissionRequestsStore     permissionrequests.Store
 	PermissionRequestsNotifier  permissionrequests.Notifier
 	PermissionRequestsApprovers permissionrequests.ApproverLister
+	// US-350: User Preferences center store. Backs the
+	// /api/v2/user-preferences endpoints used by the /settings page
+	// (theme, language, notifications, hotkeys). nil in degraded mode
+	// so the routes stay unmounted; the SPA falls back to localStorage
+	// defaults when the GET endpoint 404s.
+	UserPreferencesStore userprefs.Store
 	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
@@ -1242,6 +1249,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			prHandler.RegisterRoutes(api)
 		}
+
+		// US-350: User Preferences center. Mounts only when the
+		// backing store is wired (PG mode); degraded-mode deployments
+		// leave the /api/v2/user-preferences routes unregistered so
+		// the SPA falls back to localStorage / OS defaults.
+		if deps.UserPreferencesStore != nil {
+			userprefs.NewHandler(deps.UserPreferencesStore).RegisterRoutes(api)
+		}
 	})
 
 	return r
@@ -1636,6 +1651,13 @@ func main() {
 			deps.PermissionRequestsNotifier = newPermissionRequestNotifier(deps.OmsRepo)
 			log.Printf("[permission-requests] notifier wired")
 		}
+
+		// US-350: User preferences store. Backs the /api/v2/user-
+		// preferences endpoints used by the /settings page so the
+		// caller's theme / language / notifications / hotkeys
+		// preferences persist across devices.
+		deps.UserPreferencesStore = newPGUserPrefsStore(pool)
+		log.Printf("[userprefs] store wired")
 
 		// US-336: @mention autocomplete + notifications. The user
 		// directory adapter wraps the existing PG users repo; the
