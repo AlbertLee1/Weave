@@ -24,8 +24,10 @@ func setupNotificationRouter(repo *mockRepo, userID string) http.Handler {
 		}
 		return userID
 	})
+	handler.SetNotificationBulkStore(repo)
 	r := chi.NewRouter()
 	r.Get("/api/v2/notifications", handler.ListNotifications)
+	r.Post("/api/v2/notifications/read-all", handler.MarkAllNotificationsRead)
 	r.Post("/api/v2/notifications/{notificationId}/read", handler.MarkNotificationRead)
 	return r
 }
@@ -219,6 +221,169 @@ func TestCreateNotificationForUser(t *testing.T) {
 	}
 	if n.Read {
 		t.Fatal("expected notification to be unread")
+	}
+}
+
+func TestListNotifications_TypeFilter(t *testing.T) {
+	now := time.Now()
+	repo := &mockRepo{
+		notifications: []oms.Notification{
+			{ID: "n1", UserID: "alice", Title: "M1", Type: "mention", Read: false, CreatedAt: now},
+			{ID: "n2", UserID: "alice", Title: "W1", Type: "watch", Read: false, CreatedAt: now},
+			{ID: "n3", UserID: "alice", Title: "A1", Type: "approval", Read: false, CreatedAt: now},
+			{ID: "n4", UserID: "alice", Title: "S1", Type: "system", Read: true, CreatedAt: now},
+		},
+	}
+	router := setupNotificationRouter(repo, "")
+
+	cases := []struct {
+		name    string
+		query   string
+		wantIDs []string
+	}{
+		{"single type", "?type=mention", []string{"n1"}},
+		{"comma list", "?type=mention,watch", []string{"n1", "n2"}},
+		{"repeated param", "?type=approval&type=watch", []string{"n2", "n3"}},
+		{"unknown type", "?type=other", []string{}},
+		{"empty value ignored", "?type=", []string{"n1", "n2", "n3", "n4"}},
+		{"type + unread", "?type=mention,watch&unread=true", []string{"n1", "n2"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v2/notifications"+tc.query, nil)
+			req = withTestUser(req, "alice")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp struct {
+				Data []oms.Notification `json:"data"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+			gotIDs := make([]string, 0, len(resp.Data))
+			for _, n := range resp.Data {
+				gotIDs = append(gotIDs, n.ID)
+			}
+			if len(gotIDs) != len(tc.wantIDs) {
+				t.Fatalf("expected %d notifications, got %d (%v)", len(tc.wantIDs), len(gotIDs), gotIDs)
+			}
+			seen := map[string]bool{}
+			for _, id := range gotIDs {
+				seen[id] = true
+			}
+			for _, want := range tc.wantIDs {
+				if !seen[want] {
+					t.Errorf("missing expected id %q in %v", want, gotIDs)
+				}
+			}
+		})
+	}
+}
+
+func TestMarkAllNotificationsRead_AllUnread(t *testing.T) {
+	now := time.Now()
+	repo := &mockRepo{
+		notifications: []oms.Notification{
+			{ID: "n1", UserID: "alice", Title: "M1", Type: "mention", Read: false, CreatedAt: now},
+			{ID: "n2", UserID: "alice", Title: "W1", Type: "watch", Read: false, CreatedAt: now},
+			{ID: "n3", UserID: "alice", Title: "S1", Type: "system", Read: true, CreatedAt: now},
+			{ID: "n4", UserID: "bob", Title: "X1", Type: "mention", Read: false, CreatedAt: now},
+		},
+	}
+	router := setupNotificationRouter(repo, "")
+
+	req := httptest.NewRequest("POST", "/api/v2/notifications/read-all", nil)
+	req = withTestUser(req, "alice")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Updated int `json:"updated"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp.Updated != 2 {
+		t.Fatalf("expected 2 updated, got %d", resp.Updated)
+	}
+
+	// Alice's unread rows are now read; bob's untouched.
+	for _, n := range repo.notifications {
+		if n.UserID == "alice" && !n.Read {
+			t.Errorf("alice's notification %q should be read after bulk-read", n.ID)
+		}
+		if n.UserID == "bob" && n.Read {
+			t.Errorf("bob's notification %q should be untouched", n.ID)
+		}
+	}
+}
+
+func TestMarkAllNotificationsRead_TypeScoped(t *testing.T) {
+	now := time.Now()
+	repo := &mockRepo{
+		notifications: []oms.Notification{
+			{ID: "n1", UserID: "alice", Title: "M1", Type: "mention", Read: false, CreatedAt: now},
+			{ID: "n2", UserID: "alice", Title: "W1", Type: "watch", Read: false, CreatedAt: now},
+			{ID: "n3", UserID: "alice", Title: "A1", Type: "approval", Read: false, CreatedAt: now},
+		},
+	}
+	router := setupNotificationRouter(repo, "")
+
+	req := httptest.NewRequest("POST", "/api/v2/notifications/read-all?type=mention,approval", nil)
+	req = withTestUser(req, "alice")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Updated int `json:"updated"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp.Updated != 2 {
+		t.Fatalf("expected 2 updated (mention+approval), got %d", resp.Updated)
+	}
+
+	wantRead := map[string]bool{"n1": true, "n2": false, "n3": true}
+	for _, n := range repo.notifications {
+		if want, ok := wantRead[n.ID]; ok && n.Read != want {
+			t.Errorf("notification %q read=%v, want %v", n.ID, n.Read, want)
+		}
+	}
+}
+
+func TestMarkAllNotificationsRead_NoBulkStoreReturns503(t *testing.T) {
+	repo := &mockRepo{}
+	handler := oms.NewOMSHandler(repo)
+	handler.SetActorFunc(func(ctx context.Context) string { return "alice" })
+	// Intentionally NOT calling SetNotificationBulkStore.
+	r := chi.NewRouter()
+	r.Post("/api/v2/notifications/read-all", handler.MarkAllNotificationsRead)
+
+	req := httptest.NewRequest("POST", "/api/v2/notifications/read-all", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when bulk store not wired, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if body["errorName"] != "NotificationsBulkUnavailable" {
+		t.Errorf("expected errorName=NotificationsBulkUnavailable, got %v", body["errorName"])
 	}
 }
 

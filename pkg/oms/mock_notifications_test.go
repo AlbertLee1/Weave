@@ -45,6 +45,36 @@ func (m *mockRepo) MarkNotificationRead(_ context.Context, id string) error {
 	return oms.ErrNotFound
 }
 
+// MarkAllNotificationsRead implements the narrow oms.NotificationBulkStore
+// interface (US-343) directly on mockRepo so the bulk handler can be exercised
+// without a *PGRepository.
+func (m *mockRepo) MarkAllNotificationsRead(_ context.Context, userID string, types []string) (int, error) {
+	if m.updateErr != nil {
+		return 0, m.updateErr
+	}
+	typeSet := map[string]struct{}{}
+	for _, t := range types {
+		typeSet[t] = struct{}{}
+	}
+	updated := 0
+	for i := range m.notifications {
+		if m.notifications[i].UserID != userID {
+			continue
+		}
+		if m.notifications[i].Read {
+			continue
+		}
+		if len(typeSet) > 0 {
+			if _, ok := typeSet[m.notifications[i].Type]; !ok {
+				continue
+			}
+		}
+		m.notifications[i].Read = true
+		updated++
+	}
+	return updated, nil
+}
+
 // Notification stubs on noopRepo to satisfy oms.Repository.
 
 func (n *noopRepo) CreateNotification(_ context.Context, _ *oms.Notification) error { return nil }

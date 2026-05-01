@@ -141,6 +141,11 @@ type ServerDeps struct {
 	// snapshot endpoints return SnapshotsUnavailable 400 so the routes are
 	// still mounted (and discoverable via OpenAPI / contract tests).
 	ObjectSetSnapshotStore oms.ObjectSetSnapshotStore
+	// US-343: bulk-mark-read on the notifications table. Wired from the
+	// uncached *PGRepository so the /api/v2/notifications/read-all endpoint
+	// always observes the authoritative read-state. Nil in degraded mode
+	// leaves the route returning 503 NotificationsBulkUnavailable.
+	NotificationBulkStore  oms.NotificationBulkStore
 	TimeSeriesStore        timeseries.Store
 	GeotemporalStore       geotemporal.Store
 	CipherDecryptor        cipher.Decryptor
@@ -705,6 +710,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			if deps.InterfaceMethodDispatcher != nil {
 				omsHandler.SetInterfaceMethodDispatcher(deps.InterfaceMethodDispatcher)
+			}
+			if deps.NotificationBulkStore != nil {
+				omsHandler.SetNotificationBulkStore(deps.NotificationBulkStore)
 			}
 			RegisterRoutes(api, omsHandler)
 		}
@@ -1387,6 +1395,11 @@ func main() {
 		// endpoint always observes the authoritative tail (the metadata
 		// cache decorator does not wrap ObjectActivityStore methods).
 		deps.ActivityStore = pgRepo
+		// US-343: bulk-mark-read endpoint reads/writes the notifications
+		// table directly through the uncached *PGRepository so the
+		// authoritative row-state is observed without the metadata cache
+		// decorator interposing.
+		deps.NotificationBulkStore = pgRepo
 		// US-067: PG-backed audit event store for the admin read endpoint.
 		// US-265: optional SIEM exporter tees every persisted event onto
 		// stdout/syslog/S3 via a BatchedExporter. Disabled by default so

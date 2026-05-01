@@ -2821,3 +2821,21 @@ func (r *PGRepository) MarkNotificationRead(ctx context.Context, id string) erro
 	}
 	return nil
 }
+
+// MarkAllNotificationsRead marks every unread notification belonging to userID
+// as read. When types is non-empty the update is scoped to rows whose type is
+// in that set. Returns the number of rows updated. Implements the narrow
+// NotificationBulkStore interface (US-343).
+func (r *PGRepository) MarkAllNotificationsRead(ctx context.Context, userID string, types []string) (int, error) {
+	query := `UPDATE notifications SET read = true WHERE user_id = $1 AND read = false`
+	args := []interface{}{userID}
+	if len(types) > 0 {
+		query += ` AND type = ANY($2)`
+		args = append(args, types)
+	}
+	tag, err := r.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}

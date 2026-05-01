@@ -5731,6 +5731,19 @@ paths:
             type: string
             enum: ["true", "false"]
           description: Filter for unread notifications only
+        - name: type
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          description: |
+            Filter to one or more notification type tags (mention / watch /
+            approval / system / ...). Repeat the query parameter or pass a
+            comma-separated list (?type=mention,watch). Empty / unknown values
+            are ignored. (US-343)
       responses:
         "200":
           description: List of notifications
@@ -5743,6 +5756,43 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Notification"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v2/notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      summary: Mark every unread notification belonging to the caller as read
+      description: |
+        Bulk-mark-read endpoint (US-343). Optionally narrowed by ?type=<tag> to
+        scope the action to one or more notification type tags. Returns the
+        number of rows updated.
+      tags: [Notifications]
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          description: |
+            Restrict the bulk-read to one or more notification type tags.
+            Repeat the query parameter or pass a comma-separated list.
+            Empty / unknown values are ignored.
+      responses:
+        "200":
+          description: Number of notifications updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+                    minimum: 0
+        "503":
+          description: Bulk endpoint not configured (degraded mode)
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v2/notifications/{notificationId}/read:

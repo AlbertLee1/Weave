@@ -2057,8 +2057,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 144,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend: GET /api/v2/notifications now accepts repeated/comma-list ?type= and post-filters at the handler (parseNotificationTypeFilter dedupes empty + whitespace). New POST /api/v2/notifications/read-all accepts the same ?type= shape and returns {updated:N}; unwired ⇒ 503 NotificationsBulkUnavailable. *PGRepository.MarkAllNotificationsRead uses one UPDATE … WHERE user_id=$1 AND read=false [AND type=ANY($2)]; bulk path goes through a narrow oms.NotificationBulkStore wired from the uncached *PGRepository (not the CachedRepository decorator, matching the ActivityStore / ObjectSetSnapshotStore pattern) so the row-state read is authoritative. OpenAPI canonical + embedded specs document both endpoints; contract trio passes. Frontend: NotificationCenter renders 5-tab strip (All / Mentions / Watches / Approvals / System) keyed off n.type — `system` is the catch-all that absorbs legacy `automate.alert`/`system.info`/etc., per-tab unread badge counts derive from a single `useMemo` over the unfiltered list. `Mark <type> read` button calls the bulk endpoint scoped to the active tab's wire types (or [] for All). Type-aware glyph renders for mention(@) / watch(◉) / approval(✓) / system(!) via the existing renderTypeBadge switch. RTL test count: 17 (10 prior + 7 new) — every tab present, badge counts correct, switching filters rows, bulk endpoint called with right ?type=, type-specific badges rendered. tsc 0 errors; vitest 775/775 pass; go test -short ./... PASS (pkg + cmd/server + internal + test/{northwind,chinook,e2e}); CGO_ENABLED=0 go build + go vet clean. dev-browser skill not available in this harness — manual browser verification still pending."
     },
     {
       "id": "US-344",

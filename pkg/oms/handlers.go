@@ -25,6 +25,7 @@ type OMSHandler struct {
 	savedObjectSetLister     SavedObjectSetLister
 	interfaceMethodStore     InterfaceMethodStore
 	interfaceMethodDispatcher InterfaceMethodActionDispatcher
+	notificationBulkStore    NotificationBulkStore
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
@@ -98,6 +99,14 @@ func (h *OMSHandler) SetSavedObjectSetLister(s SavedObjectSetLister) {
 // Used by notification handlers to determine the current user.
 func (h *OMSHandler) SetActorFunc(fn ActorFunc) {
 	h.actorFn = fn
+}
+
+// SetNotificationBulkStore wires the narrow NotificationBulkStore used by the
+// /api/v2/notifications/read-all endpoint (US-343). When unset the handler
+// responds with 503 NotificationsBulkUnavailable so degraded-mode test
+// routers that do not supply the store still boot cleanly.
+func (h *OMSHandler) SetNotificationBulkStore(s NotificationBulkStore) {
+	h.notificationBulkStore = s
 }
 
 // resolveRepo returns a Repository for the request. If ?branch= is set, it
