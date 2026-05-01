@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { NotificationCenter } from '../common/NotificationCenter';
+import { LanguageSwitcher } from '../common/LanguageSwitcher';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
 
-const THEME_OPTIONS: Array<{
-  value: ThemePreference;
-  label: string;
-  description: string;
-}> = [
-  { value: 'light', label: 'Light', description: '浅色' },
-  { value: 'dark', label: 'Dark', description: '深色' },
-  { value: 'system', label: 'System', description: '跟随系统' },
-];
+const THEME_OPTION_VALUES: ReadonlyArray<ThemePreference> = ['light', 'dark', 'system'];
 
 function pathToBreadcrumbs(pathname: string): string[] {
   const segments = pathname.split('/').filter(Boolean);
@@ -24,6 +18,7 @@ export function Topbar() {
   const location = useLocation();
   const breadcrumbs = pathToBreadcrumbs(location.pathname);
   const [panelOpen, setPanelOpen] = useState(false);
+  const { t } = useTranslation();
 
   const { data } = useNotifications({ unreadOnly: true });
   const unreadCount = useMemo(
@@ -86,7 +81,7 @@ export function Topbar() {
         <div ref={themeMenuRef} className="relative">
           <button
             type="button"
-            aria-label="Theme"
+            aria-label={t('theme.label')}
             aria-haspopup="menu"
             aria-expanded={themeMenuOpen}
             data-testid="theme-menu-trigger"
@@ -94,7 +89,7 @@ export function Topbar() {
             data-preference={preference}
             onClick={() => setThemeMenuOpen((v) => !v)}
             className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
-            title="主题"
+            title={t('theme.label')}
           >
             {theme === 'dark' ? (
               <svg
@@ -135,21 +130,21 @@ export function Topbar() {
           {themeMenuOpen && (
             <div
               role="menu"
-              aria-label="Theme"
+              aria-label={t('theme.label')}
               data-testid="theme-menu"
               className="absolute right-0 mt-1 min-w-[160px] rounded border border-border bg-bg-primary shadow-lg z-10"
             >
-              {THEME_OPTIONS.map((opt) => {
-                const active = preference === opt.value;
+              {THEME_OPTION_VALUES.map((value) => {
+                const active = preference === value;
                 return (
                   <button
-                    key={opt.value}
+                    key={value}
                     type="button"
                     role="menuitemradio"
                     aria-checked={active}
-                    data-testid={`theme-option-${opt.value}`}
+                    data-testid={`theme-option-${value}`}
                     onClick={() => {
-                      setPreference(opt.value);
+                      setPreference(value);
                       setThemeMenuOpen(false);
                     }}
                     className={`flex w-full items-center justify-between px-3 py-2 text-xs font-sans transition-colors ${
@@ -158,14 +153,14 @@ export function Topbar() {
                         : 'text-text-primary hover:bg-bg-secondary'
                     }`}
                   >
-                    <span>{opt.label}</span>
-                    <span className="ml-3 text-text-muted">{opt.description}</span>
+                    <span>{t(`theme.${value}`)}</span>
                   </button>
                 );
               })}
             </div>
           )}
         </div>
+        <LanguageSwitcher />
         <button
           type="button"
           aria-label="Notifications"

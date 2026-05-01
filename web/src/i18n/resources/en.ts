@@ -60,6 +60,20 @@ const en = {
     dark: 'Dark',
     system: 'System',
   },
+  language: {
+    label: 'Language',
+    'zh-CN': '简体中文',
+    en: 'English',
+  },
+  dashboardPage: {
+    sectionOntologies: 'Ontologies',
+    emptyTitle: 'No ontologies yet',
+    emptyDescription:
+      'Ontologies are managed through the Foundry API. Use the SDK or CLI to create ontologies.',
+    failedToLoad: 'Failed to load ontologies: {{message}}',
+    statOntologies: 'Ontologies',
+    statObjectTypes: 'Object Types',
+  },
   errors: {
     loadFailed: 'Failed to load: {{message}}',
     networkError: 'Network error, please check your connection and retry.',

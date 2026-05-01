@@ -67,6 +67,19 @@ const zhCN = {
     dark: '深色',
     system: '跟随系统',
   },
+  language: {
+    label: '语言',
+    'zh-CN': '简体中文',
+    en: 'English',
+  },
+  dashboardPage: {
+    sectionOntologies: '本体',
+    emptyTitle: '暂无本体',
+    emptyDescription: '本体通过 Foundry API 管理，请使用 SDK 或 CLI 创建本体。',
+    failedToLoad: '加载本体失败：{{message}}',
+    statOntologies: '本体',
+    statObjectTypes: '对象类型',
+  },
   errors: {
     loadFailed: '加载失败：{{message}}',
     networkError: '网络异常，请检查连接后重试',

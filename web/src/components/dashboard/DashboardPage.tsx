@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useOntologies } from '../../hooks/useOntologies';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
 import type { Ontology } from '../../api/types';
@@ -23,6 +24,7 @@ function OntologyCardWithCount({ ontology, onClick, index }: { ontology: Ontolog
 export function DashboardPage() {
   const navigate = useNavigate();
   const { data: ontologies, isLoading, error } = useOntologies();
+  const { t } = useTranslation();
 
   const totalObjectTypes = 0;
 
@@ -38,7 +40,7 @@ export function DashboardPage() {
     return (
       <div className="flex items-center justify-center h-96">
         <p className="text-sm text-accent-error">
-          Failed to load ontologies: {(error as Error).message}
+          {t('dashboardPage.failedToLoad', { message: (error as Error).message })}
         </p>
       </div>
     );
@@ -100,7 +102,7 @@ export function DashboardPage() {
                 className="w-1.5 h-1.5 rounded-full"
                 style={{ background: '#14B8A6', boxShadow: '0 0 6px rgba(20,184,166,0.8)' }}
               />
-              Ontology Layer Engine
+              {t('dashboard.eyebrow')}
             </div>
 
             {/* Main title */}
@@ -115,7 +117,7 @@ export function DashboardPage() {
                 animation: 'fadeInUp 500ms 120ms ease-out both',
               }}
             >
-              WEAVE
+              {t('dashboard.title')}
             </h1>
 
             <p
@@ -126,7 +128,7 @@ export function DashboardPage() {
                 animation: 'fadeInUp 500ms 200ms ease-out both',
               }}
             >
-              Define your data universe. Model objects, relationships, and actions in a unified ontology layer.
+              {t('dashboard.subtitle')}
             </p>
           </div>
         </div>
@@ -150,7 +152,7 @@ export function DashboardPage() {
             className="text-xs font-semibold uppercase tracking-widest text-text-secondary"
             style={{ fontFamily: 'var(--font-sans)' }}
           >
-            Ontologies
+            {t('dashboardPage.sectionOntologies')}
           </h2>
           {ontologies && ontologies.length > 0 && (
             <span
@@ -171,8 +173,8 @@ export function DashboardPage() {
       {/* ── Ontology Grid / Empty State ───────────────────────────── */}
       {!ontologies || ontologies.length === 0 ? (
         <EmptyState
-          title="No ontologies yet"
-          description="Ontologies are managed through the Foundry API. Use the SDK or CLI to create ontologies."
+          title={t('dashboardPage.emptyTitle')}
+          description={t('dashboardPage.emptyDescription')}
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

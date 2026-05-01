@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+
 interface StatsBarProps {
   ontologyCount: number;
   objectTypeCount: number;
@@ -47,6 +49,7 @@ function StatItem({ icon, label, value, color, delay }: StatItemProps) {
 }
 
 export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-stretch gap-3">
       <StatItem
@@ -55,7 +58,7 @@ export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
             <path d="M4 7a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V7zM4 15a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2z" />
           </svg>
         }
-        label="Ontologies"
+        label={t('dashboardPage.statOntologies')}
         value={ontologyCount}
         color="#F59E0B"
         delay={0}
@@ -69,7 +72,7 @@ export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
             <rect x="14" y="14" width="7" height="7" rx="1" />
           </svg>
         }
-        label="Object Types"
+        label={t('dashboardPage.statObjectTypes')}
         value={objectTypeCount}
         color="#14B8A6"
         delay={80}
