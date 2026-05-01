@@ -2341,6 +2341,9 @@
       "priority": 164,
       "passes": true,
       "notes": "Three self-contained hello-world quickstarts under examples/ — py-quickstart uses the in-repo weave-client SDK, ts-quickstart uses the global fetch on Node 18+, go-quickstart uses net/http with its own go.mod (carved out of the parent module so it clones in isolation and `go test ./...` from repo root doesn't recurse into it). Each ships its own README documenting the 5-min path: `make dev` → cd → run. examples/quickstart_test.go is a regular (non-tagged) test that gates structure (file existence) unconditionally, runs `go vet ./...` against go-quickstart unconditionally (the test runner's own toolchain), and runs `tsc --noEmit` against ts-quickstart + `python3 -m py_compile` against py-quickstart conditionally (skipping when the toolchain isn't reachable so minimal CI containers stay green; web CI workflow always has tsc). TS quickstart ships a tiny src/globals.d.ts ambient shim for `process`/`console` so it type-checks without `@types/node` — keeps the dep-free `tsc --noEmit` honest in CI. All `go test ./...` green; tsc, go vet, py_compile all green locally."
+    },
+    {
+      "id": "US-364",
       "title": "SDK Cookbook",
       "description": "作为高级用户，我想看最佳实践 recipes。",
       "acceptanceCriteria": [
@@ -2350,8 +2353,8 @@
         "Typecheck passes"
       ],
       "priority": 165,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "docs/cookbook/ ships README + five chapter pairs (NN-name.md prose + NN-name.py runnable companion) — async (asyncio.gather fan-out via WeaveAsyncClient), retry (RetryPolicy production/deterministic/disabled shapes + Retry-After / POST-never-retry caveats), batching (apply_batch chunking, BatchError phase decoding, idempotency notes — counts come back via resp.edits.added_object_count, NOT a per-row results list), subscription (SSE consumer with explicit frame parser, lastEventId resume, 1s→30s capped backoff, lazy httpx import so py_compile passes without httpx installed), rag (search-as-retrieval + numbered snippet formatter + LLM stub seam). Verifying gate is docs/cookbook/cookbook_test.go: TestCookbook_StructureMatches asserts every chapter ships a .md and .py side-by-side; TestCookbook_PythonSamples_PyCompile parses each .py via python3 -m py_compile (skips when no python3 on PATH, mirroring examples/quickstart_test.go). Adding a new recipe = append the stem to the chapters slice + drop the two files. Also fixed prd.json structural breakage between US-363 and this entry (missing closing brace + id field after notes). go test ./... green; go vet green."
     }
   ]
 }
