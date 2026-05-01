@@ -116,6 +116,10 @@ const en = {
     title: 'This page hit an error',
     description: 'The error has been logged. Click retry to re-render this page, or navigate elsewhere.',
   },
+  offline: {
+    banner: 'You are offline — showing cached data',
+    reconnected: 'Reconnected, syncing…',
+  },
 } as const;
 
 export default en;

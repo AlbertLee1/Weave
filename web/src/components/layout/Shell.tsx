@@ -1,12 +1,15 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { CommandPalette } from '../common/CommandPalette';
 import { HotkeyHelpModal } from '../common/HotkeyHelpModal';
 import { Toaster } from '../common/Toaster';
+import { OfflineIndicator } from '../common/OfflineIndicator';
 import { RouteErrorBoundary } from '../common/ErrorBoundary';
 import { useShortcut } from '../../hotkeys';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useOntologyStore } from '../../stores/ontologyStore';
 
 export function Shell() {
@@ -20,6 +23,21 @@ export function Shell() {
   const selectedOntology = useOntologyStore((s) => s.selectedOntology);
   const activeOntology =
     (params.ontology as string | undefined) ?? selectedOntology ?? null;
+
+  // Auto-sync on reconnect (US-354): TanStack Query's onlineManager already
+  // resumes paused queries on `online`, but we ALSO invalidate every query
+  // on transition from offline → online so cached-but-stale views (which
+  // the user was browsing while disconnected) refetch immediately. The
+  // ref guards against the initial mount counting as a recovery.
+  const online = useOnlineStatus();
+  const queryClient = useQueryClient();
+  const wasOnlineRef = useRef<boolean>(online);
+  useEffect(() => {
+    if (!wasOnlineRef.current && online) {
+      queryClient.invalidateQueries();
+    }
+    wasOnlineRef.current = online;
+  }, [online, queryClient]);
 
   useShortcut('commandPalette', togglePalette);
   useShortcut('showHelp', toggleHelp);
@@ -46,6 +64,7 @@ export function Shell() {
       />
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0">
+        <OfflineIndicator />
         <Topbar />
         <main
           className="flex-1 overflow-auto p-6"

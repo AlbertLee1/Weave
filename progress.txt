@@ -262,6 +262,7 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 - Rendering untrusted user-authored markdown in the SPA (US-341 comments, future PR descriptions / wiki / chat): use `react-markdown` (already pulled transitively via `@uiw/react-md-editor` — declare it in `web/package.json` so the dep is explicit) with NO `rehype-raw` plugin. The default config is the security posture: raw HTML in source is escaped to text rather than rendered as DOM, and `defaultUrlTransform` strips `javascript:` from link/image URLs. Adding `rehype-sanitize` is only needed if you opt INTO `rehype-raw` for some reason — DO NOT add `rehype-raw` for "richer" rendering, that's how XSS sneaks in. Always override the `a` component to stamp `target="_blank" rel="noopener noreferrer"` (otherwise linked pages can `window.opener.location = …` or leak referrer). For inline-text decorations (mention badges, citation tokens, etc.) walk the React node tree post-render with a `cloneElement`-based recursive helper that splits string leaves only — react-markdown's `components` prop maps HTML tag names, there is no `text` slot, and pre-processing the source (e.g. `[@x](#mention:x)`) interferes with bare-text inputs. **Skip `remark-gfm`** for any content containing `@email@domain.com` mentions: GFM's autolink-literal extension turns bare emails into mailto links, fragmenting the mention regex's input across two text nodes. CommonMark already covers fenced code blocks; tables/strikethrough/task-lists are rarely needed in comment surfaces. Prior art: `web/src/components/browser/CommentBody.tsx`.
 - Global keyboard shortcut registry (US-348, future US-349 help panel / per-page shortcuts): single source of truth in `web/src/hotkeys/registry.ts` — typed `HotkeyId` union + `HOTKEYS` array (id / keys / i18nKey / group). One `useShortcut(id, handler, { enabled? })` call per binding keeps the rules-of-hooks invariant trivial; a parent registers N shortcuts by writing N call sites, never a `Partial<Record<HotkeyId, () => void>>` map looped over inside a hook. Two react-hotkeys-hook v5 traps to bake into any future shortcut hook: (1) the effect deps strip `enabled` / `preventDefault` / `ignoreEventWhen` before comparing, so toggling `options.enabled` after mount does NOT re-subscribe — gate enabled INSIDE the callback closure (and put it in the `dependencies` array so the callback ref refreshes), letting useHotkeys subscribe permanently and the closure decide; (2) jsdom keyboard events MUST carry `code: 'KeyX'` (e.g. `code: 'KeyK'` for `meta+k`) — the library's keydown handler short-circuits when `a.code` is undefined, so a bare `fireEvent.keyDown(document, { key: 'k', metaKey: true })` silently never fires. Sequences use `>` (`g>d`) and a single string can't mix `+` and `>` (library logs and skips). Keep i18n dynamic via `t(def.i18nKey)` and accept the `UNUSED` flag from `extract-i18n.mjs` — the audit is informational, not fatal, and the keys ARE statically defined in zh-CN/en.
 - Dual-layer ErrorBoundary pattern (US-352, future SPA-wide guarded surfaces): `react-error-boundary` ships ONE `<ErrorBoundary>` primitive — wire two instances. (1) **GlobalErrorBoundary OUTSIDE the provider tree** (in App.tsx wrapping QueryClientProvider/Router/AuthProvider). Its fallback MUST avoid any hook depending on those providers (no `useTranslation` / `useQueryClient` / `useAuth` / `useNavigate`) — a provider crash means those hooks throw too and the outer boundary has nothing to render. Hardcode bilingual strings ("应用发生错误 / Something went wrong"). (2) **RouteErrorBoundary INSIDE Shell** wrapping `<Outlet />`. Shell stays usable so the user can navigate away; fallback uses `useTranslation()` (i18n is provider-tree-internal, guaranteed available here). Pass `resetKeys={[location.pathname]}` so route changes auto-reset the boundary — without it, navigating away from a crashed page leaves the user stuck on the fallback until they hit Retry. `react-error-boundary@6` widened the `onError(error, info)` first param from `Error` to `unknown` (TS2322 if you keep v5's signature); transparently forward `unknown` to the reporter and let the reporter coerce via `error instanceof Error ? error : new Error(String(error))`. Reporter must NEVER throw upstream — wrap custom reporter calls in `try {} catch {}` and `.catch(() => {})` around fetch/sendBeacon, or you risk a re-entrant boundary catch loop. `navigator.sendBeacon` (with `fetch({ keepalive: true })` jsdom fallback) is the right primitive for fire-and-forget client error POSTs because it survives unload. Prior art: `web/src/components/common/ErrorBoundary.tsx` + `web/src/lib/errorReporter.ts`.
+- Offline support (US-354, future per-page offline shells / sync queues): three pieces, in order — (1) tiny in-house IDB key/value at `web/src/lib/offlineCache.ts` mirroring localforage's `getItem`/`setItem`/`removeItem`/`clear`/`keys` surface (~80 LOC, in-memory fallback when `indexedDB` is undefined so jsdom + private-mode browsers don't blow up; "PRD says localforage" does NOT mandate the npm dep when the surface is this small — same anti-dep posture as US-326 declining react-pivottable / react-dnd); (2) `useOnlineStatus` hook + `OfflineIndicator` component pinned ABOVE Topbar inside Shell, three states (hidden / amber-offline / teal-reconnected-2.5s-pulse) — render-phase setState (`if (online !== prevOnline) { setPrevOnline(online); if (...) setShowReconnected(true) }`, progress.txt:119 prior art) detects the offline → online transition without tripping `react-hooks/set-state-in-effect`, separate `[showReconnected]` effect owns the timer; (3) Shell's reconnect watcher calls `queryClient.invalidateQueries()` on every offline → online transition — TanStack Query's `refetchOnReconnect: true` already resumes paused queries, but the explicit invalidate makes auto-sync deterministic for views the user was browsing while offline. Service Worker registration (`web/src/lib/serviceWorker.ts` + `web/public/sw.js`) is production-only — `import.meta.env.DEV` gate is mandatory because Vite HMR + SW interception are mutually exclusive (intercepting the dev server breaks module reloads). SW scope is **application-data-blind**: shell precache + stale-while-revalidate for `/assets/*`, network-first navigations w/ shell fallback, pass-through for API GETs. Data-level caching lives in the SPA (TanStack Query + offlineCache) where staleness rules already live; pushing API caching into the SW creates two sources of truth.
 
 ## 2026-04-18 - US-200 Derived Properties framework
 - Created `pkg/types/formula` package with Goja-backed expression evaluator:
@@ -5377,4 +5378,85 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - **替换 LoadingSpinner 时的 import 清理**：每个被替换文件最后用 `grep LoadingSpinner` 检查 ——如果文件里只剩 import 没有使用，必须把 import 也删掉。不删 ESLint 会报 "no-unused-vars" 但本项目 lint 配置似乎放过 import unused（ApprovalsPage 等替换都没报），所以**手动 grep 是唯一可靠的护栏**。BrowserPage 和 ActionHistoryPage 都中招过，记一下。
   - i18n key 漏报的预防：任何在源码里**新增 `t('...')` 调用** 都要 `node scripts/extract-i18n.mjs` 验一遍。本次 `t('dashboardPage.loadingOntologies')` 漏写了 zh-CN/en 两个 resources 文件，extract-i18n 立即报 MISSING 并指出文件:行——所以 build 之前一定要跑一次 i18n 校验，不要依赖 vitest（vitest 只挂 i18next 的 fallback，缺 key 会安静走默认值不报错）。
   - "verify in browser" 类验收：本环境 dev-browser skill 不可用，**仍要在 PRD/progress 里显式注明 manual verification needed**（不是静默跳过），与 US-351/US-352 保持一致。覆盖度由 vitest a11y/render 断言保证，但 shimmer 动画的视觉效果 / 屏幕阅读器实际播报需要真实浏览器才能验。
+---
+
+## 2026-05-02 - US-354 Offline 支持
+- New `web/src/lib/offlineCache.ts` localforage-shaped IndexedDB key/value
+  store (`getItem`/`setItem`/`removeItem`/`clear`/`keys`) with an
+  in-memory fallback for jsdom + private-mode browsers. ~80 LOC, no
+  new npm dep.
+- New `web/src/hooks/useOnlineStatus.ts` returning `navigator.onLine`
+  state and listening for `online`/`offline` window events.
+- New `web/src/components/common/OfflineIndicator.tsx` banner pinned
+  above the Topbar inside Shell. Three visual states: hidden when
+  online, amber 离线 banner when offline, teal "已恢复" pulse for 2.5s
+  on reconnect (auto-unmounts).
+- `web/src/lib/serviceWorker.ts` + `web/public/sw.js` register the
+  shell-precaching SW in production only (DEV/jsdom no-op). Strategy:
+  precache shell on install, network-first navigations w/ shell
+  fallback, stale-while-revalidate for `/assets/`, pass-through for
+  API GETs (TanStack Query + offlineCache own data caching).
+- Shell wires an `online` watcher that calls `queryClient.invalidateQueries()`
+  on offline → online transition so cached-but-stale views refetch
+  immediately. Built-in `refetchOnReconnect` is the belt; the explicit
+  invalidate is the braces.
+- i18n: added `offline.banner` + `offline.reconnected` to zh-CN and en.
+- Tests (14 new, all green; 881 total still passing):
+  - `OfflineIndicator.test.tsx` — hidden/online/offline/reconnected
+    transitions + auto-unmount after 2500ms.
+  - `useOnlineStatus.test.ts` — initial value + event-driven updates.
+  - `offlineCache.test.ts` — round-trip primitives/objects, missing
+    keys → null, removeItem isolation, clear, keys.
+  - `serviceWorker.test.ts` — no-op when navigator.serviceWorker is
+    missing + DEV-mode bail.
+- Files changed:
+  - `web/src/lib/offlineCache.ts` (new)
+  - `web/src/lib/__tests__/offlineCache.test.ts` (new)
+  - `web/src/lib/serviceWorker.ts` (new)
+  - `web/src/lib/__tests__/serviceWorker.test.ts` (new)
+  - `web/src/hooks/useOnlineStatus.ts` (new)
+  - `web/src/hooks/__tests__/useOnlineStatus.test.ts` (new)
+  - `web/src/components/common/OfflineIndicator.tsx` (new)
+  - `web/src/components/common/__tests__/OfflineIndicator.test.tsx` (new)
+  - `web/public/sw.js` (new)
+  - `web/src/components/layout/Shell.tsx` (mount indicator, wire auto-sync)
+  - `web/src/main.tsx` (registerServiceWorker on boot)
+  - `web/src/i18n/resources/zh-CN.ts` + `en.ts` (offline.* keys)
+- **Learnings for future iterations:**
+  - "localforage" in a PRD does NOT mandate the npm package. The full
+    surface we use is `getItem`/`setItem`/`removeItem`/`clear`/`keys` —
+    ~80 LOC of in-house IDB wrapper covers it without the 30KB dep,
+    and the in-memory fallback path makes jsdom tests trivial without
+    pulling in `fake-indexeddb`. Same anti-dep pattern as US-326
+    (PivotTable, declined react-pivottable / react-dnd) and US-323
+    (declined react-force-graph in favour of d3-force).
+  - Render-phase setState comparison (progress.txt:119, US-315 prior
+    art) is the right fix when a transient pulse needs to fire on a
+    boolean transition AND a timer needs to clear it: detect the
+    transition during render with `if (online !== prevOnline) { ... }`,
+    arm a separate `[showFlag]` effect that owns the timer. Trying to
+    cram both into one effect trips `react-hooks/set-state-in-effect`.
+  - Service Worker registration MUST guard `import.meta.env.DEV` —
+    Vite's HMR pipe and SW interception are mutually exclusive
+    (intercepting the dev server breaks module reloads). Wrap the
+    import.meta.env access in try/catch so non-Vite test runners
+    that don't define it don't throw at module load.
+  - TanStack Query already has `refetchOnReconnect: true` by default,
+    but invalidating ALL queries on offline → online transition makes
+    auto-sync deterministic: any view the user was browsing offline
+    (TanStack Query's stored data + our offlineCache snapshots) is
+    nudged to refetch on the next render, not just the next
+    `staleTime` expiry. The cost is one transient render burst on
+    reconnect; the benefit is "user comes back to fresh data, not
+    yesterday's cached page".
+  - jsdom does NOT expose IndexedDB (jsdom 28). Either polyfill with
+    `fake-indexeddb` (one more dep) or write the storage layer with a
+    typeof-guarded fallback. For one-table key/value caches the
+    fallback path is ~5 LOC and keeps the test setup minimal.
+  - The SW strategy in `web/public/sw.js` is intentionally
+    application-data-blind: API GETs pass through, no JSON caching at
+    the SW layer. Data-level caching belongs in the SPA (TanStack
+    Query + offlineCache) where staleness rules + per-route
+    invalidation already live. Pushing API caching into the SW
+    creates two sources of truth that disagree on what "fresh" means.
 ---
