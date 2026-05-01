@@ -29,6 +29,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from ._async_http import AsyncTransport
 from ._http import HTTPResponse, build_query_string, quote_path
+from ._retry import RetryPolicy
 from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
 from .types import (
     ActionType,
@@ -79,11 +80,16 @@ class WeaveAsyncClient:
         api_key: Optional[str] = None,
         timeout: float = 30.0,
         transport: Optional[AsyncTransport] = None,
+        retry: Optional[RetryPolicy] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.api_key = api_key
-        self._transport = transport or AsyncTransport(timeout=timeout)
+        if transport is None:
+            transport = AsyncTransport(timeout=timeout, retry=retry)
+        elif retry is not None:
+            transport.retry = retry
+        self._transport = transport
 
         self.ontologies = AsyncOntologiesAPI(self)
         self.objects = AsyncObjectsAPI(self)

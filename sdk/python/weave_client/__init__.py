@@ -24,6 +24,7 @@ The SDK is intentionally thin: it returns Pydantic models for metadata
 endpoints and plain ``dict`` payloads for object endpoints, where the schema
 varies per object type.
 """
+from ._retry import RetryPolicy
 from .async_client import WeaveAsyncClient
 from .client import Client
 from .exceptions import (
@@ -51,6 +52,7 @@ from .types import (
 
 __all__ = [
     "Client",
+    "RetryPolicy",
     "WeaveAsyncClient",
     "WeaveError",
     "WeaveAuthError",

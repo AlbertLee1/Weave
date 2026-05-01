@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ._http import HTTPResponse, Transport
+from ._retry import RetryPolicy
 from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
 from .types import LoginResponse
 
@@ -31,11 +32,16 @@ class Client:
         api_key: Optional[str] = None,
         timeout: float = 30.0,
         transport: Optional[Transport] = None,
+        retry: Optional[RetryPolicy] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
         self.api_key = api_key
-        self._transport = transport or Transport(timeout=timeout)
+        if transport is None:
+            transport = Transport(timeout=timeout, retry=retry)
+        elif retry is not None:
+            transport.retry = retry
+        self._transport = transport
 
         # Lazy import to avoid circular references at module-import time.
         from .actions import ActionsAPI

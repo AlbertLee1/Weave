@@ -164,6 +164,92 @@ export type FetchHandler = (req: Request) => Promise<Response>;
 // logging, retry, caching, telemetry.
 export type Middleware = (req: Request, next: FetchHandler) => Promise<Response>;
 
+// RetryPolicy configures the built-in retry middleware. The middleware retries
+// only idempotent HTTP methods (GET / HEAD / OPTIONS / PUT / DELETE) on
+// transport errors and on retriable status codes (408, 425, 429, 500, 502,
+// 503, 504). Backoff is exponential with full jitter; if the server sends a
+// ` + "`Retry-After`" + ` header (delta-seconds or HTTP-date) it overrides the computed
+// delay so well-behaved clients yield to explicit guidance.
+export interface RetryPolicy {
+  // maxAttempts is the total number of attempts INCLUDING the first try.
+  // Defaults to 3 (i.e. up to 2 retries after the initial request).
+  maxAttempts?: number;
+  // baseDelayMs is the initial backoff (exp 0). Defaults to 100ms.
+  baseDelayMs?: number;
+  // maxDelayMs caps any single backoff window. Defaults to 5_000ms.
+  maxDelayMs?: number;
+  // multiplier between successive attempts. Defaults to 2 (binary exponential).
+  multiplier?: number;
+  // retryStatuses overrides the default retriable HTTP status set.
+  retryStatuses?: number[];
+  // retryMethods overrides the default idempotent method set.
+  retryMethods?: string[];
+}
+
+const DEFAULT_RETRY_STATUSES = [408, 425, 429, 500, 502, 503, 504];
+const DEFAULT_RETRY_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'];
+
+function parseRetryAfter(header: string | null, now: number): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (trimmed === '') return null;
+  const seconds = Number(trimmed);
+  if (!Number.isNaN(seconds) && seconds >= 0) return Math.floor(seconds * 1000);
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) return Math.max(0, dateMs - now);
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+// retryMiddleware builds a Middleware that auto-retries idempotent requests with
+// exponential backoff and full jitter. Install it once on the client:
+//
+//   client.use(retryMiddleware({ maxAttempts: 5 }));
+//
+// Non-idempotent methods (POST / PATCH) bypass retries — they may have already
+// taken effect on the server, and replaying them silently risks double-writes.
+export function retryMiddleware(policy: RetryPolicy = {}): Middleware {
+  const maxAttempts = Math.max(1, policy.maxAttempts ?? 3);
+  const baseDelay = Math.max(0, policy.baseDelayMs ?? 100);
+  const maxDelay = Math.max(baseDelay, policy.maxDelayMs ?? 5_000);
+  const multiplier = policy.multiplier ?? 2;
+  const statuses = new Set(policy.retryStatuses ?? DEFAULT_RETRY_STATUSES);
+  const methods = new Set((policy.retryMethods ?? DEFAULT_RETRY_METHODS).map((m) => m.toUpperCase()));
+
+  return async (req, next) => {
+    const method = req.method.toUpperCase();
+    if (!methods.has(method)) {
+      return next(req);
+    }
+    let lastErr: unknown = undefined;
+    let lastResp: Response | undefined = undefined;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const r = await next(req.clone());
+        if (!statuses.has(r.status) || attempt === maxAttempts - 1) {
+          return r;
+        }
+        lastResp = r;
+      } catch (err) {
+        if (attempt === maxAttempts - 1) throw err;
+        lastErr = err;
+      }
+      const cap = Math.min(maxDelay, baseDelay * Math.pow(multiplier, attempt));
+      let delay = Math.floor(Math.random() * (cap + 1));
+      if (lastResp) {
+        const ra = parseRetryAfter(lastResp.headers.get('Retry-After'), Date.now());
+        if (ra !== null) delay = Math.min(maxDelay, ra);
+      }
+      await sleep(delay);
+    }
+    if (lastResp) return lastResp;
+    throw lastErr ?? new Error('retryMiddleware: exhausted attempts');
+  };
+}
+
 export class HttpClient {
   private middlewares: Middleware[] = [];
 
@@ -269,6 +355,12 @@ export class WeaveClient {
   // logging, retry, telemetry) once on the WeaveClient.
   use(mw: Middleware): void {
     this.http.use(mw);
+  }
+
+  // useRetry installs the built-in exponential-backoff retry middleware. Equivalent
+  // to ` + "`client.use(retryMiddleware(policy))`" + ` but reads better at the call site.
+  useRetry(policy: RetryPolicy = {}): void {
+    this.http.use(retryMiddleware(policy));
   }
 {{range .ActionTypes}}
   async apply{{ pascalCase .APIName }}({{if .Parameters}}params: {{ pascalCase .APIName }}Params{{end}}): Promise<void> {

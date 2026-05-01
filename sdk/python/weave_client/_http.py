@@ -8,10 +8,13 @@ HTTP/2 — but it makes the test suite runnable without `pip install`.
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, Iterator, Optional, Tuple
+
+from ._retry import RetryPolicy, header_get_ci, parse_retry_after
 
 try:  # pragma: no cover - exercised only when httpx is installed
     import httpx  # type: ignore
@@ -38,8 +41,9 @@ class HTTPResponse:
 class Transport:
     """Tiny request shim. Subclassed only to swap in test transports."""
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, retry: Optional[RetryPolicy] = None):
         self.timeout = timeout
+        self.retry = retry
         if _HAS_HTTPX:
             self._httpx_client = httpx.Client(timeout=timeout)
         else:
@@ -57,6 +61,7 @@ class Transport:
         headers: Optional[Dict[str, str]] = None,
         json_body: Any = None,
     ) -> HTTPResponse:
+        method_upper = method.upper()
         headers = dict(headers or {})
         body_bytes: Optional[bytes] = None
         if json_body is not None:
@@ -64,13 +69,59 @@ class Transport:
             headers.setdefault("Content-Type", "application/json")
         headers.setdefault("Accept", "application/json")
 
+        policy = self.retry
+        if policy is None or not policy.is_retriable_method(method_upper):
+            return self._send_once(method_upper, url, headers, body_bytes)
+
+        last_err: Optional[BaseException] = None
+        last_resp: Optional[HTTPResponse] = None
+        attempts = policy.attempts()
+        sleep_fn = policy.sleep or time.sleep
+        for attempt in range(attempts):
+            try:
+                resp = self._send_once(method_upper, url, headers, body_bytes)
+            except (
+                urllib.error.URLError,
+                ConnectionError,
+                TimeoutError,
+            ) as e:
+                if attempt == attempts - 1:
+                    raise
+                last_err = e
+                last_resp = None
+            else:
+                if not policy.is_retriable_status(resp.status_code) or attempt == attempts - 1:
+                    return resp
+                last_resp = resp
+                last_err = None
+            delay = policy.backoff(attempt)
+            if last_resp is not None:
+                ra = parse_retry_after(
+                    header_get_ci(last_resp.headers, "Retry-After"), time.time()
+                )
+                if ra is not None:
+                    delay = min(policy.max_delay, ra)
+            sleep_fn(delay)
+        if last_resp is not None:
+            return last_resp
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("retry policy exhausted with no result")
+
+    def _send_once(
+        self,
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        body_bytes: Optional[bytes],
+    ) -> HTTPResponse:
         if self._httpx_client is not None:  # pragma: no cover - httpx path
             resp = self._httpx_client.request(
-                method.upper(), url, headers=headers, content=body_bytes
+                method, url, headers=headers, content=body_bytes
             )
             return HTTPResponse(resp.status_code, resp.text, dict(resp.headers))
 
-        req = urllib.request.Request(url=url, data=body_bytes, method=method.upper())
+        req = urllib.request.Request(url=url, data=body_bytes, method=method)
         for k, v in headers.items():
             req.add_header(k, v)
         try:

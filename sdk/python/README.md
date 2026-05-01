@@ -116,6 +116,28 @@ asyncio.run(main())
 Errors raised by the async client are the same `WeaveError` /
 `WeaveAuthError` / `WeaveNotFoundError` hierarchy as the sync client.
 
+## Retry policy (US-358)
+
+Pass `retry=RetryPolicy(...)` to either `Client` or `WeaveAsyncClient` to
+opt into automatic retries with exponential backoff and full jitter:
+
+```python
+from weave_client import Client, RetryPolicy
+
+weave = Client(
+    "http://localhost:9117",
+    retry=RetryPolicy(max_attempts=5, base_delay=0.2, max_delay=4.0),
+)
+```
+
+Retries fire only on idempotent methods (`GET`, `HEAD`, `OPTIONS`, `PUT`,
+`DELETE`) and on transient status codes (`408`, `425`, `429`, `500`, `502`,
+`503`, `504`) plus transport-level errors. `POST` and `PATCH` never retry —
+they may have already taken effect on the server. The server's `Retry-After`
+header (delta-seconds or HTTP-date) overrides the computed backoff. Set
+`max_attempts=1` to disable retries; the constructor default (no `retry=`
+argument) also leaves retries off.
+
 ## Errors
 
 Non-2xx responses raise typed exceptions:

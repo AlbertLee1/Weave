@@ -804,6 +804,76 @@ func TestGoGenerator_RequestInterceptor(t *testing.T) {
 	}
 }
 
+// --- Retry policy tests (US-358) ---
+
+func TestTSGenerator_RetryPolicy(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("ts")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client, ok := filesByPath(files)["src/client.ts"]
+	if !ok {
+		t.Fatal("expected src/client.ts in output")
+	}
+	for _, want := range []string{
+		"export interface RetryPolicy",
+		"export function retryMiddleware",
+		"useRetry(policy: RetryPolicy",
+		"DEFAULT_RETRY_STATUSES",
+		"DEFAULT_RETRY_METHODS",
+		// Idempotent-only contract.
+		"'GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'",
+		// Retriable status set.
+		"408, 425, 429, 500, 502, 503, 504",
+		// Honour Retry-After.
+		"Retry-After",
+		// Built around fetch + Math.random for jitter.
+		"Math.random()",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.ts missing %q\n%s", want, client)
+		}
+	}
+}
+
+func TestGoGenerator_RetryPolicy(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client, ok := filesByPath(files)["client.go"]
+	if !ok {
+		t.Fatal("expected client.go in output")
+	}
+	for _, want := range []string{
+		"type RetryPolicy struct",
+		"func RetryMiddleware(policy RetryPolicy) Middleware",
+		"func (c *Client) UseRetry(policy RetryPolicy)",
+		"defaultRetryStatuses",
+		"defaultRetryMethods",
+		"http.MethodGet",
+		// Honour Retry-After.
+		"Retry-After",
+		"parseRetryAfter",
+		// Exponential + jitter.
+		"math.Pow",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.go missing %q\n%s", want, client)
+		}
+	}
+	// Generated Go must remain gofmt-clean.
+	formatted, err := format.Source([]byte(client))
+	if err != nil {
+		t.Fatalf("client.go failed to parse: %v\n%s", err, client)
+	}
+	if string(formatted) != client {
+		t.Errorf("client.go is not gofmt-formatted")
+	}
+}
+
 func TestGoGenerator_IsGofmtFormatted(t *testing.T) {
 	g, _ := sdkgen.GetGenerator("go")
 	files, err := g.Generate(context.Background(), testSchema())

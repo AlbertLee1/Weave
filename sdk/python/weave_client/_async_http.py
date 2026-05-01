@@ -6,19 +6,23 @@ fallback — async is opt-in and httpx is its only backend.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 import httpx
 
 from ._http import HTTPResponse
+from ._retry import RetryPolicy, header_get_ci, parse_retry_after
 
 
 class AsyncTransport:
     """Async sibling of :class:`weave_client._http.Transport`."""
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, retry: Optional[RetryPolicy] = None):
         self.timeout = timeout
+        self.retry = retry
         self._client = httpx.AsyncClient(timeout=timeout)
 
     async def aclose(self) -> None:
@@ -32,6 +36,7 @@ class AsyncTransport:
         headers: Optional[Dict[str, str]] = None,
         json_body: Any = None,
     ) -> HTTPResponse:
+        method_upper = method.upper()
         headers = dict(headers or {})
         body_bytes: Optional[bytes] = None
         if json_body is not None:
@@ -39,8 +44,52 @@ class AsyncTransport:
             headers.setdefault("Content-Type", "application/json")
         headers.setdefault("Accept", "application/json")
 
+        policy = self.retry
+        if policy is None or not policy.is_retriable_method(method_upper):
+            return await self._send_once(method_upper, url, headers, body_bytes)
+
+        last_err: Optional[BaseException] = None
+        last_resp: Optional[HTTPResponse] = None
+        attempts = policy.attempts()
+        for attempt in range(attempts):
+            try:
+                resp = await self._send_once(method_upper, url, headers, body_bytes)
+            except (httpx.TransportError, ConnectionError, TimeoutError) as e:
+                if attempt == attempts - 1:
+                    raise
+                last_err = e
+                last_resp = None
+            else:
+                if not policy.is_retriable_status(resp.status_code) or attempt == attempts - 1:
+                    return resp
+                last_resp = resp
+                last_err = None
+            delay = policy.backoff(attempt)
+            if last_resp is not None:
+                ra = parse_retry_after(
+                    header_get_ci(last_resp.headers, "Retry-After"), time.time()
+                )
+                if ra is not None:
+                    delay = min(policy.max_delay, ra)
+            if policy.sleep is not None:
+                policy.sleep(delay)
+            else:
+                await asyncio.sleep(delay)
+        if last_resp is not None:
+            return last_resp
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("retry policy exhausted with no result")
+
+    async def _send_once(
+        self,
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        body_bytes: Optional[bytes],
+    ) -> HTTPResponse:
         resp = await self._client.request(
-            method.upper(), url, headers=headers, content=body_bytes
+            method, url, headers=headers, content=body_bytes
         )
         return HTTPResponse(resp.status_code, resp.text, dict(resp.headers))
 

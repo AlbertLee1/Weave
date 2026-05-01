@@ -3,6 +3,7 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
 ---
 
 ## Codebase Patterns
+- SDK retry policy idiom (TS + Go + Python tri-lane parity, US-358): expose a `RetryPolicy` shape (TS interface / Go struct / Python dataclass) with `maxAttempts`, `baseDelay`, `maxDelay`, `multiplier`, `retryStatuses`, `retryMethods`, optional `rand` + `sleep` seams. Default to 3 attempts, 100ms base, 5s cap (TS/Go) or 2s cap (Python), multiplier 2, full jitter (`uniform(0, cap)`), idempotent-only methods `(GET, HEAD, OPTIONS, PUT, DELETE)`, retriable statuses `(408, 425, 429, 500, 502, 503, 504)`. POST/PATCH NEVER retry — silent double-writes are worse than a single 5xx. `Retry-After` (delta-seconds OR HTTP-date) overrides the computed backoff but is clamped to `maxDelay`. Implementation site: TS/Go = a `Middleware` factory layered over the US-357 `use(...)` seam (`client.use(retryMiddleware(policy))` or sugar `client.useRetry(policy)`); Python = transport-level loop on `Transport`/`AsyncTransport` keyed off a `retry: Optional[RetryPolicy]` ctor kwarg. Python retries are off-by-default (constructor kwarg unset = single attempt) so existing tests stay deterministic; opt in via `Client(url, retry=RetryPolicy())`. Go request body must set `req.GetBody` once on entry so per-attempt `req.Clone(ctx)` can re-read it (without `GetBody` the second attempt sends an empty body — server returns 400 — masking retry behaviour). TS uses `await next(req.clone())` since `Request.body` is a once-consumed `ReadableStream`. `max_attempts=1` is the disable knob (one attempt = no retries) — no separate `enabled` flag. Header lookup MUST be case-insensitive (urllib hands back a plain dict that preserves server-side case); `weave_client._retry.header_get_ci` is the canonical helper. Test-friendly `policy.sleep` injection keeps suites sub-second.
 - Generator-template middleware chain idiom (TS + Go SDK parity, US-357): expose a `Middleware` type as `(req, next) => response` (TS) / `func(req, next) (resp, error)` (Go), keep the registered slice on the Client/HttpClient, and BUILD THE CHAIN BY WALKING IT IN REVERSE so the first registered middleware ends up at the OUTERMOST layer (matches Express/Connect/axios mental models). TS template now constructs a `Request` (not `(url, init)`) and spreads `{ ...this.headers }` into it so middlewares can mutate per-request without leaking into shared state. Go template uses an inner-loop `prev := next; next = func(r) { return mw(r, prev) }` to capture each middleware safely. Document the first-use=outermost convention in the public type's doc comment so consumers don't have to test it empirically. Verify both: `TestTSGenerator_RequestInterceptor` + `TestGoGenerator_RequestInterceptor` for structure, `TestTypescriptSDK_TSCNoEmit` + `TestGoSDK_GoVet` (integration tag) for compile-cleanliness of the GENERATED code — unit tests on substrings won't catch missing imports.
 - Activity-fanout hooks on the funnel consumer: piggyback on the existing `SetOnChange` per-edit callback rather than introducing a parallel NATS subscription. The callback already runs inside the consumer's ack flow with broadcast / websocket fan-out alongside it; adding a third "watch fanout" branch keeps every cross-cutting subscriber on one ordered stream and avoids duplicate JetStream consumer durables. Keep the work light (one `WatchersFor` lookup + N notification inserts) — heavy lifting belongs on a separate worker. ChangeEvent grew `ActorID` + `OntologyAPIName` (omitempty) to carry per-batch context downstream; future hooks (audit fanout, ledger projection, etc.) inherit them for free.
 - Object→watch RID convention: `oss.FormatObject` builds object RIDs as `ri.phonograph2-objects.main.object.<primaryKey>` and the SPA stamps that exact string into `watches.target_rid` via `__rid`. Any backend that needs to match a per-objectType edit against the watches table MUST use a single `ComputeTargetRID(objectType, primaryKey)` helper that mirrors `FormatObject`. `pkg/notifications.ComputeTargetRID` is the canonical helper; if `oss.FormatObject` ever changes shape, change both. `objectType` is currently a no-op argument (parking for the day RIDs become objectType-scoped) — keep it on the signature so future changes don't ripple through every caller.
@@ -5619,4 +5620,140 @@ Started: 2026年 4月18日 星期六 13时29分15秒 CST
   - `go vet` integration test (TestGoSDK_GoVet) catches missing imports / unused vars / wrong fmt verbs in the GENERATED file before any user touches it; whenever we add Go output that imports a new stdlib package, run the integration test locally — unit tests only check structural substrings, they won't catch a missing import. Same advice for TS: TestTypescriptSDK_TSCNoEmit catches type errors that the structural tests miss.
 - **Codebase Pattern added (top of progress.txt):**
   - Generator-template middleware chain idiom (TS + Go parity).
+---
+
+## 2026-05-02 - US-358 SDK 重试策略
+- Implemented opt-in retry policy across all three SDK lanes (TS generator,
+  Go generator, hand-written Python SDK).
+- Files changed:
+  - pkg/sdkgen/gen_ts.go: client template now exports `RetryPolicy`,
+    `retryMiddleware(policy)`, and a convenience `WeaveClient.useRetry(policy?)`.
+    Built atop the US-357 middleware seam — `retryMiddleware` is just a
+    `Middleware` factory you pass to `client.use(...)`. Idempotent-only
+    (GET/HEAD/OPTIONS/PUT/DELETE), exponential backoff with full jitter,
+    honours the `Retry-After` header (delta-seconds + HTTP-date), retriable
+    statuses [408, 425, 429, 500, 502, 503, 504]. Clones the Request per
+    attempt so middleware mutations don't leak across retries.
+  - pkg/sdkgen/gen_go.go: client template now exports `RetryPolicy` struct,
+    `RetryMiddleware(policy)` factory, `(c *Client) UseRetry(policy)`. Same
+    idempotent/status semantics. Reads & memoises the request body once
+    (sets `req.GetBody`) so retries replay it cleanly; clones the request
+    per attempt and drains/closes the prior response body to return
+    connections to the pool. Imports widened to include `errors`, `io`,
+    `math`, `math/rand`, `strconv`, `strings`, `time`. Generated file still
+    gofmt-clean and `go vet`-clean (TestGoSDK_GoVet integration test).
+  - pkg/sdkgen/sdkgen_test.go: 2 new structural tests
+    (TestTSGenerator_RetryPolicy, TestGoGenerator_RetryPolicy) asserting the
+    public API surface, idempotent-method set, retriable-status set, the
+    Retry-After hook, and (Go) gofmt-stability of the generated file.
+  - sdk/python/weave_client/_retry.py (new): leaf module hosting the shared
+    `RetryPolicy` dataclass + `parse_retry_after` + case-insensitive header
+    helper. Zero deps on the rest of the SDK so both the sync and async
+    transport can import it without a cycle.
+  - sdk/python/weave_client/_http.py: `Transport` gains a `retry` kwarg.
+    Sends one request when retries are off; loops with exponential backoff +
+    jitter when on. Splits the original request impl into `_send_once`.
+  - sdk/python/weave_client/_async_http.py: mirror of the sync change for
+    `AsyncTransport`. Uses `asyncio.sleep` by default; honours `policy.sleep`
+    when injected (test seam).
+  - sdk/python/weave_client/client.py + async_client.py: both `Client` and
+    `WeaveAsyncClient` now accept `retry: Optional[RetryPolicy] = None` in
+    their constructor. Default is "retries off" so existing tests stay
+    deterministic; pass `retry=RetryPolicy()` to opt in.
+  - sdk/python/weave_client/__init__.py: re-exports `RetryPolicy`.
+  - sdk/python/tests/test_retry.py (new, 19 tests): unit tests on
+    RetryPolicy + parse_retry_after, sync-client integration tests against a
+    `_FlakyServer` loopback HTTPServer (success after retries / no-retry on
+    POST / no-retry on 4xx / exhaust raises last-status / max_attempts=1
+    disables / Retry-After honoured), and async-client integration tests
+    against the same server using `httpx.AsyncClient`. All sleeps captured
+    via an injected `_NoSleepCapture` so the suite stays sub-second.
+  - sdk/python/README.md: new "Retry policy (US-358)" section above Errors.
+  - prd.json: US-358 → passes:true
+- Verification:
+  - `go test ./pkg/sdkgen/...` → 32 tests pass (was 28; +4 retry tests).
+  - `go test -tags integration ./pkg/sdkgen/...` → all green
+    (TestTypescriptSDK_TSCNoEmit + TestGoSDK_GoVet still pass; generated
+    code compiles and vets clean).
+  - `go test ./pkg/...` → all green, no regressions.
+  - `CGO_ENABLED=0 go build ./...` → clean.
+  - `cd sdk/python && PYTHONPATH=. python3 -m unittest discover -s tests -p 'test_*.py'` →
+    120 tests pass (was 101 before US-358 → +19).
+- **Learnings for future iterations:**
+  - Layering retry on top of the existing Middleware seam (US-357) is the
+    right call for the generated SDKs — `retryMiddleware(policy)` is a
+    plain `Middleware`, so users compose it freely with auth, logging,
+    telemetry middlewares without us inventing a parallel "retry interceptor"
+    concept. Convenience method `useRetry(policy)` on the WeaveClient/Go
+    Client is just sugar for `client.use(retryMiddleware(policy))`.
+  - **TS Request body retry**: `await next(req.clone())` per attempt is
+    mandatory — `Request.body` is a `ReadableStream` consumed on first
+    fetch; without `.clone()` the second attempt sees an empty body. The
+    underlying middleware seam already passes a `Request`, not a
+    `(url, init)` pair, so cloning is the natural unit of work.
+  - **Go Request body retry** is harder: `req.Body` is read-once, so the
+    middleware reads it fully into memory ONCE on entry, sets
+    `req.GetBody = func() (io.ReadCloser, error) { ... bytes.NewReader }`,
+    and clones the request per attempt with `req.Clone(ctx)` + a fresh
+    `req.GetBody()`. This is exactly what Go's `http.Client` does
+    internally for redirects. Without the GetBody seam the retry sends
+    the second attempt with no body — server sees a malformed request
+    and returns 400, masking the real retry behaviour. Verified by the
+    `TestGoSDK_GoVet` integration test compiling + vetting the generated
+    file.
+  - **Don't retry POST / PATCH** even when the server returns 503. The
+    request might have ALREADY taken effect on the server (the 503 could
+    have come from the response path, not the request path), and replaying
+    it silently risks double-writes. The PRD's "仅对 idempotent 方法"
+    requirement encodes exactly this discipline; the default
+    `retry_methods` set is `(GET, HEAD, OPTIONS, PUT, DELETE)`. Caller can
+    opt in to POST retries by passing a custom `RetryMethods` if they know
+    a particular endpoint is genuinely idempotent (e.g. the server
+    de-dupes by `Idempotency-Key`).
+  - **Full jitter > equal jitter** for back-pressure scenarios — pick
+    `delay = uniform(0, cap)` instead of `delay = cap/2 + uniform(0, cap/2)`.
+    Full jitter spreads concurrent client retries more uniformly across the
+    backoff window, which matters when 100 clients all hit a 503 wall at
+    once. AWS Architecture Blog "Exponential Backoff and Jitter" 2015 is
+    the canonical reference. Tests assert `0 ≤ delay ≤ cap` for all
+    attempts to lock the contract.
+  - **Retry-After overrides computed backoff** — well-behaved clients
+    honour explicit server guidance over their own backoff curve. Accept
+    both delta-seconds (`"5"`) and HTTP-date (`"Wed, 21 Oct 2026 ..."`)
+    forms; clamp to `max_delay` so a hostile server can't pin clients for
+    hours. Single source of truth for the parser:
+    `pkg/sdkgen/gen_go.go::parseRetryAfter` (Go), the inline
+    `parseRetryAfter` function in `pkg/sdkgen/gen_ts.go` (TS), and
+    `sdk/python/weave_client/_retry.py::parse_retry_after` (Python).
+  - **Header lookup must be case-insensitive** when the underlying
+    transport hands you a plain dict. urllib's `dict(r.getheaders())`
+    preserves the case the server sent ("Retry-After"), but `dict.get`
+    uses string equality — and the BaseHTTPRequestHandler used in tests
+    sends "Retry-After" exactly, while a real proxy might send
+    "retry-after". `weave_client._retry.header_get_ci(headers, name)`
+    is the canonical helper; use it any time you read a response header
+    in the SDK, not just for retries. (This was caught by the failing
+    `test_retry_after_header_is_honoured` test — the fix was a one-line
+    substitution at the call site.)
+  - **HTTP-date timestamp test pitfall**: don't pick a Unix timestamp
+    by hand and assert it represents a specific calendar date. Either
+    parse the date string with `email.utils.parsedate_to_datetime` and
+    derive `now` from it, or use `datetime(...,tzinfo=timezone.utc).timestamp()`
+    so the test stays pinned to the date string regardless of the
+    machine's epoch arithmetic. First version of the test was off by a
+    full year.
+  - **Sleep injection via `policy.sleep`** keeps tests sub-second. The
+    Python `RetryPolicy.sleep: Callable[[float], None]` field lets the
+    test inject a `_NoSleepCapture` that records all delays in a list;
+    Go's `RetryPolicy.Sleep func(time.Duration)` mirrors this. Without
+    the seam the retry suite would take ~5s per test as it walks the
+    100ms→2s exponential curve. Same pattern as
+    `oms.CachedRepository.nowFunc` and `oss/computed.Resolver.SetNowFunc`.
+  - **`max_attempts=1` is the disable knob** rather than a separate
+    `enabled` flag. One attempt = no retries. Lets users override the
+    PRD-default "3 attempts" without inventing a sentinel value, and
+    makes the retry-disabled path a regression of the retry-enabled
+    path (the same loop, exiting after one iteration).
+- **Codebase Pattern added (top of progress.txt):**
+  - SDK retry policy idiom (TS + Go + Python tri-lane parity).
 ---

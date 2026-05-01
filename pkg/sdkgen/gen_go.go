@@ -123,9 +123,16 @@ func (g *goGenerator) generateClient(schema OntologySchema) ([]byte, error) {
 	buf.WriteString("\t\"bytes\"\n")
 	buf.WriteString("\t\"context\"\n")
 	buf.WriteString("\t\"encoding/json\"\n")
+	buf.WriteString("\t\"errors\"\n")
 	buf.WriteString("\t\"fmt\"\n")
+	buf.WriteString("\t\"io\"\n")
+	buf.WriteString("\t\"math\"\n")
+	buf.WriteString("\t\"math/rand\"\n")
 	buf.WriteString("\t\"net/http\"\n")
 	buf.WriteString("\t\"net/url\"\n")
+	buf.WriteString("\t\"strconv\"\n")
+	buf.WriteString("\t\"strings\"\n")
+	buf.WriteString("\t\"time\"\n")
 	buf.WriteString(")\n\n")
 
 	buf.WriteString(`// ListOptions configures pagination for list/search requests.
@@ -169,6 +176,189 @@ func NewClient(baseURL, ontology, token string) *Client {
 // final response last.
 func (c *Client) Use(mw Middleware) {
 	c.middlewares = append(c.middlewares, mw)
+}
+
+// RetryPolicy configures the built-in retry middleware. The middleware retries
+// only idempotent HTTP methods (GET / HEAD / OPTIONS / PUT / DELETE) on
+// transport errors and on retriable status codes (408, 425, 429, 500, 502,
+// 503, 504). Backoff is exponential with full jitter; if the server sends a
+// Retry-After header (delta-seconds or HTTP-date) it overrides the computed
+// delay so well-behaved clients yield to explicit guidance.
+type RetryPolicy struct {
+	// MaxAttempts is the total attempts INCLUDING the first try. Zero/negative
+	// values fall back to 3 (i.e. up to 2 retries after the initial request).
+	MaxAttempts int
+	// BaseDelay is the initial backoff (exp 0). Zero falls back to 100ms.
+	BaseDelay time.Duration
+	// MaxDelay caps any single backoff window. Zero falls back to 5s.
+	MaxDelay time.Duration
+	// Multiplier between successive attempts. Zero falls back to 2.0.
+	Multiplier float64
+	// RetryStatuses overrides the default retriable HTTP status set.
+	RetryStatuses []int
+	// RetryMethods overrides the default idempotent method set.
+	RetryMethods []string
+	// Rand is the jitter source. Nil falls back to the package-default rng.
+	Rand *rand.Rand
+	// Sleep is the wait function. Nil falls back to time.Sleep so tests can
+	// inject a no-op or capture the delays.
+	Sleep func(time.Duration)
+}
+
+var defaultRetryStatuses = []int{408, 425, 429, 500, 502, 503, 504}
+var defaultRetryMethods = []string{http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete}
+
+func parseRetryAfter(h string, now time.Time) (time.Duration, bool) {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(h); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(h); err == nil {
+		d := t.Sub(now)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+// RetryMiddleware builds a Middleware that auto-retries idempotent requests with
+// exponential backoff and full jitter. Install it once on the client:
+//
+//	client.Use(sdk.RetryMiddleware(sdk.RetryPolicy{MaxAttempts: 5}))
+//
+// Non-idempotent methods (POST / PATCH) bypass retries — they may have already
+// taken effect on the server, and replaying them silently risks double-writes.
+// The middleware drains and closes intermediate response bodies so connections
+// return to the pool cleanly.
+func RetryMiddleware(policy RetryPolicy) Middleware {
+	maxAttempts := policy.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	baseDelay := policy.BaseDelay
+	if baseDelay <= 0 {
+		baseDelay = 100 * time.Millisecond
+	}
+	maxDelay := policy.MaxDelay
+	if maxDelay < baseDelay {
+		maxDelay = 5 * time.Second
+	}
+	mult := policy.Multiplier
+	if mult <= 0 {
+		mult = 2.0
+	}
+	statuses := policy.RetryStatuses
+	if len(statuses) == 0 {
+		statuses = defaultRetryStatuses
+	}
+	statusSet := make(map[int]struct{}, len(statuses))
+	for _, s := range statuses {
+		statusSet[s] = struct{}{}
+	}
+	methods := policy.RetryMethods
+	if len(methods) == 0 {
+		methods = defaultRetryMethods
+	}
+	methodSet := make(map[string]struct{}, len(methods))
+	for _, m := range methods {
+		methodSet[strings.ToUpper(m)] = struct{}{}
+	}
+	rng := policy.Rand
+	sleep := policy.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+
+	return func(req *http.Request, next RoundTripFunc) (*http.Response, error) {
+		if _, ok := methodSet[strings.ToUpper(req.Method)]; !ok {
+			return next(req)
+		}
+		var (
+			lastErr  error
+			lastResp *http.Response
+			body     []byte
+		)
+		if req.Body != nil && req.GetBody == nil {
+			b, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			req.Body.Close()
+			body = b
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			req.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(body)), nil
+			}
+			req.ContentLength = int64(len(body))
+		}
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			attemptReq := req
+			if attempt > 0 && req.GetBody != nil {
+				rc, err := req.GetBody()
+				if err != nil {
+					return nil, err
+				}
+				clone := req.Clone(req.Context())
+				clone.Body = rc
+				attemptReq = clone
+			}
+			resp, err := next(attemptReq)
+			if err == nil {
+				if _, retry := statusSet[resp.StatusCode]; !retry || attempt == maxAttempts-1 {
+					return resp, nil
+				}
+				lastResp = resp
+				lastErr = nil
+			} else {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return nil, err
+				}
+				if attempt == maxAttempts-1 {
+					return nil, err
+				}
+				lastErr = err
+				lastResp = nil
+			}
+			cap := time.Duration(math.Min(float64(maxDelay), float64(baseDelay)*math.Pow(mult, float64(attempt))))
+			delay := jitter(rng, cap)
+			if lastResp != nil {
+				if d, ok := parseRetryAfter(lastResp.Header.Get("Retry-After"), time.Now()); ok {
+					if d > maxDelay {
+						d = maxDelay
+					}
+					delay = d
+				}
+				io.Copy(io.Discard, lastResp.Body)
+				lastResp.Body.Close()
+				lastResp = nil
+			}
+			sleep(delay)
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("retry middleware: exhausted attempts")
+	}
+}
+
+func jitter(rng *rand.Rand, cap time.Duration) time.Duration {
+	if cap <= 0 {
+		return 0
+	}
+	if rng != nil {
+		return time.Duration(rng.Int63n(int64(cap) + 1))
+	}
+	return time.Duration(rand.Int63n(int64(cap) + 1))
+}
+
+// UseRetry installs the built-in retry middleware on this client.
+func (c *Client) UseRetry(policy RetryPolicy) {
+	c.Use(RetryMiddleware(policy))
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out interface{}) error {
