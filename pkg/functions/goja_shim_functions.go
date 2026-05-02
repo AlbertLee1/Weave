@@ -82,12 +82,12 @@ func (r *Runtime) registerWeaveShim(vm *goja.Runtime, ctx context.Context) {
 
 		stack := fncall.StackFromContext(ctx)
 		if len(stack) >= fncall.MaxDepth {
-			panic(vm.NewGoError(fmt.Errorf("%w: depth=%d limit=%d ref=%s",
+			panic(vm.NewGoError(fmt.Errorf("FUNCTION_RECURSION_DEPTH_EXCEEDED: %w: depth=%d limit=%d ref=%s",
 				fncall.ErrDepthExceeded, len(stack)+1, fncall.MaxDepth, ref)))
 		}
 		for _, entry := range stack {
 			if entry == ref {
-				panic(vm.NewGoError(fmt.Errorf("%w: %s is already in stack %v",
+				panic(vm.NewGoError(fmt.Errorf("FUNCTION_CALL_CYCLE: %w: %s is already in stack %v",
 					fncall.ErrCycleDetected, ref, stack)))
 			}
 		}

@@ -128,6 +128,28 @@ func NewFunctionNondeterministic(name string, params map[string]string) *APIErro
 	return newAPIError("WEAVE_FUNCTION_NONDETERMINISTIC", name, params, http.StatusConflict)
 }
 
+// NewFunctionCallCycle creates a WEAVE_FUNCTION_CALL_CYCLE API error
+// (HTTP 422). US-371: returned by the Function publish path when static
+// analysis of weave.callFunction(...) targets surfaces a cycle in the
+// resulting call graph (A→B→A, self-recursion, or any longer ring). Callers
+// populate Parameters with at minimum `name` (the rejected function's
+// name@version), `cycle` (the dotted cycle path), and may include the
+// offending downstream `target` so SDK clients can guide the author back
+// to the broken edge without a second round-trip.
+func NewFunctionCallCycle(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_FUNCTION_CALL_CYCLE", name, params, http.StatusUnprocessableEntity)
+}
+
+// NewFunctionRecursionDepthExceeded creates a
+// WEAVE_FUNCTION_RECURSION_DEPTH_EXCEEDED API error (HTTP 422). US-371: the
+// runtime sentinel surfaced when weave.callFunction tries to grow the call
+// stack past fncall.MaxDepth (8 frames). Callers populate Parameters with at
+// minimum `depth` (the rejected nesting level), `limit` (the configured
+// ceiling), and `ref` (the function ref the runtime refused to dispatch).
+func NewFunctionRecursionDepthExceeded(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_FUNCTION_RECURSION_DEPTH_EXCEEDED", name, params, http.StatusUnprocessableEntity)
+}
+
 // NewValidationSchema creates a WEAVE_VALIDATION_SCHEMA API error (HTTP 422).
 // US-245: returned by the ActionType parameter-validation DSL when a request
 // violates the declared JSON Schema (Draft-07). Callers populate Parameters

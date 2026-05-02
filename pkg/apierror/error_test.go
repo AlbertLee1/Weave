@@ -163,6 +163,36 @@ func TestWriteError_SetsHTTPStatus(t *testing.T) {
 	}
 }
 
+// US-371: the apierror constructors for runtime depth-exceeded and
+// publish-time call-graph cycle must surface the named wire-format codes at
+// HTTP 422.
+func TestNewFunctionRecursionDepthExceeded_Code(t *testing.T) {
+	err := NewFunctionRecursionDepthExceeded("FunctionRecursionDepthExceeded", map[string]string{
+		"depth": "9",
+		"limit": "8",
+		"ref":   "helper",
+	})
+	if err.ErrorCode != "WEAVE_FUNCTION_RECURSION_DEPTH_EXCEEDED" {
+		t.Fatalf("expected WEAVE_FUNCTION_RECURSION_DEPTH_EXCEEDED, got %q", err.ErrorCode)
+	}
+	if err.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", err.StatusCode)
+	}
+}
+
+func TestNewFunctionCallCycle_Code(t *testing.T) {
+	err := NewFunctionCallCycle("FunctionCallCycle", map[string]string{
+		"name":  "A",
+		"cycle": "A -> B -> A",
+	})
+	if err.ErrorCode != "WEAVE_FUNCTION_CALL_CYCLE" {
+		t.Fatalf("expected WEAVE_FUNCTION_CALL_CYCLE, got %q", err.ErrorCode)
+	}
+	if err.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", err.StatusCode)
+	}
+}
+
 func TestWriteError_ContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	WriteJSON(w, NewNotFound("NotFound", nil))

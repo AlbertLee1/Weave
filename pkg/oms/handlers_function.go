@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -13,6 +14,48 @@ import (
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
 )
+
+// detectFunctionCallCycle wraps DetectCallCycle so the in-flight Function's
+// updated source overrides whatever the repository would return for the same
+// identity. Without the override an UpdateFunction whose new body adds a
+// callee that closes a cycle (A→B → publish B' adding B→A) would slip
+// through because the repository still returns the old, cycle-free B.
+func detectFunctionCallCycle(ctx context.Context, repo Repository, ontologyRID string, inFlight *Function) error {
+	lookup := &functionCallGraphRepoOverlay{repo: repo, override: inFlight}
+	return DetectCallCycle(ctx, lookup, ontologyRID, inFlight)
+}
+
+// functionCallGraphRepoOverlay routes lookups through the repository while
+// returning the in-flight row whenever the requested ref matches the
+// row being published. The overlay sits between the cycle detector and the
+// Repository so the publish-time scan sees the new source code, not the
+// persisted predecessor.
+type functionCallGraphRepoOverlay struct {
+	repo     Repository
+	override *Function
+}
+
+func (o *functionCallGraphRepoOverlay) GetFunction(ctx context.Context, fnRID string) (*Function, error) {
+	if o.override != nil && o.override.RID == fnRID && fnRID != "" {
+		return o.override, nil
+	}
+	return o.repo.GetFunction(ctx, fnRID)
+}
+
+func (o *functionCallGraphRepoOverlay) GetFunctionByName(ctx context.Context, ontologyRID, name string) (*Function, error) {
+	if o.override != nil && o.override.OntologyRID == ontologyRID && o.override.Name == name && name != "" {
+		return o.override, nil
+	}
+	return o.repo.GetFunctionByName(ctx, ontologyRID, name)
+}
+
+func (o *functionCallGraphRepoOverlay) GetFunctionByNameVersion(ctx context.Context, ontologyRID, name, version string) (*Function, error) {
+	if o.override != nil && o.override.OntologyRID == ontologyRID && o.override.Name == name &&
+		o.override.NormalisedVersion() == version && name != "" {
+		return o.override, nil
+	}
+	return o.repo.GetFunctionByNameVersion(ctx, ontologyRID, name, version)
+}
 
 // CreateFunctionRequest is the request body for creating a function. Version
 // is an optional semver string (US-217); when omitted the handler defaults to
@@ -110,6 +153,19 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fn.Runtime = fn.NormalisedRuntime()
+
+	if cycleErr := detectFunctionCallCycle(r.Context(), h.repo, ontologyRID, fn); cycleErr != nil {
+		var cyc *FunctionCallCycleError
+		if errors.As(cycleErr, &cyc) {
+			apierror.WriteJSON(w, apierror.NewFunctionCallCycle("FunctionCallCycle", map[string]string{
+				"name":  fn.Name,
+				"cycle": strings.Join(cyc.Cycle, " -> "),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("DetectFunctionCallCycleFailed", nil))
+		return
+	}
 
 	if err := h.repo.CreateFunction(r.Context(), fn); err != nil {
 		if errors.Is(err, ErrDuplicate) {
@@ -269,6 +325,19 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existing.Runtime = existing.NormalisedRuntime()
+
+	if cycleErr := detectFunctionCallCycle(r.Context(), h.repo, existing.OntologyRID, existing); cycleErr != nil {
+		var cyc *FunctionCallCycleError
+		if errors.As(cycleErr, &cyc) {
+			apierror.WriteJSON(w, apierror.NewFunctionCallCycle("FunctionCallCycle", map[string]string{
+				"name":  existing.Name,
+				"cycle": strings.Join(cyc.Cycle, " -> "),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("DetectFunctionCallCycleFailed", nil))
+		return
+	}
 
 	if err := h.repo.UpdateFunction(r.Context(), existing); err != nil {
 		if errors.Is(err, ErrNotFound) {
