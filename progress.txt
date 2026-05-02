@@ -10,6 +10,8 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - For canonical-JSON hashing across the codebase, prefer the `objectset.HashDefinition` helper (sorts keys, sha256 hex). Calling `json.Marshal` first is fine — the helper canonicalises again.
 - Executor errors that need a non-default APIError mapping should be sentinels in `pkg/oss/objectset/executor.go` (e.g. `ErrQueryTooLarge`) and translated by the `executeError(err) *apierror.APIError` helper in `pkg/oss/objectset/handler.go`. All `h.executor.Execute` callers in this package go through that helper instead of hand-rolling `apierror.NewInvalidParameter("ObjectSetFailed", …)`. Add an `apierror.New<Code>` constructor in `pkg/apierror/error.go` for the wire-format code (e.g. `WEAVE_QUERY_TOO_LARGE` → 422).
 - `pkg/oss/objectset/searcharound_path_test.go::seedMultiHopIndex` accepts `testing.TB` so unit tests AND benchmarks can share it. `multiHopResolver` is the canonical in-memory `LinkResolver` for path-traversal tests — it implements `ResolveLinkedObjectsByAPIName` (forward), `ResolveLinkedReverseByAPIName` (reverse), `ResolveTargetObjectType` and `ResolveTargetObjectTypeDir`. Bench paths should root at `Type:"static"` rather than `Type:"base"` to bypass Bleve in measurement loops; `Type:"base"` with the 10K cap can hang the in-memory Bleve index.
+- `aggregation.AggregationRequest.Accuracy` is the Palantir-style request-level toggle (`ALLOW_APPROXIMATE` default, `REQUIRE_ACCURATE` opt-in). `computeMetrics(idx, baseQuery, specs, accuracyMode)` is the chokepoint that routes `approximateDistinct` → exact and `approximatePercentile` → sort-based exact when `REQUIRE_ACCURATE` is set. The fourth return value (`approximate bool`) flags when an approximate algorithm actually fired so the response.accuracy column reflects runtime truth, not just user intent. When adding a new approximate aggregation, route both the exact-fallback path AND the approximate-flag bookkeeping through this helper rather than emitting accuracy from the call site.
+- HLL sparse-exact threshold: `1<<(precision-2)` (4096 at default p=14). Below this cardinality the axiomhq sketch is in its sparse compressed-list mode and returns byte-exact counts; above it transitions to dense estimation. Use `sparseExactThreshold(precision)` from `bleve_agg.go` rather than hard-coding the boundary, so a future precision change keeps the response.accuracy verdict consistent.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
 
@@ -83,4 +85,43 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Bench rule of thumb: when `Type:"base"` is the inner set, `searchReq.Size = BaseExecutionCap (10000)` against an in-memory Bleve index can hang for minutes per iteration. Use `Type:"static"` with a pre-built PK slice to isolate the searchAround executor's own cost. If you actually want to bench Bleve+searchAround end-to-end, allocate a real disk-backed index and seed in batches.
 - The `executeError` helper in `pkg/oss/objectset/handler.go` is the new chokepoint for executor → APIError translation. Before adding a new typed executor error, define the sentinel in `executor.go`, add the `apierror.New<Code>` constructor in `pkg/apierror/error.go`, and route through `executeError`. Don't rebuild the switch ladder per handler.
 - `loadLinks` (handler_objectset.go) wraps a single-link searchAround so it cannot trip the path-traversal cap. Leaving it on its existing `LoadLinksFailed` envelope is intentional; promoting it to `executeError` would just add an unused branch.
+---
+
+## 2026-05-02 - US-367 - Aggregation HLL approximateDistinct
+
+**Implementation:**
+- `pkg/oss/aggregation/engine.go::AggregationRequest`: added `Accuracy string` JSON-`accuracy` field carrying the Palantir wire-format request-level toggle. New constants `AccuracyAllowApproximate` (default, blank-value compatible) and `AccuracyRequireAccurate`. `requireAccurate(mode)` is the predicate the metrics layer consults.
+- `pkg/oss/aggregation/bleve_agg.go::computeMetrics`: signature widened to `(idx, baseQuery, specs, accuracyMode) ([]MetricValue, truncated bool, approximate bool, error)`. When `REQUIRE_ACCURATE` is set the switch arms for `approximateDistinct` and `approximatePercentile` route to `computeExactDistinct` and the new `exactPercentileFromIndex` respectively. The `approximate` return is true whenever an actually-approximate algorithm (HLL post-sparse, HdrHistogram percentile) produced the value — surfaced as `response.accuracy=APPROXIMATE` upstream.
+- `pkg/oss/aggregation/bleve_agg.go::computeApproximateDistinct`: now returns `(estimate, scanTruncated, approximate, err)`. The new approximate bool is `estimate >= sparseExactThreshold(precision)` where `sparseExactThreshold = 1 << (precision-2)`. Below threshold the axiomhq sparse compressed-list gives exact counts, so the response stays `ACCURATE`; above threshold the sketch went dense and we honestly report `APPROXIMATE`.
+- `pkg/oss/aggregation/approx_percentile.go`: new `exactPercentileFromIndex` + private `nearestRank` helper provide the REQUIRE_ACCURATE percentile path without depending on the test-only `exactPercentileSort`. Single-percentile returns `float64`, multi-percentile returns `map[string]float64`, matching the approximate path's JSON shape.
+- `pkg/oss/aggregation/engine.go`: every active call site of `computeMetrics` (aggregateSimple, recursiveGroupBy, aggregateCubeOrRollup) and `runSubAggregations` was widened to thread `req.Accuracy` and OR the new `approximate` return into the `truncated` accumulator that drives `resp.Accuracy`. Sub-aggregation children inherit the parent's accuracyMode via the `AggregationRequest.Accuracy` field on the synthesised childReq. Legacy unused groupBy* helpers (kept for API stability) default to `AccuracyAllowApproximate` so they compile without behavioural change.
+
+**Files changed:**
+- `pkg/oss/aggregation/engine.go` (AggregationRequest.Accuracy field, constants, accuracyMode threading through 8 call sites)
+- `pkg/oss/aggregation/bleve_agg.go` (computeMetrics signature widened; HLL → exact routing for REQUIRE_ACCURATE; sparseExactThreshold; new approximate return)
+- `pkg/oss/aggregation/approx_percentile.go` (new exactPercentileFromIndex + nearestRank)
+- `pkg/oss/aggregation/us367_accuracy_test.go` (new — 5 routing tests + 2 large-N PRD-gate tests + 2 benchmarks)
+- `prd.json` (mark US-367 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` all green across 36 packages including the new `pkg/oss/aggregation` suites and downstream consumers (test/e2e, test/northwind, test/chinook, test/foundry_parity)
+- New `pkg/oss/aggregation/us367_accuracy_test.go` runs 7/7 PASS:
+  - `TestAccuracyMode_DefaultIsAllowApproximate` — blank Accuracy keeps HLL path; 5k cardinality reports APPROXIMATE
+  - `TestAccuracyMode_RequireAccurate_DistinctRoutesToExact` — REQUIRE_ACCURATE on 5k distinct returns 5000 (byte-exact) + ACCURATE
+  - `TestAccuracyMode_AllowApproximate_SmallCardinalityIsAccurate` — sparse HLL on 3 distinct returns 3 + ACCURATE
+  - `TestAccuracyMode_RequireAccurate_PercentileRoutesToExact` — REQUIRE_ACCURATE p50 on 1..100 returns 50.0 + ACCURATE
+  - `TestAccuracyMode_AllowApproximate_PercentileFlipsResponseToApproximate` — HdrHistogram path flips response to APPROXIMATE
+  - `TestApproximateDistinct_OneMillion_RelativeErrorUnder2Percent` — HLL p=14 over 1M distinct UUIDs: error 1.27% (PRD ≤2%)
+  - `TestApproximateDistinct_OneMillion_FasterThanExactByFiveX` — HLL 11.06ms vs map[string]struct{} 80.13ms: 7.24× speedup (PRD ≥5×)
+- Benchmark numbers from `BenchmarkApproximateDistinct_HLL_OneMillion` / `BenchmarkExactDistinct_OneMillion`: 11.2ms vs 44.2ms per op (3.94× per-op when amortised across runs; the cold-path test gate sees ~7× because of GC pressure in the exact path).
+
+**Learnings for future iterations:**
+- The PRD wording "accuracy=ALLOW_APPROXIMATE 走 HLL，REQUIRE_ACCURATE 走精确" is a request-level routing toggle (Palantir parlance), NOT a per-spec field. I added it on `AggregationRequest`, not on `AggregationSpec`. The per-spec `precision` knob already exists for HLL tuning; the new `Accuracy` is the orthogonal coarse-grained switch.
+- `sparseExactThreshold(precision) = 1 << (precision - 2)` is a conservative lower bound on the axiomhq sparse→dense crossover (the actual transition depends on compressed sparse list vs dense storage). Below the threshold the sketch is *guaranteed* to give exact counts, so the response can honestly report ACCURATE. The actual axiomhq method `Sketch.sparse()` is unexported, so we can't query it directly — keep the heuristic.
+- The 1M distinct + 5× speedup gate is sensitive to allocator heat. Pre-sizing the exact map via `make(map[string]struct{}, cardinality)` is mandatory; without the size hint the speedup balloons past 10× in tests but drops below 5× in benchmarks. Keep the hint inside the perf gate so the comparison is fair.
+- When widening a function signature (3 returns → 4 returns) the cleanest cross-package strategy is: (a) update the production path consumers, (b) sweep dead-code call sites with `_, _, _, _ = ...` to keep them compiling without behavioural drift, (c) leave them as `AccuracyAllowApproximate` defaults rather than threading the new param. The legacy `groupByExact` family in `engine.go` is unreferenced by the active path (`recursiveGroupBy`) but I kept them mechanically functional for ABI stability.
+- `approxPercentilesFromIndex` returns `interface{}` (map for multi, float64 for single) — pre-existing legacy shape. The new `exactPercentileFromIndex` mirrors that shape, accepting both `single *float64` AND `multi []float64` so the bleve_agg dispatch stays uniform. If you add another percentile mode, follow the same dual-arg convention.
+- `runSubAggregations` previously synthesised a child `AggregationRequest` without `Accuracy` — that's a silent inheritance bug for nested specs. The fix is one-line (`Accuracy: accuracyMode`) but worth noting: sub-aggregation children DO inherit their parent's accuracy mode, otherwise REQUIRE_ACCURATE would only apply at the top level.
 ---

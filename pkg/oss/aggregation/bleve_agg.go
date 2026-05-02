@@ -29,10 +29,19 @@ const (
 // standardDeviation, variance, and approximatePercentile. The second
 // return value is true when any numeric scan was truncated because the
 // match total exceeded the engine's MaxDocScanSize — the caller uses it
-// to mark the top-level response as APPROXIMATE.
-func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationSpec) ([]MetricValue, bool, error) {
+// to mark the top-level response as APPROXIMATE. The third return value
+// is true when at least one approximate algorithm (HLL distinct,
+// HdrHistogram percentile) actually produced an approximate result —
+// also surfaced as APPROXIMATE on the response. accuracyMode is the
+// Palantir request-level toggle: AccuracyRequireAccurate transparently
+// promotes approximateDistinct → exactDistinct and approximatePercentile
+// → sort-based exact percentile so callers that need byte-exact output
+// can opt out of the sketches without rewriting their specs.
+func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationSpec, accuracyMode string) ([]MetricValue, bool, bool, error) {
 	metrics := make([]MetricValue, 0, len(specs))
 	truncated := false
+	approximate := false
+	exact := requireAccurate(accuracyMode)
 
 	scanSize := e.MaxDocScanSize
 	if scanSize <= 0 {
@@ -54,14 +63,14 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			searchReq.Size = 0
 			result, err := idx.Search(searchReq)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: result.Total})
 
 		case "min", "max", "sum", "avg":
 			val, t, err := computeNumericAgg(idx, baseQuery, spec.Field, spec.Type, scanSize)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			if t {
 				truncated = true
@@ -69,26 +78,40 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "approximateDistinct":
+			if exact {
+				val, t, err := computeExactDistinct(idx, baseQuery, spec.Field, scanSize)
+				if err != nil {
+					return nil, false, false, err
+				}
+				if t {
+					truncated = true
+				}
+				metrics = append(metrics, MetricValue{Name: name, Value: val})
+				break
+			}
 			precision := DefaultHLLPrecision
 			if spec.Precision != nil {
 				precision = *spec.Precision
 			}
 			if precision < MinHLLPrecision || precision > MaxHLLPrecision {
-				return nil, false, fmt.Errorf("approximateDistinct: precision %d out of range [%d,%d]", precision, MinHLLPrecision, MaxHLLPrecision)
+				return nil, false, false, fmt.Errorf("approximateDistinct: precision %d out of range [%d,%d]", precision, MinHLLPrecision, MaxHLLPrecision)
 			}
-			val, t, err := computeApproximateDistinct(idx, baseQuery, spec.Field, uint8(precision), scanSize)
+			val, t, approx, err := computeApproximateDistinct(idx, baseQuery, spec.Field, uint8(precision), scanSize)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			if t {
 				truncated = true
+			}
+			if approx {
+				approximate = true
 			}
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "exactDistinct":
 			val, t, err := computeExactDistinct(idx, baseQuery, spec.Field, scanSize)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			if t {
 				truncated = true
@@ -98,7 +121,7 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 		case "standardDeviation":
 			val, t, err := computeStdDevOrVariance(idx, baseQuery, spec.Field, true, scanSize)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			if t {
 				truncated = true
@@ -108,7 +131,7 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 		case "variance":
 			val, t, err := computeStdDevOrVariance(idx, baseQuery, spec.Field, false, scanSize)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			if t {
 				truncated = true
@@ -122,7 +145,7 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			}
 			val, t, err := computeCollectList(idx, baseQuery, spec.Field, scanSize, maxItems)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			if t {
 				truncated = true
@@ -130,13 +153,27 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 			metrics = append(metrics, MetricValue{Name: name, Value: val})
 
 		case "approximatePercentile":
-			if len(spec.Percentiles) > 0 {
-				val, t, err := approxPercentilesFromIndex(idx, baseQuery, spec.Field, spec.Percentiles, scanSize)
+			if exact {
+				val, t, err := exactPercentileFromIndex(idx, baseQuery, spec.Field, spec.Percentile, spec.Percentiles, scanSize)
 				if err != nil {
-					return nil, false, err
+					return nil, false, false, err
 				}
 				if t {
 					truncated = true
+				}
+				metrics = append(metrics, MetricValue{Name: name, Value: val})
+				break
+			}
+			if len(spec.Percentiles) > 0 {
+				val, t, err := approxPercentilesFromIndex(idx, baseQuery, spec.Field, spec.Percentiles, scanSize)
+				if err != nil {
+					return nil, false, false, err
+				}
+				if t {
+					truncated = true
+				}
+				if val != nil {
+					approximate = true
 				}
 				metrics = append(metrics, MetricValue{Name: name, Value: val})
 			} else {
@@ -146,17 +183,20 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 				}
 				val, t, err := approxPercentileFromIndex(idx, baseQuery, spec.Field, percentile, scanSize)
 				if err != nil {
-					return nil, false, err
+					return nil, false, false, err
 				}
 				if t {
 					truncated = true
+				}
+				if val != nil {
+					approximate = true
 				}
 				metrics = append(metrics, MetricValue{Name: name, Value: val})
 			}
 		}
 	}
 
-	return metrics, truncated, nil
+	return metrics, truncated, approximate, nil
 }
 
 // computeNumericAgg iterates matching documents and computes a numeric aggregate.
@@ -222,29 +262,35 @@ func computeNumericAgg(idx bleve.Index, query query.Query, field string, aggType
 // computeApproximateDistinct estimates the cardinality of a field using a
 // HyperLogLog sketch seeded per-call. Values are scanned from the documents
 // matching the query (up to scanSize), fed to the sketch as their byte
-// representation, and the sketch's Estimate() is returned as an int. The
-// second return value is true when the match total exceeds scanSize — the
-// caller surfaces that as APPROXIMATE accuracy.
+// representation, and the sketch's Estimate() is returned as an int.
 //
-// The sketch's sparse representation gives EXACT counts for low cardinalities
-// (typically under ~2^(precision-3) entries), so small datasets that used to
-// round-trip through Bleve facets still return the exact value the pre-HLL
-// implementation did.
-func computeApproximateDistinct(idx bleve.Index, q query.Query, field string, precision uint8, scanSize int) (int, bool, error) {
+// Returns (estimate, scanTruncated, approximate, err).
+//   - scanTruncated is true when the match total exceeds scanSize — the caller
+//     surfaces that as APPROXIMATE accuracy because we did not see every doc.
+//   - approximate is true when the sketch's final estimate crosses the sparse
+//     →dense threshold and the returned value is therefore an estimate rather
+//     than an exact count. axiomhq's sparse compressed-list representation
+//     gives EXACT counts for low cardinalities (transition is implementation-
+//     specific but bounded above by ~m/4 inserts at p=14, with m=1<<precision).
+//     We use the conservative threshold 1<<(precision-2) so any cardinality
+//     comfortably below the sparse boundary reports approximate=false; this
+//     keeps the response.accuracy=ACCURATE invariant for callers that pre-date
+//     the HLL switch and relied on Bleve facets returning exact small-N counts.
+func computeApproximateDistinct(idx bleve.Index, q query.Query, field string, precision uint8, scanSize int) (int, bool, bool, error) {
 	searchReq := bleve.NewSearchRequest(q)
 	searchReq.Size = scanSize
 	searchReq.Fields = []string{field}
 
 	result, err := idx.Search(searchReq)
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
 
 	truncated := result.Total > uint64(len(result.Hits))
 
 	sketch, err := hyperloglog.NewSketch(precision, true)
 	if err != nil {
-		return 0, false, fmt.Errorf("new hll sketch (precision=%d): %w", precision, err)
+		return 0, false, false, fmt.Errorf("new hll sketch (precision=%d): %w", precision, err)
 	}
 
 	for _, hit := range result.Hits {
@@ -264,7 +310,22 @@ func computeApproximateDistinct(idx bleve.Index, q query.Query, field string, pr
 		}
 	}
 
-	return int(sketch.Estimate()), truncated, nil
+	estimate := int(sketch.Estimate())
+	approximate := estimate >= sparseExactThreshold(precision)
+	return estimate, truncated, approximate, nil
+}
+
+// sparseExactThreshold returns the cardinality below which the HLL sketch is
+// guaranteed to be in its sparse exact-counting representation. axiomhq's
+// transition from sparse to dense happens implementation-specifically when
+// the compressed sparse list grows beyond the dense storage cost; the
+// conservative bound 1<<(precision-2) sits comfortably below that crossover
+// for every supported precision and keeps the "small-N is exact" guarantee.
+func sparseExactThreshold(precision uint8) int {
+	if precision < MinHLLPrecision {
+		precision = MinHLLPrecision
+	}
+	return 1 << (precision - 2)
 }
 
 // computeExactDistinct counts exact distinct values for a field using map-based deduplication.

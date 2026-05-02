@@ -29,6 +29,33 @@ type AggregationRequest struct {
 	// semantics as Cube for rolled-up dimensions. Mutex with Cube; if both are
 	// set Cube wins.
 	Rollup bool `json:"rollup,omitempty"`
+	// Accuracy is the Palantir-style request-level toggle that lets callers
+	// opt out of the engine's default approximate algorithms (HyperLogLog
+	// for approximateDistinct, HdrHistogram/t-digest for approximatePercentile).
+	// Two values are recognised:
+	//   - "" or "ALLOW_APPROXIMATE" (default): approximate aggregations run
+	//     their sketches; the response.accuracy field reports whether the
+	//     produced result was actually approximate at runtime.
+	//   - "REQUIRE_ACCURATE": approximate aggregations are transparently
+	//     promoted to their exact counterparts (approximateDistinct →
+	//     exactDistinct, approximatePercentile → sort-based percentile),
+	//     so existing specs can demand byte-exact output without a rewrite.
+	Accuracy string `json:"accuracy,omitempty"`
+}
+
+// Accuracy mode constants for AggregationRequest.Accuracy. Match the Palantir
+// V2 wire format. A blank Accuracy is treated as AccuracyAllowApproximate so
+// existing callers that never set the field keep their previous semantics.
+const (
+	AccuracyAllowApproximate = "ALLOW_APPROXIMATE"
+	AccuracyRequireAccurate  = "REQUIRE_ACCURATE"
+)
+
+// requireAccurate reports whether the caller demanded exact algorithms for
+// approximate-by-default aggregations. The engine forwards this verdict to
+// computeMetrics so each leaf bucket inherits the request-level mode.
+func requireAccurate(mode string) bool {
+	return mode == AccuracyRequireAccurate
 }
 
 // SubAggregationSpec is a named child aggregation that runs against the scope
@@ -138,7 +165,7 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	}
 
 	if len(req.SubAggregations) > 0 && len(req.GroupBy) == 0 {
-		subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations)
+		subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations, req.Accuracy)
 		if err != nil {
 			return nil, err
 		}
@@ -184,8 +211,9 @@ func validateSubAggregations(subs []SubAggregationSpec) error {
 // runSubAggregations executes each named sub-aggregation against the given
 // scope query and returns the results keyed by Name. Each sub-aggregation
 // reuses Aggregate's grouping + recursion machinery so nested sub-aggregations
-// resolve transparently.
-func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []SubAggregationSpec) (map[string]*AggregationResponse, bool, error) {
+// resolve transparently. accuracyMode is propagated unchanged so children
+// inherit the request-level REQUIRE_ACCURATE / ALLOW_APPROXIMATE toggle.
+func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []SubAggregationSpec, accuracyMode string) (map[string]*AggregationResponse, bool, error) {
 	if len(subs) == 0 {
 		return nil, false, nil
 	}
@@ -197,6 +225,7 @@ func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []S
 			GroupBy:         s.GroupBy,
 			SubAggregations: s.SubAggregations,
 			Having:          s.Having,
+			Accuracy:        accuracyMode,
 		}
 		childResp, err := e.AggregateWithQuery(idx, scope, childReq)
 		if err != nil {
@@ -212,7 +241,7 @@ func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []S
 
 // aggregateSimple performs aggregation without groupBy.
 func (e *Engine) aggregateSimple(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
-	metrics, truncated, err := e.computeMetrics(idx, baseQuery, req.Aggregations)
+	metrics, truncated, approximate, err := e.computeMetrics(idx, baseQuery, req.Aggregations, req.Accuracy)
 	if err != nil {
 		return nil, fmt.Errorf("compute metrics: %w", err)
 	}
@@ -222,7 +251,7 @@ func (e *Engine) aggregateSimple(idx bleve.Index, baseQuery query.Query, req *Ag
 			{Metrics: metrics},
 		},
 	}
-	if truncated {
+	if truncated || approximate {
 		resp.Accuracy = "APPROXIMATE"
 	}
 	return resp, nil
@@ -264,7 +293,7 @@ func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, re
 		return nil, fmt.Errorf("groupBy is empty")
 	}
 
-	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations, req.SubAggregations)
+	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations, req.SubAggregations, req.Accuracy)
 	if err != nil {
 		return nil, err
 	}
@@ -335,16 +364,16 @@ func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, r
 	var truncated bool
 	for _, subset := range combos {
 		if len(subset) == 0 {
-			metrics, tr, err := e.computeMetrics(idx, baseQuery, req.Aggregations)
+			metrics, tr, approx, err := e.computeMetrics(idx, baseQuery, req.Aggregations, req.Accuracy)
 			if err != nil {
 				return nil, fmt.Errorf("cube/rollup grand total: %w", err)
 			}
-			if tr {
+			if tr || approx {
 				truncated = true
 			}
 			row := AggregationRow{Metrics: metrics}
 			if len(req.SubAggregations) > 0 {
-				subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations)
+				subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations, req.Accuracy)
 				if err != nil {
 					return nil, fmt.Errorf("cube/rollup grand total sub-aggregations: %w", err)
 				}
@@ -360,7 +389,7 @@ func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, r
 		for i, idx := range subset {
 			subsetGBs[i] = req.GroupBy[idx]
 		}
-		rows, tr, err := e.recursiveGroupBy(idx, baseQuery, subsetGBs, req.Aggregations, req.SubAggregations)
+		rows, tr, err := e.recursiveGroupBy(idx, baseQuery, subsetGBs, req.Aggregations, req.SubAggregations, req.Accuracy)
 		if err != nil {
 			return nil, fmt.Errorf("cube/rollup subset %v: %w", subset, err)
 		}
@@ -379,8 +408,10 @@ func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, r
 
 // recursiveGroupBy processes groupBy specs one at a time, nesting results.
 // Sub-aggregations attach to leaf rows only; intermediate groupBy levels
-// pass them through unchanged.
-func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec, subs []SubAggregationSpec) ([]AggregationRow, bool, error) {
+// pass them through unchanged. accuracyMode is forwarded to each leaf
+// computeMetrics call so the per-bucket aggregations honour the request-
+// level REQUIRE_ACCURATE / ALLOW_APPROXIMATE toggle.
+func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec, subs []SubAggregationSpec, accuracyMode string) ([]AggregationRow, bool, error) {
 	gb := groupBys[0]
 	remaining := groupBys[1:]
 
@@ -395,7 +426,7 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 	for _, entry := range entries {
 		if len(remaining) > 0 {
 			// Recurse with narrowed scope
-			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs, subs)
+			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs, subs, accuracyMode)
 			if err != nil {
 				return nil, false, err
 			}
@@ -416,11 +447,11 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 			}
 		} else {
 			// Leaf level — compute metrics + run sub-aggregations against bucket scope.
-			metrics, leafTrunc, err := e.computeMetrics(idx, entry.scopeQuery, specs)
+			metrics, leafTrunc, leafApprox, err := e.computeMetrics(idx, entry.scopeQuery, specs, accuracyMode)
 			if err != nil {
 				return nil, false, fmt.Errorf("compute metrics for group %v: %w", entry.value, err)
 			}
-			if leafTrunc {
+			if leafTrunc || leafApprox {
 				truncated = true
 			}
 			row := AggregationRow{
@@ -428,7 +459,7 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 				Metrics: metrics,
 			}
 			if len(subs) > 0 {
-				subResults, subTrunc, err := e.runSubAggregations(idx, entry.scopeQuery, subs)
+				subResults, subTrunc, err := e.runSubAggregations(idx, entry.scopeQuery, subs, accuracyMode)
 				if err != nil {
 					return nil, false, fmt.Errorf("sub-aggregations for group %v: %w", entry.value, err)
 				}
@@ -771,7 +802,7 @@ func (e *Engine) groupByExact(idx bleve.Index, baseQuery query.Query, gb GroupBy
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
 
-		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for group %q: %w", term.Term, err)
 		}
@@ -841,7 +872,7 @@ func (e *Engine) groupByFixedWidth(idx bleve.Index, baseQuery query.Query, gb Gr
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, rangeQuery)
 
-		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for range %s: %w", nr.Name, err)
 		}
@@ -911,7 +942,7 @@ func (e *Engine) groupByRanges(idx bleve.Index, baseQuery query.Query, gb GroupB
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, rangeQuery)
 
-		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for range %s: %w", nr.Name, err)
 		}
@@ -1036,7 +1067,7 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		docIDQ := bleve.NewDocIDQuery(docIDs)
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, docIDQ)
 
-		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for duration bucket: %w", err)
 		}
@@ -1092,7 +1123,7 @@ func (e *Engine) groupByTopValues(idx bleve.Index, baseQuery query.Query, gb Gro
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
 
-		metrics, _, err := e.computeMetrics(idx, scopedQuery, specs)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for topValues group %q: %w", term.Term, err)
 		}

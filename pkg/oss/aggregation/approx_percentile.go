@@ -3,6 +3,7 @@ package aggregation
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
 
@@ -151,6 +152,88 @@ func approxPercentilesFromIndex(idx bleve.Index, q query.Query, field string, pe
 		return nil, false, err
 	}
 	return out, truncated, nil
+}
+
+// exactPercentileFromIndex computes percentile(s) exactly via a sorted scan
+// of the matching docs. Used by computeMetrics when the request carries
+// AccuracyRequireAccurate so callers can opt out of the HdrHistogram path
+// without rewriting their specs. The shape mirrors approxPercentilesFromIndex
+// (single-percentile → float64, multi-percentile → map[string]float64) so
+// the response stays JSON-shape-compatible with the approximate output.
+func exactPercentileFromIndex(idx bleve.Index, q query.Query, field string, single *float64, multi []float64, scanSize int) (interface{}, bool, error) {
+	searchReq := bleve.NewSearchRequest(q)
+	searchReq.Size = scanSize
+	searchReq.Fields = []string{field}
+
+	result, err := idx.Search(searchReq)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := result.Total > uint64(len(result.Hits))
+
+	if len(result.Hits) == 0 {
+		if len(multi) > 0 {
+			return map[string]float64{}, truncated, nil
+		}
+		return nil, truncated, nil
+	}
+
+	values := make([]float64, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		raw, ok := hit.Fields[field]
+		if !ok {
+			continue
+		}
+		numVal, ok := raw.(float64)
+		if !ok {
+			continue
+		}
+		values = append(values, numVal)
+	}
+	if len(values) == 0 {
+		if len(multi) > 0 {
+			return map[string]float64{}, truncated, nil
+		}
+		return nil, truncated, nil
+	}
+	sort.Float64s(values)
+
+	if len(multi) > 0 {
+		out := make(map[string]float64, len(multi))
+		for _, p := range multi {
+			out[fmt.Sprintf("%g", p)] = nearestRank(values, p)
+		}
+		return out, truncated, nil
+	}
+	p := 50.0
+	if single != nil {
+		p = *single
+	}
+	return nearestRank(values, p), truncated, nil
+}
+
+// nearestRank returns the value at the requested percentile (0–100) of the
+// pre-sorted slice using nearest-rank, matching the existing test helper
+// exactPercentileSort. Defined alongside exactPercentileFromIndex so the
+// production path doesn't depend on test-only code.
+func nearestRank(sorted []float64, percentile float64) float64 {
+	if len(sorted) == 0 {
+		return math.NaN()
+	}
+	if percentile <= 0 {
+		return sorted[0]
+	}
+	if percentile >= 100 {
+		return sorted[len(sorted)-1]
+	}
+	idx := int(math.Ceil(percentile/100.0*float64(len(sorted)))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 // approxPercentileFromIndex replaces the legacy sort-based computePercentile
