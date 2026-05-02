@@ -16,14 +16,20 @@ import (
 	"github.com/liyang/weave/pkg/rid"
 )
 
-// CreateRequest is the POST body for /api/admin/cell-masks.
+// CreateRequest is the POST body for /api/admin/cell-masks. US-376 adds
+// optional Expression (CEL predicate) and MaskStrategy (uppercase REDACT |
+// HASH | NULL | PARTIAL). Expression-bearing masks are evaluated per row
+// against the (user, row) binding; AppliesTo-only masks keep the US-258
+// allow-list semantics.
 type CreateRequest struct {
-	ObjectTypeRID   string            `json:"objectTypeRid"`
-	PrimaryKey      string            `json:"primaryKey"`
-	PropertyAPIName string            `json:"propertyApiName"`
-	MaskRule        masking.MaskRule  `json:"maskRule"`
-	AppliesTo       masking.AppliesTo `json:"appliesTo"`
-	Description     string            `json:"description,omitempty"`
+	ObjectTypeRID   string               `json:"objectTypeRid"`
+	PrimaryKey      string               `json:"primaryKey"`
+	PropertyAPIName string               `json:"propertyApiName"`
+	MaskRule        masking.MaskRule     `json:"maskRule,omitempty"`
+	MaskStrategy    masking.MaskStrategy `json:"maskStrategy,omitempty"`
+	Expression      string               `json:"expression,omitempty"`
+	AppliesTo       masking.AppliesTo    `json:"appliesTo"`
+	Description     string               `json:"description,omitempty"`
 }
 
 // ListResponse is the GET /api/admin/cell-masks envelope.
@@ -75,6 +81,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		PrimaryKey:      strings.TrimSpace(req.PrimaryKey),
 		PropertyAPIName: strings.TrimSpace(req.PropertyAPIName),
 		MaskRule:        req.MaskRule,
+		MaskStrategy:    masking.NormalizeStrategy(req.MaskStrategy),
+		Expression:      strings.TrimSpace(req.Expression),
 		AppliesTo:       req.AppliesTo,
 		Description:     strings.TrimSpace(req.Description),
 		CreatedBy:       u.ID,
@@ -184,11 +192,33 @@ func (h *Handler) updateFor(w http.ResponseWriter, r *http.Request, ridStr strin
 		}))
 		return
 	}
-	if upd.MaskRule != nil && !masking.IsKnownRule(*upd.MaskRule) {
+	if upd.MaskRule != nil && *upd.MaskRule != "" && !masking.IsKnownRule(*upd.MaskRule) {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidCellMask", map[string]string{
 			"reason": ErrUnknownMaskRule.Error(),
 		}))
 		return
+	}
+	if upd.MaskStrategy != nil && *upd.MaskStrategy != "" {
+		canon := masking.NormalizeStrategy(*upd.MaskStrategy)
+		if canon == "" {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidCellMask", map[string]string{
+				"reason": ErrUnknownMaskStrategy.Error(),
+			}))
+			return
+		}
+		*upd.MaskStrategy = canon
+	}
+	if upd.Expression != nil {
+		expr := strings.TrimSpace(*upd.Expression)
+		if expr != "" {
+			if err := celmaskValidate(expr); err != nil {
+				apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidCellMask", map[string]string{
+					"reason": ErrInvalidExpression.Error() + ": " + err.Error(),
+				}))
+				return
+			}
+		}
+		*upd.Expression = expr
 	}
 	m, err := h.store.Update(r.Context(), ridStr, upd)
 	if err != nil {

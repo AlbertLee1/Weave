@@ -2,12 +2,25 @@ package cellsec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/cellsec/celmask"
 	"github.com/liyang/weave/pkg/masking"
 )
+
+// compiledCellMask wraps a CellMask with the optional pre-compiled CEL
+// program (US-376). The program is non-nil iff the mask carries a non-empty
+// Expression that compiled cleanly during Reload. Authoring errors surface
+// in compileErr so /api/admin/cell-masks consumers can introspect bad rows
+// without breaking enforcement of the well-formed siblings.
+type compiledCellMask struct {
+	mask       *CellMask
+	program    *celmask.Program
+	compileErr error
+}
 
 // Engine indexes CellMask rows by (ObjectType RID, primary key) so a query-
 // time lookup for a specific row yields its applicable cell-level transforms
@@ -18,7 +31,7 @@ type Engine struct {
 	groupLookup GroupMembershipLookup
 
 	mu      sync.RWMutex
-	byOTKey map[string]map[string][]*CellMask // otRID → primaryKey → masks
+	byOTKey map[string]map[string][]*compiledCellMask // otRID → primaryKey → masks
 }
 
 // New returns an Engine with an empty cache. Call Reload before relying on
@@ -28,13 +41,14 @@ func New(store Store, gl GroupMembershipLookup) *Engine {
 	return &Engine{
 		store:       store,
 		groupLookup: gl,
-		byOTKey:     make(map[string]map[string][]*CellMask),
+		byOTKey:     make(map[string]map[string][]*compiledCellMask),
 	}
 }
 
 // Reload pulls the current set of masks from the store and replaces the
 // in-memory index. A store failure aborts the reload so a transient DB
-// hiccup does not wipe enforcement.
+// hiccup does not wipe enforcement. Per-row CEL programs (US-376) are
+// compiled here so the per-request hot path stays a flat Eval.
 func (e *Engine) Reload(ctx context.Context) error {
 	if e == nil || e.store == nil {
 		return nil
@@ -43,14 +57,15 @@ func (e *Engine) Reload(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("cellsec.Reload: %w", err)
 	}
-	index := make(map[string]map[string][]*CellMask, len(rows))
+	index := make(map[string]map[string][]*compiledCellMask, len(rows))
 	for _, m := range rows {
+		entry := buildCompiled(m)
 		pkIndex, ok := index[m.ObjectTypeRID]
 		if !ok {
-			pkIndex = make(map[string][]*CellMask)
+			pkIndex = make(map[string][]*compiledCellMask)
 			index[m.ObjectTypeRID] = pkIndex
 		}
-		pkIndex[m.PrimaryKey] = append(pkIndex[m.PrimaryKey], m)
+		pkIndex[m.PrimaryKey] = append(pkIndex[m.PrimaryKey], entry)
 	}
 	e.mu.Lock()
 	e.byOTKey = index
@@ -58,10 +73,28 @@ func (e *Engine) Reload(ctx context.Context) error {
 	return nil
 }
 
+func buildCompiled(m *CellMask) *compiledCellMask {
+	entry := &compiledCellMask{mask: m}
+	if m == nil || m.Expression == "" {
+		return entry
+	}
+	prg, err := celmask.Compile(m.Expression)
+	if err != nil {
+		entry.compileErr = err
+		return entry
+	}
+	entry.program = prg
+	return entry
+}
+
 // Compile resolves the cell-mask transforms that SHOULD be applied to the
 // caller for the cell located at (objectTypeRID, primaryKey).
 //
-// Semantics match pkg/masking.Engine:
+// This is the legacy US-258 entry point; it ignores Expression-bearing
+// masks (those need a row binding — call CompileForRow). It returns the
+// MaskRule shape so existing callers keep working unchanged.
+//
+// Semantics:
 //   - nil user                     → nil (no masks)
 //   - admin (PermUserManage)       → nil (bypass)
 //   - no masks on (OT, PK)         → nil
@@ -72,6 +105,42 @@ func (e *Engine) Reload(ctx context.Context) error {
 // mask in iteration order wins; admins should author one mask per (cell,
 // property) tuple.
 func (e *Engine) Compile(ctx context.Context, user *auth.User, objectTypeRID, primaryKey string) (map[string]masking.MaskRule, error) {
+	strategies, err := e.compileInternal(ctx, user, objectTypeRID, primaryKey, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	if strategies == nil {
+		return nil, nil
+	}
+	out := make(map[string]masking.MaskRule, len(strategies))
+	for k, s := range strategies {
+		if rule := masking.RuleFromStrategy(s); rule != "" {
+			out[k] = rule
+		}
+	}
+	return out, nil
+}
+
+// CompileForRow is the US-376 entry point that evaluates CEL Expression
+// masks against the caller AND the row's properties. Strategy masks are
+// returned in the canonical MaskStrategy taxonomy (REDACT|HASH|NULL|PARTIAL)
+// so the caller can dispatch through masking.ApplyStrategyTransforms.
+//
+// row may be nil; CEL programs that reference row.<field> evaluate against
+// an empty map. AppliesTo-only masks (no Expression) are still evaluated so
+// the new and legacy paths can coexist on the same (OT, PK).
+//
+// When multiple masks target the same property on the same cell and both
+// fire, the LAST mask in store iteration order wins. Authors should keep
+// one (cell, property) → one mask to avoid surprises.
+func (e *Engine) CompileForRow(ctx context.Context, user *auth.User, objectTypeRID, primaryKey string, row map[string]any) (map[string]masking.MaskStrategy, error) {
+	return e.compileInternal(ctx, user, objectTypeRID, primaryKey, row, true)
+}
+
+// compileInternal is the shared core. includeExpression toggles whether
+// Expression-bearing masks are evaluated; Compile (legacy) passes false to
+// preserve backwards compatibility with US-258 callers that have no row.
+func (e *Engine) compileInternal(ctx context.Context, user *auth.User, objectTypeRID, primaryKey string, row map[string]any, includeExpression bool) (map[string]masking.MaskStrategy, error) {
 	if e == nil || user == nil {
 		return nil, nil
 	}
@@ -81,12 +150,12 @@ func (e *Engine) Compile(ctx context.Context, user *auth.User, objectTypeRID, pr
 
 	e.mu.RLock()
 	pkIndex, ok := e.byOTKey[objectTypeRID]
-	var masks []*CellMask
+	var entries []*compiledCellMask
 	if ok {
-		masks = pkIndex[primaryKey]
+		entries = pkIndex[primaryKey]
 	}
 	e.mu.RUnlock()
-	if len(masks) == 0 {
+	if len(entries) == 0 {
 		return nil, nil
 	}
 
@@ -99,14 +168,100 @@ func (e *Engine) Compile(ctx context.Context, user *auth.User, objectTypeRID, pr
 		userGroups = g
 	}
 
-	out := make(map[string]masking.MaskRule)
-	for _, m := range masks {
-		if hasAllowList(m.AppliesTo) && m.AppliesTo.IsApplicable(user, userGroups) {
+	view := userViewFromAuth(user)
+
+	out := make(map[string]masking.MaskStrategy)
+	for _, entry := range entries {
+		m := entry.mask
+		if m == nil {
 			continue
 		}
-		out[m.PropertyAPIName] = m.MaskRule
+		switch {
+		case m.Expression != "":
+			if !includeExpression {
+				continue
+			}
+			fire, err := evaluateProgram(entry, view, row)
+			if err != nil {
+				// Fail closed: a broken expression masks the cell rather
+				// than silently leaking the clear value.
+				out[m.PropertyAPIName] = m.EffectiveStrategy()
+				continue
+			}
+			if fire {
+				out[m.PropertyAPIName] = m.EffectiveStrategy()
+			}
+		default:
+			if hasAllowList(m.AppliesTo) && m.AppliesTo.IsApplicable(user, userGroups) {
+				continue
+			}
+			out[m.PropertyAPIName] = m.EffectiveStrategy()
+		}
 	}
 	return out, nil
+}
+
+// evaluateProgram runs the compiled CEL program. A nil program (compile
+// failed at Reload) is treated as "fire and mask" so a malformed expression
+// never opens a hole in enforcement.
+func evaluateProgram(entry *compiledCellMask, view celmask.UserView, row map[string]any) (bool, error) {
+	if entry == nil {
+		return false, errors.New("cellsec: nil compiled entry")
+	}
+	if entry.program == nil {
+		if entry.compileErr != nil {
+			return false, entry.compileErr
+		}
+		return false, errors.New("cellsec: missing compiled program")
+	}
+	return entry.program.Eval(view, row)
+}
+
+// userViewFromAuth bridges auth.User into the celmask binding shape. The
+// markings list goes through the canonical normaliser so admins can author
+// expressions like '"PII" in user.markings' regardless of whether the
+// upstream JWT carried []string, []any, or a scalar.
+func userViewFromAuth(u *auth.User) celmask.UserView {
+	if u == nil {
+		return celmask.UserView{}
+	}
+	markings := normaliseMarkings(u.Attributes)
+	return celmask.UserView{
+		ID:         u.ID,
+		Email:      u.Email,
+		Roles:      u.Roles,
+		Markings:   markings,
+		Attributes: u.Attributes,
+	}
+}
+
+func normaliseMarkings(attrs map[string]any) []string {
+	if len(attrs) == 0 {
+		return nil
+	}
+	raw, ok := attrs[auth.MarkingsAttributeKey]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
+	}
 }
 
 // Size returns the number of masks cached for an ObjectType RID. Useful for
@@ -126,7 +281,9 @@ func (e *Engine) Size(objectTypeRID string) int {
 
 // SetMasks replaces the cached masks for a single (ObjectType RID, primaryKey)
 // pair. Used by tests and the admin handler's fast-path refresh. Passing an
-// empty slice drops the entry.
+// empty slice drops the entry. CEL programs are compiled in this path so
+// tests do not need to round-trip through Reload to exercise expression
+// behaviour.
 func (e *Engine) SetMasks(objectTypeRID, primaryKey string, masks []*CellMask) {
 	if e == nil {
 		return
@@ -144,13 +301,13 @@ func (e *Engine) SetMasks(objectTypeRID, primaryKey string, masks []*CellMask) {
 		return
 	}
 	if !ok {
-		pkIndex = make(map[string][]*CellMask)
+		pkIndex = make(map[string][]*compiledCellMask)
 		e.byOTKey[objectTypeRID] = pkIndex
 	}
-	copied := make([]*CellMask, len(masks))
+	copied := make([]*compiledCellMask, len(masks))
 	for i, m := range masks {
 		cp := *m
-		copied[i] = &cp
+		copied[i] = buildCompiled(&cp)
 	}
 	pkIndex[primaryKey] = copied
 }

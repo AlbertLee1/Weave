@@ -319,14 +319,18 @@ func (s *ServiceImpl) applyColumnMasking(ctx context.Context, ot *oms.ObjectType
 	return objs
 }
 
-// applyCellMasking enforces US-258 cell-level security by rewriting property
-// values on a per-(objectType, primary key) basis. Runs AFTER applyColumnMasking
-// so row-specific cell rules can further restrict (or add transforms not
-// declared at the column level) for a single instance. A nil engine, nil
-// object-type or empty input slice short-circuits to a no-op. Transforms
-// reuse the masking rule vocabulary (hash/redact/partial) and mutate the
-// property map in place for allocation-free pass-through when no cell masks
-// apply.
+// applyCellMasking enforces US-258 / US-376 cell-level security by rewriting
+// property values on a per-(objectType, primary key) basis. Runs AFTER
+// applyColumnMasking so row-specific cell rules can further restrict (or
+// add transforms not declared at the column level) for a single instance.
+// A nil engine, nil object-type or empty input slice short-circuits to a
+// no-op.
+//
+// US-376: the row's properties are passed through to CompileForRow so any
+// CEL Expression masks can evaluate against the (user, row) binding before
+// the row hits the wire. Returned strategies are applied via
+// masking.ApplyStrategyTransforms which understands the new NULL strategy
+// alongside the legacy hash/redact/partial trio.
 func (s *ServiceImpl) applyCellMasking(ctx context.Context, ot *oms.ObjectType, objs []*WireObject) []*WireObject {
 	if s.cellMaskEngine == nil || ot == nil || len(objs) == 0 {
 		return objs
@@ -340,11 +344,11 @@ func (s *ServiceImpl) applyCellMasking(ctx context.Context, ot *oms.ObjectType, 
 		if pk == "" {
 			continue
 		}
-		transforms, err := s.cellMaskEngine.Compile(ctx, user, ot.RID, pk)
+		transforms, err := s.cellMaskEngine.CompileForRow(ctx, user, ot.RID, pk, o.Properties)
 		if err != nil || len(transforms) == 0 {
 			continue
 		}
-		masking.ApplyTransforms(o.Properties, transforms)
+		masking.ApplyStrategyTransforms(o.Properties, transforms)
 	}
 	return objs
 }

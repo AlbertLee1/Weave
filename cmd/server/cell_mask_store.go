@@ -37,28 +37,28 @@ func (s *pgCellMaskStore) Create(ctx context.Context, m *cellsec.CellMask) error
 	}
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO cell_masks
-		   (rid, object_type_rid, primary_key, property_api_name, mask_rule, applies_to, description, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		m.RID, m.ObjectTypeRID, m.PrimaryKey, m.PropertyAPIName, string(m.MaskRule), appliesJSON, m.Description, m.CreatedBy,
+		   (rid, object_type_rid, primary_key, property_api_name, mask_rule, mask_strategy, expression, applies_to, description, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		m.RID, m.ObjectTypeRID, m.PrimaryKey, m.PropertyAPIName, string(m.MaskRule), string(m.MaskStrategy), m.Expression, appliesJSON, m.Description, m.CreatedBy,
 	)
 	return err
 }
 
 func (s *pgCellMaskStore) Get(ctx context.Context, rid string) (*cellsec.CellMask, error) {
 	return s.scanOne(ctx,
-		`SELECT rid, object_type_rid, primary_key, property_api_name, mask_rule, applies_to, description, created_by, created_at, updated_at
+		`SELECT rid, object_type_rid, primary_key, property_api_name, mask_rule, COALESCE(mask_strategy, ''), COALESCE(expression, ''), applies_to, description, created_by, created_at, updated_at
 		 FROM cell_masks WHERE rid = $1`, rid)
 }
 
 func (s *pgCellMaskStore) List(ctx context.Context) ([]*cellsec.CellMask, error) {
 	return s.scanMany(ctx,
-		`SELECT rid, object_type_rid, primary_key, property_api_name, mask_rule, applies_to, description, created_by, created_at, updated_at
+		`SELECT rid, object_type_rid, primary_key, property_api_name, mask_rule, COALESCE(mask_strategy, ''), COALESCE(expression, ''), applies_to, description, created_by, created_at, updated_at
 		 FROM cell_masks ORDER BY created_at ASC`)
 }
 
 func (s *pgCellMaskStore) ListByObjectType(ctx context.Context, objectTypeRID string) ([]*cellsec.CellMask, error) {
 	return s.scanMany(ctx,
-		`SELECT rid, object_type_rid, primary_key, property_api_name, mask_rule, applies_to, description, created_by, created_at, updated_at
+		`SELECT rid, object_type_rid, primary_key, property_api_name, mask_rule, COALESCE(mask_strategy, ''), COALESCE(expression, ''), applies_to, description, created_by, created_at, updated_at
 		 FROM cell_masks WHERE object_type_rid = $1 ORDER BY created_at ASC`, objectTypeRID)
 }
 
@@ -69,6 +69,16 @@ func (s *pgCellMaskStore) Update(ctx context.Context, rid string, upd cellsec.Ce
 	if upd.MaskRule != nil {
 		sets = append(sets, "mask_rule = $"+strconv.Itoa(argN))
 		args = append(args, string(*upd.MaskRule))
+		argN++
+	}
+	if upd.MaskStrategy != nil {
+		sets = append(sets, "mask_strategy = $"+strconv.Itoa(argN))
+		args = append(args, string(*upd.MaskStrategy))
+		argN++
+	}
+	if upd.Expression != nil {
+		sets = append(sets, "expression = $"+strconv.Itoa(argN))
+		args = append(args, *upd.Expression)
 		argN++
 	}
 	if upd.AppliesTo != nil {
@@ -114,11 +124,13 @@ func (s *pgCellMaskStore) scanOne(ctx context.Context, sql string, args ...inter
 	var (
 		m          cellsec.CellMask
 		rule       string
+		strategy   string
+		expression string
 		appliesRaw []byte
 		createdAt  time.Time
 		updatedAt  time.Time
 	)
-	err := row.Scan(&m.RID, &m.ObjectTypeRID, &m.PrimaryKey, &m.PropertyAPIName, &rule, &appliesRaw, &m.Description, &m.CreatedBy, &createdAt, &updatedAt)
+	err := row.Scan(&m.RID, &m.ObjectTypeRID, &m.PrimaryKey, &m.PropertyAPIName, &rule, &strategy, &expression, &appliesRaw, &m.Description, &m.CreatedBy, &createdAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, cellsec.ErrNotFound
@@ -126,6 +138,8 @@ func (s *pgCellMaskStore) scanOne(ctx context.Context, sql string, args ...inter
 		return nil, err
 	}
 	m.MaskRule = masking.MaskRule(rule)
+	m.MaskStrategy = masking.MaskStrategy(strategy)
+	m.Expression = expression
 	if err := json.Unmarshal(appliesRaw, &m.AppliesTo); err != nil {
 		return nil, fmt.Errorf("cellsec: decode appliesTo: %w", err)
 	}
@@ -145,14 +159,18 @@ func (s *pgCellMaskStore) scanMany(ctx context.Context, sql string, args ...inte
 		var (
 			m          cellsec.CellMask
 			rule       string
+			strategy   string
+			expression string
 			appliesRaw []byte
 			createdAt  time.Time
 			updatedAt  time.Time
 		)
-		if err := rows.Scan(&m.RID, &m.ObjectTypeRID, &m.PrimaryKey, &m.PropertyAPIName, &rule, &appliesRaw, &m.Description, &m.CreatedBy, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&m.RID, &m.ObjectTypeRID, &m.PrimaryKey, &m.PropertyAPIName, &rule, &strategy, &expression, &appliesRaw, &m.Description, &m.CreatedBy, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		m.MaskRule = masking.MaskRule(rule)
+		m.MaskStrategy = masking.MaskStrategy(strategy)
+		m.Expression = expression
 		if err := json.Unmarshal(appliesRaw, &m.AppliesTo); err != nil {
 			return nil, fmt.Errorf("cellsec: decode appliesTo: %w", err)
 		}

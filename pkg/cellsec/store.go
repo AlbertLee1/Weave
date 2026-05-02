@@ -94,6 +94,12 @@ func (s *MemoryStore) Update(_ context.Context, rid string, upd CellMaskUpdate) 
 	if upd.MaskRule != nil {
 		m.MaskRule = *upd.MaskRule
 	}
+	if upd.MaskStrategy != nil {
+		m.MaskStrategy = *upd.MaskStrategy
+	}
+	if upd.Expression != nil {
+		m.Expression = *upd.Expression
+	}
 	if upd.AppliesTo != nil {
 		m.AppliesTo = *upd.AppliesTo
 	}
