@@ -320,3 +320,54 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - `canonicalRefForFunction(fn) = name@NormalisedVersion()` (or RID when name is empty) is the identity collapsing key. This means a callee referenced by RID and the same callee referenced by name still register as the same DFS node — necessary because authors mix the two ref shapes liberally (RIDs in code-generated bindings, names in hand-written scripts). Don't switch to a pk-only key without thinking through the cross-shape collision case.
 - The PRD's named codes `FUNCTION_RECURSION_DEPTH_EXCEEDED` / `FUNCTION_CALL_CYCLE` were embedded in TWO places: (a) the runtime panic-string prefix in `goja_shim_functions.go` so the JS-side error message includes the named code, AND (b) the apierror constructors for handlers that map sentinel → 422. The runtime route still preserves `errors.Is(err, fncall.ErrDepthExceeded)` for typed dispatch — adding the prefix is additive, not breaking.
 ---
+
+## 2026-05-02 - US-372 - AIP Logic Block 图引擎
+
+**Implementation:**
+- New migration `000085_aip_logic_flow_engine.{up,down}.sql` extends `aip_logic_flows` with `fallback_model TEXT` (default LLM model swapped in when retries exhaust) + `max_retries INTEGER` (flow-level retry budget, capped 0..8 by check constraint). The existing `nodes`/`edges` JSONB columns already serve as the `nodes_json/edges_json` the PRD calls for — no parallel registry, same "row IS the published version" pattern as US-370 / functions.
+- `pkg/aip/logic/flow.go`: added `NodeTypeIterate = "iterate"` constant + `MaxIterateItems = 100` + `MaxRetryAttempts = 8` (mirror the migration check). `IsKnownNodeType` / `KnownNodeTypes` now register the new type. `Flow` struct gained `FallbackModel string` + `MaxRetries int`; `FlowUpdate` gained the matching pointer fields. `TraceEntry` gained `Attempts int` + `UsedFallback bool` so audit trails preserve "how many tries did this take?". `Validate` now rejects MaxRetries out of range and validates per-node `config.retry` shape AND `iterate` node body (rejects nested-iterate, missing forEach/body, unknown body type).
+- `pkg/aip/logic/executor.go`: added `executeNodeWithPolicy(ctx, flow, node, state, input)` chokepoint between Execute's main loop and runNode. It (1) computes attempts via `nodeMaxAttempts(n, flow)` — per-node `config.retry.maxAttempts` overrides flow.MaxRetries+1 default; (2) runs runNode in a loop with `nodeBackoff(n)` between retries via `time.After`; (3) on exhaustion, if node is LLM and `flow.FallbackModel != ""` and node hasn't been rerouted, runs one final attempt with `nodeWithModel(n, flow.FallbackModel)` and stamps `UsedFallback=true`. New `runIterateNode(ctx, n, state, input)` resolves `config.forEach` (accepts either bare path `input.items` or template `{{input.items}}`), enforces `MaxIterateItems` cap with `ErrIterateLimitExceeded` sentinel, and dispatches the body node spec once per item with a per-iteration `iterate.<bodyId>.{item,index,length}` scope cloned into state via `cloneStateForIterate`. Nested iterate is rejected at validation, so body retries are honoured by the body's own `runNode` retry config but the iterate node itself is not wholesale-retried (a partial iteration must not be silently re-run).
+- `pkg/aip/logic/store.go::MemoryStore.UpdateFlow`: round-trips the new pointer fields. `pkg/aip/logic/handlers.go::createFlowRequest`/`updateFlowRequest`: accept `fallbackModel` + `maxRetries`; `CreateFlow` + `UpdateFlow` thread them into `Flow` / `FlowUpdate`.
+- `cmd/server/aip_logic_store.go`: PG store INSERT/UPDATE/SELECT/SCAN paths now round-trip the new columns. `COALESCE(fallback_model, '')` + `COALESCE(max_retries, 0)` keep legacy rows (pre-migration) reading cleanly without a backfill step.
+
+**Files changed:**
+- `migrations/000085_aip_logic_flow_engine.up.sql` (new)
+- `migrations/000085_aip_logic_flow_engine.down.sql` (new)
+- `pkg/aip/logic/flow.go` (new node type + constants + Flow/FlowUpdate fields + TraceEntry fields + retry/iterate validation + iterateBody/toInt helpers)
+- `pkg/aip/logic/executor.go` (executeNodeWithPolicy + runIterateNode + cloneStateForIterate + nodeMaxAttempts/nodeBackoff/nodeWithModel + ErrIterateLimitExceeded)
+- `pkg/aip/logic/store.go` (MemoryStore.UpdateFlow round-trips new fields)
+- `pkg/aip/logic/handlers.go` (create/update request shapes, Create/Update flows wire new fields)
+- `pkg/aip/logic/us372_engine_test.go` (new — 15 unit + handler tests)
+- `cmd/server/aip_logic_store.go` (PG round-trip for fallback_model + max_retries)
+- `prd.json` (mark US-372 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test -count=1 -short ./...` PASS across the full suite (cmd/server, pkg/aip/*, all OSS packages, test/e2e, test/foundry_parity, test/northwind 2:30, test/chinook 3:46)
+- 15/15 new unit tests in `pkg/aip/logic/us372_engine_test.go` pass:
+  - `TestUS372_Iterate_RunsBodyForEachItem_RespectsCap` — body fires 3 times for 3 items; results array carries each iteration output with template-substituted item value
+  - `TestUS372_Iterate_OverCapAborts` — 101 items trips ErrIterateLimitExceeded before any body invocation
+  - `TestUS372_Iterate_AcceptsTemplateWrappedForEach` — `{{input.items}}` shape parses identically to `input.items`
+  - `TestUS372_Iterate_RejectsNestedIterate` — Validate refuses nested iterate body
+  - `TestUS372_Retry_NodeLevelMaxAttempts_RecoversAfterFailures` — flaky 2-fail provider; 3-attempt budget recovers; trace.Attempts=3
+  - `TestUS372_Retry_ExhaustionPropagates` — exhausts budget → status=failed, exactly attempts-many provider calls
+  - `TestUS372_Retry_FlowLevelMaxRetriesDefault` — flow.MaxRetries=2 is honoured when node has no override
+  - `TestUS372_FallbackModel_SwitchesAfterRetries` — primary-v1 fails twice, fallback-v1 fires once; trace.UsedFallback=true; output `via fallback-v1`
+  - `TestUS372_FallbackModel_NoFallbackForToolNode` — fallback policy is LLM-only
+  - `TestUS372_E2E_LLM_Tool_If_Flow` — PRD acceptance gate: 3-node LLM→tool→conditional (yes/no branches) flow; trace contains all 6 nodes (4 used + 1 conditional + 1 skipped)
+  - `TestUS372_Validate_RejectsRetryOutOfRange` — config.retry.maxAttempts > 8 → InvalidFlowDefinition
+  - `TestUS372_Validate_RejectsFlowMaxRetriesOutOfRange` — flow.MaxRetries > 8 → InvalidFlowDefinition
+  - `TestUS372_Retry_BackoffDelayHonoured` — 25ms backoff produces ≥20ms wall-clock delay between attempts
+  - `TestUS372_Iterate_NotAnArrayFails` — non-array forEach value → typed error
+  - `TestUS372_HandlerCreate_AcceptsFallbackAndMaxRetries` — POST /api/v2/aip/logic-flows persists + reads back the new fields
+
+**Learnings for future iterations:**
+- The PRD's "aip_logic_flows 表新增 nodes_json、edges_json、..." wording reads as "add four new columns" but the table already has `nodes` + `edges` JSONB columns from US-281 — those ARE the json blobs the PRD describes. Don't introduce parallel `nodes_json`/`edges_json`; the existing columns already serve. Only `fallback_model` + `max_retries` are genuinely new. This mirrors the US-370 lesson ("the existing functions table IS function_versions") — read the PRD as intent, not as a literal column list, and reuse what's there.
+- Per-node retry config lives inside `node.config.retry = {maxAttempts, backoffMs}` so the schema didn't need extending. Validation is centralised in `validateRetryConfig(cfg)` and called from `validateNodeConfig` for every node type — i.e., retry config validation runs even on non-LLM nodes (tool / iterate / output) so a misconfiguration is caught before runtime regardless of where it sits.
+- Iterate's body is dispatched via `runNode` (not `executeNodeWithPolicy`) on purpose: a partial iteration must not be retried wholesale, the per-body retry budget is honoured by `runNode` already (since runNode → runLLMNode/runToolNode is the same dispatch surface), and the flow-level fallback model semantics for nested LLM calls inside iterate are deliberately NOT applied (one well-tested fallback fire per node is the contract). If a future US wants iterate body LLM nodes to honour the parent fallback, thread the parent flow into runIterateNode and call `executeNodeWithPolicy(ctx, flow, body, ...)` instead.
+- `Node.Config["retry"]` round-trips through JSON as `map[string]any` with `maxAttempts` as `float64` (the JSON-decoded number type). The new `toInt(v)` helper accepts both `int` (from in-process callers / tests) and `float64` (from JSON unmarshal). When adding a future numeric knob inside Config, use the same helper rather than asserting `int` directly — JSON unmarshal will silently break direct int assertions.
+- For flow-level MaxRetries the wire semantics are "additional retries beyond the first attempt" so total attempts = MaxRetries + 1. For per-node `config.retry.maxAttempts` the wire semantics are "total attempts" (so 1 = no retry). This is the Palantir convention; I picked it to keep the wire shape recognisable for SDK users coming from Foundry. Document at the SDK level if this distinction surfaces — internally `nodeMaxAttempts` always returns the "total attempts" form.
+- `cloneStateForIterate` shallow-copies the parent state so iterations cannot leak per-iteration state into each other (or into post-iterate downstream nodes). The `iterate.<bodyId>` scope is scoped under the body node's id, so multiple iterate nodes in the same flow can coexist without their per-iteration item shadowing each other.
+- The fallback policy fires AFTER all retries are exhausted, not interleaved. This matches "如果重试都失败再切" rather than "after each retry try the fallback". Production observability differs: `trace.Attempts` counts retries-on-primary; a fallback success bumps Attempts by 1 and stamps `UsedFallback=true`. SDKs can detect "primary exhausted but flow succeeded" by `trace.UsedFallback && status==success`.
+---

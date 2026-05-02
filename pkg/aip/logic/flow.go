@@ -17,16 +17,27 @@ import (
 // Node type constants. Matches the JSON wire shape used by the SPA
 // editor and persisted as `nodes[*].type` in the aip_logic_flows table.
 const (
-	NodeTypeLLM    = "llm"
-	NodeTypeTool   = "tool"
-	NodeTypeIf     = "if"
-	NodeTypeOutput = "output"
+	NodeTypeLLM     = "llm"
+	NodeTypeTool    = "tool"
+	NodeTypeIf      = "if"
+	NodeTypeIterate = "iterate"
+	NodeTypeOutput  = "output"
 )
+
+// MaxIterateItems caps the forEach iteration count for an iterate node
+// (US-372 acceptance gate: "上限 100 项"). Hardcoded rather than
+// configurable so a malformed flow cannot bypass the bound.
+const MaxIterateItems = 100
+
+// MaxRetryAttempts caps the per-node retry budget (so a single misfit
+// flow cannot pin a worker for hours). Mirrors the migration check
+// constraint on aip_logic_flows.max_retries.
+const MaxRetryAttempts = 8
 
 // IsKnownNodeType reports whether name is a built-in node type.
 func IsKnownNodeType(name string) bool {
 	switch name {
-	case NodeTypeLLM, NodeTypeTool, NodeTypeIf, NodeTypeOutput:
+	case NodeTypeLLM, NodeTypeTool, NodeTypeIf, NodeTypeIterate, NodeTypeOutput:
 		return true
 	}
 	return false
@@ -34,29 +45,36 @@ func IsKnownNodeType(name string) bool {
 
 // KnownNodeTypes returns the canonical list in stable order.
 func KnownNodeTypes() []string {
-	return []string{NodeTypeLLM, NodeTypeTool, NodeTypeIf, NodeTypeOutput}
+	return []string{NodeTypeLLM, NodeTypeTool, NodeTypeIf, NodeTypeIterate, NodeTypeOutput}
 }
 
 // Flow is one persisted Logic Flow row. Nodes carry the executable
-// configuration; Edges describe data flow between nodes.
+// configuration; Edges describe data flow between nodes. FallbackModel
+// and MaxRetries are flow-level defaults the executor consults when an
+// individual node does not pin its own. They mirror the
+// fallback_model / max_retries columns on aip_logic_flows.
 type Flow struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Nodes       []Node    `json:"nodes"`
-	Edges       []Edge    `json:"edges"`
-	CreatedBy   string    `json:"createdBy,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description,omitempty"`
+	Nodes         []Node    `json:"nodes"`
+	Edges         []Edge    `json:"edges"`
+	FallbackModel string    `json:"fallbackModel,omitempty"`
+	MaxRetries    int       `json:"maxRetries,omitempty"`
+	CreatedBy     string    `json:"createdBy,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // FlowUpdate is the partial-update payload. Pointer fields preserve
 // "omit=keep current" semantics.
 type FlowUpdate struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Nodes       *[]Node `json:"nodes,omitempty"`
-	Edges       *[]Edge `json:"edges,omitempty"`
+	Name          *string `json:"name,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Nodes         *[]Node `json:"nodes,omitempty"`
+	Edges         *[]Edge `json:"edges,omitempty"`
+	FallbackModel *string `json:"fallbackModel,omitempty"`
+	MaxRetries    *int    `json:"maxRetries,omitempty"`
 }
 
 // Node is one executable step. Config is a free-form JSON object whose
@@ -92,13 +110,18 @@ type Run struct {
 }
 
 // TraceEntry is one step record from a Run. Status is one of
-// "success", "skipped", or "failed".
+// "success", "skipped", or "failed". Attempts is the number of dispatch
+// attempts the executor made before recording this entry (1 when no
+// retry occurred); UsedFallback is true when the LLM fallback model
+// was substituted for the node's primary provider.
 type TraceEntry struct {
-	NodeID string         `json:"nodeId"`
-	Type   string         `json:"type"`
-	Status string         `json:"status"`
-	Output map[string]any `json:"output,omitempty"`
-	Error  string         `json:"error,omitempty"`
+	NodeID       string         `json:"nodeId"`
+	Type         string         `json:"type"`
+	Status       string         `json:"status"`
+	Output       map[string]any `json:"output,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	Attempts     int            `json:"attempts,omitempty"`
+	UsedFallback bool           `json:"usedFallback,omitempty"`
 }
 
 // Run status constants.
@@ -152,6 +175,9 @@ func (f *Flow) Validate() error {
 	}
 	if len(f.Nodes) == 0 {
 		return errors.New("flow must contain at least one node")
+	}
+	if f.MaxRetries < 0 || f.MaxRetries > MaxRetryAttempts {
+		return fmt.Errorf("flow maxRetries must be in [0, %d]", MaxRetryAttempts)
 	}
 	seen := make(map[string]struct{}, len(f.Nodes))
 	for i, n := range f.Nodes {
@@ -245,10 +271,103 @@ func validateNodeConfig(n Node) error {
 		if cfgString(n.Config, "condition") == "" {
 			return errors.New("if node requires config.condition")
 		}
+	case NodeTypeIterate:
+		if cfgString(n.Config, "forEach") == "" {
+			return errors.New("iterate node requires config.forEach")
+		}
+		if _, ok := n.Config["body"].(map[string]any); !ok {
+			return errors.New("iterate node requires config.body (a node spec)")
+		}
+		body, _ := iterateBody(n)
+		if body == nil {
+			return errors.New("iterate node config.body must be a node spec")
+		}
+		if !IsKnownNodeType(body.Type) || body.Type == NodeTypeIterate {
+			return fmt.Errorf("iterate node body has unsupported type %q", body.Type)
+		}
+		if err := validateNodeConfig(*body); err != nil {
+			return fmt.Errorf("iterate body: %w", err)
+		}
 	case NodeTypeOutput:
 		// keys is optional — an empty output node returns the full state.
 	}
+	if err := validateRetryConfig(n.Config); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateRetryConfig enforces the optional retry knob shape:
+// {"retry": {"maxAttempts": <0..MaxRetryAttempts>, "backoffMs": <int>}}.
+// Both fields are optional inside retry; their absence falls back to
+// flow-level defaults at execute time.
+func validateRetryConfig(cfg map[string]any) error {
+	raw, ok := cfg["retry"]
+	if !ok {
+		return nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("config.retry must be an object")
+	}
+	if v, has := m["maxAttempts"]; has {
+		n, ok := toInt(v)
+		if !ok {
+			return errors.New("config.retry.maxAttempts must be an integer")
+		}
+		if n < 0 || n > MaxRetryAttempts {
+			return fmt.Errorf("config.retry.maxAttempts must be in [0, %d]", MaxRetryAttempts)
+		}
+	}
+	if v, has := m["backoffMs"]; has {
+		n, ok := toInt(v)
+		if !ok {
+			return errors.New("config.retry.backoffMs must be an integer")
+		}
+		if n < 0 {
+			return errors.New("config.retry.backoffMs must be non-negative")
+		}
+	}
+	return nil
+}
+
+// iterateBody parses the body field of an iterate node back into a Node.
+// Returns (nil, false) when the body is missing or malformed.
+func iterateBody(n Node) (*Node, bool) {
+	raw, ok := n.Config["body"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	body := Node{}
+	if id, _ := raw["id"].(string); id != "" {
+		body.ID = id
+	} else {
+		body.ID = n.ID + ".body"
+	}
+	body.Type, _ = raw["type"].(string)
+	if cfg, ok := raw["config"].(map[string]any); ok {
+		body.Config = cfg
+	}
+	return &body, true
+}
+
+// toInt coerces a JSON-decoded number to an int. JSON numbers come back
+// as float64 by default; tests / fixtures sometimes pass int literals
+// directly so accept both shapes.
+func toInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int32:
+		return int(x), true
+	case int64:
+		return int(x), true
+	case float32:
+		return int(x), x == float32(int(x))
+	case float64:
+		return int(x), x == float64(int(x))
+	}
+	return 0, false
 }
 
 // cfgString reads a string from a node config map. Returns "" when

@@ -71,18 +71,22 @@ func (h *Handler) requireStore(w http.ResponseWriter) bool {
 }
 
 type createFlowRequest struct {
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Nodes       []Node `json:"nodes"`
-	Edges       []Edge `json:"edges"`
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Nodes         []Node `json:"nodes"`
+	Edges         []Edge `json:"edges"`
+	FallbackModel string `json:"fallbackModel,omitempty"`
+	MaxRetries    int    `json:"maxRetries,omitempty"`
 }
 
 type updateFlowRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Nodes       *[]Node `json:"nodes,omitempty"`
-	Edges       *[]Edge `json:"edges,omitempty"`
+	Name          *string `json:"name,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Nodes         *[]Node `json:"nodes,omitempty"`
+	Edges         *[]Edge `json:"edges,omitempty"`
+	FallbackModel *string `json:"fallbackModel,omitempty"`
+	MaxRetries    *int    `json:"maxRetries,omitempty"`
 }
 
 type executeFlowRequest struct {
@@ -122,14 +126,16 @@ func (h *Handler) CreateFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	flow := &Flow{
-		ID:          id,
-		Name:        req.Name,
-		Description: req.Description,
-		Nodes:       req.Nodes,
-		Edges:       req.Edges,
-		CreatedBy:   user.ID,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:            id,
+		Name:          req.Name,
+		Description:   req.Description,
+		Nodes:         req.Nodes,
+		Edges:         req.Edges,
+		FallbackModel: req.FallbackModel,
+		MaxRetries:    req.MaxRetries,
+		CreatedBy:     user.ID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	if err := flow.Validate(); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFlowDefinition", map[string]string{
@@ -231,6 +237,12 @@ func (h *Handler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
 	if req.Edges != nil {
 		proposed.Edges = *req.Edges
 	}
+	if req.FallbackModel != nil {
+		proposed.FallbackModel = *req.FallbackModel
+	}
+	if req.MaxRetries != nil {
+		proposed.MaxRetries = *req.MaxRetries
+	}
 	if err := proposed.Validate(); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFlowDefinition", map[string]string{
 			"reason": err.Error(),
@@ -238,10 +250,12 @@ func (h *Handler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upd := FlowUpdate{
-		Name:        req.Name,
-		Description: req.Description,
-		Nodes:       req.Nodes,
-		Edges:       req.Edges,
+		Name:          req.Name,
+		Description:   req.Description,
+		Nodes:         req.Nodes,
+		Edges:         req.Edges,
+		FallbackModel: req.FallbackModel,
+		MaxRetries:    req.MaxRetries,
 	}
 	if err := h.store.UpdateFlow(r.Context(), id, upd); err != nil {
 		if errors.Is(err, ErrFlowNotFound) {

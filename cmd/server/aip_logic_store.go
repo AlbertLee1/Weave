@@ -42,9 +42,10 @@ func (s *pgAIPLogicStore) CreateFlow(ctx context.Context, f *logic.Flow) error {
 		return err
 	}
 	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO aip_logic_flows (id, name, description, nodes, edges, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		f.ID, f.Name, f.Description, nodes, edges, f.CreatedBy,
+		`INSERT INTO aip_logic_flows
+		   (id, name, description, nodes, edges, fallback_model, max_retries, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		f.ID, f.Name, f.Description, nodes, edges, f.FallbackModel, f.MaxRetries, f.CreatedBy,
 	); err != nil {
 		if isLogicUniqueViolation(err) {
 			return logic.ErrFlowAlreadyExists
@@ -67,10 +68,13 @@ func (s *pgAIPLogicStore) GetFlow(ctx context.Context, id string) (*logic.Flow, 
 		createdBy string
 	)
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, description, nodes, edges, COALESCE(created_by,''),
+		`SELECT id, name, description, nodes, edges,
+		        COALESCE(fallback_model, ''), COALESCE(max_retries, 0),
+		        COALESCE(created_by,''),
 		        created_at, updated_at
 		 FROM aip_logic_flows WHERE id = $1`, id).
 		Scan(&f.ID, &f.Name, &f.Description, &nodesRaw, &edgesRaw,
+			&f.FallbackModel, &f.MaxRetries,
 			&createdBy, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -95,12 +99,16 @@ func (s *pgAIPLogicStore) ListFlows(ctx context.Context, createdBy string) ([]*l
 	)
 	if createdBy == "" {
 		rows, err = s.pool.Query(ctx,
-			`SELECT id, name, description, nodes, edges, COALESCE(created_by,''),
+			`SELECT id, name, description, nodes, edges,
+			        COALESCE(fallback_model,''), COALESCE(max_retries, 0),
+			        COALESCE(created_by,''),
 			        created_at, updated_at
 			 FROM aip_logic_flows ORDER BY created_at DESC, id ASC`)
 	} else {
 		rows, err = s.pool.Query(ctx,
-			`SELECT id, name, description, nodes, edges, COALESCE(created_by,''),
+			`SELECT id, name, description, nodes, edges,
+			        COALESCE(fallback_model,''), COALESCE(max_retries, 0),
+			        COALESCE(created_by,''),
 			        created_at, updated_at
 			 FROM aip_logic_flows WHERE created_by = $1
 			 ORDER BY created_at DESC, id ASC`, createdBy)
@@ -117,6 +125,7 @@ func (s *pgAIPLogicStore) ListFlows(ctx context.Context, createdBy string) ([]*l
 			edgesRaw []byte
 		)
 		if err := rows.Scan(&f.ID, &f.Name, &f.Description, &nodesRaw, &edgesRaw,
+			&f.FallbackModel, &f.MaxRetries,
 			&f.CreatedBy, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -161,6 +170,16 @@ func (s *pgAIPLogicStore) UpdateFlow(ctx context.Context, id string, upd logic.F
 		}
 		sets = append(sets, "edges = $"+strconv.Itoa(argN))
 		args = append(args, edges)
+		argN++
+	}
+	if upd.FallbackModel != nil {
+		sets = append(sets, "fallback_model = $"+strconv.Itoa(argN))
+		args = append(args, *upd.FallbackModel)
+		argN++
+	}
+	if upd.MaxRetries != nil {
+		sets = append(sets, "max_retries = $"+strconv.Itoa(argN))
+		args = append(args, *upd.MaxRetries)
 		argN++
 	}
 	args = append(args, id)

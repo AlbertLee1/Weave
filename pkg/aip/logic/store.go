@@ -121,6 +121,12 @@ func (s *MemoryStore) UpdateFlow(_ context.Context, id string, upd FlowUpdate) e
 	if upd.Edges != nil {
 		f.Edges = append([]Edge(nil), *upd.Edges...)
 	}
+	if upd.FallbackModel != nil {
+		f.FallbackModel = *upd.FallbackModel
+	}
+	if upd.MaxRetries != nil {
+		f.MaxRetries = *upd.MaxRetries
+	}
 	f.UpdatedAt = time.Now().UTC()
 	return nil
 }
