@@ -31,7 +31,7 @@ type AggregationRequest struct {
 	Rollup bool `json:"rollup,omitempty"`
 	// Accuracy is the Palantir-style request-level toggle that lets callers
 	// opt out of the engine's default approximate algorithms (HyperLogLog
-	// for approximateDistinct, HdrHistogram/t-digest for approximatePercentile).
+	// for approximateDistinct, t-digest for approximatePercentile).
 	// Two values are recognised:
 	//   - "" or "ALLOW_APPROXIMATE" (default): approximate aggregations run
 	//     their sketches; the response.accuracy field reports whether the
@@ -87,7 +87,7 @@ type AggregationSpec struct {
 	Field       string    `json:"field,omitempty"`       // required for min/max/sum/avg
 	Name        string    `json:"name,omitempty"`        // output name
 	Percentile  *float64  `json:"percentile,omitempty"`  // for approximatePercentile (0-100), scalar result
-	Percentiles []float64 `json:"percentiles,omitempty"` // for approximatePercentile batch: single HdrHistogram pass, map[string]float64 result
+	Percentiles []float64 `json:"percentiles,omitempty"` // for approximatePercentile batch: single t-digest pass, map[string]float64 result
 	MaxItems    *int      `json:"maxItems,omitempty"`    // for collectList: max values to collect (default 100)
 	Precision   *int      `json:"precision,omitempty"`   // for approximateDistinct: HyperLogLog precision, 4..18 (default 14 — ~0.81% standard error)
 }

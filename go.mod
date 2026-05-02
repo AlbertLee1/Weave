@@ -3,7 +3,6 @@ module github.com/liyang/weave
 go 1.25.0
 
 require (
-	github.com/HdrHistogram/hdrhistogram-go v1.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15
@@ -19,6 +18,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/vault/api v1.23.0
+	github.com/influxdata/tdigest v0.0.1
 	github.com/jackc/pglogrepl v0.0.0-20260401131349-e37c41485510
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mmcloughlin/geohash v0.10.0

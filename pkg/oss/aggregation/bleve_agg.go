@@ -31,7 +31,7 @@ const (
 // match total exceeded the engine's MaxDocScanSize — the caller uses it
 // to mark the top-level response as APPROXIMATE. The third return value
 // is true when at least one approximate algorithm (HLL distinct,
-// HdrHistogram percentile) actually produced an approximate result —
+// t-digest percentile) actually produced an approximate result —
 // also surfaced as APPROXIMATE on the response. accuracyMode is the
 // Palantir request-level toggle: AccuracyRequireAccurate transparently
 // promotes approximateDistinct → exactDistinct and approximatePercentile

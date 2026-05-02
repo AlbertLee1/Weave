@@ -144,7 +144,7 @@ func TestAccuracyMode_AllowApproximate_SmallCardinalityIsAccurate(t *testing.T) 
 }
 
 // Test that REQUIRE_ACCURATE on approximatePercentile routes through the
-// exact sort-based percentile (not HdrHistogram) and reports ACCURATE.
+// exact sort-based percentile (not t-digest) and reports ACCURATE.
 func TestAccuracyMode_RequireAccurate_PercentileRoutesToExact(t *testing.T) {
 	idx := setupAccuracyIndex(t, 100)
 	eng := NewEngine()
@@ -178,7 +178,7 @@ func TestAccuracyMode_RequireAccurate_PercentileRoutesToExact(t *testing.T) {
 }
 
 // Test that ALLOW_APPROXIMATE on percentile still flips response.accuracy to
-// APPROXIMATE because HdrHistogram is by definition an approximate algorithm,
+// APPROXIMATE because t-digest is by definition an approximate algorithm,
 // even when scan was not truncated.
 func TestAccuracyMode_AllowApproximate_PercentileFlipsResponseToApproximate(t *testing.T) {
 	idx := setupAccuracyIndex(t, 100)
@@ -196,7 +196,7 @@ func TestAccuracyMode_AllowApproximate_PercentileFlipsResponseToApproximate(t *t
 		t.Fatalf("Aggregate: %v", err)
 	}
 	if resp.Accuracy != "APPROXIMATE" {
-		t.Errorf("response.accuracy = %q, want APPROXIMATE (HdrHistogram is approximate)", resp.Accuracy)
+		t.Errorf("response.accuracy = %q, want APPROXIMATE (t-digest is approximate)", resp.Accuracy)
 	}
 }
 

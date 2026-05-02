@@ -102,9 +102,10 @@ func normalInverseCDF(p float64) float64 {
 
 // TestApproximatePercentile_Gaussian10k verifies that approximatePercentile
 // returns p50/p95/p99 values within a loose tolerance of the analytic
-// normal-distribution quantiles on a 10k Gaussian dataset. US-016 only
-// establishes the HdrHistogram-backed path; the tight ≤5% assertion lives
-// in US-018's bench test.
+// normal-distribution quantiles on a 10k Gaussian dataset. The tight
+// US-368 ≤1% relative-error gate at 1M points lives in
+// tdigest_percentile_test.go; this test guards the engine plumbing
+// against regressions on a smaller dataset.
 func TestApproximatePercentile_Gaussian10k(t *testing.T) {
 	const (
 		n      = 10000
@@ -164,82 +165,6 @@ func TestApproximatePercentile_Scalar(t *testing.T) {
 	}
 	if _, ok := resp.Data[0].Metrics[0].Value.(float64); !ok {
 		t.Errorf("p75 value type = %T, want float64 scalar", resp.Data[0].Metrics[0].Value)
-	}
-}
-
-// TestComputeApproxPercentileHdr_DirectCall exercises the HdrHistogram-backed
-// percentile function directly on a Gaussian dataset, independent of the
-// Bleve search path. This is the canonical US-016 unit test: if the
-// HdrHistogram implementation is missing the package fails to compile,
-// making the red→green cycle explicit.
-func TestComputeApproxPercentileHdr_DirectCall(t *testing.T) {
-	const (
-		n      = 10000
-		mean   = 5000.0
-		stddev = 1000.0
-	)
-	r := rand.New(rand.NewSource(7))
-	values := make([]float64, 0, n)
-	for i := 0; i < n; i++ {
-		v := r.NormFloat64()*stddev + mean
-		if v < 0 {
-			v = 0
-		}
-		values = append(values, v)
-	}
-
-	for _, p := range []float64{50, 95, 99} {
-		got, err := computeApproxPercentileHdr(values, p)
-		if err != nil {
-			t.Fatalf("computeApproxPercentileHdr p%v: %v", p, err)
-		}
-		want := mean + stddev*normalInverseCDF(p/100.0)
-		tolerance := 0.1 * want
-		if math.Abs(got-want) > tolerance {
-			t.Errorf("p%v = %.2f, want ~%.2f (±%.2f)", p, got, want, tolerance)
-		}
-	}
-}
-
-// TestComputeApproxPercentilesHdr_DirectCall drives the multi-percentile
-// helper directly, asserting that a SINGLE HdrHistogram feeds p50/p95/p99
-// in one pass. Keys are the unadorned numeric percentile strings ("50",
-// "95", "99") so JSON response consumers can round-trip them without
-// parsing a prefix.
-func TestComputeApproxPercentilesHdr_DirectCall(t *testing.T) {
-	const (
-		n      = 10000
-		mean   = 5000.0
-		stddev = 1000.0
-	)
-	r := rand.New(rand.NewSource(11))
-	values := make([]float64, 0, n)
-	for i := 0; i < n; i++ {
-		v := r.NormFloat64()*stddev + mean
-		if v < 0 {
-			v = 0
-		}
-		values = append(values, v)
-	}
-
-	got, err := computeApproxPercentilesHdr(values, []float64{50, 95, 99})
-	if err != nil {
-		t.Fatalf("computeApproxPercentilesHdr: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("len(got) = %d, want 3", len(got))
-	}
-	for _, p := range []float64{50, 95, 99} {
-		key := fmt.Sprintf("%g", p)
-		v, ok := got[key]
-		if !ok {
-			t.Fatalf("missing key %q in %v", key, got)
-		}
-		want := mean + stddev*normalInverseCDF(p/100.0)
-		tolerance := 0.1 * want
-		if math.Abs(v-want) > tolerance {
-			t.Errorf("p%v = %.2f, want ~%.2f (±%.2f)", p, v, want, tolerance)
-		}
 	}
 }
 

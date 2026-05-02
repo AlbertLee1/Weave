@@ -27,22 +27,22 @@ import (
 )
 
 // TestPercentileGroupBy_NorthwindFreightByCountry is the Phase 6 cross-US test
-// pairing US-016/US-017 (HdrHistogram-backed approxPercentile + multi-percentile)
-// with the groupBy pipeline (US-013) and accuracy marker (US-014).
+// pairing US-016/US-017/US-368 (t-digest-backed approxPercentile + multi-
+// percentile) with the groupBy pipeline (US-013) and accuracy marker (US-014).
 //
 // It seeds the real Northwind orders fixture into a Bleve index, then POSTs to
 // /objectSets/aggregate asking for the p95 of `freight` grouped by `shipCountry`
 // (a not_analyzed string typeclass field, so term buckets split cleanly). The
-// per-bucket approximation is compared against a sort-based exact percentile
-// computed directly from the seeded values; the assertion is that relative
-// error stays ≤ 5%, matching the Foundry parity target from US-018.
+// per-bucket approximation is compared against a t-digest-convention reference
+// percentile computed directly from the seeded values; the assertion is that
+// relative error stays ≤ 5%.
 //
 // The test runs twice to exercise both contract shapes:
 //
 //  1. Scalar percentile (Percentile: &p95) — MetricValue.Value is float64.
 //  2. Multi-percentile ([50, 95, 99])       — MetricValue.Value is
 //     map[string]float64 keyed by the percentile string. This verifies that
-//     a single HdrHistogram pass drives multiple percentiles per group, which
+//     a single t-digest pass drives multiple percentiles per group, which
 //     is the interesting shared-work path at aggregation scale.
 //
 // On top of the per-bucket numeric check, the top-level `accuracy` field must
@@ -178,7 +178,7 @@ func TestPercentileGroupBy_NorthwindFreightByCountry(t *testing.T) {
 	const (
 		relTol     = 0.05 // US-018 5% bound
 		absTol     = 0.01 // guard against tiny denominators
-		minBucketN = 10   // skip microscopic buckets where nearest-rank/Hdr rounding dominates
+		minBucketN = 10   // skip microscopic buckets where percentile-definition rounding dominates
 	)
 
 	// ---- Call 1: scalar p95 per shipCountry --------------------------------
@@ -341,47 +341,52 @@ func TestPercentileGroupBy_NorthwindFreightByCountry(t *testing.T) {
 }
 
 // referencePercentileForBucket is the ground-truth percentile used to bound
-// the HdrHistogram approximation per country bucket. It mirrors the same
-// rank-rounding as hdrhistogram-go's Histogram.ValueAtPercentile:
+// the t-digest approximation per country bucket. It mirrors the t-digest
+// (influxdata/tdigest) Quantile interpolation when every centroid carries
+// unit weight (which holds for any bucket smaller than the digest's
+// processedSize cap). With unit-weight centroids the cumulative weights
+// land on half-integers (0.5, 1.5, …, n−0.5), so a percentile request of
+// q = P/100 reduces to a linear interpolation between the two flanking
+// sorted values.
 //
-//	count = int64((P/100)*N + 0.5); max(1); min(N)
-//	return sorted[count-1]
-//
-// Nearest-rank (ceil) would be an equally valid percentile definition, but it
-// disagrees with HdrHistogram for small N (Argentina N=16 at p95: nearest-rank
-// → sorted[15]=217.86 vs HdrHistogram → sorted[14]=90.85, one full rank
-// apart). Since US-036 is checking approximation quality, not contending
-// definitions, the reference uses the same tie-breaking as the algorithm; the
-// remaining delta is purely HdrHistogram's 3-sig-fig bucket precision, which
-// stays well inside the 5% relative tolerance imposed below.
+// Linear-interpolation reference disagrees with the simpler nearest-rank
+// definition for small N (Argentina N=16 at p95: nearest-rank → sorted[15]
+// vs t-digest → 0.3·sorted[14] + 0.7·sorted[15], one full rank apart).
+// Using the same tie-breaking as the algorithm under test keeps the
+// 5% relative-tolerance assertion meaningful instead of asserting a
+// definitional mismatch.
 func referencePercentileForBucket(values []float64, percentile float64) float64 {
 	if len(values) == 0 {
 		return math.NaN()
 	}
-	sorted := make([]float64, len(values))
+	n := len(values)
+	sorted := make([]float64, n)
 	copy(sorted, values)
 	sort.Float64s(sorted)
 	if percentile <= 0 {
 		return sorted[0]
 	}
 	if percentile >= 100 {
-		return sorted[len(sorted)-1]
+		return sorted[n-1]
 	}
-	count := int((percentile/100.0)*float64(len(sorted)) + 0.5)
-	if count < 1 {
-		count = 1
+	index := (percentile / 100.0) * float64(n)
+	if index <= 0.5 {
+		return sorted[0]
 	}
-	if count > len(sorted) {
-		count = len(sorted)
+	if index >= float64(n)-0.5 {
+		return sorted[n-1]
 	}
-	return sorted[count-1]
+	lower := int(math.Ceil(index - 0.5))
+	z1 := index - (float64(lower) - 0.5)
+	z2 := (float64(lower) + 0.5) - index
+	return (z2*sorted[lower-1] + z1*sorted[lower]) / (z1 + z2)
 }
 
-// percentileWithinTolerance compares a percentile approximation against an
-// exact reference using the looser of `relTol` relative error and `absTol`
-// absolute error. The absolute floor prevents false positives when the exact
-// value is unusually small — freight values as low as 0.3 exist in Northwind
-// and would otherwise make any rounding explode the relative error.
+// percentileWithinTolerance compares a percentile approximation against the
+// reference using the looser of `relTol` relative error and `absTol`
+// absolute error. The absolute floor prevents false positives when the
+// reference is unusually small — freight values as low as 0.3 exist in
+// Northwind and would otherwise make any rounding explode the relative error.
 func percentileWithinTolerance(got, want, relTol, absTol float64) bool {
 	if math.IsNaN(got) || math.IsNaN(want) {
 		return false

@@ -12,6 +12,7 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - `pkg/oss/objectset/searcharound_path_test.go::seedMultiHopIndex` accepts `testing.TB` so unit tests AND benchmarks can share it. `multiHopResolver` is the canonical in-memory `LinkResolver` for path-traversal tests — it implements `ResolveLinkedObjectsByAPIName` (forward), `ResolveLinkedReverseByAPIName` (reverse), `ResolveTargetObjectType` and `ResolveTargetObjectTypeDir`. Bench paths should root at `Type:"static"` rather than `Type:"base"` to bypass Bleve in measurement loops; `Type:"base"` with the 10K cap can hang the in-memory Bleve index.
 - `aggregation.AggregationRequest.Accuracy` is the Palantir-style request-level toggle (`ALLOW_APPROXIMATE` default, `REQUIRE_ACCURATE` opt-in). `computeMetrics(idx, baseQuery, specs, accuracyMode)` is the chokepoint that routes `approximateDistinct` → exact and `approximatePercentile` → sort-based exact when `REQUIRE_ACCURATE` is set. The fourth return value (`approximate bool`) flags when an approximate algorithm actually fired so the response.accuracy column reflects runtime truth, not just user intent. When adding a new approximate aggregation, route both the exact-fallback path AND the approximate-flag bookkeeping through this helper rather than emitting accuracy from the call site.
 - HLL sparse-exact threshold: `1<<(precision-2)` (4096 at default p=14). Below this cardinality the axiomhq sketch is in its sparse compressed-list mode and returns byte-exact counts; above it transitions to dense estimation. Use `sparseExactThreshold(precision)` from `bleve_agg.go` rather than hard-coding the boundary, so a future precision change keeps the response.accuracy verdict consistent.
+- `approximatePercentile` runs through `pkg/oss/aggregation/tdigest_percentile.go` (influxdata/tdigest) at compression `DefaultTDigestCompression=100`. That cap is the steady-state memory contract: max processed centroids `2c` + max unprocessed `8c` ≈ 16000 bytes ≤ 16 KiB ceiling (tested at 1M points). When a bucket has unit-weight centroids (any size below the digest's processed cap), Quantile reduces to *linear interpolation between two flanking sorted values at half-integer cumulative weights* — disagrees with HdrHistogram's nearest-rank/3-sig-fig convention, so any percentile reference test must use the same interpolation formula (see `phase6_percentile_groupby_test.go::referencePercentileForBucket`). HdrHistogram is no longer in the dependency graph.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
 
@@ -124,4 +125,47 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - When widening a function signature (3 returns → 4 returns) the cleanest cross-package strategy is: (a) update the production path consumers, (b) sweep dead-code call sites with `_, _, _, _ = ...` to keep them compiling without behavioural drift, (c) leave them as `AccuracyAllowApproximate` defaults rather than threading the new param. The legacy `groupByExact` family in `engine.go` is unreferenced by the active path (`recursiveGroupBy`) but I kept them mechanically functional for ABI stability.
 - `approxPercentilesFromIndex` returns `interface{}` (map for multi, float64 for single) — pre-existing legacy shape. The new `exactPercentileFromIndex` mirrors that shape, accepting both `single *float64` AND `multi []float64` so the bleve_agg dispatch stays uniform. If you add another percentile mode, follow the same dual-arg convention.
 - `runSubAggregations` previously synthesised a child `AggregationRequest` without `Accuracy` — that's a silent inheritance bug for nested specs. The fix is one-line (`Accuracy: accuracyMode`) but worth noting: sub-aggregation children DO inherit their parent's accuracy mode, otherwise REQUIRE_ACCURATE would only apply at the top level.
+---
+
+## 2026-05-02 - US-368 - Aggregation t-digest percentile
+
+**Implementation:**
+- `pkg/oss/aggregation/tdigest_percentile.go` (new): `computeApproxPercentileTDigest` and `computeApproxPercentilesTDigest` are the package-private engines for single- and multi-percentile aggregation. Both feed every numeric value into a fresh `tdigest.NewWithCompression(DefaultTDigestCompression=100)` digest and call `Quantile(p/100)`. Constant chosen so the digest holds at most `2c=200` processed + `8c=800` unprocessed centroids = 16000 bytes ≤ 16 KiB ceiling.
+- `pkg/oss/aggregation/approx_percentile.go`: replaced the HdrHistogram-backed `computeApproxPercentileHdr`, `computeApproxPercentilesHdr`, and `buildHistogram` helpers with thin t-digest dispatchers. `approxPercentileFromIndex` and `approxPercentilesFromIndex` now share a single `scanNumericField` helper that pulls hits from Bleve and extracts the float64 field, then hand off to the t-digest helper. `exactPercentileFromIndex` and `nearestRank` (REQUIRE_ACCURATE path) untouched — same shape, same semantics.
+- `pkg/oss/aggregation/engine.go` + `pkg/oss/aggregation/bleve_agg.go`: comment refresh — Accuracy doc now mentions t-digest, AggregationSpec.Percentiles describes the single t-digest pass, and `computeMetrics`'s third return is documented as the t-digest approximate flag.
+- `go.mod` / `go.sum`: added `github.com/influxdata/tdigest v0.0.1`, dropped `github.com/HdrHistogram/hdrhistogram-go` (no longer referenced after the rewrite). `go mod tidy` is clean.
+
+**Files changed:**
+- `pkg/oss/aggregation/tdigest_percentile.go` (new)
+- `pkg/oss/aggregation/tdigest_percentile_test.go` (new — 5 unit tests + memory gate + 1M bench)
+- `pkg/oss/aggregation/approx_percentile.go` (rewritten — HdrHistogram → t-digest)
+- `pkg/oss/aggregation/percentile_test.go` (removed `TestComputeApproxPercentileHdr_DirectCall` and `TestComputeApproxPercentilesHdr_DirectCall`; refreshed comments)
+- `pkg/oss/aggregation/percentile_bench_test.go` (kept the shared `gaussian10k`, `exactPercentileSort`, `BenchmarkExactPercentileSort` ground-truth helpers; dropped the HdrHistogram-direct accuracy test and benches)
+- `pkg/oss/aggregation/engine.go` (comment refresh: Accuracy + Percentiles now mention t-digest)
+- `pkg/oss/aggregation/bleve_agg.go` (comment refresh: t-digest in approximate-flag doc)
+- `pkg/oss/aggregation/us367_accuracy_test.go` (comment refresh)
+- `test/integration/phase6/phase6_percentile_groupby_test.go` (`referencePercentileForBucket` rewritten to t-digest's linear-interpolation convention; comment refresh)
+- `go.mod`, `go.sum` (+ tdigest, − hdrhistogram-go)
+- `prd.json` (mark US-368 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` PASS across 60+ packages, including `pkg/oss/aggregation`, `test/e2e`, `test/foundry_parity`, `test/northwind` (196s), `test/chinook` (289s)
+- `go test -tags integration -run NEVERMATCH ./test/integration/phase6/...` confirms updated integration test still compiles
+- 5 new t-digest unit tests + 1M accuracy gate + 1M memory gate PASS:
+  - `TestComputeApproxPercentileTDigest_DirectCall` — 10k Gaussian within ±10% of analytic quantiles for p50/p90/p95/p99
+  - `TestComputeApproxPercentilesTDigest_DirectCall` — single-pass multi-percentile shape + accuracy
+  - `TestComputeApproxPercentileTDigest_VsExact` — 100k uniform p50/p90/p95/p99 ≤1% rel err vs exact (worst observed 0.000316)
+  - `TestApproximatePercentile_OneMillion_P99Under1Percent` — 1M Gaussian p99 rel err 0.0466% (PRD ≤1%)
+  - `TestApproximatePercentile_OneMillion_MemoryUnder16KB` — digest footprint 15832 B (PRD ≤16384 B)
+- `BenchmarkApproxPercentileTDigest_OneMillion-16  3  77,596,639 ns/op` ≈ 78 ms per 1M-point pass at p=99
+
+**Learnings for future iterations:**
+- `tdigest.NewWithCompression(100)` is the right knob for hitting the PRD's "1M points ≤ 16 KiB" memory budget. Default compression `1000` blows past 160 KiB. The library's centroid struct is two `float64`s (16 B), and the only structural caps are `2c` processed + `8c` unprocessed. Multiply by 16 to get the upper-bound footprint; the cumulative slice (≤ `2c+1` float64s) is the only meaningful add-on after `process()` runs.
+- For unit-weight centroids (every bucket smaller than `2c`), t-digest's `Quantile` is *linear interpolation between two consecutive sorted values at half-integer cumulative weights* — i.e., for `index = q·n`, `lower = ceil(index − 0.5)`, result = `(z2·v[lower-1] + z1·v[lower]) / (z1 + z2)` where `z1 = index − (lower − 0.5)`, `z2 = (lower + 0.5) − index`. Any test that wants to compare against an exact reference at small N must use this same convention; nearest-rank disagrees by a full bucket on small N (Argentina N=16 at p95: nearest-rank → sorted[15] vs t-digest → 0.3·sorted[14] + 0.7·sorted[15]).
+- The HdrHistogram dependency disappears entirely after this story. `go mod tidy` removes it from `go.mod`/`go.sum`. Future iterations don't need the `percentileScale = 1000.0` shift/scale dance — t-digest accepts any float64 (including negatives) directly without preprocessing.
+- The `TestApproximatePercentile_OneMillion_*` accuracy and memory gates are gated by `testing.Short()` so `go test -short` skips them, but `go test ./...` (the default) runs them. They take ~150 ms total — cheap enough to keep in the regular test path rather than -bench-only.
+- `digestFootprint(td)` is a deterministic upper-bound calculation rather than a runtime.MemStats delta, because allocator noise on `runtime.MemStats` made the latter approach non-portable. The accounting matches the library's slice/struct layout: processed cap × 16 B + maxUnprocessed cap × 16 B + (len(processed)+1) × 8 B + struct overhead.
+- `BenchmarkApproxPercentileTDigest_OneMillion` at b.N=1 measures the entire 1M-point ingest + Quantile cost, which makes per-op numbers dominated by allocator + sort time. If you need fine-grained Add-only timing, refactor to allocate the digest once outside the b.N loop and call `Add` inside; current bench keeps the e2e shape so the 78 ms/op is "what a real query would cost".
 ---
