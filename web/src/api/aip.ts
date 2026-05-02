@@ -23,7 +23,9 @@ export interface AIPToolCall {
 // AIPMessage mirrors pkg/aip.Message on the wire. Tool-call fields
 // (toolCalls / toolCallId / toolName) are populated on rows produced
 // by the function-calling chain (US-284) and absent on regular
-// system / user / assistant text turns.
+// system / user / assistant text turns. parentMessageId / branchId
+// arrived with US-374 to expose tree shape; legacy linear callers may
+// omit both.
 export interface AIPMessage {
   id: number;
   threadId: string;
@@ -33,7 +35,21 @@ export interface AIPMessage {
   toolCalls?: AIPToolCall[];
   toolCallId?: string;
   toolName?: string;
+  parentMessageId?: number | null;
+  branchId?: string;
   createdAt: string;
+}
+
+// AIPMessageTreeNode mirrors pkg/aip.MessageTreeNode on the wire. The
+// node carries every Message field flat (Go embeds *Message into the
+// struct) plus a children slice ordered by message id asc.
+export interface AIPMessageTreeNode extends AIPMessage {
+  children?: AIPMessageTreeNode[];
+}
+
+export interface ThreadTreeResponse {
+  threadId: string;
+  roots: AIPMessageTreeNode[];
 }
 
 export interface ListThreadsResponse {
@@ -101,6 +117,13 @@ export function deleteThread(threadId: string): Promise<void> {
   return request<void>(
     'DELETE',
     `/api/v2/aip/threads/${encodeURIComponent(threadId)}`,
+  );
+}
+
+export function getThreadTree(threadId: string): Promise<ThreadTreeResponse> {
+  return request<ThreadTreeResponse>(
+    'GET',
+    `/api/v2/aip/threads/${encodeURIComponent(threadId)}/tree`,
   );
 }
 

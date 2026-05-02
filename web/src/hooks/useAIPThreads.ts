@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createThread,
   deleteThread,
+  getThreadTree,
   listMessages,
   listThreads,
   sendMessage,
@@ -14,6 +15,7 @@ import {
 export const aipQueryKeys = {
   threads: ['aip', 'threads'] as const,
   messages: (threadId: string) => ['aip', 'messages', threadId] as const,
+  tree: (threadId: string) => ['aip', 'tree', threadId] as const,
 };
 
 export function useAIPThreads(enabled = true) {
@@ -28,6 +30,14 @@ export function useAIPMessages(threadId: string | null) {
   return useQuery({
     queryKey: threadId ? aipQueryKeys.messages(threadId) : ['aip', 'messages', '__none__'],
     queryFn: () => listMessages(threadId as string),
+    enabled: !!threadId,
+  });
+}
+
+export function useAIPThreadTree(threadId: string | null) {
+  return useQuery({
+    queryKey: threadId ? aipQueryKeys.tree(threadId) : ['aip', 'tree', '__none__'],
+    queryFn: () => getThreadTree(threadId as string),
     enabled: !!threadId,
   });
 }
@@ -69,6 +79,7 @@ export function useSendAIPMessage(threadId: string) {
     mutationFn: (body: SendMessageRequest) => sendMessage(threadId, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: aipQueryKeys.messages(threadId) });
+      qc.invalidateQueries({ queryKey: aipQueryKeys.tree(threadId) });
       qc.invalidateQueries({ queryKey: aipQueryKeys.threads });
     },
   });

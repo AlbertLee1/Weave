@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiRequestError } from '../../api/client';
-import type { AIPMessage, AIPThread } from '../../api/aip';
+import type { AIPMessage, AIPMessageTreeNode, AIPThread } from '../../api/aip';
 import {
   useAIPMessages,
+  useAIPThreadTree,
   useAIPThreads,
   useCreateAIPThread,
   useDeleteAIPThread,
@@ -384,6 +385,59 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
     [messagesQuery.data],
   );
 
+  const treeQuery = useAIPThreadTree(thread.id);
+  const treeRoots = useMemo<AIPMessageTreeNode[]>(
+    () => treeQuery.data?.roots ?? [],
+    [treeQuery.data],
+  );
+
+  // activeBranchTipId names the message that defines the visible branch
+  // chain (root → tip). Default = id of the latest message in the
+  // thread; clicking a tree node moves the tip and re-filters the
+  // messages list to the chain ending at the clicked node.
+  const [activeBranchTipId, setActiveBranchTipId] = useState<number | null>(null);
+
+  // Auto-pick the latest message as the default tip when the messages
+  // list first loads or the active thread changes. Once the user picks a
+  // tip explicitly we leave it alone so a refetch (e.g. after sending a
+  // message) doesn't yank the selection.
+  useEffect(() => {
+    if (messages.length === 0) return;
+    if (activeBranchTipId !== null && messages.some((m) => m.id === activeBranchTipId)) {
+      return;
+    }
+    const latest = messages.reduce(
+      (acc, m) => (acc === null || m.id > acc ? m.id : acc),
+      null as number | null,
+    );
+    setActiveBranchTipId(latest);
+  }, [messages, activeBranchTipId]);
+
+  // Drop the selection when the active thread changes so the next thread
+  // starts from its own latest message.
+  useEffect(() => {
+    setActiveBranchTipId(null);
+  }, [thread.id]);
+
+  const branchPathIds = useMemo(
+    () => computeBranchPath(messages, activeBranchTipId),
+    [messages, activeBranchTipId],
+  );
+  // hasParentLinks gates the branch filter: legacy threads pre-US-374
+  // ship messages without parent_message_id, in which case there is no
+  // tree shape to filter against — show the full list.
+  const hasParentLinks = useMemo(
+    () => messages.some((m) => m.parentMessageId != null),
+    [messages],
+  );
+  const branchMessages = useMemo(
+    () =>
+      hasParentLinks
+        ? messages.filter((m) => branchPathIds.has(m.id))
+        : messages,
+    [messages, branchPathIds, hasParentLinks],
+  );
+
   const [composerValue, setComposerValue] = useState('');
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -403,7 +457,7 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
     if (typeof fn === 'function') {
       scrollAnchorRef.current!.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, streamingChars]);
+  }, [branchMessages, streamingChars]);
 
   // Streaming display tick. Reveals one character per STREAM_TICK_MS until
   // the assistant message is fully visible. Cleanup on dependency change
@@ -436,6 +490,10 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
           setComposerValue('');
           setStreamingMessageId(resp.assistantMessage.id);
           setStreamingChars(0);
+          // The new turn extends whichever branch was active before.
+          // Promote the tip to the freshly-arrived assistant message so
+          // it stays visible after the messages refetch.
+          setActiveBranchTipId(resp.assistantMessage.id);
         },
         onError: (err) => setComposerError(describeError(err)),
       },
@@ -483,47 +541,57 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
         </div>
       </header>
 
-      <div
-        className="flex-1 overflow-y-auto px-4 py-4"
-        data-testid="thread-messages"
-      >
-        {messagesQuery.isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <LoadingSpinner />
-          </div>
-        ) : messagesQuery.isError ? (
-          <div
-            role="alert"
-            className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
-          >
-            {describeError(messagesQuery.error)}
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="py-10 text-center text-xs text-text-secondary">
-            No messages yet. Send the first message to get started.
-          </div>
-        ) : (
-          <ul className="space-y-4">
-            {messages.map((msg) => {
-              const isStreaming = msg.id === streamingMessageId;
-              const renderedContent = isStreaming
-                ? msg.content.slice(0, streamingChars)
-                : msg.content;
-              return (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  rendered={renderedContent}
-                  streaming={
-                    isStreaming && streamingChars < msg.content.length
-                  }
-                />
-              );
-            })}
-            {sendMutation.isPending && <PendingAssistantPlaceholder />}
-          </ul>
-        )}
-        <div ref={scrollAnchorRef} aria-hidden />
+      <div className="flex flex-1 overflow-hidden">
+        <ThreadTreePanel
+          roots={treeRoots}
+          loading={treeQuery.isLoading}
+          error={treeQuery.error}
+          activeBranchTipId={activeBranchTipId}
+          branchPathIds={branchPathIds}
+          onSelect={setActiveBranchTipId}
+        />
+        <div
+          className="flex-1 overflow-y-auto px-4 py-4"
+          data-testid="thread-messages"
+        >
+          {messagesQuery.isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <LoadingSpinner />
+            </div>
+          ) : messagesQuery.isError ? (
+            <div
+              role="alert"
+              className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
+            >
+              {describeError(messagesQuery.error)}
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="py-10 text-center text-xs text-text-secondary">
+              No messages yet. Send the first message to get started.
+            </div>
+          ) : (
+            <ul className="space-y-4">
+              {branchMessages.map((msg) => {
+                const isStreaming = msg.id === streamingMessageId;
+                const renderedContent = isStreaming
+                  ? msg.content.slice(0, streamingChars)
+                  : msg.content;
+                return (
+                  <MessageBubble
+                    key={msg.id}
+                    message={msg}
+                    rendered={renderedContent}
+                    streaming={
+                      isStreaming && streamingChars < msg.content.length
+                    }
+                  />
+                );
+              })}
+              {sendMutation.isPending && <PendingAssistantPlaceholder />}
+            </ul>
+          )}
+          <div ref={scrollAnchorRef} aria-hidden />
+        </div>
       </div>
 
       <footer className="border-t border-border/50 p-3">
@@ -607,6 +675,182 @@ function MessageBubble({ message, rendered, streaming }: MessageBubbleProps) {
       </div>
     </li>
   );
+}
+
+interface ThreadTreePanelProps {
+  roots: AIPMessageTreeNode[];
+  loading: boolean;
+  error: unknown;
+  activeBranchTipId: number | null;
+  branchPathIds: Set<number>;
+  onSelect: (id: number) => void;
+}
+
+function ThreadTreePanel({
+  roots,
+  loading,
+  error,
+  activeBranchTipId,
+  branchPathIds,
+  onSelect,
+}: ThreadTreePanelProps) {
+  return (
+    <aside
+      className="flex w-60 shrink-0 flex-col border-r border-border/50 bg-bg-primary/40"
+      aria-label="Message tree"
+      data-testid="thread-tree-panel"
+    >
+      <div className="border-b border-border/50 px-3 py-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+          Branches
+        </h3>
+        <p className="text-[10px] text-text-secondary">
+          Click a node to switch the active branch.
+        </p>
+      </div>
+      <div className="flex-1 overflow-y-auto px-2 py-2">
+        {loading ? (
+          <div className="flex items-center justify-center py-6">
+            <LoadingSpinner />
+          </div>
+        ) : error ? (
+          <div
+            role="alert"
+            data-testid="thread-tree-error"
+            className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-300"
+          >
+            {describeError(error)}
+          </div>
+        ) : roots.length === 0 ? (
+          <div
+            data-testid="thread-tree-empty"
+            className="py-4 text-center text-[11px] text-text-secondary"
+          >
+            No messages yet.
+          </div>
+        ) : (
+          <ul className="space-y-1">
+            {roots.map((root) => (
+              <ThreadTreeNode
+                key={root.id}
+                node={root}
+                depth={0}
+                activeBranchTipId={activeBranchTipId}
+                branchPathIds={branchPathIds}
+                onSelect={onSelect}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+interface ThreadTreeNodeProps {
+  node: AIPMessageTreeNode;
+  depth: number;
+  activeBranchTipId: number | null;
+  branchPathIds: Set<number>;
+  onSelect: (id: number) => void;
+}
+
+function ThreadTreeNode({
+  node,
+  depth,
+  activeBranchTipId,
+  branchPathIds,
+  onSelect,
+}: ThreadTreeNodeProps) {
+  const isOnBranch = branchPathIds.has(node.id);
+  const isTip = activeBranchTipId === node.id;
+  const preview = node.content.trim().slice(0, 48) || `(${node.role})`;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(node.id)}
+        data-testid="thread-tree-node"
+        data-message-id={node.id}
+        data-on-branch={isOnBranch ? 'true' : 'false'}
+        data-active-tip={isTip ? 'true' : 'false'}
+        aria-current={isTip ? 'true' : undefined}
+        style={{ paddingLeft: 8 + depth * 12 }}
+        className={`flex w-full flex-col gap-0.5 rounded-md py-1.5 pr-2 text-left text-[11px] transition-colors ${
+          isTip
+            ? 'border border-amber-500/50 bg-amber-500/15 text-text-primary'
+            : isOnBranch
+            ? 'border border-amber-500/20 bg-amber-500/5 text-text-primary'
+            : 'border border-transparent text-text-secondary hover:bg-bg-tertiary/50'
+        }`}
+      >
+        <div className="flex items-center gap-1.5">
+          <span
+            className="font-mono uppercase tracking-wider"
+            data-testid="thread-tree-node-role"
+          >
+            {node.role}
+          </span>
+          {node.branchId && node.branchId !== 'main' && (
+            <span
+              className="rounded-sm bg-fuchsia-500/15 px-1 font-mono text-[9px] uppercase tracking-wider text-fuchsia-300"
+              data-testid="thread-tree-node-branch"
+            >
+              {node.branchId}
+            </span>
+          )}
+          <span className="ml-auto font-mono text-[9px] text-text-secondary">
+            #{node.id}
+          </span>
+        </div>
+        <span
+          className="truncate text-[11px] leading-tight"
+          data-testid="thread-tree-node-preview"
+          title={node.content}
+        >
+          {preview}
+        </span>
+      </button>
+      {node.children && node.children.length > 0 && (
+        <ul className="space-y-1">
+          {node.children.map((child) => (
+            <ThreadTreeNode
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              activeBranchTipId={activeBranchTipId}
+              branchPathIds={branchPathIds}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+// computeBranchPath walks parent_message_id from `tipId` up to the root
+// and returns every id on the chain. Orphan ancestors (parent id points
+// outside the slice) terminate the walk cleanly without polluting the
+// returned set, so callers using the result for `messages.filter` get a
+// crisp branch view.
+export function computeBranchPath(
+  messages: AIPMessage[],
+  tipId: number | null,
+): Set<number> {
+  if (tipId === null) return new Set();
+  const byId = new Map<number, AIPMessage>();
+  for (const m of messages) byId.set(m.id, m);
+  const path = new Set<number>();
+  let current: number | null | undefined = tipId;
+  while (current !== null && current !== undefined) {
+    if (path.has(current)) break;
+    const node = byId.get(current);
+    if (!node) break;
+    path.add(current);
+    current = node.parentMessageId ?? null;
+  }
+  return path;
 }
 
 function PendingAssistantPlaceholder() {
