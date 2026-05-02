@@ -8,6 +8,8 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Migration numbering convention: zero-padded `000NNN_description.{up,down}.sql`. Migrations are run with `golang-migrate`. As of US-365 the tip is migration 000082.
 - Test build tags: unit tests run by default; `//go:build integration` tests need `go test -tags integration` and use `internal/testutil.StartPGContainer(t)` to boot a real Postgres container. The `ListEntries` helper on the in-memory `Store` is the canonical way to introspect ephemeral entries from tests.
 - For canonical-JSON hashing across the codebase, prefer the `objectset.HashDefinition` helper (sorts keys, sha256 hex). Calling `json.Marshal` first is fine — the helper canonicalises again.
+- Executor errors that need a non-default APIError mapping should be sentinels in `pkg/oss/objectset/executor.go` (e.g. `ErrQueryTooLarge`) and translated by the `executeError(err) *apierror.APIError` helper in `pkg/oss/objectset/handler.go`. All `h.executor.Execute` callers in this package go through that helper instead of hand-rolling `apierror.NewInvalidParameter("ObjectSetFailed", …)`. Add an `apierror.New<Code>` constructor in `pkg/apierror/error.go` for the wire-format code (e.g. `WEAVE_QUERY_TOO_LARGE` → 422).
+- `pkg/oss/objectset/searcharound_path_test.go::seedMultiHopIndex` accepts `testing.TB` so unit tests AND benchmarks can share it. `multiHopResolver` is the canonical in-memory `LinkResolver` for path-traversal tests — it implements `ResolveLinkedObjectsByAPIName` (forward), `ResolveLinkedReverseByAPIName` (reverse), `ResolveTargetObjectType` and `ResolveTargetObjectTypeDir`. Bench paths should root at `Type:"static"` rather than `Type:"base"` to bypass Bleve in measurement loops; `Type:"base"` with the 10K cap can hang the in-memory Bleve index.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
 
@@ -45,4 +47,40 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - `gofmt` rewrites the column-aligned struct field comments — keep them as plain bullet points or expect a fmt round.
 - The acceptance criterion mentions a `/saveObjectSet` endpoint that does not exist in the codebase. The `CreateSnapshot` POST route (US-224) IS the durable-save path; satisfying the byte-for-byte invariant relies on its frozen-PK persistence. Future work may add `/saveObjectSet` proper — the `PGSavedStore` is ready.
 - The TTL scheduler is delivered as `PGSavedStore.RunReaperLoop` rather than wired directly into `cmd/server/main.go`. Wiring is one Go statement once `PGSavedStore` is constructed: `go store.RunReaperLoop(rootCtx, time.Minute, time.Hour, nil, log.Println)`.
+---
+
+## 2026-05-02 - US-366 - searchAround 多跳与 cycle detection
+
+**Implementation:**
+- `pkg/oss/objectset/executor.go::executeSearchAroundPath` now maintains a cross-hop `visited` set keyed by `(objectType, primaryKey)` (canonical helper `visitedKey`). The set is seeded with the inner ObjectSet's PKs so paths that step back to the origin (A→B→A direct loop) shrink to zero on hop 2. After each hop's resolver call the executor dedups within the hop, then prunes any PKs already present in `visited`, then records the survivors in `visited` for subsequent hops. Triangle / longer cycles (A→B→C→A) terminate cleanly with an empty result instead of re-walking the source.
+- New constant `SearchAroundIntermediateCap = 1_000_000` and sentinel `var ErrQueryTooLarge` (wraps the literal `WEAVE_QUERY_TOO_LARGE` marker). The walk aborts when either the seed set OR any post-prune intermediate set exceeds the cap; the wrapped error carries the offending hop index, link API name and the actual size for caller diagnostics.
+- `pkg/apierror/error.go::NewQueryTooLarge` produces the new wire-format code `WEAVE_QUERY_TOO_LARGE` at HTTP 422.
+- `pkg/oss/objectset/handler.go::executeError(err)` is the single chokepoint for executor → APIError translation: it special-cases `errors.Is(err, ErrQueryTooLarge)` → 422 and falls back to the historical `INVALID_ARGUMENT "ObjectSetFailed"` envelope. All four call sites in the package (handler.go LoadObjects + Aggregate, handler_preview.go Preview, snapshot_persisted.go CreateSnapshot) now route through it. The `loadLinks` legacy single-link surface in handler_objectset.go was left on its existing `LoadLinksFailed` envelope because it never triggers the path-traversal cap.
+- `pkg/oss/objectset/searcharound_us366_test.go` adds 4 unit tests (direct A→B→A loop, A→B→C→A triangle, fresh-PK regression, 1M+1 oversize abort) plus `BenchmarkExecute_SearchAround_Path_ThreeHops_10K`. Bench rooted at `Type:"static"` so it isolates the path-traversal cost (visited-set + dedup + resolver dispatch) without Bleve overhead.
+- `pkg/oss/objectset/searcharound_path_test.go::TestExecute_SearchAround_Path_MixedDirection` updated for the new contract: e1 (the seed) is pruned by cycle detection so the result is `{e2, e3}` instead of the old `{e1, e2, e3}`. `seedMultiHopIndex` widened from `*testing.T` to `testing.TB` so the bench reuses it.
+
+**Files changed:**
+- `pkg/oss/objectset/executor.go` (US-366 visited-set + intermediate-cap guard in `executeSearchAroundPath`; new `SearchAroundIntermediateCap`, `ErrQueryTooLarge`, `visitedKey`)
+- `pkg/oss/objectset/handler.go` (new `executeError` helper; LoadObjects + Aggregate call sites)
+- `pkg/oss/objectset/handler_preview.go` (route through `executeError`)
+- `pkg/oss/objectset/snapshot_persisted.go` (route through `executeError`)
+- `pkg/oss/objectset/searcharound_us366_test.go` (new — 4 unit tests + 3-hop benchmark)
+- `pkg/oss/objectset/searcharound_path_test.go` (`seedMultiHopIndex` accepts `testing.TB`; mixed-direction test asserts cycle prune)
+- `pkg/apierror/error.go` (new `NewQueryTooLarge` constructor)
+- `prd.json` (mark US-366 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` all green (tested ~50 packages including `pkg/oss/objectset`, `pkg/oss`, e2e, northwind, chinook)
+- 4 new unit tests pass: `TestExecute_SearchAround_Path_CycleDetection_DirectLoop`, `TestExecute_SearchAround_Path_CycleDetection_Triangle`, `TestExecute_SearchAround_Path_CycleDetection_DoesNotPruneFreshNodes`, `TestExecute_SearchAround_Path_TooLarge_AbortsHop`
+- Benchmark: `BenchmarkExecute_SearchAround_Path_ThreeHops_10K-16  10  2,551,662 ns/op` ≈ 2.6 ms — well under the 200 ms PRD threshold (~80× headroom)
+
+**Learnings for future iterations:**
+- The `executeSearchAroundPath` visited set is keyed by `(objectType, pk)` not just `pk`, because path traversals legitimately revisit the *same PK string* at *different ObjectTypes* (e.g. a numeric "1" PK appearing as both Order and Customer). A pk-only key would over-prune. The NUL-separator (`"\x00"`) is safe — Weave's RID format and ObjectType API names disallow NUL.
+- Cycle detection seeds `visited` with the inner ObjectSet PKs at the inner set's ObjectType. This means the previous behaviour where reverse traversal returned the seed verbatim (e.g. employee→dept→reverse-employee yielded the original employee) is now suppressed. One existing test (`TestExecute_SearchAround_Path_MixedDirection`) had to be updated — the expected return set is now the *peers* of the seed, not the seed itself. If you find more callers that depend on "starting object echoed back", document it as a usage migration, not a regression.
+- Intermediate cap of 1M is generous on purpose — typical fanouts in northwind / chinook stay sub-100K. The cap exists primarily to break runaway resolvers (e.g. a misconfigured M2M link returning the cartesian join). Surface a clear `cap` parameter in the APIError so SDK users know what threshold they tripped.
+- Bench rule of thumb: when `Type:"base"` is the inner set, `searchReq.Size = BaseExecutionCap (10000)` against an in-memory Bleve index can hang for minutes per iteration. Use `Type:"static"` with a pre-built PK slice to isolate the searchAround executor's own cost. If you actually want to bench Bleve+searchAround end-to-end, allocate a real disk-backed index and seed in batches.
+- The `executeError` helper in `pkg/oss/objectset/handler.go` is the new chokepoint for executor → APIError translation. Before adding a new typed executor error, define the sentinel in `executor.go`, add the `apierror.New<Code>` constructor in `pkg/apierror/error.go`, and route through `executeError`. Don't rebuild the switch ladder per handler.
+- `loadLinks` (handler_objectset.go) wraps a single-link searchAround so it cannot trip the path-traversal cap. Leaving it on its existing `LoadLinksFailed` envelope is intentional; promoting it to `executeError` would just add an unused branch.
 ---

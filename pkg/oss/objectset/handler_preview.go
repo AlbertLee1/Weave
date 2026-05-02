@@ -78,7 +78,7 @@ func (h *Handler) loadPreview(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executor.Execute(ctx, req.ObjectSet)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, executeError(err))
 		return
 	}
 

@@ -131,9 +131,7 @@ func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	ctx := WithOntologyScope(r.Context(), ontologyAPIName)
 	result, err := h.executor.Execute(ctx, def)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{
-			"error": err.Error(),
-		}))
+		apierror.WriteJSON(w, executeError(err))
 		return
 	}
 

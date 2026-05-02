@@ -3,6 +3,7 @@ package objectset
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -147,6 +148,21 @@ func mergePolicyQuery(userQ, policyQ query.Query) query.Query {
 // Truncated flag is set so callers can warn the user that the answer is
 // approximate.
 const BaseExecutionCap = 10000
+
+// SearchAroundIntermediateCap bounds the deduped working set between hops in
+// a multi-hop searchAround path traversal (US-366). Crossing it aborts the
+// walk with ErrQueryTooLarge so callers receive a typed 422 instead of
+// silently OOM-ing the executor. The threshold is intentionally generous —
+// a single intermediate hop carrying ~1M primary keys is already a sign the
+// caller should pre-filter the inner ObjectSet.
+const SearchAroundIntermediateCap = 1_000_000
+
+// ErrQueryTooLarge is returned by a multi-hop searchAround whose intermediate
+// working set exceeds SearchAroundIntermediateCap. The handler layer (see
+// pkg/oss/objectset/handler.go) maps it to APIError code
+// WEAVE_QUERY_TOO_LARGE / HTTP 422 so SDK clients can surface a stable code
+// instead of parsing the wrapped error message.
+var ErrQueryTooLarge = errors.New("WEAVE_QUERY_TOO_LARGE: searchAround intermediate result exceeds cap")
 
 // Result holds the execution result.
 type Result struct {
@@ -663,6 +679,19 @@ type reverseLinkFinder interface {
 // with a descriptive error so cross-hop paths fail loudly instead of
 // silently walking the wrong index.
 //
+// Cycle detection (US-366): the executor maintains a cross-hop visited set
+// keyed by (objectType, primaryKey). After each hop's resolver call, PKs
+// already seen at the same ObjectType are pruned so traversals like
+// A→B→A→B do not re-walk previously visited nodes (and therefore terminate
+// in finite work even when path length and the link graph could in
+// principle cycle indefinitely). The visited set is seeded with the source
+// PKs so paths that step back to the origin shrink to zero on hop 1.
+//
+// Intermediate-size cap (US-366): when the deduped+pruned working set
+// crosses SearchAroundIntermediateCap the walk aborts with ErrQueryTooLarge
+// — the handler maps this to WEAVE_QUERY_TOO_LARGE / HTTP 422 so callers
+// see a stable error code instead of an OOM.
+//
 // Edge-property enrichment is intentionally not surfaced for path-based
 // searchAround; the single-hop shape remains the channel for per-edge props.
 func (e *Executor) executeSearchAroundPath(ctx context.Context, def *Definition) (*Result, error) {
@@ -674,6 +703,18 @@ func (e *Executor) executeSearchAroundPath(ctx context.Context, def *Definition)
 	currentType := sourceResult.ObjectType
 	currentPKs := sourceResult.PrimaryKeys
 	truncated := sourceResult.Truncated
+
+	// Cross-hop visited set keyed by "objectType\x00primaryKey". Seeded with
+	// the source set so the very first hop already prunes any link that
+	// loops back to the origin.
+	visited := make(map[string]bool, len(currentPKs))
+	for _, pk := range currentPKs {
+		visited[visitedKey(currentType, pk)] = true
+	}
+	if len(currentPKs) > SearchAroundIntermediateCap {
+		return nil, fmt.Errorf("%w: source set has %d primary keys (cap %d)",
+			ErrQueryTooLarge, len(currentPKs), SearchAroundIntermediateCap)
+	}
 
 	for i, step := range def.Path {
 		dir, err := links.ParseDirection(step.Direction)
@@ -693,16 +734,22 @@ func (e *Executor) executeSearchAroundPath(ctx context.Context, def *Definition)
 				i, step.Link, step.ExpectedObjectType, resolvedTargetType)
 		}
 
+		// Resolve the next-hop ObjectType up front so empty intermediate
+		// sets still pick the right currentType when we short-circuit.
+		nextType := ""
+		switch {
+		case resolvedTargetType != "":
+			nextType = resolvedTargetType
+		case step.ExpectedObjectType != "":
+			nextType = step.ExpectedObjectType
+		}
+
 		if len(currentPKs) == 0 {
 			// Empty sets stay empty through subsequent hops; pick the best
 			// known target type so downstream callers still see the right
 			// result.ObjectType.
 			currentPKs = nil
-			if step.ExpectedObjectType != "" {
-				currentType = step.ExpectedObjectType
-			} else if resolvedTargetType != "" {
-				currentType = resolvedTargetType
-			}
+			currentType = nextType
 			continue
 		}
 
@@ -721,15 +768,29 @@ func (e *Executor) executeSearchAroundPath(ctx context.Context, def *Definition)
 		}
 		nextPKs = dedupeStrings(nextPKs)
 
-		// Advance: next hop reads from the resolved (or declared) target type.
-		switch {
-		case resolvedTargetType != "":
-			currentType = resolvedTargetType
-		case step.ExpectedObjectType != "":
-			currentType = step.ExpectedObjectType
-		default:
-			currentType = ""
+		// Cycle prune: drop any PK we've already visited at this
+		// ObjectType. The remaining set is what the *next* hop reads from
+		// and is also what the final result.PrimaryKeys returns when this
+		// is the last step.
+		if len(nextPKs) > 0 {
+			pruned := nextPKs[:0]
+			for _, pk := range nextPKs {
+				key := visitedKey(nextType, pk)
+				if visited[key] {
+					continue
+				}
+				visited[key] = true
+				pruned = append(pruned, pk)
+			}
+			nextPKs = pruned
 		}
+
+		if len(nextPKs) > SearchAroundIntermediateCap {
+			return nil, fmt.Errorf("%w: hop %d (link %q) produced %d primary keys (cap %d)",
+				ErrQueryTooLarge, i, step.Link, len(nextPKs), SearchAroundIntermediateCap)
+		}
+
+		currentType = nextType
 		currentPKs = nextPKs
 	}
 
@@ -738,6 +799,13 @@ func (e *Executor) executeSearchAroundPath(ctx context.Context, def *Definition)
 		PrimaryKeys: currentPKs,
 		Truncated:   truncated,
 	}, nil
+}
+
+// visitedKey is the canonical map key for the cross-hop searchAround
+// cycle-prune set. Using a NUL separator keeps it injection-free since
+// neither ObjectType API names nor primary keys contain NUL.
+func visitedKey(objectType, pk string) string {
+	return objectType + "\x00" + pk
 }
 
 // dedupeStrings returns pks with duplicates removed while preserving the

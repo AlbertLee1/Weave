@@ -2,6 +2,7 @@ package objectset
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -159,6 +160,20 @@ func (h *Handler) applyPropertyVisibility(ctx context.Context, objectType string
 	return out, nil
 }
 
+// executeError maps an executor error to a typed APIError. Most failures
+// degrade to INVALID_ARGUMENT (the historical "ObjectSetFailed" envelope);
+// the multi-hop searchAround intermediate-cap breach (US-366) is promoted
+// to WEAVE_QUERY_TOO_LARGE / 422 so SDK clients can surface a stable code.
+func executeError(err error) *apierror.APIError {
+	if errors.Is(err, ErrQueryTooLarge) {
+		return apierror.NewQueryTooLarge("SearchAroundQueryTooLarge", map[string]string{
+			"error": err.Error(),
+			"cap":   strconv.Itoa(SearchAroundIntermediateCap),
+		})
+	}
+	return apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()})
+}
+
 // LoadObjects handles POST /api/v2/ontologies/{ont}/objectSets/loadObjects.
 func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	var req LoadObjectSetRequest
@@ -206,7 +221,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	// Execute the ObjectSet to get PKs
 	result, err := h.executor.Execute(ctx, req.ObjectSet)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, executeError(err))
 		return
 	}
 
@@ -466,7 +481,7 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 	// Execute the ObjectSet to determine the object type and PKs.
 	result, err := h.executor.Execute(ctx, req.ObjectSet)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, executeError(err))
 		return
 	}
 

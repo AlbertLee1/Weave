@@ -119,7 +119,7 @@ func (m *multiHopResolver) ResolveTargetObjectTypeDir(_ context.Context, callerO
 	return m.targetType[callerOT+"|"+link], nil
 }
 
-func seedMultiHopIndex(t *testing.T, ots []string) *index.Manager {
+func seedMultiHopIndex(t testing.TB, ots []string) *index.Manager {
 	t.Helper()
 	dir := t.TempDir()
 	mgr := index.NewManager(dir)
@@ -209,8 +209,9 @@ func TestExecute_SearchAround_Path_ThreeHops(t *testing.T) {
 
 // TestExecute_SearchAround_Path_MixedDirection checks a reverse step in the
 // middle of the path: base employee -> dept (forward) -> back to employee
-// (reverse). The result should be the original employees plus peers that
-// share the same dept.
+// (reverse). The result is the *peers* of the original employees that share
+// the same dept; the seed itself is pruned by US-366 cycle detection so the
+// caller does not get its own input echoed back.
 func TestExecute_SearchAround_Path_MixedDirection(t *testing.T) {
 	mgr := seedMultiHopIndex(t, []string{"employee", "department"})
 	for _, pk := range []string{"e1"} {
@@ -245,9 +246,9 @@ func TestExecute_SearchAround_Path_MixedDirection(t *testing.T) {
 		t.Errorf("ObjectType: want employee, got %q", result.ObjectType)
 	}
 	got := sorted(result.PrimaryKeys)
-	want := []string{"e1", "e2", "e3"}
+	want := []string{"e2", "e3"}
 	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
-		t.Errorf("PKs: want %v, got %v", want, got)
+		t.Errorf("PKs: want %v, got %v (e1 is the seed and must be pruned by cycle detection)", want, got)
 	}
 }
 
