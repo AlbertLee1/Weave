@@ -221,3 +221,64 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Saga step status semantics matter for the reaper / observability: PENDING means the step never reached prepare, FAILED means prepare itself failed, APPLIED means the primary edits committed, COMPENSATED means the rollback ran cleanly, COMPENSATION_FAILED means the inverse batch could not be built or published (and a DLQ row exists). The `sagaTerminalStatus(dlq)` helper picks `FAILED` when ANY DLQ row was enqueued — a partial rollback is still a failure from the user's perspective.
 - The existing `pkg/actions/saga_test.go` (US-239) tests still pass without modification because `ApplyBatchSaga` is now a backwards-compat wrapper that calls `ApplyBatchSagaWithOptions(SagaOptions{})`. New tests should call the explicit-options form so they can opt into idempotency keys; legacy callers don't need to migrate.
 ---
+
+## 2026-05-02 - US-370 - Function 确定性重放 + 版本绑定
+
+**Implementation:**
+- New migration `000084_function_versions_replay.{up,down}.sql` extends `functions` with `code_hash`, `signature_hash`, `published_at` columns (the existing `(name, version)` row IS the function_versions registry); adds `function_version TEXT NOT NULL DEFAULT ''` to `action_types` so an Action can pin a specific build; and creates `function_executions` (execution_id PK, function_rid, function_version, input_hash, output_hash, input_json, output_json, error_message, requested_by, is_replay, replay_of, executed_at) with indexes on (function_rid, function_version) and (function_rid, function_version, input_hash).
+- `pkg/oms/function_replay.go` (new): canonical-JSON hashing helpers — `HashFunctionCode` / `HashFunctionSignature` / `HashFunctionInput` / `HashFunctionOutput` — all sha256-hex, all sorting object keys, all collapsing empty-shape inputs (`null` / `{}` / blank) to a single canonical form. `FunctionExecution` struct + narrow `FunctionExecutionStore` interface (`RecordExecution` / `GetExecution` / `FindByInputHash` / `ListExecutions`). `ErrExecutionNotFound` sentinel mirrors `oms.ErrNotFound`. `NewFunctionExecutionID(fnRID, version, inputHash, ts)` produces the deterministic rid-shaped identifier `fnx-<sha8>`.
+- `pkg/oms/models.go`: extended `Function` with `CodeHash`, `SignatureHash`, `PublishedAt` (US-370 publish-time fingerprint). `ActionType` extended with `FunctionVersion` so action_types can pin a specific function build (Action wire format echoes this when set).
+- `pkg/oms/handlers.go` (`SetFunctionExecutionStore` / `FunctionExecutionStore` setter+getter pair) and `pkg/oms/handlers_function.go::ExecuteFunction` now persist every execute call via `recordFunctionExecution(ctx, fn, params, result, err, false, "")` — input/output hashes lands in function_executions for later audit. Streaming responses log the executor's primary return value (the iterator yields each item separately but the underlying executor result captured the materialised slice).
+- `pkg/oms/handlers_function_replay.go` (new): `ReplayFunction` is the new POST `/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay` handler. Two invocation shapes: (a) `{"executionId":"fnx-..."}` resolves the persisted row, replays its `(version, input)` tuple, and compares the fresh output hash to the recorded one; (b) `{"version":"x.y.z","input":{...}}` skips the lookup and replays the supplied tuple (no determinism check because there's no historical hash). Hash divergence returns 409 with `errorCode=WEAVE_FUNCTION_NONDETERMINISTIC` AND the fresh `result` body alongside the original execution row, so SDK auditors surface drift without a second round-trip. `recordFunctionExecution(...)` lives in this file — it's shared between the execute and replay paths.
+- `pkg/oms/pg_repository.go`: extended `CreateActionType` / `GetActionType` / `ListActionTypes` / `UpdateActionType` to round-trip `function_version`; extended `CreateFunction` / `GetFunction` / `GetFunctionByName` / `GetFunctionByNameVersion` / `ListFunctionVersionsByName` / `ListFunctions` / `scanFunctions` / `UpdateFunction` to hash code+signature on every write and round-trip `code_hash` / `signature_hash` / `published_at` on every read. Legacy rows (pre-migration) backfill via `COALESCE(code_hash, '')` + a runtime fallback — the row reads as if it were freshly hashed.
+- `pkg/oms/handlers_import.go`: ontology import path now passes through `FunctionVersion` so Action rows in an imported package keep their version pin.
+- `pkg/apierror/error.go::NewFunctionNondeterministic` produces the new wire-format `WEAVE_FUNCTION_NONDETERMINISTIC` at HTTP 409 (used by future SDK consumers; the inline replay handler currently emits the warning in-band).
+- `cmd/server/function_execution_store.go` (new): concrete PG implementation of `oms.FunctionExecutionStore`. `RecordExecution` uses `ON CONFLICT (execution_id) DO NOTHING` so the deterministic id `fnx-<sha>` is idempotent in retry storms. `GetExecution` returns `oms.ErrExecutionNotFound` on `pgx.ErrNoRows` so the handler can branch with `errors.Is`. Lives in `cmd/server` so `pkg/oms` doesn't need a `pgxpool` import — same dependency direction as `pgActionApprovalStore` / `pgActionSagaStore` from US-242 / US-369.
+- `cmd/server/main.go`: wires `omsHandler.SetFunctionExecutionStore(newPGFunctionExecutionStore(deps.PGPool))` next to the existing `SetLinkPropertyStore` / `SetLinkEdgeStore` block (PG-gated). Degraded-mode (no PG) routers leave the store nil; the replay handler returns 503 NotConfigured.
+- `cmd/server/routes.go`: registers `POST /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay`.
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml`: full OpenAPI 3 entry for the new replay endpoint (request shape, 200/400/404/409/503 responses, warning envelope on the 409). Spec mirror synced for the contract test.
+
+**Files changed:**
+- `migrations/000084_function_versions_replay.up.sql` (new)
+- `migrations/000084_function_versions_replay.down.sql` (new)
+- `pkg/oms/function_replay.go` (new — hashing helpers + FunctionExecution + FunctionExecutionStore + NewFunctionExecutionID)
+- `pkg/oms/handlers_function_replay.go` (new — ReplayFunction handler + recordFunctionExecution helper)
+- `pkg/oms/handlers_function_replay_test.go` (new — 11 unit tests)
+- `pkg/oms/handlers.go` (functionExecutionStore field + setter/getter)
+- `pkg/oms/handlers_function.go` (recordFunctionExecution call inside ExecuteFunction)
+- `pkg/oms/handlers_import.go` (ActionType FunctionVersion passthrough)
+- `pkg/oms/models.go` (Function CodeHash/SignatureHash/PublishedAt + ActionType FunctionVersion)
+- `pkg/oms/pg_repository.go` (function_version + code_hash/signature_hash/published_at round-trip)
+- `pkg/apierror/error.go` (NewFunctionNondeterministic)
+- `cmd/server/function_execution_store.go` (new — pgFunctionExecutionStore)
+- `cmd/server/main.go` (SetFunctionExecutionStore wiring)
+- `cmd/server/routes.go` (replay route registration)
+- `api/openapi.yaml` (replay endpoint spec)
+- `cmd/server/openapi_spec.yaml` (synced copy)
+- `prd.json` (mark US-370 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test -count=1 -short ./...` PASS across the full suite (cmd/server, pkg/oms, all OSS packages, test/e2e, test/foundry_parity, test/northwind 2:31, test/chinook 3:49, etc.)
+- 11/11 new unit tests in `pkg/oms/handlers_function_replay_test.go` pass:
+  - `TestReplay_RecordsExecutionOnExecute` — execute path persists a non-replay row with input+output hashes
+  - `TestReplay_DeterministicMatch` — replay against captured row matches the recorded hash, returns 200 + match=true, persists a second row with is_replay=true and replay_of pointing at the original
+  - `TestReplay_NondeterministicReturns409` — divergent hash returns 409 with WEAVE_FUNCTION_NONDETERMINISTIC warning + fresh result echoed
+  - `TestReplay_ExecutionNotFound` — bogus executionId → 404
+  - `TestReplay_StoreNotConfiguredReturns503` — degraded-mode router (no store) → 503
+  - `TestReplay_AdHocVersionAndInput` — version+input shape replays without a historical row
+  - `TestReplay_RequiresVersionWhenNoExecutionID` — empty body → 400 InvalidParameter:version
+  - `TestHashFunctionCode_StableForSameSource` — sha256 stability + collision rejection
+  - `TestHashFunctionInput_KeyOrderInvariant` — canonical sort
+  - `TestHashFunctionSignature_EmptyShapesCollapse` — nil / `{}` / `null` / whitespace all hash identically
+  - `TestRecordExecution_SkippedOnExecutorError` — failed execution still records (errorMessage populated, outputHash empty) so audit can spot recurring failures
+
+**Learnings for future iterations:**
+- The PRD wording "function_versions 表" is misleading — the existing `functions` PG table is already keyed by `(ontology_rid, name, version)`, so every row IS effectively a published version. Bolt the publish-time fingerprint columns (`code_hash`, `signature_hash`, `published_at`) onto it instead of creating a parallel registry. The mental model is "functions IS function_versions". This is documented in the migration's leading comment so it doesn't drift.
+- `HashFunctionInput` / `HashFunctionOutput` have to canonicalise object key order at every level. A naïve `json.Marshal` of a `map[string]interface{}` is already sorted in Go 1.12+ at the top level, but nested maps in `interface{}` slots come back in insertion order — easy to miss. The `canonicaliseJSON` helper recurses; arrays preserve their original order (positional semantics) but objects always sort. Test `TestHashFunctionInput_KeyOrderInvariant` is the regression gate.
+- Streaming Function responses (`?stream=1`) still hit `recordFunctionExecution` because the handler captures `result` from `h.functionExecutor.Execute` before delegating to `writeFunctionStream`. The persisted row contains the materialised slice/scalar, not the per-line stream — that's the right grain for replay since the executor's first return value IS what a non-streaming caller would see. If a future US-219 improvement makes streaming truly lazy (yielding values without materialising), this assumption breaks and the replay record becomes a slice-of-nil; revisit the call site then.
+- The handler's degraded-mode behaviour for nil executor / nil store: NEVER 500 — the 503 envelope echoes which dependency is missing so SDK callers can debug the routing without a second tool. The `SetFunctionExecutor` setter is configured by tests but NOT by `cmd/server/main.go` (yet); the production replay path requires both `deps.PGPool != nil` AND a future executor wiring step. New routes that depend on optional executors should follow this pattern: 503 with a structured `errorCode` body, NEVER silent fallthrough.
+- `function_executions.execution_id` is a `fnx-<sha256-of-rid|version|inputHash|nanoseconds>` — deterministic so `ON CONFLICT DO NOTHING` is safe under retry, but unique enough across processes that a simultaneous execute from two workers won't collide unless they hit the same nanosecond. If you need a stronger uniqueness guarantee, swap to `uuid.New()` and accept the unique-violation cost.
+- The `NewFunctionNondeterministic(...)` apierror constructor exists for future SDK callers but the current replay handler emits the warning inline (HTTP 409 + `warning.code` field) so the response can carry both the fresh `result` AND the original row. Future work can switch to `apierror.WriteJSON` if the wire shape needs to converge with the rest of the error envelope; the constructor is ready.
+---

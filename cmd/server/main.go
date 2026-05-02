@@ -721,6 +721,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.NotificationBulkStore != nil {
 				omsHandler.SetNotificationBulkStore(deps.NotificationBulkStore)
 			}
+			// US-370: Function execution audit log + /replay endpoint. The
+			// store backs both the implicit /execute logging hook and the
+			// explicit /replay endpoint; degraded-mode (no PG) routers leave
+			// it nil and replay returns 503 NotConfigured.
+			if deps.PGPool != nil {
+				omsHandler.SetFunctionExecutionStore(newPGFunctionExecutionStore(deps.PGPool))
+			}
 			RegisterRoutes(api, omsHandler)
 		}
 

@@ -524,12 +524,12 @@ func (r *PGRepository) CreateActionType(ctx context.Context, at *ActionType) err
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO action_types (rid, ontology_rid, api_name, display_name, description,
 		 status, parameters, rules, function_rid, is_function_backed, submission_criteria, side_effects,
-		 implements_method_rid, compensate_action_rid, requires_approval, approvers, parameter_schema)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16, $17)`,
+		 implements_method_rid, compensate_action_rid, requires_approval, approvers, parameter_schema, function_version)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16, $17, $18)`,
 		at.RID, at.OntologyRID, at.APIName, at.DisplayName, at.Description,
 		at.Status, params, rules, at.FunctionRID, at.IsFunctionBacked, sc, se,
 		at.ImplementsMethodRID, at.CompensateActionRID,
-		at.RequiresApproval, approvers, paramSchema)
+		at.RequiresApproval, approvers, paramSchema, at.FunctionVersion)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -549,7 +549,8 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 		 COALESCE(compensate_action_rid, ''),
 		 COALESCE(requires_approval, FALSE),
 		 COALESCE(approvers, '[]'::jsonb),
-		 parameter_schema
+		 parameter_schema,
+		 COALESCE(function_version, '')
 		 FROM action_types WHERE rid = $1`, rid).
 		Scan(&at.RID, &at.OntologyRID, &at.APIName, &at.DisplayName, &at.Description,
 			&at.Status, &at.Parameters, &at.Rules,
@@ -559,7 +560,8 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 			&at.CompensateActionRID,
 			&at.RequiresApproval,
 			&approvers,
-			&paramSchema)
+			&paramSchema,
+			&at.FunctionVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -597,7 +599,8 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 		 COALESCE(compensate_action_rid, ''),
 		 COALESCE(requires_approval, FALSE),
 		 COALESCE(approvers, '[]'::jsonb),
-		 parameter_schema
+		 parameter_schema,
+		 COALESCE(function_version, '')
 		 FROM action_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -619,7 +622,8 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 			&at.CompensateActionRID,
 			&at.RequiresApproval,
 			&approvers,
-			&paramSchema); err != nil {
+			&paramSchema,
+			&at.FunctionVersion); err != nil {
 			return nil, err
 		}
 		at.Approvers = decodeApprovers(approvers)
@@ -640,10 +644,12 @@ func (r *PGRepository) UpdateActionType(ctx context.Context, at *ActionType) err
 		 parameters=$4, rules=$5, submission_criteria=$6, side_effects=$7,
 		 implements_method_rid=NULLIF($8, ''),
 		 compensate_action_rid=NULLIF($9, ''),
-		 requires_approval=$10, approvers=$11, parameter_schema=$12 WHERE rid=$13`,
+		 requires_approval=$10, approvers=$11, parameter_schema=$12,
+		 function_version=$13 WHERE rid=$14`,
 		at.DisplayName, at.Description, at.Status, at.Parameters, at.Rules,
 		at.SubmissionCriteria, at.SideEffects, at.ImplementsMethodRID,
-		at.CompensateActionRID, at.RequiresApproval, approvers, paramSchema, at.RID)
+		at.CompensateActionRID, at.RequiresApproval, approvers, paramSchema,
+		at.FunctionVersion, at.RID)
 	if err != nil {
 		return err
 	}
@@ -1588,15 +1594,19 @@ func (r *PGRepository) CreateFunction(ctx context.Context, fn *Function) error {
 	signature := normaliseSignatureForWrite(fn.Signature)
 	runtime := fn.NormalisedRuntime()
 	version := fn.NormalisedVersion()
+	codeHash := HashFunctionCode(fn.SourceCode)
+	sigHash := HashFunctionSignature(signature)
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime, pure)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime, fn.Pure)
+		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime, pure, code_hash, signature_hash, published_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime, fn.Pure, codeHash, sigHash)
 	if err != nil {
 		return wrapPGError(err)
 	}
 	fn.Runtime = runtime
 	fn.Version = version
+	fn.CodeHash = codeHash
+	fn.SignatureHash = sigHash
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}
@@ -1608,10 +1618,12 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 	var sig []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
-		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
 		 FROM functions WHERE rid = $1`, rid).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
-			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt)
+			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1619,6 +1631,12 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 		return nil, err
 	}
 	fn.Signature = signatureFromBytes(sig)
+	if fn.CodeHash == "" {
+		fn.CodeHash = HashFunctionCode(fn.SourceCode)
+	}
+	if fn.SignatureHash == "" {
+		fn.SignatureHash = HashFunctionSignature(fn.Signature)
+	}
 	return fn, nil
 }
 
@@ -1629,7 +1647,8 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name string) (*Function, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
-		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND (rid = $2 OR name = $2)`, ontologyRID, name)
@@ -1657,12 +1676,14 @@ func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID
 	var sig []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
-		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND name = $2 AND version = $3`, ontologyRID, name, version).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
-			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt)
+			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1670,6 +1691,12 @@ func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID
 		return nil, err
 	}
 	fn.Signature = signatureFromBytes(sig)
+	if fn.CodeHash == "" {
+		fn.CodeHash = HashFunctionCode(fn.SourceCode)
+	}
+	if fn.SignatureHash == "" {
+		fn.SignatureHash = HashFunctionSignature(fn.Signature)
+	}
 	return fn, nil
 }
 
@@ -1679,7 +1706,8 @@ func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID
 func (r *PGRepository) ListFunctionVersionsByName(ctx context.Context, ontologyRID, name string) ([]Function, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
-		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND name = $2`, ontologyRID, name)
@@ -1704,10 +1732,17 @@ func scanFunctions(rows pgx.Rows) ([]Function, error) {
 		var fn Function
 		var sig []byte
 		if err := rows.Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode,
-			&fn.CreatedBy, &sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt); err != nil {
+			&fn.CreatedBy, &sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt); err != nil {
 			return nil, err
 		}
 		fn.Signature = signatureFromBytes(sig)
+		if fn.CodeHash == "" {
+			fn.CodeHash = HashFunctionCode(fn.SourceCode)
+		}
+		if fn.SignatureHash == "" {
+			fn.SignatureHash = HashFunctionSignature(fn.Signature)
+		}
 		out = append(out, fn)
 	}
 	return out, nil
@@ -1719,7 +1754,8 @@ func (r *PGRepository) ListFunctions(ctx context.Context, ontologyRID string) ([
 	// in Go using parsed semver so callers see latest-first per name.
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
-		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at
+		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
 		 FROM functions
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY name`, ontologyRID)
@@ -1739,10 +1775,13 @@ func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {
 	signature := normaliseSignatureForWrite(fn.Signature)
 	runtime := fn.NormalisedRuntime()
 	version := fn.NormalisedVersion()
+	codeHash := HashFunctionCode(fn.SourceCode)
+	sigHash := HashFunctionSignature(signature)
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE functions SET name=$1, version=$2, source_code=$3, signature=$4, runtime=$5, pure=$6
-		 WHERE rid=$7`,
-		fn.Name, version, fn.SourceCode, signature, runtime, fn.Pure, fn.RID)
+		`UPDATE functions SET name=$1, version=$2, source_code=$3, signature=$4, runtime=$5, pure=$6,
+		   code_hash=$7, signature_hash=$8, published_at=NOW()
+		 WHERE rid=$9`,
+		fn.Name, version, fn.SourceCode, signature, runtime, fn.Pure, codeHash, sigHash, fn.RID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -1751,6 +1790,8 @@ func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {
 	}
 	fn.Runtime = runtime
 	fn.Version = version
+	fn.CodeHash = codeHash
+	fn.SignatureHash = sigHash
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}

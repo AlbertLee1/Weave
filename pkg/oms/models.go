@@ -343,6 +343,11 @@ type ActionType struct {
 	SideEffects        json.RawMessage `json:"sideEffects,omitempty"`
 	FunctionRID        string          `json:"functionRid,omitempty"`
 	IsFunctionBacked   bool            `json:"isFunctionBacked"`
+	// FunctionVersion (US-370) pins the semver of the Function this
+	// ActionType is bound to. Empty means "latest" — the executor
+	// resolves at invoke time. A non-empty value forces routing to the
+	// matching (name, version) row, surviving subsequent publishes.
+	FunctionVersion string `json:"functionVersion,omitempty"`
 	// ImplementsMethodRID (US-214) points at an interface_methods row whose
 	// signature this ActionType claims to implement. Empty means the action
 	// is not method-bound. Surfaced on the wire via ToFullMetadataJSON and
@@ -447,6 +452,9 @@ func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
 	}
 	if at.FunctionRID != "" {
 		wire["functionRid"] = at.FunctionRID
+	}
+	if at.FunctionVersion != "" {
+		wire["functionVersion"] = at.FunctionVersion
 	}
 	wire["isFunctionBacked"] = at.IsFunctionBacked
 	if at.ImplementsMethodRID != "" {
@@ -582,6 +590,19 @@ type Function struct {
 	Pure      bool      `json:"pure,omitempty"`
 	CreatedBy string    `json:"createdBy"`
 	CreatedAt time.Time `json:"createdAt"`
+	// CodeHash is the sha256 hex of the source code captured at publish
+	// time (US-370). Two rows with the same code_hash but different
+	// versions are byte-identical builds; the hash drives replay's
+	// determinism check.
+	CodeHash string `json:"codeHash,omitempty"`
+	// SignatureHash is the sha256 hex of the canonical-JSON signature at
+	// publish time (US-370). Empty / null signatures collapse to the hash
+	// of `{}` so legacy rows pre-US-215 produce the same hash regardless
+	// of how they were written.
+	SignatureHash string `json:"signatureHash,omitempty"`
+	// PublishedAt is the registry's notion of "the moment this version
+	// became live" (US-370). Backfills to created_at for legacy rows.
+	PublishedAt time.Time `json:"publishedAt,omitempty"`
 }
 
 // OntologyBranch represents a branch for isolated ontology schema changes.

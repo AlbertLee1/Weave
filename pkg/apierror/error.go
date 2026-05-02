@@ -119,6 +119,15 @@ func NewQueryTooLarge(name string, params map[string]string) *APIError {
 	return newAPIError("WEAVE_QUERY_TOO_LARGE", name, params, http.StatusUnprocessableEntity)
 }
 
+// NewFunctionNondeterministic creates a WEAVE_FUNCTION_NONDETERMINISTIC API
+// error (HTTP 409). US-370: returned by POST /functions/{rid}/replay when the
+// fresh execution's output hash diverges from the persisted historical hash.
+// Callers populate Parameters with at minimum `executionId`, `originalHash`,
+// `replayHash` so SDK consumers can surface a meaningful audit notice.
+func NewFunctionNondeterministic(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_FUNCTION_NONDETERMINISTIC", name, params, http.StatusConflict)
+}
+
 // NewValidationSchema creates a WEAVE_VALIDATION_SCHEMA API error (HTTP 422).
 // US-245: returned by the ActionType parameter-validation DSL when a request
 // violates the declared JSON Schema (Draft-07). Callers populate Parameters

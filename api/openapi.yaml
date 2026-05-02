@@ -4985,6 +4985,107 @@ paths:
                     additionalProperties: true
                   error:
                     type: string
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay:
+    post:
+      operationId: replayFunction
+      summary: Replay a Function at a captured version (US-370)
+      description: |
+        Re-runs the Function pinned to the version captured by a historical
+        execution row and compares the fresh output hash to the recorded one.
+        The audit endpoint behind PRD US-370.
+
+        Two invocation shapes are supported:
+          - `executionId` resolves the persisted row, replays its stored
+            `(version, input)` tuple, and compares hashes.
+          - `version` + `input` skips the lookup and replays the supplied
+            tuple. The determinism check is skipped because there is no
+            historical hash to compare against.
+
+        A hash divergence returns 409 with `errorCode=WEAVE_FUNCTION_NONDETERMINISTIC`
+        and the fresh `result` body alongside the original execution row so
+        SDK auditors can surface the drift without a second round-trip.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                executionId:
+                  type: string
+                  description: ID of a previously persisted execution row.
+                version:
+                  type: string
+                  description: |
+                    Semver of the Function build to replay. Required when
+                    `executionId` is omitted.
+                input:
+                  type: object
+                  additionalProperties: true
+                  description: |
+                    Parameter map to replay. Required when `executionId` is
+                    omitted; ignored otherwise.
+      responses:
+        "200":
+          description: Replay matched the recorded hash (or no historical hash to compare).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid: { type: string }
+                  functionVersion: { type: string }
+                  executionId: { type: string }
+                  originalHash: { type: string }
+                  replayHash: { type: string }
+                  match: { type: boolean }
+                  result: {}
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: |
+            Hash divergence (US-370). The body still includes the fresh
+            `result` plus a `warning.code=WEAVE_FUNCTION_NONDETERMINISTIC`
+            entry referencing the original execution.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid: { type: string }
+                  functionVersion: { type: string }
+                  executionId: { type: string }
+                  originalHash: { type: string }
+                  replayHash: { type: string }
+                  match: { type: boolean }
+                  result: {}
+                  warning:
+                    type: object
+                    properties:
+                      code: { type: string }
+                      message: { type: string }
+                  original:
+                    type: object
+                    additionalProperties: true
+        "503":
+          description: Function executor or execution store not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  reason: { type: string }
   /api/v2/ontologies/{ontologyApiName}/branches:
     post:
       operationId: createBranch

@@ -413,6 +413,11 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	result, err := h.functionExecutor.Execute(execCtx, fn, coerced)
+	// Persist input/output hashes for replay (US-370). Streaming responses
+	// still log the executor's primary return value — the iterator yields
+	// each item separately but the underlying executor result already
+	// captures the materialised slice.
+	h.recordFunctionExecution(r.Context(), fn, coerced, result, err, false, "")
 	if streaming {
 		writeFunctionStream(w, fn.RID, result, err, execCtx)
 		return

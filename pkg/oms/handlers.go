@@ -19,6 +19,7 @@ type OMSHandler struct {
 	functionExecutor         FunctionExecutor
 	functionQuotaLimiter     FunctionQuotaLimiter
 	functionResultCache      FunctionResultCache
+	functionExecutionStore   FunctionExecutionStore
 	actorFn                  ActorFunc
 	linkPropertyStore        LinkPropertyStore
 	linkEdgeStore            LinkEdgeStore
@@ -58,6 +59,23 @@ func (h *OMSHandler) SetFunctionExecutor(e FunctionExecutor) {
 // supply one.
 func (h *OMSHandler) SetFunctionQuotaLimiter(l FunctionQuotaLimiter) {
 	h.functionQuotaLimiter = l
+}
+
+// SetFunctionExecutionStore wires the durable execution log used by the
+// /functions/{rid}/replay endpoint (US-370). When unset the regular
+// /execute path still runs but executions are not persisted, and replay
+// surfaces a 503 NotConfigured. The store is also written to on every
+// successful execute so the input/output hash pair lands in
+// function_executions for later audit.
+func (h *OMSHandler) SetFunctionExecutionStore(s FunctionExecutionStore) {
+	h.functionExecutionStore = s
+}
+
+// FunctionExecutionStore returns the wired store (or nil) so the route
+// table can decide whether to register the replay endpoint without
+// importing the concrete type.
+func (h *OMSHandler) FunctionExecutionStore() FunctionExecutionStore {
+	return h.functionExecutionStore
 }
 
 // SetFunctionResultCache wires the optional result cache used by the

@@ -101,6 +101,10 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// US-217 list-versions: returns every stored semver of the named function
 	// in the ontology, latest-first.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionName}/versions", omsHandler.ListFunctionVersions)
+	// US-370 deterministic replay: re-runs a Function at the captured version
+	// against the recorded input and surfaces a hash divergence as
+	// WEAVE_FUNCTION_NONDETERMINISTIC.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay", omsHandler.ReplayFunction)
 
 	// Ontology Branches (US-113, US-116)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.CreateBranch)

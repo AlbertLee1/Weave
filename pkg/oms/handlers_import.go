@@ -435,6 +435,7 @@ func (h *OMSHandler) importActionTypes(ctx context.Context, ontologyRID, mode st
 			Status: at.Status, Parameters: at.Parameters, Rules: at.Rules,
 			SubmissionCriteria: at.SubmissionCriteria, SideEffects: at.SideEffects,
 			FunctionRID: remapRID(fnRIDMap, at.FunctionRID), IsFunctionBacked: at.IsFunctionBacked,
+			FunctionVersion: at.FunctionVersion,
 		}
 		if newAT.Status == "" {
 			newAT.Status = "ACTIVE"
