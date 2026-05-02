@@ -179,6 +179,7 @@ type Executor struct {
 	actionLogStore     ActionLogStore
 	progressPub        ProgressPublisher
 	lineageStore       oms.LineageStore
+	sagaStore          SagaStore
 	paramSchemas       *ParameterSchemaValidator
 	cancelRegistry     jobCancelRegistry
 }
@@ -290,6 +291,19 @@ func (e *Executor) ActionApprovalStore() ActionApprovalStore {
 	return e.approvalStore
 }
 
+// SetSagaStore attaches the durable saga coordinator store used by
+// ApplyBatchSaga (US-369). When nil the saga path runs in-memory only —
+// the rollback semantics still hold but no idempotency / DLQ rows are
+// written. Same setter pattern as ActionApprovalStore.
+func (e *Executor) SetSagaStore(s SagaStore) {
+	e.sagaStore = s
+}
+
+// SagaStore returns the wired saga store (may be nil).
+func (e *Executor) SagaStore() SagaStore {
+	return e.sagaStore
+}
+
 // ResolveActionType is an exported shim around the saga coordinator's
 // lookup helper so the Apply handler can locate the ActionType before
 // executing rules — needed by the US-242 approval gate which inspects the
@@ -342,11 +356,15 @@ type BatchFailure struct {
 // so the handler can surface it via errors.As instead of collapsing to a
 // generic 400.
 type BatchError struct {
-	Phase             string
-	FailedActionIndex int
-	ActionType        string
-	Message           string
-	Cause             error
+	Phase             string `json:"phase"`
+	FailedActionIndex int    `json:"failedActionIndex"`
+	ActionType        string `json:"actionType"`
+	Message           string `json:"message"`
+	// Cause carries the original typed error in-process so handlers can
+	// recover it via errors.As. JSON-skipped because the error interface
+	// has no general unmarshaller — Message already preserves the
+	// caller-visible description for SagaResult round-trips.
+	Cause error `json:"-"`
 }
 
 func (e *BatchError) Error() string {

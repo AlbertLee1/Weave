@@ -768,6 +768,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/revert", actionHandler.Revert)
+			// US-369: multi-step saga with idempotency + DLQ.
+			//   POST /api/v2/ontologies/{ontology}/actions/applySaga
+			//   GET  /api/v2/ontologies/{ontology}/actions/saga/dlq
+			//   POST /api/v2/ontologies/{ontology}/actions/saga/dlq/{dlqId}/retry
+			//   POST /api/v2/ontologies/{ontology}/actions/saga/dlq/{dlqId}/drop
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/applySaga", actionHandler.ApplySaga)
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq", actionHandler.ListSagaDLQ)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq/{dlqId}/retry", actionHandler.RetrySagaDLQ)
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq/{dlqId}/drop", actionHandler.DropSagaDLQ)
 			// US-240: async-apply polling endpoint. Always registered when the
 			// executor is wired; returns 404 if no job store is attached.
 			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}", actionHandler.GetJob)
@@ -2322,6 +2331,12 @@ func main() {
 			// store — degraded-mode (no PG) routers keep the sync-apply
 			// contract stable for unit tests.
 			deps.ActionExecutor.SetActionApprovalStore(newPGActionApprovalStore(deps.PGPool))
+			// US-369: durable saga coordinator. Persists saga header,
+			// per-step edits / inverse edits, idempotency-key dedupe,
+			// and dead-letter queue rows for failed compensators.
+			// Degraded-mode (no PG) keeps the in-memory saga path
+			// untouched.
+			deps.ActionExecutor.SetSagaStore(newPGActionSagaStore(deps.PGPool))
 			// US-299: lineage edges (lineage_edges) record where each object
 			// came from. The store is the same uncached *PGRepository every
 			// other catalog hook reuses; degraded-mode (no PG) routers leave

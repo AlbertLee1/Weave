@@ -7219,6 +7219,196 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/applySaga:
+    post:
+      operationId: applyActionSaga
+      summary: Apply a multi-step saga (US-369)
+      description: |
+        Runs an ordered list of actions as a saga: every step is prepared in
+        declaration order; on any prepare/commit failure the previously
+        prepared steps' compensators (CompensateActionRID) fire in reverse
+        order. When the executor's SagaStore is wired, an idempotency_key
+        replays the prior result instead of re-executing, and any compensator
+        that itself fails to prepare or commit is enqueued to the dead-letter
+        queue (action_saga_dlq) for manual or scheduled retry.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [steps]
+              properties:
+                idempotencyKey:
+                  type: string
+                  description: |
+                    Optional dedupe token. Two requests with the same key
+                    return the same SagaResult; the second is marked
+                    replayed=true and does not re-execute.
+                steps:
+                  type: array
+                  description: Ordered list of action invocations.
+                  items:
+                    type: object
+                    required: [actionType]
+                    properties:
+                      actionType:
+                        type: string
+                      parameters:
+                        type: object
+                        additionalProperties: true
+      responses:
+        "200":
+          description: Saga result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum: [saga]
+                  sagaId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [SUCCESS, COMPENSATED, FAILED]
+                  idempotencyKey:
+                    type: string
+                  replayed:
+                    type: boolean
+                  batchId:
+                    type: string
+                  applied:
+                    type: array
+                    items:
+                      type: object
+                  compensations:
+                    type: array
+                    items:
+                      type: object
+                  dlqEntries:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/saga/dlq:
+    get:
+      operationId: listSagaDLQ
+      summary: List dead-letter saga rows (US-369)
+      description: |
+        Returns DLQ rows whose status matches the ?status filter (default
+        PENDING). Each row records a compensator that failed during a saga
+        rollback. Operators can replay the inverse-edit batch via the retry
+        endpoint or dismiss the row via the drop endpoint.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: status
+          required: false
+          description: PENDING (default), RESOLVED, or DROPPED.
+          schema:
+            type: string
+            enum: [PENDING, RESOLVED, DROPPED]
+        - in: query
+          name: limit
+          required: false
+          description: Max rows to return (default 100, max 1000).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: DLQ entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/saga/dlq/{dlqId}/retry:
+    post:
+      operationId: retrySagaDLQ
+      summary: Retry a dead-letter saga row (US-369)
+      description: |
+        Re-publishes the inverse-edit batch carried by a PENDING DLQ row.
+        On success the row transitions to RESOLVED. On failure the row
+        stays PENDING with attempts incremented and failure_message
+        updated.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: dlqId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: DLQ row resolved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dlqId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [RESOLVED]
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+        "500":
+          description: Retry failed; row stays PENDING.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIError"
+  /api/v2/ontologies/{ontologyApiName}/actions/saga/dlq/{dlqId}/drop:
+    post:
+      operationId: dropSagaDLQ
+      summary: Dismiss a dead-letter saga row (US-369)
+      description: |
+        Manual operator dismissal — transitions a DLQ row to DROPPED
+        without replaying its edits. Use when the inverse edits are not
+        appropriate to publish (e.g. the corresponding object has since
+        been recreated by other workflows).
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: dlqId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: DLQ row dropped.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dlqId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [DROPPED]
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/actions/revert:
     post:
       operationId: revertAction
