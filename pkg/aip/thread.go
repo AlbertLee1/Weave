@@ -70,16 +70,40 @@ type ThreadUpdate struct {
 // case and the model is awaiting tool results before continuing.
 // ToolCallID + ToolName are set on RoleTool rows and reference the
 // assistant tool_call being answered.
+//
+// ParentMessageID + BranchID (US-374) form the branch-tree backbone:
+// every message has at most one parent on its branch (nil = branch
+// root); BranchID groups sibling chains so a thread can carry multiple
+// alternative continuations from any pivot point.
 type Message struct {
-	ID         int64      `json:"id"`
-	ThreadID   string     `json:"threadId"`
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	TokenCount int        `json:"tokenCount,omitempty"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string     `json:"toolCallId,omitempty"`
-	ToolName   string     `json:"toolName,omitempty"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	ID              int64      `json:"id"`
+	ThreadID        string     `json:"threadId"`
+	Role            string     `json:"role"`
+	Content         string     `json:"content"`
+	TokenCount      int        `json:"tokenCount,omitempty"`
+	ToolCalls       []ToolCall `json:"toolCalls,omitempty"`
+	ToolCallID      string     `json:"toolCallId,omitempty"`
+	ToolName        string     `json:"toolName,omitempty"`
+	ParentMessageID *int64     `json:"parentMessageId,omitempty"`
+	BranchID        string     `json:"branchId,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+}
+
+// DefaultBranchID is the branch identifier used for the linear (non-forked)
+// history of every thread. Messages whose store impl predates US-374 read
+// back as branch_id='main' via the migration default.
+const DefaultBranchID = "main"
+
+// ValidateBranchID returns an error when id is not a permitted branch
+// identifier. Mirrors the SQL CHECK on aip_messages.branch_id.
+func ValidateBranchID(id string) error {
+	if id == "" {
+		return fmt.Errorf("branch id must not be empty")
+	}
+	if !threadIDRE.MatchString(id) {
+		return fmt.Errorf("branch id %q is invalid: allowed characters are [A-Za-z0-9._-] and length must be 1..128", id)
+	}
+	return nil
 }
 
 // threadIDRE matches the canonical thread identifier shape: the same

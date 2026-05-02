@@ -309,6 +309,8 @@ func TestHandler_RoutesRegistered(t *testing.T) {
 		"DELETE /api/v2/aip/threads/{threadId}":              false,
 		"GET /api/v2/aip/threads/{threadId}/messages":        false,
 		"POST /api/v2/aip/threads/{threadId}/messages":       false,
+		"POST /api/v2/aip/threads/{threadId}/fork":           false,
+		"GET /api/v2/aip/threads/{threadId}/tree":            false,
 	}
 	_ = chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		key := method + " " + strings.TrimSuffix(route, "/*")

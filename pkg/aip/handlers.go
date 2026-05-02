@@ -74,6 +74,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v2/aip/threads/{threadId}", h.DeleteThread)
 	r.Get("/api/v2/aip/threads/{threadId}/messages", h.ListMessages)
 	r.Post("/api/v2/aip/threads/{threadId}/messages", h.SendMessage)
+	r.Post("/api/v2/aip/threads/{threadId}/fork", h.ForkThread)
+	r.Get("/api/v2/aip/threads/{threadId}/tree", h.GetThreadTree)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
