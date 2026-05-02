@@ -2,6 +2,7 @@ package objectset
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,6 +22,13 @@ import (
 // when the handler freezes an ObjectSet. The cmd/server adapter is
 // responsible for marshalling Definition into the JSONB column on the
 // underlying object_set_snapshots row and unmarshalling it back on read.
+//
+// US-365 fields (DefinitionHash / SnapshotAt / IsImmutable) record the
+// canonical-JSON sha256 of Definition, the snapshot transaction id assigned
+// at create time, and the immutability flag (always true for snapshots —
+// they exist precisely to provide byte-for-byte identical re-loads). These
+// fields propagate through the cmd/server adapter into the object_set_snapshots
+// columns added by migration 000082.
 type PersistedSnapshot struct {
 	RID             string
 	OntologyAPIName string
@@ -30,6 +38,9 @@ type PersistedSnapshot struct {
 	Truncated       bool
 	CreatedBy       string
 	CreatedAt       time.Time
+	DefinitionHash  string
+	SnapshotAt      int64
+	IsImmutable     bool
 }
 
 // ErrSnapshotNotFound is the sentinel a PersistedSnapshotStore should return
@@ -58,13 +69,20 @@ func (h *Handler) SetPersistedSnapshotStore(store PersistedSnapshotStore) {
 }
 
 // CreateSnapshotResponse is the wire shape returned by CreateSnapshot.
+//
+// US-365 added DefinitionHash, SnapshotAt, IsImmutable so SDKs can verify
+// they got back the exact definition they posted (hash) and chain follow-up
+// reads against the snapshot transaction id that was allocated.
 type CreateSnapshotResponse struct {
-	SnapshotRID string    `json:"snapshotRid"`
-	ObjectType  string    `json:"objectType"`
-	PrimaryKeys []string  `json:"primaryKeys"`
-	TotalCount  string    `json:"totalCount"`
-	Truncated   bool      `json:"truncated,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	SnapshotRID    string    `json:"snapshotRid"`
+	ObjectType     string    `json:"objectType"`
+	PrimaryKeys    []string  `json:"primaryKeys"`
+	TotalCount     string    `json:"totalCount"`
+	Truncated      bool      `json:"truncated,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	DefinitionHash string    `json:"definitionHash,omitempty"`
+	SnapshotAt     int64     `json:"snapshotAt,omitempty"`
+	IsImmutable    bool      `json:"isImmutable"`
 }
 
 // GetSnapshotResponse is the wire shape returned by GetSnapshot. It mirrors
@@ -72,11 +90,14 @@ type CreateSnapshotResponse struct {
 // row decoder, with the snapshot identity + creation time stamped on the
 // outer object.
 type GetSnapshotResponse struct {
-	SnapshotRID string            `json:"snapshotRid"`
-	ObjectType  string            `json:"objectType"`
-	Data        []*oss.WireObject `json:"data"`
-	TotalCount  string            `json:"totalCount"`
-	CreatedAt   time.Time         `json:"createdAt"`
+	SnapshotRID    string            `json:"snapshotRid"`
+	ObjectType     string            `json:"objectType"`
+	Data           []*oss.WireObject `json:"data"`
+	TotalCount     string            `json:"totalCount"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	DefinitionHash string            `json:"definitionHash,omitempty"`
+	SnapshotAt     int64             `json:"snapshotAt,omitempty"`
+	IsImmutable    bool              `json:"isImmutable"`
 }
 
 // CreateSnapshot handles POST
@@ -116,6 +137,7 @@ func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defJSON, _ := json.Marshal(def)
 	snap := &PersistedSnapshot{
 		RID:             fmt.Sprintf("ri.objectsets.main.snapshot.%s", uuid.New().String()),
 		OntologyAPIName: ontologyAPIName,
@@ -124,6 +146,9 @@ func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		PrimaryKeys:     append([]string(nil), result.PrimaryKeys...),
 		Truncated:       result.Truncated,
 		CreatedAt:       time.Now().UTC(),
+		DefinitionHash:  HashDefinition(defJSON),
+		SnapshotAt:      NextSnapshotAt(),
+		IsImmutable:     true,
 	}
 	if u := auth.UserFromContext(ctx); u != nil {
 		snap.CreatedBy = u.ID
@@ -137,12 +162,15 @@ func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, &CreateSnapshotResponse{
-		SnapshotRID: snap.RID,
-		ObjectType:  snap.ObjectType,
-		PrimaryKeys: snap.PrimaryKeys,
-		TotalCount:  strconv.Itoa(len(snap.PrimaryKeys)),
-		Truncated:   snap.Truncated,
-		CreatedAt:   snap.CreatedAt,
+		SnapshotRID:    snap.RID,
+		ObjectType:     snap.ObjectType,
+		PrimaryKeys:    snap.PrimaryKeys,
+		TotalCount:     strconv.Itoa(len(snap.PrimaryKeys)),
+		Truncated:      snap.Truncated,
+		CreatedAt:      snap.CreatedAt,
+		DefinitionHash: snap.DefinitionHash,
+		SnapshotAt:     snap.SnapshotAt,
+		IsImmutable:    snap.IsImmutable,
 	})
 }
 
@@ -204,10 +232,13 @@ func (h *Handler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, &GetSnapshotResponse{
-		SnapshotRID: snap.RID,
-		ObjectType:  snap.ObjectType,
-		Data:        data,
-		TotalCount:  strconv.Itoa(len(snap.PrimaryKeys)),
-		CreatedAt:   snap.CreatedAt,
+		SnapshotRID:    snap.RID,
+		ObjectType:     snap.ObjectType,
+		Data:           data,
+		TotalCount:     strconv.Itoa(len(snap.PrimaryKeys)),
+		CreatedAt:      snap.CreatedAt,
+		DefinitionHash: snap.DefinitionHash,
+		SnapshotAt:     snap.SnapshotAt,
+		IsImmutable:    snap.IsImmutable,
 	})
 }

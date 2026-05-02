@@ -41,6 +41,9 @@ func (a *objectSetSnapshotAdapter) CreatePersistedSnapshot(ctx context.Context, 
 		Truncated:       snap.Truncated,
 		CreatedBy:       snap.CreatedBy,
 		CreatedAt:       snap.CreatedAt,
+		DefinitionHash:  snap.DefinitionHash,
+		SnapshotAt:      snap.SnapshotAt,
+		IsImmutable:     snap.IsImmutable,
 	}
 	return a.store.CreateObjectSetSnapshot(ctx, row)
 }
@@ -73,5 +76,8 @@ func (a *objectSetSnapshotAdapter) GetPersistedSnapshot(ctx context.Context, rid
 		Truncated:       row.Truncated,
 		CreatedBy:       row.CreatedBy,
 		CreatedAt:       row.CreatedAt,
+		DefinitionHash:  row.DefinitionHash,
+		SnapshotAt:      row.SnapshotAt,
+		IsImmutable:     row.IsImmutable,
 	}, nil
 }

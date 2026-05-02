@@ -8,7 +8,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/internal/testutil"
 	"github.com/liyang/weave/pkg/oss/objectset"
@@ -19,11 +21,20 @@ import (
 // testutil.StartPGContainer's t.Cleanup hooks).
 func setupSavedStore(t *testing.T) *objectset.PGSavedStore {
 	t.Helper()
+	store, _ := setupSavedStoreWithPool(t)
+	return store
+}
+
+// setupSavedStoreWithPool also exposes the underlying pgx pool so tests that
+// need to mutate row state directly (e.g. backdating created_at to exercise
+// the reaper) can do so without a public accessor on PGSavedStore.
+func setupSavedStoreWithPool(t *testing.T) (*objectset.PGSavedStore, *pgxpool.Pool) {
+	t.Helper()
 	pg := testutil.StartPGContainer(t)
 	if err := database.RunMigrationsUp(pg.DSN, testutil.MigrationsDir()); err != nil {
 		t.Fatalf("migration failed: %v", err)
 	}
-	return objectset.NewPGSavedStore(pg.Pool)
+	return objectset.NewPGSavedStore(pg.Pool), pg.Pool
 }
 
 // baseDef returns a minimal valid definition for tests.
@@ -279,5 +290,176 @@ func TestPGSavedStore_List_RespectsLimit(t *testing.T) {
 	}
 	if len(list) != 3 {
 		t.Errorf("expected 3 entries with limit=3, got %d", len(list))
+	}
+}
+
+// US-365 — immutable snapshot persistence.
+
+func TestPGSavedStore_Create_StampsUS365Fields(t *testing.T) {
+	store := setupSavedStore(t)
+	ctx := context.Background()
+
+	rec := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "us365-stamps",
+		Definition:      baseDef(t, "employee"),
+		IsImmutable:     true,
+	}
+	if err := store.Create(ctx, rec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if rec.DefinitionHash == "" {
+		t.Error("DefinitionHash empty after Create")
+	}
+	if rec.SnapshotAt == 0 {
+		t.Error("SnapshotAt = 0 after Create; expected nextval() allocation")
+	}
+
+	got, err := store.Get(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DefinitionHash != rec.DefinitionHash {
+		t.Errorf("Get.DefinitionHash = %q, want %q", got.DefinitionHash, rec.DefinitionHash)
+	}
+	if got.SnapshotAt != rec.SnapshotAt {
+		t.Errorf("Get.SnapshotAt = %d, want %d", got.SnapshotAt, rec.SnapshotAt)
+	}
+	if !got.IsImmutable {
+		t.Error("Get.IsImmutable = false, want true")
+	}
+}
+
+func TestPGSavedStore_Create_FrozenPrimaryKeysRoundTrip(t *testing.T) {
+	store := setupSavedStore(t)
+	ctx := context.Background()
+
+	pks := []string{"e1", "e2", "e3"}
+	rec := &objectset.SavedObjectSet{
+		OntologyAPIName:   "north",
+		Name:              "us365-frozen",
+		Definition:        baseDef(t, "employee"),
+		IsImmutable:       true,
+		FrozenObjectType:  "employee",
+		FrozenPrimaryKeys: pks,
+		FrozenTruncated:   false,
+	}
+	if err := store.Create(ctx, rec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := store.Get(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.FrozenObjectType != "employee" {
+		t.Errorf("FrozenObjectType = %q, want employee", got.FrozenObjectType)
+	}
+	if len(got.FrozenPrimaryKeys) != len(pks) {
+		t.Fatalf("FrozenPrimaryKeys len = %d, want %d", len(got.FrozenPrimaryKeys), len(pks))
+	}
+	for i, pk := range pks {
+		if got.FrozenPrimaryKeys[i] != pk {
+			t.Errorf("FrozenPrimaryKeys[%d] = %q, want %q", i, got.FrozenPrimaryKeys[i], pk)
+		}
+	}
+}
+
+func TestPGSavedStore_ReapExpired_HonorsImmutability(t *testing.T) {
+	store, pool := setupSavedStoreWithPool(t)
+	ctx := context.Background()
+
+	immutable := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "kept-forever",
+		Definition:      baseDef(t, "employee"),
+		IsImmutable:     true,
+	}
+	ephemeral := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "ephemeral",
+		Definition:      baseDef(t, "employee"),
+		IsImmutable:     false,
+	}
+	for _, r := range []*objectset.SavedObjectSet{immutable, ephemeral} {
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create %s: %v", r.Name, err)
+		}
+	}
+
+	// Backdate both rows so they are eligible for the reaper. The reaper
+	// must drop only the non-immutable one.
+	if _, err := pool.Exec(ctx,
+		`UPDATE saved_object_sets SET created_at = NOW() - INTERVAL '2 hours' WHERE id IN ($1, $2)`,
+		immutable.ID, ephemeral.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	dropped, err := store.ReapExpired(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("ReapExpired: %v", err)
+	}
+	if dropped != 1 {
+		t.Errorf("ReapExpired dropped %d rows, want 1 (the ephemeral one)", dropped)
+	}
+
+	if _, err := store.Get(ctx, immutable.ID); err != nil {
+		t.Errorf("immutable row lost: %v", err)
+	}
+	if _, err := store.Get(ctx, ephemeral.ID); !errors.Is(err, objectset.ErrSavedSetNotFound) {
+		t.Errorf("ephemeral row should be reaped, got err=%v", err)
+	}
+}
+
+func TestPGSavedStore_ReapExpired_KeepsRecent(t *testing.T) {
+	store := setupSavedStore(t)
+	ctx := context.Background()
+
+	rec := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "fresh",
+		Definition:      baseDef(t, "employee"),
+		IsImmutable:     false,
+	}
+	if err := store.Create(ctx, rec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	dropped, err := store.ReapExpired(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("ReapExpired: %v", err)
+	}
+	if dropped != 0 {
+		t.Errorf("ReapExpired dropped %d rows, want 0 (row was just created)", dropped)
+	}
+}
+
+func TestPGSavedStore_HashIsStable_AcrossKeyOrder(t *testing.T) {
+	store := setupSavedStore(t)
+	ctx := context.Background()
+
+	a := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "hash-a",
+		Definition:      json.RawMessage(`{"type":"base","objectType":"employee"}`),
+		IsImmutable:     true,
+	}
+	b := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "hash-b",
+		Definition:      json.RawMessage(`{"objectType":"employee","type":"base"}`),
+		IsImmutable:     true,
+	}
+	if err := store.Create(ctx, a); err != nil {
+		t.Fatalf("Create a: %v", err)
+	}
+	if err := store.Create(ctx, b); err != nil {
+		t.Fatalf("Create b: %v", err)
+	}
+	if a.DefinitionHash != b.DefinitionHash {
+		t.Errorf("hash differs across key order: %q vs %q", a.DefinitionHash, b.DefinitionHash)
+	}
+	if a.SnapshotAt == b.SnapshotAt {
+		t.Errorf("snapshot_at must be unique per save: a=%d b=%d", a.SnapshotAt, b.SnapshotAt)
 	}
 }

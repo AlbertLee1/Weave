@@ -3,10 +3,26 @@ package objectset
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// snapshotAtCounter is a process-wide monotonically-increasing counter that
+// stamps every Store.Put with a "snapshot transaction id" so that ephemeral
+// createTemporary entries carry the same snapshot_at semantics that the PG
+// store derives from saved_object_sets_snapshot_seq. The counter survives
+// only for the process lifetime; the database sequence is the cross-process
+// authority.
+var snapshotAtCounter int64
+
+// NextSnapshotAt allocates the next ephemeral snapshot transaction id.
+// Exported so tests can assert that createTemporary records a non-zero,
+// monotonically-increasing transaction.
+func NextSnapshotAt() int64 {
+	return atomic.AddInt64(&snapshotAtCounter, 1)
+}
 
 // Store provides temporary storage for ObjectSet definitions with TTL.
 type Store struct {
@@ -18,8 +34,9 @@ type Store struct {
 }
 
 type storeEntry struct {
-	def       *Definition
-	createdAt time.Time
+	def        *Definition
+	createdAt  time.Time
+	snapshotAt int64
 }
 
 // NewStore creates a new ObjectSet store with the given TTL.
@@ -66,15 +83,18 @@ func (s *Store) Stop() {
 	})
 }
 
-// Put stores an ObjectSet definition and returns its reference ID.
+// Put stores an ObjectSet definition and returns its reference ID. Each Put
+// allocates a fresh snapshot transaction id (US-365) so callers can assert
+// that the temporary entry has been "recorded" against a snapshot.
 func (s *Store) Put(def *Definition) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	id := uuid.New().String()
 	s.entries[id] = &storeEntry{
-		def:       def,
-		createdAt: time.Now(),
+		def:        def,
+		createdAt:  time.Now(),
+		snapshotAt: NextSnapshotAt(),
 	}
 	return id
 }
@@ -119,10 +139,15 @@ func (s *Store) Count() int {
 // EntrySnapshot is a stable read-only view of a stored ObjectSet, suitable
 // for callers that want to enumerate the live store without coupling to its
 // internal layout. Definition is the same pointer the original Put received.
+//
+// SnapshotAt is the per-process transaction id allocated when the entry was
+// inserted (US-365); zero for legacy entries created before the field
+// existed.
 type EntrySnapshot struct {
 	ID         string
 	Definition *Definition
 	CreatedAt  time.Time
+	SnapshotAt int64
 }
 
 // ListEntries returns a snapshot of every non-expired entry. The returned
@@ -138,7 +163,12 @@ func (s *Store) ListEntries() []EntrySnapshot {
 		if now.Sub(entry.createdAt) > s.ttl {
 			continue
 		}
-		out = append(out, EntrySnapshot{ID: id, Definition: entry.def, CreatedAt: entry.createdAt})
+		out = append(out, EntrySnapshot{
+			ID:         id,
+			Definition: entry.def,
+			CreatedAt:  entry.createdAt,
+			SnapshotAt: entry.snapshotAt,
+		})
 	}
 	return out
 }
@@ -155,5 +185,10 @@ func (s *Store) GetEntry(id string) (*EntrySnapshot, error) {
 	if time.Since(entry.createdAt) > s.ttl {
 		return nil, fmt.Errorf("objectSet %q has expired", id)
 	}
-	return &EntrySnapshot{ID: id, Definition: entry.def, CreatedAt: entry.createdAt}, nil
+	return &EntrySnapshot{
+		ID:         id,
+		Definition: entry.def,
+		CreatedAt:  entry.createdAt,
+		SnapshotAt: entry.snapshotAt,
+	}, nil
 }

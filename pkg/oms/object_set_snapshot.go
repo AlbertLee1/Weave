@@ -11,6 +11,11 @@ import (
 // (US-224). It freezes a Definition together with the materialised PrimaryKeys
 // list and the ObjectType those PKs resolve under so a future GET can return
 // the same membership without re-running the original query.
+//
+// US-365 added DefinitionHash, SnapshotAt, IsImmutable. They are populated
+// from migration 000082's columns and let the caller chain follow-up reads
+// against the snapshot transaction id and verify the saved definition has
+// not changed under it.
 type ObjectSetSnapshot struct {
 	RID             string          `json:"rid"`
 	OntologyAPIName string          `json:"ontologyApiName"`
@@ -20,6 +25,9 @@ type ObjectSetSnapshot struct {
 	Truncated       bool            `json:"truncated,omitempty"`
 	CreatedBy       string          `json:"createdBy,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
+	DefinitionHash  string          `json:"definitionHash,omitempty"`
+	SnapshotAt      int64           `json:"snapshotAt,omitempty"`
+	IsImmutable     bool            `json:"isImmutable"`
 }
 
 // Validate rejects rows the read path could not interpret. Called by repo

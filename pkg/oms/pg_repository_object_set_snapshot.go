@@ -27,10 +27,12 @@ func (r *PGRepository) CreateObjectSetSnapshot(ctx context.Context, snap *Object
 	}
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO object_set_snapshots (rid, ontology_api_name, object_type,
-		 definition, primary_keys, truncated, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		 definition, primary_keys, truncated, created_by,
+		 definition_hash, snapshot_at, is_immutable)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		snap.RID, snap.OntologyAPIName, snap.ObjectType,
-		[]byte(def), pkJSON, snap.Truncated, snap.CreatedBy)
+		[]byte(def), pkJSON, snap.Truncated, snap.CreatedBy,
+		snap.DefinitionHash, snap.SnapshotAt, snap.IsImmutable)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -45,10 +47,14 @@ func (r *PGRepository) GetObjectSetSnapshot(ctx context.Context, rid string) (*O
 	var defJSON, pkJSON []byte
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_api_name, object_type, definition, primary_keys,
-		 truncated, created_by, created_at
+		 truncated, created_by, created_at,
+		 COALESCE(definition_hash, ''),
+		 COALESCE(snapshot_at, 0),
+		 COALESCE(is_immutable, TRUE)
 		 FROM object_set_snapshots WHERE rid = $1`, rid).
 		Scan(&snap.RID, &snap.OntologyAPIName, &snap.ObjectType, &defJSON, &pkJSON,
-			&snap.Truncated, &snap.CreatedBy, &snap.CreatedAt)
+			&snap.Truncated, &snap.CreatedBy, &snap.CreatedAt,
+			&snap.DefinitionHash, &snap.SnapshotAt, &snap.IsImmutable)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
