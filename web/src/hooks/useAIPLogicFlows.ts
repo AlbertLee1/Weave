@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createLogicFlow,
   deleteLogicFlow,
+  dryRunLogicNode,
   executeLogicFlow,
   getLogicFlow,
   listLogicFlows,
   listLogicRuns,
   updateLogicFlow,
   type CreateLogicFlowRequest,
+  type DryRunLogicNodeRequest,
   type ExecuteLogicFlowRequest,
   type UpdateLogicFlowRequest,
 } from '../api/aipLogic';
@@ -86,5 +88,11 @@ export function useExecuteAIPLogicFlow(flowId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: aipLogicQueryKeys.runs(flowId) });
     },
+  });
+}
+
+export function useDryRunAIPLogicNode(flowId: string) {
+  return useMutation({
+    mutationFn: (body: DryRunLogicNodeRequest) => dryRunLogicNode(flowId, body),
   });
 }

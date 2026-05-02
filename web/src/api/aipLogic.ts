@@ -21,6 +21,8 @@ export interface AIPLogicFlow {
   description?: string;
   nodes: AIPLogicNode[];
   edges: AIPLogicEdge[];
+  fallbackModel?: string;
+  maxRetries?: number;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
@@ -32,6 +34,8 @@ export interface AIPLogicTraceEntry {
   status: 'success' | 'skipped' | 'failed';
   output?: Record<string, unknown>;
   error?: string;
+  attempts?: number;
+  usedFallback?: boolean;
 }
 
 export interface AIPLogicRun {
@@ -60,6 +64,8 @@ export interface CreateLogicFlowRequest {
   description?: string;
   nodes: AIPLogicNode[];
   edges: AIPLogicEdge[];
+  fallbackModel?: string;
+  maxRetries?: number;
 }
 
 export interface UpdateLogicFlowRequest {
@@ -67,13 +73,30 @@ export interface UpdateLogicFlowRequest {
   description?: string;
   nodes?: AIPLogicNode[];
   edges?: AIPLogicEdge[];
+  fallbackModel?: string;
+  maxRetries?: number;
 }
 
 export interface ExecuteLogicFlowRequest {
   input?: Record<string, unknown>;
 }
 
-export const KNOWN_LOGIC_NODE_TYPES = ['llm', 'tool', 'if', 'output'] as const;
+export interface DryRunLogicNodeRequest {
+  node: AIPLogicNode;
+  state?: Record<string, unknown>;
+}
+
+export interface DryRunLogicNodeResponse {
+  trace: AIPLogicTraceEntry;
+}
+
+export const KNOWN_LOGIC_NODE_TYPES = [
+  'llm',
+  'tool',
+  'if',
+  'iterate',
+  'output',
+] as const;
 export type LogicNodeType = (typeof KNOWN_LOGIC_NODE_TYPES)[number];
 
 export function listLogicFlows(): Promise<ListLogicFlowsResponse> {
@@ -128,5 +151,16 @@ export function listLogicRuns(
   return request<ListLogicRunsResponse>(
     'GET',
     `/api/v2/aip/logic-flows/${encodeURIComponent(flowId)}/runs`,
+  );
+}
+
+export function dryRunLogicNode(
+  flowId: string,
+  body: DryRunLogicNodeRequest,
+): Promise<DryRunLogicNodeResponse> {
+  return request<DryRunLogicNodeResponse>(
+    'POST',
+    `/api/v2/aip/logic-flows/${encodeURIComponent(flowId)}/dry-run-node`,
+    body,
   );
 }

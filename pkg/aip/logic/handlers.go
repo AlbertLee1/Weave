@@ -46,6 +46,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Put("/api/v2/aip/logic-flows/{flowId}", h.UpdateFlow)
 	r.Delete("/api/v2/aip/logic-flows/{flowId}", h.DeleteFlow)
 	r.Post("/api/v2/aip/logic-flows/{flowId}/execute", h.ExecuteFlow)
+	r.Post("/api/v2/aip/logic-flows/{flowId}/dry-run-node", h.DryRunNode)
 	r.Get("/api/v2/aip/logic-flows/{flowId}/runs", h.ListRuns)
 }
 
@@ -91,6 +92,20 @@ type updateFlowRequest struct {
 
 type executeFlowRequest struct {
 	Input map[string]any `json:"input,omitempty"`
+}
+
+// dryRunNodeRequest carries an in-flight node spec plus an arbitrary
+// state map so the editor can preview a node's output without saving the
+// flow. The state map is plumbed straight through to the executor's
+// per-node dispatcher; "input" and prior-node outputs may be provided
+// by name (e.g. {"input": {...}, "n1": {...}}).
+type dryRunNodeRequest struct {
+	Node  Node           `json:"node"`
+	State map[string]any `json:"state,omitempty"`
+}
+
+type dryRunNodeResponse struct {
+	Trace TraceEntry `json:"trace"`
 }
 
 type listFlowsResponse struct {
@@ -353,6 +368,82 @@ func (h *Handler) ExecuteFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, run)
+}
+
+// DryRunNode POST /api/v2/aip/logic-flows/{flowId}/dry-run-node. Runs a
+// single in-flight node spec against a caller-supplied state map and
+// returns its TraceEntry. No Run row is persisted — this is the editor
+// preview path the SPA uses to show "what would this node output?"
+// without forcing the author to save the whole flow first. Ownership is
+// gated on the parent flow so dry-run can't be used to evaluate nodes
+// for a flow the caller cannot already read.
+func (h *Handler) DryRunNode(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	if h.executor == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("AIPLogicFlowExecutorUnavailable", map[string]string{
+			"reason": "executor is not wired",
+		}))
+		return
+	}
+	id, ok := h.flowIDParam(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := h.lookupFlowOwned(r.Context(), w, id, user); !ok {
+		return
+	}
+	var req dryRunNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if strings.TrimSpace(req.Node.ID) == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidNode", map[string]string{
+			"reason": "node.id is required",
+		}))
+		return
+	}
+	if !IsKnownNodeType(req.Node.Type) {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidNode", map[string]string{
+			"reason": "node.type is unknown",
+			"type":   req.Node.Type,
+		}))
+		return
+	}
+	if err := validateNodeConfig(req.Node); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidNode", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	state := req.State
+	if state == nil {
+		state = map[string]any{}
+	}
+	var input map[string]any
+	if v, ok := state["input"].(map[string]any); ok {
+		input = v
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), defaultExecuteTimeout)
+	defer cancel()
+	entry, _, runErr := h.executor.runNode(ctx, req.Node, state, input)
+	if runErr != nil {
+		// Preview surfaces failures via the trace entry, not as a
+		// transport error — return 200 so the SPA can render the
+		// failure inline instead of the error envelope.
+		entry.Status = TraceStatusFailed
+		if entry.Error == "" {
+			entry.Error = runErr.Error()
+		}
+	}
+	httputil.WriteJSON(w, http.StatusOK, dryRunNodeResponse{Trace: entry})
 }
 
 // ListRuns GET /api/v2/aip/logic-flows/{flowId}/runs.

@@ -22,6 +22,7 @@ import type {
   AIPLogicFlow,
   AIPLogicNode,
   AIPLogicRun,
+  AIPLogicTraceEntry,
   LogicNodeType,
 } from '../../api/aipLogic';
 import { KNOWN_LOGIC_NODE_TYPES } from '../../api/aipLogic';
@@ -31,6 +32,7 @@ import {
   useAIPLogicRuns,
   useCreateAIPLogicFlow,
   useDeleteAIPLogicFlow,
+  useDryRunAIPLogicNode,
   useExecuteAIPLogicFlow,
   useUpdateAIPLogicFlow,
 } from '../../hooks/useAIPLogicFlows';
@@ -63,6 +65,11 @@ const NODE_TYPE_META: Record<
     color: '#A78BFA',
     description: 'Branches on a condition (==, !=, <, <=, >, >=, contains).',
   },
+  iterate: {
+    label: 'Iterate',
+    color: '#60A5FA',
+    description: 'Runs an inner node once per item in a forEach array.',
+  },
   output: {
     label: 'Output',
     color: '#10B981',
@@ -86,6 +93,11 @@ function defaultConfigFor(nodeType: string): Record<string, unknown> {
       return { tool: 'echo', params: {} };
     case 'if':
       return { condition: '' };
+    case 'iterate':
+      return {
+        forEach: 'input.items',
+        body: { id: 'body', type: 'tool', config: { tool: 'echo', params: {} } },
+      };
     case 'output':
       return { keys: [] as string[] };
   }
@@ -212,6 +224,179 @@ const EMPTY_NEW_FLOW: NewFlowDraft = {
   name: '',
   description: '',
 };
+
+// ----------------------------------------------------------------------------
+// Realtime validation (US-373)
+//
+// `validateGraph` runs in the SPA against the in-flight node + edge state and
+// produces structured issues the editor surfaces inline:
+//   - cycle: a node participates in a directed cycle (DFS in-stack)
+//   - unconnected: a non-trivial graph has nodes with no incoming AND no
+//     outgoing edges (orphan nodes are an authoring smell, not a structural
+//     error). Single-node flows are exempt — a freshly seeded "output"-only
+//     flow shouldn't render red.
+//   - unboundParam: a {{...}} placeholder references a node id (or 'input',
+//     'iterate') that does not exist in the current flow scope. Unbound
+//     params are the most common debug source for "why is my flow returning
+//     nothing" so we highlight aggressively.
+// ----------------------------------------------------------------------------
+
+export type ValidationIssueKind = 'cycle' | 'unconnected' | 'unboundParam';
+
+export interface ValidationIssue {
+  kind: ValidationIssueKind;
+  nodeId: string;
+  message: string;
+  ref?: string;
+}
+
+export interface ValidationReport {
+  issues: ValidationIssue[];
+  byNode: Record<string, ValidationIssue[]>;
+}
+
+const VALID_PARAM_ROOTS = new Set<string>(['input', 'iterate']);
+
+function detectCycleNodes(
+  nodes: { id: string }[],
+  edges: { source: string; target: string }[],
+): Set<string> {
+  const adj = new Map<string, string[]>();
+  for (const n of nodes) adj.set(n.id, []);
+  for (const e of edges) {
+    if (adj.has(e.source)) adj.get(e.source)!.push(e.target);
+  }
+  const onStack = new Set<string>();
+  const visited = new Set<string>();
+  const inCycle = new Set<string>();
+  const dfs = (id: string, stack: string[]) => {
+    onStack.add(id);
+    stack.push(id);
+    for (const next of adj.get(id) ?? []) {
+      if (!adj.has(next)) continue;
+      if (onStack.has(next)) {
+        const startIdx = stack.indexOf(next);
+        if (startIdx >= 0) {
+          for (let i = startIdx; i < stack.length; i++) inCycle.add(stack[i]);
+          inCycle.add(next);
+        }
+      } else if (!visited.has(next)) {
+        dfs(next, stack);
+      }
+    }
+    stack.pop();
+    onStack.delete(id);
+    visited.add(id);
+  };
+  for (const n of nodes) {
+    if (!visited.has(n.id)) dfs(n.id, []);
+  }
+  return inCycle;
+}
+
+// Extract every {{ref.path}} placeholder root from a string. We only care
+// about the first dotted segment — the executor's substituteVars accepts
+// arbitrarily nested paths but the binding check is per-root.
+function extractPlaceholderRoots(text: string): string[] {
+  if (typeof text !== 'string') return [];
+  const out: string[] = [];
+  const re = /\{\{\s*([A-Za-z_][\w-]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    out.push(m[1]);
+  }
+  return out;
+}
+
+function collectPlaceholdersFromValue(value: unknown): string[] {
+  if (typeof value === 'string') return extractPlaceholderRoots(value);
+  if (Array.isArray(value)) {
+    return value.flatMap(collectPlaceholdersFromValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).flatMap(
+      collectPlaceholdersFromValue,
+    );
+  }
+  return [];
+}
+
+export function validateGraph(
+  rfNodes: { id: string; data?: { nodeType?: unknown; config?: unknown } }[],
+  rfEdges: { source: string; target: string }[],
+): ValidationReport {
+  const issues: ValidationIssue[] = [];
+  const knownNodeIds = new Set(rfNodes.map((n) => n.id));
+
+  // Cycle detection
+  const cycleNodes = detectCycleNodes(rfNodes, rfEdges);
+  for (const id of cycleNodes) {
+    issues.push({
+      kind: 'cycle',
+      nodeId: id,
+      message: 'Node participates in a cycle.',
+    });
+  }
+
+  // Unconnected node detection (only flag in graphs of 2+ nodes)
+  if (rfNodes.length > 1) {
+    const incoming = new Map<string, number>();
+    const outgoing = new Map<string, number>();
+    for (const n of rfNodes) {
+      incoming.set(n.id, 0);
+      outgoing.set(n.id, 0);
+    }
+    for (const e of rfEdges) {
+      incoming.set(e.target, (incoming.get(e.target) ?? 0) + 1);
+      outgoing.set(e.source, (outgoing.get(e.source) ?? 0) + 1);
+    }
+    for (const n of rfNodes) {
+      if ((incoming.get(n.id) ?? 0) === 0 && (outgoing.get(n.id) ?? 0) === 0) {
+        issues.push({
+          kind: 'unconnected',
+          nodeId: n.id,
+          message: 'Node has no incoming or outgoing edges.',
+        });
+      }
+    }
+  }
+
+  // Unbound placeholder detection
+  for (const n of rfNodes) {
+    const cfg = (n.data?.config ?? {}) as Record<string, unknown>;
+    const refs = collectPlaceholdersFromValue(cfg);
+    for (const ref of refs) {
+      if (VALID_PARAM_ROOTS.has(ref)) continue;
+      if (knownNodeIds.has(ref)) continue;
+      issues.push({
+        kind: 'unboundParam',
+        nodeId: n.id,
+        ref,
+        message: `Reference {{${ref}…}} is not bound to any known node, "input", or "iterate".`,
+      });
+    }
+  }
+
+  const byNode: Record<string, ValidationIssue[]> = {};
+  for (const issue of issues) {
+    if (!byNode[issue.nodeId]) byNode[issue.nodeId] = [];
+    byNode[issue.nodeId].push(issue);
+  }
+  return { issues, byNode };
+}
+
+function nodeStyleWithIssues(
+  nodeType: string,
+  hasIssues: boolean,
+): React.CSSProperties {
+  const base = nodeStyle(nodeType);
+  if (!hasIssues) return base;
+  return {
+    ...base,
+    border: '1px solid #F43F5E',
+    boxShadow: '0 0 12px rgba(244,63,94,0.45)',
+  };
+}
 
 export function LogicFlowsPage() {
   return (
@@ -521,10 +706,22 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
   const [lastRun, setLastRun] = useState<AIPLogicRun | null>(null);
   const [executePanelOpen, setExecutePanelOpen] = useState(false);
   const [executeInput, setExecuteInput] = useState('{}');
+  const [dryRunState, setDryRunState] = useState('{\n  "input": {}\n}');
+  const [dryRunResult, setDryRunResult] =
+    useState<AIPLogicTraceEntry | null>(null);
+  const [dryRunError, setDryRunError] = useState<string | null>(null);
+  const [fallbackModel, setFallbackModel] = useState('');
+  const [maxRetries, setMaxRetries] = useState<number>(0);
 
   const updateMutation = useUpdateAIPLogicFlow();
   const executeMutation = useExecuteAIPLogicFlow(flow?.id ?? '');
+  const dryRunMutation = useDryRunAIPLogicNode(flow?.id ?? '');
   const runsQuery = useAIPLogicRuns(flow?.id ?? null);
+
+  const validation = useMemo(
+    () => validateGraph(nodes, edges),
+    [nodes, edges],
+  );
 
   // Hydrate state when the flow id changes.
   useEffect(() => {
@@ -536,6 +733,8 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
       setSaveError(null);
       setExecuteError(null);
       setLastRun(null);
+      setDryRunResult(null);
+      setDryRunError(null);
       return;
     }
     const rf = flowToReactFlow(flow);
@@ -546,7 +745,36 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
     setSaveError(null);
     setExecuteError(null);
     setLastRun(null);
+    setDryRunResult(null);
+    setDryRunError(null);
+    setFallbackModel(flow.fallbackModel ?? '');
+    setMaxRetries(flow.maxRetries ?? 0);
   }, [flow]);
+
+  // Reflect validation issues onto the canvas via per-node style. We do
+  // this in a separate effect so the cycle / unconnected / unboundParam
+  // highlights pick up edge changes too — not just node-data changes.
+  useEffect(() => {
+    setNodes((curr) => {
+      let mutated = false;
+      const next = curr.map((n) => {
+        const hasIssues = (validation.byNode[n.id]?.length ?? 0) > 0;
+        const desiredStyle = nodeStyleWithIssues(
+          String(n.data?.nodeType ?? 'llm'),
+          hasIssues,
+        );
+        if (
+          n.style?.border === desiredStyle.border &&
+          n.style?.boxShadow === desiredStyle.boxShadow
+        ) {
+          return n;
+        }
+        mutated = true;
+        return { ...n, style: desiredStyle };
+      });
+      return mutated ? next : curr;
+    });
+  }, [validation]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((curr) => {
@@ -630,11 +858,66 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
     updateMutation.mutate(
       {
         flowId: flow.id,
-        body: { nodes: wire.nodes, edges: wire.edges },
+        body: {
+          nodes: wire.nodes,
+          edges: wire.edges,
+          fallbackModel,
+          maxRetries,
+        },
       },
       {
         onSuccess: () => setDirty(false),
         onError: (err) => setSaveError(describeError(err)),
+      },
+    );
+  };
+
+  const onDryRun = () => {
+    if (!flow) return;
+    if (!selectedNodeId) {
+      setDryRunError('Select a node before running a dry-run.');
+      return;
+    }
+    const target = nodes.find((n) => n.id === selectedNodeId);
+    if (!target) {
+      setDryRunError('Selected node has gone missing.');
+      return;
+    }
+    setDryRunError(null);
+    setDryRunResult(null);
+    let parsed: Record<string, unknown> = {};
+    if (dryRunState.trim() !== '') {
+      try {
+        const candidate = JSON.parse(dryRunState);
+        if (
+          candidate &&
+          typeof candidate === 'object' &&
+          !Array.isArray(candidate)
+        ) {
+          parsed = candidate as Record<string, unknown>;
+        } else {
+          setDryRunError('State must be a JSON object.');
+          return;
+        }
+      } catch (e) {
+        setDryRunError(`Invalid JSON: ${(e as Error).message}`);
+        return;
+      }
+    }
+    const cfg = { ...((target.data?.config as Record<string, unknown>) ?? {}) };
+    delete cfg['__editorPosition'];
+    dryRunMutation.mutate(
+      {
+        node: {
+          id: target.id,
+          type: String(target.data?.nodeType ?? 'llm'),
+          config: cfg,
+        },
+        state: parsed,
+      },
+      {
+        onSuccess: (res) => setDryRunResult(res.trace),
+        onError: (err) => setDryRunError(describeError(err)),
       },
     );
   };
@@ -754,6 +1037,45 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
         </div>
       )}
 
+      <ValidationBanner report={validation} onSelect={setSelectedNodeId} />
+
+      <div
+        className="flex flex-wrap items-center gap-3 border-b border-border/50 bg-bg-primary/30 px-3 py-1.5 text-[11px] text-text-secondary"
+        data-testid="flow-settings"
+      >
+        <label className="flex items-center gap-1.5">
+          Fallback model
+          <input
+            type="text"
+            value={fallbackModel}
+            onChange={(e) => {
+              setFallbackModel(e.target.value);
+              setDirty(true);
+            }}
+            placeholder="(none)"
+            data-testid="flow-fallback-model"
+            className="w-32 rounded-md border border-border/50 bg-bg-primary px-2 py-1 font-mono text-[11px] text-text-primary outline-none focus:border-amber-500/60"
+          />
+        </label>
+        <label className="flex items-center gap-1.5">
+          Max retries
+          <input
+            type="number"
+            min={0}
+            max={8}
+            value={maxRetries}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10);
+              if (Number.isNaN(n)) return;
+              setMaxRetries(Math.max(0, Math.min(8, n)));
+              setDirty(true);
+            }}
+            data-testid="flow-max-retries"
+            className="w-16 rounded-md border border-border/50 bg-bg-primary px-2 py-1 font-mono text-[11px] text-text-primary outline-none focus:border-amber-500/60"
+          />
+        </label>
+      </div>
+
       {executePanelOpen && (
         <div
           className="flex flex-col gap-2 border-b border-border/50 bg-bg-primary/40 px-3 py-2"
@@ -818,6 +1140,15 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
         </div>
         <NodeConfigPanel
           node={selectedNode}
+          issues={
+            selectedNode ? (validation.byNode[selectedNode.id] ?? []) : []
+          }
+          dryRunState={dryRunState}
+          onChangeDryRunState={setDryRunState}
+          dryRunResult={dryRunResult}
+          dryRunError={dryRunError}
+          dryRunPending={dryRunMutation.isPending}
+          onDryRun={onDryRun}
           onClose={() => setSelectedNodeId(null)}
           onChangeConfig={(cfg) => {
             if (!selectedNode) return;
@@ -854,6 +1185,13 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
 
 interface NodeConfigPanelProps {
   node: RFNode<RFNodeData> | null;
+  issues: ValidationIssue[];
+  dryRunState: string;
+  dryRunResult: AIPLogicTraceEntry | null;
+  dryRunError: string | null;
+  dryRunPending: boolean;
+  onChangeDryRunState: (s: string) => void;
+  onDryRun: () => void;
   onClose: () => void;
   onChangeConfig: (cfg: Record<string, unknown>) => void;
   onChangeType: (t: LogicNodeType) => void;
@@ -863,6 +1201,13 @@ interface NodeConfigPanelProps {
 
 function NodeConfigPanel({
   node,
+  issues,
+  dryRunState,
+  dryRunResult,
+  dryRunError,
+  dryRunPending,
+  onChangeDryRunState,
+  onDryRun,
   onClose,
   onChangeConfig,
   onChangeType,
@@ -914,6 +1259,27 @@ function NodeConfigPanel({
         </button>
       </header>
 
+      {issues.length > 0 && (
+        <div
+          role="alert"
+          data-testid="node-issue-list"
+          className="border-b border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300"
+        >
+          <div className="mb-1 font-semibold">Issues with this node</div>
+          <ul className="space-y-0.5">
+            {issues.map((issue, i) => (
+              <li
+                key={`${issue.kind}-${i}`}
+                data-testid="node-issue"
+                data-issue-kind={issue.kind}
+              >
+                {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="flex-1 space-y-4 overflow-y-auto px-3 py-3">
         <label className="flex flex-col gap-1 text-[11px] text-text-secondary">
           Node ID
@@ -947,6 +1313,15 @@ function NodeConfigPanel({
           config={cfg}
           onChange={onChangeConfig}
         />
+
+        <DryRunPanel
+          state={dryRunState}
+          onChangeState={onChangeDryRunState}
+          onRun={onDryRun}
+          pending={dryRunPending}
+          result={dryRunResult}
+          error={dryRunError}
+        />
       </div>
 
       <footer className="border-t border-border/50 px-3 py-2">
@@ -960,6 +1335,155 @@ function NodeConfigPanel({
         </button>
       </footer>
     </aside>
+  );
+}
+
+interface DryRunPanelProps {
+  state: string;
+  onChangeState: (s: string) => void;
+  onRun: () => void;
+  pending: boolean;
+  result: AIPLogicTraceEntry | null;
+  error: string | null;
+}
+
+function DryRunPanel({
+  state,
+  onChangeState,
+  onRun,
+  pending,
+  result,
+  error,
+}: DryRunPanelProps) {
+  return (
+    <div
+      data-testid="dry-run-panel"
+      className="rounded-md border border-border/50 bg-bg-primary/40 p-2"
+    >
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] font-semibold text-text-secondary">
+          Dry run
+        </span>
+        <button
+          type="button"
+          onClick={onRun}
+          disabled={pending}
+          data-testid="dry-run-btn"
+          className="rounded-md bg-teal-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
+        >
+          {pending ? 'Running…' : 'Run node'}
+        </button>
+      </div>
+      <label className="flex flex-col gap-1 text-[10px] text-text-muted">
+        State (JSON object — provides input + upstream node outputs)
+        <textarea
+          rows={3}
+          value={state}
+          onChange={(e) => onChangeState(e.target.value)}
+          data-testid="dry-run-state"
+          className="rounded-md border border-border/50 bg-bg-primary px-2 py-1.5 font-mono text-[10px] text-text-primary outline-none focus:border-amber-500/60"
+        />
+      </label>
+      {error && (
+        <div
+          role="alert"
+          data-testid="dry-run-error"
+          className="mt-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-300"
+        >
+          {error}
+        </div>
+      )}
+      {result && (
+        <div
+          data-testid="dry-run-result"
+          data-status={result.status}
+          className="mt-1 rounded border border-border/50 bg-bg-primary/60 p-1.5 text-[10px] text-text-secondary"
+        >
+          <div>
+            status:{' '}
+            <span
+              className={
+                result.status === 'success'
+                  ? 'text-teal-300'
+                  : 'text-rose-300'
+              }
+            >
+              {result.status}
+            </span>
+            {typeof result.attempts === 'number' && result.attempts > 1 && (
+              <span className="ml-2 text-text-muted">
+                attempts: {result.attempts}
+              </span>
+            )}
+            {result.usedFallback && (
+              <span className="ml-2 text-amber-300">used fallback</span>
+            )}
+          </div>
+          {result.error && (
+            <div className="mt-0.5 text-rose-300" data-testid="dry-run-error-text">
+              {result.error}
+            </div>
+          )}
+          {result.output && Object.keys(result.output).length > 0 && (
+            <pre
+              data-testid="dry-run-output"
+              className="mt-1 max-h-32 overflow-y-auto rounded bg-bg-primary/80 p-1.5 font-mono text-[10px] text-text-primary"
+            >
+              {JSON.stringify(result.output, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ValidationBannerProps {
+  report: ValidationReport;
+  onSelect: (nodeId: string) => void;
+}
+
+function ValidationBanner({ report, onSelect }: ValidationBannerProps) {
+  if (report.issues.length === 0) {
+    return (
+      <div
+        data-testid="validation-banner"
+        data-issue-count="0"
+        className="border-b border-emerald-500/30 bg-emerald-500/5 px-3 py-1 text-[11px] text-emerald-300"
+      >
+        No validation issues.
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid="validation-banner"
+      data-issue-count={report.issues.length}
+      className="border-b border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-300"
+    >
+      <div className="mb-0.5 font-semibold">
+        {report.issues.length} validation{' '}
+        {report.issues.length === 1 ? 'issue' : 'issues'}
+      </div>
+      <ul className="space-y-0.5">
+        {report.issues.map((issue, i) => (
+          <li
+            key={`${issue.kind}-${issue.nodeId}-${i}`}
+            data-testid="validation-issue"
+            data-issue-kind={issue.kind}
+          >
+            <button
+              type="button"
+              onClick={() => onSelect(issue.nodeId)}
+              className="text-left underline-offset-2 hover:underline"
+            >
+              <span className="font-mono">{issue.nodeId}</span>:{' '}
+              {issue.message}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -1056,6 +1580,24 @@ function NodeConfigFields({
           </p>
         </>
       );
+    case 'iterate':
+      return (
+        <>
+          {stringField(
+            'forEach',
+            'forEach (state path)',
+            'input.items',
+          )}
+          <IterateBodyEditor
+            value={(config.body as Record<string, unknown>) ?? {}}
+            onChange={(v) => setField('body', v)}
+          />
+          <p className="text-[10px] text-text-muted">
+            Body runs once per item; cap is 100 items. Reference the current
+            item via <code>{'{{iterate.<bodyId>.item}}'}</code>.
+          </p>
+        </>
+      );
     case 'output':
       return (
         <KeysEditor
@@ -1112,6 +1654,59 @@ function ParamsEditor({ value, onChange }: ParamsEditorProps) {
           }
         }}
         data-testid="node-cfg-params"
+        className="rounded-md border border-border/50 bg-bg-primary px-2 py-1.5 font-mono text-[11px] text-text-primary outline-none focus:border-amber-500/60"
+      />
+      {error && (
+        <span className="text-[10px] text-rose-300" role="alert">
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
+
+interface IterateBodyEditorProps {
+  value: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}
+
+function IterateBodyEditor({ value, onChange }: IterateBodyEditorProps) {
+  const [text, setText] = useState(() =>
+    JSON.stringify(value ?? {}, null, 2),
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setText(JSON.stringify(value ?? {}, null, 2));
+  }, [value]);
+
+  return (
+    <label className="flex flex-col gap-1 text-[11px] text-text-secondary">
+      Body (inner node spec)
+      <textarea
+        rows={6}
+        value={text}
+        onChange={(e) => {
+          const next = e.target.value;
+          setText(next);
+          if (next.trim() === '') {
+            setError(null);
+            onChange({});
+            return;
+          }
+          try {
+            const parsed = JSON.parse(next);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              setError(null);
+              onChange(parsed as Record<string, unknown>);
+            } else {
+              setError('Must be a JSON object.');
+            }
+          } catch (e) {
+            setError((e as Error).message);
+          }
+        }}
+        data-testid="node-cfg-body"
         className="rounded-md border border-border/50 bg-bg-primary px-2 py-1.5 font-mono text-[11px] text-text-primary outline-none focus:border-amber-500/60"
       />
       {error && (
