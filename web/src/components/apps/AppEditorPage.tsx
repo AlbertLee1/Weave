@@ -5,19 +5,32 @@ import {
   listApps,
   updateApp,
   type App,
+  type AppEvent,
+  type AppVariable,
+  type AppVariableType,
 } from '../../api/apps';
 import {
   COMPONENT_TYPES,
   INSTANCE_DND_MIME,
   MAX_COLUMNS,
   PALETTE_DND_MIME,
+  VARIABLE_NAME_PATTERN,
+  VARIABLE_TYPES,
+  decodeLayout,
   distributeWidths,
-  instancesFromLayout,
   instancesToLayout,
+  makeEvent,
   makeInstance,
+  makeVariable,
+  substituteVariables,
   type ComponentInstance,
   type ComponentType,
 } from './layout';
+import {
+  dispatchEvent,
+  initialVariableState,
+  type VariableState,
+} from './runtime';
 
 // US-392: App Component Palette + Canvas + Property Panel.
 //
@@ -52,6 +65,7 @@ export interface AppEditorPageProps {
 
 export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const [instances, setInstances] = useState<ComponentInstance[]>([]);
+  const [variables, setVariables] = useState<AppVariable[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState('Untitled App');
   const [savedRid, setSavedRid] = useState<string | null>(rid ?? null);
@@ -62,6 +76,9 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const dragOverCanvas = useRef(false);
   const [canvasIsDragging, setCanvasIsDragging] = useState(false);
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [runtimeState, setRuntimeState] = useState<VariableState>({});
+  const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
   // Load existing app on mount when rid is supplied.
   useEffect(() => {
@@ -72,7 +89,9 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
         if (cancelled) return;
         setName(row.name);
         setSavedRid(row.rid);
-        setInstances(instancesFromLayout(row.layoutJson));
+        const decoded = decodeLayout(row.layoutJson);
+        setInstances(decoded.instances);
+        setVariables(decoded.variables);
       })
       .catch(() => {
         // Fall through to blank editor — degraded mode (no PG store)
@@ -142,6 +161,57 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
         i.id === id ? { ...i, props: { ...i.props, ...patch } } : i,
       ),
     );
+  }, []);
+
+  const setOnClick = useCallback(
+    (id: string, event: AppEvent | null) => {
+      setInstances((prev) =>
+        prev.map((i) => {
+          if (i.id !== id) return i;
+          const events = { ...i.events };
+          if (event === null) delete events.onClick;
+          else events.onClick = event;
+          return { ...i, events };
+        }),
+      );
+    },
+    [],
+  );
+
+  const addVariable = useCallback(() => {
+    setVariables((prev) => {
+      let n = prev.length + 1;
+      let candidate = `var${n}`;
+      const taken = new Set(prev.map((v) => v.name));
+      while (taken.has(candidate)) {
+        n += 1;
+        candidate = `var${n}`;
+      }
+      return [...prev, makeVariable(candidate, 'string', '')];
+    });
+  }, []);
+
+  const updateVariable = useCallback(
+    (index: number, patch: Partial<AppVariable>) => {
+      setVariables((prev) =>
+        prev.map((v, i) => (i === index ? { ...v, ...patch } : v)),
+      );
+    },
+    [],
+  );
+
+  const removeVariable = useCallback((index: number) => {
+    setVariables((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const enterPreview = useCallback(() => {
+    setRuntimeState(initialVariableState(variables));
+    setRuntimeMessage(null);
+    setMode('preview');
+  }, [variables]);
+
+  const exitPreview = useCallback(() => {
+    setMode('edit');
   }, []);
 
   const handlePaletteDragStart = useCallback(
@@ -221,7 +291,7 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const handleSave = useCallback(async () => {
     setSaveStatus('saving');
     setSaveError(null);
-    const layoutJson = instancesToLayout(instances);
+    const layoutJson = instancesToLayout(instances, variables);
     try {
       if (savedRid) {
         await updateApp({ rid: savedRid, name, layoutJson });
@@ -237,12 +307,40 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
         err instanceof Error ? err.message : 'Save failed',
       );
     }
-  }, [instances, name, onSaved, savedRid]);
+  }, [instances, name, onSaved, savedRid, variables]);
 
   const canAddMore = instances.length < MAX_COLUMNS;
+  const isPreview = mode === 'preview';
+
+  const handleRuntimeEvent = useCallback(
+    async (event: AppEvent) => {
+      try {
+        await dispatchEvent(event, {
+          variables,
+          state: runtimeState,
+          setState: setRuntimeState,
+          navigate: (to) => {
+            setRuntimeMessage(`navigate → ${to}`);
+          },
+          runAction: (actionType, params) => {
+            const summary =
+              Object.keys(params).length > 0
+                ? `runAction ${actionType}(${JSON.stringify(params)})`
+                : `runAction ${actionType}`;
+            setRuntimeMessage(summary);
+          },
+        });
+      } catch (err) {
+        setRuntimeMessage(
+          err instanceof Error ? `error: ${err.message}` : 'event failed',
+        );
+      }
+    },
+    [variables, runtimeState],
+  );
 
   return (
-    <div data-testid="app-editor-page" className="min-h-full p-6">
+    <div data-testid="app-editor-page" data-mode={mode} className="min-h-full p-6">
       <header className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-text-primary tracking-tight">
@@ -262,6 +360,14 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
             onChange={(e) => setName(e.target.value)}
             className="px-2 py-1 rounded border border-border bg-bg-secondary text-sm text-text-primary"
           />
+          <button
+            type="button"
+            data-testid="app-mode-toggle"
+            onClick={() => (isPreview ? exitPreview() : enterPreview())}
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+          >
+            {isPreview ? 'Back to Edit' : 'Preview'}
+          </button>
           <button
             type="button"
             data-testid="app-save"
@@ -306,30 +412,53 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
         </div>
       </header>
 
-      <div className="grid grid-cols-12 gap-4">
-        <ComponentPalette
-          onDragStart={handlePaletteDragStart}
-          onAdd={addInstance}
-          canAddMore={canAddMore}
+      {isPreview ? (
+        <RuntimeView
+          instances={instances}
+          variables={variables}
+          state={runtimeState}
+          onEvent={handleRuntimeEvent}
+          message={runtimeMessage}
         />
+      ) : (
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-3 flex flex-col gap-4">
+            <ComponentPalette
+              onDragStart={handlePaletteDragStart}
+              onAdd={addInstance}
+              canAddMore={canAddMore}
+            />
+            <VariablesPanel
+              variables={variables}
+              onAdd={addVariable}
+              onUpdate={updateVariable}
+              onRemove={removeVariable}
+            />
+          </div>
 
-        <div className="col-span-7">
-          <Canvas
-            instances={instances}
-            widths={widths}
-            selectedId={selectedId}
-            isDropTarget={canvasIsDragging}
-            onSelect={setSelectedId}
-            onRemove={removeInstance}
-            onInstanceDragStart={handleInstanceDragStart}
-            onDragOver={handleCanvasDragOver}
-            onDragLeave={handleCanvasDragLeave}
-            onDrop={handleCanvasDrop}
+          <div className="col-span-7">
+            <Canvas
+              instances={instances}
+              widths={widths}
+              selectedId={selectedId}
+              isDropTarget={canvasIsDragging}
+              onSelect={setSelectedId}
+              onRemove={removeInstance}
+              onInstanceDragStart={handleInstanceDragStart}
+              onDragOver={handleCanvasDragOver}
+              onDragLeave={handleCanvasDragLeave}
+              onDrop={handleCanvasDrop}
+            />
+          </div>
+
+          <PropertyPanel
+            selected={selected}
+            variables={variables}
+            onPatch={patchProps}
+            onSetOnClick={setOnClick}
           />
         </div>
-
-        <PropertyPanel selected={selected} onPatch={patchProps} />
-      </div>
+      )}
     </div>
   );
 }
@@ -608,10 +737,17 @@ function CanvasInstancePreview({
 
 interface PropertyPanelProps {
   selected: ComponentInstance | null;
+  variables: AppVariable[];
   onPatch: (id: string, patch: Record<string, unknown>) => void;
+  onSetOnClick: (id: string, event: AppEvent | null) => void;
 }
 
-function PropertyPanel({ selected, onPatch }: PropertyPanelProps) {
+function PropertyPanel({
+  selected,
+  variables,
+  onPatch,
+  onSetOnClick,
+}: PropertyPanelProps) {
   if (!selected) {
     return (
       <aside
@@ -645,8 +781,452 @@ function PropertyPanel({ selected, onPatch }: PropertyPanelProps) {
         instance={selected}
         onPatch={(patch) => onPatch(selected.id, patch)}
       />
+      <EventsEditor
+        instance={selected}
+        variables={variables}
+        onSetOnClick={(ev) => onSetOnClick(selected.id, ev)}
+      />
     </aside>
   );
+}
+
+interface VariablesPanelProps {
+  variables: AppVariable[];
+  onAdd: () => void;
+  onUpdate: (index: number, patch: Partial<AppVariable>) => void;
+  onRemove: (index: number) => void;
+}
+
+function VariablesPanel({
+  variables,
+  onAdd,
+  onUpdate,
+  onRemove,
+}: VariablesPanelProps) {
+  return (
+    <aside
+      data-testid="app-variables-panel"
+      data-variable-count={variables.length}
+      className="border border-border rounded bg-bg-secondary/40 p-3"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-mono font-medium text-text-secondary">
+          Variables
+        </h2>
+        <button
+          type="button"
+          data-testid="app-variables-add"
+          onClick={onAdd}
+          className="text-xs px-2 py-0.5 rounded border border-border bg-bg-primary text-text-primary hover:border-accent-primary"
+        >
+          + Add
+        </button>
+      </div>
+      {variables.length === 0 ? (
+        <p
+          data-testid="app-variables-empty"
+          className="text-xs text-text-secondary italic"
+        >
+          No variables. Variables hold runtime state read by components and
+          written by events.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {variables.map((v, idx) => {
+            const nameValid = VARIABLE_NAME_PATTERN.test(v.name);
+            const dupCount = variables.filter((x) => x.name === v.name).length;
+            const isDuplicate = dupCount > 1;
+            return (
+              <li
+                key={idx}
+                data-testid="app-variable-row"
+                data-variable-name={v.name}
+                data-variable-type={v.type}
+                data-variable-invalid={
+                  !nameValid || isDuplicate ? 'true' : 'false'
+                }
+                className="flex flex-col gap-1 border border-border rounded p-2 bg-bg-primary"
+              >
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    aria-label={`Variable name ${idx + 1}`}
+                    data-testid={`app-variable-name-${idx}`}
+                    value={v.name}
+                    onChange={(e) => onUpdate(idx, { name: e.target.value })}
+                    placeholder="varName"
+                    className="flex-1 px-2 py-0.5 rounded border border-border bg-bg-secondary text-xs text-text-primary font-mono"
+                  />
+                  <button
+                    type="button"
+                    data-testid={`app-variable-remove-${idx}`}
+                    aria-label={`Remove ${v.name}`}
+                    onClick={() => onRemove(idx)}
+                    className="text-text-secondary hover:text-accent-error text-xs px-1"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="flex items-center gap-1">
+                  <select
+                    aria-label={`Variable type ${idx + 1}`}
+                    data-testid={`app-variable-type-${idx}`}
+                    value={v.type}
+                    onChange={(e) =>
+                      onUpdate(idx, {
+                        type: e.target.value as AppVariableType,
+                      })
+                    }
+                    className="px-1 py-0.5 rounded border border-border bg-bg-secondary text-xs text-text-primary"
+                  >
+                    {VARIABLE_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    aria-label={`Variable default ${idx + 1}`}
+                    data-testid={`app-variable-default-${idx}`}
+                    value={v.default}
+                    onChange={(e) =>
+                      onUpdate(idx, { default: e.target.value })
+                    }
+                    placeholder="default"
+                    className="flex-1 px-2 py-0.5 rounded border border-border bg-bg-secondary text-xs text-text-primary font-mono"
+                  />
+                </div>
+                {!nameValid && v.name !== '' && (
+                  <p
+                    data-testid={`app-variable-error-${idx}`}
+                    className="text-[10px] text-accent-error"
+                  >
+                    Names must match /[A-Za-z_][A-Za-z0-9_]*/.
+                  </p>
+                )}
+                {isDuplicate && (
+                  <p
+                    data-testid={`app-variable-dup-${idx}`}
+                    className="text-[10px] text-accent-error"
+                  >
+                    Duplicate variable name.
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </aside>
+  );
+}
+
+interface EventsEditorProps {
+  instance: ComponentInstance;
+  variables: AppVariable[];
+  onSetOnClick: (event: AppEvent | null) => void;
+}
+
+function EventsEditor({ instance, variables, onSetOnClick }: EventsEditorProps) {
+  const onClick = instance.events?.onClick;
+  const kind: AppEvent['kind'] | 'none' = onClick?.kind ?? 'none';
+
+  const updateOnClick = useCallback(
+    (next: AppEvent | null) => onSetOnClick(next),
+    [onSetOnClick],
+  );
+
+  return (
+    <div
+      data-testid="app-events-editor"
+      data-onclick-kind={kind}
+      className="mt-3 pt-3 border-t border-border flex flex-col gap-2"
+    >
+      <h3 className="text-xs font-mono font-medium text-text-secondary">
+        onClick
+      </h3>
+      <select
+        aria-label="onClick handler kind"
+        data-testid="app-event-onclick-kind"
+        value={kind}
+        onChange={(e) => {
+          const next = e.target.value as AppEvent['kind'] | 'none';
+          if (next === 'none') {
+            updateOnClick(null);
+          } else {
+            updateOnClick(makeEvent(next));
+          }
+        }}
+        className="px-1 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary"
+      >
+        <option value="none">No handler</option>
+        <option value="setVariable">Set Variable</option>
+        <option value="runAction">Run Action</option>
+        <option value="navigate">Navigate</option>
+      </select>
+      {onClick?.kind === 'setVariable' && (
+        <div className="flex flex-col gap-1">
+          <select
+            aria-label="setVariable target"
+            data-testid="app-event-onclick-setvariable-name"
+            value={onClick.name}
+            onChange={(e) =>
+              updateOnClick({ ...onClick, name: e.target.value })
+            }
+            className="px-1 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary"
+          >
+            <option value="">— select variable —</option>
+            {variables.map((v) => (
+              <option key={v.name} value={v.name}>
+                {v.name} : {v.type}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            aria-label="setVariable value"
+            data-testid="app-event-onclick-setvariable-value"
+            value={onClick.value}
+            onChange={(e) =>
+              updateOnClick({ ...onClick, value: e.target.value })
+            }
+            placeholder="value (use {{var}} for refs)"
+            className="px-2 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary font-mono"
+          />
+        </div>
+      )}
+      {onClick?.kind === 'runAction' && (
+        <input
+          type="text"
+          aria-label="runAction ActionType"
+          data-testid="app-event-onclick-runaction-actiontype"
+          value={onClick.actionType}
+          onChange={(e) =>
+            updateOnClick({ ...onClick, actionType: e.target.value })
+          }
+          placeholder="action API name"
+          className="px-2 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary font-mono"
+        />
+      )}
+      {onClick?.kind === 'navigate' && (
+        <input
+          type="text"
+          aria-label="navigate target"
+          data-testid="app-event-onclick-navigate-to"
+          value={onClick.to}
+          onChange={(e) => updateOnClick({ ...onClick, to: e.target.value })}
+          placeholder="/path/{{var}}"
+          className="px-2 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary font-mono"
+        />
+      )}
+    </div>
+  );
+}
+
+interface RuntimeViewProps {
+  instances: ComponentInstance[];
+  variables: AppVariable[];
+  state: VariableState;
+  onEvent: (event: AppEvent) => void;
+  message: string | null;
+}
+
+function RuntimeView({
+  instances,
+  variables,
+  state,
+  onEvent,
+  message,
+}: RuntimeViewProps) {
+  const stringState = useMemo(() => {
+    const out: Record<string, string | number | boolean> = {};
+    for (const v of variables) {
+      out[v.name] = state[v.name] ?? '';
+    }
+    return out;
+  }, [variables, state]);
+
+  const widths = useMemo(() => distributeWidths(instances.length), [instances]);
+
+  return (
+    <div data-testid="app-runtime-view" className="flex flex-col gap-3">
+      <div
+        data-testid="app-runtime-state"
+        className="rounded border border-border bg-bg-secondary/40 p-2 text-xs font-mono text-text-secondary flex flex-wrap gap-3"
+      >
+        {variables.length === 0 && <span>No variables.</span>}
+        {variables.map((v) => (
+          <span
+            key={v.name}
+            data-testid={`app-runtime-var-${v.name}`}
+            data-variable-value={String(state[v.name] ?? '')}
+          >
+            {v.name}
+            <span className="text-text-tertiary">: {v.type}</span>
+            <span className="ml-1 text-accent-primary">
+              = {String(state[v.name] ?? '')}
+            </span>
+          </span>
+        ))}
+      </div>
+      <div
+        data-testid="app-runtime-canvas"
+        className="min-h-[300px] border border-border rounded bg-bg-secondary/40 p-3"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
+          gap: 8,
+        }}
+      >
+        {instances.length === 0 && (
+          <p
+            style={{ gridColumn: '1 / -1' }}
+            className="text-xs text-text-secondary italic text-center"
+          >
+            Empty app. Add components in Edit mode.
+          </p>
+        )}
+        {instances.map((inst, idx) => (
+          <RuntimeInstance
+            key={inst.id}
+            instance={inst}
+            width={widths[idx]}
+            state={stringState}
+            onEvent={onEvent}
+          />
+        ))}
+      </div>
+      {message && (
+        <p
+          data-testid="app-runtime-message"
+          className="text-xs font-mono text-text-secondary border border-border rounded px-2 py-1"
+        >
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RuntimeInstance({
+  instance,
+  width,
+  state,
+  onEvent,
+}: {
+  instance: ComponentInstance;
+  width: number;
+  state: Record<string, string | number | boolean>;
+  onEvent: (event: AppEvent) => void;
+}) {
+  const onClick = instance.events?.onClick;
+  const handleClick = useCallback(() => {
+    if (onClick) onEvent(onClick);
+  }, [onClick, onEvent]);
+
+  return (
+    <div
+      data-testid="app-runtime-instance"
+      data-component-type={instance.componentType}
+      style={{ gridColumn: `span ${width}` }}
+      className="border border-border rounded bg-bg-primary p-3 text-text-primary"
+    >
+      <RuntimeComponent
+        instance={instance}
+        state={state}
+        onClick={onClick ? handleClick : undefined}
+      />
+    </div>
+  );
+}
+
+function RuntimeComponent({
+  instance,
+  state,
+  onClick,
+}: {
+  instance: ComponentInstance;
+  state: Record<string, string | number | boolean>;
+  onClick?: () => void;
+}) {
+  const meta = COMPONENT_TYPES.find((c) => c.type === instance.componentType);
+  switch (instance.componentType) {
+    case 'text':
+      return (
+        <div
+          data-testid="app-runtime-text"
+          className="text-sm whitespace-pre-wrap"
+        >
+          {substituteVariables(
+            String(instance.props.content ?? ''),
+            state,
+          )}
+        </div>
+      );
+    case 'button':
+      return (
+        <button
+          type="button"
+          data-testid="app-runtime-button"
+          onClick={onClick}
+          className="px-3 py-1.5 rounded border border-border bg-accent-primary/20 text-sm text-text-primary hover:border-accent-primary"
+        >
+          {substituteVariables(
+            String(instance.props.label ?? meta?.label ?? 'Button'),
+            state,
+          )}
+        </button>
+      );
+    case 'table':
+      return (
+        <div className="text-xs text-text-secondary">
+          <div className="font-mono">Table</div>
+          <div className="truncate">
+            {substituteVariables(
+              String(instance.props.objectSet ?? '— bind ObjectSet —'),
+              state,
+            )}
+          </div>
+        </div>
+      );
+    case 'form':
+      return (
+        <div className="text-xs text-text-secondary">
+          <div className="font-mono">Form</div>
+          <div className="truncate">
+            {substituteVariables(
+              String(instance.props.actionType ?? '— bind ActionType —'),
+              state,
+            )}
+          </div>
+        </div>
+      );
+    case 'chart':
+      return (
+        <div className="text-xs text-text-secondary">
+          <div className="font-mono">Chart</div>
+          <div className="truncate">
+            {substituteVariables(
+              String(instance.props.title ?? 'Untitled chart'),
+              state,
+            )}
+          </div>
+        </div>
+      );
+    case 'objectCard':
+      return (
+        <div className="text-xs text-text-secondary">
+          <div className="font-mono">Object Card</div>
+          <div className="truncate">
+            {substituteVariables(
+              String(instance.props.objectType ?? '— bind ObjectType —'),
+              state,
+            )}
+          </div>
+        </div>
+      );
+  }
 }
 
 interface ComponentPropertyFieldsProps {

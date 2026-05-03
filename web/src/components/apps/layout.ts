@@ -1,4 +1,12 @@
-import type { LayoutNode } from '../../api/apps';
+import type {
+  AppEvent,
+  AppEventMap,
+  AppVariable,
+  AppVariableType,
+  LayoutNode,
+} from '../../api/apps';
+
+export type { AppEvent, AppEventMap, AppVariable, AppVariableType };
 
 // US-392: shared layout helpers + constants for the App Editor. Lives
 // in its own module so the page component file can stay component-only
@@ -67,6 +75,10 @@ export interface ComponentInstance {
   id: string;
   componentType: ComponentType;
   props: Record<string, unknown>;
+  // events is the optional onClick handler bag (US-393). Older fixtures
+  // pre-US-393 don't set this; callers that need to read/write it
+  // should default-spread an empty object via `instance.events ?? {}`.
+  events?: AppEventMap;
 }
 
 let instanceIdCounter = 0;
@@ -81,7 +93,59 @@ export function makeInstance(type: ComponentType): ComponentInstance {
     id: nextInstanceId(),
     componentType: type,
     props: { ...(meta?.defaultProps ?? {}) },
+    events: {},
   };
+}
+
+// US-393: app-level Variables. Names are unique and must match
+// /^[A-Za-z_][A-Za-z0-9_]*$/ so {{var}} template substitution is
+// unambiguous. Defaults travel as strings on the wire and are coerced to
+// the declared type at runtime by `coerceVariableValue`.
+export const VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const VARIABLE_TYPES: AppVariableType[] = [
+  'string',
+  'number',
+  'boolean',
+];
+
+export function makeVariable(
+  name: string,
+  type: AppVariableType = 'string',
+  defaultValue = '',
+): AppVariable {
+  return { name, type, default: defaultValue };
+}
+
+export function coerceVariableValue(
+  raw: string,
+  type: AppVariableType,
+): string | number | boolean {
+  if (type === 'number') {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (type === 'boolean') {
+    const v = raw.trim().toLowerCase();
+    return v === 'true' || v === '1' || v === 'yes';
+  }
+  return raw;
+}
+
+// substituteVariables replaces `{{name}}` / `{{ name }}` references in
+// `input` with the live variable value. Unknown names are left as-is so
+// authors can spot typos at preview time. Uses a single-pass scan so
+// nested `{{a}}{{b}}` references do not require recursion.
+export function substituteVariables(
+  input: string,
+  state: Record<string, string | number | boolean>,
+): string {
+  if (!input.includes('{{')) return input;
+  return input.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (full, key) => {
+    if (Object.prototype.hasOwnProperty.call(state, key)) {
+      return String(state[key]);
+    }
+    return full;
+  });
 }
 
 // distributeWidths splits 12 grid columns across N components such that
@@ -102,49 +166,84 @@ export function distributeWidths(count: number): number[] {
 // single top-level row with one col per component. Empty canvases land
 // as a single-component placeholder so the resulting JSON still passes
 // pkg/apps/layout.go::ValidateLayout (the AC for US-391's wire shape).
+//
+// The optional `variables` array rides on the root row as an extra
+// field — Go's validator ignores unknown row keys so this round-trips
+// without a backend schema change.
 export function instancesToLayout(
   instances: ComponentInstance[],
+  variables: AppVariable[] = [],
 ): LayoutNode {
-  if (instances.length === 0) {
-    return {
-      type: 'row',
-      children: [
-        {
-          type: 'col',
-          width: 12,
-          child: { type: 'component', componentType: 'text', props: {} },
-        },
-      ],
-    };
+  const root: LayoutNode =
+    instances.length === 0
+      ? {
+          type: 'row',
+          children: [
+            {
+              type: 'col',
+              width: 12,
+              child: { type: 'component', componentType: 'text', props: {} },
+            },
+          ],
+        }
+      : {
+          type: 'row',
+          children: instances.map((inst, idx) => ({
+            type: 'col',
+            width: distributeWidths(instances.length)[idx],
+            child: encodeComponentNode(inst),
+          })),
+        };
+  if (variables.length > 0 && root.type === 'row') {
+    root.variables = variables.map((v) => ({ ...v }));
   }
-  const widths = distributeWidths(instances.length);
-  return {
-    type: 'row',
-    children: instances.map((inst, idx) => ({
-      type: 'col',
-      width: widths[idx],
-      child: {
-        type: 'component',
-        componentType: inst.componentType,
-        props: inst.props,
-      },
-    })),
+  return root;
+}
+
+function encodeComponentNode(inst: ComponentInstance): LayoutNode {
+  const node: LayoutNode = {
+    type: 'component',
+    componentType: inst.componentType,
+    props: inst.props,
   };
+  if (node.type === 'component' && inst.events && hasAnyEvent(inst.events)) {
+    node.events = { ...inst.events };
+  }
+  return node;
+}
+
+function hasAnyEvent(events: AppEventMap | undefined): boolean {
+  if (!events) return false;
+  return Boolean(events.onClick);
 }
 
 // instancesFromLayout walks a layout JSON and returns its component
-// children as a flat list. Multi-row layouts (nested rows inside cols)
-// are flattened depth-first so future stories that build richer
-// layouts still load round-trip in the simple canvas. Anything it
-// doesn't recognise lands as an empty list — the editor falls back to
-// a blank canvas rather than crashing on unknown payloads.
+// children as a flat list, plus any variables declared at the root.
+// Multi-row layouts (nested rows inside cols) are flattened depth-first
+// so future stories that build richer layouts still load round-trip in
+// the simple canvas. Anything it doesn't recognise lands as an empty
+// list — the editor falls back to a blank canvas rather than crashing
+// on unknown payloads.
+export interface DecodedLayout {
+  instances: ComponentInstance[];
+  variables: AppVariable[];
+}
+
 export function instancesFromLayout(
   node: LayoutNode | undefined,
 ): ComponentInstance[] {
-  if (!node) return [];
-  const out: ComponentInstance[] = [];
-  walkLayout(node, out);
-  return out;
+  return decodeLayout(node).instances;
+}
+
+export function decodeLayout(node: LayoutNode | undefined): DecodedLayout {
+  if (!node) return { instances: [], variables: [] };
+  const instances: ComponentInstance[] = [];
+  walkLayout(node, instances);
+  const variables =
+    node.type === 'row' && Array.isArray(node.variables)
+      ? node.variables.map((v) => ({ ...v }))
+      : [];
+  return { instances, variables };
 }
 
 function walkLayout(node: LayoutNode, out: ComponentInstance[]): void {
@@ -153,6 +252,7 @@ function walkLayout(node: LayoutNode, out: ComponentInstance[]): void {
       id: nextInstanceId(),
       componentType: node.componentType as ComponentType,
       props: node.props ?? {},
+      events: node.events ? { ...node.events } : {},
     });
     return;
   }
@@ -163,4 +263,12 @@ function walkLayout(node: LayoutNode, out: ComponentInstance[]): void {
   for (const child of node.children) {
     walkLayout(child, out);
   }
+}
+
+// makeEvent builds a fresh AppEvent of the requested kind with sane
+// empty defaults. Used by the editor's "Add onClick handler" UI.
+export function makeEvent(kind: AppEvent['kind']): AppEvent {
+  if (kind === 'setVariable') return { kind, name: '', value: '' };
+  if (kind === 'runAction') return { kind, actionType: '', params: {} };
+  return { kind, to: '' };
 }

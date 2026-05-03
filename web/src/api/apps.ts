@@ -4,11 +4,18 @@ import { request } from './client';
 // is recursive — `row` carries a children array of `col`s, `col` has an
 // integer width (1..12) plus a single child node, `component` is a leaf
 // identified by `componentType` plus an opaque `props` bag.
+//
+// US-393 extension: the root row may carry a `variables` array (App-level
+// runtime state declarations) and components may carry an `events` map
+// (named handlers — currently `onClick`). Both fields are opaque to the
+// Go validator (extra row/component object keys are ignored) so no
+// backend schema change is needed.
 export type LayoutNode = LayoutRow | LayoutCol | LayoutComponent;
 
 export interface LayoutRow {
   type: 'row';
   children: LayoutCol[];
+  variables?: AppVariable[];
 }
 
 export interface LayoutCol {
@@ -21,7 +28,27 @@ export interface LayoutComponent {
   type: 'component';
   componentType: string;
   props?: Record<string, unknown>;
+  events?: AppEventMap;
 }
+
+export type AppVariableType = 'string' | 'number' | 'boolean';
+
+export interface AppVariable {
+  name: string;
+  type: AppVariableType;
+  default: string;
+}
+
+// AppEventMap keys are event names (currently just `onClick`). Each
+// entry is a discriminated union of action handlers.
+export interface AppEventMap {
+  onClick?: AppEvent;
+}
+
+export type AppEvent =
+  | { kind: 'setVariable'; name: string; value: string }
+  | { kind: 'runAction'; actionType: string; params?: Record<string, string> }
+  | { kind: 'navigate'; to: string };
 
 export interface App {
   rid: string;
