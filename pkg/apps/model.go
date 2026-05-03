@@ -17,14 +17,21 @@ import (
 // Version is the monotonically-increasing version counter on the live
 // `apps` row — every update bumps it AND inserts a snapshot into the
 // `app_versions` history table. Version starts at 1 on Create.
+//
+// PublishedVersion / PublishedAt / PublishedBy together encode the
+// US-396 publish state. An App is "published" iff PublishedVersion is
+// non-nil; the three fields are stamped + cleared atomically.
 type App struct {
-	RID        string          `json:"rid"`
-	Name       string          `json:"name"`
-	OwnerID    string          `json:"ownerId"`
-	LayoutJSON json.RawMessage `json:"layoutJson"`
-	Version    int             `json:"version"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
+	RID              string          `json:"rid"`
+	Name             string          `json:"name"`
+	OwnerID          string          `json:"ownerId"`
+	LayoutJSON       json.RawMessage `json:"layoutJson"`
+	Version          int             `json:"version"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
+	PublishedVersion *int            `json:"publishedVersion,omitempty"`
+	PublishedAt      *time.Time      `json:"publishedAt,omitempty"`
+	PublishedBy      *string         `json:"publishedBy,omitempty"`
 }
 
 // AppVersion is one historical snapshot of an App. The `app_versions`

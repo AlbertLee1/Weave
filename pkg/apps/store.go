@@ -19,6 +19,12 @@ var ErrNotFound = errors.New("apps: not found")
 // AppNameConflict at the handler.
 var ErrNameConflict = errors.New("apps: name conflict")
 
+// ErrNotPublished is returned by GetPublished when the App exists but
+// has never been published (or was unpublished). Maps to 404
+// AppNotPublished at the handler so viewers see a distinct envelope
+// from "App does not exist at all".
+var ErrNotPublished = errors.New("apps: not published")
+
 // Store is the narrow persistence surface. Kept off oms.Repository so
 // adding apps doesn't cascade into the codebase's many in-memory repo
 // stubs (same dep-direction trick as dashboards.Store).
@@ -40,6 +46,38 @@ type Store interface {
 	Delete(ctx context.Context, rid, ownerID string) error
 	ListVersions(ctx context.Context, rid, ownerID string) ([]*AppVersion, error)
 	GetVersion(ctx context.Context, rid string, version int, ownerID string) (*AppVersion, error)
+
+	// Publish pins the App's current Version as the read-only snapshot
+	// served by GetPublished. Owner-only — non-owner callers get
+	// ErrNotFound to avoid leaking RID existence. Re-publishing an
+	// already-published App overwrites the pin to the new latest
+	// version. The returned PublishedAppView reflects the row after the
+	// publish stamp lands.
+	Publish(ctx context.Context, rid, ownerID, publishedBy string) (*PublishedAppView, error)
+
+	// Unpublish clears the publish state. Owner-only; idempotent — a
+	// no-op on an already-unpublished App returns nil.
+	Unpublish(ctx context.Context, rid, ownerID string) error
+
+	// GetPublished returns the published snapshot — accessible to ANY
+	// authenticated viewer (no owner gate). Returns ErrNotFound if the
+	// RID is unknown, ErrNotPublished if the App exists but has no
+	// active publish pin.
+	GetPublished(ctx context.Context, rid string) (*PublishedAppView, error)
+}
+
+// PublishedAppView is the read-only wire shape served to viewers at
+// /apps/{rid}/view. It carries the pinned-version snapshot inline so
+// the SPA can render without a second round-trip, plus a small slice
+// of the parent App's identity (name + ownerId) for chrome.
+type PublishedAppView struct {
+	RID              string          `json:"rid"`
+	Name             string          `json:"name"`
+	OwnerID          string          `json:"ownerId"`
+	PublishedVersion int             `json:"publishedVersion"`
+	PublishedAt      time.Time       `json:"publishedAt"`
+	PublishedBy      string          `json:"publishedBy"`
+	LayoutJSON       json.RawMessage `json:"layoutJson"`
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -66,6 +104,18 @@ func cloneApp(a *App) *App {
 	cp := *a
 	if a.LayoutJSON != nil {
 		cp.LayoutJSON = append(json.RawMessage(nil), a.LayoutJSON...)
+	}
+	if a.PublishedVersion != nil {
+		v := *a.PublishedVersion
+		cp.PublishedVersion = &v
+	}
+	if a.PublishedAt != nil {
+		t := *a.PublishedAt
+		cp.PublishedAt = &t
+	}
+	if a.PublishedBy != nil {
+		s := *a.PublishedBy
+		cp.PublishedBy = &s
 	}
 	return &cp
 }
@@ -256,4 +306,88 @@ func (m *MemoryStore) GetVersion(_ context.Context, rid string, version int, own
 		return nil, ErrNotFound
 	}
 	return cloneVersion(v), nil
+}
+
+// Publish stamps the live row's PublishedVersion to the current
+// Version. Owner-only.
+func (m *MemoryStore) Publish(_ context.Context, rid, ownerID, publishedBy string) (*PublishedAppView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.rows[rid]
+	if !ok || row.OwnerID != ownerID {
+		return nil, ErrNotFound
+	}
+	hist, ok := m.versions[rid]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	snap, ok := hist[row.Version]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	now := time.Now().UTC()
+	v := row.Version
+	by := publishedBy
+	row.PublishedVersion = &v
+	row.PublishedAt = &now
+	row.PublishedBy = &by
+	return &PublishedAppView{
+		RID:              row.RID,
+		Name:             row.Name,
+		OwnerID:          row.OwnerID,
+		PublishedVersion: v,
+		PublishedAt:      now,
+		PublishedBy:      by,
+		LayoutJSON:       append(json.RawMessage(nil), snap.LayoutJSON...),
+	}, nil
+}
+
+// Unpublish clears the publish pin. Owner-only; idempotent.
+func (m *MemoryStore) Unpublish(_ context.Context, rid, ownerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.rows[rid]
+	if !ok || row.OwnerID != ownerID {
+		return ErrNotFound
+	}
+	row.PublishedVersion = nil
+	row.PublishedAt = nil
+	row.PublishedBy = nil
+	return nil
+}
+
+// GetPublished returns the read-only published snapshot for any
+// authenticated viewer.
+func (m *MemoryStore) GetPublished(_ context.Context, rid string) (*PublishedAppView, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	row, ok := m.rows[rid]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if row.PublishedVersion == nil {
+		return nil, ErrNotPublished
+	}
+	hist, ok := m.versions[rid]
+	if !ok {
+		return nil, ErrNotPublished
+	}
+	snap, ok := hist[*row.PublishedVersion]
+	if !ok {
+		return nil, ErrNotPublished
+	}
+	view := &PublishedAppView{
+		RID:              row.RID,
+		Name:             snap.Name,
+		OwnerID:          row.OwnerID,
+		PublishedVersion: *row.PublishedVersion,
+		LayoutJSON:       append(json.RawMessage(nil), snap.LayoutJSON...),
+	}
+	if row.PublishedAt != nil {
+		view.PublishedAt = *row.PublishedAt
+	}
+	if row.PublishedBy != nil {
+		view.PublishedBy = *row.PublishedBy
+	}
+	return view, nil
 }

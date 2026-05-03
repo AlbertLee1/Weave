@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,13 +96,18 @@ func (s *pgAppsStore) Create(ctx context.Context, app *apps.App, createdBy strin
 func (s *pgAppsStore) getRaw(ctx context.Context, rid string) (*apps.App, error) {
 	var row apps.App
 	var layoutBytes []byte
+	var pubVersion *int
+	var pubAt *time.Time
+	var pubBy *string
 	err := s.pool.QueryRow(ctx,
 		`SELECT rid, name, owner_id,
-		        COALESCE(layout_json, '{}'::jsonb), version, created_at, updated_at
+		        COALESCE(layout_json, '{}'::jsonb), version, created_at, updated_at,
+		        published_version, published_at, published_by
 		 FROM apps WHERE rid = $1`,
 		rid).
 		Scan(&row.RID, &row.Name, &row.OwnerID,
-			&layoutBytes, &row.Version, &row.CreatedAt, &row.UpdatedAt)
+			&layoutBytes, &row.Version, &row.CreatedAt, &row.UpdatedAt,
+			&pubVersion, &pubAt, &pubBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apps.ErrNotFound
@@ -109,6 +115,9 @@ func (s *pgAppsStore) getRaw(ctx context.Context, rid string) (*apps.App, error)
 		return nil, err
 	}
 	row.LayoutJSON = json.RawMessage(layoutBytes)
+	row.PublishedVersion = pubVersion
+	row.PublishedAt = pubAt
+	row.PublishedBy = pubBy
 	return &row, nil
 }
 
@@ -126,7 +135,8 @@ func (s *pgAppsStore) Get(ctx context.Context, rid, ownerID string) (*apps.App, 
 func (s *pgAppsStore) List(ctx context.Context, ownerID string) ([]*apps.App, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT rid, name, owner_id,
-		        COALESCE(layout_json, '{}'::jsonb), version, created_at, updated_at
+		        COALESCE(layout_json, '{}'::jsonb), version, created_at, updated_at,
+		        published_version, published_at, published_by
 		 FROM apps WHERE owner_id = $1 ORDER BY name ASC`,
 		ownerID)
 	if err != nil {
@@ -137,11 +147,18 @@ func (s *pgAppsStore) List(ctx context.Context, ownerID string) ([]*apps.App, er
 	for rows.Next() {
 		var r apps.App
 		var layoutBytes []byte
+		var pubVersion *int
+		var pubAt *time.Time
+		var pubBy *string
 		if err := rows.Scan(&r.RID, &r.Name, &r.OwnerID,
-			&layoutBytes, &r.Version, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&layoutBytes, &r.Version, &r.CreatedAt, &r.UpdatedAt,
+			&pubVersion, &pubAt, &pubBy); err != nil {
 			return nil, err
 		}
 		r.LayoutJSON = json.RawMessage(layoutBytes)
+		r.PublishedVersion = pubVersion
+		r.PublishedAt = pubAt
+		r.PublishedBy = pubBy
 		out = append(out, &r)
 	}
 	if err := rows.Err(); err != nil {
@@ -259,6 +276,131 @@ func (s *pgAppsStore) ListVersions(ctx context.Context, rid, ownerID string) ([]
 		out = append(out, &r)
 	}
 	return out, rows.Err()
+}
+
+func (s *pgAppsStore) Publish(ctx context.Context, rid, ownerID, publishedBy string) (*apps.PublishedAppView, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		curOwnerID string
+		curVersion int
+		curName    string
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT owner_id, version, name FROM apps WHERE rid = $1 FOR UPDATE`,
+		rid).Scan(&curOwnerID, &curVersion, &curName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apps.ErrNotFound
+		}
+		return nil, err
+	}
+	if curOwnerID != ownerID {
+		return nil, apps.ErrNotFound
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx,
+		`UPDATE apps
+		 SET published_version = $1, published_at = $2, published_by = $3
+		 WHERE rid = $4`,
+		curVersion, now, publishedBy, rid); err != nil {
+		return nil, err
+	}
+	var (
+		snapName    string
+		layoutBytes []byte
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT name, COALESCE(layout_json, '{}'::jsonb)
+		 FROM app_versions WHERE app_rid = $1 AND version = $2`,
+		rid, curVersion).Scan(&snapName, &layoutBytes)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apps.ErrNotFound
+		}
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &apps.PublishedAppView{
+		RID:              rid,
+		Name:             snapName,
+		OwnerID:          curOwnerID,
+		PublishedVersion: curVersion,
+		PublishedAt:      now,
+		PublishedBy:      publishedBy,
+		LayoutJSON:       json.RawMessage(layoutBytes),
+	}, nil
+}
+
+func (s *pgAppsStore) Unpublish(ctx context.Context, rid, ownerID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE apps
+		 SET published_version = NULL, published_at = NULL, published_by = NULL
+		 WHERE rid = $1 AND owner_id = $2`,
+		rid, ownerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apps.ErrNotFound
+	}
+	return nil
+}
+
+func (s *pgAppsStore) GetPublished(ctx context.Context, rid string) (*apps.PublishedAppView, error) {
+	var (
+		ownerID    string
+		pubVersion *int
+		pubAt      *time.Time
+		pubBy      *string
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT owner_id, published_version, published_at, published_by
+		 FROM apps WHERE rid = $1`,
+		rid).Scan(&ownerID, &pubVersion, &pubAt, &pubBy)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apps.ErrNotFound
+		}
+		return nil, err
+	}
+	if pubVersion == nil {
+		return nil, apps.ErrNotPublished
+	}
+	var (
+		snapName    string
+		layoutBytes []byte
+	)
+	err = s.pool.QueryRow(ctx,
+		`SELECT name, COALESCE(layout_json, '{}'::jsonb)
+		 FROM app_versions WHERE app_rid = $1 AND version = $2`,
+		rid, *pubVersion).Scan(&snapName, &layoutBytes)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apps.ErrNotPublished
+		}
+		return nil, err
+	}
+	view := &apps.PublishedAppView{
+		RID:              rid,
+		Name:             snapName,
+		OwnerID:          ownerID,
+		PublishedVersion: *pubVersion,
+		LayoutJSON:       json.RawMessage(layoutBytes),
+	}
+	if pubAt != nil {
+		view.PublishedAt = *pubAt
+	}
+	if pubBy != nil {
+		view.PublishedBy = *pubBy
+	}
+	return view, nil
 }
 
 func (s *pgAppsStore) GetVersion(ctx context.Context, rid string, version int, ownerID string) (*apps.AppVersion, error) {

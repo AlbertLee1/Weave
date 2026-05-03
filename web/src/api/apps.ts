@@ -58,6 +58,23 @@ export interface App {
   version: number;
   createdAt: string;
   updatedAt: string;
+  publishedVersion?: number;
+  publishedAt?: string;
+  publishedBy?: string;
+}
+
+// PublishedAppView is the read-only viewer-facing snapshot returned by
+// GET /api/v2/apps/{rid}/view (US-396). Any authenticated user can
+// fetch it once an owner has published the App; the layout is pinned
+// to the version recorded at publish time.
+export interface PublishedAppView {
+  rid: string;
+  name: string;
+  ownerId: string;
+  publishedVersion: number;
+  publishedAt: string;
+  publishedBy: string;
+  layoutJson: LayoutNode;
 }
 
 export interface AppVersion {
@@ -113,5 +130,31 @@ export function listAppVersions(rid: string): Promise<ListAppVersionsResponse> {
   return request<ListAppVersionsResponse>(
     'GET',
     `/api/v2/apps/${encodeURIComponent(rid)}/versions`,
+  );
+}
+
+// publishApp pins the App's current version as the read-only published
+// snapshot. Owner-only on the server.
+export function publishApp(rid: string): Promise<PublishedAppView> {
+  return request<PublishedAppView>(
+    'POST',
+    `/api/v2/apps/${encodeURIComponent(rid)}/publish`,
+  );
+}
+
+// unpublishApp clears the publish pin. Owner-only on the server.
+export function unpublishApp(rid: string): Promise<void> {
+  return request<void>(
+    'POST',
+    `/api/v2/apps/${encodeURIComponent(rid)}/unpublish`,
+  );
+}
+
+// viewApp fetches the published snapshot. Accessible to any
+// authenticated viewer.
+export function viewApp(rid: string): Promise<PublishedAppView> {
+  return request<PublishedAppView>(
+    'GET',
+    `/api/v2/apps/${encodeURIComponent(rid)}/view`,
   );
 }

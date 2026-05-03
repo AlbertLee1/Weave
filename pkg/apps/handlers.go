@@ -16,7 +16,7 @@ import (
 )
 
 // Handler implements the /api/v2/apps/* CRUD + version history
-// endpoints (US-391).
+// endpoints (US-391, US-396).
 //
 //	GET    /api/v2/apps                          — list owned Apps
 //	POST   /api/v2/apps                          — create
@@ -25,6 +25,9 @@ import (
 //	DELETE /api/v2/apps/{rid}                    — delete + cascade history
 //	GET    /api/v2/apps/{rid}/versions           — list history newest-first
 //	GET    /api/v2/apps/{rid}/versions/{version} — fetch one history row
+//	POST   /api/v2/apps/{rid}/publish            — owner pin current version (US-396)
+//	POST   /api/v2/apps/{rid}/unpublish          — owner clear publish state (US-396)
+//	GET    /api/v2/apps/{rid}/view               — viewer fetch published snapshot (US-396)
 type Handler struct {
 	store Store
 }
@@ -43,6 +46,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v2/apps/{rid}", h.Delete)
 	r.Get("/api/v2/apps/{rid}/versions", h.ListVersions)
 	r.Get("/api/v2/apps/{rid}/versions/{version}", h.GetVersion)
+	r.Post("/api/v2/apps/{rid}/publish", h.Publish)
+	r.Post("/api/v2/apps/{rid}/unpublish", h.Unpublish)
+	r.Get("/api/v2/apps/{rid}/view", h.View)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
@@ -261,11 +267,62 @@ func (h *Handler) GetVersion(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, v)
 }
 
+// Publish POST /api/v2/apps/{rid}/publish. Owner-only.
+func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id := chi.URLParam(r, "rid")
+	view, err := h.store.Publish(r.Context(), id, user.ID, user.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, view)
+}
+
+// Unpublish POST /api/v2/apps/{rid}/unpublish. Owner-only.
+func (h *Handler) Unpublish(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id := chi.URLParam(r, "rid")
+	if err := h.store.Unpublish(r.Context(), id, user.ID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// View GET /api/v2/apps/{rid}/view. Any authenticated user.
+//
+// The viewer surface intentionally does NOT consult ownership — once
+// an App has been published it is readable by every authenticated
+// viewer in the deployment. Unpublished Apps return 404
+// AppNotPublished so viewers cannot enumerate draft RIDs.
+func (h *Handler) View(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id := chi.URLParam(r, "rid")
+	view, err := h.store.GetPublished(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, view)
+}
+
 // writeStoreError translates store-layer sentinel errors into the
 // canonical API error envelope. Unrecognised errors fall through to a
 // 500 internal envelope.
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrNotPublished):
+		apierror.WriteJSON(w, apierror.NewNotFound("AppNotPublished", nil))
 	case errors.Is(err, ErrNotFound):
 		apierror.WriteJSON(w, apierror.NewNotFound("AppNotFound", nil))
 	case errors.Is(err, ErrNameConflict):
