@@ -42,6 +42,7 @@ import {
   useAppObjectSet,
   type TableSortDirection,
 } from './useAppObjectSet';
+import { APP_TEMPLATES, type AppTemplate } from './templates';
 
 // US-392: App Component Palette + Canvas + Property Panel.
 //
@@ -112,6 +113,15 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const [versionsError, setVersionsError] = useState<string | null>(null);
   const [rollbackBusy, setRollbackBusy] = useState<number | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
+
+  // US-399: built-in template picker. Auto-shown in new-App mode (no
+  // rid prop) so authors land on a "pick a scaffold or start blank"
+  // chooser instead of an empty canvas. Once dismissed (via "Start
+  // blank") or a template is applied, the panel hides; the header
+  // exposes a "Templates" toggle for re-opening it pre-Save.
+  const [templatePickerVisible, setTemplatePickerVisible] = useState<boolean>(
+    !rid,
+  );
 
   // Load existing app on mount when rid is supplied.
   useEffect(() => {
@@ -235,6 +245,23 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
 
   const removeVariable = useCallback((index: number) => {
     setVariables((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const applyTemplate = useCallback((tpl: AppTemplate) => {
+    const decoded = decodeLayout(tpl.layoutJson);
+    setInstances(decoded.instances);
+    setVariables(decoded.variables);
+    setName(tpl.defaultAppName);
+    setSelectedId(null);
+    setTemplatePickerVisible(false);
+  }, []);
+
+  const dismissTemplatePicker = useCallback(() => {
+    setTemplatePickerVisible(false);
+  }, []);
+
+  const openTemplatePicker = useCallback(() => {
+    setTemplatePickerVisible(true);
   }, []);
 
   const enterPreview = useCallback(() => {
@@ -489,6 +516,16 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
           >
             {isPreview ? 'Back to Edit' : 'Preview'}
           </button>
+          {!savedRid && !templatePickerVisible && !isPreview && (
+            <button
+              type="button"
+              data-testid="app-templates-toggle"
+              onClick={openTemplatePicker}
+              className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+            >
+              Templates
+            </button>
+          )}
           <button
             type="button"
             data-testid="app-save"
@@ -555,6 +592,14 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
             void handleRollback(v);
           }}
           onClose={closeVersions}
+        />
+      )}
+
+      {!isPreview && !savedRid && templatePickerVisible && (
+        <TemplatePickerPanel
+          templates={APP_TEMPLATES}
+          onSelect={applyTemplate}
+          onDismiss={dismissTemplatePicker}
         />
       )}
 
@@ -2163,6 +2208,82 @@ function VersionsPanel({
           {rollbackError}
         </p>
       )}
+    </section>
+  );
+}
+
+interface TemplatePickerPanelProps {
+  templates: readonly AppTemplate[];
+  onSelect: (template: AppTemplate) => void;
+  onDismiss: () => void;
+}
+
+// US-399: Template picker. Auto-shown in new-App mode so authors can
+// land on a sensible scaffold instead of a blank canvas. The panel is
+// dismissible (Start blank), and the "Use template" buttons populate
+// instances + variables + the App name from the selected template.
+// Once an App has been saved (savedRid is set) the panel is hidden
+// permanently — templates are a fresh-start affordance, not an undo
+// for an already-saved layout.
+function TemplatePickerPanel({
+  templates,
+  onSelect,
+  onDismiss,
+}: TemplatePickerPanelProps) {
+  return (
+    <section
+      data-testid="app-template-picker"
+      data-template-count={templates.length}
+      className="mb-4 border border-border rounded bg-bg-secondary/40 p-3"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h2 className="text-sm font-mono font-medium text-text-secondary">
+            Start from a template
+          </h2>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Pick a scaffold to populate the canvas, or start blank.
+          </p>
+        </div>
+        <button
+          type="button"
+          data-testid="app-template-picker-blank"
+          onClick={onDismiss}
+          className="px-2 py-1 rounded border border-border bg-bg-secondary text-xs text-text-primary hover:border-accent-primary"
+        >
+          Start blank
+        </button>
+      </div>
+      <ul
+        data-testid="app-template-picker-list"
+        className="grid grid-cols-1 md:grid-cols-3 gap-2"
+      >
+        {templates.map((tpl) => (
+          <li
+            key={tpl.id}
+            data-testid={`app-template-card-${tpl.id}`}
+            data-template-id={tpl.id}
+            className="border border-border rounded p-3 bg-bg-primary flex flex-col gap-2"
+          >
+            <div className="flex flex-col">
+              <span className="text-sm font-medium text-text-primary">
+                {tpl.name}
+              </span>
+              <span className="text-xs text-text-secondary mt-1">
+                {tpl.description}
+              </span>
+            </div>
+            <button
+              type="button"
+              data-testid={`app-template-use-${tpl.id}`}
+              onClick={() => onSelect(tpl)}
+              className="self-start px-2 py-1 rounded border border-border bg-accent-primary/20 text-xs text-text-primary hover:border-accent-primary"
+            >
+              Use template
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
