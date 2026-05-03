@@ -35,6 +35,7 @@ import { PipelinesPage } from './components/pipelines/PipelinesPage';
 import { LineagePage } from './components/lineage/LineagePage';
 import { DashboardEditorPage } from './components/dashboards/DashboardEditorPage';
 import { AppEditorPage } from './components/apps/AppEditorPage';
+import { QuiverPage } from './components/quiver/QuiverPage';
 import { PermissionRequestsPage } from './components/permissionrequests/PermissionRequestsPage';
 import { MentionsPage } from './components/notifications/MentionsPage';
 import { SettingsPage } from './components/settings/SettingsPage';
@@ -126,6 +127,7 @@ export default function App() {
               <Route path="mentions" element={<MentionsPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
+              <Route path="quiver/:ontology" element={<QuiverPage />} />
               <Route path="objectsets/:ontology" element={<ObjectSetPage />} />
               <Route path="objectsets/:ontology/saved" element={<SavedObjectSetsPage />} />
               <Route path="objectsets/:ontology/diff" element={<ObjectSetDiffPage />} />

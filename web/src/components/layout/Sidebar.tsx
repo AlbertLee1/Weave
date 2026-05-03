@@ -121,6 +121,11 @@ export function Sidebar() {
     },
     { to: '/threads', label: 'AIP Threads', icon: 'chat' },
     { to: '/logic-flows', label: 'AIP Logic', icon: 'workflow' },
+    {
+      to: activeOntology ? `/quiver/${activeOntology}` : '/',
+      label: 'Quiver TS',
+      icon: 'clock',
+    },
     { to: '/pipelines', label: 'Pipelines', icon: 'pipeline' },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
