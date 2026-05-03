@@ -2,6 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
+
+// Mock the quiver API module so the tests don't issue real network
+// requests when the page mounts and lists saved dashboards. Default
+// impls keep the panel quiet — tests that exercise the save flow
+// override the mock per-case.
+const quiverMocks = vi.hoisted(() => ({
+  listQuiverDashboards: vi
+    .fn()
+    .mockResolvedValue({ dashboards: [] }),
+  getQuiverDashboard: vi.fn(),
+  saveQuiverDashboard: vi.fn(),
+  deleteQuiverDashboard: vi.fn(),
+  viewQuiverDashboard: vi.fn(),
+}));
+vi.mock('../../../api/quiver', () => quiverMocks);
+
 import { QuiverPage } from '../QuiverPage';
 import * as timeseriesApi from '../../../api/timeseries';
 
@@ -136,5 +152,62 @@ describe('QuiverPage', () => {
   it('shows the missing-ontology empty state when the URL has no ontology', () => {
     renderPage('/');
     expect(screen.getByText(/missing ontology/i)).toBeInTheDocument();
+  });
+
+  it('saves the workbench config to the backend (US-403)', async () => {
+    vi.spyOn(timeseriesApi, 'streamTimeSeriesPoints').mockResolvedValue([]);
+    quiverMocks.saveQuiverDashboard.mockResolvedValue({
+      rid: 'ri.quiver.main.dashboard.new',
+      name: 'Demo',
+      owner: 'user:test',
+      config: {
+        ontologyApiName: 'test',
+        series: [
+          {
+            id: 'a',
+            objectType: 'Server',
+            primaryKey: 's1',
+            property: 'cpu',
+            label: 'CPU',
+            color: '#22d3ee',
+          },
+        ],
+      },
+      createdAt: '2026-04-18T10:00:00Z',
+      updatedAt: '2026-04-18T10:00:00Z',
+    });
+
+    renderPage();
+
+    // Save button is hidden when no series + no name → start by adding a series.
+    fireEvent.change(screen.getByTestId('quiver-input-objectType'), {
+      target: { value: 'Server' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-primaryKey'), {
+      target: { value: 's1' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-property'), {
+      target: { value: 'cpu' },
+    });
+    fireEvent.click(screen.getByTestId('quiver-add-button'));
+
+    fireEvent.change(screen.getByTestId('quiver-dashboard-name'), {
+      target: { value: 'Demo' },
+    });
+    expect(screen.getByTestId('quiver-save-button')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('quiver-save-button'));
+
+    await waitFor(() => {
+      expect(quiverMocks.saveQuiverDashboard).toHaveBeenCalledTimes(1);
+    });
+    const arg = quiverMocks.saveQuiverDashboard.mock.calls[0][0];
+    expect(arg.name).toBe('Demo');
+    expect(arg.config.ontologyApiName).toBe('test');
+    expect(arg.config.series).toHaveLength(1);
+    expect(arg.config.series[0].objectType).toBe('Server');
+    expect(arg.config.series[0].primaryKey).toBe('s1');
+    expect(arg.config.series[0].property).toBe('cpu');
+    // First save (no existing rid) should not include rid in payload.
+    expect(arg.rid).toBeUndefined();
   });
 });

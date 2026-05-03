@@ -1,82 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router';
-import { useTimeSeriesPoints } from '../../hooks/useTimeSeries';
-import type { TimeSeriesPoint } from '../../api/timeseries';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmptyState } from '../common/EmptyState';
-import { MultiSeriesChart, type ChartSeries } from './MultiSeriesChart';
+import { pickColor } from '../../utils/quiverAggregation';
 import {
-  aggregateRange,
-  EMPTY_AGGREGATE,
-  pickColor,
-  type RangeAggregate,
-} from '../../utils/quiverAggregation';
+  QuiverWorkbenchView,
+  type SeriesSpec,
+} from './QuiverWorkbenchView';
+import {
+  getQuiverDashboard,
+  listQuiverDashboards,
+  saveQuiverDashboard,
+  deleteQuiverDashboard,
+  type QuiverDashboard,
+  type QuiverDashboardConfig,
+} from '../../api/quiver';
+import { ApiRequestError } from '../../api/client';
 
-// Wide-enough timestamp bounds that aggregateRange's "in window" predicate
-// admits every parseable point. Chosen to stay finite (so the helper's
-// finiteness guard does not trip) and to span the JS Date range.
-const TIME_LOW = -8.64e15;
-const TIME_HIGH = 8.64e15;
+const QUIVER_DASHBOARDS_KEY = ['quiver', 'dashboards'] as const;
 
-interface SeriesSpec {
-  id: string;
-  ontologyApiName: string;
-  objectType: string;
-  primaryKey: string;
-  property: string;
-  label: string;
-  color: string;
-}
-
-// Sub-component pattern (one per spec) so React Hooks rules stay satisfied
-// while the parent stitches multiple useTimeSeriesPoints results together.
-type SeriesStatus = 'loading' | 'error' | 'ready';
-
-function SeriesFetcher({
-  spec,
-  onLoaded,
-}: {
-  spec: SeriesSpec;
-  onLoaded: (id: string, points: TimeSeriesPoint[], status: SeriesStatus) => void;
-}) {
-  const { data, isLoading, isError } = useTimeSeriesPoints({
-    ontologyApiName: spec.ontologyApiName,
-    objectType: spec.objectType,
-    primaryKey: spec.primaryKey,
-    property: spec.property,
-  });
-  const status: SeriesStatus = isLoading
-    ? 'loading'
-    : isError
-      ? 'error'
-      : 'ready';
-  useEffect(() => {
-    onLoaded(spec.id, data ?? [], status);
-  }, [spec.id, data, status, onLoaded]);
-  return null;
-}
-
-function formatNumber(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000) return n.toFixed(0);
-  if (Math.abs(n) >= 1) return n.toFixed(2);
-  return n.toFixed(4);
-}
-
-function formatTime(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms)) return '—';
-  return new Date(ms).toISOString().replace('.000', '');
+function dashboardKey(rid: string) {
+  return ['quiver', 'dashboards', rid] as const;
 }
 
 export function QuiverPage() {
-  const { ontology } = useParams<{ ontology: string }>();
+  const navigate = useNavigate();
+  const { ontology, rid } = useParams<{ ontology: string; rid?: string }>();
   const ontologyApiName = ontology ?? '';
+  const queryClient = useQueryClient();
+
   const [seriesList, setSeriesList] = useState<SeriesSpec[]>([]);
-  const [pointsById, setPointsById] = useState<Record<string, TimeSeriesPoint[]>>({});
-  const [statusById, setStatusById] = useState<Record<string, SeriesStatus>>({});
-  const [selection, setSelection] = useState<{ start: number | null; end: number | null }>({
-    start: null,
-    end: null,
-  });
+  const [dashboardName, setDashboardName] = useState('');
+  const [dashboardRID, setDashboardRID] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Picker form state
   const [draftObjectType, setDraftObjectType] = useState('');
@@ -84,19 +40,69 @@ export function QuiverPage() {
   const [draftProperty, setDraftProperty] = useState('');
   const [draftLabel, setDraftLabel] = useState('');
 
-  const handleLoaded = useCallback(
-    (id: string, points: TimeSeriesPoint[], status: SeriesStatus) => {
-      setPointsById((prev) => {
-        if (prev[id] === points) return prev;
-        return { ...prev, [id]: points };
-      });
-      setStatusById((prev) => {
-        if (prev[id] === status) return prev;
-        return { ...prev, [id]: status };
-      });
+  const dashboardsQuery = useQuery({
+    queryKey: QUIVER_DASHBOARDS_KEY,
+    queryFn: listQuiverDashboards,
+    // The list endpoint 404s in degraded-mode (no PG) deployments;
+    // hide the panel rather than render an error toast.
+    retry: false,
+  });
+
+  const loadedDashboardQuery = useQuery({
+    queryKey: rid ? dashboardKey(rid) : ['quiver', 'dashboards', '__none__'],
+    queryFn: () => getQuiverDashboard(rid!),
+    enabled: !!rid,
+    retry: false,
+  });
+
+  // When the URL carries an :rid, hydrate the editor state from the
+  // persisted config the first time the dashboard loads. We use rid as
+  // the effect's identity so re-renders inside the dashboard don't
+  // overwrite local edits.
+  useEffect(() => {
+    const dashboard = loadedDashboardQuery.data;
+    if (!dashboard || !rid) return;
+    setDashboardRID(dashboard.rid);
+    setDashboardName(dashboard.name);
+    const cfg = dashboard.config ?? { ontologyApiName: '', series: [] };
+    if (Array.isArray(cfg.series)) {
+      setSeriesList(
+        cfg.series.map((s) => ({
+          id: s.id,
+          ontologyApiName: cfg.ontologyApiName || ontologyApiName,
+          objectType: s.objectType,
+          primaryKey: s.primaryKey,
+          property: s.property,
+          label: s.label,
+          color: s.color,
+        })),
+      );
+    }
+  }, [loadedDashboardQuery.data, rid, ontologyApiName]);
+
+  const saveMutation = useMutation({
+    mutationFn: saveQuiverDashboard,
+    onSuccess: (saved: QuiverDashboard) => {
+      setDashboardRID(saved.rid);
+      setSaveError(null);
+      queryClient.invalidateQueries({ queryKey: QUIVER_DASHBOARDS_KEY });
+      queryClient.setQueryData(dashboardKey(saved.rid), saved);
     },
-    [],
-  );
+    onError: (err: unknown) => {
+      if (err instanceof ApiRequestError) {
+        setSaveError(`${err.errorName}: ${JSON.stringify(err.parameters ?? {})}`);
+      } else {
+        setSaveError(String(err));
+      }
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteQuiverDashboard,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUIVER_DASHBOARDS_KEY });
+    },
+  });
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -126,55 +132,41 @@ export function QuiverPage() {
 
   function handleRemove(id: string) {
     setSeriesList((prev) => prev.filter((s) => s.id !== id));
-    setPointsById((prev) => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setStatusById((prev) => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
   }
 
-  const handleRangeSelect = useCallback(
-    (start: number | null, end: number | null) => {
-      setSelection({ start, end });
-    },
-    [],
-  );
-
-  function handleClearSelection() {
-    setSelection({ start: null, end: null });
-  }
-
-  const chartSeries = useMemo<ChartSeries[]>(
-    () =>
-      seriesList.map((s) => ({
+  function handleSave() {
+    const trimmedName = dashboardName.trim();
+    if (!trimmedName) {
+      setSaveError('Dashboard name is required.');
+      return;
+    }
+    const config: QuiverDashboardConfig = {
+      ontologyApiName,
+      series: seriesList.map((s) => ({
         id: s.id,
+        objectType: s.objectType,
+        primaryKey: s.primaryKey,
+        property: s.property,
         label: s.label,
         color: s.color,
-        points: pointsById[s.id] ?? [],
       })),
-    [seriesList, pointsById],
-  );
+    };
+    saveMutation.mutate({
+      ...(dashboardRID ? { rid: dashboardRID } : {}),
+      name: trimmedName,
+      config,
+    });
+  }
 
-  // Per-series aggregate over the active selection window. When no selection
-  // is active, fall through to "all data" aggregation so the panel always has
-  // something useful to show — a common Foundry/Quiver UX expectation.
-  const aggregates = useMemo<Record<string, RangeAggregate>>(() => {
-    const out: Record<string, RangeAggregate> = {};
-    const start = selection.start ?? TIME_LOW;
-    const end = selection.end ?? TIME_HIGH;
-    for (const s of seriesList) {
-      const pts = pointsById[s.id] ?? [];
-      out[s.id] = aggregateRange(pts, start, end);
+  function handleNew() {
+    setDashboardRID(null);
+    setDashboardName('');
+    setSeriesList([]);
+    setSaveError(null);
+    if (rid) {
+      navigate(`/quiver/${ontologyApiName}`);
     }
-    return out;
-  }, [seriesList, pointsById, selection]);
+  }
 
   if (!ontologyApiName) {
     return (
@@ -187,21 +179,117 @@ export function QuiverPage() {
     );
   }
 
-  const hasInfiniteRange = selection.start === null || selection.end === null;
+  const dashboards = dashboardsQuery.data?.dashboards ?? [];
+  const dashboardsAvailable = !dashboardsQuery.isError;
 
   return (
     <div className="flex flex-col h-full overflow-hidden" data-testid="quiver-page">
-      {seriesList.map((s) => (
-        <SeriesFetcher key={s.id} spec={s} onLoaded={handleLoaded} />
-      ))}
-
       <div className="border-b border-border bg-bg-primary p-4 flex flex-col gap-4">
-        <div>
-          <h2 className="text-sm font-medium text-text-primary">Quiver Workbench</h2>
-          <div className="text-xs font-mono text-text-secondary mt-0.5">
-            {ontologyApiName}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-medium text-text-primary">Quiver Workbench</h2>
+            <div className="text-xs font-mono text-text-secondary mt-0.5">
+              {ontologyApiName}
+              {dashboardRID && (
+                <span className="ml-2 text-text-muted">· {dashboardRID}</span>
+              )}
+            </div>
           </div>
+          {dashboardsAvailable && (
+            <div
+              className="flex items-center gap-2"
+              data-testid="quiver-save-controls"
+            >
+              <input
+                type="text"
+                placeholder="Dashboard name"
+                value={dashboardName}
+                onChange={(e) => setDashboardName(e.target.value)}
+                data-testid="quiver-dashboard-name"
+                className="px-2 py-1.5 text-sm bg-bg-tertiary border border-border rounded text-text-primary w-56"
+              />
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={
+                  saveMutation.isPending ||
+                  dashboardName.trim() === '' ||
+                  seriesList.length === 0
+                }
+                data-testid="quiver-save-button"
+                className="bg-accent-emerald text-bg-primary px-3 py-1.5 rounded text-sm font-medium hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {dashboardRID ? 'Update' : 'Save'}
+              </button>
+              {dashboardRID && (
+                <button
+                  type="button"
+                  onClick={handleNew}
+                  data-testid="quiver-new-button"
+                  className="px-3 py-1.5 text-sm border border-border rounded text-text-secondary hover:text-text-primary"
+                >
+                  New
+                </button>
+              )}
+            </div>
+          )}
         </div>
+
+        {saveError && (
+          <div
+            className="text-xs text-accent-error"
+            data-testid="quiver-save-error"
+          >
+            {saveError}
+          </div>
+        )}
+
+        {dashboardsAvailable && dashboards.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-2 text-xs"
+            data-testid="quiver-saved-list"
+          >
+            <span className="text-text-secondary">Saved:</span>
+            {dashboards.map((d) => (
+              <span
+                key={d.rid}
+                className={`flex items-center gap-1 border rounded px-2 py-1 ${
+                  d.rid === dashboardRID
+                    ? 'border-accent-cyan text-text-primary'
+                    : 'border-border text-text-secondary'
+                }`}
+                data-testid={`quiver-saved-${d.rid}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => navigate(`/quiver/${ontologyApiName}/${d.rid}`)}
+                  className="hover:text-text-primary"
+                  data-testid={`quiver-load-${d.rid}`}
+                >
+                  {d.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/quiver/${ontologyApiName}/${d.rid}/view`)}
+                  className="text-text-muted hover:text-accent-cyan"
+                  title="Open read-only share view"
+                  data-testid={`quiver-share-${d.rid}`}
+                >
+                  share
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteMutation.mutate(d.rid)}
+                  className="text-text-muted hover:text-accent-error"
+                  aria-label={`Delete ${d.name}`}
+                  data-testid={`quiver-delete-${d.rid}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         <form
           onSubmit={handleAdd}
@@ -262,122 +350,10 @@ export function QuiverPage() {
             description="Add a series above to plot a time-series overlay."
           />
         ) : (
-          <>
-            <div
-              className="border border-border rounded p-4 bg-bg-tertiary"
-              data-testid="quiver-chart-panel"
-            >
-              <MultiSeriesChart
-                series={chartSeries}
-                onRangeSelect={handleRangeSelect}
-              />
-            </div>
-
-            <div
-              className="border border-border rounded bg-bg-tertiary"
-              data-testid="quiver-aggregate-panel"
-            >
-              <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-                <h3 className="text-xs font-medium text-text-primary">
-                  {hasInfiniteRange ? 'Series totals' : 'Selection aggregate'}
-                </h3>
-                <div className="flex items-center gap-3 text-xs font-mono text-text-secondary">
-                  <span data-testid="quiver-selection-start">
-                    {hasInfiniteRange ? 'all' : formatTime(selection.start)}
-                  </span>
-                  <span>→</span>
-                  <span data-testid="quiver-selection-end">
-                    {hasInfiniteRange ? 'all' : formatTime(selection.end)}
-                  </span>
-                  {!hasInfiniteRange && (
-                    <button
-                      type="button"
-                      onClick={handleClearSelection}
-                      className="px-2 py-0.5 border border-border rounded text-text-secondary hover:text-text-primary"
-                      data-testid="quiver-clear-selection"
-                    >
-                      clear
-                    </button>
-                  )}
-                </div>
-              </div>
-              <table className="w-full text-xs">
-                <thead className="bg-bg-primary text-text-secondary uppercase tracking-wider">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-sans">Series</th>
-                    <th className="px-3 py-2 text-right font-sans">Count</th>
-                    <th className="px-3 py-2 text-right font-sans">Sum</th>
-                    <th className="px-3 py-2 text-right font-sans">Avg</th>
-                    <th className="px-3 py-2 text-right font-sans">Min</th>
-                    <th className="px-3 py-2 text-right font-sans">Max</th>
-                    <th className="px-3 py-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {seriesList.map((s) => {
-                    const agg = aggregates[s.id] ?? EMPTY_AGGREGATE;
-                    const status = statusById[s.id];
-                    return (
-                      <tr
-                        key={s.id}
-                        data-testid={`quiver-row-${s.id}`}
-                        className="border-t border-border"
-                      >
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="inline-block w-3 h-3 rounded-sm flex-shrink-0"
-                              style={{ background: s.color }}
-                              data-testid={`quiver-color-${s.id}`}
-                            />
-                            <div className="flex flex-col">
-                              <span className="text-text-primary">{s.label}</span>
-                              <span className="font-mono text-[10px] text-text-muted">
-                                {s.objectType}/{s.primaryKey}.{s.property}
-                              </span>
-                            </div>
-                            {status === 'loading' && (
-                              <span className="text-text-muted">…</span>
-                            )}
-                            {status === 'error' && (
-                              <span className="text-accent-error">err</span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-text-primary" data-testid={`quiver-count-${s.id}`}>
-                          {agg.count}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-text-primary" data-testid={`quiver-sum-${s.id}`}>
-                          {agg.count === 0 ? '—' : formatNumber(agg.sum)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-text-primary" data-testid={`quiver-avg-${s.id}`}>
-                          {agg.count === 0 ? '—' : formatNumber(agg.avg)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-text-primary">
-                          {agg.count === 0 ? '—' : formatNumber(agg.min)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-text-primary" data-testid={`quiver-max-${s.id}`}>
-                          {agg.count === 0 ? '—' : formatNumber(agg.max)}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleRemove(s.id)}
-                            data-testid={`quiver-remove-${s.id}`}
-                            className="text-text-muted hover:text-accent-error"
-                            aria-label="Remove series"
-                          >
-                            ×
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
+          <QuiverWorkbenchView
+            seriesList={seriesList}
+            onRemove={handleRemove}
+          />
         )}
       </div>
     </div>

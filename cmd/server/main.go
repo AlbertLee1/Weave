@@ -58,6 +58,7 @@ import (
 	"github.com/liyang/weave/pkg/comments"
 	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/permissionrequests"
+	"github.com/liyang/weave/pkg/quiver"
 	"github.com/liyang/weave/pkg/reactions"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
@@ -368,6 +369,11 @@ type ServerDeps struct {
 	// routes stay unmounted; the SPA's App Editor falls back to ephemeral
 	// state until the backing store is wired (PG mode only).
 	AppsStore apps.Store
+	// US-403: Quiver dashboards per-owner persistence with RID-based
+	// read-only sharing. nil in degraded mode so the /api/v2/quiver/*
+	// routes stay unmounted; the SPA's Quiver workbench falls back to
+	// ephemeral in-memory state until the backing store is wired.
+	QuiverStore quiver.Store
 	// US-334: Comments per-RID threaded store. Backs the
 	// /api/v2/comments/* CRUD endpoints used by the ObjectDetail
 	// Comments tab. nil in degraded mode so the routes stay unmounted
@@ -1303,6 +1309,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			apps.NewHandler(deps.AppsStore).RegisterRoutes(api)
 		}
 
+		// US-403: Quiver dashboards — per-owner CRUD with RID-based
+		// read-only sharing (`/quiver/{rid}/view`). Mounts only when
+		// the PG store is wired; degraded-mode deployments leave the
+		// /api/v2/quiver/* routes unregistered and the SPA's Quiver
+		// workbench falls back to ephemeral in-memory state.
+		if deps.QuiverStore != nil {
+			quiver.NewHandler(deps.QuiverStore).RegisterRoutes(api)
+		}
+
 		// US-334: Comments per-RID CRUD with soft-delete +
 		// pagination. Same degraded-mode shape as saved searches —
 		// the SPA hides the Comments tab when the list endpoint
@@ -1743,6 +1758,12 @@ func main() {
 		// the Workshop-lite App Editor (live row + version history).
 		deps.AppsStore = newPGAppsStore(pool)
 		log.Printf("[apps] store wired")
+
+		// US-403: Quiver dashboards store. Backs the
+		// /api/v2/quiver/* routes used by the Quiver workbench for
+		// save / load / share (read-only `/view`).
+		deps.QuiverStore = newPGQuiverStore(pool)
+		log.Printf("[quiver] dashboards store wired")
 
 		// US-334: Comments store. Backs the /api/v2/comments/*
 		// routes used by the ObjectDetail Comments tab.
