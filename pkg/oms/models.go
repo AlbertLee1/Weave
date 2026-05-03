@@ -348,6 +348,14 @@ type ActionType struct {
 	// resolves at invoke time. A non-empty value forces routing to the
 	// matching (name, version) row, surviving subsequent publishes.
 	FunctionVersion string `json:"functionVersion,omitempty"`
+	// BranchID (US-384) names the ontology branch this ActionType row
+	// belongs to. The canonical "main" trunk uses "main"; a feature
+	// branch publishing its own ActionType v2 stamps its branch name
+	// here so the (ontology_rid, api_name, branch_id) UNIQUE constraint
+	// keeps the rows independent. Empty input is normalised to
+	// DefaultBranch ("main") at write time so legacy callers keep
+	// landing on the trunk.
+	BranchID string `json:"branchId,omitempty"`
 	// ImplementsMethodRID (US-214) points at an interface_methods row whose
 	// signature this ActionType claims to implement. Empty means the action
 	// is not method-bound. Surfaced on the wire via ToFullMetadataJSON and
@@ -603,6 +611,13 @@ type Function struct {
 	// PublishedAt is the registry's notion of "the moment this version
 	// became live" (US-370). Backfills to created_at for legacy rows.
 	PublishedAt time.Time `json:"publishedAt,omitempty"`
+	// BranchID (US-384) names the ontology branch this Function version
+	// belongs to. Same semantics as ActionType.BranchID — branch v2 of a
+	// function coexists with main v1 because the
+	// (ontology_rid, name, version, branch_id) UNIQUE constraint is keyed
+	// on the branch as well. Empty input normalises to DefaultBranch
+	// ("main") at write time.
+	BranchID string `json:"branchId,omitempty"`
 }
 
 // OntologyBranch represents a branch for isolated ontology schema changes.

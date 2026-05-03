@@ -521,18 +521,20 @@ func (r *PGRepository) CreateActionType(ctx context.Context, at *ActionType) err
 		return err
 	}
 	paramSchema := normaliseParameterSchemaForWrite(at.ParameterSchema)
+	branchID := NormalizeBranchID(at.BranchID)
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO action_types (rid, ontology_rid, api_name, display_name, description,
 		 status, parameters, rules, function_rid, is_function_backed, submission_criteria, side_effects,
-		 implements_method_rid, compensate_action_rid, requires_approval, approvers, parameter_schema, function_version)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16, $17, $18)`,
+		 implements_method_rid, compensate_action_rid, requires_approval, approvers, parameter_schema, function_version, branch_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16, $17, $18, $19)`,
 		at.RID, at.OntologyRID, at.APIName, at.DisplayName, at.Description,
 		at.Status, params, rules, at.FunctionRID, at.IsFunctionBacked, sc, se,
 		at.ImplementsMethodRID, at.CompensateActionRID,
-		at.RequiresApproval, approvers, paramSchema, at.FunctionVersion)
+		at.RequiresApproval, approvers, paramSchema, at.FunctionVersion, branchID)
 	if err != nil {
 		return wrapPGError(err)
 	}
+	at.BranchID = branchID
 	return nil
 }
 
@@ -550,7 +552,8 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 		 COALESCE(requires_approval, FALSE),
 		 COALESCE(approvers, '[]'::jsonb),
 		 parameter_schema,
-		 COALESCE(function_version, '')
+		 COALESCE(function_version, ''),
+		 COALESCE(branch_id, 'main')
 		 FROM action_types WHERE rid = $1`, rid).
 		Scan(&at.RID, &at.OntologyRID, &at.APIName, &at.DisplayName, &at.Description,
 			&at.Status, &at.Parameters, &at.Rules,
@@ -561,7 +564,8 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 			&at.RequiresApproval,
 			&approvers,
 			&paramSchema,
-			&at.FunctionVersion)
+			&at.FunctionVersion,
+			&at.BranchID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -574,12 +578,19 @@ func (r *PGRepository) GetActionType(ctx context.Context, rid string) (*ActionTy
 }
 
 func (r *PGRepository) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*ActionType, error) {
+	branch := BranchScopeFromContext(ctx)
 	var rid string
+	// Prefer the row stamped with the requested branch; fall back to the
+	// main row when the branch has no override. The CASE expression
+	// orders the candidates so the branch-specific row sorts first.
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid FROM action_types
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND (rid = $2 OR api_name = $2)`,
-		ontologyRID, apiNameOrRID).Scan(&rid)
+		 AND (rid = $2 OR api_name = $2)
+		 AND branch_id IN ($3, 'main')
+		 ORDER BY (CASE WHEN branch_id = $3 THEN 0 ELSE 1 END)
+		 LIMIT 1`,
+		ontologyRID, apiNameOrRID, branch).Scan(&rid)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -590,8 +601,15 @@ func (r *PGRepository) GetActionTypeByAPIName(ctx context.Context, ontologyRID, 
 }
 
 func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) ([]ActionType, error) {
+	branch := BranchScopeFromContext(ctx)
+	// DISTINCT ON (api_name) keeps a single row per ApiName, preferring
+	// the branch-specific row over the main fallback. The ORDER BY clause
+	// must mirror the DISTINCT ON column list and tie-break by the branch
+	// preference so PostgreSQL's "first row wins" semantics pick the
+	// branch overlay when present (US-384).
 	rows, err := r.pool.Query(ctx,
-		`SELECT rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
+		`SELECT DISTINCT ON (api_name)
+		 rid, ontology_rid, api_name, display_name, COALESCE(description, ''),
 		 COALESCE(status, 'ACTIVE'), parameters, rules,
 		 COALESCE(function_rid, ''), is_function_backed, created_at,
 		 submission_criteria, side_effects,
@@ -600,10 +618,13 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 		 COALESCE(requires_approval, FALSE),
 		 COALESCE(approvers, '[]'::jsonb),
 		 parameter_schema,
-		 COALESCE(function_version, '')
+		 COALESCE(function_version, ''),
+		 COALESCE(branch_id, 'main')
 		 FROM action_types
-		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
-		 ORDER BY api_name`, ontologyRID)
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND branch_id IN ($2, 'main')
+		 ORDER BY api_name, (CASE WHEN branch_id = $2 THEN 0 ELSE 1 END)`,
+		ontologyRID, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +644,8 @@ func (r *PGRepository) ListActionTypes(ctx context.Context, ontologyRID string) 
 			&at.RequiresApproval,
 			&approvers,
 			&paramSchema,
-			&at.FunctionVersion); err != nil {
+			&at.FunctionVersion,
+			&at.BranchID); err != nil {
 			return nil, err
 		}
 		at.Approvers = decodeApprovers(approvers)
@@ -1596,10 +1618,11 @@ func (r *PGRepository) CreateFunction(ctx context.Context, fn *Function) error {
 	version := fn.NormalisedVersion()
 	codeHash := HashFunctionCode(fn.SourceCode)
 	sigHash := HashFunctionSignature(signature)
+	branchID := NormalizeBranchID(fn.BranchID)
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime, pure, code_hash, signature_hash, published_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
-		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime, fn.Pure, codeHash, sigHash)
+		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime, pure, code_hash, signature_hash, published_at, branch_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12)`,
+		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime, fn.Pure, codeHash, sigHash, branchID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -1607,6 +1630,7 @@ func (r *PGRepository) CreateFunction(ctx context.Context, fn *Function) error {
 	fn.Version = version
 	fn.CodeHash = codeHash
 	fn.SignatureHash = sigHash
+	fn.BranchID = branchID
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}
@@ -1619,11 +1643,12 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
-		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
+		        COALESCE(branch_id, 'main')
 		 FROM functions WHERE rid = $1`, rid).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
 			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
-			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt)
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1645,13 +1670,16 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 // returns the latest semver — callers wanting a specific version should use
 // GetFunctionByNameVersion or pass the URL segment through ResolveFunctionRef.
 func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name string) (*Function, error) {
+	branch := BranchScopeFromContext(ctx)
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
-		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
+		        COALESCE(branch_id, 'main')
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND (rid = $2 OR name = $2)`, ontologyRID, name)
+		 AND (rid = $2 OR name = $2)
+		 AND branch_id IN ($3, 'main')`, ontologyRID, name, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -1664,6 +1692,7 @@ func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name 
 	if len(candidates) == 0 {
 		return nil, ErrNotFound
 	}
+	candidates = preferBranchFunctions(candidates, branch)
 	SortFunctionsByVersionDesc(candidates)
 	winner := candidates[0]
 	return &winner, nil
@@ -1672,18 +1701,26 @@ func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name 
 // GetFunctionByNameVersion resolves a function row pinned to a specific
 // semver. Used by URL refs of the form `name@version`.
 func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID, name, version string) (*Function, error) {
+	branch := BranchScopeFromContext(ctx)
 	fn := &Function{}
 	var sig []byte
+	// Prefer branch-specific row, fall back to main, like
+	// GetActionTypeByAPIName. The CASE expression orders the candidates
+	// so the branch-specific (name, version) row sorts first.
 	err := r.pool.QueryRow(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
-		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
+		        COALESCE(branch_id, 'main')
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND name = $2 AND version = $3`, ontologyRID, name, version).
+		 AND name = $2 AND version = $3
+		 AND branch_id IN ($4, 'main')
+		 ORDER BY (CASE WHEN branch_id = $4 THEN 0 ELSE 1 END)
+		 LIMIT 1`, ontologyRID, name, version, branch).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
 			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
-			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt)
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1702,15 +1739,21 @@ func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID
 
 // ListFunctionVersionsByName returns every stored version of the named
 // function within the ontology, sorted latest-first via
-// SortFunctionsByVersionDesc.
+// SortFunctionsByVersionDesc. When the request context carries a non-main
+// branch scope, branch-specific versions shadow the main-branch versions
+// they share a semver with — but main-only versions stay visible so the
+// branch inherits the trunk's history (US-384).
 func (r *PGRepository) ListFunctionVersionsByName(ctx context.Context, ontologyRID, name string) ([]Function, error) {
+	branch := BranchScopeFromContext(ctx)
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
-		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
+		        COALESCE(branch_id, 'main')
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
-		 AND name = $2`, ontologyRID, name)
+		 AND name = $2
+		 AND branch_id IN ($3, 'main')`, ontologyRID, name, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -1719,6 +1762,7 @@ func (r *PGRepository) ListFunctionVersionsByName(ctx context.Context, ontologyR
 	if err != nil {
 		return nil, err
 	}
+	out = preferBranchFunctions(out, branch)
 	SortFunctionsByVersionDesc(out)
 	return out, nil
 }
@@ -1733,7 +1777,7 @@ func scanFunctions(rows pgx.Rows) ([]Function, error) {
 		var sig []byte
 		if err := rows.Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode,
 			&fn.CreatedBy, &sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
-			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt); err != nil {
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID); err != nil {
 			return nil, err
 		}
 		fn.Signature = signatureFromBytes(sig)
@@ -1748,17 +1792,47 @@ func scanFunctions(rows pgx.Rows) ([]Function, error) {
 	return out, nil
 }
 
+// preferBranchFunctions removes main-branch entries that have a
+// branch-specific override at the same semver. Used by the branch-aware
+// read paths to give the branch's published version priority while still
+// inheriting unmodified versions from main (US-384).
+func preferBranchFunctions(in []Function, branch string) []Function {
+	if branch == "" || branch == DefaultBranch {
+		return in
+	}
+	branchVersions := map[string]bool{}
+	for _, fn := range in {
+		if fn.BranchID == branch {
+			branchVersions[fn.NormalisedVersion()] = true
+		}
+	}
+	if len(branchVersions) == 0 {
+		return in
+	}
+	out := in[:0]
+	for _, fn := range in {
+		if fn.BranchID != branch && branchVersions[fn.NormalisedVersion()] {
+			continue
+		}
+		out = append(out, fn)
+	}
+	return out
+}
+
 func (r *PGRepository) ListFunctions(ctx context.Context, ontologyRID string) ([]Function, error) {
+	branch := BranchScopeFromContext(ctx)
 	// Order at the SQL layer is best-effort (lexical version sort would
 	// place "10.0.0" before "2.0.0"); SortFunctionsByVersionDesc fixes that
 	// in Go using parsed semver so callers see latest-first per name.
 	rows, err := r.pool.Query(ctx,
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
-		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at)
+		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
+		        COALESCE(branch_id, 'main')
 		 FROM functions
-		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
-		 ORDER BY name`, ontologyRID)
+		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
+		 AND branch_id IN ($2, 'main')
+		 ORDER BY name`, ontologyRID, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -1767,8 +1841,37 @@ func (r *PGRepository) ListFunctions(ctx context.Context, ontologyRID string) ([
 	if err != nil {
 		return nil, err
 	}
+	out = preferBranchFunctionsByName(out, branch)
 	SortFunctionsByVersionDesc(out)
 	return out, nil
+}
+
+// preferBranchFunctionsByName removes main-branch entries for a given
+// (name, version) pair when the branch overlay supplies its own version.
+// Differs from preferBranchFunctions only in scope: this helper operates
+// across multiple function names so the cross-name aggregate listing
+// stays correct (US-384).
+func preferBranchFunctionsByName(in []Function, branch string) []Function {
+	if branch == "" || branch == DefaultBranch {
+		return in
+	}
+	branchKeys := map[string]bool{}
+	for _, fn := range in {
+		if fn.BranchID == branch {
+			branchKeys[fn.Name+"@"+fn.NormalisedVersion()] = true
+		}
+	}
+	if len(branchKeys) == 0 {
+		return in
+	}
+	out := in[:0]
+	for _, fn := range in {
+		if fn.BranchID != branch && branchKeys[fn.Name+"@"+fn.NormalisedVersion()] {
+			continue
+		}
+		out = append(out, fn)
+	}
+	return out
 }
 
 func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {

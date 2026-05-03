@@ -606,6 +606,9 @@ components:
           type: array
           items:
             type: string
+        branchId:
+          description: "US-384: ontology branch this ActionType row belongs to. Defaults to 'main'. A branch publishing its own version of the same apiName stamps the branch name here so the (ontology, apiName, branch) UNIQUE constraint keeps the rows independent."
+          type: string
     ActionParameterV2:
       type: object
       required: [dataType, required]
@@ -885,6 +888,9 @@ components:
         createdAt:
           type: string
           format: date-time
+        branchId:
+          description: "US-384: ontology branch this Function version belongs to. Defaults to 'main'. Branch v2 of a function coexists with main v1 because the (ontology, name, version, branch) UNIQUE constraint is keyed on the branch as well."
+          type: string
     OntologyBranch:
       type: object
       required: [id, ontologyRid, name, baseVersion, status, createdBy, createdAt, updatedAt]

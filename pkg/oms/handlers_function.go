@@ -377,6 +377,11 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	fnIdentifier := chi.URLParam(r, "functionRid")
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 
+	// US-384: stamp ?branch= onto ctx so resolveFunctionRef picks the
+	// branch-specific function row when the branch has published its
+	// own version, falling back to main otherwise. Propagating via r so
+	// every downstream r.Context() inherits the scope.
+	r = r.WithContext(WithBranchScope(r.Context(), r.URL.Query().Get("branch")))
 	fn, err := h.resolveFunctionRef(r.Context(), ontologyAPIName, fnIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {

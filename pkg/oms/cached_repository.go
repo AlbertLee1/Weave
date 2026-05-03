@@ -410,7 +410,10 @@ func (c *CachedRepository) GetActionType(ctx context.Context, rid string) (*Acti
 }
 
 func (c *CachedRepository) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*ActionType, error) {
-	key := ontologyRID + "|" + apiNameOrRID
+	// Cache key includes the branch scope so a branch-aware lookup never
+	// returns the main row from a sibling request that warmed the cache
+	// without a branch (US-384).
+	key := BranchScopeFromContext(ctx) + "|" + ontologyRID + "|" + apiNameOrRID
 	c.mu.RLock()
 	if e, ok := c.actionTypeAPI[key]; ok && c.entryFresh(e.expires) {
 		c.mu.RUnlock()
@@ -428,8 +431,9 @@ func (c *CachedRepository) GetActionTypeByAPIName(ctx context.Context, ontologyR
 }
 
 func (c *CachedRepository) ListActionTypes(ctx context.Context, ontologyRID string) ([]ActionType, error) {
+	key := BranchScopeFromContext(ctx) + "|" + ontologyRID
 	c.mu.RLock()
-	if e, ok := c.actionTypeList[ontologyRID]; ok && c.entryFresh(e.expires) {
+	if e, ok := c.actionTypeList[key]; ok && c.entryFresh(e.expires) {
 		c.mu.RUnlock()
 		return e.value, nil
 	}
@@ -439,7 +443,7 @@ func (c *CachedRepository) ListActionTypes(ctx context.Context, ontologyRID stri
 		return nil, err
 	}
 	c.mu.Lock()
-	c.actionTypeList[ontologyRID] = cacheEntry[[]ActionType]{value: v, expires: c.newExpiry()}
+	c.actionTypeList[key] = cacheEntry[[]ActionType]{value: v, expires: c.newExpiry()}
 	c.mu.Unlock()
 	return v, nil
 }

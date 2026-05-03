@@ -19,6 +19,21 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 )
 
+// withBranchScope wraps r so downstream handler code that propagates
+// r.Context() through the executor sees the request's `?branch=` param
+// stamped via oms.WithBranchScope. The branch scope is what drives
+// US-384 routing of ActionType and Function lookups to the
+// branch-specific row when the branch has published its own version.
+// An empty / "main" branch input is a no-op so the legacy main-only
+// path stays free of context churn.
+func withBranchScope(r *http.Request) *http.Request {
+	branch := r.URL.Query().Get("branch")
+	if branch == "" || branch == oms.DefaultBranch {
+		return r
+	}
+	return r.WithContext(oms.WithBranchScope(r.Context(), branch))
+}
+
 // staleObjectAPIError converts an Executor-level *StaleObjectError into the
 // Palantir-wire-format 409 Conflict response used by US-023 optimistic
 // concurrency. Returns nil when err is not a *StaleObjectError so the
@@ -69,6 +84,7 @@ func NewHandler(executor *Executor) *Handler {
 //   - options.mode: VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
 //   - options.returnEdits: ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
 func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
+	r = withBranchScope(r)
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	action := chi.URLParam(r, "action")
 
@@ -587,6 +603,7 @@ type applyWithOverridesEnvelope struct {
 // is routed through the same Apply code path so options.mode and
 // options.returnEdits behave identically to the plain apply endpoint.
 func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
+	r = withBranchScope(r)
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	action := chi.URLParam(r, "action")
 
@@ -688,6 +705,7 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 //   - The old Weave "mode" field (atomic/bestEffort) is rejected with 400.
 //   - options.returnEdits controls whether edits appear in the response (default ALL).
 func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
+	r = withBranchScope(r)
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	action := chi.URLParam(r, "action")
 
