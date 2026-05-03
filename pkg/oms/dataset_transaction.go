@@ -33,6 +33,14 @@ type DatasetTransaction struct {
 	CommittedAt     time.Time `json:"committedAt"`
 	EditsCount      int       `json:"editsCount"`
 	UserID          string    `json:"userId,omitempty"`
+	// RolledBackAt + RolledBackToTxID are the US-388 audit overlay. A
+	// non-zero RolledBackAt means a `POST /datasets/{rid}/rollback`
+	// invocation marked this transaction as undone — its edits are no
+	// longer the source of truth. RolledBackToTxID points at the rollback
+	// target the operator chose so subsequent audits can reconstruct the
+	// chain (a rollback bookkeeping row may self-point to its own TxID).
+	RolledBackAt     time.Time `json:"rolledBackAt,omitempty"`
+	RolledBackToTxID string    `json:"rolledBackToTxId,omitempty"`
 }
 
 // Validate rejects rows the persistence layer could not interpret. Called
@@ -56,6 +64,15 @@ func (t DatasetTransaction) Validate() error {
 	return nil
 }
 
+// AffectedKey identifies a single (ObjectTypeRID, PrimaryKey) tuple whose
+// state changed during a rollback window. The US-388 rollback handler
+// fetches one of these per object that needs replay so a small window
+// rollback does not have to brute-force scan every Bleve doc.
+type AffectedKey struct {
+	ObjectTypeRID string
+	PrimaryKey    string
+}
+
 // DatasetTransactionStore is the narrow read/write surface the funnel
 // consumer + /datasets/{rid}/history handler depend on. Kept outside
 // Repository for the same reason as ColumnLineageStore / SagaStore — the
@@ -76,4 +93,14 @@ type DatasetTransactionStore interface {
 	GetDatasetTransaction(ctx context.Context, txID string) (*DatasetTransaction, error)
 	LatestForOntology(ctx context.Context, ontologyAPIName string) (*DatasetTransaction, error)
 	ListByOntology(ctx context.Context, ontologyAPIName string, limit int) ([]DatasetTransaction, error)
+	// ListAfterCommittedAt returns the chain entries strictly newer than
+	// `after` for the given ontology, oldest-first so a rollback can apply
+	// inverse edits in chronological order. Rolled-back rows are still
+	// surfaced — the caller decides whether to skip them.
+	ListAfterCommittedAt(ctx context.Context, ontologyAPIName string, after time.Time) ([]DatasetTransaction, error)
+	// MarkRolledBack stamps the rollback audit columns on a single
+	// transaction row. Idempotent: a second MarkRolledBack on the same
+	// txID overwrites both fields so a re-run of a partially failed
+	// rollback finishes cleanly.
+	MarkRolledBack(ctx context.Context, txID, rolledBackToTxID string, rolledBackAt time.Time) error
 }

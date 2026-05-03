@@ -9038,6 +9038,132 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/datasets/{rid}/transactions:
+    post:
+      operationId: createDatasetTransaction
+      summary: Record an explicit dataset_transactions checkpoint (US-388).
+      description: |
+        Creates a fresh `dataset_transactions` row whose `parentTxId`
+        points at the current chain head for the dataset's ontology, so a
+        caller can pin an `?asOf=tx-...` reference to a known checkpoint
+        without waiting for an EditBatch to drift through the funnel. The
+        body is optional — when supplied it carries an informational
+        `editsCount` and an override `userId` for non-interactive
+        callers.
+      tags: [DatasetTransactions]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          schema:
+            type: string
+          description: Ontology RID or api name.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                editsCount:
+                  type: integer
+      responses:
+        "201":
+          description: Newly recorded checkpoint transaction.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [txId, ontologyApiName, committedAt, editsCount]
+                properties:
+                  txId:
+                    type: string
+                  parentTxId:
+                    type: string
+                  ontologyApiName:
+                    type: string
+                  committedAt:
+                    type: string
+                    format: date-time
+                  editsCount:
+                    type: integer
+                  userId:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Dataset not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v2/datasets/{rid}/rollback:
+    post:
+      operationId: rollbackDataset
+      summary: Roll the dataset back to a target tx (US-388).
+      description: |
+        Marks every `dataset_transactions` row newer than the supplied
+        `?to=tx-...` target as rolled back, replays each affected object
+        back to the per-PK state captured at the target's `committedAt`
+        instant via the existing US-223 `SnapshotObjectsAt` reader, and
+        records a fresh "rollback" transaction at the new chain head. The
+        replay deletes objects that did not yet exist at the target and
+        re-indexes the prior state for everything that did.
+
+        Returns `RollbackTargetNotFound` 404 when `?to=` references a
+        transaction that does not exist; `RollbackTargetWrongOntology`
+        400 when the target belongs to a different ontology than the URL
+        `{rid}`. `DatasetRollbackUnavailable` 400 surfaces in degraded
+        mode (no `DatasetTransactionStore`).
+      tags: [DatasetTransactions]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          schema:
+            type: string
+          description: Ontology RID or api name.
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+          description: Rollback target — must start with `tx-`.
+      responses:
+        "200":
+          description: Rollback summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rolledBackTxIds, restoredObjects, deletedObjects]
+                properties:
+                  rolledBackTxIds:
+                    type: array
+                    items:
+                      type: string
+                  restoredObjects:
+                    type: integer
+                  deletedObjects:
+                    type: integer
+                  newTransaction:
+                    type: object
+                  targetTx:
+                    type: object
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Dataset or rollback target not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/actions/{rid}/impact:
     get:
       operationId: getActionImpact

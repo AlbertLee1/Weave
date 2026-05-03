@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -37,11 +38,15 @@ func (r *PGRepository) GetDatasetTransaction(ctx context.Context, txID string) (
 	tx := &DatasetTransaction{}
 	var parent *string
 	var userID *string
+	var rolledBackAt *time.Time
+	var rolledBackTo *string
 	err := r.pool.QueryRow(ctx,
-		`SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id
+		`SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id,
+		        rolled_back_at, rolled_back_to_tx_id
 		   FROM dataset_transactions
 		  WHERE tx_id = $1`, txID).
-		Scan(&tx.TxID, &parent, &tx.OntologyAPIName, &tx.CommittedAt, &tx.EditsCount, &userID)
+		Scan(&tx.TxID, &parent, &tx.OntologyAPIName, &tx.CommittedAt, &tx.EditsCount, &userID,
+			&rolledBackAt, &rolledBackTo)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -54,6 +59,12 @@ func (r *PGRepository) GetDatasetTransaction(ctx context.Context, txID string) (
 	if userID != nil {
 		tx.UserID = *userID
 	}
+	if rolledBackAt != nil {
+		tx.RolledBackAt = *rolledBackAt
+	}
+	if rolledBackTo != nil {
+		tx.RolledBackToTxID = *rolledBackTo
+	}
 	return tx, nil
 }
 
@@ -65,13 +76,17 @@ func (r *PGRepository) LatestForOntology(ctx context.Context, ontologyAPIName st
 	tx := &DatasetTransaction{}
 	var parent *string
 	var userID *string
+	var rolledBackAt *time.Time
+	var rolledBackTo *string
 	err := r.pool.QueryRow(ctx,
-		`SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id
+		`SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id,
+		        rolled_back_at, rolled_back_to_tx_id
 		   FROM dataset_transactions
 		  WHERE ontology_api_name = $1
 		  ORDER BY committed_at DESC, tx_id DESC
 		  LIMIT 1`, ontologyAPIName).
-		Scan(&tx.TxID, &parent, &tx.OntologyAPIName, &tx.CommittedAt, &tx.EditsCount, &userID)
+		Scan(&tx.TxID, &parent, &tx.OntologyAPIName, &tx.CommittedAt, &tx.EditsCount, &userID,
+			&rolledBackAt, &rolledBackTo)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -84,6 +99,12 @@ func (r *PGRepository) LatestForOntology(ctx context.Context, ontologyAPIName st
 	if userID != nil {
 		tx.UserID = *userID
 	}
+	if rolledBackAt != nil {
+		tx.RolledBackAt = *rolledBackAt
+	}
+	if rolledBackTo != nil {
+		tx.RolledBackToTxID = *rolledBackTo
+	}
 	return tx, nil
 }
 
@@ -92,7 +113,8 @@ func (r *PGRepository) LatestForOntology(ctx context.Context, ontologyAPIName st
 // the chain stays short enough that a simple cap suffices and pagination
 // is unnecessary.
 func (r *PGRepository) ListByOntology(ctx context.Context, ontologyAPIName string, limit int) ([]DatasetTransaction, error) {
-	q := `SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id
+	q := `SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id,
+	             rolled_back_at, rolled_back_to_tx_id
 		    FROM dataset_transactions
 		   WHERE ontology_api_name = $1
 		   ORDER BY committed_at DESC, tx_id DESC`
@@ -112,8 +134,11 @@ func (r *PGRepository) ListByOntology(ctx context.Context, ontologyAPIName strin
 		var tx DatasetTransaction
 		var parent *string
 		var userID *string
+		var rolledBackAt *time.Time
+		var rolledBackTo *string
 		if err := rows.Scan(&tx.TxID, &parent, &tx.OntologyAPIName,
-			&tx.CommittedAt, &tx.EditsCount, &userID); err != nil {
+			&tx.CommittedAt, &tx.EditsCount, &userID,
+			&rolledBackAt, &rolledBackTo); err != nil {
 			return nil, err
 		}
 		if parent != nil {
@@ -122,7 +147,112 @@ func (r *PGRepository) ListByOntology(ctx context.Context, ontologyAPIName strin
 		if userID != nil {
 			tx.UserID = *userID
 		}
+		if rolledBackAt != nil {
+			tx.RolledBackAt = *rolledBackAt
+		}
+		if rolledBackTo != nil {
+			tx.RolledBackToTxID = *rolledBackTo
+		}
 		out = append(out, tx)
 	}
 	return out, rows.Err()
+}
+
+// ListAfterCommittedAt returns the chain entries strictly newer than `after`
+// for the given ontology, oldest-first so a rollback can apply inverse
+// edits in chronological order. Rolled-back rows are still surfaced.
+func (r *PGRepository) ListAfterCommittedAt(ctx context.Context, ontologyAPIName string, after time.Time) ([]DatasetTransaction, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT tx_id, parent_tx_id, ontology_api_name, committed_at, edits_count, user_id,
+		        rolled_back_at, rolled_back_to_tx_id
+		   FROM dataset_transactions
+		  WHERE ontology_api_name = $1
+		    AND committed_at > $2
+		  ORDER BY committed_at ASC, tx_id ASC`, ontologyAPIName, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DatasetTransaction
+	for rows.Next() {
+		var tx DatasetTransaction
+		var parent *string
+		var userID *string
+		var rolledBackAt *time.Time
+		var rolledBackTo *string
+		if err := rows.Scan(&tx.TxID, &parent, &tx.OntologyAPIName,
+			&tx.CommittedAt, &tx.EditsCount, &userID,
+			&rolledBackAt, &rolledBackTo); err != nil {
+			return nil, err
+		}
+		if parent != nil {
+			tx.ParentTxID = *parent
+		}
+		if userID != nil {
+			tx.UserID = *userID
+		}
+		if rolledBackAt != nil {
+			tx.RolledBackAt = *rolledBackAt
+		}
+		if rolledBackTo != nil {
+			tx.RolledBackToTxID = *rolledBackTo
+		}
+		out = append(out, tx)
+	}
+	return out, rows.Err()
+}
+
+// ListAffectedKeysSince returns the distinct (ObjectTypeRID, PrimaryKey)
+// tuples whose object_history has at least one row with recorded_at
+// strictly newer than `after`, scoped to the ontology. Used by the US-388
+// rollback handler to bound the per-PK replay set instead of walking
+// every Bleve doc.
+func (r *PGRepository) ListAffectedKeysSince(ctx context.Context, ontologyRID string, after time.Time) ([]AffectedKey, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT oh.object_type_rid, oh.primary_key
+		   FROM object_history oh
+		   JOIN object_types ot ON ot.rid = oh.object_type_rid
+		  WHERE ot.ontology_rid = $1
+		    AND oh.recorded_at > $2`,
+		ontologyRID, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AffectedKey
+	for rows.Next() {
+		var k AffectedKey
+		if err := rows.Scan(&k.ObjectTypeRID, &k.PrimaryKey); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// MarkRolledBack stamps rolled_back_at + rolled_back_to_tx_id on a single
+// transaction. Idempotent: a re-run after a partial failure overwrites
+// both columns so the audit trail terminates on a coherent state.
+func (r *PGRepository) MarkRolledBack(ctx context.Context, txID, rolledBackToTxID string, rolledBackAt time.Time) error {
+	if txID == "" {
+		return fmt.Errorf("MarkRolledBack: txID required")
+	}
+	if rolledBackAt.IsZero() {
+		return fmt.Errorf("MarkRolledBack: rolledBackAt required")
+	}
+	cmd, err := r.pool.Exec(ctx,
+		`UPDATE dataset_transactions
+		    SET rolled_back_at      = $2,
+		        rolled_back_to_tx_id = $3
+		  WHERE tx_id = $1`,
+		txID, rolledBackAt, nilIfEmpty(rolledBackToTxID))
+	if err != nil {
+		return wrapPGError(err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

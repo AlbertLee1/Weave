@@ -155,6 +155,14 @@ type ServerDeps struct {
 	// leaves /datasets/{rid}/history returning DatasetHistoryUnavailable
 	// 400 and the OSS asOf=tx- path returning TransactionLookupUnavailable.
 	DatasetTransactionStore oms.DatasetTransactionStore
+	// US-388 Dataset Transaction Chain (rollback). DatasetAffectedStore
+	// surfaces the (ObjectTypeRID, PrimaryKey) tuples whose object_history
+	// has rows newer than the rollback target so the per-PK replay scopes
+	// to actual changes rather than the entire ontology. Wired off the
+	// uncached *PGRepository in the PG bootstrap; nil in degraded mode
+	// makes /api/v2/datasets/{rid}/rollback fall back to a metadata-only
+	// audit overlay (the chain is still marked, no data is touched).
+	DatasetAffectedStore datasetRollbackAffectedStore
 	// US-343: bulk-mark-read on the notifications table. Wired from the
 	// uncached *PGRepository so the /api/v2/notifications/read-all endpoint
 	// always observes the authoritative read-state. Nil in degraded mode
@@ -981,6 +989,29 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		datasetHistoryH := newDatasetHistoryHandler(deps.OmsRepo, deps.DatasetTransactionStore)
 		api.Get("/api/v2/datasets/{rid}/history", datasetHistoryH.History)
 
+		// US-388: explicit dataset transactions + rollback. The handlers
+		// are mounted unconditionally so the routes stay discoverable
+		// via OpenAPI / contract tests; missing dependencies surface as
+		// DatasetRollbackUnavailable 400. The replay path needs the
+		// HistorySnapshotStore (US-223) + DatasetAffectedStore (US-388)
+		// + IndexMgr; absent any of the three the rollback degrades to
+		// a metadata-only audit overlay (newer txs are still marked).
+		var datasetTxWriter datasetTransactionWriter
+		if deps.DatasetTransactionStore != nil {
+			if writer, ok := deps.DatasetTransactionStore.(datasetTransactionWriter); ok {
+				datasetTxWriter = writer
+			}
+		}
+		datasetRollbackH := newDatasetRollbackHandler(
+			deps.OmsRepo,
+			datasetTxWriter,
+			deps.DatasetAffectedStore,
+			deps.HistorySnapshotStore,
+			deps.IndexMgr,
+		)
+		api.Post("/api/v2/datasets/{rid}/transactions", datasetRollbackH.CreateTransaction)
+		api.Post("/api/v2/datasets/{rid}/rollback", datasetRollbackH.Rollback)
+
 		// Admin: index rebuild (US-011). Gated to admin-level roles via
 		// PermUserManage — it reindexes Bleve from the authoritative
 		// object_history tail and is a disruptive, operator-only action.
@@ -1471,6 +1502,10 @@ func main() {
 		// methods live on *PGRepository, not on the cached metadata
 		// Repository, so we point at pgRepo directly.
 		deps.DatasetTransactionStore = pgRepo
+		// US-388: rollback affected-keys lookup. Same backing repo —
+		// ListAffectedKeysSince walks object_history JOIN object_types
+		// to scope the per-PK replay set without an extra round-trip.
+		deps.DatasetAffectedStore = pgRepo
 		// US-312: per-object activity timeline reads from the uncached
 		// *PGRepository's ListObjectHistoryPage so the cursor-paginated
 		// endpoint always observes the authoritative tail (the metadata
