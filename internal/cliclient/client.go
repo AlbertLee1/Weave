@@ -752,6 +752,94 @@ func (c *Client) RebuildIndex(ctx context.Context, ontology, objectType string) 
 	return &resp, nil
 }
 
+// DatasetTransaction mirrors oms.DatasetTransaction's wire shape. The CLI
+// only surfaces the bookkeeping fields needed to render the post-rollback
+// summary; richer fields can be added without breaking callers because the
+// JSON decoder ignores unknown keys.
+type DatasetTransaction struct {
+	TxID             string    `json:"txId"`
+	ParentTxID       string    `json:"parentTxId,omitempty"`
+	OntologyAPIName  string    `json:"ontologyApiName"`
+	CommittedAt      time.Time `json:"committedAt"`
+	EditsCount       int       `json:"editsCount"`
+	UserID           string    `json:"userId,omitempty"`
+	RolledBackAt     time.Time `json:"rolledBackAt,omitempty"`
+	RolledBackToTxID string    `json:"rolledBackToTxId,omitempty"`
+}
+
+// CreateDatasetTransactionRequest is the optional body for POST
+// /api/v2/datasets/{rid}/transactions. Both fields are optional — an empty
+// request creates a default checkpoint stamped against the prior chain
+// head.
+type CreateDatasetTransactionRequest struct {
+	UserID     string `json:"userId,omitempty"`
+	EditsCount int    `json:"editsCount,omitempty"`
+}
+
+// CreateDatasetTransaction stamps an explicit checkpoint into the
+// dataset_transactions chain so a caller can pin a future ?asOf=tx-... or
+// rollback target to a known point. Returns the freshly-recorded row.
+func (c *Client) CreateDatasetTransaction(ctx context.Context, datasetRID string, req *CreateDatasetTransactionRequest) (*DatasetTransaction, error) {
+	path := "/api/v2/datasets/" + url.PathEscape(datasetRID) + "/transactions"
+	var body any
+	if req != nil {
+		body = req
+	}
+	var tx DatasetTransaction
+	if err := c.do(ctx, http.MethodPost, path, body, &tx); err != nil {
+		return nil, err
+	}
+	return &tx, nil
+}
+
+// PITRRollbackResponse mirrors the wire shape of POST
+// /api/v2/datasets/{rid}/rollback. The server may degrade the per-PK
+// replay (no affectedStore / historyStore / index manager wired) — in that
+// case RestoredObjects + DeletedObjects are zero and the response carries
+// only the audit overlay (RolledBackTxIDs + NewTransaction).
+type PITRRollbackResponse struct {
+	RolledBackTxIDs []string            `json:"rolledBackTxIds"`
+	RestoredObjects int                 `json:"restoredObjects"`
+	DeletedObjects  int                 `json:"deletedObjects"`
+	NewTransaction  *DatasetTransaction `json:"newTransaction,omitempty"`
+	TargetTx        *DatasetTransaction `json:"targetTx,omitempty"`
+}
+
+// RollbackDataset triggers point-in-time recovery: every dataset
+// transaction strictly newer than `targetTxID` is marked rolled-back, every
+// affected (objectType, primaryKey) pair has its live Bleve doc replayed
+// against the snapshot at the target's CommittedAt (restore prior state, or
+// delete if the row did not exist at the target), and a fresh bookkeeping
+// transaction is recorded as the new chain head.
+//
+// `targetTxID` MUST start with "tx-"; the server rejects other inputs with
+// InvalidRollbackTarget.
+func (c *Client) RollbackDataset(ctx context.Context, datasetRID, targetTxID string) (*PITRRollbackResponse, error) {
+	path := "/api/v2/datasets/" + url.PathEscape(datasetRID) +
+		"/rollback?to=" + url.QueryEscape(targetTxID)
+	var resp PITRRollbackResponse
+	if err := c.do(ctx, http.MethodPost, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DatasetHistoryResponse mirrors GET /api/v2/datasets/{rid}/history.
+type DatasetHistoryResponse struct {
+	Transactions []DatasetTransaction `json:"transactions"`
+}
+
+// DatasetHistory returns the per-ontology transaction chain for a dataset,
+// newest first. The server caps the response at 1000 rows.
+func (c *Client) DatasetHistory(ctx context.Context, datasetRID string) (*DatasetHistoryResponse, error) {
+	path := "/api/v2/datasets/" + url.PathEscape(datasetRID) + "/history"
+	var resp DatasetHistoryResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ----- Auth endpoints ------------------------------------------------------
 
 // Login exchanges email + password for an access/refresh token pair. The

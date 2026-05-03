@@ -888,3 +888,114 @@ func TestGetObjectSet(t *testing.T) {
 		t.Fatalf("unexpected resp: %+v", resp)
 	}
 }
+
+// TestRollbackDataset verifies the URL shape (including the ?to= query
+// parameter) and the response decode round-trip for the US-390 PITR API.
+func TestRollbackDataset(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/datasets/shop/rollback": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"rolledBackTxIds":["tx-2","tx-3"],
+				"restoredObjects":1,
+				"deletedObjects":1,
+				"newTransaction":{"txId":"tx-bookkeeping","parentTxId":"tx-1","ontologyApiName":"shop","committedAt":"2026-05-03T00:00:00Z","editsCount":2,"rolledBackToTxId":"tx-1"},
+				"targetTx":{"txId":"tx-1","ontologyApiName":"shop","committedAt":"2026-01-01T00:00:00Z","editsCount":1}
+			}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	resp, err := c.RollbackDataset(context.Background(), "shop", "tx-1")
+	if err != nil {
+		t.Fatalf("RollbackDataset: %v", err)
+	}
+	if resp.RestoredObjects != 1 || resp.DeletedObjects != 1 {
+		t.Errorf("counts = (%d, %d), want (1, 1)", resp.RestoredObjects, resp.DeletedObjects)
+	}
+	if len(resp.RolledBackTxIDs) != 2 {
+		t.Errorf("RolledBackTxIDs = %v", resp.RolledBackTxIDs)
+	}
+	if resp.NewTransaction == nil || resp.NewTransaction.TxID != "tx-bookkeeping" {
+		t.Errorf("NewTransaction = %+v", resp.NewTransaction)
+	}
+	if resp.TargetTx == nil || resp.TargetTx.TxID != "tx-1" {
+		t.Errorf("TargetTx = %+v", resp.TargetTx)
+	}
+	if len(*rec) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(*rec))
+	}
+	if want := "/api/v2/datasets/shop/rollback?to=tx-1"; (*rec)[0].path != want {
+		t.Errorf("request URI = %q, want %q", (*rec)[0].path, want)
+	}
+}
+
+// TestRollbackDatasetSurfacesAPIError ensures a 404 from the server is
+// surfaced as a typed *APIError with the right ErrorName so the CLI can
+// render it cleanly.
+func TestRollbackDatasetSurfacesAPIError(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/datasets/shop/rollback": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"errorCode":"NOT_FOUND","errorName":"RollbackTargetNotFound","parameters":{"to":"tx-missing"}}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	_, err := c.RollbackDataset(context.Background(), "shop", "tx-missing")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T (%v)", err, err)
+	}
+	if apiErr.ErrorName != "RollbackTargetNotFound" {
+		t.Errorf("ErrorName = %q", apiErr.ErrorName)
+	}
+}
+
+// TestCreateDatasetTransactionStampsBody verifies the optional body is
+// posted when supplied and that the omit-empty fields don't leak through.
+func TestCreateDatasetTransactionStampsBody(t *testing.T) {
+	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
+		"POST /api/v2/datasets/shop/transactions": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"txId":"tx-newhead","parentTxId":"tx-prev","ontologyApiName":"shop","committedAt":"2026-05-03T00:00:00Z","editsCount":0,"userId":"alice"}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	tx, err := c.CreateDatasetTransaction(context.Background(), "shop", &CreateDatasetTransactionRequest{
+		UserID: "alice",
+	})
+	if err != nil {
+		t.Fatalf("CreateDatasetTransaction: %v", err)
+	}
+	if tx.TxID != "tx-newhead" || tx.ParentTxID != "tx-prev" || tx.UserID != "alice" {
+		t.Errorf("tx = %+v", tx)
+	}
+	if !strings.Contains((*rec)[0].body, `"userId":"alice"`) {
+		t.Errorf("body should carry userId, got %q", (*rec)[0].body)
+	}
+}
+
+// TestDatasetHistoryParsesTransactions verifies the history endpoint shape.
+func TestDatasetHistoryParsesTransactions(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]http.HandlerFunc{
+		"GET /api/v2/datasets/shop/history": func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"transactions":[
+				{"txId":"tx-2","parentTxId":"tx-1","ontologyApiName":"shop","committedAt":"2026-01-01T00:01:00Z","editsCount":3},
+				{"txId":"tx-1","ontologyApiName":"shop","committedAt":"2026-01-01T00:00:00Z","editsCount":1}
+			]}`))
+		},
+	})
+	c := NewClient(srv.URL, "tok")
+	hist, err := c.DatasetHistory(context.Background(), "shop")
+	if err != nil {
+		t.Fatalf("DatasetHistory: %v", err)
+	}
+	if len(hist.Transactions) != 2 {
+		t.Fatalf("len = %d, want 2", len(hist.Transactions))
+	}
+	if hist.Transactions[0].TxID != "tx-2" || hist.Transactions[1].TxID != "tx-1" {
+		t.Errorf("ordering = %s, %s", hist.Transactions[0].TxID, hist.Transactions[1].TxID)
+	}
+}

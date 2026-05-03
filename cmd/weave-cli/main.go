@@ -40,6 +40,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAdmin(rest, stdout, stderr)
 	case "fixtures":
 		return runFixtures(rest, stdout, stderr)
+	case "pitr":
+		return runPitr(rest, stdout, stderr)
 	case "repl":
 		return runREPL(rest, stdin, stdout, stderr)
 	default:
@@ -62,6 +64,7 @@ Commands:
   config     Read and write the local config file (~/.config/weave/config.toml)
   admin      Server administration (index rebuild, ...)
   fixtures   Generate synthetic test data for an ObjectType (generate)
+  pitr       Point-in-time recovery (restore, history)
   repl       Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)
