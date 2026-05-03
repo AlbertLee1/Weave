@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -2064,13 +2065,33 @@ func main() {
 	// still get a working filesystem; the HTTP handler is gated on both.
 	deps.MediaStore = media.NewStore(cfg.DataDir + "/media")
 
-	// 2c. TimeSeries store. Prefer the PG backend when a pool is wired;
-	// fall back to an in-memory store in degraded mode so unit/dev runs
-	// that skip PG still get live endpoints.
-	if deps.PGPool != nil {
-		deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
-	} else {
+	// 2c. TimeSeries store (US-400). WEAVE_TS_BACKEND selects the backend:
+	//   - "victoriametrics" → write-through to /api/v1/import + read from
+	//     /api/v1/export at WEAVE_TS_URL
+	//   - "memory"          → in-process MemoryStore (degraded mode)
+	//   - "postgres"        → forces PG even when WEAVE_TS_BACKEND was set
+	//                         but PG is wired
+	//   - "" / "auto"       → historical behaviour: PG when wired, memory
+	//                         otherwise.
+	switch strings.ToLower(strings.TrimSpace(cfg.TimeSeries.Backend)) {
+	case "victoriametrics":
+		deps.TimeSeriesStore = timeseries.NewVMStore(cfg.TimeSeries.URL)
+		log.Printf("[TIMESERIES] backend=victoriametrics url=%s", cfg.TimeSeries.URL)
+	case "memory":
 		deps.TimeSeriesStore = timeseries.NewMemoryStore()
+		log.Printf("[TIMESERIES] backend=memory (forced)")
+	case "postgres":
+		if deps.PGPool == nil {
+			log.Fatalf("WEAVE_TS_BACKEND=postgres but no PG pool wired")
+		}
+		deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+		log.Printf("[TIMESERIES] backend=postgres (forced)")
+	default:
+		if deps.PGPool != nil {
+			deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+		} else {
+			deps.TimeSeriesStore = timeseries.NewMemoryStore()
+		}
 	}
 
 	// 2d. Geotemporal store. In-memory only for now — PostGIS/JSONB backend

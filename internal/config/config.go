@@ -218,6 +218,21 @@ type Config struct {
 	SAML            SAMLConfig
 	LDAP            LDAPConfig
 	AuditExport     AuditExportConfig
+	TimeSeries      TimeSeriesConfig
+}
+
+// TimeSeriesConfig selects the backend for pkg/timeseries (US-400).
+//
+// Backend = "memory" (default in degraded mode), "postgres" (the previous
+// default whenever PG was wired), or "victoriametrics" (write-through to
+// a VictoriaMetrics single-node deployment via /api/v1/import +
+// /api/v1/export). When Backend="victoriametrics", URL must point at the
+// VM HTTP listener (e.g. http://victoriametrics:8428) — empty URL fails
+// validation up front so a misconfigured deploy can't silently lose
+// points.
+type TimeSeriesConfig struct {
+	Backend string
+	URL     string
 }
 
 func Load() (*Config, error) {
@@ -267,6 +282,9 @@ func Load() (*Config, error) {
 			RetentionInterval:   24 * time.Hour,
 			RetentionBatchSize:  1000,
 			RetentionArchive:    "none",
+		},
+		TimeSeries: TimeSeriesConfig{
+			Backend: "auto",
 		},
 	}
 
@@ -696,6 +714,17 @@ func Load() (*Config, error) {
 		cfg.AuditExport.RetentionS3Prefix = v
 	}
 
+	// TimeSeries backend selection (US-400). Default "auto" preserves the
+	// historical behaviour: PG when wired, otherwise in-memory. Operators
+	// opt into VictoriaMetrics by setting WEAVE_TS_BACKEND=victoriametrics
+	// + WEAVE_TS_URL.
+	if v := os.Getenv("WEAVE_TS_BACKEND"); v != "" {
+		cfg.TimeSeries.Backend = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("WEAVE_TS_URL"); v != "" {
+		cfg.TimeSeries.URL = strings.TrimSpace(v)
+	}
+
 	return cfg, nil
 }
 
@@ -827,6 +856,20 @@ func (c *Config) Validate() error {
 			problems = append(problems,
 				fmt.Sprintf("AuditExport.RetentionArchive %q: must be one of none, s3", c.AuditExport.RetentionArchive))
 		}
+	}
+
+	// TimeSeries backend (US-400).
+	switch strings.ToLower(strings.TrimSpace(c.TimeSeries.Backend)) {
+	case "", "auto", "memory", "postgres":
+		// no-op
+	case "victoriametrics":
+		if strings.TrimSpace(c.TimeSeries.URL) == "" {
+			problems = append(problems,
+				"TimeSeries.Backend=victoriametrics requires WEAVE_TS_URL (e.g. http://victoriametrics:8428)")
+		}
+	default:
+		problems = append(problems,
+			fmt.Sprintf("TimeSeries.Backend %q: must be one of auto, memory, postgres, victoriametrics", c.TimeSeries.Backend))
 	}
 
 	if len(problems) == 0 {

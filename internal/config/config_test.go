@@ -922,3 +922,81 @@ func TestConfig_Validate_AuditRetention_NoneArchivePasses(t *testing.T) {
 		t.Fatalf("retention + none archive should validate, got: %v", err)
 	}
 }
+
+// US-400 — TimeSeries backend selection.
+
+func TestLoadConfig_TimeSeriesDefaults(t *testing.T) {
+	clearTimeSeriesEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TimeSeries.Backend != "auto" {
+		t.Errorf("Backend = %q, want auto", cfg.TimeSeries.Backend)
+	}
+	if cfg.TimeSeries.URL != "" {
+		t.Errorf("URL = %q, want empty", cfg.TimeSeries.URL)
+	}
+}
+
+func TestLoadConfig_TimeSeriesOverrides(t *testing.T) {
+	clearTimeSeriesEnv(t)
+	t.Setenv("WEAVE_TS_BACKEND", "VictoriaMetrics")
+	t.Setenv("WEAVE_TS_URL", "http://victoriametrics:8428")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TimeSeries.Backend != "victoriametrics" {
+		t.Errorf("Backend = %q, want victoriametrics (lower-case)", cfg.TimeSeries.Backend)
+	}
+	if cfg.TimeSeries.URL != "http://victoriametrics:8428" {
+		t.Errorf("URL = %q", cfg.TimeSeries.URL)
+	}
+}
+
+func TestConfig_Validate_TimeSeriesVMRequiresURL(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.TimeSeries = TimeSeriesConfig{Backend: "victoriametrics"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error when victoriametrics backend has no URL")
+	}
+	if !strings.Contains(err.Error(), "WEAVE_TS_URL") {
+		t.Errorf("expected error to mention WEAVE_TS_URL, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_TimeSeriesUnknownBackend(t *testing.T) {
+	cfg := validDevConfig()
+	cfg.TimeSeries = TimeSeriesConfig{Backend: "kafka"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for unknown backend")
+	}
+	if !strings.Contains(err.Error(), "kafka") {
+		t.Errorf("expected error to mention the bad value, got: %v", err)
+	}
+}
+
+func TestConfig_Validate_TimeSeriesValidBackends(t *testing.T) {
+	for _, b := range []string{"", "auto", "memory", "postgres"} {
+		cfg := validDevConfig()
+		cfg.TimeSeries = TimeSeriesConfig{Backend: b}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Backend=%q: validate error %v", b, err)
+		}
+	}
+	cfg := validDevConfig()
+	cfg.TimeSeries = TimeSeriesConfig{Backend: "victoriametrics", URL: "http://vm:8428"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("victoriametrics+URL: validate error %v", err)
+	}
+}
+
+func clearTimeSeriesEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"WEAVE_TS_BACKEND", "WEAVE_TS_URL"} {
+		t.Setenv(k, "")
+	}
+}

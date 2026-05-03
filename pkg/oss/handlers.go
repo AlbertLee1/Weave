@@ -114,6 +114,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/firstPoint", h.GetTimeSeriesFirstPoint)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/lastPoint", h.GetTimeSeriesLastPoint)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/streamPoints", h.StreamTimeSeriesPoints)
+	// US-400: write endpoint. Body is {time:RFC3339, value:any}. Routes
+	// to the configured backend (memory / PG / VictoriaMetrics).
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/points", h.AppendTimeSeriesPoint)
 
 	// TimeSeriesValueBankProperty endpoints (US-038). The {propertyName}
 	// vs {property} path parameter inconsistency is deliberate — it

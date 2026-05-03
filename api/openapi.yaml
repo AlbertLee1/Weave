@@ -8425,6 +8425,56 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/points:
+    post:
+      operationId: appendTimeSeriesPoint
+      summary: Append a point to a time series property (US-400)
+      description: |
+        Writes one (time, value) datapoint to the configured time series
+        backend. When `WEAVE_TS_BACKEND=victoriametrics` is configured,
+        the point is forwarded to VictoriaMetrics via /api/v1/import;
+        otherwise it lands in the in-memory or PostgreSQL backend.
+        VictoriaMetrics requires numeric values — non-numeric payloads
+        return 400 TimeSeriesNonNumericValue.
+      tags: [TimeSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [time]
+              properties:
+                time:
+                  type: string
+                  format: date-time
+                value: {}
+      responses:
+        "204":
+          description: Point appended.
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{propertyName}/latestValue:
     get:
       operationId: getTimeSeriesLatestValue

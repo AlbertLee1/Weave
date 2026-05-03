@@ -35,6 +35,28 @@ services:
       timeout: 3s
       retries: 5
 
+  # VictoriaMetrics single-node deployment for the optional pkg/timeseries
+  # backend (US-400). Disabled by default — the weave service only routes
+  # /api/v2/.../timeseries/{property}/points to VictoriaMetrics when
+  # WEAVE_TS_BACKEND=victoriametrics + WEAVE_TS_URL=http://victoriametrics:8428
+  # are set. Stays out of the way for environments that prefer the in-memory
+  # or PG backends.
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.99.0
+    command:
+      - "-storageDataPath=/storage"
+      - "-retentionPeriod=12"
+      - "-httpListenAddr=:8428"
+    ports:
+      - "8428:8428"
+    volumes:
+      - vmdata:/storage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8428/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   weave:
     build:
       context: .
@@ -113,3 +135,4 @@ volumes:
   weavedata:
   promdata:
   grafanadata:
+  vmdata:

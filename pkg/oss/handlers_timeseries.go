@@ -1,8 +1,10 @@
 package oss
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -164,9 +166,56 @@ func writeTimeSeriesError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, timeseries.ErrNoPoints):
 		apierror.WriteJSON(w, apierror.NewNotFound("TimeSeriesPointNotFound", nil))
+	case errors.Is(err, timeseries.ErrNonNumericValue):
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesNonNumericValue", map[string]string{
+			"reason": err.Error(),
+		}))
 	default:
 		apierror.WriteJSON(w, apierror.NewInternal("TimeSeriesStoreError", map[string]string{
 			"message": err.Error(),
 		}))
 	}
+}
+
+// AppendTimeSeriesPoint handles
+// POST /api/v2/ontologies/{o}/objects/{type}/{pk}/timeseries/{property}/points.
+//
+// Body shape: {"time":"2026-04-01T00:00:00Z","value":42.5}. Time is RFC3339;
+// value is forwarded to the configured Store as-is so the memory and PG
+// backends keep accepting non-numeric payloads. The VictoriaMetrics
+// backend coerces value to float64 and returns 400 TimeSeriesNonNumericValue
+// for unsupported types.
+func (h *Handler) AppendTimeSeriesPoint(w http.ResponseWriter, r *http.Request) {
+	key, ok := h.resolveTimeSeriesKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Time  string      `json:"time"`
+		Value interface{} `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesPointInvalidBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if body.Time == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesPointInvalidBody", map[string]string{
+			"reason": "time is required (RFC3339)",
+		}))
+		return
+	}
+	ts, err := time.Parse(time.RFC3339Nano, body.Time)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesPointInvalidBody", map[string]string{
+			"reason": "invalid time: " + err.Error(),
+		}))
+		return
+	}
+	if err := h.timeseriesStore.AppendPoint(r.Context(), key, timeseries.Point{Time: ts, Value: body.Value}); err != nil {
+		writeTimeSeriesError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
