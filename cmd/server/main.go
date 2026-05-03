@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -41,6 +42,7 @@ import (
 	"github.com/liyang/weave/pkg/lineage"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/masking"
+	"github.com/liyang/weave/pkg/materialize"
 	"github.com/liyang/weave/pkg/mcp"
 	"github.com/liyang/weave/pkg/media"
 	"github.com/liyang/weave/pkg/metrics"
@@ -2454,6 +2456,17 @@ func main() {
 				deps.FunnelConsumer.SetEmbeddingRateLimiter(lim)
 			}
 		}
+
+		// US-405: best-effort Parquet materialization of every applied
+		// EditBatch. One file per (batch, objectType) lands under
+		// $WEAVE_DATA_DIR/materialized so US-406 snapshot rebuilds and
+		// US-407 cold-tier queries can replay the change log without
+		// going through Bleve. Failures inside the writer are logged
+		// but never abort the batch — the index commit is the source
+		// of truth for read paths.
+		matRoot := filepath.Join(cfg.DataDir, "materialized")
+		deps.FunnelConsumer.SetEditMaterializer(materialize.NewMaterializer(matRoot))
+		log.Printf("[MATERIALIZE] root=%s", matRoot)
 
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)

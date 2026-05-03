@@ -191,6 +191,13 @@ type Consumer struct {
 	// to "TransactionNotFound" — but US-223 timestamp-based asOf still
 	// works against object_history, so this hook is purely additive.
 	txRecorder DatasetTransactionRecorder
+
+	// materializer persists every applied batch to durable columnar
+	// storage (US-405). Nil disables materialization. Failures inside
+	// the materializer are logged but never abort the batch — the
+	// index commit is the source of truth, materialization is the
+	// downstream snapshot-rebuild source.
+	materializer EditMaterializer
 }
 
 // NewConsumer creates a new edit consumer.
@@ -998,6 +1005,11 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	// must not roll back the index commit. Runs after the index is updated
 	// so a failed embed cannot strand a half-applied batch.
 	c.generateEmbeddings(ctx, batch)
+
+	// US-405: best-effort materialization to durable columnar storage.
+	// Same fail-soft contract as embeddings — the index is the source of
+	// truth for reads, materialization is the source for cold-tier rebuilds.
+	c.runMaterialize(ctx, batch)
 
 	// US-379: record one dataset_transactions row per applied batch and
 	// surface its tx_id on every subsequent object_history row. Failures
