@@ -1081,6 +1081,118 @@ components:
         mainState:
           type: object
           description: The current state of the entity on main.
+    AnnotatedDiffEntry:
+      type: object
+      required: [entityType, entityRid, apiName, resolutionKey, changeType, hasConflict]
+      description: |
+        US-385 — categorised branch diff entry annotated with the entity's
+        apiName and the "<entityType>:<apiName>" resolutionKey the merge
+        handler looks up against MergeBranchRequest.conflictResolution.
+      properties:
+        entityType:
+          type: string
+          description: One of objectType / property / linkType / actionType.
+        entityRid:
+          type: string
+        apiName:
+          type: string
+          description: Entity apiName extracted from after_state (or before_state for DELETED).
+        resolutionKey:
+          type: string
+          description: Stable conflictResolution key, "<entityType>:<apiName>".
+        changeType:
+          type: string
+          enum: [ADDED, MODIFIED, DELETED]
+        hasConflict:
+          type: boolean
+          description: True when main has independently modified the same entity.
+        before:
+          type: object
+          nullable: true
+        after:
+          type: object
+          nullable: true
+    AnnotatedMergeConflict:
+      type: object
+      required: [entityType, entityRid, apiName, resolutionKey, changeType]
+      description: |
+        US-385 — extends MergeConflict with apiName + resolutionKey. The
+        resolutionKey ("<entityType>:<apiName>") is the lookup key the merge
+        handler expects in MergeBranchRequest.conflictResolution.
+      properties:
+        entityType:
+          type: string
+        entityRid:
+          type: string
+        apiName:
+          type: string
+        resolutionKey:
+          type: string
+        changeType:
+          type: string
+          enum: [MODIFIED, DELETED]
+        branchState:
+          type: object
+        mainState:
+          type: object
+    BranchDiffPostResponse:
+      type: object
+      required: [branch, added, modified, deleted, conflicts, hasConflicts]
+      description: |
+        US-385 — response body of POST /branches/{branchId}/diff. Categorises
+        every recorded BranchChange into added / modified / deleted lists and
+        surfaces the inline conflict set computed against current main state.
+      properties:
+        branch:
+          $ref: "#/components/schemas/OntologyBranch"
+        added:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnnotatedDiffEntry"
+        modified:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnnotatedDiffEntry"
+        deleted:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnnotatedDiffEntry"
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnnotatedMergeConflict"
+        hasConflicts:
+          type: boolean
+    MergeBranchRequest:
+      type: object
+      description: |
+        US-385 — body for POST /branches/{branchId}/merge. The
+        conflictResolution map keys are stable resolutionKey strings of the
+        form "<entityType>:<apiName>"; values are "use-branch" or "use-main".
+        Conflicts whose key is absent from the map cause a 409 MERGE_CONFLICT
+        response so the caller never silently merges over an unresolved
+        conflict.
+      properties:
+        conflictResolution:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [use-branch, use-main]
+    MergeBranchResponse:
+      type: object
+      required: [branch, appliedCount, skippedCount]
+      description: |
+        US-385 — response body of POST /branches/{branchId}/merge. The
+        applied/skipped counts let the caller verify that "use-main"
+        resolutions were honoured (skipped > 0) without re-fetching the
+        branch state.
+      properties:
+        branch:
+          $ref: "#/components/schemas/OntologyBranch"
+        appliedCount:
+          type: integer
+        skippedCount:
+          type: integer
     ValueType:
       type: object
       required: [rid, apiName, displayName, baseType, version]
@@ -5276,6 +5388,33 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+    post:
+      operationId: postBranchDiff
+      summary: Categorised branch diff with inline conflict annotations (US-385)
+      description: |
+        Returns the branch's recorded changes split into added / modified /
+        deleted lists and a separate conflicts array. Each entry carries the
+        entity's apiName and a stable resolutionKey ("<entityType>:<apiName>")
+        that the merge endpoint consumes via conflictResolution.
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Categorised diff with conflict annotations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BranchDiffPostResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/breaking-changes:
     get:
       operationId: getBranchBreakingChanges
@@ -5338,6 +5477,61 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/MergeConflict"
+  /api/v2/ontologies/{ontologyApiName}/branches/{branchId}/merge:
+    post:
+      operationId: mergeBranch
+      summary: Direct branch merge with explicit conflict resolution (US-385)
+      description: |
+        Applies the branch's recorded changes to main. When the same entity
+        was independently modified on main, the caller must supply a
+        resolution in conflictResolution keyed by "<entityType>:<apiName>"
+        with value "use-branch" or "use-main". Unresolved conflicts return
+        409 MERGE_CONFLICT with the annotated conflict list. On success the
+        branch transitions to status="merged".
+      tags: [Branches]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: branchId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeBranchRequest"
+      responses:
+        "200":
+          description: Merge succeeded. Branch is now merged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MergeBranchResponse"
+        "400":
+          $ref: "#/components/responses/InvalidParameterError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: Unresolved merge conflict — caller must include a resolution for every entry.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode:
+                    type: string
+                    example: MERGE_CONFLICT
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AnnotatedMergeConflict"
+                  unresolved:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AnnotatedMergeConflict"
   /api/v2/ontologies/{ontologyApiName}/proposals:
     post:
       operationId: createProposal

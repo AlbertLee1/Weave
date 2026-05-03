@@ -112,8 +112,16 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.GetBranch)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}", omsHandler.CloseBranch)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", omsHandler.GetBranchDiff)
+	// US-385 — POST diff returns the categorised added/modified/deleted view
+	// plus inline conflict annotations (apiName + resolutionKey) the merge
+	// handler will look up against conflictResolution.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/diff", omsHandler.PostBranchDiff)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/breaking-changes", omsHandler.GetBranchBreakingChanges)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/rebase", omsHandler.RebaseBranch)
+	// US-385 — direct branch merge with conflictResolution body. Sits next
+	// to the proposal-based MergeProposal flow; both write to the same
+	// underlying branch_changes apply path.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/branches/{branchId}/merge", omsHandler.MergeBranch)
 
 	// Ontology Proposals (US-117, US-118)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/proposals", omsHandler.CreateProposal)
