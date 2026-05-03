@@ -50,13 +50,17 @@ func (s *pgPipelineStore) CreatePipeline(ctx context.Context, p *pipeline.Pipeli
 	if err != nil {
 		return err
 	}
+	schemaRaw, err := json.Marshal(coalesceSchemaFields(p.LastKnownSchema))
+	if err != nil {
+		return err
+	}
 	err = s.pool.QueryRow(ctx,
 		`INSERT INTO pipelines
-		   (id, name, description, inputs, transforms, outputs, schedule, enabled, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		   (id, name, description, inputs, transforms, outputs, schedule, enabled, created_by, mode, last_known_schema)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING created_at, updated_at`,
 		p.ID, p.Name, p.Description, inputs, transforms, outputs,
-		p.Schedule, p.Enabled, p.CreatedBy,
+		p.Schedule, p.Enabled, p.CreatedBy, p.Mode, schemaRaw,
 	).Scan(&p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if isPipelineUniqueViolation(err) {
@@ -73,6 +77,7 @@ func (s *pgPipelineStore) GetPipeline(ctx context.Context, id string) (*pipeline
 		inputsRaw     []byte
 		transformsRaw []byte
 		outputsRaw    []byte
+		schemaRaw     []byte
 	)
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, name, description,
@@ -80,11 +85,14 @@ func (s *pgPipelineStore) GetPipeline(ctx context.Context, id string) (*pipeline
 		        COALESCE(transforms, '[]'::jsonb),
 		        COALESCE(outputs, '[]'::jsonb),
 		        COALESCE(schedule, ''), enabled, COALESCE(created_by, ''),
+		        COALESCE(mode, ''),
+		        COALESCE(last_known_schema, '[]'::jsonb),
 		        created_at, updated_at
 		 FROM pipelines WHERE id = $1`, id).
 		Scan(&p.ID, &p.Name, &p.Description,
 			&inputsRaw, &transformsRaw, &outputsRaw,
 			&p.Schedule, &p.Enabled, &p.CreatedBy,
+			&p.Mode, &schemaRaw,
 			&p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -101,6 +109,9 @@ func (s *pgPipelineStore) GetPipeline(ctx context.Context, id string) (*pipeline
 	if err := json.Unmarshal(coalesceJSON(outputsRaw, "[]"), &p.Outputs); err != nil {
 		return nil, err
 	}
+	if err := json.Unmarshal(coalesceJSON(schemaRaw, "[]"), &p.LastKnownSchema); err != nil {
+		return nil, err
+	}
 	return &p, nil
 }
 
@@ -114,6 +125,8 @@ func (s *pgPipelineStore) ListPipelines(ctx context.Context, createdBy string) (
 	             COALESCE(transforms, '[]'::jsonb),
 	             COALESCE(outputs, '[]'::jsonb),
 	             COALESCE(schedule, ''), enabled, COALESCE(created_by, ''),
+	             COALESCE(mode, ''),
+	             COALESCE(last_known_schema, '[]'::jsonb),
 	             created_at, updated_at
 	      FROM pipelines`
 	if createdBy == "" {
@@ -133,10 +146,12 @@ func (s *pgPipelineStore) ListPipelines(ctx context.Context, createdBy string) (
 			inputsRaw     []byte
 			transformsRaw []byte
 			outputsRaw    []byte
+			schemaRaw     []byte
 		)
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description,
 			&inputsRaw, &transformsRaw, &outputsRaw,
 			&p.Schedule, &p.Enabled, &p.CreatedBy,
+			&p.Mode, &schemaRaw,
 			&p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -147,6 +162,9 @@ func (s *pgPipelineStore) ListPipelines(ctx context.Context, createdBy string) (
 			return nil, err
 		}
 		if err := json.Unmarshal(coalesceJSON(outputsRaw, "[]"), &p.Outputs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(coalesceJSON(schemaRaw, "[]"), &p.LastKnownSchema); err != nil {
 			return nil, err
 		}
 		out = append(out, &p)
@@ -205,6 +223,20 @@ func (s *pgPipelineStore) UpdatePipeline(ctx context.Context, id string, upd pip
 		args = append(args, *upd.Enabled)
 		argN++
 	}
+	if upd.Mode != nil {
+		sets = append(sets, "mode = $"+strconv.Itoa(argN))
+		args = append(args, *upd.Mode)
+		argN++
+	}
+	if upd.LastKnownSchema != nil {
+		raw, err := json.Marshal(coalesceSchemaFields(*upd.LastKnownSchema))
+		if err != nil {
+			return err
+		}
+		sets = append(sets, "last_known_schema = $"+strconv.Itoa(argN))
+		args = append(args, raw)
+		argN++
+	}
 	args = append(args, id)
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE pipelines SET `+strings.Join(sets, ", ")+
@@ -250,11 +282,11 @@ func (s *pgPipelineStore) AppendPipelineRun(ctx context.Context, run *pipeline.P
 	}
 	err = s.pool.QueryRow(ctx,
 		`INSERT INTO pipeline_runs
-		   (pipeline_id, status, started_at, finished_at, error_message, run_result, triggered_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		   (pipeline_id, status, started_at, finished_at, error_message, run_result, triggered_by, last_committed_offset)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id, created_at, started_at`,
 		run.PipelineID, run.Status, startedAt, run.FinishedAt,
-		run.ErrorMessage, resultJSON, run.TriggeredBy,
+		run.ErrorMessage, resultJSON, run.TriggeredBy, run.LastCommittedOffset,
 	).Scan(&run.ID, &run.CreatedAt, &run.StartedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "violates foreign key constraint") {
@@ -279,14 +311,17 @@ func (s *pgPipelineStore) GetPipelineRun(ctx context.Context, pipelineID string,
 		triggeredBy string
 		status      string
 	)
+	var lastCommittedOffset int64
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, pipeline_id, COALESCE(status, ''), started_at, finished_at,
 		        COALESCE(error_message, ''),
 		        COALESCE(run_result, '{}'::jsonb),
-		        COALESCE(triggered_by, ''), created_at
+		        COALESCE(triggered_by, ''),
+		        COALESCE(last_committed_offset, 0),
+		        created_at
 		 FROM pipeline_runs WHERE id = $1 AND pipeline_id = $2`, runID, pipelineID).
 		Scan(&run.ID, &run.PipelineID, &status, &startedAt, &finishedAt,
-			&errMessage, &resultRaw, &triggeredBy, &createdAt)
+			&errMessage, &resultRaw, &triggeredBy, &lastCommittedOffset, &createdAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pipeline.ErrPipelineRunNotFound
@@ -298,6 +333,7 @@ func (s *pgPipelineStore) GetPipelineRun(ctx context.Context, pipelineID string,
 	run.FinishedAt = finishedAt
 	run.ErrorMessage = errMessage
 	run.TriggeredBy = triggeredBy
+	run.LastCommittedOffset = lastCommittedOffset
 	run.CreatedAt = createdAt
 	if len(resultRaw) > 0 && string(resultRaw) != "{}" {
 		var rr pipeline.RunResult
@@ -338,7 +374,9 @@ func (s *pgPipelineStore) ListPipelineRuns(ctx context.Context, pipelineID strin
 	q := `SELECT id, pipeline_id, COALESCE(status, ''), started_at, finished_at,
 	             COALESCE(error_message, ''),
 	             COALESCE(run_result, '{}'::jsonb),
-	             COALESCE(triggered_by, ''), created_at
+	             COALESCE(triggered_by, ''),
+	             COALESCE(last_committed_offset, 0),
+	             created_at
 	      FROM pipeline_runs WHERE pipeline_id = $1`
 	if opts.Cursor > 0 {
 		rows, err = s.pool.Query(ctx,
@@ -361,7 +399,7 @@ func (s *pgPipelineStore) ListPipelineRuns(ctx context.Context, pipelineID strin
 			finishedAt *time.Time
 		)
 		if err := rows.Scan(&run.ID, &run.PipelineID, &run.Status, &run.StartedAt, &finishedAt,
-			&run.ErrorMessage, &resultRaw, &run.TriggeredBy, &run.CreatedAt); err != nil {
+			&run.ErrorMessage, &resultRaw, &run.TriggeredBy, &run.LastCommittedOffset, &run.CreatedAt); err != nil {
 			return nil, err
 		}
 		run.FinishedAt = finishedAt
@@ -383,6 +421,32 @@ func (s *pgPipelineStore) ListPipelineRuns(ctx context.Context, pipelineID strin
 	return page, nil
 }
 
+// LatestCommittedOffset returns the highest last_committed_offset across
+// successful runs of pipelineID. Returns 0 when no successful run exists.
+// pipeline.ErrPipelineNotFound when the pipeline itself is missing.
+func (s *pgPipelineStore) LatestCommittedOffset(ctx context.Context, pipelineID string) (int64, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM pipelines WHERE id = $1)`, pipelineID).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, pipeline.ErrPipelineNotFound
+	}
+	var max *int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT MAX(COALESCE(last_committed_offset, 0))
+		   FROM pipeline_runs
+		  WHERE pipeline_id = $1 AND status = 'success'`, pipelineID).Scan(&max)
+	if err != nil {
+		return 0, err
+	}
+	if max == nil {
+		return 0, nil
+	}
+	return *max, nil
+}
+
 func coalesceInputs(in []pipeline.Input) []pipeline.Input {
 	if in == nil {
 		return []pipeline.Input{}
@@ -400,6 +464,13 @@ func coalesceTransforms(in []pipeline.Transform) []pipeline.Transform {
 func coalesceOutputs(in []pipeline.Output) []pipeline.Output {
 	if in == nil {
 		return []pipeline.Output{}
+	}
+	return in
+}
+
+func coalesceSchemaFields(in []pipeline.SchemaField) []pipeline.SchemaField {
+	if in == nil {
+		return []pipeline.SchemaField{}
 	}
 	return in
 }

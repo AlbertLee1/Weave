@@ -193,6 +193,21 @@ func TestNewFunctionCallCycle_Code(t *testing.T) {
 	}
 }
 
+// US-378: pipeline schema-evolution constructor surfaces the named
+// wire-format code at HTTP 422.
+func TestNewPipelineBreakingChange_Code(t *testing.T) {
+	err := NewPipelineBreakingChange("PipelineBreakingChange", map[string]string{
+		"pipelineId": "demo",
+		"dropped":    "email",
+	})
+	if err.ErrorCode != "WEAVE_PIPELINE_BREAKING_CHANGE" {
+		t.Fatalf("expected WEAVE_PIPELINE_BREAKING_CHANGE, got %q", err.ErrorCode)
+	}
+	if err.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", err.StatusCode)
+	}
+}
+
 func TestWriteError_ContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	WriteJSON(w, NewNotFound("NotFound", nil))

@@ -20,16 +20,22 @@ var ErrPipelineRunNotFound = errors.New("pipeline: run not found")
 // dispatch time and updated after the runner returns; today every memory
 // path persists at terminal state, but the schema accommodates the future
 // async-progress UX (US-300+).
+//
+// LastCommittedOffset (US-378) is the high-water-mark offset the run
+// successfully advanced the pipeline to. APPEND-mode runs read it from
+// the prior successful run and write the post-run value here. FULL-mode
+// runs leave it at 0.
 type PipelineRun struct {
-	ID           int64      `json:"id"`
-	PipelineID   string     `json:"pipelineId"`
-	Status       string     `json:"status"`
-	StartedAt    time.Time  `json:"startedAt"`
-	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
-	ErrorMessage string     `json:"errorMessage,omitempty"`
-	Result       *RunResult `json:"result,omitempty"`
-	TriggeredBy  string     `json:"triggeredBy,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID                  int64      `json:"id"`
+	PipelineID          string     `json:"pipelineId"`
+	Status              string     `json:"status"`
+	StartedAt           time.Time  `json:"startedAt"`
+	FinishedAt          *time.Time `json:"finishedAt,omitempty"`
+	ErrorMessage        string     `json:"errorMessage,omitempty"`
+	Result              *RunResult `json:"result,omitempty"`
+	TriggeredBy         string     `json:"triggeredBy,omitempty"`
+	LastCommittedOffset int64      `json:"lastCommittedOffset,omitempty"`
+	CreatedAt           time.Time  `json:"createdAt"`
 }
 
 // ListRunsOptions tunes ListPipelineRuns. Cursor is exclusive — when
@@ -88,6 +94,31 @@ func (s *MemoryStore) GetPipelineRun(_ context.Context, pipelineID string, runID
 		}
 	}
 	return nil, ErrPipelineRunNotFound
+}
+
+// LatestCommittedOffset returns the highest last_committed_offset among
+// successful runs of pipelineID. Returns 0 when no successful run exists
+// (the conventional "scan from the start" sentinel for APPEND mode).
+// ErrPipelineNotFound when the pipeline itself is missing.
+func (s *MemoryStore) LatestCommittedOffset(_ context.Context, pipelineID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.pipelines[pipelineID]; !ok {
+		return 0, ErrPipelineNotFound
+	}
+	var max int64
+	for _, r := range s.runs {
+		if r.PipelineID != pipelineID {
+			continue
+		}
+		if r.Status != "success" {
+			continue
+		}
+		if r.LastCommittedOffset > max {
+			max = r.LastCommittedOffset
+		}
+	}
+	return max, nil
 }
 
 // ListPipelineRuns returns runs for pipelineID newest-first (descending id).

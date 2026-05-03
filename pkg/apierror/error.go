@@ -159,6 +159,16 @@ func NewValidationSchema(name string, params map[string]string) *APIError {
 	return newAPIError("WEAVE_VALIDATION_SCHEMA", name, params, http.StatusUnprocessableEntity)
 }
 
+// NewPipelineBreakingChange creates a WEAVE_PIPELINE_BREAKING_CHANGE API error
+// (HTTP 422). US-378: returned when an APPEND-mode pipeline run detects a
+// schema diff that drops or alters the type of a column the pipeline has
+// previously committed against. Callers populate Parameters with at minimum
+// `pipelineId`, `dropped` (comma-joined list of removed column names) and
+// optionally `conflicts` (comma-joined "name:oldType→newType" pairs).
+func NewPipelineBreakingChange(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_PIPELINE_BREAKING_CHANGE", name, params, http.StatusUnprocessableEntity)
+}
+
 // WriteJSON writes an APIError as a JSON HTTP response with the appropriate status code.
 func WriteJSON(w http.ResponseWriter, err *APIError) {
 	w.Header().Set("Content-Type", "application/json")

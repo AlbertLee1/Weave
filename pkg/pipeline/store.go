@@ -31,6 +31,11 @@ type Store interface {
 	AppendPipelineRun(ctx context.Context, run *PipelineRun) error
 	GetPipelineRun(ctx context.Context, pipelineID string, runID int64) (*PipelineRun, error)
 	ListPipelineRuns(ctx context.Context, pipelineID string, opts ListRunsOptions) (*ListRunsPage, error)
+
+	// US-378 — APPEND-mode incremental progress: the highest
+	// last_committed_offset across successful runs. 0 when no
+	// successful run exists.
+	LatestCommittedOffset(ctx context.Context, pipelineID string) (int64, error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -131,6 +136,12 @@ func (s *MemoryStore) UpdatePipeline(_ context.Context, id string, upd PipelineU
 	}
 	if upd.Enabled != nil {
 		p.Enabled = *upd.Enabled
+	}
+	if upd.Mode != nil {
+		p.Mode = *upd.Mode
+	}
+	if upd.LastKnownSchema != nil {
+		p.LastKnownSchema = cloneSchemaFields(*upd.LastKnownSchema)
 	}
 	p.UpdatedAt = time.Now().UTC()
 	return nil

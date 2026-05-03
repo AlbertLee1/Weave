@@ -22,31 +22,71 @@ import (
 	"time"
 )
 
+// Mode classifies a pipeline's run shape (US-378).
+//
+//   - ModeFull (the default, also represented by an empty string for
+//     pre-US-378 rows) re-scans the whole source on every run; offset
+//     bookkeeping is ignored.
+//   - ModeAppend opts into incremental runs: each run only processes
+//     rows whose source-side offset is strictly greater than the prior
+//     successful run's last_committed_offset. Schema-evolution rules
+//     also kick in — new columns auto-add to the downstream index, but
+//     dropped or type-conflicting columns abort the run with
+//     WEAVE_PIPELINE_BREAKING_CHANGE.
+const (
+	ModeFull   = "FULL"
+	ModeAppend = "APPEND"
+)
+
+// IsKnownMode reports whether m is one of the canonical mode values
+// (the empty string is treated as ModeFull and accepted everywhere).
+func IsKnownMode(m string) bool {
+	switch m {
+	case "", ModeFull, ModeAppend:
+		return true
+	}
+	return false
+}
+
+// SchemaField is one column of a source schema as observed by the
+// runtime. The shape is intentionally narrow — name + type — so it
+// round-trips cleanly through pipelines.last_known_schema JSONB without
+// pinning the persistence layer to the richer pkg/pipeline/schema.Field
+// (which carries sample stats irrelevant to evolution).
+type SchemaField struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 // Pipeline is one persisted pipeline row.
 type Pipeline struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	Inputs      []Input     `json:"inputs"`
-	Transforms  []Transform `json:"transforms"`
-	Outputs     []Output    `json:"outputs"`
-	Schedule    string      `json:"schedule,omitempty"`
-	Enabled     bool        `json:"enabled"`
-	CreatedBy   string      `json:"createdBy,omitempty"`
-	CreatedAt   time.Time   `json:"createdAt"`
-	UpdatedAt   time.Time   `json:"updatedAt"`
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	Description     string        `json:"description,omitempty"`
+	Inputs          []Input       `json:"inputs"`
+	Transforms      []Transform   `json:"transforms"`
+	Outputs         []Output      `json:"outputs"`
+	Schedule        string        `json:"schedule,omitempty"`
+	Enabled         bool          `json:"enabled"`
+	Mode            string        `json:"mode,omitempty"`
+	LastKnownSchema []SchemaField `json:"lastKnownSchema,omitempty"`
+	CreatedBy       string        `json:"createdBy,omitempty"`
+	CreatedAt       time.Time     `json:"createdAt"`
+	UpdatedAt       time.Time     `json:"updatedAt"`
 }
 
 // PipelineUpdate is the partial-update payload. Pointer fields preserve
 // "omit=keep current" semantics; same shape as logic.FlowUpdate.
 type PipelineUpdate struct {
-	Name        *string      `json:"name,omitempty"`
-	Description *string      `json:"description,omitempty"`
-	Inputs      *[]Input     `json:"inputs,omitempty"`
-	Transforms  *[]Transform `json:"transforms,omitempty"`
-	Outputs     *[]Output    `json:"outputs,omitempty"`
-	Schedule    *string      `json:"schedule,omitempty"`
-	Enabled     *bool        `json:"enabled,omitempty"`
+	Name            *string        `json:"name,omitempty"`
+	Description     *string        `json:"description,omitempty"`
+	Inputs          *[]Input       `json:"inputs,omitempty"`
+	Transforms      *[]Transform   `json:"transforms,omitempty"`
+	Outputs         *[]Output      `json:"outputs,omitempty"`
+	Schedule        *string        `json:"schedule,omitempty"`
+	Enabled         *bool          `json:"enabled,omitempty"`
+	Mode            *string        `json:"mode,omitempty"`
+	LastKnownSchema *[]SchemaField `json:"lastKnownSchema,omitempty"`
 }
 
 // Input is one source descriptor. Type identifies the connector (e.g.
@@ -206,6 +246,9 @@ func (p *Pipeline) Validate() error {
 	if err := ValidateSchedule(p.Schedule); err != nil {
 		return err
 	}
+	if !IsKnownMode(p.Mode) {
+		return fmt.Errorf("pipeline mode %q is invalid: allowed values are '', %q, %q", p.Mode, ModeFull, ModeAppend)
+	}
 	return nil
 }
 
@@ -244,7 +287,18 @@ func ClonePipeline(p *Pipeline) *Pipeline {
 	cp.Inputs = cloneInputs(p.Inputs)
 	cp.Transforms = cloneTransforms(p.Transforms)
 	cp.Outputs = cloneOutputs(p.Outputs)
+	cp.LastKnownSchema = cloneSchemaFields(p.LastKnownSchema)
 	return &cp
+}
+
+// cloneSchemaFields returns a deep copy of in.
+func cloneSchemaFields(in []SchemaField) []SchemaField {
+	if in == nil {
+		return nil
+	}
+	out := make([]SchemaField, len(in))
+	copy(out, in)
+	return out
 }
 
 func cloneInputs(in []Input) []Input {
