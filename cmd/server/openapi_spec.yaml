@@ -8555,6 +8555,155 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/lineage/property/{rid}:
+    get:
+      operationId: getPropertyLineage
+      summary: List upstream dataset columns that feed an ObjectType property
+      description: |
+        US-377. Returns every `lineage_column_edges` row whose
+        `dst_property_rid` matches the supplied path parameter. Edges
+        are derived synchronously from `datasource_bindings.column_mapping`
+        on every binding write (CREATE / UPDATE) and cleared on binding
+        delete, so the result reflects the binding state in lockstep.
+
+        Newest-first ordering by `ts` (then internal id as a tiebreaker).
+        The response sets `truncated: true` when the underlying listing
+        hit the per-call page limit (200) so callers know additional
+        edges may exist beyond the response window.
+      tags: [Lineage]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          schema:
+            type: string
+          description: |
+            Downstream property RID
+            (`ri.ontology.main.property.<uuid>`).
+      responses:
+        "200":
+          description: Upstream column edges feeding the property.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [propertyRid, upstream, truncated]
+                properties:
+                  propertyRid:
+                    type: string
+                    description: Echo of the path RID.
+                  truncated:
+                    type: boolean
+                    description: |
+                      Set when the listing hit the per-call page limit;
+                      additional edges exist beyond the response window.
+                  upstream:
+                    type: array
+                    items:
+                      type: object
+                      required: [bindingRid, srcDatasetRid, srcColumn, timestamp]
+                      properties:
+                        bindingRid:
+                          type: string
+                          description: Owning datasource_binding RID.
+                        srcDatasetRid:
+                          type: string
+                        srcColumn:
+                          type: string
+                        timestamp:
+                          type: string
+                          format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Column lineage store is not configured (degraded mode).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v2/lineage/dataset-columns/impact:
+    get:
+      operationId: getDatasetColumnImpact
+      summary: List ObjectType properties impacted by an upstream dataset column
+      description: |
+        US-377. Reverse-impact analysis for column-level lineage.
+        Given an upstream `(dataset, column)` pair, returns every
+        downstream property that derives from it via a
+        `datasource_bindings.column_mapping` entry.
+
+        Used by admin tooling to answer "what properties break if I
+        drop this column?" before applying a destructive schema change.
+        Newest-first ordering; `truncated: true` when the listing hit
+        the per-call page limit (200).
+      tags: [Lineage]
+      parameters:
+        - in: query
+          name: dataset
+          required: true
+          schema:
+            type: string
+          description: Upstream dataset RID.
+        - in: query
+          name: column
+          required: true
+          schema:
+            type: string
+          description: Upstream column name within the dataset.
+      responses:
+        "200":
+          description: Downstream properties impacted by the supplied (dataset, column).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [datasetRid, column, impacted, truncated]
+                properties:
+                  datasetRid:
+                    type: string
+                  column:
+                    type: string
+                  truncated:
+                    type: boolean
+                  impacted:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        [
+                          bindingRid,
+                          dstObjectTypeRid,
+                          dstPropertyRid,
+                          dstPropertyApiName,
+                          timestamp,
+                        ]
+                      properties:
+                        bindingRid:
+                          type: string
+                        dstObjectTypeRid:
+                          type: string
+                        dstPropertyRid:
+                          type: string
+                        dstPropertyApiName:
+                          type: string
+                        timestamp:
+                          type: string
+                          format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Column lineage store is not configured (degraded mode).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/actions/{rid}/impact:
     get:
       operationId: getActionImpact

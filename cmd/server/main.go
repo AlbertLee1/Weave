@@ -111,6 +111,12 @@ type ServerDeps struct {
 	// /api/v2/objects/{rid}/lineage handler returns 404
 	// LineageNotConfigured when the route is hit.
 	LineageStore oms.LineageStore
+	// US-377: lineage_column_edges read surface + binding-write hook.
+	// Wired from the uncached *PGRepository in the PG bootstrap; nil in
+	// degraded mode so the /api/v2/lineage/property/{rid} +
+	// /api/v2/lineage/dataset-columns/impact handlers return 404
+	// ColumnLineageNotConfigured when hit.
+	ColumnLineageStore oms.ColumnLineageStore
 	// US-312: per-object activity-timeline store. Wired from the uncached
 	// *PGRepository so the cursor-paginated history endpoint always reads
 	// the authoritative tail; nil in degraded mode leaves the
@@ -721,6 +727,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.NotificationBulkStore != nil {
 				omsHandler.SetNotificationBulkStore(deps.NotificationBulkStore)
 			}
+			// US-377: column-level lineage derivation hook on the
+			// datasource-binding write path. Setter is no-op when the
+			// store is nil (degraded mode).
+			if deps.ColumnLineageStore != nil {
+				omsHandler.SetColumnLineageStore(deps.ColumnLineageStore)
+			}
 			// US-370: Function execution audit log + /replay endpoint. The
 			// store backs both the implicit /execute logging hook and the
 			// explicit /replay endpoint; degraded-mode (no PG) routers leave
@@ -854,6 +866,10 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// not gate on LineageStore!=nil so degraded-mode SDKs / curl can
 		// still discover the contract — same shape as sqlqueries.
 		lineageHandler := lineage.NewHandler(deps.LineageStore)
+		// US-377: column-level lineage read endpoints. Mounted always so
+		// the contract is discoverable even in degraded mode (handler
+		// returns 404 ColumnLineageNotConfigured when the store is nil).
+		lineageHandler.SetColumnLineageStore(deps.ColumnLineageStore)
 		lineageHandler.RegisterRoutes(api)
 
 		// OntologyTransaction experimental edits endpoint (US-041).
@@ -1404,6 +1420,11 @@ func main() {
 		// the action executor writes through in SetLineageStore below — keeps
 		// the read and write paths trivially consistent.
 		deps.LineageStore = pgRepo
+		// US-377: lineage_column_edges store. Served by the uncached
+		// *PGRepository so the binding-write derivation path and the
+		// property-level read endpoints share a single concrete view of
+		// the table — same pattern as LineageStore above.
+		deps.ColumnLineageStore = pgRepo
 		// US-210: link-property schema + link-edge value stores. Same reason
 		// as MediaCatalog — these narrow stores are not on oms.Repository, so
 		// the CachedRepository decorator does not wrap them.

@@ -53,9 +53,13 @@ const pageLimit = 200
 
 // Handler serves GET /api/v2/objects/{rid}/lineage. The store may be nil
 // in degraded-mode (no PG) bootstraps; in that case every request is
-// rejected with 404 LineageNotConfigured rather than panicking.
+// rejected with 404 LineageNotConfigured rather than panicking. The
+// optional columnStore (US-377) backs the property-level read endpoints
+// — when nil those routes return 404 ColumnLineageNotConfigured but the
+// object-level GetLineage path is unaffected.
 type Handler struct {
-	store oms.LineageStore
+	store       oms.LineageStore
+	columnStore oms.ColumnLineageStore
 }
 
 // NewHandler binds a Handler to a LineageStore. Pass nil for degraded
@@ -64,9 +68,23 @@ func NewHandler(store oms.LineageStore) *Handler {
 	return &Handler{store: store}
 }
 
-// RegisterRoutes mounts the lineage endpoint on r.
+// SetColumnLineageStore wires the optional column-level lineage store
+// (US-377). When set the property-level read endpoints serve real data;
+// when nil they return 404 ColumnLineageNotConfigured but stay
+// discoverable so SDKs / curl can probe the contract in degraded mode.
+func (h *Handler) SetColumnLineageStore(s oms.ColumnLineageStore) {
+	h.columnStore = s
+}
+
+// RegisterRoutes mounts the lineage endpoints on r.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/objects/{rid}/lineage", h.GetLineage)
+	// US-377: column-level lineage. Two routes — one for upstream
+	// (which dataset columns feed this property?), one for the reverse
+	// impact analysis (which downstream properties break if this
+	// dataset column goes away?).
+	r.Get("/api/v2/lineage/property/{rid}", h.GetPropertyLineage)
+	r.Get("/api/v2/lineage/dataset-columns/impact", h.GetDatasetColumnImpact)
 }
 
 // Node is one vertex in the lineage graph.
@@ -242,4 +260,134 @@ func NodeType(rid string) string {
 		return ""
 	}
 	return parts[3]
+}
+
+// columnPageLimit caps the per-call row count returned by the
+// property-lineage and reverse-impact endpoints so a runaway listing
+// cannot drag the whole table back through a single HTTP response.
+// Mirrors pageLimit (200) so the operational mental model is uniform.
+const columnPageLimit = 200
+
+// PropertyUpstream is one upstream column reference rendered for the
+// GET /api/v2/lineage/property/{rid} response.
+type PropertyUpstream struct {
+	BindingRID    string    `json:"bindingRid"`
+	SrcDatasetRID string    `json:"srcDatasetRid"`
+	SrcColumn     string    `json:"srcColumn"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
+// PropertyLineageResponse is the wire shape returned by
+// GET /api/v2/lineage/property/{rid}.
+type PropertyLineageResponse struct {
+	PropertyRID string             `json:"propertyRid"`
+	Upstream    []PropertyUpstream `json:"upstream"`
+	Truncated   bool               `json:"truncated"`
+}
+
+// DatasetColumnImpactedProperty is one downstream property reference
+// rendered for the GET /api/v2/lineage/dataset-columns/impact response.
+type DatasetColumnImpactedProperty struct {
+	BindingRID         string    `json:"bindingRid"`
+	DstObjectTypeRID   string    `json:"dstObjectTypeRid"`
+	DstPropertyRID     string    `json:"dstPropertyRid"`
+	DstPropertyAPIName string    `json:"dstPropertyApiName"`
+	Timestamp          time.Time `json:"timestamp"`
+}
+
+// DatasetColumnImpactResponse is the wire shape returned by
+// GET /api/v2/lineage/dataset-columns/impact?dataset=...&column=....
+type DatasetColumnImpactResponse struct {
+	DatasetRID string                          `json:"datasetRid"`
+	Column     string                          `json:"column"`
+	Impacted   []DatasetColumnImpactedProperty `json:"impacted"`
+	Truncated  bool                            `json:"truncated"`
+}
+
+// GetPropertyLineage answers "which dataset columns feed this property?"
+// by listing every ColumnLineageEdge whose dst_property_rid matches the
+// supplied path parameter. Newest-first by ts. Returns 404
+// ColumnLineageNotConfigured when the column-level store is unwired.
+func (h *Handler) GetPropertyLineage(w http.ResponseWriter, r *http.Request) {
+	if h.columnStore == nil {
+		apierror.WriteJSON(w, apierror.NewNotFound("ColumnLineageNotConfigured", nil))
+		return
+	}
+	propRID := strings.TrimSpace(chi.URLParam(r, "rid"))
+	if propRID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidPropertyRID", map[string]string{
+			"rid": propRID,
+		}))
+		return
+	}
+	edges, err := h.columnStore.ListUpstreamColumnLineageForProperty(r.Context(), propRID, columnPageLimit)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ColumnLineageQueryFailed", map[string]string{
+			"message": err.Error(),
+		}))
+		return
+	}
+	upstream := make([]PropertyUpstream, 0, len(edges))
+	for _, e := range edges {
+		upstream = append(upstream, PropertyUpstream{
+			BindingRID:    e.BindingRID,
+			SrcDatasetRID: e.SrcDatasetRID,
+			SrcColumn:     e.SrcColumn,
+			Timestamp:     e.Timestamp,
+		})
+	}
+	resp := PropertyLineageResponse{
+		PropertyRID: propRID,
+		Upstream:    upstream,
+		Truncated:   len(edges) >= columnPageLimit,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetDatasetColumnImpact is the reverse-impact analysis: given an
+// upstream (dataset, column) pair, list every downstream property that
+// derives from it. Used by admin tooling to answer "what breaks if I
+// drop this column?" before applying a destructive schema change.
+func (h *Handler) GetDatasetColumnImpact(w http.ResponseWriter, r *http.Request) {
+	if h.columnStore == nil {
+		apierror.WriteJSON(w, apierror.NewNotFound("ColumnLineageNotConfigured", nil))
+		return
+	}
+	dataset := strings.TrimSpace(r.URL.Query().Get("dataset"))
+	column := strings.TrimSpace(r.URL.Query().Get("column"))
+	if dataset == "" || column == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingDatasetOrColumn", map[string]string{
+			"dataset": dataset,
+			"column":  column,
+		}))
+		return
+	}
+	edges, err := h.columnStore.ListDownstreamColumnLineageForDatasetColumn(r.Context(), dataset, column, columnPageLimit)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ColumnLineageQueryFailed", map[string]string{
+			"message": err.Error(),
+		}))
+		return
+	}
+	impacted := make([]DatasetColumnImpactedProperty, 0, len(edges))
+	for _, e := range edges {
+		impacted = append(impacted, DatasetColumnImpactedProperty{
+			BindingRID:         e.BindingRID,
+			DstObjectTypeRID:   e.DstObjectTypeRID,
+			DstPropertyRID:     e.DstPropertyRID,
+			DstPropertyAPIName: e.DstPropertyAPIName,
+			Timestamp:          e.Timestamp,
+		})
+	}
+	resp := DatasetColumnImpactResponse{
+		DatasetRID: dataset,
+		Column:     column,
+		Impacted:   impacted,
+		Truncated:  len(edges) >= columnPageLimit,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }

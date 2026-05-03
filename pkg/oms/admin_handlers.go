@@ -3133,6 +3133,13 @@ func (h *OMSHandler) CreateDatasourceBinding(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// US-377: synchronously derive column-level lineage edges from the
+	// new binding's column_mapping. Failures here are logged via the
+	// returned error envelope but do not roll back the binding write —
+	// the lineage view is a derived index, not authoritative state, and
+	// a future binding update will re-derive it.
+	h.deriveColumnLineageOnBindingChange(r.Context(), db)
+
 	httputil.WriteJSON(w, http.StatusCreated, db)
 }
 
@@ -3220,6 +3227,11 @@ func (h *OMSHandler) UpdateDatasourceBinding(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// US-377: re-derive column-level lineage edges from the updated
+	// column_mapping (Replace-by-binding semantics keep the edge set in
+	// lockstep with the binding payload).
+	h.deriveColumnLineageOnBindingChange(r.Context(), existing)
+
 	httputil.WriteJSON(w, http.StatusOK, existing)
 }
 
@@ -3238,7 +3250,35 @@ func (h *OMSHandler) DeleteDatasourceBinding(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// US-377: cascade-clear derived column lineage edges so the lineage
+	// view does not retain dangling pointers to the deleted binding.
+	if h.columnLineageStore != nil {
+		_, _ = h.columnLineageStore.DeleteColumnLineageForBinding(r.Context(), dbRID)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deriveColumnLineageOnBindingChange recomputes column-level lineage
+// edges from the binding's column_mapping and atomically replaces the
+// edge set owned by the binding RID. A nil column lineage store
+// short-circuits — degraded-mode bootstraps that have not wired the
+// store skip derivation silently. Property-lookup or store failures are
+// swallowed: the lineage view is a derived index that the next
+// successful binding update will rebuild.
+func (h *OMSHandler) deriveColumnLineageOnBindingChange(ctx context.Context, db *DatasourceBinding) {
+	if h.columnLineageStore == nil || db == nil || db.RID == "" {
+		return
+	}
+	props, err := h.repo.ListProperties(ctx, db.ObjectTypeRID)
+	if err != nil {
+		return
+	}
+	edges, err := DeriveColumnLineageEdges(db, props)
+	if err != nil {
+		return
+	}
+	_ = h.columnLineageStore.ReplaceColumnLineageForBinding(ctx, db.RID, edges)
 }
 
 // --- Request structs for QueryType ---

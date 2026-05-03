@@ -27,6 +27,7 @@ type OMSHandler struct {
 	interfaceMethodStore     InterfaceMethodStore
 	interfaceMethodDispatcher InterfaceMethodActionDispatcher
 	notificationBulkStore    NotificationBulkStore
+	columnLineageStore       ColumnLineageStore
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
@@ -125,6 +126,22 @@ func (h *OMSHandler) SetActorFunc(fn ActorFunc) {
 // routers that do not supply the store still boot cleanly.
 func (h *OMSHandler) SetNotificationBulkStore(s NotificationBulkStore) {
 	h.notificationBulkStore = s
+}
+
+// SetColumnLineageStore wires the narrow ColumnLineageStore used by the
+// datasource-binding write path (US-377) to derive column-level lineage
+// edges. When unset the binding handlers skip derivation silently —
+// degraded-mode test routers that have no PG store still pass the
+// admin-CRUD tests without dragging this store through every mock.
+func (h *OMSHandler) SetColumnLineageStore(s ColumnLineageStore) {
+	h.columnLineageStore = s
+}
+
+// ColumnLineageStore returns the wired ColumnLineageStore (or nil) so
+// callers (e.g. the lineage handler) can decide whether to mount the
+// property-level read endpoints without importing the concrete type.
+func (h *OMSHandler) ColumnLineageStore() ColumnLineageStore {
+	return h.columnLineageStore
 }
 
 // resolveRepo returns a Repository for the request. If ?branch= is set, it
