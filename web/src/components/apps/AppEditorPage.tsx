@@ -87,6 +87,13 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [runtimeState, setRuntimeState] = useState<VariableState>({});
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
+  // US-397: viewport toggle in preview mode. 'desktop' lets the SPA's
+  // own layout breakpoints decide; 'mobile' forces a narrow mobile-frame
+  // container so authors can sanity-check single-column rendering
+  // without resizing their browser. Edit-mode chrome is also responsive
+  // via Tailwind sm/md/lg classes (declared on the relevant grid
+  // wrappers), independent of this toggle.
+  const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
 
   // Load existing app on mount when rid is supplied.
   useEffect(() => {
@@ -453,10 +460,16 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
           state={runtimeState}
           onEvent={handleRuntimeEvent}
           message={runtimeMessage}
+          viewport={viewport}
+          onViewportChange={setViewport}
         />
       ) : (
-        <div className="grid grid-cols-12 gap-4">
-          <div className="col-span-3 flex flex-col gap-4">
+        // US-397: Edit-mode chrome stacks vertically on phones (<lg) and
+        // returns to its 3-7-2 sidebar layout on lg+. Sub-columns inside
+        // are gated on lg: prefixes so the inner col-spans only kick in
+        // once the outer grid splits.
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          <div className="lg:col-span-3 flex flex-col gap-4">
             <ComponentPalette
               onDragStart={handlePaletteDragStart}
               onAdd={addInstance}
@@ -470,7 +483,7 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
             />
           </div>
 
-          <div className="col-span-7">
+          <div className="lg:col-span-7">
             <Canvas
               instances={instances}
               widths={widths}
@@ -511,7 +524,7 @@ function ComponentPalette({
   return (
     <aside
       data-testid="app-palette"
-      className="col-span-3 border border-border rounded bg-bg-secondary/40 p-3"
+      className="lg:col-span-3 border border-border rounded bg-bg-secondary/40 p-3"
     >
       <h2 className="text-sm font-mono font-medium text-text-secondary mb-2">
         Components
@@ -787,7 +800,7 @@ function PropertyPanel({
       <aside
         data-testid="app-property-panel"
         data-empty="true"
-        className="col-span-2 border border-border rounded bg-bg-secondary/40 p-3"
+        className="lg:col-span-2 border border-border rounded bg-bg-secondary/40 p-3"
       >
         <h2 className="text-sm font-mono font-medium text-text-secondary mb-2">
           Properties
@@ -806,7 +819,7 @@ function PropertyPanel({
       data-testid="app-property-panel"
       data-component-type={selected.componentType}
       data-instance-id={selected.id}
-      className="col-span-2 border border-border rounded bg-bg-secondary/40 p-3"
+      className="lg:col-span-2 border border-border rounded bg-bg-secondary/40 p-3"
     >
       <h2 className="text-sm font-mono font-medium text-text-secondary mb-2">
         {meta?.label ?? selected.componentType}
@@ -1193,14 +1206,34 @@ interface RuntimeViewProps {
   state: VariableState;
   onEvent: (event: AppEvent) => void;
   message: string | null;
+  viewport: 'desktop' | 'mobile';
+  onViewportChange: (next: 'desktop' | 'mobile') => void;
 }
 
+// US-397: Preview-mode runtime view with viewport toggle.
+//
+// Two surfaces are responsive:
+//
+// 1. The runtime canvas itself uses Tailwind's `sm:` breakpoint
+//    (640px) — below it the inline grid collapses to a single
+//    column so each component fills the row, above it the 12-col
+//    grid returns and authored widths apply. The data-attributes
+//    (`data-cols`) flip in lockstep so tests / E2E can assert the
+//    breakpoint behaviour without measuring CSS.
+//
+// 2. The viewport toggle is an explicit override that sets
+//    `data-viewport=mobile` on the frame, wraps the canvas in a
+//    375px-wide container, and forces the single-column grid even
+//    on a desktop browser. This lets authors sanity-check phone
+//    rendering without resizing the window.
 function RuntimeView({
   instances,
   variables,
   state,
   onEvent,
   message,
+  viewport,
+  onViewportChange,
 }: RuntimeViewProps) {
   const stringState = useMemo(() => {
     const out: Record<string, string | number | boolean> = {};
@@ -1211,9 +1244,20 @@ function RuntimeView({
   }, [variables, state]);
 
   const widths = useMemo(() => distributeWidths(instances.length), [instances]);
+  const isMobileFrame = viewport === 'mobile';
+  // Forced mobile drops the 12-col tracks for a single column; default
+  // ('desktop') uses Tailwind responsive classes so the SPA's natural
+  // breakpoint behaviour wins.
+  const canvasGridClass = isMobileFrame
+    ? 'grid grid-cols-1 gap-2'
+    : 'grid grid-cols-1 sm:grid-cols-12 gap-2';
 
   return (
-    <div data-testid="app-runtime-view" className="flex flex-col gap-3">
+    <div
+      data-testid="app-runtime-view"
+      data-viewport={viewport}
+      className="flex flex-col gap-3"
+    >
       <div
         data-testid="app-runtime-state"
         className="rounded border border-border bg-bg-secondary/40 p-2 text-xs font-mono text-text-secondary flex flex-wrap gap-3"
@@ -1234,31 +1278,73 @@ function RuntimeView({
         ))}
       </div>
       <div
-        data-testid="app-runtime-canvas"
-        className="min-h-[300px] border border-border rounded bg-bg-secondary/40 p-3"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-          gap: 8,
-        }}
+        data-testid="app-runtime-viewport-toolbar"
+        className="flex items-center gap-2 text-xs text-text-secondary"
       >
-        {instances.length === 0 && (
-          <p
-            style={{ gridColumn: '1 / -1' }}
-            className="text-xs text-text-secondary italic text-center"
+        <span className="font-mono">Viewport:</span>
+        <div className="inline-flex rounded border border-border overflow-hidden">
+          <button
+            type="button"
+            data-testid="app-viewport-desktop"
+            data-active={viewport === 'desktop' ? 'true' : 'false'}
+            onClick={() => onViewportChange('desktop')}
+            className={`px-2 py-0.5 text-xs ${
+              viewport === 'desktop'
+                ? 'bg-accent-primary/20 text-text-primary'
+                : 'bg-bg-secondary text-text-secondary hover:text-text-primary'
+            }`}
           >
-            Empty app. Add components in Edit mode.
-          </p>
-        )}
-        {instances.map((inst, idx) => (
-          <RuntimeInstance
-            key={inst.id}
-            instance={inst}
-            width={widths[idx]}
-            state={stringState}
-            onEvent={onEvent}
-          />
-        ))}
+            Desktop
+          </button>
+          <button
+            type="button"
+            data-testid="app-viewport-mobile"
+            data-active={viewport === 'mobile' ? 'true' : 'false'}
+            onClick={() => onViewportChange('mobile')}
+            className={`px-2 py-0.5 text-xs border-l border-border ${
+              viewport === 'mobile'
+                ? 'bg-accent-primary/20 text-text-primary'
+                : 'bg-bg-secondary text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Mobile
+          </button>
+        </div>
+      </div>
+      <div
+        data-testid="app-runtime-frame"
+        data-frame-mode={viewport}
+        className={
+          isMobileFrame
+            ? 'mx-auto w-full max-w-[375px] border border-border rounded shadow-md bg-bg-primary'
+            : 'w-full'
+        }
+      >
+        <div
+          data-testid="app-runtime-canvas"
+          data-cols={isMobileFrame ? '1' : '12'}
+          className={`min-h-[300px] border border-border rounded bg-bg-secondary/40 p-3 ${canvasGridClass}`}
+        >
+          {instances.length === 0 && (
+            <p
+              className={`text-xs text-text-secondary italic text-center ${
+                isMobileFrame ? '' : 'sm:col-span-12'
+              }`}
+            >
+              Empty app. Add components in Edit mode.
+            </p>
+          )}
+          {instances.map((inst, idx) => (
+            <RuntimeInstance
+              key={inst.id}
+              instance={inst}
+              width={widths[idx]}
+              state={stringState}
+              onEvent={onEvent}
+              forceSingleColumn={isMobileFrame}
+            />
+          ))}
+        </div>
       </div>
       {message && (
         <p
@@ -1277,22 +1363,36 @@ function RuntimeInstance({
   width,
   state,
   onEvent,
+  forceSingleColumn,
 }: {
   instance: ComponentInstance;
   width: number;
   state: Record<string, string | number | boolean>;
   onEvent: (event: AppEvent) => void;
+  forceSingleColumn?: boolean;
 }) {
   const onClick = instance.events?.onClick;
   const handleClick = useCallback(() => {
     if (onClick) onEvent(onClick);
   }, [onClick, onEvent]);
 
+  // US-397: in mobile-frame mode the parent grid only has one column,
+  // so authored widths collapse to span-1 (the full row). In desktop
+  // mode the parent uses `grid-cols-1 sm:grid-cols-12` — `gridColumn:
+  // span N` is clamped by the browser to the available track count, so
+  // <sm everything still occupies the single column and ≥sm authored
+  // widths apply.
+  const style = forceSingleColumn
+    ? undefined
+    : { gridColumn: `span ${width}` };
+
   return (
     <div
       data-testid="app-runtime-instance"
       data-component-type={instance.componentType}
-      style={{ gridColumn: `span ${width}` }}
+      data-instance-width={width}
+      data-mobile-frame={forceSingleColumn ? 'true' : 'false'}
+      style={style}
       className="border border-border rounded bg-bg-primary p-3 text-text-primary"
     >
       <RuntimeComponent
