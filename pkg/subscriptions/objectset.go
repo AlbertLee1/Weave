@@ -193,19 +193,22 @@ func (h *Hub) handleSubscribeObjectSet(c *Connection, raw json.RawMessage) Messa
 	}
 
 	// Lock order: hub.mu → conn.subMu (resolver lookup ran first so we don't
-	// re-enter h.mu).
+	// re-enter h.mu). Explicit locks (not defer) so the US-380 replay drain
+	// can run after the registration without holding mutexes.
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	c.subMu.Lock()
-	defer c.subMu.Unlock()
 
 	if len(c.subscriptions) >= MaxSubscriptionsPerConnection {
+		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per connection reached (10)",
 		}
 	}
 	if !h.reserveUserSubLocked(c.userID) {
+		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per user reached",
@@ -215,9 +218,21 @@ func (h *Hub) handleSubscribeObjectSet(c *Connection, raw json.RawMessage) Messa
 	sub := newObjectSetSubscription(def, req.Select)
 	c.subscriptions[sub.ID] = sub
 	h.addToIndexLocked(c, sub)
+	doReplay := c.replayCursor > 0
+	c.subMu.Unlock()
+	h.mu.Unlock()
 
-	return Message{
-		Type:           "subscribed",
-		SubscriptionID: sub.ID,
+	if !doReplay {
+		return Message{
+			Type:           "subscribed",
+			SubscriptionID: sub.ID,
+		}
 	}
+
+	select {
+	case c.send <- Message{Type: "subscribed", SubscriptionID: sub.ID}:
+	default:
+	}
+	h.replayObjectSubscription(c, sub)
+	return Message{}
 }

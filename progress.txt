@@ -24,6 +24,7 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Pipeline incremental + schema-evolution (US-378) shares a fail-closed invariant: schema diff via `ResolveSchemaEvolution(prior, current)` MUST run BEFORE the source's `ReadAfter(ctx, after)` call. The runtime contract is "no side effects leak through a BREAKING_CHANGE": no read I/O, no sink schema extension, no row write. Future incremental connectors must seed their work through `pkg/pipeline/incremental.go::RunIncremental` so this ordering stays mechanically enforced. The `LatestCommittedOffset(ctx, pipelineID)` watermark filter is `status='success'` only — failed/canceled runs do NOT advance progress, otherwise a half-applied run could silently drop rows on the next APPEND. `pkg/pipeline/schema_evolution.go::typesEquivalent` is trim+case-insensitive for Type, case-sensitive on Name — schema sources frequently disagree on type casing without semantic difference, while column names ARE case-sensitive in most downstream stores.
 - Column-level lineage (US-377) is a SECOND lineage surface alongside US-300's `lineage_edges`. The `lineage_column_edges` table tracks `(src_dataset, src_column) → (dst_object_type, dst_property)` and is populated synchronously by the datasource-binding write path: `OMSHandler.deriveColumnLineageOnBindingChange` calls `DeriveColumnLineageEdges(binding, properties)` and atomically `ReplaceColumnLineageForBinding`. Replace-by-binding (NOT append-only) is the canonical write semantics so a binding update that DROPS a property yields zero edges for it immediately. The `ColumnLineageStore` interface lives in `pkg/oms` (matching the `LineageStore` shape — narrow, off the main `Repository` interface so degraded-mode test routers don't have to cascade-stub it). `DeriveColumnLineageEdges` accepts BOTH wire shapes for `column_mapping` JSON: flat object `{propertyApiName: column}` AND array form `[{property, column}]` with `p`/`c` short-key alternates. Output is sorted lexicographically by (api_name, src_column) so identical mapping payloads produce identical edge sets modulo ts — useful for change-detection. Handler routes `GET /api/v2/lineage/property/{rid}` + `GET /api/v2/lineage/dataset-columns/impact?dataset=...&column=...` are mounted unconditionally on the lineage handler (404 ColumnLineageNotConfigured in degraded mode); both must appear in `api/openapi.yaml` AND `cmd/server/openapi_spec.yaml` because the contract test walks chi routes regardless of store wiring. Note: `datasource_bindings` admin routes were stripped in US-006 so the hook fires only via direct handler invocation today; the wiring is ready when admin routes return.
 - Time-travel asOf (US-379 extends US-223): the OSS load handler's `?asOf=` query parameter now accepts TWO wire formats — RFC3339 timestamp (US-223 default) and `tx-<id>` reference into `dataset_transactions` (US-379). Branching lives in `pkg/oss/objectset/handler.go::resolveAsOf(ctx, raw)`; the `"tx-"` prefix routes to the wired `TransactionResolver` which translates to a `committed_at` instant, then both branches converge on `loadObjectsAsOf(time.Time)`. Resolver + history snapshot provider are intentionally orthogonal hooks — degraded-mode routers can wire one without the other. New asOf flavors (e.g. `branch:` refs) plug in as new prefix arms with zero changes downstream. The funnel consumer's `recordDatasetTransaction` lands one row per applied EditBatch with `parent_tx_id` resolved via `LatestForOntology(batch.OntologyAPIName)` — the chain is per-ontology, NOT per-ObjectType. `ON CONFLICT (tx_id) DO NOTHING` handles NATS at-least-once redelivery so a duplicate batch is silently deduped on the chain. `EditBatch.ID` is normalised via `strings.HasPrefix(id, "tx-")` and conditionally prepended; legacy publishers that emit raw uuids are still safe. The `tx_id` column on `object_history` is populated for future collision-disambiguation but the snapshot scan still uses `[valid_from, valid_to)` half-open intervals — same-instant batches fall back to "latest wins" until a future US wires tx-aware snapshot reads.
+- WebSocket subscription cursor + replay (US-380): `pkg/subscriptions.EventLog` is the Hub-owned sliding-window replay buffer. Every `HandleObjectChange` and `HandleActionJobProgress` first calls `eventLog.Append` UNDER hub.mu and stamps the assigned monotonic cursor on the outbound `Message.Cursor` field. The lock ordering (append + index read in one critical section) guarantees that a subscription registered at hub.mu cannot miss an event whose cursor ≤ snapshot-time-latest AND will receive every live event with cursor > snapshot-time-latest. Aggregation events are NOT logged — they are derived per-subscription state and reseed via Bleve at subscribe time. Reconnect protocol: `?since=<cursor>` is parsed BEFORE `websocket.Accept` so a malformed value can be coerced to 0 ("no replay"). The welcome envelope carries `lastEventId = eventLog.LatestID()`. If `since < earliestLive` OR `since > latest` the connection-level `onOutOfDate` (no SubscriptionID) fires immediately and `replayCursor` is set to -1 to disarm per-subscription replay. Otherwise each subscribe handler — `handleSubscribe` / `handleSubscribeObjectSet` / `handleSubscribeActionJob` — drops the `defer Unlock` pattern in favour of explicit locks so it can register the subscription, release locks, then drain `replayObjectSubscription` / `replayActionJobSubscription` onto `c.send`. Because the routing index is updated under the same hub.mu critical section as the snapshot read, there's no overlap between replayed events (id ≤ snapshot.maxID) and live events (id > snapshot.maxID). Pattern: when adding new event kinds that need replay support, give them a new `EventLogEntry.Kind` discriminator + a marshaller method on the entry, then thread them through the replay drain alongside the existing `objectChange` / `actionJobProgress` arms.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
 
@@ -908,4 +909,166 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
   necessary the path forward is `?pageToken=` cursor (mirroring
   loadObjects) rather than uncapping. Don't add pagination
   pre-emptively — measure first.
+---
+
+## 2026-05-03 - US-380 - WebSocket subscription cursor + replay
+
+**Implementation:**
+- `pkg/subscriptions/eventlog.go` (new): `EventLog` is a sliding-window
+  FIFO of recently dispatched events keyed by a monotonic int64 cursor.
+  `Append(entry)` returns the assigned cursor under a mutex so callers
+  can stamp it on the outbound wire message in lockstep. `Snapshot(since)`
+  returns the tail (entries with id > since) defensively copied for
+  iteration without the lock. Eviction is `Window` OR `MaxEntries`
+  (whichever fires first); defaults are 5 minutes / 10000 entries per
+  the PRD. `EventLogEntry.Kind` discriminates `objectChange` vs
+  `actionJobProgress`; aggregation events are NOT logged because they
+  are per-subscription derived state and re-seed via Bleve at
+  subscribe time. Marshal helpers on the entry produce the same JSON
+  shapes that `HandleObjectChange` / `HandleActionJobProgress` would
+  emit live, so replay drains never diverge from live dispatch.
+- `pkg/subscriptions/hub.go`: `Message` envelope gains `Cursor int64`
+  (per-event id, JSON `cursor`) and `LastEventID int64` (welcome
+  high-water mark, JSON `lastEventId`). `HubConfig` gets an embedded
+  `EventLogConfig`. `Hub` owns one `*EventLog` plus an exported
+  `EventLog()` accessor for tests. `Connection.replayCursor` (int64)
+  carries the parsed `?since=` value through to the subscribe
+  handlers; `0` means no replay requested, `-1` is the post-out-of-window
+  sentinel. `parseSinceCursor(raw)` is the URL parser — empty / negative /
+  malformed all coerce to 0 so a bad client never fails the upgrade.
+- `HandleWSWithUser` now reads `?since=<cursor>` BEFORE `websocket.Accept`,
+  stamps the live high-water cursor on the welcome envelope, and emits
+  a connection-level `onOutOfDate` (no SubscriptionID) if the requested
+  cursor falls outside `[earliestLive, latest]`. The out-of-window
+  branch zeros `replayCursor` (-1) so subsequent subscribes do not
+  attempt per-subscription replay.
+- `pkg/subscriptions/subscription.go::HandleObjectChange` and
+  `pkg/subscriptions/job.go::HandleActionJobProgress` now `Append` to
+  the log under `hub.mu` BEFORE reading the routing index, then stamp
+  the assigned cursor on the outbound `objectChanged` /
+  `actionJobProgress` messages. The single critical section guarantees
+  the snapshot/index ordering invariant: subscriptions registered at
+  hub.mu cannot miss events whose cursor ≤ snapshot.maxID, AND replay
+  + live dispatch never deliver the same event twice (replayed cursors
+  are bounded above by snapshot.maxID; live cursors are strictly above).
+- `pkg/subscriptions/aggregation.go::sendAggregationChanged` widened to
+  accept the triggering cursor; subscribe-time initial snapshots use
+  cursor=0 (not associated with any specific log entry).
+- `pkg/subscriptions/replay.go` (new): `replayObjectSubscription` and
+  `replayActionJobSubscription` are the per-subscription drains. Both
+  walk a snapshot of the log since the connection's `replayCursor`,
+  filter by the subscription's match function (pure-data
+  `Subscription.matches` for objects, JobID equality for jobs),
+  marshal each entry as the equivalent live message, and push to
+  `c.send` with the entry's original cursor preserved. `c.markOverflow(subID)`
+  + early return on a full send buffer keeps replay polite under
+  back-pressure (existing `onOutOfDate` overflow path then surfaces).
+- `pkg/subscriptions/subscription.go`, `objectset.go`, and `job.go`
+  subscribe handlers: dropped the `defer h.mu.Unlock()` /
+  `defer c.subMu.Unlock()` pattern in favour of explicit locks so we
+  can release before draining replay onto `c.send` (replay enqueues
+  messages and must not contend with `hub.mu` / `conn.subMu`). When
+  `replayCursor > 0` the handler emits the `subscribed` reply directly
+  to `c.send`, drives the appropriate replay function, and returns the
+  Message{} sentinel that tells the readPump to skip the default
+  dispatch.
+- `pkg/subscriptions/us380_replay_test.go` (new — 11 tests):
+  - 4 `EventLog` unit tests: monotonic cursor, snapshot tail, time-window
+    eviction (with injected nowFunc), MaxEntries eviction
+  - 1 `parseSinceCursor` table test (empty / 0 / positive / negative /
+    non-numeric / large)
+  - 2 wire-format tests: welcome carries `lastEventId`, objectChanged
+    carries `cursor`
+  - 1 baseline replay test: subscribe → event → drop → 2 events fire
+    offline → reconnect with `?since=` → both replayed in order
+  - 1 PRD acceptance gate: 30-second-disconnect simulation via injected
+    log clock; 50 events fire offline; reconnect recovers all 50
+  - 1 out-of-window test: MaxEntries=5 + 10 events evicts cursor=1;
+    `?since=1` → connection-level `onOutOfDate` fires before any
+    subscription work
+  - 1 backward-compat test: no `?since=` skips replay even if the log
+    contains pre-connect events
+
+**Files changed:**
+- `pkg/subscriptions/eventlog.go` (new — 175 lines)
+- `pkg/subscriptions/replay.go` (new — 86 lines)
+- `pkg/subscriptions/hub.go` (`Message.Cursor` / `Message.LastEventID`,
+  `HubConfig.EventLog`, `Connection.replayCursor`, `Hub.eventLog`,
+  `parseSinceCursor`, welcome stamping, out-of-window branch in
+  `HandleWSWithUser`, `EventLog()` accessor)
+- `pkg/subscriptions/subscription.go` (`HandleObjectChange` log append +
+  cursor stamping; `handleSubscribe` explicit-locks + replay drain)
+- `pkg/subscriptions/objectset.go` (`handleSubscribeObjectSet`
+  explicit-locks + replay drain)
+- `pkg/subscriptions/job.go` (`HandleActionJobProgress` log append +
+  cursor stamping; `handleSubscribeActionJob` explicit-locks + replay
+  drain)
+- `pkg/subscriptions/aggregation.go` (`sendAggregationChanged` +
+  `handleSubscribeAggregation` widened with cursor parameter)
+- `pkg/subscriptions/us380_replay_test.go` (new — 11 tests)
+- `prd.json` (mark US-380 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./pkg/subscriptions/... -v` 11/11 US-380 tests PASS, full
+  package suite green (preserves all US-133 / US-134 / US-305 / US-306 /
+  US-308 / US-318 behaviour)
+- `go test ./...` PASS across ~50 packages including `cmd/server`,
+  `test/e2e`, `test/foundry_parity`, `test/northwind`, `test/chinook`
+- `gofmt -l ./pkg/subscriptions/` clean
+
+**Learnings for future iterations:**
+- The replay-and-routing-index invariant turns on doing the log
+  `Append` and the `subIndex[objectType]` read in the SAME critical
+  section. If the append moves out of the lock, a subscription that
+  arrives between append and dispatch can both miss the live event
+  AND replay it (because the replay snapshot would not include the
+  un-stamped event). Pattern: any new event kind that needs replay
+  must follow the same hub.mu append-then-route shape as the existing
+  two paths. Don't optimise the lock window away.
+- The subscribe handlers had to drop `defer Unlock()` in favour of
+  explicit locks because the replay drain enqueues messages onto
+  `c.send` and `c.send` is a buffered channel — under load (or in
+  tests with a deliberately small buffer) the replay can briefly
+  block on the writePump, and we must not be holding hub.mu during
+  that wait. The aggregation subscribe handler had already adopted
+  the explicit-lock pattern for the same reason; this story aligns
+  the other three handlers with that convention.
+- Out-of-window detection happens at handshake time, NOT at
+  subscribe time. The reasoning: the client should know to refresh
+  global state BEFORE re-establishing subscriptions, otherwise it
+  will paint a partial view from `subscribed` → `objectChanged` and
+  only later discover the gap. The connection-level `onOutOfDate`
+  with empty SubscriptionID is the documented signal for "everything
+  you knew is stale; do a full refresh and re-subscribe from scratch".
+- `?since=<cursor>` parsing is deliberately liberal — empty /
+  negative / non-numeric / scientific-notation all coerce to 0 ("no
+  replay"). The connection still upgrades cleanly. This is the
+  natural extension of the rest of the websocket layer's policy
+  ("don't let bad client input fail the connection") and matches
+  how SSE Last-Event-ID handling already behaves elsewhere in the
+  codebase. If a future story needs to surface "your cursor was
+  malformed" to the client, add a fresh out-of-band notice rather
+  than failing the upgrade.
+- `EventLog.Snapshot(since)` returns `entries, minLive` so callers
+  who care about the out-of-window verdict get both pieces atomically.
+  At present `HandleWSWithUser` consults `EarliestID()` and
+  `LatestID()` separately because the welcome path branches on each
+  bound, but the unified accessor is there for future SDK helpers
+  that want a single round-trip ("am I in the window?") API.
+- Aggregation events not entering the log is a deliberate design
+  choice: per-subscription derived state (running totals, group
+  buckets) cannot replay correctly from a wire envelope; the only
+  safe recovery is to re-seed via Bleve at subscribe time. If
+  aggregation subscribers need replay-style continuity in the
+  future, the right move is to carry a `lastSeenAggregationVersion`
+  field on the subscription itself rather than logging the
+  individual `aggregationChanged` payloads.
+- Tests inject `EventLog.nowFunc` (private field) to simulate
+  multi-second outages without sleeping. Pattern: keep the
+  injection point package-private (not on `EventLogConfig`) so
+  production code cannot accidentally drive it; tests in the same
+  package retain access. Existing US-133/308 tests follow the same
+  convention with `Connection.nowFunc` for rate-limit windows.
 ---

@@ -36,11 +36,19 @@ type ActionJobProgressEvent struct {
 // subscribed to jobID. Same overflow / rate-limit semantics as the
 // HandleObjectChange dispatch path so a slow client can't back the publisher
 // up. Safe to call concurrently. US-318.
+//
+// US-380: every progress event is appended to the Hub's replay log so a
+// reconnecting client can recover missed deltas via ?since=<cursor>.
 func (h *Hub) HandleActionJobProgress(jobID string, evt ActionJobProgressEvent) {
 	if jobID == "" {
 		return
 	}
 	h.mu.Lock()
+	cursor := h.eventLog.Append(EventLogEntry{
+		Kind:     "actionJobProgress",
+		JobID:    jobID,
+		JobEvent: evt,
+	})
 	entries := h.jobSubscriptionsLocked(jobID)
 	h.mu.Unlock()
 	if len(entries) == 0 {
@@ -60,6 +68,7 @@ func (h *Hub) HandleActionJobProgress(jobID string, evt ActionJobProgressEvent) 
 		msg := Message{
 			Type:           "actionJobProgress",
 			SubscriptionID: sub.ID,
+			Cursor:         cursor,
 			Data:           data,
 		}
 		select {
@@ -83,17 +92,19 @@ func (h *Hub) handleSubscribeActionJob(c *Connection, raw json.RawMessage) Messa
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	c.subMu.Lock()
-	defer c.subMu.Unlock()
 
 	if len(c.subscriptions) >= MaxSubscriptionsPerConnection {
+		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per connection reached (10)",
 		}
 	}
 	if !h.reserveUserSubLocked(c.userID) {
+		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per user reached",
@@ -106,11 +117,23 @@ func (h *Hub) handleSubscribeActionJob(c *Connection, raw json.RawMessage) Messa
 	}
 	c.subscriptions[sub.ID] = sub
 	h.addJobSubLocked(c, sub)
+	doReplay := c.replayCursor > 0
+	c.subMu.Unlock()
+	h.mu.Unlock()
 
-	return Message{
-		Type:           "subscribed",
-		SubscriptionID: sub.ID,
+	if !doReplay {
+		return Message{
+			Type:           "subscribed",
+			SubscriptionID: sub.ID,
+		}
 	}
+
+	select {
+	case c.send <- Message{Type: "subscribed", SubscriptionID: sub.ID}:
+	default:
+	}
+	h.replayActionJobSubscription(c, sub)
+	return Message{}
 }
 
 // addJobSubLocked registers (conn, sub) under sub.JobID. Caller must hold h.mu.

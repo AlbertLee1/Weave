@@ -568,7 +568,7 @@ func (h *Hub) handleSubscribeAggregation(c *Connection, raw json.RawMessage) Mes
 	case c.send <- subscribed:
 	default:
 	}
-	sendAggregationChanged(c, sub.ID, agg.Snapshot())
+	sendAggregationChanged(c, sub.ID, agg.Snapshot(), 0)
 
 	return Message{}
 }
@@ -577,7 +577,11 @@ func (h *Hub) handleSubscribeAggregation(c *Connection, raw json.RawMessage) Mes
 // to the connection's send channel. A full send buffer drops the message
 // rather than blocking — overflow is signalled to the client via the existing
 // onOutOfDate path next time the buffer drains.
-func sendAggregationChanged(c *Connection, subID string, state *aggregation.AggregationResponse) {
+//
+// US-380: cursor is the change-event id that triggered this snapshot. 0 is
+// used for the initial subscribe-time snapshot which is not associated with
+// any specific event in the replay log.
+func sendAggregationChanged(c *Connection, subID string, state *aggregation.AggregationResponse, cursor int64) {
 	payload, err := json.Marshal(AggregationChangedPayload{State: state})
 	if err != nil {
 		return
@@ -585,6 +589,7 @@ func sendAggregationChanged(c *Connection, subID string, state *aggregation.Aggr
 	msg := Message{
 		Type:           "aggregationChanged",
 		SubscriptionID: subID,
+		Cursor:         cursor,
 		Data:           payload,
 	}
 	select {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,14 +14,38 @@ import (
 	"nhooyr.io/websocket/wsjson"
 )
 
+// parseSinceCursor extracts a non-negative monotonic cursor from the
+// ?since=<n> query parameter. Empty / malformed / non-positive values are
+// reported as 0 ("no replay requested") so the upgrade path stays liberal —
+// a misbehaving client merely loses replay, not the connection itself.
+func parseSinceCursor(raw string) int64 {
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 // Message is the envelope for all WebSocket messages (both client→server and
 // server→client). The Type field discriminates the payload kind; Data carries
 // the type-specific JSON body. ConnectionID is populated only in the welcome
 // message; SubscriptionID is populated in subscription-related messages.
+//
+// US-380: Cursor carries the monotonic event id from the Hub's replay log on
+// every server→client event message, plus the high-water mark on the welcome
+// envelope. Clients persist the most recent cursor and supply it as
+// ?since=<cursor> on reconnect; the server replays missed events from the
+// 5-minute sliding window or emits a connection-level onOutOfDate when the
+// cursor falls outside the window.
 type Message struct {
 	Type           string          `json:"type"`
 	ConnectionID   string          `json:"connectionId,omitempty"`
 	SubscriptionID string          `json:"subscriptionId,omitempty"`
+	Cursor         int64           `json:"cursor,omitempty"`
+	LastEventID    int64           `json:"lastEventId,omitempty"`
 	Data           json.RawMessage `json:"data,omitempty"`
 	Error          string          `json:"error,omitempty"`
 }
@@ -47,6 +72,10 @@ type HubConfig struct {
 	// EventRateWindow is the rolling window over which EventRateLimit is
 	// counted. Default: 1 second.
 	EventRateWindow time.Duration
+
+	// EventLog configures the cursor-based replay buffer (US-380). Window
+	// defaults to 5 minutes; MaxEntries to 10000.
+	EventLog EventLogConfig
 }
 
 func (cfg *HubConfig) applyDefaults() {
@@ -82,6 +111,13 @@ type Connection struct {
 	conn   *websocket.Conn
 	send   chan Message
 	done   chan struct{} // closed when the connection's goroutines have exited
+
+	// US-380: replay cursor supplied via ?since=<cursor> on the WebSocket
+	// upgrade URL. Set once at connect time and consumed by the first
+	// successful subscribe call (per subscription type). 0 means "no
+	// reconnect requested", -1 means "out of replay window — client has
+	// already been told to refresh".
+	replayCursor int64
 
 	// Subscription management (US-133). Protected by subMu.
 	subMu         sync.Mutex
@@ -182,6 +218,7 @@ type Hub struct {
 	config          HubConfig
 	resolver        ObjectSetResolver // optional; nil means subscribeObjectSet rejects {objectSetRid}
 	indexResolverFn IndexResolver     // optional; nil means subscribeAggregation seeds with empty state
+	eventLog        *EventLog         // US-380: cursor-based replay buffer
 }
 
 // NewHub creates a new Hub ready to accept WebSocket connections with
@@ -202,7 +239,14 @@ func NewHubWithConfig(cfg HubConfig) *Hub {
 		ctx:      ctx,
 		stop:     stop,
 		config:   cfg,
+		eventLog: NewEventLog(cfg.EventLog),
 	}
+}
+
+// EventLog exposes the Hub's replay buffer. Tests use it to assert cursor
+// monotonicity and window eviction; production callers should not need it.
+func (h *Hub) EventLog() *EventLog {
+	return h.eventLog
 }
 
 // SetObjectSetResolver wires the resolver used by subscribeObjectSet to
@@ -258,6 +302,12 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 // across every connection the user holds open. An empty userID falls back to
 // the anonymous-quota-bypassed path.
 func (h *Hub) HandleWSWithUser(w http.ResponseWriter, r *http.Request, userID string) {
+	// US-380: parse ?since=<cursor> BEFORE the upgrade so a malformed
+	// cursor still produces a clean ws frame after handshake (we cannot
+	// 4xx an HTTP request after Accept).
+	sinceParam := r.URL.Query().Get("since")
+	requestedCursor := parseSinceCursor(sinceParam)
+
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // origin check handled at routing layer
 	})
@@ -283,16 +333,41 @@ func (h *Hub) HandleWSWithUser(w http.ResponseWriter, r *http.Request, userID st
 		hub:           h,
 		rateLimit:     h.config.EventRateLimit,
 		rateWindow:    h.config.EventRateWindow,
+		replayCursor:  requestedCursor,
 	}
 
 	h.register(c)
 
-	// Send welcome message
+	// Send welcome message — US-380 stamps the current high-water cursor
+	// so a fresh client knows the starting point for events that arrive
+	// AFTER this welcome frame.
 	welcome := Message{
 		Type:         "welcome",
 		ConnectionID: connID,
+		LastEventID:  h.eventLog.LatestID(),
 	}
 	c.send <- welcome
+
+	// US-380: out-of-window detection. If the caller asked to resume from
+	// a cursor older than the live buffer's earliest id, surface the
+	// connection-level onOutOfDate signal RIGHT after welcome so the
+	// client can refresh its full state before re-subscribing. The
+	// per-subscription replay path stays disabled for this connection.
+	if requestedCursor > 0 {
+		earliest := h.eventLog.EarliestID()
+		latest := h.eventLog.LatestID()
+		// requestedCursor < earliest → cursor predates the live window.
+		// requestedCursor > latest → cursor refers to a future event the
+		// server has not yet emitted (treat as ahead-of-window: refresh).
+		// requestedCursor == latest → no missed events; nothing to replay.
+		if (earliest > 0 && requestedCursor < earliest) || requestedCursor > latest {
+			c.replayCursor = -1
+			c.send <- Message{
+				Type:        "onOutOfDate",
+				LastEventID: latest,
+			}
+		}
+	}
 
 	// Start read, write, and heartbeat goroutines
 	var wg sync.WaitGroup

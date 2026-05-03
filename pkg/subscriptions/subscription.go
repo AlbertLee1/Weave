@@ -116,10 +116,21 @@ func editTypeToState(editType string) string {
 // Properties are projected per subscription's Select clause. Dispatch cost is
 // O(K) where K is the number of subscriptions registered for this specific
 // objectType — independent of the total active subscription count (US-306).
+//
+// US-380: every change is appended to the Hub's replay log under hub.mu so a
+// reconnecting client supplying ?since=<cursor> can recover missed events.
+// The assigned cursor is stamped on the outbound objectChanged envelope.
 func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, properties map[string]interface{}) {
 	state := editTypeToState(editType)
 
 	h.mu.Lock()
+	cursor := h.eventLog.Append(EventLogEntry{
+		Kind:       "objectChange",
+		ObjectType: objectType,
+		PrimaryKey: primaryKey,
+		EditType:   editType,
+		Properties: properties,
+	})
 	entries := h.subscriptionsForObjectTypeLocked(objectType)
 	h.mu.Unlock()
 
@@ -137,7 +148,7 @@ func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, proper
 					conn.markOverflow(sub.ID)
 					continue
 				}
-				sendAggregationChanged(conn, sub.ID, sub.Aggregator.Snapshot())
+				sendAggregationChanged(conn, sub.ID, sub.Aggregator.Snapshot(), cursor)
 			}
 			continue
 		}
@@ -163,6 +174,7 @@ func (h *Hub) HandleObjectChange(objectType, primaryKey, editType string, proper
 		msg := Message{
 			Type:           "objectChanged",
 			SubscriptionID: sub.ID,
+			Cursor:         cursor,
 			Data:           data,
 		}
 		select {
@@ -186,19 +198,24 @@ func (h *Hub) handleSubscribe(c *Connection, raw json.RawMessage) Message {
 	}
 
 	// Lock order: hub.mu → conn.subMu, matching HandleObjectChange so routing
-	// index updates and dispatch never deadlock.
+	// index updates and dispatch never deadlock. Explicit locks (not defer)
+	// so the US-380 replay path can fire after the registration is durable
+	// without holding either mutex while it drains buffered messages onto
+	// c.send.
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	c.subMu.Lock()
-	defer c.subMu.Unlock()
 
 	if len(c.subscriptions) >= MaxSubscriptionsPerConnection {
+		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per connection reached (10)",
 		}
 	}
 	if !h.reserveUserSubLocked(c.userID) {
+		c.subMu.Unlock()
+		h.mu.Unlock()
 		return Message{
 			Type:  "error",
 			Error: "maximum subscriptions per user reached",
@@ -208,11 +225,26 @@ func (h *Hub) handleSubscribe(c *Connection, raw json.RawMessage) Message {
 	sub := NewSubscription(req)
 	c.subscriptions[sub.ID] = sub
 	h.addToIndexLocked(c, sub)
+	doReplay := c.replayCursor > 0
+	c.subMu.Unlock()
+	h.mu.Unlock()
 
-	return Message{
-		Type:           "subscribed",
-		SubscriptionID: sub.ID,
+	if !doReplay {
+		return Message{
+			Type:           "subscribed",
+			SubscriptionID: sub.ID,
+		}
 	}
+
+	// Push the subscribed reply directly so the client sees
+	// subscribed → replayed objectChanged events in order. Returning
+	// Message{} signals the readPump to skip the default dispatch.
+	select {
+	case c.send <- Message{Type: "subscribed", SubscriptionID: sub.ID}:
+	default:
+	}
+	h.replayObjectSubscription(c, sub)
+	return Message{}
 }
 
 // handleUnsubscribe removes a subscription from a connection.
