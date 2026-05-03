@@ -16,6 +16,7 @@ import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { ObjectSetDiffPage } from './components/objectsets/ObjectSetDiffPage';
 import { SavedObjectSetsPage } from './components/objectsets/SavedObjectSetsPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
+import { BranchReconcilePage } from './components/explorer/BranchReconcilePage';
 import { PlaygroundPage } from './components/developer/PlaygroundPage';
 import { MetricsPage } from './components/developer/MetricsPage';
 import { ObjectTypeAdminPage } from './components/admin/ObjectTypeAdminPage';
@@ -90,6 +91,7 @@ export default function App() {
               <Route index element={<DashboardPage />} />
               <Route path="explorer/:ontology" element={<ExplorerPage />} />
               <Route path="explorer/:ontology/branches/:branch/diff" element={<BranchDiffPage />} />
+              <Route path="explorer/:ontology/branches/:branch/reconcile" element={<BranchReconcilePage />} />
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />

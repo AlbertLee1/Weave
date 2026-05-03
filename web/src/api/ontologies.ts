@@ -1,4 +1,5 @@
-import { request } from './client';
+import { ApiRequestError, request, withActiveBranch } from './client';
+import { authedFetch } from '../auth/interceptor';
 import type {
   Ontology,
   ObjectType,
@@ -12,6 +13,10 @@ import type {
   ValueType,
   QueryType,
   BranchDiffEntry,
+  BranchDiffPostResponse,
+  MergeBranchRequest,
+  MergeBranchResponse,
+  MergeConflictBody,
   OntologyBranch,
 } from './types';
 
@@ -640,6 +645,63 @@ export async function getBranchDiff(
     `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}/diff`,
   );
   return resp.data;
+}
+
+// US-385 / US-387: categorised diff with conflict annotations.
+export async function postBranchDiff(
+  ontologyApiName: string,
+  branchId: string,
+): Promise<BranchDiffPostResponse> {
+  return request<BranchDiffPostResponse>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}/diff`,
+  );
+}
+
+// MergeBranchConflictError carries the 409 body so callers can render the
+// unresolved conflict list without a re-fetch.
+export class MergeBranchConflictError extends Error {
+  conflicts: MergeConflictBody['conflicts'];
+  unresolved: MergeConflictBody['unresolved'];
+  constructor(body: MergeConflictBody) {
+    super('MERGE_CONFLICT');
+    this.name = 'MergeBranchConflictError';
+    this.conflicts = body.conflicts ?? [];
+    this.unresolved = body.unresolved ?? [];
+  }
+}
+
+// US-385 / US-387: direct merge with explicit conflict resolution. The
+// 409 body is non-standard (`{errorCode, conflicts, unresolved}`) so we
+// branch on status before delegating to the standard request() helper.
+export async function mergeBranch(
+  ontologyApiName: string,
+  branchId: string,
+  body: MergeBranchRequest,
+): Promise<MergeBranchResponse> {
+  const path = withActiveBranch(
+    `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}/merge`,
+  );
+  const resp = await authedFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  const parsed = text ? JSON.parse(text) : {};
+  if (resp.status === 409 && parsed?.errorCode === 'MERGE_CONFLICT') {
+    throw new MergeBranchConflictError(parsed as MergeConflictBody);
+  }
+  if (!resp.ok) {
+    throw new ApiRequestError({
+      errorCode: parsed.errorCode ?? 'UNKNOWN',
+      errorName: parsed.errorName ?? resp.statusText,
+      errorInstanceId: parsed.errorInstanceId ?? '',
+      parameters: parsed.parameters,
+      statusCode: resp.status,
+    });
+  }
+  return parsed as MergeBranchResponse;
 }
 
 // --- Query execution ---

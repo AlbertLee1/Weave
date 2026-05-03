@@ -508,3 +508,54 @@ export interface OntologyBranch {
   createdAt: string;
   updatedAt: string;
 }
+
+// --- US-385 / US-387 Branch Reconcile (mirrors pkg/oms/handlers_branch_merge.go) ---
+
+export interface AnnotatedDiffEntry {
+  entityType: string;
+  entityRid: string;
+  apiName: string;
+  resolutionKey: string;
+  changeType: 'ADDED' | 'MODIFIED' | 'DELETED';
+  hasConflict: boolean;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+}
+
+export interface AnnotatedMergeConflict {
+  entityType: string;
+  entityRid: string;
+  apiName: string;
+  resolutionKey: string;
+  changeType: 'ADDED' | 'MODIFIED' | 'DELETED';
+  branchState?: Record<string, unknown> | null;
+  mainState?: Record<string, unknown> | null;
+}
+
+export interface BranchDiffPostResponse {
+  branch: OntologyBranch;
+  added: AnnotatedDiffEntry[];
+  modified: AnnotatedDiffEntry[];
+  deleted: AnnotatedDiffEntry[];
+  conflicts: AnnotatedMergeConflict[];
+  hasConflicts: boolean;
+}
+
+export type ConflictResolutionChoice = 'use-branch' | 'use-main';
+
+export interface MergeBranchRequest {
+  conflictResolution?: Record<string, ConflictResolutionChoice>;
+}
+
+export interface MergeBranchResponse {
+  branch: OntologyBranch;
+  appliedCount: number;
+  skippedCount: number;
+}
+
+// 409 body shape returned by POST /merge when conflicts are unresolved.
+export interface MergeConflictBody {
+  errorCode: 'MERGE_CONFLICT';
+  conflicts: AnnotatedMergeConflict[];
+  unresolved: AnnotatedMergeConflict[];
+}

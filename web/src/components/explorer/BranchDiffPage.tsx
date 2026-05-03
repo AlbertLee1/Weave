@@ -180,10 +180,21 @@ export function BranchDiffPage() {
           <span>/</span>
           <span className="text-text-primary font-medium">{branchId}</span>
         </div>
-        <h2 className="text-lg font-semibold text-text-primary">Branch Diff</h2>
-        <p className="text-xs text-text-secondary mt-0.5">
-          Changes on this branch compared to main.
-        </p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">Branch Diff</h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Changes on this branch compared to main.
+            </p>
+          </div>
+          <Link
+            to={`/explorer/${ontologyApiName}/branches/${branchId}/reconcile`}
+            className="px-3 py-1.5 rounded text-xs text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/10 transition-colors"
+            data-testid="branch-diff-open-reconcile"
+          >
+            Open Reconcile UI
+          </Link>
+        </div>
 
         {/* Summary badges */}
         <div className="flex items-center gap-3 mt-3">
