@@ -37,7 +37,19 @@ export const COMPONENT_TYPES: ComponentTypeMeta[] = [
     type: 'table',
     label: 'Table',
     description: 'Tabular ObjectSet view',
-    defaultProps: { objectSet: '', columns: [] },
+    // US-395: Table binds an ObjectSet (RID or base ObjectType API name)
+    // + a columns list. pageSize / orderByField / filterField are
+    // optional runtime knobs surfaced in the property panel.
+    defaultProps: {
+      objectSet: '',
+      columns: [],
+      pageSize: 25,
+      orderByField: '',
+      orderByDirection: 'asc',
+      filterField: '',
+      filterOp: 'eq',
+      filterValue: '',
+    },
   },
   {
     type: 'form',

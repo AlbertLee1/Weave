@@ -34,6 +34,11 @@ import {
   initialVariableState,
   type VariableState,
 } from './runtime';
+import {
+  TABLE_FILTER_OPS,
+  useAppObjectSet,
+  type TableSortDirection,
+} from './useAppObjectSet';
 
 // US-392: App Component Palette + Canvas + Property Panel.
 //
@@ -1337,17 +1342,9 @@ function RuntimeComponent({
         </button>
       );
     case 'table':
-      return (
-        <div className="text-xs text-text-secondary">
-          <div className="font-mono">Table</div>
-          <div className="truncate">
-            {substituteVariables(
-              String(instance.props.objectSet ?? '— bind ObjectSet —'),
-              state,
-            )}
-          </div>
-        </div>
-      );
+      // US-395: Table runtime binds an ObjectSet RID / ObjectType to a
+      // live data fetch with pagination + sorting + filter.
+      return <RuntimeTable instance={instance} state={state} />;
     case 'form':
       return (
         <div className="text-xs text-text-secondary">
@@ -1387,6 +1384,210 @@ function RuntimeComponent({
   }
 }
 
+interface RuntimeTableProps {
+  instance: ComponentInstance;
+  state: Record<string, string | number | boolean>;
+}
+
+// US-395: live ObjectSet binding for the Table component. The hook
+// resolves objectSet (RID or base ObjectType API name) + columns +
+// pageSize/sort/filter against the runtime variable state, and exposes
+// pageIndex / hasNextPage / goNext / goPrev plus a sortOverride state
+// that flips when the user clicks a column header.
+function RuntimeTable({ instance, state }: RuntimeTableProps) {
+  const ontology = useOntologyStore((s) => s.selectedOntology);
+  const [sortOverride, setSortOverride] = useState<{
+    field: string;
+    direction: TableSortDirection;
+  } | null>(null);
+
+  const view = useAppObjectSet({
+    ontologyApiName: ontology,
+    props: instance.props,
+    state,
+    sortOverride,
+  });
+
+  const columns = view.resolved.columns ?? [];
+  const sortField =
+    sortOverride?.field ?? view.resolved.orderByField ?? null;
+  const sortDirection =
+    sortOverride?.direction ?? view.resolved.orderByDirection ?? 'asc';
+
+  const onHeaderClick = useCallback(
+    (col: string) => {
+      setSortOverride((prev) => {
+        if (prev?.field === col) {
+          // Clicking the same column toggles direction.
+          return {
+            field: col,
+            direction: prev.direction === 'asc' ? 'desc' : 'asc',
+          };
+        }
+        return { field: col, direction: 'asc' };
+      });
+    },
+    [],
+  );
+
+  if (!ontology) {
+    return (
+      <div
+        data-testid="app-runtime-table"
+        data-table-state="no-ontology"
+        className="text-xs text-text-secondary"
+      >
+        Bind an ontology before previewing the Table.
+      </div>
+    );
+  }
+
+  if (!view.resolved.objectSet || columns.length === 0) {
+    return (
+      <div
+        data-testid="app-runtime-table"
+        data-table-state="unbound"
+        className="text-xs text-text-secondary"
+      >
+        Configure the Table with an ObjectSet and at least one column.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="app-runtime-table"
+      data-table-state={view.loading ? 'loading' : view.error ? 'error' : 'ok'}
+      data-page-index={view.pageIndex}
+      data-page-size={view.pageSize}
+      className="flex flex-col gap-2"
+    >
+      <div className="overflow-auto border border-border rounded">
+        <table className="w-full text-xs text-left">
+          <thead className="bg-bg-secondary/60 text-text-secondary">
+            <tr>
+              {columns.map((col) => {
+                const isSorted = sortField === col;
+                return (
+                  <th
+                    key={col}
+                    data-testid={`app-runtime-table-header-${col}`}
+                    data-sort-active={isSorted ? 'true' : 'false'}
+                    data-sort-direction={isSorted ? sortDirection : ''}
+                    onClick={() => onHeaderClick(col)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onHeaderClick(col);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className="px-2 py-1 cursor-pointer select-none hover:text-text-primary border-b border-border font-mono"
+                  >
+                    {col}
+                    {isSorted && (
+                      <span className="ml-1 text-accent-primary">
+                        {sortDirection === 'asc' ? '▲' : '▼'}
+                      </span>
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {view.data.length === 0 ? (
+              <tr>
+                <td
+                  data-testid="app-runtime-table-empty"
+                  colSpan={Math.max(columns.length, 1)}
+                  className="px-2 py-3 text-center text-text-secondary italic"
+                >
+                  {view.loading ? 'Loading…' : 'No rows'}
+                </td>
+              </tr>
+            ) : (
+              view.data.map((row, idx) => (
+                <tr
+                  key={
+                    typeof row.__primaryKey === 'string' ||
+                    typeof row.__primaryKey === 'number'
+                      ? String(row.__primaryKey)
+                      : idx
+                  }
+                  data-testid="app-runtime-table-row"
+                  className="border-b border-border last:border-b-0"
+                >
+                  {columns.map((col) => (
+                    <td
+                      key={col}
+                      data-testid={`app-runtime-table-cell-${col}`}
+                      className="px-2 py-1 text-text-primary truncate max-w-[200px]"
+                    >
+                      {formatCellValue(row[col])}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div
+        data-testid="app-runtime-table-pagination"
+        className="flex items-center gap-2 text-[11px] text-text-secondary font-mono"
+      >
+        <button
+          type="button"
+          data-testid="app-runtime-table-prev"
+          onClick={view.goPrev}
+          disabled={!view.hasPrevPage || view.loading}
+          className="px-2 py-0.5 rounded border border-border bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:border-accent-primary"
+        >
+          ← Prev
+        </button>
+        <span data-testid="app-runtime-table-page-label">
+          Page {view.pageIndex + 1}
+        </span>
+        <button
+          type="button"
+          data-testid="app-runtime-table-next"
+          onClick={view.goNext}
+          disabled={!view.hasNextPage || view.loading}
+          className="px-2 py-0.5 rounded border border-border bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:border-accent-primary"
+        >
+          Next →
+        </button>
+        {view.totalCount !== undefined && (
+          <span data-testid="app-runtime-table-total">
+            Total {view.totalCount}
+          </span>
+        )}
+        {view.error ? (
+          <span
+            data-testid="app-runtime-table-error"
+            className="text-accent-error"
+          >
+            {view.error instanceof Error ? view.error.message : 'fetch failed'}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function formatCellValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 interface ComponentPropertyFieldsProps {
   instance: ComponentInstance;
   onPatch: (patch: Record<string, unknown>) => void;
@@ -1401,11 +1602,11 @@ function ComponentPropertyFields({
       return (
         <div className="flex flex-col gap-2">
           <PropField
-            label="ObjectSet RID"
+            label="ObjectSet (RID or ObjectType)"
             testId="prop-table-objectSet"
             value={String(instance.props.objectSet ?? '')}
             onChange={(v) => onPatch({ objectSet: v })}
-            placeholder="ri.objectSet…"
+            placeholder="ri.objectSet… or Customer"
           />
           <PropField
             label="Columns (comma-separated)"
@@ -1424,6 +1625,74 @@ function ComponentPropertyFields({
               })
             }
             placeholder="name, status"
+          />
+          <label className="flex flex-col gap-1 text-xs text-text-secondary">
+            Page Size
+            <input
+              type="number"
+              min={1}
+              max={500}
+              data-testid="prop-table-pageSize"
+              value={
+                typeof instance.props.pageSize === 'number' ||
+                typeof instance.props.pageSize === 'string'
+                  ? String(instance.props.pageSize)
+                  : '25'
+              }
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                onPatch({ pageSize: Number.isFinite(v) && v > 0 ? v : 25 });
+              }}
+              className="px-2 py-1 rounded border border-border bg-bg-primary text-sm text-text-primary"
+            />
+          </label>
+          <PropField
+            label="Default Sort Field"
+            testId="prop-table-orderByField"
+            value={String(instance.props.orderByField ?? '')}
+            onChange={(v) => onPatch({ orderByField: v })}
+            placeholder="(none)"
+          />
+          <label className="flex flex-col gap-1 text-xs text-text-secondary">
+            Default Sort Direction
+            <select
+              data-testid="prop-table-orderByDirection"
+              value={String(instance.props.orderByDirection ?? 'asc')}
+              onChange={(e) => onPatch({ orderByDirection: e.target.value })}
+              className="px-2 py-1 rounded border border-border bg-bg-primary text-sm text-text-primary"
+            >
+              <option value="asc">asc</option>
+              <option value="desc">desc</option>
+            </select>
+          </label>
+          <PropField
+            label="Filter Field"
+            testId="prop-table-filterField"
+            value={String(instance.props.filterField ?? '')}
+            onChange={(v) => onPatch({ filterField: v })}
+            placeholder="(none)"
+          />
+          <label className="flex flex-col gap-1 text-xs text-text-secondary">
+            Filter Op
+            <select
+              data-testid="prop-table-filterOp"
+              value={String(instance.props.filterOp ?? 'eq')}
+              onChange={(e) => onPatch({ filterOp: e.target.value })}
+              className="px-2 py-1 rounded border border-border bg-bg-primary text-sm text-text-primary"
+            >
+              {TABLE_FILTER_OPS.map((op) => (
+                <option key={op} value={op}>
+                  {op}
+                </option>
+              ))}
+            </select>
+          </label>
+          <PropField
+            label="Filter Value"
+            testId="prop-table-filterValue"
+            value={String(instance.props.filterValue ?? '')}
+            onChange={(v) => onPatch({ filterValue: v })}
+            placeholder="literal or {{var}}"
           />
         </div>
       );
