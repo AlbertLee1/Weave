@@ -34,6 +34,7 @@ import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
 import { LineagePage } from './components/lineage/LineagePage';
 import { DashboardEditorPage } from './components/dashboards/DashboardEditorPage';
+import { AppEditorPage } from './components/apps/AppEditorPage';
 import { PermissionRequestsPage } from './components/permissionrequests/PermissionRequestsPage';
 import { MentionsPage } from './components/notifications/MentionsPage';
 import { SettingsPage } from './components/settings/SettingsPage';
@@ -61,6 +62,20 @@ function DashboardEditorRoute() {
       key={params.id ?? '__new__'}
       id={params.id}
       onSaved={(id) => navigate(`/dashboards/${id}`)}
+    />
+  );
+}
+
+// US-392: route wrapper for the App Editor. Mirror DashboardEditorRoute
+// so the rid in the URL becomes a shareable link after a fresh save.
+function AppEditorRoute() {
+  const params = useParams<{ rid?: string }>();
+  const navigate = useNavigate();
+  return (
+    <AppEditorPage
+      key={params.rid ?? '__new__'}
+      rid={params.rid}
+      onSaved={(rid) => navigate(`/apps/${rid}`)}
     />
   );
 }
@@ -103,6 +118,8 @@ export default function App() {
               <Route path="lineage/:rid" element={<LineagePage />} />
               <Route path="dashboards" element={<DashboardEditorRoute />} />
               <Route path="dashboards/:id" element={<DashboardEditorRoute />} />
+              <Route path="apps" element={<AppEditorRoute />} />
+              <Route path="apps/:rid" element={<AppEditorRoute />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="permission-requests" element={<PermissionRequestsPage />} />
