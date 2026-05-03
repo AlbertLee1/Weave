@@ -8475,6 +8475,76 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/timeseries/transform:
+    post:
+      operationId: transformTimeSeries
+      summary: Apply a chain of transforms to a time series (US-402)
+      description: |
+        Applies an ordered list of {op, params} transforms to a time
+        series and returns the resulting points. The input series may be
+        supplied inline (`points`) or resolved from the configured time
+        series store (`source` — exactly one must be provided).
+        Supported ops: diff, sma (window), ema (alpha), resample
+        (interval, agg), scale (factor, offset).
+      tags: [TimeSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transforms]
+              properties:
+                source:
+                  type: object
+                  description: Resolve the input series from the store.
+                  required: [objectType, primaryKey, property]
+                  properties:
+                    objectType:
+                      type: string
+                    primaryKey:
+                      type: string
+                    property:
+                      type: string
+                points:
+                  type: array
+                  description: Inline input series (mutually exclusive with source).
+                  items:
+                    $ref: "#/components/schemas/TimeSeriesPoint"
+                transforms:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [op]
+                    properties:
+                      op:
+                        type: string
+                        enum: [diff, sma, ema, resample, scale]
+                      params:
+                        type: object
+                        additionalProperties: true
+      responses:
+        "200":
+          description: Transformed series.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [points]
+                properties:
+                  points:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TimeSeriesPoint"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{propertyName}/latestValue:
     get:
       operationId: getTimeSeriesLatestValue

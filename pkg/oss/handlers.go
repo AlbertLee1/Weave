@@ -118,6 +118,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	// to the configured backend (memory / PG / VictoriaMetrics).
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/points", h.AppendTimeSeriesPoint)
 
+	// US-402: chain-transform endpoint. Accepts inline points or a
+	// store-resolved series source plus an ordered list of
+	// {op, params} steps; returns the transformed series.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/timeseries/transform", h.TransformTimeSeries)
+
 	// TimeSeriesValueBankProperty endpoints (US-038). The {propertyName}
 	// vs {property} path parameter inconsistency is deliberate — it
 	// matches Foundry's OpenAPI exactly. resolveTimeSeriesKey accepts
