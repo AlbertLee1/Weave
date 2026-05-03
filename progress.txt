@@ -1657,3 +1657,73 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Backend `MergeBranch` rejects branches with `status != "open"` (409 BranchNotOpen) BEFORE inspecting the body, so a closed-branch user hitting "Merge" surfaces as an `ApiRequestError` with `errorCode: "BranchNotOpen"`. The page also pre-disables the merge button when `branch.status !== 'open'` so the user gets immediate visual feedback instead of relying on the round-trip 409. Keep both guards: client-side disable for UX, server-side reject for correctness.
 - The "Open Reconcile UI" link from `BranchDiffPage` is the discoverability bridge — without it users would have no way to find the new surface unless they typed the URL. Adding the link in the header (rather than the body) keeps it visible regardless of how many diff entries the page renders. When introducing a new sibling page that supersedes an existing read-only surface, mirror this pattern: keep the legacy page operational, add a link from its header to the new page, and note both in the route table.
 ---
+
+## 2026-05-03 - US-388 - Dataset Transaction Chain (rollback)
+
+**Implementation:**
+- New migration `000093_dataset_transaction_rollback.{up,down}.sql` adds the rollback audit overlay to `dataset_transactions`: nullable `rolled_back_at TIMESTAMPTZ` + `rolled_back_to_tx_id TEXT`, plus a partial index `idx_dataset_transactions_rolled_back ON (ontology_api_name, rolled_back_at) WHERE rolled_back_at IS NOT NULL` so a "show me undone txs" lookup stays cheap. Loose TEXT (no FK) on `rolled_back_to_tx_id` because the rollback bookkeeping row legitimately self-points to its own TxID and an FK would create an awkward "constraint deferred to commit" pattern.
+- `pkg/oms/dataset_transaction.go`:
+  - `DatasetTransaction` gains `RolledBackAt time.Time` + `RolledBackToTxID string` (both `omitempty`). Zero-value time means "not rolled back" — matches the SQL NULL semantics without an extra `*time.Time` indirection.
+  - New `AffectedKey{ObjectTypeRID, PrimaryKey}` struct surfaces the per-PK replay set the rollback handler needs.
+  - `DatasetTransactionStore` interface widened with `ListAfterCommittedAt(ctx, ontologyAPIName, after)` (oldest-first chain entries strictly newer than `after`) and `MarkRolledBack(ctx, txID, rolledBackToTxID, rolledBackAt)` (idempotent overwrite).
+- `pkg/oms/pg_repository_dataset_transaction.go`:
+  - All five existing read methods (`GetDatasetTransaction`, `LatestForOntology`, `ListByOntology`) round-trip the new `rolled_back_at` / `rolled_back_to_tx_id` columns via `*time.Time` / `*string` scan dests — same pattern as `parent_tx_id` / `user_id`.
+  - New `ListAfterCommittedAt` selects rows with `committed_at > $2` ordered ASC for chronological replay; rolled-back rows are still surfaced (caller's choice whether to skip).
+  - New `ListAffectedKeysSince` joins `object_history` to `object_types` so the affected-keys lookup is scoped by `ontology_rid`. `DISTINCT (object_type_rid, primary_key)` so a PK touched by N batches surfaces once.
+  - New `MarkRolledBack` rejects an empty `txID` / zero `rolledBackAt` up front, then `UPDATE` with `nilIfEmpty(rolledBackToTxID)` so a self-pointing bookkeeping row is still expressible via a non-empty string. Returns `ErrNotFound` on zero rows-affected.
+- `cmd/server/dataset_rollback_handler.go` (new):
+  - `datasetTransactionWriter` interface composes `datasetTransactionLister` (the existing read-only contract from `dataset_transaction_handler.go`) with `RecordDatasetTransaction` + `ListAfterCommittedAt` + `MarkRolledBack`. Same shape pattern as `oms.DatasetTransactionStore` minus the funnel consumer's recorder overlap so a degraded-mode test router can plug a fake.
+  - `datasetRollbackOntologyRepo` is the OMS subset (`GetOntology` + `GetObjectType`) used for URL → ontology resolution AND per-PK replay's ObjectType lookup.
+  - `datasetRollbackAffectedStore` (`ListAffectedKeysSince`) and `datasetRollbackSnapshot` (`SnapshotObjectsAt`) are the two replay-side hooks; nil any of them and the rollback degrades to a metadata-only audit overlay.
+  - `indexWriter` is the `*index.Manager` subset (`IndexDocument`/`DeleteDocument`) the replay path mutates.
+  - `CreateTransaction` (`POST /api/v2/datasets/{rid}/transactions`): looks up ontology → reads chain head via `LatestForOntology` → mints a `tx-<32-hex>` id via `crypto/rand` (16 bytes = 128 bits) → records with `parent_tx_id = chain head`. Optional body `{userId?, editsCount?}` with `DisallowUnknownFields`. Returns `201` JSON of the freshly stamped row. Empty chain → `parentTxId` blank.
+  - `Rollback` (`POST /api/v2/datasets/{rid}/rollback?to=tx-...`): the AC chokepoint. (1) validate `?to=` → starts with `tx-` (`InvalidRollbackTarget` 400 if not), (2) lookup ontology + target tx, reject `RollbackTargetWrongOntology` cross-ontology, `RollbackTargetNotFound` 404 missing, (3) `ListAfterCommittedAt` newer txs, (4) replay each `(objectTypeRID, primaryKey)` against `SnapshotObjectsAt(targetTx.CommittedAt)` — restored if snapshot row exists, deleted from the live Bleve index otherwise, (5) `MarkRolledBack` each newer tx, (6) record a fresh "rollback" tx whose `parent_tx_id = target.TxID` AND `rolled_back_to_tx_id = target.TxID` (self-pointer audit) so the chain head moves coherently.
+  - Replay degrades cleanly: nil affected/history/index → `RestoredObjects=0, DeletedObjects=0` but the audit overlay still flips and the bookkeeping row still lands.
+- `cmd/server/main.go`:
+  - `ServerDeps` gains `DatasetAffectedStore datasetRollbackAffectedStore` for the affected-keys lookup. Wired off the uncached `*PGRepository` in the PG bootstrap (the `ListAffectedKeysSince` method joins `object_history`, not on the cached metadata Repository).
+  - Routes `POST /api/v2/datasets/{rid}/transactions` + `POST /api/v2/datasets/{rid}/rollback` mounted unconditionally so OpenAPI / contract tests always discover them. The `datasetTxWriter` is acquired via type assertion on `deps.DatasetTransactionStore` (the same `*PGRepository`) so a degraded-mode router that left it unset still gets `DatasetRollbackUnavailable` 400 cleanly.
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml`: documented both new POST routes (`createDatasetTransaction` + `rollbackDataset`) including the `?to=` query, `RollbackTargetNotFound` / `RollbackTargetWrongOntology` / `DatasetRollbackUnavailable` error envelopes, and the response wire shape (`rolledBackTxIds`, `restoredObjects`, `deletedObjects`, `newTransaction`, `targetTx`). Files kept byte-identical for the contract test.
+
+**Files changed:**
+- `migrations/000093_dataset_transaction_rollback.up.sql` (new)
+- `migrations/000093_dataset_transaction_rollback.down.sql` (new)
+- `pkg/oms/dataset_transaction.go` (RolledBackAt/RolledBackToTxID + AffectedKey + 2 store-interface methods)
+- `pkg/oms/pg_repository_dataset_transaction.go` (column round-trip + ListAfterCommittedAt + ListAffectedKeysSince + MarkRolledBack)
+- `cmd/server/dataset_rollback_handler.go` (new — 2 handlers + 5 narrow interfaces + replayObjects helper + newCheckpointTxID minter)
+- `cmd/server/main.go` (DatasetAffectedStore field + handler mount + PG bootstrap wiring)
+- `cmd/server/dataset_rollback_handler_test.go` (new — 12 unit tests covering happy path, AC degraded modes, error envelopes, replay invariants)
+- `api/openapi.yaml`, `cmd/server/openapi_spec.yaml`
+- `prd.json` (mark US-388 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` PASS across the full ~70-package surface (cached on second run; uncached cmd/server completes in 2.6s)
+- `go test ./cmd/server/ -run "TestRollback|TestCreateTransaction|TestNewCheckpointTxID" -v` — 12/12 PASS
+  - `TestCreateTransaction_StampsParentFromChainHead` — POST returns 201, parent points at prior chain head
+  - `TestCreateTransaction_GenesisHasEmptyParent` — empty chain → blank ParentTxID
+  - `TestCreateTransaction_DegradedReturns400` — nil store → `DatasetRollbackUnavailable`
+  - `TestCreateTransaction_DatasetNotFound` — missing ontology → 404
+  - `TestRollback_MissingTargetParam` — no `?to=` → `MissingRollbackTarget` 400
+  - `TestRollback_TargetNotFound` — unknown tx → 404 `RollbackTargetNotFound`
+  - `TestRollback_TargetWrongOntology` — cross-ontology target → 400 with both ontology names in params
+  - `TestRollback_InvalidTargetPrefix` — non-`tx-` target → `InvalidRollbackTarget` 400
+  - `TestRollback_FullReplay_RestoresAndDeletes` — AC end-to-end: t1 write → t2 modify+create → rollback to t1 restores pk=A from snapshot, deletes pk=B (post-target create), marks tx-2 + tx-3 rolled back, records bookkeeping row at chain head pointing at tx-1
+  - `TestRollback_DegradedNoReplayInfra` — nil affected/history/index → metadata-only rollback (counts=0, audit overlay flipped, bookkeeping row stamped)
+  - `TestRollback_NoNewerTxs_NoOp` — target IS chain head → empty RolledBackTxIDs but bookkeeping row still recorded
+  - `TestNewCheckpointTxID_HasCorrectShape` — 100 mints, all start with `tx-`, no collisions
+- `diff api/openapi.yaml cmd/server/openapi_spec.yaml` — empty (byte-identical, contract test gate clean)
+- `go test -tags integration -run NEVERMATCH ./cmd/server/...` — compiles. `pkg/oms` integration tag still hits the pre-existing `seedOntology redeclared` failure documented under US-365/US-366/US-383/US-384 — unchanged by this story.
+
+**Learnings for future iterations:**
+- The acceptance criterion has THREE parts that look like one feature: (a) `dataset_transactions` table with `parent_tx_id` (already built in US-379, migration 000090), (b) `POST /transactions` for explicit checkpoints, (c) `POST /rollback?to=tx-...` for the actual time-travel effect. The first part is reused as-is; the second is an empty-edits checkpoint stamper; the third is the surgical part. Don't conflate them — the rollback is the only one that touches user-visible state, the checkpoint is metadata-only.
+- The rollback's "write isolation" semantics (PRD: "写入按 tx 隔离") translate to: every `POST /rollback` records a fresh bookkeeping tx whose `parent_tx_id = target.TxID`, NOT the prior chain head. This intentionally branches the chain visually — a future `?asOf=tx-...` read past the rollback resolves correctly because the rollback's CommittedAt > target's CommittedAt and `committed_at`-ordered scans still find the right snapshot. The audit overlay (`rolled_back_at` / `rolled_back_to_tx_id` on the abandoned txs) lets a future history view render the "deleted" branch with strikethrough rather than dropping it.
+- Self-pointer convention: the bookkeeping row sets `rolled_back_to_tx_id = target.TxID` (NOT its own TxID). This makes the audit semantics clean — every row with a non-NULL `rolled_back_to_tx_id` either (a) was rolled back (its own state is stale, points at the rollback target), or (b) IS a rollback bookkeeping row (its state is canonical, points at the rollback target). The schema doesn't disambiguate the two cases — the join with `parent_tx_id` makes (b) detectable (rollback rows have parent = the same target).
+- Replay degrades, marks don't. The handler returns 200 even with nil affected/history/index — the chain audit overlay always flips, but `RestoredObjects` / `DeletedObjects` stay 0. This matches the PRD's "rollback is a metadata-first operation" semantics: a system without a replay infrastructure (e.g. a fresh Bleve cluster being rebuilt) should still be able to flip the chain. Conversely, a `MarkRolledBack` failure DOES abort the handler — a half-marked chain is genuinely incoherent and would surface as a stale `?asOf=tx-...` read returning the rolled-back state.
+- The replay walks `affectedStore` keys, NOT `ListAfterCommittedAt`'s tx list. The two views differ on purpose: the tx list is the AUDIT axis ("which txs to mark"); the affected-keys list is the OBJECT axis ("which docs to replay"). A single tx can touch hundreds of PKs; conversely a long sequence of compensating edits can re-touch the same PK across N txs but the replay only needs the latest snapshot at target's CommittedAt — one re-index per affected (objectType, pk) is sufficient.
+- Bucketing affected keys by `ObjectTypeRID` BEFORE iterating cuts the snapshot fetches from O(affected_keys) to O(distinct_object_types). For a typical rollback that touches N rows of M ObjectTypes (N >> M), this is the difference between minutes of round-trips and milliseconds. Done by `byOT := make(map[string][]string)` in `replayObjects`.
+- `crypto/rand` for the tx id (16 bytes = 128 bits) is overkill for a single-machine deployment but matches the rest of the project's RID minting and avoids the time-precision ambiguity of `tx-20260503T...`. The fallback to a time-based id when `crypto/rand` errors is a defensive hedge that keeps the handler making forward progress on platforms where `getrandom(2)` is mis-configured.
+- The `datasetTransactionWriter` interface composes `datasetTransactionLister` rather than re-declaring the read methods. This means a future story that adds a new read method to the lister (e.g. `ListByUser` for an audit drill-down) automatically picks it up in the writer surface and no per-method ceremony is needed in the rollback handler. Same composition pattern as `oms.DatasetTransactionStore` extending a hypothetical reader interface.
+- `nilIfEmpty(rolledBackToTxID)` in the `MarkRolledBack` UPDATE is the canonical PG nullability shim: empty Go string → SQL NULL, non-empty string → TEXT value. Used throughout the repo for `parent_tx_id` / `user_id` / etc. — keep using it for any new nullable column to avoid the "stored empty string vs NULL" ambiguity that breaks `WHERE col IS NULL` queries.
+- The cmd/server `historySnapshotStore` interface (in `history_snapshot_provider.go`) and the new `datasetRollbackSnapshot` interface (in `dataset_rollback_handler.go`) have IDENTICAL method shapes — both expect `SnapshotObjectsAt(ctx, objectTypeRID, asOf) ([]oms.LatestObjectState, error)`. They're declared independently so each consumer can stub its own minimal subset; `*PGRepository` satisfies both. Don't try to merge them into one shared interface — the duplication is intentional and keeps test fakes narrow.
+- The `recordingIndex` test fake in `dataset_rollback_handler_test.go` captures Index/Delete calls into nested maps keyed by scoped key + PK so tests can assert exactly what the rollback wrote. This is the canonical pattern for asserting on "what side effects landed on the index manager" — same shape used by other index-touching tests in the repo. The `index.ScopedKey(ontologyAPIName, objectTypeAPIName)` formatter is the single source of truth for the `{ontology}__{objectType}` key shape — never hardcode the separator.
