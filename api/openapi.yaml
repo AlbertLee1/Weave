@@ -4826,6 +4826,18 @@ paths:
       tags: [Functions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          required: false
+          schema:
+            type: string
+          description: |
+            US-389: publish the row on the named ontology branch. Empty /
+            omitted normalises to "main". The query parameter is
+            authoritative when both ?branch= and the body's branchId field
+            are present. The (ontology, name, version, branchId) UNIQUE key
+            lets a branch publish its own version of an existing
+            name@version without colliding with main.
       requestBody:
         required: true
         content:
@@ -4843,8 +4855,8 @@ paths:
                   description: |
                     Semver string. Defaults to "1.0.0" when omitted (US-217).
                     Posting a name+version pair that already exists in the
-                    ontology returns 409 — new versions never overwrite older
-                    rows.
+                    ontology+branch returns 409 — new versions never
+                    overwrite older rows.
                   example: "1.0.0"
                 runtime:
                   type: string
@@ -4859,6 +4871,12 @@ paths:
                     result cache. Defaults to false.
                 createdBy:
                   type: string
+                branchId:
+                  type: string
+                  description: |
+                    US-389: ontology branch the row should land on. The
+                    ?branch= query parameter takes precedence when both are
+                    set; empty / omitted normalises to "main".
       responses:
         "201":
           description: Function created.

@@ -60,8 +60,10 @@ func (o *functionCallGraphRepoOverlay) GetFunctionByNameVersion(ctx context.Cont
 // CreateFunctionRequest is the request body for creating a function. Version
 // is an optional semver string (US-217); when omitted the handler defaults to
 // DefaultFunctionVersion ("1.0.0"). Posting a name+version pair that already
-// exists in the ontology returns 409 — new versions never overwrite older
-// rows.
+// exists in the ontology+branch returns 409 — new versions never overwrite
+// older rows. BranchID (US-389) names the ontology branch that owns the
+// published row; empty / omitted normalises to "main" and the body field is
+// superseded by an explicit ?branch= query parameter when both are present.
 type CreateFunctionRequest struct {
 	Name       string          `json:"name"`
 	SourceCode string          `json:"sourceCode"`
@@ -74,6 +76,7 @@ type CreateFunctionRequest struct {
 	// nothing caches by accident.
 	Pure      bool   `json:"pure,omitempty"`
 	CreatedBy string `json:"createdBy,omitempty"`
+	BranchID  string `json:"branchId,omitempty"`
 }
 
 // UpdateFunctionRequest is the request body for updating a function. Pointer
@@ -135,6 +138,17 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if version == "" {
 		version = DefaultFunctionVersion
 	}
+	// US-389: publish-time branch resolution. ?branch= query parameter is
+	// authoritative when present (matches the read path's WithBranchScope
+	// stamping); the body field is the legacy fallback for SDK callers that
+	// can't easily mutate the URL. Empty / "main" both normalise to the
+	// DefaultBranch sentinel so the row lands on trunk just like a pre-US-389
+	// publisher would have.
+	branchID := r.URL.Query().Get("branch")
+	if branchID == "" {
+		branchID = req.BranchID
+	}
+	branchID = NormalizeBranchID(branchID)
 	fn := &Function{
 		RID:         rid.NewFunctionRID(),
 		OntologyRID: ontologyRID,
@@ -145,6 +159,7 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		Signature:   req.Signature,
 		Pure:        req.Pure,
 		CreatedBy:   req.CreatedBy,
+		BranchID:    branchID,
 	}
 	if err := fn.Validate(); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:function", map[string]string{
@@ -154,7 +169,12 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 	fn.Runtime = fn.NormalisedRuntime()
 
-	if cycleErr := detectFunctionCallCycle(r.Context(), h.repo, ontologyRID, fn); cycleErr != nil {
+	// Stamp the branch onto ctx so the cycle detector resolves callees
+	// against the branch's overlay (a branch-scoped publish that introduces
+	// A→B should detect cycles using B's branch row when present, falling
+	// back to main otherwise — same routing as ExecuteFunction).
+	cycleCtx := WithBranchScope(r.Context(), branchID)
+	if cycleErr := detectFunctionCallCycle(cycleCtx, h.repo, ontologyRID, fn); cycleErr != nil {
 		var cyc *FunctionCallCycleError
 		if errors.As(cycleErr, &cyc) {
 			apierror.WriteJSON(w, apierror.NewFunctionCallCycle("FunctionCallCycle", map[string]string{
@@ -170,8 +190,9 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.CreateFunction(r.Context(), fn); err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			apierror.WriteJSON(w, apierror.NewConflict("FunctionAlreadyExists", map[string]string{
-				"name":    req.Name,
-				"version": fn.Version,
+				"name":     req.Name,
+				"version":  fn.Version,
+				"branchId": fn.BranchID,
 			}))
 			return
 		}
