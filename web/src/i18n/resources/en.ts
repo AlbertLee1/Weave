@@ -65,6 +65,11 @@ const en = {
     'zh-CN': '简体中文',
     en: 'English',
   },
+  branch: {
+    label: 'Ontology Branch',
+    default: 'default',
+    loading: 'Loading branches…',
+  },
   dashboardPage: {
     sectionOntologies: 'Ontologies',
     emptyTitle: 'No ontologies yet',

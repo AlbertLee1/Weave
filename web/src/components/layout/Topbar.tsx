@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router';
+import { useLocation, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { NotificationCenter } from '../common/NotificationCenter';
 import { LanguageSwitcher } from '../common/LanguageSwitcher';
+import { BranchPicker } from './BranchPicker';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
+import { useOntologyStore } from '../../stores/ontologyStore';
 
 const THEME_OPTION_VALUES: ReadonlyArray<ThemePreference> = ['light', 'dark', 'system'];
 
@@ -19,6 +21,11 @@ export function Topbar() {
   const breadcrumbs = pathToBreadcrumbs(location.pathname);
   const [panelOpen, setPanelOpen] = useState(false);
   const { t } = useTranslation();
+
+  const params = useParams();
+  const selectedOntology = useOntologyStore((s) => s.selectedOntology);
+  const activeOntology =
+    (params.ontology as string | undefined) ?? selectedOntology ?? null;
 
   const { data } = useNotifications({ unreadOnly: true });
   const unreadCount = useMemo(
@@ -78,6 +85,7 @@ export function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-1">
+        <BranchPicker ontologyApiName={activeOntology} />
         <div ref={themeMenuRef} className="relative">
           <button
             type="button"

@@ -72,6 +72,11 @@ const zhCN = {
     'zh-CN': '简体中文',
     en: 'English',
   },
+  branch: {
+    label: '本体分支',
+    default: '默认',
+    loading: '正在加载分支…',
+  },
   dashboardPage: {
     sectionOntologies: '本体',
     emptyTitle: '暂无本体',

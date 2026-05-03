@@ -493,3 +493,18 @@ export interface BranchDiffEntry {
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
 }
+
+// --- Ontology Branch (mirrors pkg/oms/models.go OntologyBranch) ---
+
+export interface OntologyBranch {
+  id: string;
+  ontologyRid: string;
+  name: string;
+  baseVersion: number;
+  parentBranchId?: string;
+  baseTx?: string;
+  status: 'open' | 'merged' | 'closed';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
