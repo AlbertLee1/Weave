@@ -48,3 +48,27 @@ type ObjectSnapshot struct {
 type TransactionResolver interface {
 	ResolveTransaction(ctx context.Context, txID string) (time.Time, error)
 }
+
+// ErrBranchNotFound is the sentinel a BranchScopeProvider returns when the
+// caller asked for a branch with no matching row. The handler maps it to a
+// BranchNotFound 400 envelope; any other error surfaces as
+// BranchScopeFailed so configuration mistakes stay visible.
+var ErrBranchNotFound = errors.New("ontology branch not found")
+
+// BranchScopeProvider rewrites a live ObjectSet result for a non-default
+// branch (US-381). The handler short-circuits and never calls the provider
+// for branch="main"; for any other branch the provider is consulted with
+// the executor's live PrimaryKeys and is expected to return the
+// authoritative replacement set visible on that branch. Implementations
+// may add branch-only PKs (objects written on the branch but absent from
+// main), drop branch-deleted PKs, or return a branch-scoped subset.
+//
+// Returning ErrBranchNotFound surfaces as BranchNotFound 400; any other
+// error becomes BranchScopeFailed.
+//
+// Kept as a narrow interface so pkg/oss/objectset does not depend on
+// pkg/oms for the OntologyBranch shape — cmd/server wires a thin adapter
+// when the durable branch overlay (US-383+) lands.
+type BranchScopeProvider interface {
+	ScopeObjectSet(ctx context.Context, branch, ontologyAPIName, objectTypeAPIName string, livePKs []string) ([]string, error)
+}

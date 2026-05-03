@@ -24,6 +24,7 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Pipeline incremental + schema-evolution (US-378) shares a fail-closed invariant: schema diff via `ResolveSchemaEvolution(prior, current)` MUST run BEFORE the source's `ReadAfter(ctx, after)` call. The runtime contract is "no side effects leak through a BREAKING_CHANGE": no read I/O, no sink schema extension, no row write. Future incremental connectors must seed their work through `pkg/pipeline/incremental.go::RunIncremental` so this ordering stays mechanically enforced. The `LatestCommittedOffset(ctx, pipelineID)` watermark filter is `status='success'` only — failed/canceled runs do NOT advance progress, otherwise a half-applied run could silently drop rows on the next APPEND. `pkg/pipeline/schema_evolution.go::typesEquivalent` is trim+case-insensitive for Type, case-sensitive on Name — schema sources frequently disagree on type casing without semantic difference, while column names ARE case-sensitive in most downstream stores.
 - Column-level lineage (US-377) is a SECOND lineage surface alongside US-300's `lineage_edges`. The `lineage_column_edges` table tracks `(src_dataset, src_column) → (dst_object_type, dst_property)` and is populated synchronously by the datasource-binding write path: `OMSHandler.deriveColumnLineageOnBindingChange` calls `DeriveColumnLineageEdges(binding, properties)` and atomically `ReplaceColumnLineageForBinding`. Replace-by-binding (NOT append-only) is the canonical write semantics so a binding update that DROPS a property yields zero edges for it immediately. The `ColumnLineageStore` interface lives in `pkg/oms` (matching the `LineageStore` shape — narrow, off the main `Repository` interface so degraded-mode test routers don't have to cascade-stub it). `DeriveColumnLineageEdges` accepts BOTH wire shapes for `column_mapping` JSON: flat object `{propertyApiName: column}` AND array form `[{property, column}]` with `p`/`c` short-key alternates. Output is sorted lexicographically by (api_name, src_column) so identical mapping payloads produce identical edge sets modulo ts — useful for change-detection. Handler routes `GET /api/v2/lineage/property/{rid}` + `GET /api/v2/lineage/dataset-columns/impact?dataset=...&column=...` are mounted unconditionally on the lineage handler (404 ColumnLineageNotConfigured in degraded mode); both must appear in `api/openapi.yaml` AND `cmd/server/openapi_spec.yaml` because the contract test walks chi routes regardless of store wiring. Note: `datasource_bindings` admin routes were stripped in US-006 so the hook fires only via direct handler invocation today; the wiring is ready when admin routes return.
 - Time-travel asOf (US-379 extends US-223): the OSS load handler's `?asOf=` query parameter now accepts TWO wire formats — RFC3339 timestamp (US-223 default) and `tx-<id>` reference into `dataset_transactions` (US-379). Branching lives in `pkg/oss/objectset/handler.go::resolveAsOf(ctx, raw)`; the `"tx-"` prefix routes to the wired `TransactionResolver` which translates to a `committed_at` instant, then both branches converge on `loadObjectsAsOf(time.Time)`. Resolver + history snapshot provider are intentionally orthogonal hooks — degraded-mode routers can wire one without the other. New asOf flavors (e.g. `branch:` refs) plug in as new prefix arms with zero changes downstream. The funnel consumer's `recordDatasetTransaction` lands one row per applied EditBatch with `parent_tx_id` resolved via `LatestForOntology(batch.OntologyAPIName)` — the chain is per-ontology, NOT per-ObjectType. `ON CONFLICT (tx_id) DO NOTHING` handles NATS at-least-once redelivery so a duplicate batch is silently deduped on the chain. `EditBatch.ID` is normalised via `strings.HasPrefix(id, "tx-")` and conditionally prepended; legacy publishers that emit raw uuids are still safe. The `tx_id` column on `object_history` is populated for future collision-disambiguation but the snapshot scan still uses `[valid_from, valid_to)` half-open intervals — same-instant batches fall back to "latest wins" until a future US wires tx-aware snapshot reads.
+- ObjectSet branch overlay (US-381): `?branch=<name>` rides on the same query string as `?asOf=`. Parsing happens in `pkg/oss/objectset/handler.go::resolveBranch` BEFORE the asOf branch fires so a non-main branch with no provider wired surfaces a clean `BranchLookupUnavailable` 400 instead of cascading into the asOf failure mode. `WithBranchScope(ctx, branch)` / `BranchScopeFromContext(ctx)` in `pkg/oss/objectset/scope.go` are the per-request context channel — `DefaultBranch = "main"` is a no-op on stamping AND the read-side default, so callers don't need nil/empty guards. The `BranchScopeProvider.ScopeObjectSet` hook receives the executor's live PrimaryKeys and returns the authoritative replacement set visible on the branch — branch-only adds, deletions, and substitutions all flow through one entry point. The provider is NEVER consulted for the default branch (legacy behaviour stays byte-for-byte identical). `ErrBranchNotFound` → `BranchNotFound` 400; everything else → `BranchScopeFailed` 400. The asOf path applies the provider as an INTERSECT-only post-filter (the existing `HistorySnapshotProvider` interface returns per-PK `Properties` and can't materialise rows that don't exist in `object_history`); branch-aware history reads are a US-383+ concern when the durable overlay actually exists. The 128-char branch identifier cap mirrors the OMS `OntologyBranch.Name` schema bound — keep these in sync if a future US widens one.
 - WebSocket subscription cursor + replay (US-380): `pkg/subscriptions.EventLog` is the Hub-owned sliding-window replay buffer. Every `HandleObjectChange` and `HandleActionJobProgress` first calls `eventLog.Append` UNDER hub.mu and stamps the assigned monotonic cursor on the outbound `Message.Cursor` field. The lock ordering (append + index read in one critical section) guarantees that a subscription registered at hub.mu cannot miss an event whose cursor ≤ snapshot-time-latest AND will receive every live event with cursor > snapshot-time-latest. Aggregation events are NOT logged — they are derived per-subscription state and reseed via Bleve at subscribe time. Reconnect protocol: `?since=<cursor>` is parsed BEFORE `websocket.Accept` so a malformed value can be coerced to 0 ("no replay"). The welcome envelope carries `lastEventId = eventLog.LatestID()`. If `since < earliestLive` OR `since > latest` the connection-level `onOutOfDate` (no SubscriptionID) fires immediately and `replayCursor` is set to -1 to disarm per-subscription replay. Otherwise each subscribe handler — `handleSubscribe` / `handleSubscribeObjectSet` / `handleSubscribeActionJob` — drops the `defer Unlock` pattern in favour of explicit locks so it can register the subscription, release locks, then drain `replayObjectSubscription` / `replayActionJobSubscription` onto `c.send`. Because the routing index is updated under the same hub.mu critical section as the snapshot read, there's no overlap between replayed events (id ≤ snapshot.maxID) and live events (id > snapshot.maxID). Pattern: when adding new event kinds that need replay support, give them a new `EventLogEntry.Kind` discriminator + a marshaller method on the entry, then thread them through the replay drain alongside the existing `objectChange` / `actionJobProgress` arms.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
@@ -1071,4 +1072,192 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
   production code cannot accidentally drive it; tests in the same
   package retain access. Existing US-133/308 tests follow the same
   convention with `Connection.nowFunc` for rate-limit windows.
+---
+
+## 2026-05-03 - US-381 - ObjectSet asOf / branch 参数
+
+**Implementation:**
+- `pkg/oss/objectset/scope.go` adds the `DefaultBranch = "main"` constant
+  plus the `WithBranchScope(ctx, branch)` / `BranchScopeFromContext(ctx)`
+  helpers. Empty input AND `DefaultBranch` are no-ops on the stamp side
+  so the legacy main-only path stays free of context churn; the read
+  side returns `DefaultBranch` when no scope was set so call sites can
+  treat the value as authoritative without nil/empty guards. Mirrors the
+  US-044 ontology-scope pattern (`WithOntologyScope` + private
+  `branchScopeKey{}` struct).
+- `pkg/oss/objectset/snapshot.go` declares the new
+  `BranchScopeProvider` interface — `ScopeObjectSet(ctx, branch,
+  ontologyAPIName, objectTypeAPIName, livePKs) ([]string, error)` —
+  plus the `ErrBranchNotFound` sentinel. The handler short-circuits
+  and never calls the provider for `branch="main"`; for any other
+  branch the provider is consulted with the executor's live
+  PrimaryKeys and is expected to return the authoritative replacement
+  set visible on that branch. Implementations may add branch-only
+  PKs, drop branch-deleted PKs, or return arbitrary substitutions.
+- `pkg/oss/objectset/handler.go` extends `Handler` with
+  `branchScopes BranchScopeProvider` plus the matching
+  `SetBranchScopeProvider` setter (mirrors `SetTransactionResolver`
+  shape). `LoadObjects` parses `?branch=` BEFORE the asOf branch
+  fires, stamps it on `ctx`, and gates non-default branches on a
+  wired provider — non-main + nil provider → 400
+  `BranchLookupUnavailable` (NOT a silent fall-through to main, which
+  would let a UI mistakenly think its branch view succeeded).
+- `resolveBranch(raw)` is the new query-string normaliser: empty value
+  → `DefaultBranch` (preserves pre-US-381 behaviour); whitespace at
+  either end → `InvalidBranch` 400 (no silent trim — branch
+  identifiers are user-visible labels and a stray space almost
+  always indicates a client bug); identifiers > 128 chars →
+  `InvalidBranch` 400 (keeps audit log lines bounded).
+- `branchScopeError(branch, err)` is the chokepoint for provider
+  → APIError translation: `ErrBranchNotFound` → `BranchNotFound`
+  400; everything else → `BranchScopeFailed` 400 (the same envelope
+  shape as US-379's `TimeTravelFailed`).
+- Live path (post-Execute): when `branch != DefaultBranch`,
+  `result.PrimaryKeys = h.branchScopes.ScopeObjectSet(...)`. The
+  rewrite happens before pagination/Bleve fetch so branch-only
+  PKs that have no Bleve presence flow through cleanly (the
+  existing `if err != nil || len(res.Hits) == 0 { continue }`
+  guard silently drops them). totalCount reflects the provider's
+  authoritative verdict.
+- asOf path: snapshot results are post-filtered by intersecting
+  against the provider's authoritative set when `branch !=
+  DefaultBranch`. Branch deletions / substitutions surface as a
+  reduced response; branch-only adds the snapshot lacks are
+  silently dropped (the asOf history scan can't materialise
+  rows that don't exist in `object_history`). The wire example
+  `?branch=feature-x&asOf=tx-123` from the PRD is fully covered.
+- 14 new tests in `pkg/oss/objectset/handler_branch_us381_test.go`
+  drive every branch of the wiring (live path, asOf path, default
+  main, explicit main, missing provider, present provider, error
+  sentinels, validation, context helper round-trip).
+
+**Files changed:**
+- `pkg/oss/objectset/scope.go` (DefaultBranch constant +
+  WithBranchScope / BranchScopeFromContext helpers + private
+  branchScopeKey)
+- `pkg/oss/objectset/snapshot.go` (BranchScopeProvider interface +
+  ErrBranchNotFound sentinel)
+- `pkg/oss/objectset/handler.go` (Handler.branchScopes field +
+  SetBranchScopeProvider setter + LoadObjects branch parse / scope
+  wiring + loadObjectsAsOf branch post-filter + resolveBranch +
+  branchScopeError helpers)
+- `pkg/oss/objectset/handler_branch_us381_test.go` (new — 14 tests)
+- `prd.json` (mark US-381 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test -short -count=1 ./...` PASS across the full suite
+  (cmd/server, all pkg/* incl. oms, oss, oss/objectset, subscriptions,
+  test/e2e, test/foundry_parity, test/northwind 2:38, test/chinook 3:54).
+  0 FAIL.
+- 14/14 new US-381 tests in `handler_branch_us381_test.go` pass:
+  - `TestBranchScope_DefaultsToMain` — no `?branch=` → provider not
+    consulted, totalCount=2 from live executor
+  - `TestBranchScope_ExplicitMainBypassesProvider` — `?branch=main`
+    + provider that would replace if consulted → still skipped,
+    totalCount=2
+  - `TestBranchScope_NonMainWithoutProviderReturnsLookupUnavailable`
+    — non-main + nil provider → 400 BranchLookupUnavailable
+  - `TestBranchScope_NonMainWithProviderRoutesScopedPKs` — provider
+    receives livePKs [e1, e2] + ctx-stamped branch; returns [e1] →
+    response totalCount=1, only e1 surfaces
+  - `TestBranchScope_BranchOnlyAdditionsAreSurfacedAsPKs` — provider
+    returns 3 PKs incl. branch-only e3-branch-only with no Bleve
+    presence → totalCount=3, data=[e1, e2] (e3 silently dropped at
+    Bleve fetch)
+  - `TestBranchScope_E2E_BranchWritesAreInvisibleOnMain` —
+    **PRD acceptance gate**: same handler / two requests; `branch=
+    feature-x` totalCount=3 (overlay surfaces branch-only); empty
+    `?branch=` AND `?branch=main` both totalCount=2 (main does NOT
+    see branch-only); provider consulted exactly once
+  - `TestBranchScope_BranchNotFoundFromProvider` — `notFound[branch]`
+    returns ErrBranchNotFound → 400 BranchNotFound (NOT
+    BranchScopeFailed)
+  - `TestBranchScope_PropagatesProviderError` — generic error →
+    400 BranchScopeFailed with the underlying error in
+    `parameters.error`
+  - `TestBranchScope_RejectsWhitespaceBranch` — `?branch=%20feature
+    -x%20` → 400 InvalidBranch (no silent trim)
+  - `TestBranchScope_RejectsOverlongBranch` — 200-char branch →
+    400 InvalidBranch (128-char audit-log bound)
+  - `TestBranchScope_AsOf_BranchPostFiltersSnapshots` —
+    `?branch=feature-x&asOf=2026-01-15T00:00:00Z` (the PRD wire
+    example): snapshot returns 3 PKs; provider returns 2; intersect
+    yields 2; data PKs = [emp-1, emp-3]
+  - `TestBranchScope_AsOf_DefaultMainSkipsBranchProvider` — asOf
+    + no branch param → provider not consulted, totalCount=2
+  - `TestBranchScope_AsOf_NonMainWithoutProviderReturnsLookupUnavailable`
+    — asOf + non-main + nil provider → 400 BranchLookupUnavailable
+    (history snapshot provider NOT called)
+  - `TestBranchScope_ContextHelpers` — WithBranchScope / FromContext
+    round-trip (empty → "main", "main" → "main", "feature-x" →
+    "feature-x", subsequent empty stamp is no-op)
+- `gofmt -l ./pkg/oss/objectset/` clean
+
+**Learnings for future iterations:**
+- The branch parameter MUST be parsed and gated BEFORE the asOf
+  branch fires. If asOf is processed first and then a non-main
+  branch with a missing provider falls through to TimeTravelFailed,
+  the wire envelope misleads SDK clients about which configuration
+  is broken. The ordering is therefore: ontology scope stamp →
+  branch resolve + scope stamp → branch-availability gate →
+  asOf branch. Pattern: when adding new query parameters that
+  map to optional service hooks, parse + validate them ALL in a
+  single header section so the gate-on-availability checks happen
+  before any expensive dispatch.
+- `WithBranchScope(ctx, "main")` is intentionally a no-op so
+  legacy callers that always stamp the default still produce a
+  context indistinguishable from one that never stamped at all.
+  This keeps `BranchScopeFromContext` honest about its
+  default-return contract: the only way to put a non-default
+  branch onto ctx is to actually call the helper with that
+  non-default value. If a future US needs to know "did the caller
+  explicitly opt into main vs simply omit the parameter", that
+  distinction belongs in a separate channel (e.g. a header flag),
+  not in the scope helper.
+- The asOf branch-scope filter is INTERSECT-only because the
+  existing US-223 `HistorySnapshotProvider` interface returns
+  per-PK `Properties`. A provider that wanted to surface
+  branch-only adds in time-travel reads would need to either
+  (a) return the branch-aware snapshot directly (interface
+  change) or (b) be wired alongside a branch-aware property
+  fetcher. US-381 deliberately ships the simpler post-filter so
+  the existing PG-less degraded mode keeps working; the
+  branch-aware snapshot is a US-383+ concern when the durable
+  branch overlay actually exists.
+- `BranchScopeProvider.ScopeObjectSet` is intentionally NOT
+  responsible for fetching property data for branch-only PKs —
+  the handler still routes through the existing Bleve fetch /
+  asOf snapshot pipeline. This means branch-only PKs that
+  appear in the response's totalCount may be absent from data
+  (Bleve hit fails). Tests assert this is the contract
+  (`TestBranchScope_BranchOnlyAdditionsAreSurfacedAsPKs`). When
+  US-383+ wires real branch storage, the natural extension is
+  to add a sibling interface like `BranchPropertyResolver`
+  rather than overloading ScopeObjectSet — keep the responsibilities
+  narrow.
+- The 128-char branch-identifier cap mirrors the OMS
+  `OntologyBranch.Name` schema bound (the existing
+  `pkg/oms/handlers_branch.go` uses 128 implicitly via the SQL
+  schema). Keep these in sync — if a future US widens one, widen
+  the other in the same change so SDK clients don't accept
+  identifiers the schema-branch path will reject.
+- `Handler.branchScopes` is a plain field rather than a
+  constructor argument — same pattern as `historySnapshots`
+  and `txResolver`. The cmd/server side wires it via
+  `objSetHandler.SetBranchScopeProvider(...)` once the actual
+  branch storage lands (US-383+); until then the handler runs
+  branch-naive and any non-main branch correctly returns
+  BranchLookupUnavailable. No cmd/server changes required for
+  US-381 — the wiring point exists, the storage doesn't.
+- Test pattern: the fake `BranchScopeProvider` records both the
+  branch + ontology + objectType + livePKs of every call AND
+  the `BranchScopeFromContext(ctx)` value the handler stamped.
+  This dual recording proves both the API surface (the explicit
+  parameters match the request) AND the context propagation
+  (downstream HistorySnapshotProvider implementations can opt
+  into branch-aware reads via context.Value). The
+  `lastContext` field on the fake is the canonical assertion
+  point.
 ---

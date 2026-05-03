@@ -94,6 +94,7 @@ type Handler struct {
 	propertyFilter     PropertyFilterProvider
 	historySnapshots   HistorySnapshotProvider
 	txResolver         TransactionResolver
+	branchScopes       BranchScopeProvider
 	persistedSnapshots PersistedSnapshotStore
 	dataAccessAuditor  DataAccessAuditor
 }
@@ -146,6 +147,18 @@ func (h *Handler) SetHistorySnapshotProvider(p HistorySnapshotProvider) {
 // resolver wired.
 func (h *Handler) SetTransactionResolver(r TransactionResolver) {
 	h.txResolver = r
+}
+
+// SetBranchScopeProvider wires the optional US-381 branch overlay. When
+// attached, LoadObjects honours `?branch=<name>` by routing the live
+// executor result through the provider, which returns the PK set visible
+// on that branch (branch-only additions plus base PKs minus branch
+// deletions). Passing nil detaches the hook — non-default branches then
+// surface as BranchLookupUnavailable 400. The default branch ("main") is
+// never sent to the provider; that path stays byte-for-byte identical to
+// the pre-US-381 behaviour.
+func (h *Handler) SetBranchScopeProvider(p BranchScopeProvider) {
+	h.branchScopes = p
 }
 
 // applyPropertyVisibility is the Handler-side chokepoint that US-048
@@ -213,6 +226,27 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	ctx := WithOntologyScope(r.Context(), ontologyAPIName)
 
+	// US-381: ?branch= scopes the read to a non-default branch overlay. The
+	// parameter defaults to DefaultBranch ("main"); any other value is
+	// stamped on the context (so HistorySnapshotProvider implementations
+	// can opt into branch-aware reads) and routed through the wired
+	// BranchScopeProvider on the live path. With no provider wired the
+	// non-main path returns BranchLookupUnavailable 400 instead of
+	// silently degrading to the main branch.
+	branch, apiErr := resolveBranch(r.URL.Query().Get("branch"))
+	if apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+	ctx = WithBranchScope(ctx, branch)
+	if branch != DefaultBranch && h.branchScopes == nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("BranchLookupUnavailable", map[string]string{
+			"branch": branch,
+			"reason": "branch scope provider is not configured on this server",
+		}))
+		return
+	}
+
 	// US-223 / US-379: ?asOf= short-circuits to the time-travel path. The
 	// parameter accepts either an RFC3339 timestamp (US-223) or a
 	// "tx-<id>" reference into dataset_transactions (US-379) which the
@@ -236,6 +270,20 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apierror.WriteJSON(w, executeError(err))
 		return
+	}
+
+	// US-381: rewrite the executor's PrimaryKeys for non-default branches.
+	// The provider returns the authoritative PK set visible on the branch;
+	// branch-only adds, branch-deletions, and branch-substitutions all
+	// flow through the same hook so the rest of the load pipeline stays
+	// branch-oblivious.
+	if branch != DefaultBranch {
+		scoped, scopeErr := h.branchScopes.ScopeObjectSet(ctx, branch, ontologyAPIName, result.ObjectType, result.PrimaryKeys)
+		if scopeErr != nil {
+			apierror.WriteJSON(w, branchScopeError(branch, scopeErr))
+			return
+		}
+		result.PrimaryKeys = scoped
 	}
 
 	// Apply pagination
@@ -356,6 +404,50 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
+// resolveBranch normalises the ?branch= query parameter (US-381). An empty
+// or whitespace-only value resolves to DefaultBranch ("main") so callers
+// that omit the parameter keep their pre-US-381 behaviour. A non-empty
+// value with leading/trailing whitespace is rejected as InvalidBranch
+// rather than silently trimmed — branch identifiers are user-visible
+// labels and a stray space almost always indicates a client bug. Length
+// is capped at 128 chars to keep audit log lines bounded; matches the
+// same defensive bound the OMS branch model enforces.
+func resolveBranch(raw string) (string, *apierror.APIError) {
+	if raw == "" {
+		return DefaultBranch, nil
+	}
+	if strings.TrimSpace(raw) != raw {
+		return "", apierror.NewInvalidParameter("InvalidBranch", map[string]string{
+			"branch": raw,
+			"reason": "branch must not contain leading or trailing whitespace",
+		})
+	}
+	if len(raw) > 128 {
+		return "", apierror.NewInvalidParameter("InvalidBranch", map[string]string{
+			"branch": raw,
+			"reason": "branch identifier exceeds 128 characters",
+		})
+	}
+	return raw, nil
+}
+
+// branchScopeError maps a BranchScopeProvider error to a typed APIError.
+// ErrBranchNotFound surfaces as a clean BranchNotFound 400; every other
+// error becomes BranchScopeFailed so configuration mistakes stay visible
+// without exposing the specific 404 code to SDK callers.
+func branchScopeError(branch string, err error) *apierror.APIError {
+	if errors.Is(err, ErrBranchNotFound) {
+		return apierror.NewInvalidParameter("BranchNotFound", map[string]string{
+			"branch": branch,
+			"reason": "no ontology branch with this name",
+		})
+	}
+	return apierror.NewInvalidParameter("BranchScopeFailed", map[string]string{
+		"branch": branch,
+		"error":  err.Error(),
+	})
+}
+
 // resolveAsOf normalises the ?asOf= query parameter into the timestamp
 // the history-snapshot scan should target. The parameter accepts two wire
 // formats:
@@ -437,6 +529,39 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 			"error": err.Error(),
 		}))
 		return
+	}
+
+	// US-381: when the request also carries `?branch=`, post-filter the
+	// snapshot list through the wired BranchScopeProvider so branch
+	// overlays remain visible even on time-travel reads. The provider
+	// receives the snapshot PKs as the live set; branch deletions /
+	// substitutions are honoured by intersecting against the returned
+	// authoritative set. Branch-only adds that the snapshot path can't
+	// produce (the provider would emit PKs not present in snapshots) are
+	// silently dropped here — the caller only sees rows the history scan
+	// already materialised. The default-branch path skips this hook.
+	branch := BranchScopeFromContext(ctx)
+	if branch != DefaultBranch && h.branchScopes != nil {
+		livePKs := make([]string, len(snapshots))
+		for i, snap := range snapshots {
+			livePKs[i] = snap.PrimaryKey
+		}
+		scoped, scopeErr := h.branchScopes.ScopeObjectSet(ctx, branch, ontologyAPIName, req.ObjectSet.ObjectType, livePKs)
+		if scopeErr != nil {
+			apierror.WriteJSON(w, branchScopeError(branch, scopeErr))
+			return
+		}
+		allowed := make(map[string]struct{}, len(scoped))
+		for _, pk := range scoped {
+			allowed[pk] = struct{}{}
+		}
+		filtered := snapshots[:0]
+		for _, snap := range snapshots {
+			if _, ok := allowed[snap.PrimaryKey]; ok {
+				filtered = append(filtered, snap)
+			}
+		}
+		snapshots = filtered
 	}
 
 	// Sort PKs ASC for stable pagination. The live path inherits Bleve's

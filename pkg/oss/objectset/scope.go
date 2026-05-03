@@ -27,3 +27,34 @@ func scopedIndexKey(ctx context.Context, mgr *index.Manager, objectType string) 
 func OntologyScopeFromContextOrEmpty(ctx context.Context) string {
 	return index.OntologyScopeFromContext(ctx)
 }
+
+// DefaultBranch is the canonical "main" branch name used when ?branch= is
+// omitted from a LoadObjectSet request (US-381). All read paths that have
+// not been explicitly opted into a branch overlay should resolve to this
+// constant so the data plane stays in lockstep with the schema-branch
+// machinery in pkg/oms.
+const DefaultBranch = "main"
+
+type branchScopeKey struct{}
+
+// WithBranchScope stamps the requested branch onto ctx so the executor,
+// HistorySnapshotProvider, and BranchScopeProvider implementations downstream
+// can opt into branch-aware behaviour without an extra parameter on every
+// call. Empty input or DefaultBranch is a no-op so the legacy main-only path
+// stays free of context churn.
+func WithBranchScope(ctx context.Context, branch string) context.Context {
+	if branch == "" || branch == DefaultBranch {
+		return ctx
+	}
+	return context.WithValue(ctx, branchScopeKey{}, branch)
+}
+
+// BranchScopeFromContext returns the branch stamped via WithBranchScope.
+// Returns DefaultBranch ("main") when no branch was set so call sites can
+// treat the value as authoritative without nil/empty guards.
+func BranchScopeFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(branchScopeKey{}).(string); ok && v != "" {
+		return v
+	}
+	return DefaultBranch
+}
