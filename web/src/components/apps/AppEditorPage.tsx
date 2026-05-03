@@ -9,6 +9,9 @@ import {
   type AppVariable,
   type AppVariableType,
 } from '../../api/apps';
+import { applyAction } from '../../api/actions';
+import type { ActionResults } from '../../api/types';
+import { useOntologyStore } from '../../stores/ontologyStore';
 import {
   COMPONENT_TYPES,
   INSTANCE_DND_MIME,
@@ -312,6 +315,8 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const canAddMore = instances.length < MAX_COLUMNS;
   const isPreview = mode === 'preview';
 
+  const selectedOntology = useOntologyStore((s) => s.selectedOntology);
+
   const handleRuntimeEvent = useCallback(
     async (event: AppEvent) => {
       try {
@@ -322,12 +327,36 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
           navigate: (to) => {
             setRuntimeMessage(`navigate → ${to}`);
           },
-          runAction: (actionType, params) => {
-            const summary =
-              Object.keys(params).length > 0
-                ? `runAction ${actionType}(${JSON.stringify(params)})`
-                : `runAction ${actionType}`;
-            setRuntimeMessage(summary);
+          // US-394: in preview mode runAction goes through the live
+          // /api/v2/ontologies/{ontology}/actions/{action}/apply
+          // endpoint and surfaces its edit counts (or error) in the
+          // existing runtime message strip — that's the "toast" the AC
+          // calls for. The ontology comes from the global ontology
+          // store; preview from a page that hasn't selected one shows a
+          // clear hint instead of POSTing to a `null` ontology.
+          runAction: async (actionType, params) => {
+            if (!actionType) {
+              setRuntimeMessage('runAction: no ActionType configured');
+              return;
+            }
+            if (!selectedOntology) {
+              setRuntimeMessage(
+                `runAction ${actionType} → no ontology selected`,
+              );
+              return;
+            }
+            try {
+              const resp = await applyAction(selectedOntology, actionType, {
+                parameters: params,
+              });
+              setRuntimeMessage(formatRunActionResult(actionType, resp.edits));
+            } catch (err) {
+              setRuntimeMessage(
+                err instanceof Error
+                  ? `runAction ${actionType} → error: ${err.message}`
+                  : `runAction ${actionType} → error`,
+              );
+            }
           },
         });
       } catch (err) {
@@ -336,7 +365,7 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
         );
       }
     },
-    [variables, runtimeState],
+    [variables, runtimeState, selectedOntology],
   );
 
   return (
@@ -997,17 +1026,7 @@ function EventsEditor({ instance, variables, onSetOnClick }: EventsEditorProps) 
         </div>
       )}
       {onClick?.kind === 'runAction' && (
-        <input
-          type="text"
-          aria-label="runAction ActionType"
-          data-testid="app-event-onclick-runaction-actiontype"
-          value={onClick.actionType}
-          onChange={(e) =>
-            updateOnClick({ ...onClick, actionType: e.target.value })
-          }
-          placeholder="action API name"
-          className="px-2 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary font-mono"
-        />
+        <RunActionEditor event={onClick} onChange={updateOnClick} />
       )}
       {onClick?.kind === 'navigate' && (
         <input
@@ -1019,6 +1038,145 @@ function EventsEditor({ instance, variables, onSetOnClick }: EventsEditorProps) 
           placeholder="/path/{{var}}"
           className="px-2 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary font-mono"
         />
+      )}
+    </div>
+  );
+}
+
+interface RunActionEditorProps {
+  event: Extract<AppEvent, { kind: 'runAction' }>;
+  onChange: (next: AppEvent) => void;
+}
+
+// US-394: per-Button parameter mapping. Each row is a (paramName, value)
+// pair where the value supports `{{var}}` template substitution against
+// the runtime variable state. The wire shape on the event is
+// `params: Record<string, string>`; we materialise it as an ordered
+// array client-side so the row order is stable across edits and so an
+// empty-key row doesn't collide with another empty-key row.
+function RunActionEditor({ event, onChange }: RunActionEditorProps) {
+  const paramEntries = useMemo(
+    () => Object.entries(event.params ?? {}),
+    [event.params],
+  );
+
+  const writeEntries = useCallback(
+    (next: Array<[string, string]>) => {
+      const out: Record<string, string> = {};
+      for (const [k, v] of next) out[k] = v;
+      onChange({ ...event, params: out });
+    },
+    [event, onChange],
+  );
+
+  const setKey = useCallback(
+    (idx: number, key: string) => {
+      const next = paramEntries.map<[string, string]>(([k, v], i) =>
+        i === idx ? [key, v] : [k, v],
+      );
+      writeEntries(next);
+    },
+    [paramEntries, writeEntries],
+  );
+
+  const setValue = useCallback(
+    (idx: number, value: string) => {
+      const next = paramEntries.map<[string, string]>(([k, v], i) =>
+        i === idx ? [k, value] : [k, v],
+      );
+      writeEntries(next);
+    },
+    [paramEntries, writeEntries],
+  );
+
+  const addParam = useCallback(() => {
+    let candidate = '';
+    let n = paramEntries.length;
+    const taken = new Set(paramEntries.map(([k]) => k));
+    while (taken.has(candidate)) {
+      n += 1;
+      candidate = `param${n}`;
+    }
+    writeEntries([...paramEntries, [candidate, '']]);
+  }, [paramEntries, writeEntries]);
+
+  const removeParam = useCallback(
+    (idx: number) => {
+      const next = paramEntries.filter((_, i) => i !== idx);
+      writeEntries(next);
+    },
+    [paramEntries, writeEntries],
+  );
+
+  return (
+    <div className="flex flex-col gap-1">
+      <input
+        type="text"
+        aria-label="runAction ActionType"
+        data-testid="app-event-onclick-runaction-actiontype"
+        value={event.actionType}
+        onChange={(e) => onChange({ ...event, actionType: e.target.value })}
+        placeholder="action API name"
+        className="px-2 py-0.5 rounded border border-border bg-bg-primary text-xs text-text-primary font-mono"
+      />
+      <div className="flex items-center justify-between mt-1">
+        <span className="text-[10px] uppercase tracking-wide text-text-secondary">
+          Parameter Mapping
+        </span>
+        <button
+          type="button"
+          data-testid="app-event-onclick-runaction-add-param"
+          onClick={addParam}
+          className="text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-primary text-text-primary hover:border-accent-primary"
+        >
+          + Add
+        </button>
+      </div>
+      {paramEntries.length === 0 ? (
+        <p
+          data-testid="app-event-onclick-runaction-params-empty"
+          className="text-[10px] text-text-secondary italic"
+        >
+          No params. Map ActionType inputs to variables via {'{{varName}}'}.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {paramEntries.map(([key, value], idx) => (
+            <li
+              key={idx}
+              data-testid={`app-event-onclick-runaction-param-row-${idx}`}
+              className="flex items-center gap-1"
+            >
+              <input
+                type="text"
+                aria-label={`Parameter name ${idx + 1}`}
+                data-testid={`app-event-onclick-runaction-param-key-${idx}`}
+                value={key}
+                onChange={(e) => setKey(idx, e.target.value)}
+                placeholder="paramName"
+                className="flex-1 px-1.5 py-0.5 rounded border border-border bg-bg-primary text-[11px] text-text-primary font-mono"
+              />
+              <input
+                type="text"
+                aria-label={`Parameter value ${idx + 1}`}
+                data-testid={`app-event-onclick-runaction-param-value-${idx}`}
+                value={value}
+                onChange={(e) => setValue(idx, e.target.value)}
+                placeholder="{{var}} or literal"
+                className="flex-1 px-1.5 py-0.5 rounded border border-border bg-bg-primary text-[11px] text-text-primary font-mono"
+              />
+              <button
+                type="button"
+                data-testid={`app-event-onclick-runaction-param-remove-${idx}`}
+                aria-label={`Remove parameter ${idx + 1}`}
+                onClick={() => removeParam(idx)}
+                className="text-text-secondary hover:text-accent-error text-xs px-1"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -1360,6 +1518,29 @@ interface PropFieldProps {
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
+}
+
+// formatRunActionResult renders an ActionResults envelope as a one-line
+// summary suitable for the runtime message strip. Only non-zero counts
+// are included so the typical "1 edit" call doesn't drag along five
+// trailing zeros. When the server returned no edits envelope at all
+// (validate-only / no-edits action), the summary collapses to a bare
+// "ok".
+function formatRunActionResult(
+  actionType: string,
+  edits: ActionResults | undefined,
+): string {
+  const segments: string[] = [];
+  if (edits) {
+    if (edits.addedObjectCount) segments.push(`+${edits.addedObjectCount}`);
+    if (edits.modifiedObjectCount) segments.push(`~${edits.modifiedObjectCount}`);
+    if (edits.deletedObjectCount) segments.push(`-${edits.deletedObjectCount}`);
+    if (edits.addedLinksCount) segments.push(`+${edits.addedLinksCount} links`);
+    if (edits.deletedLinksCount)
+      segments.push(`-${edits.deletedLinksCount} links`);
+  }
+  const summary = segments.length === 0 ? 'ok' : segments.join(' ');
+  return `runAction ${actionType} → ${summary}`;
 }
 
 function PropField({

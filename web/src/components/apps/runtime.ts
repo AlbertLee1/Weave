@@ -31,7 +31,10 @@ export interface RuntimeContext {
   state: VariableState;
   setState: React.Dispatch<React.SetStateAction<VariableState>>;
   navigate: (to: string) => void;
-  runAction: (actionType: string, params: Record<string, unknown>) => Promise<void> | void;
+  runAction: (
+    actionType: string,
+    params: Record<string, unknown>,
+  ) => Promise<void> | void;
 }
 
 // dispatchEvent applies a single onClick action against the runtime
