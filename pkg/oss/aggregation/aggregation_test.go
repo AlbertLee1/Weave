@@ -767,7 +767,7 @@ func TestAggregate_NoAggregations(t *testing.T) {
 	}
 }
 
-// --- Accuracy and ComputeUsage (26) ---
+// --- Accuracy and ComputeUsage (26 + US-382) ---
 
 func TestAggregate_AccuracyAndComputeUsage(t *testing.T) {
 	idx := setupAggIndex(t)
@@ -785,8 +785,19 @@ func TestAggregate_AccuracyAndComputeUsage(t *testing.T) {
 	if resp.Accuracy != "ACCURATE" {
 		t.Errorf("expected accuracy 'ACCURATE', got %q", resp.Accuracy)
 	}
-	if resp.ComputeUsage != 4.0 {
-		t.Errorf("expected computeUsage 4.0, got %v", resp.ComputeUsage)
+	if resp.ComputeUsage == nil {
+		t.Fatalf("expected computeUsage to be populated, got nil")
+	}
+	// scannedRows must equal the index doc count visible to the base query.
+	docCount, _ := idx.DocCount()
+	if resp.ComputeUsage.ScannedRows != int64(docCount) {
+		t.Errorf("expected computeUsage.scannedRows %d, got %d", docCount, resp.ComputeUsage.ScannedRows)
+	}
+	if resp.ComputeUsage.DurationMs < 0 {
+		t.Errorf("expected non-negative durationMs, got %d", resp.ComputeUsage.DurationMs)
+	}
+	if resp.ComputeUsage.Accuracy != resp.Accuracy {
+		t.Errorf("expected computeUsage.accuracy to mirror top-level accuracy %q, got %q", resp.Accuracy, resp.ComputeUsage.Accuracy)
 	}
 
 	// Verify it appears in JSON output
@@ -801,8 +812,18 @@ func TestAggregate_AccuracyAndComputeUsage(t *testing.T) {
 	if decoded["accuracy"] != "ACCURATE" {
 		t.Errorf("expected accuracy 'ACCURATE' in JSON, got %v", decoded["accuracy"])
 	}
-	if decoded["computeUsage"].(float64) != 4.0 {
-		t.Errorf("expected computeUsage 4.0 in JSON, got %v", decoded["computeUsage"])
+	cu, ok := decoded["computeUsage"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected computeUsage to be a JSON object, got %T (%v)", decoded["computeUsage"], decoded["computeUsage"])
+	}
+	if cu["scannedRows"].(float64) != float64(docCount) {
+		t.Errorf("expected computeUsage.scannedRows %d in JSON, got %v", docCount, cu["scannedRows"])
+	}
+	if _, ok := cu["durationMs"]; !ok {
+		t.Errorf("missing computeUsage.durationMs in JSON")
+	}
+	if cu["accuracy"] != "ACCURATE" {
+		t.Errorf("expected computeUsage.accuracy 'ACCURATE' in JSON, got %v", cu["accuracy"])
 	}
 }
 

@@ -401,6 +401,9 @@ func (h *Handler) aggregateAcrossTypes(ontologyAPIName string, objectTypes []oms
 
 // mergeAggregationResponses merges two aggregation responses by summing
 // their excluded items counts. Group-by results are concatenated.
+// US-382: ComputeUsage is also accumulated — scannedRows + durationMs are
+// summed across the per-type sub-aggregations, and Accuracy collapses to
+// "APPROXIMATE" if either side surfaced an approximate result.
 func mergeAggregationResponses(a, b *aggregation.AggregationResponse) *aggregation.AggregationResponse {
 	result := &aggregation.AggregationResponse{
 		ExcludedItems: a.ExcludedItems + b.ExcludedItems,
@@ -408,6 +411,32 @@ func mergeAggregationResponses(a, b *aggregation.AggregationResponse) *aggregati
 
 	// Merge data arrays
 	result.Data = append(a.Data, b.Data...)
+
+	if a.ComputeUsage != nil || b.ComputeUsage != nil {
+		merged := &aggregation.ComputeUsage{}
+		mergedAccuracy := "ACCURATE"
+		if a.ComputeUsage != nil {
+			merged.ScannedRows += a.ComputeUsage.ScannedRows
+			merged.DurationMs += a.ComputeUsage.DurationMs
+			if a.ComputeUsage.Accuracy == "APPROXIMATE" {
+				mergedAccuracy = "APPROXIMATE"
+			}
+		}
+		if b.ComputeUsage != nil {
+			merged.ScannedRows += b.ComputeUsage.ScannedRows
+			merged.DurationMs += b.ComputeUsage.DurationMs
+			if b.ComputeUsage.Accuracy == "APPROXIMATE" {
+				mergedAccuracy = "APPROXIMATE"
+			}
+		}
+		merged.Accuracy = mergedAccuracy
+		result.ComputeUsage = merged
+	}
+	if a.Accuracy == "APPROXIMATE" || b.Accuracy == "APPROXIMATE" {
+		result.Accuracy = "APPROXIMATE"
+	} else if a.Accuracy == "ACCURATE" || b.Accuracy == "ACCURATE" {
+		result.Accuracy = "ACCURATE"
+	}
 
 	return result
 }

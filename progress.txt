@@ -24,6 +24,7 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Pipeline incremental + schema-evolution (US-378) shares a fail-closed invariant: schema diff via `ResolveSchemaEvolution(prior, current)` MUST run BEFORE the source's `ReadAfter(ctx, after)` call. The runtime contract is "no side effects leak through a BREAKING_CHANGE": no read I/O, no sink schema extension, no row write. Future incremental connectors must seed their work through `pkg/pipeline/incremental.go::RunIncremental` so this ordering stays mechanically enforced. The `LatestCommittedOffset(ctx, pipelineID)` watermark filter is `status='success'` only — failed/canceled runs do NOT advance progress, otherwise a half-applied run could silently drop rows on the next APPEND. `pkg/pipeline/schema_evolution.go::typesEquivalent` is trim+case-insensitive for Type, case-sensitive on Name — schema sources frequently disagree on type casing without semantic difference, while column names ARE case-sensitive in most downstream stores.
 - Column-level lineage (US-377) is a SECOND lineage surface alongside US-300's `lineage_edges`. The `lineage_column_edges` table tracks `(src_dataset, src_column) → (dst_object_type, dst_property)` and is populated synchronously by the datasource-binding write path: `OMSHandler.deriveColumnLineageOnBindingChange` calls `DeriveColumnLineageEdges(binding, properties)` and atomically `ReplaceColumnLineageForBinding`. Replace-by-binding (NOT append-only) is the canonical write semantics so a binding update that DROPS a property yields zero edges for it immediately. The `ColumnLineageStore` interface lives in `pkg/oms` (matching the `LineageStore` shape — narrow, off the main `Repository` interface so degraded-mode test routers don't have to cascade-stub it). `DeriveColumnLineageEdges` accepts BOTH wire shapes for `column_mapping` JSON: flat object `{propertyApiName: column}` AND array form `[{property, column}]` with `p`/`c` short-key alternates. Output is sorted lexicographically by (api_name, src_column) so identical mapping payloads produce identical edge sets modulo ts — useful for change-detection. Handler routes `GET /api/v2/lineage/property/{rid}` + `GET /api/v2/lineage/dataset-columns/impact?dataset=...&column=...` are mounted unconditionally on the lineage handler (404 ColumnLineageNotConfigured in degraded mode); both must appear in `api/openapi.yaml` AND `cmd/server/openapi_spec.yaml` because the contract test walks chi routes regardless of store wiring. Note: `datasource_bindings` admin routes were stripped in US-006 so the hook fires only via direct handler invocation today; the wiring is ready when admin routes return.
 - Time-travel asOf (US-379 extends US-223): the OSS load handler's `?asOf=` query parameter now accepts TWO wire formats — RFC3339 timestamp (US-223 default) and `tx-<id>` reference into `dataset_transactions` (US-379). Branching lives in `pkg/oss/objectset/handler.go::resolveAsOf(ctx, raw)`; the `"tx-"` prefix routes to the wired `TransactionResolver` which translates to a `committed_at` instant, then both branches converge on `loadObjectsAsOf(time.Time)`. Resolver + history snapshot provider are intentionally orthogonal hooks — degraded-mode routers can wire one without the other. New asOf flavors (e.g. `branch:` refs) plug in as new prefix arms with zero changes downstream. The funnel consumer's `recordDatasetTransaction` lands one row per applied EditBatch with `parent_tx_id` resolved via `LatestForOntology(batch.OntologyAPIName)` — the chain is per-ontology, NOT per-ObjectType. `ON CONFLICT (tx_id) DO NOTHING` handles NATS at-least-once redelivery so a duplicate batch is silently deduped on the chain. `EditBatch.ID` is normalised via `strings.HasPrefix(id, "tx-")` and conditionally prepended; legacy publishers that emit raw uuids are still safe. The `tx_id` column on `object_history` is populated for future collision-disambiguation but the snapshot scan still uses `[valid_from, valid_to)` half-open intervals — same-instant batches fall back to "latest wins" until a future US wires tx-aware snapshot reads.
+- ObjectSet aggregation excludedItems + computeUsage (US-382): the request-side `aggregation.AggregationRequest.ExcludedItems []string` is implemented as a SINGLE Boolean MUST + MUST_NOT wrap of `baseQuery` at the top of `engine.AggregateWithQuery` so every downstream path (cube/rollup, recursiveGroupBy, runSubAggregations, computeMetrics, facet entries) inherits the exclusion uniformly without per-call-site plumbing. The response-side `excludedItems int` field is the actual intersection count (one extra Size=0 Bleve search via `applyExcludedItems`) NOT `len(req.ExcludedItems)` — duplicates, blank ids, and out-of-scope PKs contribute zero. The new `*ComputeUsage{ScannedRows, DurationMs, Accuracy}` envelope is pointer + `omitempty` so raw `AggregationResponse{}` constructions still marshal cleanly; the `pkg/oss/handlers_interface.go::mergeAggregationResponses` accumulator only emits a merged envelope when at least one input had one (no phantom zero envelopes on cross-type interface aggregations). The derived-field path (`pkg/oss/objectset/handler_aggregate_derived.go::applyDerivedExcludedItems`) replicates the same dedup-then-count semantics in memory so the wire shape is identical regardless of derived-vs-base routing — and pre-filters PKs BEFORE the base-field Bleve fetch to save the round-trip when many are excluded. `countScannedRows` swallows metering errors to 0 — the side-channel must never fail the primary response. Pattern: when adding a new request-time filter that should apply globally to an aggregation tree, rewrite `baseQuery` ONCE at the top of `AggregateWithQuery` instead of threading the filter into every helper; for any new optional cost/quality fields tacked onto the same envelope, follow the pointer + `omitempty` + nil-guarded merge pattern so degraded-mode merges stay clean.
 - ObjectSet branch overlay (US-381): `?branch=<name>` rides on the same query string as `?asOf=`. Parsing happens in `pkg/oss/objectset/handler.go::resolveBranch` BEFORE the asOf branch fires so a non-main branch with no provider wired surfaces a clean `BranchLookupUnavailable` 400 instead of cascading into the asOf failure mode. `WithBranchScope(ctx, branch)` / `BranchScopeFromContext(ctx)` in `pkg/oss/objectset/scope.go` are the per-request context channel — `DefaultBranch = "main"` is a no-op on stamping AND the read-side default, so callers don't need nil/empty guards. The `BranchScopeProvider.ScopeObjectSet` hook receives the executor's live PrimaryKeys and returns the authoritative replacement set visible on the branch — branch-only adds, deletions, and substitutions all flow through one entry point. The provider is NEVER consulted for the default branch (legacy behaviour stays byte-for-byte identical). `ErrBranchNotFound` → `BranchNotFound` 400; everything else → `BranchScopeFailed` 400. The asOf path applies the provider as an INTERSECT-only post-filter (the existing `HistorySnapshotProvider` interface returns per-PK `Properties` and can't materialise rows that don't exist in `object_history`); branch-aware history reads are a US-383+ concern when the durable overlay actually exists. The 128-char branch identifier cap mirrors the OMS `OntologyBranch.Name` schema bound — keep these in sync if a future US widens one.
 - WebSocket subscription cursor + replay (US-380): `pkg/subscriptions.EventLog` is the Hub-owned sliding-window replay buffer. Every `HandleObjectChange` and `HandleActionJobProgress` first calls `eventLog.Append` UNDER hub.mu and stamps the assigned monotonic cursor on the outbound `Message.Cursor` field. The lock ordering (append + index read in one critical section) guarantees that a subscription registered at hub.mu cannot miss an event whose cursor ≤ snapshot-time-latest AND will receive every live event with cursor > snapshot-time-latest. Aggregation events are NOT logged — they are derived per-subscription state and reseed via Bleve at subscribe time. Reconnect protocol: `?since=<cursor>` is parsed BEFORE `websocket.Accept` so a malformed value can be coerced to 0 ("no replay"). The welcome envelope carries `lastEventId = eventLog.LatestID()`. If `since < earliestLive` OR `since > latest` the connection-level `onOutOfDate` (no SubscriptionID) fires immediately and `replayCursor` is set to -1 to disarm per-subscription replay. Otherwise each subscribe handler — `handleSubscribe` / `handleSubscribeObjectSet` / `handleSubscribeActionJob` — drops the `defer Unlock` pattern in favour of explicit locks so it can register the subscription, release locks, then drain `replayObjectSubscription` / `replayActionJobSubscription` onto `c.send`. Because the routing index is updated under the same hub.mu critical section as the snapshot read, there's no overlap between replayed events (id ≤ snapshot.maxID) and live events (id > snapshot.maxID). Pattern: when adding new event kinds that need replay support, give them a new `EventLogEntry.Kind` discriminator + a marshaller method on the entry, then thread them through the replay drain alongside the existing `objectChange` / `actionJobProgress` arms.
 
@@ -1260,4 +1261,154 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
   into branch-aware reads via context.Value). The
   `lastContext` field on the fake is the canonical assertion
   point.
+---
+
+## 2026-05-03 - US-382 - ObjectSet computeUsage / excludedItems
+
+**Implementation:**
+- `pkg/oss/aggregation/response.go`: replaced the legacy
+  `ComputeUsage float64` field with a `*ComputeUsage` struct
+  `{ScannedRows int64, DurationMs int64, Accuracy string}` and the
+  matching JSON shape `computeUsage: {scannedRows, durationMs,
+  accuracy}` per the Palantir V2 wire format. Pointer + omitempty so
+  pre-stamp responses (e.g. raw merges in tests) still marshal cleanly.
+- `pkg/oss/aggregation/engine.go`: added `ExcludedItems []string` to
+  `AggregationRequest` and rewrote `AggregateWithQuery` to (a) record
+  `startTime := time.Now()` at entry, (b) call new
+  `applyExcludedItems(idx, baseQuery, req.ExcludedItems)` BEFORE any
+  metric/facet runs, (c) compute `resp.ExcludedItems` from the actual
+  intersection (not `len(req.ExcludedItems)` — duplicates and
+  out-of-scope PKs contribute zero), (d) stamp
+  `resp.ComputeUsage = &ComputeUsage{ScannedRows, DurationMs,
+  Accuracy: resp.Accuracy}` after Accuracy is finalised.
+  - `applyExcludedItems` deduplicates input, ignores blanks, runs a
+    `bleve.NewConjunctionQuery(baseQuery, NewDocIDQuery(cleaned))`
+    count search to learn the actual intersection size, then wraps
+    `baseQuery` in a Boolean MUST + MUST_NOT so EVERY downstream code
+    path (groupBy, sub-aggs, cube/rollup, derived path scopes) sees
+    the same exclusion uniformly — no per-call-site forgetting.
+  - `countScannedRows(idx, baseQuery)` runs a single `Size=0` search
+    for the post-exclusion total. Errors swallow to 0 so the metering
+    search never fails the surrounding aggregation (data is already
+    produced at that point).
+- `pkg/oss/objectset/handler.go`: added `ExcludedItems []string` to
+  `AggregateObjectSetRequest` and forwarded it verbatim into the
+  engine `AggregationRequest`. The Bleve-facet ObjectSet path
+  inherits the engine's exclusion + computeUsage stamp for free.
+- `pkg/oss/objectset/handler_aggregate_derived.go`: added
+  `applyDerivedExcludedItems(pks, excluded)` mirror for the in-memory
+  derived-field path with identical "intersection-count" semantics
+  (dedup, blank-tolerant, out-of-scope-tolerant). The derived
+  aggregator now (a) pre-filters `result.PrimaryKeys` BEFORE the
+  base-field Bleve fetch (saves a multi-doc round-trip when many PKs
+  are excluded), (b) populates `resp.ExcludedItems`, and (c) stamps
+  `resp.ComputeUsage = &aggregation.ComputeUsage{ScannedRows: int64(len(rows)),
+  DurationMs: time.Since(startTime).Milliseconds(), Accuracy:
+  resp.Accuracy}`. Same envelope shape as the engine path so SDK
+  clients see one wire format regardless of derived-vs-base routing.
+- `pkg/oss/handlers_interface.go::mergeAggregationResponses`:
+  extended the per-type aggregation merger to accumulate
+  `ComputeUsage.ScannedRows + DurationMs` and collapse Accuracy to
+  APPROXIMATE if either side is approximate. Without this the
+  cross-type interface aggregation surface would have lost
+  computeUsage entirely.
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (byte-identical
+  per the existing contract test): documented the new computeUsage
+  object shape, the new `excludedItems` integer response field, and
+  the new `excludedItems[]` request property on both
+  `AggregationRequest` and `AggregateObjectSetRequest`.
+
+**Files changed:**
+- `pkg/oss/aggregation/response.go`
+- `pkg/oss/aggregation/engine.go`
+- `pkg/oss/aggregation/aggregation_test.go` (rewrote
+  `TestAggregate_AccuracyAndComputeUsage` for the new struct shape)
+- `pkg/oss/aggregation/us382_excluded_compute_usage_test.go` (new — 7
+  unit tests)
+- `pkg/oss/objectset/handler.go`
+- `pkg/oss/objectset/handler_aggregate_derived.go`
+- `pkg/oss/objectset/aggregate_derived_us382_test.go` (new — 4 unit
+  tests for `applyDerivedExcludedItems`)
+- `pkg/oss/handlers_interface.go`
+- `api/openapi.yaml`
+- `cmd/server/openapi_spec.yaml`
+- `test/foundry_parity/us015_multi_groupby.json` (response-shape doc
+  bumped from `"float64"` to the new struct sketch)
+- `prd.json` (mark US-382 passes: true)
+
+**Verification:**
+- `go -C /Users/liyang/Documents/Community/Weave build ./...` clean
+- `go -C /Users/liyang/Documents/Community/Weave vet ./...` clean
+- `go -C /Users/liyang/Documents/Community/Weave test ./...` 74/74
+  packages PASS, 0 FAIL (full suite incl. cmd/server,
+  pkg/oss/aggregation, pkg/oss/objectset, pkg/oss, pkg/subscriptions,
+  pkg/security, test/e2e, test/foundry_parity, test/northwind:152.5s,
+  test/chinook:229.7s).
+- 11 new US-382 tests pass:
+  - aggregation pkg (7):
+    `TestAggregate_ExcludedItems_FiltersBeforeCount`,
+    `TestAggregate_ExcludedItems_FiltersBeforeNumericMetrics`,
+    `TestAggregate_ExcludedItems_FiltersBeforeGroupBy`,
+    `TestAggregate_ExcludedItems_DeduplicatesAndIgnoresOutOfScope`,
+    `TestAggregate_ExcludedItems_EmptyOrAllBlank_NoOp`,
+    `TestAggregate_ComputeUsage_StructureAndScannedRows`,
+    `TestAggregate_ComputeUsage_AccuracyMirrorsApproximate`,
+    `TestAggregate_ComputeUsage_JSONShape`
+  - objectset pkg (4): `TestApplyDerivedExcludedItems_NoExclusion`,
+    `TestApplyDerivedExcludedItems_RemovesAndCounts`,
+    `TestApplyDerivedExcludedItems_IgnoresOutOfScopeAndDuplicates`,
+    `TestApplyDerivedExcludedItems_AllBlankIsNoOp`
+
+**Learnings for future iterations:**
+- The wire format change `computeUsage: float64` → `computeUsage:
+  {scannedRows, durationMs, accuracy}` is a BREAKING change for any
+  client that read the scalar form. The frontend never used it, the
+  test fixture `us015_multi_groupby.json` was a doc-only sketch, and
+  the only Go assertion was the existing
+  `TestAggregate_AccuracyAndComputeUsage`. Future wire changes to
+  shared response envelopes should grep `<FieldName>` first to
+  enumerate downstream consumers — don't trust the absence of OpenAPI
+  drift to mean nothing depends on the old shape.
+- `excludedItems` has TWO matching axes that must stay in sync:
+  request-side `AggregationRequest.ExcludedItems []string` (input)
+  AND response-side `AggregationResponse.ExcludedItems int` (echo of
+  what was actually filtered). Reporting `len(req.ExcludedItems)`
+  blindly inflates the counter for duplicate / out-of-scope PKs;
+  doing a Bleve intersection count is one extra Size=0 search per
+  request and is the honest semantics. The same dedup-then-count
+  semantics is replicated in `applyDerivedExcludedItems` for the
+  in-memory derived path so the wire shape is uniform across both
+  routings.
+- The Boolean MUST + MUST_NOT exclusion wrap is a SINGLE place where
+  `baseQuery` is replaced. Because every downstream path (cube,
+  rollup, recursiveGroupBy, runSubAggregations, computeMetrics,
+  facet entries) takes its query from the function-scoped
+  `baseQuery` variable, the exclusion is uniformly visible without
+  per-call-site plumbing. Pattern: when adding a new request-time
+  filter that should apply globally to an aggregation tree, rewrite
+  `baseQuery` once at the top of `AggregateWithQuery` instead of
+  threading the filter into every helper.
+- `countScannedRows` deliberately swallows errors to 0 — the
+  metering search runs AFTER the response data is already
+  populated. Failing the entire aggregation on a metering glitch
+  would be worse than reporting a zero-count usage envelope.
+  Apply the same "metering side-channel cannot fail the primary
+  response" pattern to any future cost / quality fields tacked
+  onto the same envelope.
+- `*ComputeUsage` (pointer) + `omitempty` is the right shape for an
+  optionally-populated envelope. Test code that constructs a raw
+  `AggregationResponse{}` (e.g. `mergeAggregationResponses(nil-side,
+  …)`) still marshals to a clean JSON without a stale zero-value
+  `computeUsage: {scannedRows: 0, …}` polluting the wire. The
+  `mergeAggregationResponses` arms guard on `a.ComputeUsage != nil
+  || b.ComputeUsage != nil` so a degraded sub-response that lost its
+  envelope doesn't force a phantom zero envelope onto the merged
+  output.
+- The existing OpenAPI contract test
+  (`TestContract_EmbeddedSpecMatchesCanonical`) requires
+  `cmd/server/openapi_spec.yaml` to be byte-identical to
+  `api/openapi.yaml`. Always `cp api/openapi.yaml
+  cmd/server/openapi_spec.yaml` after any spec edit; the contract
+  test pre-existed and surfaces the drift cleanly with a one-line
+  fix instruction.
 ---

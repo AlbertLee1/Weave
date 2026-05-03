@@ -1886,6 +1886,16 @@ components:
             (groupBy[0..N], groupBy[0..N-1], ..., groupBy[0..0], grand total) —
             N+1 groupings in total. Rolled-up dimensions are absent from the
             row's group map. Mutex with cube; if both set, cube wins.
+        excludedItems:
+          type: array
+          description: |
+            Optional list of primary keys to exclude from the aggregation
+            scope BEFORE any metric or facet runs (US-382). Duplicates and
+            blank ids are tolerated; the response.excludedItems field reports
+            how many of the supplied PKs actually matched the post-scope
+            query.
+          items:
+            type: string
     HavingClause:
       type: object
       required: [metric, op, value]
@@ -1950,8 +1960,30 @@ components:
         accuracy:
           type: string
           enum: [ACCURATE, APPROXIMATE]
+        excludedItems:
+          type: integer
+          description: |
+            Count of caller-supplied AggregationRequest.excludedItems primary
+            keys that actually intersected the post-scope query (US-382).
+            Duplicates and out-of-scope ids contribute zero.
         computeUsage:
-          type: number
+          type: object
+          description: |
+            Per-aggregation cost-and-quality envelope (US-382). Replaces the
+            legacy scalar float form.
+          properties:
+            scannedRows:
+              type: integer
+              format: int64
+              description: Post-exclusion total document count visible to the engine.
+            durationMs:
+              type: integer
+              format: int64
+              description: Wall-clock duration of the aggregate call in milliseconds.
+            accuracy:
+              type: string
+              enum: [ACCURATE, APPROXIMATE]
+              description: Mirrors the top-level accuracy verdict.
         subAggregations:
           type: object
           description: |
@@ -1987,6 +2019,11 @@ components:
         rollup:
           type: boolean
           description: See AggregationRequest.rollup.
+        excludedItems:
+          type: array
+          description: See AggregationRequest.excludedItems (US-382).
+          items:
+            type: string
     CreateTemporaryRequest:
       type: object
       required: [objectSet]

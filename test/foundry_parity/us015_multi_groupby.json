@@ -70,9 +70,9 @@
     }
   },
   "responseShape": {
-    "excludedItems": "int",
+    "excludedItems": "int — count of caller-supplied excludedItems PKs that intersected the post-scope query (US-382)",
     "accuracy": "\"ACCURATE\" | \"APPROXIMATE\" — ACCURATE when no numeric scan exceeded engine.MaxDocScanSize",
-    "computeUsage": "float64",
+    "computeUsage": "{ scannedRows: int64, durationMs: int64, accuracy: string } — per-aggregation cost-and-quality envelope (US-382 superseded the float64 form)",
     "data": [
       {
         "group": {

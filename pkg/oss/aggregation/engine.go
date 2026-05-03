@@ -41,6 +41,14 @@ type AggregationRequest struct {
 	//     exactDistinct, approximatePercentile → sort-based percentile),
 	//     so existing specs can demand byte-exact output without a rewrite.
 	Accuracy string `json:"accuracy,omitempty"`
+	// ExcludedItems is an optional list of primary keys to exclude from the
+	// aggregation scope BEFORE any metric or groupBy facet runs (US-382).
+	// Duplicates are tolerated; PKs that don't match the post-scope query
+	// contribute zero to the response.excludedItems counter. Implemented as
+	// a Bleve Boolean MUST_NOT wrap of the base query so the exclusion is
+	// uniformly visible to every downstream code path (groupBy, sub-aggs,
+	// derived-field path).
+	ExcludedItems []string `json:"excludedItems,omitempty"`
 }
 
 // Accuracy mode constants for AggregationRequest.Accuracy. Match the Palantir
@@ -136,6 +144,8 @@ func (e *Engine) Aggregate(idx bleve.Index, req *AggregationRequest) (*Aggregati
 
 // AggregateWithQuery performs aggregation on the given index with an explicit base query.
 func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
+	startTime := time.Now()
+
 	if baseQuery == nil {
 		baseQuery = bleve.NewMatchAllQuery()
 	}
@@ -147,8 +157,17 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		return nil, err
 	}
 
+	// US-382: pre-filter excludedItems BEFORE any metric or facet runs. We
+	// count the actual intersection (caller-requested PKs that resolve in
+	// the base scope) so the response.excludedItems field reports what the
+	// engine truly removed — duplicate or out-of-scope PKs contribute zero.
+	excludedCount, scopedQuery, err := applyExcludedItems(idx, baseQuery, req.ExcludedItems)
+	if err != nil {
+		return nil, err
+	}
+	baseQuery = scopedQuery
+
 	var resp *AggregationResponse
-	var err error
 
 	switch {
 	case (req.Cube || req.Rollup) && len(req.GroupBy) > 0:
@@ -182,8 +201,76 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if resp.Accuracy == "" {
 		resp.Accuracy = "ACCURATE"
 	}
-	resp.ComputeUsage = 4.0
+	resp.ExcludedItems = excludedCount
+	resp.ComputeUsage = &ComputeUsage{
+		ScannedRows: countScannedRows(idx, baseQuery),
+		DurationMs:  time.Since(startTime).Milliseconds(),
+		Accuracy:    resp.Accuracy,
+	}
 	return resp, nil
+}
+
+// applyExcludedItems wraps baseQuery so that any document whose ID matches one
+// of excluded is filtered out before any metric or facet runs. It also reports
+// the count of caller-requested PKs that would have matched the base scope —
+// this is the value surfaced as response.excludedItems. A nil/empty exclusion
+// list is a no-op that returns (0, baseQuery, nil).
+//
+// We do an explicit intersection count instead of trusting len(excluded) so a
+// caller passing duplicates, blank strings, or out-of-scope PKs does not
+// inflate the response. The intersection count is also robust under a
+// post-Boolean Bleve plan that may rewrite the exclusion query.
+func applyExcludedItems(idx bleve.Index, baseQuery query.Query, excluded []string) (int, query.Query, error) {
+	if len(excluded) == 0 {
+		return 0, baseQuery, nil
+	}
+	cleaned := make([]string, 0, len(excluded))
+	seen := make(map[string]struct{}, len(excluded))
+	for _, pk := range excluded {
+		if pk == "" {
+			continue
+		}
+		if _, dup := seen[pk]; dup {
+			continue
+		}
+		seen[pk] = struct{}{}
+		cleaned = append(cleaned, pk)
+	}
+	if len(cleaned) == 0 {
+		return 0, baseQuery, nil
+	}
+
+	docIDQ := bleve.NewDocIDQuery(cleaned)
+	intersect := bleve.NewConjunctionQuery(baseQuery, docIDQ)
+	countReq := bleve.NewSearchRequest(intersect)
+	countReq.Size = 0
+	intRes, err := idx.Search(countReq)
+	if err != nil {
+		return 0, baseQuery, fmt.Errorf("excludedItems intersection count: %w", err)
+	}
+	excludedCount := int(intRes.Total)
+
+	wrapped := bleve.NewBooleanQuery()
+	wrapped.AddMust(baseQuery)
+	wrapped.AddMustNot(bleve.NewDocIDQuery(cleaned))
+	return excludedCount, wrapped, nil
+}
+
+// countScannedRows reports the post-exclusion total document count visible to
+// the aggregation engine. This is a lower bound on actual I/O (per-bucket
+// facet scans run on top of the same set) but matches what callers want from
+// the computeUsage envelope: "how many rows did my query touch?"
+//
+// Errors are swallowed to a zero count — the surrounding aggregation has
+// already produced data; we should not fail the response on a metering search.
+func countScannedRows(idx bleve.Index, baseQuery query.Query) int64 {
+	countReq := bleve.NewSearchRequest(baseQuery)
+	countReq.Size = 0
+	res, err := idx.Search(countReq)
+	if err != nil {
+		return 0
+	}
+	return int64(res.Total)
 }
 
 // validateSubAggregations enforces non-empty Names and uniqueness within a

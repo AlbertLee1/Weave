@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search"
@@ -56,6 +57,7 @@ func collectDerivedFieldNames(derivedValues map[string]map[string]interface{}) m
 // avg/min/max over sparse derived maps still return finite values whenever at
 // least one row contributes.
 func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req *AggregateObjectSetRequest) (*aggregation.AggregationResponse, error) {
+	startTime := time.Now()
 	for _, gb := range req.GroupBy {
 		if gb.Type != "" && gb.Type != "exact" {
 			return nil, fmt.Errorf("derived-field aggregation only supports exact groupBy, got %q", gb.Type)
@@ -64,6 +66,12 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 	if err := aggregation.ValidateHaving(req.Having); err != nil {
 		return nil, err
 	}
+
+	// US-382: pre-filter excludedItems against the resolved PK set BEFORE
+	// any base-field fetch or metric pass. Mirrors the engine path's
+	// "intersection count" semantics so a duplicated or out-of-scope PK
+	// contributes zero to response.excludedItems.
+	pks, excludedCount := applyDerivedExcludedItems(result.PrimaryKeys, req.ExcludedItems)
 
 	derivedFields := collectDerivedFieldNames(result.DerivedValues)
 
@@ -90,9 +98,9 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 
 	// Fetch base fields for every PK in one shot.
 	hitsByID := map[string]*search.DocumentMatch{}
-	if len(baseFields) > 0 && len(result.PrimaryKeys) > 0 {
-		searchReq := bleve.NewSearchRequest(bleve.NewDocIDQuery(result.PrimaryKeys))
-		searchReq.Size = len(result.PrimaryKeys)
+	if len(baseFields) > 0 && len(pks) > 0 {
+		searchReq := bleve.NewSearchRequest(bleve.NewDocIDQuery(pks))
+		searchReq.Size = len(pks)
 		searchReq.Fields = baseFields
 		idxKey := scopedIndexKey(ctx, h.indexMgr, result.ObjectType)
 		res, err := h.indexMgr.Search(idxKey, searchReq)
@@ -104,8 +112,8 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 		}
 	}
 
-	rows := make([]derivedAggRow, 0, len(result.PrimaryKeys))
-	for _, pk := range result.PrimaryKeys {
+	rows := make([]derivedAggRow, 0, len(pks))
+	for _, pk := range pks {
 		row := derivedAggRow{pk: pk, base: map[string]interface{}{}}
 		if hit, ok := hitsByID[pk]; ok {
 			for _, f := range baseFields {
@@ -126,11 +134,47 @@ func (h *Handler) aggregateWithDerived(ctx context.Context, result *Result, req 
 		data = aggregation.ApplyHaving(data, req.Having)
 	}
 	resp := &aggregation.AggregationResponse{
-		Data:     data,
-		Accuracy: "ACCURATE",
+		Data:          data,
+		Accuracy:      "ACCURATE",
+		ExcludedItems: excludedCount,
 	}
-	resp.ComputeUsage = 4.0
+	resp.ComputeUsage = &aggregation.ComputeUsage{
+		ScannedRows: int64(len(rows)),
+		DurationMs:  time.Since(startTime).Milliseconds(),
+		Accuracy:    resp.Accuracy,
+	}
 	return resp, nil
+}
+
+// applyDerivedExcludedItems mirrors engine.applyExcludedItems for the
+// in-memory derived-field aggregation path: resolve the pks set against the
+// caller-supplied exclusion list, deduplicate input, and report the count of
+// PKs that were actually present in the ObjectSet (so duplicates and
+// out-of-scope ids don't inflate response.excludedItems).
+func applyDerivedExcludedItems(pks []string, excluded []string) ([]string, int) {
+	if len(excluded) == 0 || len(pks) == 0 {
+		return pks, 0
+	}
+	excludeSet := make(map[string]struct{}, len(excluded))
+	for _, pk := range excluded {
+		if pk == "" {
+			continue
+		}
+		excludeSet[pk] = struct{}{}
+	}
+	if len(excludeSet) == 0 {
+		return pks, 0
+	}
+	out := make([]string, 0, len(pks))
+	excludedCount := 0
+	for _, pk := range pks {
+		if _, hit := excludeSet[pk]; hit {
+			excludedCount++
+			continue
+		}
+		out = append(out, pk)
+	}
+	return out, excludedCount
 }
 
 // expandDerivedCubeOrRollup mirrors the engine's Cube/Rollup path for the

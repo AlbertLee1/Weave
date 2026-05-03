@@ -646,6 +646,12 @@ type AggregateObjectSetRequest struct {
 	Having          []aggregation.HavingClause       `json:"having,omitempty"`
 	Cube            bool                             `json:"cube,omitempty"`
 	Rollup          bool                             `json:"rollup,omitempty"`
+	// ExcludedItems is an optional list of primary keys to exclude from
+	// the resolved ObjectSet before aggregation runs (US-382). Forwarded
+	// verbatim to the underlying aggregation engine so a single field
+	// drives both the Bleve-facet path and the derived-field in-memory
+	// path.
+	ExcludedItems []string `json:"excludedItems,omitempty"`
 }
 
 // Aggregate handles POST /api/v2/ontologies/{ont}/objectSets/aggregate.
@@ -707,6 +713,7 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 		Having:          req.Having,
 		Cube:            req.Cube,
 		Rollup:          req.Rollup,
+		ExcludedItems:   req.ExcludedItems,
 	}
 
 	aggResult, err := h.aggEngine.AggregateWithQuery(idx, baseQuery, aggReq)
