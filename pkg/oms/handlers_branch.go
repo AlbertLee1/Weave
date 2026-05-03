@@ -16,6 +16,17 @@ import (
 type CreateBranchRequest struct {
 	Name      string `json:"name"`
 	CreatedBy string `json:"createdBy,omitempty"`
+	// ParentBranchID (US-383) optionally chains the new branch off another
+	// branch in the same ontology. When set, metadata reads under the new
+	// branch fall back through the parent's overlay before consulting main.
+	// Empty / omitted means the parent is the canonical "main" trunk.
+	ParentBranchID string `json:"parentBranchId,omitempty"`
+	// BaseTx (US-383) pins the new branch to a dataset_transactions tx_id
+	// checkpoint (US-379). Empty means HEAD at branch creation. Validation
+	// is loose (we accept any string) because dataset_transactions only
+	// exists from migration 000090 onward — a pre-US-379 caller can't
+	// supply a value but should still be able to create a branch.
+	BaseTx string `json:"baseTx,omitempty"`
 }
 
 // BranchDetailResponse extends OntologyBranch with a change count.
@@ -54,6 +65,37 @@ func (h *OMSHandler) CreateBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate parent_branch (if supplied) belongs to the same ontology and
+	// is itself open — chaining off a merged/closed branch would silently
+	// freeze stale overlays so we reject it up front.
+	if req.ParentBranchID != "" {
+		parent, err := h.repo.GetBranch(r.Context(), req.ParentBranchID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				apierror.WriteJSON(w, apierror.NewInvalidParameter("ParentBranchNotFound", map[string]string{
+					"parentBranchId": req.ParentBranchID,
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("GetParentBranchFailed", nil))
+			return
+		}
+		if parent.OntologyRID != ontologyRID {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("ParentBranchOntologyMismatch", map[string]string{
+				"parentBranchId":   req.ParentBranchID,
+				"parentOntologyId": parent.OntologyRID,
+			}))
+			return
+		}
+		if parent.Status != "open" {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("ParentBranchNotOpen", map[string]string{
+				"parentBranchId": req.ParentBranchID,
+				"status":         parent.Status,
+			}))
+			return
+		}
+	}
+
 	// Snapshot current ontology version as base_version
 	version, err := h.repo.GetOntologyVersion(r.Context(), ontologyRID)
 	if err != nil {
@@ -61,12 +103,14 @@ func (h *OMSHandler) CreateBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	branch := &OntologyBranch{
-		ID:          rid.NewBranchRID(),
-		OntologyRID: ontologyRID,
-		Name:        req.Name,
-		BaseVersion: int64(version),
-		Status:      "open",
-		CreatedBy:   req.CreatedBy,
+		ID:             rid.NewBranchRID(),
+		OntologyRID:    ontologyRID,
+		Name:           req.Name,
+		BaseVersion:    int64(version),
+		ParentBranchID: req.ParentBranchID,
+		BaseTx:         req.BaseTx,
+		Status:         "open",
+		CreatedBy:      req.CreatedBy,
 	}
 
 	if err := h.repo.CreateBranch(r.Context(), branch); err != nil {

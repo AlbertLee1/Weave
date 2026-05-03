@@ -2468,11 +2468,14 @@ func (r *PGRepository) FindNearestNeighbors(ctx context.Context, objectTypeRID s
 // --- OntologyBranch (Phase 2) ---
 
 func (r *PGRepository) CreateBranch(ctx context.Context, b *OntologyBranch) error {
+	b.Status = NormalizeBranchStatus(b.Status)
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO ontology_branches (id, ontology_rid, name, base_version, status, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO ontology_branches (id, ontology_rid, name, base_version, parent_branch_id, base_tx, status, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING created_at, updated_at`,
-		b.ID, b.OntologyRID, b.Name, b.BaseVersion, b.Status, b.CreatedBy).
+		b.ID, b.OntologyRID, b.Name, b.BaseVersion,
+		nilIfEmpty(b.ParentBranchID), nilIfEmpty(b.BaseTx),
+		b.Status, b.CreatedBy).
 		Scan(&b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return wrapPGError(err)
@@ -2482,22 +2485,30 @@ func (r *PGRepository) CreateBranch(ctx context.Context, b *OntologyBranch) erro
 
 func (r *PGRepository) GetBranch(ctx context.Context, id string) (*OntologyBranch, error) {
 	b := &OntologyBranch{}
+	var parentBranchID, baseTx *string
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, ontology_rid, name, base_version, status, created_by, created_at, updated_at
+		`SELECT id, ontology_rid, name, base_version, parent_branch_id, base_tx, status, created_by, created_at, updated_at
 		 FROM ontology_branches WHERE id = $1`, id).
-		Scan(&b.ID, &b.OntologyRID, &b.Name, &b.BaseVersion, &b.Status, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
+		Scan(&b.ID, &b.OntologyRID, &b.Name, &b.BaseVersion, &parentBranchID, &baseTx,
+			&b.Status, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	if parentBranchID != nil {
+		b.ParentBranchID = *parentBranchID
+	}
+	if baseTx != nil {
+		b.BaseTx = *baseTx
+	}
 	return b, nil
 }
 
 func (r *PGRepository) ListBranches(ctx context.Context, ontologyRID string) ([]OntologyBranch, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, ontology_rid, name, base_version, status, created_by, created_at, updated_at
+		`SELECT id, ontology_rid, name, base_version, parent_branch_id, base_tx, status, created_by, created_at, updated_at
 		 FROM ontology_branches WHERE ontology_rid = $1 ORDER BY created_at`, ontologyRID)
 	if err != nil {
 		return nil, err
@@ -2507,8 +2518,16 @@ func (r *PGRepository) ListBranches(ctx context.Context, ontologyRID string) ([]
 	var result []OntologyBranch
 	for rows.Next() {
 		var b OntologyBranch
-		if err := rows.Scan(&b.ID, &b.OntologyRID, &b.Name, &b.BaseVersion, &b.Status, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		var parentBranchID, baseTx *string
+		if err := rows.Scan(&b.ID, &b.OntologyRID, &b.Name, &b.BaseVersion, &parentBranchID, &baseTx,
+			&b.Status, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if parentBranchID != nil {
+			b.ParentBranchID = *parentBranchID
+		}
+		if baseTx != nil {
+			b.BaseTx = *baseTx
 		}
 		result = append(result, b)
 	}
@@ -2529,7 +2548,7 @@ func (r *PGRepository) CloseBranch(ctx context.Context, id string) error {
 
 func (r *PGRepository) UpdateBranchStatus(ctx context.Context, id, status string) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE ontology_branches SET status = $2, updated_at = NOW() WHERE id = $1`, id, status)
+		`UPDATE ontology_branches SET status = $2, updated_at = NOW() WHERE id = $1`, id, NormalizeBranchStatus(status))
 	if err != nil {
 		return err
 	}

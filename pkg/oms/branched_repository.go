@@ -3,19 +3,77 @@ package oms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // BranchedRepository is a decorator around a base Repository that applies
 // branch overlay changes to read operations. ADDED entities are appended,
 // MODIFIED entities are replaced, DELETED entities are removed.
+//
+// When the embedded base is itself a *BranchedRepository the overlays compose
+// inside-out: the parent branch's overlay is applied to main first, then this
+// branch's overlay sits on top — implementing the US-383 "branch + parent
+// fallback" resolution. Construct chained repos via NewBranchedRepositoryChain.
 type BranchedRepository struct {
-	Repository           // embedded base for delegation of all non-overridden methods
+	Repository        // embedded base for delegation of all non-overridden methods
 	branchID   string
 }
 
 // NewBranchedRepository wraps base with branch overlay read behaviour.
 func NewBranchedRepository(base Repository, branchID string) *BranchedRepository {
 	return &BranchedRepository{Repository: base, branchID: branchID}
+}
+
+// NewBranchedRepositoryChain walks parent_branch pointers from leaf to root
+// and constructs a stacked overlay where the leaf branch's overlay is applied
+// outermost. The returned Repository delegates non-branch reads through to the
+// canonical main repository (`base`); branch reads are resolved leaf-first,
+// falling back to parents in order.
+//
+// `branchID` is the leaf (closest-to-caller) branch. The function tolerates a
+// missing branch row (returns the unwrapped base) and a parent_branch_id that
+// no longer exists (terminates the chain at the last resolvable ancestor) so a
+// `DELETE`d ancestor cannot turn a working branch read into a 500.
+//
+// Cycle detection: if a parent pointer revisits a branch already in the chain
+// (which the API path forbids but the underlying schema technically allows),
+// the function silently breaks the loop at the first repeat.
+func NewBranchedRepositoryChain(ctx context.Context, base Repository, branchID string) (Repository, error) {
+	if branchID == "" {
+		return base, nil
+	}
+
+	var chain []string
+	seen := map[string]bool{}
+	current := branchID
+	for current != "" {
+		if seen[current] {
+			break
+		}
+		seen[current] = true
+
+		b, err := base.GetBranch(ctx, current)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				if len(chain) == 0 {
+					// Leaf branch is missing — caller asked for a branch that
+					// doesn't exist; fall through to main rather than 500.
+					return base, nil
+				}
+				break
+			}
+			return nil, err
+		}
+		chain = append(chain, b.ID)
+		current = b.ParentBranchID
+	}
+
+	// Apply overlays root-first so the leaf's overlay ends up outermost.
+	var repo Repository = base
+	for i := len(chain) - 1; i >= 0; i-- {
+		repo = NewBranchedRepository(repo, chain[i])
+	}
+	return repo, nil
 }
 
 // --- helper: load branch changes filtered by entity type ---

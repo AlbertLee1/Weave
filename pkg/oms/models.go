@@ -606,15 +606,46 @@ type Function struct {
 }
 
 // OntologyBranch represents a branch for isolated ontology schema changes.
+//
+// Status values are normalised to the legacy lowercase namespace
+// (open|merged|closed). The PRD-style uppercase aliases ACTIVE|MERGED|ABANDONED
+// are accepted on input via NormalizeBranchStatus and stored as their lowercase
+// equivalents so existing call sites that compare against "open" keep working.
 type OntologyBranch struct {
-	ID          string    `json:"id"`
-	OntologyRID string    `json:"ontologyRid"`
-	Name        string    `json:"name"`
-	BaseVersion int64     `json:"baseVersion"`
-	Status      string    `json:"status"` // open, merged, closed
-	CreatedBy   string    `json:"createdBy"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          string `json:"id"`
+	OntologyRID string `json:"ontologyRid"`
+	Name        string `json:"name"`
+	BaseVersion int64  `json:"baseVersion"`
+	// ParentBranchID (US-383) optionally chains this branch off another
+	// branch's overlay. When set, metadata read paths fall back through the
+	// parent's branch_changes before consulting main, so a branch can
+	// inherit pending edits from its parent until merged. Empty / nil
+	// means the parent is the canonical "main" trunk.
+	ParentBranchID string `json:"parentBranchId,omitempty"`
+	// BaseTx (US-383) pins the branch's view of the underlying dataset
+	// transaction chain (US-379). Empty means "HEAD at branch creation".
+	BaseTx    string    `json:"baseTx,omitempty"`
+	Status    string    `json:"status"` // open|merged|closed (= ACTIVE|MERGED|ABANDONED)
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// NormalizeBranchStatus accepts both the legacy lowercase status values
+// (open|merged|closed) and the PRD-style uppercase aliases
+// (ACTIVE|MERGED|ABANDONED) and returns the canonical lowercase form.
+// Unknown values pass through unchanged so the upstream CHECK constraint
+// can surface the violation cleanly.
+func NormalizeBranchStatus(s string) string {
+	switch s {
+	case "ACTIVE":
+		return "open"
+	case "MERGED":
+		return "merged"
+	case "ABANDONED":
+		return "closed"
+	}
+	return s
 }
 
 // BranchChange records a single change made on a branch.

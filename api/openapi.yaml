@@ -898,8 +898,25 @@ components:
         baseVersion:
           type: integer
           format: int64
+        parentBranchId:
+          type: string
+          description: |
+            US-383 — optional pointer at another branch in the same ontology.
+            Reads on this branch fall back through the parent's overlay before
+            consulting main. Empty / omitted means the parent is the canonical
+            "main" trunk.
+        baseTx:
+          type: string
+          description: |
+            US-383 — optional dataset_transactions tx_id checkpoint pinning the
+            branch to a specific point in the underlying dataset history.
+            Empty means HEAD at branch creation.
         status:
           type: string
+          description: |
+            Lowercase canonical form is open|merged|closed. The PRD-style
+            uppercase aliases ACTIVE|MERGED|ABANDONED are accepted on input
+            and normalised on store.
           enum: [open, merged, closed]
         createdBy:
           type: string
@@ -5142,6 +5159,15 @@ paths:
                   type: string
                 createdBy:
                   type: string
+                parentBranchId:
+                  type: string
+                  description: |
+                    US-383 — optional parent branch in the same ontology to
+                    chain the new branch off. Must reference an open branch.
+                baseTx:
+                  type: string
+                  description: |
+                    US-383 — optional dataset_transactions tx_id checkpoint.
       responses:
         "201":
           description: Branch created.

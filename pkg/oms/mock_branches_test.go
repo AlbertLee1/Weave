@@ -20,6 +20,7 @@ func (m *mockRepo) CreateBranch(_ context.Context, b *oms.OntologyBranch) error 
 			return oms.ErrDuplicate
 		}
 	}
+	b.Status = oms.NormalizeBranchStatus(b.Status)
 	b.CreatedAt = time.Now()
 	b.UpdatedAt = time.Now()
 	m.branches = append(m.branches, *b)
