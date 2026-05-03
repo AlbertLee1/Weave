@@ -64,6 +64,17 @@ type Store interface {
 	// RID is unknown, ErrNotPublished if the App exists but has no
 	// active publish pin.
 	GetPublished(ctx context.Context, rid string) (*PublishedAppView, error)
+
+	// Rollback restores the live row's Name + LayoutJSON from the
+	// targeted historical version, bumping Version (so history stays
+	// strictly monotonic) and inserting a fresh AppVersion snapshot
+	// attributed to createdBy. Owner-only — non-owner callers receive
+	// ErrNotFound. Returns ErrNotFound when the targeted version row
+	// does not exist for this App. Rolling back to the live version
+	// (the most recent snapshot) is idempotent in payload terms but
+	// still bumps Version + records a snapshot — every call leaves an
+	// auditable history row.
+	Rollback(ctx context.Context, rid string, version int, ownerID, createdBy string) (*App, error)
 }
 
 // PublishedAppView is the read-only wire shape served to viewers at
@@ -354,6 +365,46 @@ func (m *MemoryStore) Unpublish(_ context.Context, rid, ownerID string) error {
 	row.PublishedAt = nil
 	row.PublishedBy = nil
 	return nil
+}
+
+// Rollback restores Name + LayoutJSON from a historical AppVersion,
+// bumping the live Version and recording a fresh history row. Owner-only.
+func (m *MemoryStore) Rollback(_ context.Context, rid string, version int, ownerID, createdBy string) (*App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.rows[rid]
+	if !ok || row.OwnerID != ownerID {
+		return nil, ErrNotFound
+	}
+	hist, ok := m.versions[rid]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	target, ok := hist[version]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if target.Name != row.Name {
+		newKey := nameKey(ownerID, target.Name)
+		if other, exists := m.nameIdx[newKey]; exists && other != rid {
+			return nil, ErrNameConflict
+		}
+		delete(m.nameIdx, nameKey(ownerID, row.Name))
+		row.Name = target.Name
+		m.nameIdx[newKey] = rid
+	}
+	row.LayoutJSON = append(json.RawMessage(nil), target.LayoutJSON...)
+	row.Version++
+	row.UpdatedAt = time.Now().UTC()
+	hist[row.Version] = &AppVersion{
+		AppRID:     rid,
+		Version:    row.Version,
+		Name:       row.Name,
+		LayoutJSON: append(json.RawMessage(nil), row.LayoutJSON...),
+		CreatedAt:  row.UpdatedAt,
+		CreatedBy:  createdBy,
+	}
+	return cloneApp(row), nil
 }
 
 // GetPublished returns the read-only published snapshot for any

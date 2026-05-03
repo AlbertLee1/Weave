@@ -158,3 +158,15 @@ export function viewApp(rid: string): Promise<PublishedAppView> {
     `/api/v2/apps/${encodeURIComponent(rid)}/view`,
   );
 }
+
+// rollbackApp restores the App's Name + LayoutJSON from a historical
+// version, bumping the live Version and recording a fresh history row.
+// Owner-only. Returns the post-rollback live App row.
+export function rollbackApp(rid: string, version: number): Promise<App> {
+  return request<App>(
+    'POST',
+    `/api/v2/apps/${encodeURIComponent(rid)}/versions/${encodeURIComponent(
+      String(version),
+    )}/rollback`,
+  );
+}

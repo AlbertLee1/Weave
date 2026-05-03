@@ -2113,3 +2113,46 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The `data-cols` / `data-frame-mode` / `data-viewport` data attributes on the runtime view are deliberate test surfaces — the alternative (asserting on Tailwind classnames or measuring computed CSS via `getComputedStyle`) is brittle (Tailwind class refactors silently break tests) and slow (jsdom's CSSOM is incomplete and `getComputedStyle` for `grid-template-columns` is unreliable). Pattern: when implementing a responsive UI, add a small enum-typed `data-*` attribute that mirrors the visual mode so tests can assert behaviour without measuring CSS. The attribute's value should change *only* when the visual mode actually changes — don't reuse it as a generic state dump.
 - When a state knob has natural persistence semantics (e.g., "the viewport I picked yesterday should still be picked when I reopen the preview"), keep the state on the parent component rather than re-initialising it per `enterPreview()`. The viewport state in this story persists across mode toggles because authors can flip to mobile, look at their app, switch back to edit to fix a layout bug, then re-enter preview — the right default at that point is "still mobile", not "back to desktop". If a later UX-driven story flips this to "always reset to desktop on preview entry", do it via a single explicit `setViewport('desktop')` line in `enterPreview` — easier to reason about than persistent-by-default + manual-reset hooks.
 ---
+
+## 2026-05-04 - US-398 - App 版本回滚
+
+**Implementation:**
+- `pkg/apps/store.go::Store` interface gains `Rollback(ctx, rid, version, ownerID, createdBy) (*App, error)`. `MemoryStore.Rollback` looks up the targeted history row, restores Name + LayoutJSON onto the live row (with the existing nameIdx swap when Name changes), bumps Version, inserts a fresh `AppVersion` snapshot attributed to the caller, and returns a clone of the post-rollback live row. Owner-only — non-owner callers map to ErrNotFound; missing version → ErrNotFound; name collisions on the targeted snapshot's name → ErrNameConflict.
+- `cmd/server/apps_store.go::pgAppsStore.Rollback` mirrors the same shape inside one Postgres transaction: `SELECT … FOR UPDATE` on `apps`, fetch the targeted `app_versions` snapshot, `UPDATE apps SET name=$1, layout_json=$2, version=$3` then INSERT into `app_versions`. Re-uses `isAppsUniqueViolation` for the name-collision branch and `getRaw` for the post-commit re-read.
+- `pkg/apps/handlers.go::Rollback` registers `POST /api/v2/apps/{rid}/versions/{version}/rollback`. Auth-required, store-required, owner-gated through the store. Returns the live `App` body on success (same shape as Update). Maps invalid version params → 400 InvalidAppVersion; missing → 404 AppNotFound; name conflict → 409 AppNameConflict.
+- `web/src/api/apps.ts::rollbackApp(rid, version): Promise<App>` is the new TS client.
+- `web/src/components/apps/AppEditorPage.tsx`:
+  - New `versions` / `versionsOpen` / `versionsStatus` / `versionsError` / `rollbackBusy` / `rollbackError` state.
+  - `loadVersions()` / `openVersions()` / `closeVersions()` / `handleRollback(version)` callbacks. Rollback success path decodes the returned layout via `decodeLayout()` and writes back into `instances` / `variables` / `name`, clears the selected instance, marks save status as 'saved', and refetches the version list so the drawer reflects the new live row.
+  - New header button `app-versions-toggle` (gated on a saved rid — unsaved drafts have no history yet) and `VersionsPanel` component rendered above the canvas. The panel shows a loading state, an error state, an empty state, and (when ready) a newest-first list with a per-row Rollback button. The live row carries a "live" badge and its rollback button is disabled (rolling back to live would still bump version but is UX-wise a no-op).
+
+**Files changed:**
+- `pkg/apps/store.go` (+ Rollback on Store interface; MemoryStore impl)
+- `pkg/apps/handlers.go` (+ chi route + Handler.Rollback)
+- `pkg/apps/us398_rollback_test.go` (new — 7 store-level + 6 handler-level tests)
+- `cmd/server/apps_store.go` (+ pgAppsStore.Rollback)
+- `web/src/api/apps.ts` (+ rollbackApp helper)
+- `web/src/components/apps/AppEditorPage.tsx` (+ versions drawer state, openVersions/closeVersions/handleRollback handlers, versions toggle button, VersionsPanel component)
+- `web/src/components/apps/__tests__/AppVersionRollback.test.tsx` (new — 7 SPA tests)
+- `prd.json` (mark US-398 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./pkg/apps/... -count=1 -v`: 13 new US-398 tests + every existing apps-package test PASS (52 tests total, 0 failures)
+- `go test ./... -count=1`: full backend suite green across ~80 packages including `cmd/server` contract suite (4/4) — apps routes are gated on the nil-store check the contract router uses, so no OpenAPI updates needed.
+- `cd web && npx tsc -b --noEmit`: clean apart from the 3 pre-existing baseline errors documented under US-392/US-397 (`src/lib/objectSetUrl.ts` Buffer × 2, `ObjectSetComposer.test.tsx` SavedObjectSet shape).
+- `cd web && npx eslint src/components/apps/ src/api/apps.ts`: 0 errors / 0 warnings.
+- `cd web && npx vitest run src/components/apps/`: 99/99 PASS in ~800 ms (92 existing + 7 new for US-398).
+- `cd web && npx vitest run`: full SPA suite 1040/1040 PASS across 135 files; no regressions elsewhere.
+- `cd web && npx vite build`: clean production build.
+- Manual browser verification still pending (no browser MCP wired in this iteration); the rollback flow is exercised end-to-end through Vitest including the "swap canvas to restored layout + reload version list + show live badge" success path and the failure path (rollback error surfaces a status row, canvas state untouched).
+
+**Learnings for future iterations:**
+- Rollback semantics: every Rollback call inserts a NEW history row (and bumps Version) even when the targeted version is the live one. This matches the Update contract — every Update is auditable, so every Rollback (which is a payload-level Update) must be too. The SPA's "Live" badge + disabled rollback button on the live row is purely a UX nudge to prevent the obviously-pointless click; the backend never refuses it. If a future story wants a strict "rollback to live is a no-op" policy, gate it on the handler side (compare requested version to current Version and return the existing row unchanged) — don't push that policy into the store, where idempotent calls would silently lose audit trail.
+- Name conflict handling on Rollback: the store Rollback path runs the same nameIdx-swap as Update so if the targeted version's Name now collides with another App owned by the caller, it surfaces ErrNameConflict (→ 409 AppNameConflict at the handler) and rolls the transaction back. This is the right policy — silently renaming the conflicting App to disambiguate would mutate state outside the rollback's apparent scope. The test `TestMemoryStore_RollbackNameConflictRolledBack` documents the contract: rolling back into a name owned by *another* App in the same owner's namespace fails cleanly without mutating either row.
+- Pattern for adding a new owner-scoped versioning operation to `pkg/apps`: (1) add the method on `Store` with the same `(ctx, rid, ..., ownerID, createdBy)` shape as Update, (2) implement on `MemoryStore` first (so unit tests run without a Postgres container), (3) implement on `pgAppsStore` inside one transaction with `FOR UPDATE` on `apps` to serialise concurrent writers, (4) reuse `isAppsUniqueViolation` for any constraint translation, (5) add the chi route in `RegisterRoutes` + handler + writeStoreError mapping, (6) add the TS client in `web/src/api/apps.ts`. The contract router gates on `deps.AppsStore != nil`, so new routes don't need OpenAPI entries as long as that gate stays.
+- Versions drawer gating on saved rid: an unsaved draft has no history so showing the toggle would lead to a confused empty-state. Gate the toggle on `savedRid` (the post-Save id, not the optional initial prop) so the button only appears once the App actually has history rows. After the first Save, savedRid populates and the toggle becomes visible — natural progressive disclosure without a route change.
+- SPA test pattern for the rollback flow: mock `listAppVersions` with two sequential resolved values (pre-rollback returns 2 rows, post-rollback returns 3 rows including the new live row). Assert on `data-version` / `data-live` attributes on row elements rather than asserting on raw DOM order, so future re-orderings (e.g. paginated history) don't silently break the assertion. The live-badge testid `app-versions-live-badge-{n}` includes the version number so the test can prove the badge moved from v2 → v3 after rollback.
+- Decode-then-restore on Rollback success: the SPA receives the post-rollback `App` body and runs it through `decodeLayout(row.layoutJson)` to populate the editor's flat instance/variable arrays. Don't shortcut this by setting `instances`/`variables` directly from the response — `decodeLayout` is the canonical wire→editor-state translation and any future schema additions (e.g. nested rows in US-450+) flow through it. Same hook as the rid-change useEffect that loads existing apps on mount.
+---

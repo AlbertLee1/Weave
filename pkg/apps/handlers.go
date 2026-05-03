@@ -28,6 +28,7 @@ import (
 //	POST   /api/v2/apps/{rid}/publish            — owner pin current version (US-396)
 //	POST   /api/v2/apps/{rid}/unpublish          — owner clear publish state (US-396)
 //	GET    /api/v2/apps/{rid}/view               — viewer fetch published snapshot (US-396)
+//	POST   /api/v2/apps/{rid}/versions/{version}/rollback — owner restore from history (US-398)
 type Handler struct {
 	store Store
 }
@@ -49,6 +50,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/v2/apps/{rid}/publish", h.Publish)
 	r.Post("/api/v2/apps/{rid}/unpublish", h.Unpublish)
 	r.Get("/api/v2/apps/{rid}/view", h.View)
+	r.Post("/api/v2/apps/{rid}/versions/{version}/rollback", h.Rollback)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
@@ -294,6 +296,36 @@ func (h *Handler) Unpublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Rollback POST /api/v2/apps/{rid}/versions/{version}/rollback. Owner-only.
+//
+// Restores Name + LayoutJSON from the targeted history row, bumping
+// Version (so the rollback itself is recorded as a new history row
+// attributed to the caller). The response is the live App row after
+// the rollback lands — same shape as Get/Update so the SPA can swap it
+// straight into its editor state.
+func (h *Handler) Rollback(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id := chi.URLParam(r, "rid")
+	versionStr := chi.URLParam(r, "version")
+	version, err := strconv.Atoi(versionStr)
+	if err != nil || version < 1 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAppVersion", map[string]string{
+			"reason":  "version must be a positive integer",
+			"version": versionStr,
+		}))
+		return
+	}
+	row, err := h.store.Rollback(r.Context(), id, version, user.ID, user.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, row)
 }
 
 // View GET /api/v2/apps/{rid}/view. Any authenticated user.

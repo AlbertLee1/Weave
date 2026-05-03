@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createApp,
   getApp,
+  listAppVersions,
   listApps,
+  rollbackApp,
   updateApp,
   type App,
   type AppEvent,
   type AppVariable,
   type AppVariableType,
+  type AppVersion,
 } from '../../api/apps';
 import { applyAction } from '../../api/actions';
 import type { ActionResults } from '../../api/types';
@@ -94,6 +97,21 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   // via Tailwind sm/md/lg classes (declared on the relevant grid
   // wrappers), independent of this toggle.
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
+  // US-398: version-rollback drawer. `versions` is the newest-first list
+  // returned by GET /api/v2/apps/{rid}/versions; `versionsOpen` controls
+  // the side-drawer visibility; `versionsStatus` is the fetch lifecycle
+  // (idle when no rid is bound, loading on first fetch, ready once
+  // populated, error on a failed fetch). `rollbackBusy` carries the
+  // version currently being rolled back so the corresponding button can
+  // show a busy state while the request is in flight.
+  const [versions, setVersions] = useState<AppVersion[]>([]);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versionsStatus, setVersionsStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle');
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [rollbackBusy, setRollbackBusy] = useState<number | null>(null);
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
 
   // Load existing app on mount when rid is supplied.
   useEffect(() => {
@@ -324,6 +342,68 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
     }
   }, [instances, name, onSaved, savedRid, variables]);
 
+  // US-398: load history rows on demand so the panel stays inert until
+  // an author actually opens the drawer. `savedRid` may flip between
+  // null (unsaved draft) and a real rid (after first Save), so this
+  // also runs when savedRid changes while the drawer is open.
+  const loadVersions = useCallback(async () => {
+    if (!savedRid) {
+      setVersions([]);
+      setVersionsStatus('idle');
+      return;
+    }
+    setVersionsStatus('loading');
+    setVersionsError(null);
+    try {
+      const resp = await listAppVersions(savedRid);
+      setVersions(resp.versions ?? []);
+      setVersionsStatus('ready');
+    } catch (err) {
+      setVersionsError(err instanceof Error ? err.message : 'Load failed');
+      setVersionsStatus('error');
+    }
+  }, [savedRid]);
+
+  const openVersions = useCallback(() => {
+    setVersionsOpen(true);
+    void loadVersions();
+  }, [loadVersions]);
+
+  const closeVersions = useCallback(() => {
+    setVersionsOpen(false);
+    setRollbackError(null);
+  }, []);
+
+  const handleRollback = useCallback(
+    async (version: number) => {
+      if (!savedRid) return;
+      setRollbackBusy(version);
+      setRollbackError(null);
+      try {
+        const row = await rollbackApp(savedRid, version);
+        // Decode the post-rollback layout back into editor state so the
+        // canvas reflects the restored snapshot immediately — no second
+        // network round-trip and no stale draft state. Bumping the
+        // history list keeps the drawer in sync with the new live row.
+        setName(row.name);
+        const decoded = decodeLayout(row.layoutJson);
+        setInstances(decoded.instances);
+        setVariables(decoded.variables);
+        setSelectedId(null);
+        setSaveStatus('saved');
+        setSaveError(null);
+        await loadVersions();
+      } catch (err) {
+        setRollbackError(
+          err instanceof Error ? err.message : 'Rollback failed',
+        );
+      } finally {
+        setRollbackBusy(null);
+      }
+    },
+    [savedRid, loadVersions],
+  );
+
   const canAddMore = instances.length < MAX_COLUMNS;
   const isPreview = mode === 'preview';
 
@@ -419,6 +499,17 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
           >
             {savedRid ? 'Save' : 'Save New'}
           </button>
+          {savedRid && (
+            <button
+              type="button"
+              data-testid="app-versions-toggle"
+              onClick={() => (versionsOpen ? closeVersions() : openVersions())}
+              aria-expanded={versionsOpen}
+              className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary"
+            >
+              {versionsOpen ? 'Hide Versions' : 'Versions'}
+            </button>
+          )}
           {saveStatus !== 'idle' && (
             <span
               data-testid="app-save-status"
@@ -452,6 +543,20 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
           )}
         </div>
       </header>
+
+      {versionsOpen && (
+        <VersionsPanel
+          versions={versions}
+          status={versionsStatus}
+          loadError={versionsError}
+          rollbackError={rollbackError}
+          rollbackBusy={rollbackBusy}
+          onRollback={(v) => {
+            void handleRollback(v);
+          }}
+          onClose={closeVersions}
+        />
+      )}
 
       {isPreview ? (
         <RuntimeView
@@ -1931,6 +2036,134 @@ function PropField({
         className="px-2 py-1 rounded border border-border bg-bg-primary text-sm text-text-primary"
       />
     </label>
+  );
+}
+
+interface VersionsPanelProps {
+  versions: AppVersion[];
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  loadError: string | null;
+  rollbackError: string | null;
+  rollbackBusy: number | null;
+  onRollback: (version: number) => void;
+  onClose: () => void;
+}
+
+// US-398: Versions drawer. Lists every history snapshot (newest first)
+// and exposes a one-click rollback button per row. The drawer renders
+// above the editor canvas so it's visible regardless of which side
+// rails the lg breakpoint has collapsed.
+function VersionsPanel({
+  versions,
+  status,
+  loadError,
+  rollbackError,
+  rollbackBusy,
+  onRollback,
+  onClose,
+}: VersionsPanelProps) {
+  const liveVersion = versions.length > 0 ? versions[0].version : undefined;
+  return (
+    <section
+      data-testid="app-versions-panel"
+      data-status={status}
+      className="mb-4 border border-border rounded bg-bg-secondary/40 p-3"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-mono font-medium text-text-secondary">
+          Version History
+        </h2>
+        <button
+          type="button"
+          data-testid="app-versions-close"
+          onClick={onClose}
+          className="text-xs text-text-secondary hover:text-text-primary"
+          aria-label="Close version history"
+        >
+          ×
+        </button>
+      </div>
+      {status === 'loading' && (
+        <p
+          data-testid="app-versions-loading"
+          className="text-xs text-text-secondary italic"
+        >
+          Loading versions…
+        </p>
+      )}
+      {status === 'error' && (
+        <p
+          data-testid="app-versions-error"
+          className="text-xs text-status-error"
+        >
+          {loadError ?? 'Failed to load versions.'}
+        </p>
+      )}
+      {status === 'ready' && versions.length === 0 && (
+        <p
+          data-testid="app-versions-empty"
+          className="text-xs text-text-secondary italic"
+        >
+          No history rows yet.
+        </p>
+      )}
+      {status === 'ready' && versions.length > 0 && (
+        <ul
+          data-testid="app-versions-list"
+          className="flex flex-col gap-1 max-h-72 overflow-auto"
+        >
+          {versions.map((v) => {
+            const isLive = v.version === liveVersion;
+            const busy = rollbackBusy === v.version;
+            return (
+              <li
+                key={v.version}
+                data-testid={`app-versions-row-${v.version}`}
+                data-version={v.version}
+                data-live={isLive ? 'true' : 'false'}
+                className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-border bg-bg-primary"
+              >
+                <div className="flex flex-col">
+                  <span className="text-sm text-text-primary font-mono">
+                    v{v.version}
+                    {isLive && (
+                      <span
+                        data-testid={`app-versions-live-badge-${v.version}`}
+                        className="ml-2 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-accent-primary/20 text-accent-primary"
+                      >
+                        live
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-text-secondary truncate">
+                    {v.name} ·{' '}
+                    {v.createdAt ? new Date(v.createdAt).toLocaleString() : '—'}
+                    {v.createdBy ? ` · ${v.createdBy}` : ''}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`app-versions-rollback-${v.version}`}
+                  onClick={() => onRollback(v.version)}
+                  disabled={busy || isLive || rollbackBusy !== null}
+                  className="px-2 py-1 rounded border border-border bg-bg-secondary text-xs text-text-primary hover:border-accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {busy ? 'Rolling back…' : isLive ? 'Live' : 'Rollback'}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {rollbackError && (
+        <p
+          data-testid="app-versions-rollback-error"
+          className="mt-2 text-xs text-status-error"
+        >
+          {rollbackError}
+        </p>
+      )}
+    </section>
   );
 }
 

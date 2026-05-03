@@ -403,6 +403,71 @@ func (s *pgAppsStore) GetPublished(ctx context.Context, rid string) (*apps.Publi
 	return view, nil
 }
 
+func (s *pgAppsStore) Rollback(ctx context.Context, rid string, version int, ownerID, createdBy string) (*apps.App, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		curOwnerID string
+		curName    string
+		curVersion int
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT owner_id, name, version FROM apps WHERE rid = $1 FOR UPDATE`,
+		rid).Scan(&curOwnerID, &curName, &curVersion)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apps.ErrNotFound
+		}
+		return nil, err
+	}
+	if curOwnerID != ownerID {
+		return nil, apps.ErrNotFound
+	}
+
+	var (
+		targetName   string
+		targetLayout []byte
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT name, COALESCE(layout_json, '{}'::jsonb)
+		 FROM app_versions WHERE app_rid = $1 AND version = $2`,
+		rid, version).Scan(&targetName, &targetLayout)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apps.ErrNotFound
+		}
+		return nil, err
+	}
+
+	newVersion := curVersion + 1
+	_, err = tx.Exec(ctx,
+		`UPDATE apps
+		 SET name = $1, layout_json = $2, version = $3, updated_at = NOW()
+		 WHERE rid = $4`,
+		targetName, targetLayout, newVersion, rid)
+	if err != nil {
+		if isAppsUniqueViolation(err) {
+			return nil, apps.ErrNameConflict
+		}
+		return nil, err
+	}
+	_, err = tx.Exec(ctx,
+		`INSERT INTO app_versions (app_rid, version, name, layout_json, created_by)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		rid, newVersion, targetName, targetLayout, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.getRaw(ctx, rid)
+}
+
 func (s *pgAppsStore) GetVersion(ctx context.Context, rid string, version int, ownerID string) (*apps.AppVersion, error) {
 	if _, err := s.Get(ctx, rid, ownerID); err != nil {
 		return nil, err
