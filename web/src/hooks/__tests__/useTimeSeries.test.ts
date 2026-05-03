@@ -132,4 +132,55 @@ describe('useTimeSeriesPoints', () => {
     expect(result.current.fetchStatus).toBe('idle');
     expect(spy).not.toHaveBeenCalled();
   });
+
+  // US-404: explicit branch threads through to the API call AND keys the
+  // query so two branch overlays of the same series cache independently.
+  it('forwards an explicit branch to the API call', async () => {
+    const spy = vi
+      .spyOn(timeseriesApi, 'streamTimeSeriesPoints')
+      .mockResolvedValue([]);
+
+    const { result } = renderHook(
+      () =>
+        useTimeSeriesPoints({
+          ontologyApiName: 'northwind',
+          objectType: 'Server',
+          primaryKey: 's1',
+          property: 'cpu',
+          branch: 'feature-x',
+        }),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(spy).toHaveBeenCalledWith({
+      ontologyApiName: 'northwind',
+      objectType: 'Server',
+      primaryKey: 's1',
+      property: 'cpu',
+      branch: 'feature-x',
+    });
+  });
+
+  it('omits branch from the API call when blank', async () => {
+    const spy = vi
+      .spyOn(timeseriesApi, 'streamTimeSeriesPoints')
+      .mockResolvedValue([]);
+
+    const { result } = renderHook(
+      () =>
+        useTimeSeriesPoints({
+          ontologyApiName: 'northwind',
+          objectType: 'Server',
+          primaryKey: 's1',
+          property: 'cpu',
+          branch: '   ',
+        }),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const call = spy.mock.calls[0][0];
+    expect('branch' in call).toBe(false);
+  });
 });

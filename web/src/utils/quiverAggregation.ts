@@ -102,3 +102,48 @@ export const QUIVER_PALETTE = [
 export function pickColor(index: number): string {
   return QUIVER_PALETTE[index % QUIVER_PALETTE.length];
 }
+
+// US-404: dash pattern for non-default-branch overlays. Pixel widths fed
+// straight to canvas setLineDash via uplot's `dash` series option.
+export const NON_DEFAULT_BRANCH_DASH: number[] = [8, 4];
+
+// US-404: small spec slice the chart-series builder consumes. Mirrors
+// the editor's SeriesSpec shape minus the runtime-only ontologyApiName
+// so it can be reused by tests without re-declaring the full editor
+// type.
+export interface BranchedSeriesSpec {
+  id: string;
+  label: string;
+  color: string;
+  branch?: string;
+}
+
+export interface ChartSeriesEntry {
+  id: string;
+  label: string;
+  color: string;
+  points: TimeSeriesPoint[];
+  dash?: number[];
+}
+
+// US-404: project a SeriesSpec list (with per-series branch overlays)
+// into the ChartSeries shape MultiSeriesChart consumes. Same-slot
+// overlays on a non-default branch render dashed with the slot's color
+// so the chart visually distinguishes branches without inflating the
+// palette.
+export function buildChartSeries(
+  seriesList: BranchedSeriesSpec[],
+  pointsById: Record<string, TimeSeriesPoint[]>,
+): ChartSeriesEntry[] {
+  return seriesList.map((s) => {
+    const branch = (s.branch ?? '').trim();
+    const isNonDefaultBranch = branch.length > 0 && branch !== 'main';
+    return {
+      id: s.id,
+      label: branch ? `${s.label} (${branch})` : s.label,
+      color: s.color,
+      points: pointsById[s.id] ?? [],
+      ...(isNonDefaultBranch ? { dash: NON_DEFAULT_BRANCH_DASH } : {}),
+    };
+  });
+}

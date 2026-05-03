@@ -73,4 +73,71 @@ describe('timeseries API', () => {
     });
     expect(result).toEqual([]);
   });
+
+  // US-404: explicit branch overrides the global ?branch= injection.
+  it('appends ?branch= when an explicit branch is supplied', async () => {
+    let capturedSearch = '';
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/objects/Server/s1/timeseries/cpu/streamPoints',
+        ({ request: req }) => {
+          capturedSearch = new URL(req.url).search;
+          return HttpResponse.json([]);
+        },
+      ),
+    );
+
+    await streamTimeSeriesPoints({
+      ontologyApiName: 'test',
+      objectType: 'Server',
+      primaryKey: 's1',
+      property: 'cpu',
+      branch: 'feature-x',
+    });
+    expect(capturedSearch).toContain('branch=feature-x');
+  });
+
+  it('does not append ?branch= for blank or missing values', async () => {
+    let capturedSearch = '';
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/objects/Server/s1/timeseries/cpu/streamPoints',
+        ({ request: req }) => {
+          capturedSearch = new URL(req.url).search;
+          return HttpResponse.json([]);
+        },
+      ),
+    );
+
+    await streamTimeSeriesPoints({
+      ontologyApiName: 'test',
+      objectType: 'Server',
+      primaryKey: 's1',
+      property: 'cpu',
+      branch: '   ',
+    });
+    expect(capturedSearch).toBe('');
+  });
+
+  it('encodes branch values with reserved URL characters', async () => {
+    let capturedSearch = '';
+    server.use(
+      http.post(
+        '/api/v2/ontologies/test/objects/Server/s1/timeseries/cpu/streamPoints',
+        ({ request: req }) => {
+          capturedSearch = new URL(req.url).search;
+          return HttpResponse.json([]);
+        },
+      ),
+    );
+
+    await streamTimeSeriesPoints({
+      ontologyApiName: 'test',
+      objectType: 'Server',
+      primaryKey: 's1',
+      property: 'cpu',
+      branch: 'feature/with spaces',
+    });
+    expect(capturedSearch).toContain('branch=feature%2Fwith%20spaces');
+  });
 });

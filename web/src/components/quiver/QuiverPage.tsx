@@ -16,6 +16,28 @@ import {
   type QuiverDashboardConfig,
 } from '../../api/quiver';
 import { ApiRequestError } from '../../api/client';
+import { useBranchStore } from '../../stores/branchStore';
+
+// US-404: pair series sharing the same (objectType, primaryKey, property)
+// across branches by reusing the slot's color so dashed/solid line styles
+// in the chart visually mark the branch difference.
+function colorForSlot(
+  series: SeriesSpec[],
+  objectType: string,
+  primaryKey: string,
+  property: string,
+): string {
+  const slotKey = `${objectType}|${primaryKey}|${property}`;
+  for (const s of series) {
+    if (`${s.objectType}|${s.primaryKey}|${s.property}` === slotKey) {
+      return s.color;
+    }
+  }
+  const distinctSlots = new Set(
+    series.map((s) => `${s.objectType}|${s.primaryKey}|${s.property}`),
+  );
+  return pickColor(distinctSlots.size);
+}
 
 const QUIVER_DASHBOARDS_KEY = ['quiver', 'dashboards'] as const;
 
@@ -39,6 +61,11 @@ export function QuiverPage() {
   const [draftPrimaryKey, setDraftPrimaryKey] = useState('');
   const [draftProperty, setDraftProperty] = useState('');
   const [draftLabel, setDraftLabel] = useState('');
+  const [draftBranch, setDraftBranch] = useState('');
+
+  // US-404: page-level active branch from the topbar picker is the implicit
+  // default for new series. The user can override per-series via the form.
+  const activeBranch = useBranchStore((s) => s.getBranch(ontologyApiName));
 
   const dashboardsQuery = useQuery({
     queryKey: QUIVER_DASHBOARDS_KEY,
@@ -75,6 +102,7 @@ export function QuiverPage() {
           property: s.property,
           label: s.label,
           color: s.color,
+          ...(s.branch ? { branch: s.branch } : {}),
         })),
       );
     }
@@ -110,24 +138,30 @@ export function QuiverPage() {
     const primaryKey = draftPrimaryKey.trim();
     const property = draftProperty.trim();
     if (!objectType || !primaryKey || !property) return;
-    const id = `${objectType}|${primaryKey}|${property}|${Date.now()}`;
+    const branchValue = draftBranch.trim() || activeBranch;
+    const id = `${objectType}|${primaryKey}|${property}|${branchValue}|${Date.now()}`;
     const label = draftLabel.trim() || `${objectType}/${primaryKey}.${property}`;
-    setSeriesList((prev) => [
-      ...prev,
-      {
-        id,
-        ontologyApiName,
-        objectType,
-        primaryKey,
-        property,
-        label,
-        color: pickColor(prev.length),
-      },
-    ]);
+    setSeriesList((prev) => {
+      const color = colorForSlot(prev, objectType, primaryKey, property);
+      return [
+        ...prev,
+        {
+          id,
+          ontologyApiName,
+          objectType,
+          primaryKey,
+          property,
+          label,
+          color,
+          ...(branchValue ? { branch: branchValue } : {}),
+        },
+      ];
+    });
     setDraftObjectType('');
     setDraftPrimaryKey('');
     setDraftProperty('');
     setDraftLabel('');
+    setDraftBranch('');
   }
 
   function handleRemove(id: string) {
@@ -149,6 +183,7 @@ export function QuiverPage() {
         property: s.property,
         label: s.label,
         color: s.color,
+        ...(s.branch ? { branch: s.branch } : {}),
       })),
     };
     saveMutation.mutate({
@@ -293,7 +328,7 @@ export function QuiverPage() {
 
         <form
           onSubmit={handleAdd}
-          className="grid grid-cols-1 md:grid-cols-5 gap-2"
+          className="grid grid-cols-1 md:grid-cols-6 gap-2"
           data-testid="quiver-add-form"
         >
           <input
@@ -327,6 +362,15 @@ export function QuiverPage() {
             onChange={(e) => setDraftLabel(e.target.value)}
             data-testid="quiver-input-label"
             className="px-2 py-1.5 text-sm bg-bg-tertiary border border-border rounded text-text-primary"
+          />
+          <input
+            type="text"
+            placeholder={`Branch (${activeBranch})`}
+            value={draftBranch}
+            onChange={(e) => setDraftBranch(e.target.value)}
+            data-testid="quiver-input-branch"
+            title="Override the ontology branch this series resolves on. Leave blank to track the page's active branch."
+            className="px-2 py-1.5 text-sm bg-bg-tertiary border border-border rounded text-text-primary font-mono"
           />
           <button
             type="submit"

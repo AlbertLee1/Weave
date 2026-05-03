@@ -11,6 +11,10 @@ export interface ChartSeries {
   label: string;
   color: string;
   points: TimeSeriesPoint[];
+  // US-404: optional uplot dash pattern (pixel widths fed to canvas
+  // setLineDash). Solid by default; non-default-branch overlays render
+  // dashed so the same colour visually disambiguates branches.
+  dash?: number[];
 }
 
 interface MultiSeriesChartProps {
@@ -83,6 +87,7 @@ export function MultiSeriesChart({
             width: 2,
             spanGaps: true,
             points: { show: false },
+            ...(s.dash && s.dash.length > 0 ? { dash: s.dash } : {}),
           })),
         ],
         axes: [

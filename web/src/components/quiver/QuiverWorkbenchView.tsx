@@ -4,6 +4,7 @@ import type { TimeSeriesPoint } from '../../api/timeseries';
 import { MultiSeriesChart, type ChartSeries } from './MultiSeriesChart';
 import {
   aggregateRange,
+  buildChartSeries,
   EMPTY_AGGREGATE,
   type RangeAggregate,
 } from '../../utils/quiverAggregation';
@@ -25,6 +26,11 @@ export interface SeriesSpec {
   property: string;
   label: string;
   color: string;
+  // US-404: optional ontology branch this series resolves on. Empty/undefined
+  // means it tracks the page's active branch. Series whose branch differs
+  // from DEFAULT_BRANCH render with a dashed line so the same color can
+  // distinguish two branch overlays of the same property.
+  branch?: string;
 }
 
 type SeriesStatus = 'loading' | 'error' | 'ready';
@@ -41,6 +47,7 @@ function SeriesFetcher({
     objectType: spec.objectType,
     primaryKey: spec.primaryKey,
     property: spec.property,
+    ...(spec.branch ? { branch: spec.branch } : {}),
   });
   const status: SeriesStatus = isLoading
     ? 'loading'
@@ -111,13 +118,7 @@ export function QuiverWorkbenchView({
   }
 
   const chartSeries = useMemo<ChartSeries[]>(
-    () =>
-      seriesList.map((s) => ({
-        id: s.id,
-        label: s.label,
-        color: s.color,
-        points: pointsById[s.id] ?? [],
-      })),
+    () => buildChartSeries(seriesList, pointsById),
     [seriesList, pointsById],
   );
 
@@ -206,11 +207,26 @@ export function QuiverWorkbenchView({
                       <span
                         aria-hidden
                         className="inline-block w-3 h-3 rounded-sm flex-shrink-0"
-                        style={{ background: s.color }}
+                        style={{
+                          background:
+                            s.branch && s.branch !== 'main'
+                              ? `repeating-linear-gradient(90deg, ${s.color} 0 4px, transparent 4px 6px)`
+                              : s.color,
+                        }}
                         data-testid={`quiver-color-${s.id}`}
                       />
                       <div className="flex flex-col">
-                        <span className="text-text-primary">{s.label}</span>
+                        <span className="text-text-primary">
+                          {s.label}
+                          {s.branch && s.branch.length > 0 ? (
+                            <span
+                              className="ml-1 px-1 text-[10px] font-mono uppercase tracking-wide rounded bg-bg-secondary text-text-secondary"
+                              data-testid={`quiver-branch-${s.id}`}
+                            >
+                              {s.branch}
+                            </span>
+                          ) : null}
+                        </span>
                         <span className="font-mono text-[10px] text-text-muted">
                           {s.objectType}/{s.primaryKey}.{s.property}
                         </span>

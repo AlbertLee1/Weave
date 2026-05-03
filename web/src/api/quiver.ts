@@ -12,6 +12,9 @@ export interface QuiverSeriesConfig {
   property: string;
   label: string;
   color: string;
+  // US-404: optional ontology branch this series resolves on. Empty/absent
+  // means the series tracks the page's active branch (default 'main').
+  branch?: string;
 }
 
 export interface QuiverDashboardConfig {

@@ -20,6 +20,7 @@ vi.mock('../../../api/quiver', () => quiverMocks);
 
 import { QuiverPage } from '../QuiverPage';
 import * as timeseriesApi from '../../../api/timeseries';
+import { useBranchStore } from '../../../stores/branchStore';
 
 function renderPage(initialPath = '/quiver/test') {
   const queryClient = new QueryClient({
@@ -40,6 +41,17 @@ function renderPage(initialPath = '/quiver/test') {
 describe('QuiverPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // US-404: branchStore persists per-ontology selection in localStorage
+    // (Zustand persist middleware). Clear it between tests so a stale
+    // selection from a sibling test cannot drift the form's default
+    // branch and corrupt assertions on the saved config payload.
+    localStorage.removeItem('weave-active-branch');
+    useBranchStore.setState({ selections: {} });
+    quiverMocks.saveQuiverDashboard.mockClear();
+    quiverMocks.listQuiverDashboards.mockClear();
+    quiverMocks.getQuiverDashboard.mockClear();
+    quiverMocks.deleteQuiverDashboard.mockClear();
+    quiverMocks.viewQuiverDashboard.mockClear();
   });
 
   it('renders the empty state until a series is added', () => {
@@ -154,6 +166,86 @@ describe('QuiverPage', () => {
     expect(screen.getByText(/missing ontology/i)).toBeInTheDocument();
   });
 
+  // US-404: per-series branch override field on the picker form. The
+  // submitted SeriesSpec persists `branch`, the timeseries fetch passes
+  // it through, and the row badge reveals which branch the spec resolves
+  // on. Two overlays of the same (objectType, primaryKey, property)
+  // share a colour but render with different dash patterns in the chart
+  // (asserted in the QuiverWorkbenchView/MultiSeriesChart unit tests).
+  it('persists a per-series branch override and forwards it to the timeseries fetch', async () => {
+    const spy = vi
+      .spyOn(timeseriesApi, 'streamTimeSeriesPoints')
+      .mockResolvedValue([]);
+    renderPage();
+
+    fireEvent.change(screen.getByTestId('quiver-input-objectType'), {
+      target: { value: 'Server' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-primaryKey'), {
+      target: { value: 's1' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-property'), {
+      target: { value: 'cpu' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-branch'), {
+      target: { value: 'feature-x' },
+    });
+    fireEvent.click(screen.getByTestId('quiver-add-button'));
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    const call = spy.mock.calls.find(
+      (c) => (c[0] as { branch?: string }).branch === 'feature-x',
+    );
+    expect(call).toBeDefined();
+    const row = screen.getByTestId(/^quiver-row-Server\|s1\|cpu\|feature-x/);
+    const rid = row.getAttribute('data-testid')!.replace('quiver-row-', '');
+    expect(screen.getByTestId(`quiver-branch-${rid}`)).toHaveTextContent(
+      'feature-x',
+    );
+  });
+
+  it('reuses the same colour for two branches of the same property and tags both rows (US-404)', async () => {
+    vi.spyOn(timeseriesApi, 'streamTimeSeriesPoints').mockResolvedValue([]);
+    renderPage();
+
+    function addBranchSeries(branch: string) {
+      fireEvent.change(screen.getByTestId('quiver-input-objectType'), {
+        target: { value: 'Server' },
+      });
+      fireEvent.change(screen.getByTestId('quiver-input-primaryKey'), {
+        target: { value: 's1' },
+      });
+      fireEvent.change(screen.getByTestId('quiver-input-property'), {
+        target: { value: 'cpu' },
+      });
+      fireEvent.change(screen.getByTestId('quiver-input-branch'), {
+        target: { value: branch },
+      });
+      fireEvent.click(screen.getByTestId('quiver-add-button'));
+    }
+
+    addBranchSeries('main');
+    addBranchSeries('feature-x');
+
+    const swatches = screen.getAllByTestId(/^quiver-color-/);
+    expect(swatches).toHaveLength(2);
+    // Two branch overlays of the same (ot, pk, property) reuse the slot
+    // colour. The non-default branch swatch carries a dashed gradient
+    // so the rendered backgrounds are NOT identical even though both
+    // strokes use the same RGB value — assert the underlying chart
+    // series colour by inspecting the raw style for the rgb token.
+    const mainBg = (swatches[0] as HTMLElement).style.background;
+    const branchBg = (swatches[1] as HTMLElement).style.background;
+    expect(mainBg).not.toBe('');
+    expect(branchBg).not.toBe('');
+    expect(branchBg).toContain(mainBg);
+
+    const branchTags = screen.getAllByTestId(/^quiver-branch-/);
+    expect(branchTags.map((el) => el.textContent)).toEqual(
+      expect.arrayContaining(['main', 'feature-x']),
+    );
+  });
+
   it('saves the workbench config to the backend (US-403)', async () => {
     vi.spyOn(timeseriesApi, 'streamTimeSeriesPoints').mockResolvedValue([]);
     quiverMocks.saveQuiverDashboard.mockResolvedValue({
@@ -209,5 +301,45 @@ describe('QuiverPage', () => {
     expect(arg.config.series[0].property).toBe('cpu');
     // First save (no existing rid) should not include rid in payload.
     expect(arg.rid).toBeUndefined();
+  });
+
+  it('includes the per-series branch in the saved config payload (US-404)', async () => {
+    vi.spyOn(timeseriesApi, 'streamTimeSeriesPoints').mockResolvedValue([]);
+    quiverMocks.saveQuiverDashboard.mockResolvedValue({
+      rid: 'ri.quiver.main.dashboard.new',
+      name: 'BranchedDemo',
+      owner: 'user:test',
+      config: { ontologyApiName: 'test', series: [] },
+      createdAt: '2026-04-18T10:00:00Z',
+      updatedAt: '2026-04-18T10:00:00Z',
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByTestId('quiver-input-objectType'), {
+      target: { value: 'Server' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-primaryKey'), {
+      target: { value: 's1' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-property'), {
+      target: { value: 'cpu' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-branch'), {
+      target: { value: 'feature-x' },
+    });
+    fireEvent.click(screen.getByTestId('quiver-add-button'));
+
+    fireEvent.change(screen.getByTestId('quiver-dashboard-name'), {
+      target: { value: 'BranchedDemo' },
+    });
+    fireEvent.click(screen.getByTestId('quiver-save-button'));
+
+    await waitFor(() => {
+      expect(quiverMocks.saveQuiverDashboard).toHaveBeenCalledTimes(1);
+    });
+    const arg = quiverMocks.saveQuiverDashboard.mock.calls[0][0];
+    expect(arg.config.series).toHaveLength(1);
+    expect(arg.config.series[0].branch).toBe('feature-x');
   });
 });

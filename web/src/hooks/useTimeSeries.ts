@@ -27,20 +27,34 @@ export interface UseTimeSeriesPointsParams {
   objectType: string;
   primaryKey: string;
   property: string;
+  // US-404: optional explicit branch. When set the fetch overrides the
+  // store's active branch and the queryKey is keyed on it so multi-branch
+  // overlays cache independently.
+  branch?: string;
   enabled?: boolean;
 }
 
 export function useTimeSeriesPoints(params: UseTimeSeriesPointsParams) {
-  const { ontologyApiName, objectType, primaryKey, property, enabled } = params;
+  const { ontologyApiName, objectType, primaryKey, property, branch, enabled } =
+    params;
   const keyOk = !!(ontologyApiName && objectType && primaryKey && property);
+  const branchKey = branch && branch.trim().length > 0 ? branch.trim() : '';
   return useQuery<TimeSeriesPoint[]>({
-    queryKey: ['timeseries', ontologyApiName, objectType, primaryKey, property],
+    queryKey: [
+      'timeseries',
+      ontologyApiName,
+      objectType,
+      primaryKey,
+      property,
+      branchKey,
+    ],
     queryFn: () =>
       streamTimeSeriesPoints({
         ontologyApiName,
         objectType,
         primaryKey,
         property,
+        ...(branchKey ? { branch: branchKey } : {}),
       }),
     enabled: keyOk && enabled !== false,
   });

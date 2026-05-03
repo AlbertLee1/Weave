@@ -41,6 +41,7 @@ export function QuiverViewPage() {
       property: s.property,
       label: s.label,
       color: s.color,
+      ...(s.branch ? { branch: s.branch } : {}),
     }));
   }, [data]);
 
