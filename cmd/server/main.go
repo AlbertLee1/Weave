@@ -53,6 +53,7 @@ import (
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/actiontemplates"
+	"github.com/liyang/weave/pkg/apps"
 	"github.com/liyang/weave/pkg/comments"
 	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/permissionrequests"
@@ -361,6 +362,11 @@ type ServerDeps struct {
 	// sharing. nil in degraded mode so /api/v2/dashboards/* routes stay
 	// unmounted; the Dashboard Editor falls back to ephemeral state.
 	DashboardsStore dashboards.Store
+	// US-391: Apps (Workshop-lite App Editor) per-owner CRUD store with
+	// versioned layout history. nil in degraded mode so the /api/v2/apps/*
+	// routes stay unmounted; the SPA's App Editor falls back to ephemeral
+	// state until the backing store is wired (PG mode only).
+	AppsStore apps.Store
 	// US-334: Comments per-RID threaded store. Backs the
 	// /api/v2/comments/* CRUD endpoints used by the ObjectDetail
 	// Comments tab. nil in degraded mode so the routes stay unmounted
@@ -1288,6 +1294,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			dashboards.NewHandler(deps.DashboardsStore).RegisterRoutes(api)
 		}
 
+		// US-391: Workshop-lite App Editor — per-owner CRUD with
+		// versioned layout history. Mounts only when the PG store is
+		// wired; degraded-mode deployments leave the /api/v2/apps/*
+		// routes unregistered.
+		if deps.AppsStore != nil {
+			apps.NewHandler(deps.AppsStore).RegisterRoutes(api)
+		}
+
 		// US-334: Comments per-RID CRUD with soft-delete +
 		// pagination. Same degraded-mode shape as saved searches —
 		// the SPA hides the Comments tab when the list endpoint
@@ -1723,6 +1737,11 @@ func main() {
 		// routes used by the Dashboard Editor for save / load / share.
 		deps.DashboardsStore = newPGDashboardsStore(pool)
 		log.Printf("[dashboards] store wired")
+
+		// US-391: Apps store. Backs the /api/v2/apps/* routes used by
+		// the Workshop-lite App Editor (live row + version history).
+		deps.AppsStore = newPGAppsStore(pool)
+		log.Printf("[apps] store wired")
 
 		// US-334: Comments store. Backs the /api/v2/comments/*
 		// routes used by the ObjectDetail Comments tab.

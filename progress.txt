@@ -1817,3 +1817,67 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The cliclient response decoder accepts the server's `time.Time` JSON encoding (`"2026-05-03T00:00:00Z"`) without any custom `UnmarshalJSON` because `time.Time` round-trips RFC3339 by default. If a future endpoint emits `time.Duration` or another type that doesn't round-trip cleanly, add a per-type `UnmarshalJSON` rather than touching the decoder.
 - The CLI's restore summary intentionally does NOT echo the target tx (`Rollback to tx-1: ...` already names it), but DOES echo the new chain head and parent. This mirrors what an operator typically wants in the terminal: "what did I undo, what's the new state". Anything richer (full diff of restored fields, etc.) belongs in `--json` output for piping into jq.
 ---
+
+## 2026-05-03 - US-391 - App 容器与 Layout DSL
+
+**Implementation:**
+- New migration `000094_apps_app_versions.{up,down}.sql` adds two tables: `apps` (rid TEXT PK, name TEXT, owner_id TEXT, layout_json JSONB, version INT ≥1, created_at, updated_at; UNIQUE on (owner_id, name)) and `app_versions` (composite PK (app_rid, version) with `app_rid REFERENCES apps(rid) ON DELETE CASCADE`, name + layout_json snapshot, created_by, created_at). The version-DESC index on `app_versions(app_rid, version DESC)` keeps the rollback UI's "newest first" listing index-only.
+- New package `pkg/apps` with the canonical Workshop-lite App Editor surface:
+  - `pkg/apps/layout.go`: Layout DSL types + `ValidateLayout(json.RawMessage) error`. Three node types — `row` (children []Node, must be cols, sum widths ≤12), `col` (width 1..12 strict integer, single child), `component` (componentType non-empty string + opaque props). Validator uses `json.Decoder` with `UseNumber` so 6.5 widths are rejected even before the range check. Strict decode rejects trailing JSON noise. `MaxLayoutDepth = 32` recursion cap so a pathological client can't blow the Go stack. Errors carry a JSON path (`children[0].child.componentType`) so the SPA editor can highlight the offending node, plus an `ErrInvalidLayout` sentinel for `errors.Is` at the store/handler boundary.
+  - `pkg/apps/model.go`: `App{RID, Name, OwnerID, LayoutJSON, Version, CreatedAt, UpdatedAt}` + `AppVersion{AppRID, Version, Name, LayoutJSON, CreatedAt, CreatedBy}` + `Update{Name, LayoutJSON}` partial-update DTO. `MaxNameLength=128` + `ValidateName` mirror the dashboards pattern.
+  - `pkg/apps/store.go`: narrow `Store` interface (Create / Get / List / Update / Delete / ListVersions / GetVersion). `MemoryStore` implementation for tests + degraded-mode deployments. Every `Create` stamps Version=1 and records the initial snapshot; every `Update` increments Version and appends a fresh snapshot — even a no-op DTO bumps Version because the contract is "every Update is auditable history". Validation runs before any state mutation so a bad layout cannot leave the live row half-mutated. ErrNotFound is owner-scoped (cross-owner read = NotFound regardless of existence).
+  - `pkg/apps/handlers.go`: 7 chi routes — list / create / get / update / delete / list versions / get version. Auth-required; `nil store` falls through to a 500 `AppsUnavailable` envelope so degraded routers can keep their /api/v2 prefix mounted. Layout-validation failures surface as 400 `InvalidAppLayout` with the path field copied from the underlying `*LayoutError`. Conflicts → 409 `AppNameConflict`; missing → 404 `AppNotFound`; bad version path segment → 400 `InvalidAppVersion`. Update PUT re-validates name + layout BEFORE forwarding to the store so a malformed request is rejected at the handler layer.
+- `cmd/server/apps_store.go` (new): concrete `pgAppsStore` implementing `apps.Store` against the `apps` + `app_versions` tables. Create + Update wrap the live-row mutation AND the `app_versions` insert in one transaction so the two surfaces never drift; Update uses `SELECT … FOR UPDATE` on the live row to make the version bump race-free across concurrent writers. PG unique-violation (SQLSTATE 23505) on (owner_id, name) maps to `apps.ErrNameConflict`. Layout JSONB writes go through `layoutForWrite` so a nil RawMessage lands as `'{}'` not the literal string `'null'`.
+- `cmd/server/main.go`:
+  - New import `github.com/liyang/weave/pkg/apps`.
+  - `ServerDeps` gains `AppsStore apps.Store` (US-391 docstring) — nil in degraded mode.
+  - Route mount: `if deps.AppsStore != nil { apps.NewHandler(deps.AppsStore).RegisterRoutes(api) }` next to the existing `dashboards` mount.
+  - PG bootstrap: `deps.AppsStore = newPGAppsStore(pool)` immediately after the dashboards wiring + a `[apps] store wired` log line.
+- The /api/v2/apps/* routes are intentionally NOT in `api/openapi.yaml` because the contract test router leaves `deps.AppsStore` nil — same pattern as dashboards. When future stories (US-392+) flesh out the SPA App Editor surface and wire AppsStore in the contract router, both files (`api/openapi.yaml` + `cmd/server/openapi_spec.yaml`) will need entries for these 7 routes; until then the contract tests stay green.
+
+**Files changed:**
+- `migrations/000094_apps_app_versions.up.sql` (new)
+- `migrations/000094_apps_app_versions.down.sql` (new)
+- `pkg/apps/layout.go` (new — Layout DSL + ValidateLayout + MaxLayoutDepth/MaxColumns + ErrInvalidLayout sentinel)
+- `pkg/apps/model.go` (new — App / AppVersion / Update + ValidateName)
+- `pkg/apps/store.go` (new — Store interface + MemoryStore + sentinel errors)
+- `pkg/apps/handlers.go` (new — 7 chi routes + degraded-mode shim)
+- `pkg/apps/layout_test.go` (new — 14 unit tests for ValidateLayout, including AC canonical shape, depth limit, width bounds, trailing-JSON noise)
+- `pkg/apps/store_test.go` (new — 13 store-layer tests covering create/list/get/update/delete + version history bookkeeping)
+- `pkg/apps/handlers_test.go` (new — 3 HTTP handler tests including degraded-mode and full CRUD + version listing flow)
+- `cmd/server/apps_store.go` (new — pgAppsStore with transactional bump + history append)
+- `cmd/server/main.go` (apps import + ServerDeps.AppsStore + route mount + PG store wiring)
+- `prd.json` (mark US-391 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` all green across the full ~80-package surface
+- `go test -count=1 ./pkg/apps/ ./cmd/server/` PASS — 30 new tests in pkg/apps (14 layout + 13 store + 3 handlers) plus the existing cmd/server suite
+- `go test ./cmd/server/ -run "TestContract_AllRoutesDocumented|TestContract_NoOrphanedSpecPaths|TestContract_EmbeddedSpecMatchesCanonical" -v` — 3/3 PASS (apps routes are gated on the nil-store check the contract router uses, so no OpenAPI entries needed yet)
+- Full pkg/apps test breakdown:
+  - `TestValidateLayout_AcceptsCanonicalShape` — PRD wire shape validates
+  - `TestValidateLayout_RejectsEmpty/{nil,empty,whitespace}` — 3 cases
+  - `TestValidateLayout_RejectsInvalidJSON` — malformed JSON
+  - `TestValidateLayout_RejectsUnknownType/{unknown,missing,empty type,type not string,layout not object}` — 5 cases
+  - `TestValidateLayout_RowRequiresChildrenArray/{missing,not array,empty,entry not obj}` — 4 cases
+  - `TestValidateLayout_ColRequiresWidthAndChild/{below range,above range,missing,child missing,float}` — 5 cases
+  - `TestValidateLayout_RowChildWidthsCannotExceed12` — sum-≤-12 grid invariant
+  - `TestValidateLayout_RowChildrenMustBeColumns` — row's direct children must be cols
+  - `TestValidateLayout_ComponentRequiresComponentType/{missing,empty,not string}` — 3 cases
+  - `TestValidateLayout_NestedRowsAllowed` — col→row nesting
+  - `TestValidateLayout_DepthLimit` — recursion cap at MaxLayoutDepth
+  - `TestValidateLayout_RejectsTrailingNoise` — strict decode contract
+  - `TestMemoryStore_*` — Create stamps Version=1 + records history; Update bumps Version and appends; rejects invalid layouts atomically; cross-owner reads/writes return ErrNotFound; Delete cascades version history; List sorted by name
+  - `TestHandler_*` — Auth required (401), full CRUD flow (201→200→404→204), invalid layout returns 400 with InvalidAppLayout errorName, degraded-mode returns 500 AppsUnavailable
+
+**Learnings for future iterations:**
+- The PRD wire shape `{type:'row', children:[{type:'col', width:6, child:{type:'component'...}}]}` constrains the validator strongly: row's direct children MUST be cols (never plain components, never nested rows), cols MUST have a width AND a child, components are leaves with a componentType identifier. The validator codifies this exactly so a future SPA editor that accidentally produces malformed JSON gets a clear `path` into the offending node rather than a generic "invalid layout" error. Pattern: when the PRD includes a wire example, test EVERY constraint that example implies (positional, width range, sum-bound, type-tag enum) — the example is the contract, not just a hint.
+- `json.Decoder.UseNumber()` is the canonical way to distinguish integer 6 from float 6.5 in a generic `map[string]any` decode. Without it, both arrive as `float64(6)` and `float64(6.5)` and the integer check needs a `math.Trunc(v) == v` workaround. UseNumber gives you `json.Number` directly and `Int64()` errors on a non-integer literal — that's the test for "this is a valid grid width". Keep this pattern for any future DSL field that requires strict-integer semantics.
+- The version-bump contract is "every Update is auditable history, including no-op updates". This trades a slight churn cost for a clean audit invariant: `app_versions` row count = number of `PUT /apps/{rid}` calls that succeeded with owner-gated 200. A "skip empty updates" optimization would corrupt this invariant and break the future US-398 rollback UI's per-action timeline. Don't add empty-update suppression without re-considering the audit contract.
+- `SELECT … FOR UPDATE` on the live `apps` row inside the Update transaction is the cheapest way to make concurrent updates race-free. Without it, two simultaneous PUTs would race the version bump and either (a) leak two `app_versions` rows at the same version (PRIMARY KEY violation, transaction rollback) or (b) overwrite each other's layout with the version reading stale. The lock is held only for the duration of the UPDATE + INSERT pair; release happens at COMMIT. Pattern: any feature whose model has a "monotonic version + history append" shape needs FOR UPDATE on the live row inside the transaction.
+- Degraded-mode (nil store) routing: every endpoint returns 500 `AppsUnavailable` rather than 404 because the routes ARE mounted but the backing infrastructure is missing — this lets the SPA's API client distinguish "feature disabled on this deployment" (500 with named errorCode) from "bad URL" (404). The dashboards / saved-searches / action-templates packages all share this shape; reuse it for any new feature that's gated behind a PG-only store.
+- The `apps` routes are NOT in `api/openapi.yaml` because the contract test router leaves `deps.AppsStore = nil`, gating the mount block. When the SPA-side App Editor (US-392+) lands and the contract test router needs to discover the routes for documentation enforcement, EITHER (a) wire a `MemoryStore` into the contract router's deps (preferred — surfaces every route to the contract test) OR (b) add the 7 paths to `undocumentedRouteAllowList` (fallback when the route is intentionally undocumented). The first option is the right pattern because every public route SHOULD be in the spec; the second is only for swagger UI / static-asset shims.
+- `ON DELETE CASCADE` on `app_versions.app_rid` is the canonical way to keep the history coherent when the live row is deleted. Without it, a `DELETE /apps/{rid}` would orphan the version rows and the next `Create` with a re-used RID would silently inherit history from the previous owner. Pattern: any "live row + immutable history" pair needs CASCADE on the FK; the immutable invariant is "history is meaningful only while its parent row exists".
+- The validator's path strings (`children[0].child.componentType`) are JS-style selector paths designed to feed an SPA-side error renderer that can highlight the matching node in a tree view. Stable + machine-readable + cheap to produce. Avoid plain-English error messages here — `"the third row has too many columns"` is harder to map back to the JSON tree than `children[2].children: col width sum 14 exceeds grid width 12`.
+---
