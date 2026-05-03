@@ -2,8 +2,16 @@ package objectset
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrTransactionNotFound is the sentinel a TransactionResolver returns
+// when the requested tx_id has no matching row in dataset_transactions.
+// The handler maps it to a TransactionNotFound 400 envelope; any other
+// error surfaces as TimeTravelFailed so configuration mistakes stay
+// visible.
+var ErrTransactionNotFound = errors.New("dataset transaction not found")
 
 // HistorySnapshotProvider returns the per-PK snapshot of an ObjectType at
 // the requested past timestamp. Implementations scan object_history for the
@@ -26,4 +34,17 @@ type HistorySnapshotProvider interface {
 type ObjectSnapshot struct {
 	PrimaryKey string
 	Properties map[string]interface{}
+}
+
+// TransactionResolver translates a US-379 dataset_transactions tx_id into
+// the concrete commit timestamp that ?asOf= should target. Implementations
+// query the dataset_transactions table; cmd/server wires a thin adapter
+// over oms.DatasetTransactionStore. ErrTransactionNotFound (or any error
+// the implementation returns) surfaces as a TransactionNotFound 400.
+//
+// Decoupled from HistorySnapshotProvider so a deployment can wire one
+// without the other (e.g. degraded-mode test routers without PG keep the
+// timestamp-based asOf path live and just refuse tx-id lookups).
+type TransactionResolver interface {
+	ResolveTransaction(ctx context.Context, txID string) (time.Time, error)
 }

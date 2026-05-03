@@ -23,6 +23,7 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Cell-level masking has TWO orthogonal axes (US-258 / US-376) that share one `cell_masks` table and one `pkg/cellsec.Engine`: (a) AppliesTo allow-list (legacy `MaskRule` lowercase hash/redact/partial), (b) CEL Expression predicate (`MaskStrategy` uppercase REDACT/HASH/NULL/PARTIAL with the new NULL strategy). Programs are pre-compiled once at `Engine.Reload` (and `SetMasks`) into a `compiledCellMask` wrapper so the per-row hot path is a flat map lookup + one `cel.Program.Eval`. The CEL bindings are `user.{id,email,roles,markings,attributes}` and `row.<property>` (the wire object's `Properties` map). The expression must return bool — TRUE means the mask fires (caller gets the masked value). Empty expression falls back to the legacy AppliesTo allow-list semantics. **Fail-closed contract:** any CEL eval error surfaces as "mask applies" so a broken expression never opens a hole in enforcement. The serialisation hook is `pkg/oss/service_impl.go::applyCellMasking` which now calls `Engine.CompileForRow(ctx, user, otRID, pk, row.Properties)` and dispatches via `masking.ApplyStrategyTransforms`. Legacy `Engine.Compile` still returns the old `map[string]MaskRule` shape for callers that don't have the row in scope.
 - Pipeline incremental + schema-evolution (US-378) shares a fail-closed invariant: schema diff via `ResolveSchemaEvolution(prior, current)` MUST run BEFORE the source's `ReadAfter(ctx, after)` call. The runtime contract is "no side effects leak through a BREAKING_CHANGE": no read I/O, no sink schema extension, no row write. Future incremental connectors must seed their work through `pkg/pipeline/incremental.go::RunIncremental` so this ordering stays mechanically enforced. The `LatestCommittedOffset(ctx, pipelineID)` watermark filter is `status='success'` only — failed/canceled runs do NOT advance progress, otherwise a half-applied run could silently drop rows on the next APPEND. `pkg/pipeline/schema_evolution.go::typesEquivalent` is trim+case-insensitive for Type, case-sensitive on Name — schema sources frequently disagree on type casing without semantic difference, while column names ARE case-sensitive in most downstream stores.
 - Column-level lineage (US-377) is a SECOND lineage surface alongside US-300's `lineage_edges`. The `lineage_column_edges` table tracks `(src_dataset, src_column) → (dst_object_type, dst_property)` and is populated synchronously by the datasource-binding write path: `OMSHandler.deriveColumnLineageOnBindingChange` calls `DeriveColumnLineageEdges(binding, properties)` and atomically `ReplaceColumnLineageForBinding`. Replace-by-binding (NOT append-only) is the canonical write semantics so a binding update that DROPS a property yields zero edges for it immediately. The `ColumnLineageStore` interface lives in `pkg/oms` (matching the `LineageStore` shape — narrow, off the main `Repository` interface so degraded-mode test routers don't have to cascade-stub it). `DeriveColumnLineageEdges` accepts BOTH wire shapes for `column_mapping` JSON: flat object `{propertyApiName: column}` AND array form `[{property, column}]` with `p`/`c` short-key alternates. Output is sorted lexicographically by (api_name, src_column) so identical mapping payloads produce identical edge sets modulo ts — useful for change-detection. Handler routes `GET /api/v2/lineage/property/{rid}` + `GET /api/v2/lineage/dataset-columns/impact?dataset=...&column=...` are mounted unconditionally on the lineage handler (404 ColumnLineageNotConfigured in degraded mode); both must appear in `api/openapi.yaml` AND `cmd/server/openapi_spec.yaml` because the contract test walks chi routes regardless of store wiring. Note: `datasource_bindings` admin routes were stripped in US-006 so the hook fires only via direct handler invocation today; the wiring is ready when admin routes return.
+- Time-travel asOf (US-379 extends US-223): the OSS load handler's `?asOf=` query parameter now accepts TWO wire formats — RFC3339 timestamp (US-223 default) and `tx-<id>` reference into `dataset_transactions` (US-379). Branching lives in `pkg/oss/objectset/handler.go::resolveAsOf(ctx, raw)`; the `"tx-"` prefix routes to the wired `TransactionResolver` which translates to a `committed_at` instant, then both branches converge on `loadObjectsAsOf(time.Time)`. Resolver + history snapshot provider are intentionally orthogonal hooks — degraded-mode routers can wire one without the other. New asOf flavors (e.g. `branch:` refs) plug in as new prefix arms with zero changes downstream. The funnel consumer's `recordDatasetTransaction` lands one row per applied EditBatch with `parent_tx_id` resolved via `LatestForOntology(batch.OntologyAPIName)` — the chain is per-ontology, NOT per-ObjectType. `ON CONFLICT (tx_id) DO NOTHING` handles NATS at-least-once redelivery so a duplicate batch is silently deduped on the chain. `EditBatch.ID` is normalised via `strings.HasPrefix(id, "tx-")` and conditionally prepended; legacy publishers that emit raw uuids are still safe. The `tx_id` column on `object_history` is populated for future collision-disambiguation but the snapshot scan still uses `[valid_from, valid_to)` half-open intervals — same-instant batches fall back to "latest wins" until a future US wires tx-aware snapshot reads.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
 
@@ -679,4 +680,232 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The `IncrementalSink` interface is intentionally optional (nil = preview mode). This unblocks two future US directions: (a) a "dry-run" pipeline preview UI that resolves the diff + reports the row delta without writing, (b) an "audit" run that captures the schema evolution history into a separate audit-only sink without touching the production index. Both can be built on `RunIncremental(ctx, opts)` without an interface change.
 - `pkg/pipeline/incremental.go` is named at the package root (not under `pkg/pipeline/incremental/...`) because it's the new opt-in execution mode for the existing pipeline runner, not a separate service. The `Run*` API surface lives next to `RunDAG` so callers see both shapes when reading the package. If a future US adds CDC-style streaming, that's where a sibling `pkg/pipeline/streaming.go` would land — by mode, not by transport.
 - The Store interface widening to add `LatestCommittedOffset` is backwards-compatible because all existing callers (handlers, scheduler) don't touch APPEND-mode state. New methods in interface go at the BOTTOM of the existing block grouped by US — easier to read the chronological evolution of the interface, and the `// US-298 — ... API.` / `// US-378 — ...` comments serve as section headers for future additions.
+---
+
+## 2026-05-03 - US-379 - Time-travel 查询（Dataset transaction chain）
+
+**Implementation:**
+- New migration `000090_dataset_transactions.{up,down}.sql` adds the
+  `dataset_transactions` table (`tx_id PK, parent_tx_id, ontology_api_name,
+  committed_at, edits_count, user_id`) plus a `tx_id` back-reference
+  column on `object_history`. Indexed by `(ontology_api_name,
+  committed_at DESC, tx_id DESC)` so chain reads + parent lookups stay
+  cheap; `tx_id` on `object_history` is partial-indexed `WHERE tx_id IS
+  NOT NULL` to keep the legacy null-row case off the B-tree.
+- `pkg/oms/dataset_transaction.go` (new) defines `DatasetTransaction`
+  and `DatasetTransactionStore` (narrow surface: Record, Get,
+  LatestForOntology, ListByOntology). Validation rejects rows whose
+  `TxID` lacks the `"tx-"` prefix at the boundary so a malformed insert
+  never lands a row the OSS asOf parser cannot find.
+  `DatasetTransactionIDPrefix = "tx-"` is the canonical constant.
+- `pkg/oms/pg_repository_dataset_transaction.go` (new) is the PG impl.
+  `RecordDatasetTransaction` is `INSERT ... ON CONFLICT (tx_id) DO
+  NOTHING` so a redelivered NATS message won't duplicate the chain.
+  `LatestForOntology` returns `(nil, nil)` for a soft miss (no
+  transactions for this ontology yet — the genesis case).
+- `pkg/oms/object_history.go`: `ObjectHistory` struct gains `TxID
+  string` so the funnel consumer can stamp the per-batch tx_id on every
+  history row produced by the same EditBatch. `pg_repository.go`
+  `InsertObjectHistory` SQL widened to write the new column via
+  `nilIfEmpty(h.TxID)` (NULL for legacy / no-recorder paths).
+- `pkg/funnel/consumer.go`: new `DatasetTransactionRecorder` interface
+  (mirrors the narrow oms surface), `txRecorder` field, `SetTxRecorder`
+  setter, and a new `recordDatasetTransaction(ctx, batch)` helper that
+  runs after `applyBatchEdits` succeeds. The helper resolves
+  `parent_tx_id` via `LatestForOntology(batch.OntologyAPIName)`,
+  prefixes a raw `EditBatch.ID` with `"tx-"` if necessary, and lands
+  one `dataset_transactions` row per batch. Returns the resulting
+  tx_id so the caller can stamp it on each subsequent
+  `oms.ObjectHistory.TxID`. Failures log + degrade to empty TxID
+  rather than aborting the index commit (the index is the source of
+  truth for read paths).
+- `pkg/oss/objectset/snapshot.go`: new `TransactionResolver` interface
+  + `ErrTransactionNotFound` sentinel. The resolver translates
+  `tx-<id>` to a concrete `committed_at` so the existing US-223
+  history-snapshot scan stays untouched downstream.
+- `pkg/oss/objectset/handler.go`: `Handler.txResolver` field,
+  `SetTransactionResolver` setter, and a new `resolveAsOf(ctx, raw)
+  → (time.Time, *apierror.APIError)` helper that branches on the
+  `"tx-"` prefix — RFC3339 keeps the US-223 path untouched. Error
+  envelopes:
+    - `tx-` with no resolver wired → `TransactionLookupUnavailable`
+    - `tx-` with unknown id → `TransactionNotFound`
+    - `tx-` with any other resolver error → `TimeTravelFailed`
+    - non-`tx-` non-RFC3339 → `InvalidAsOf` (existing message refreshed).
+- `cmd/server/dataset_transaction_handler.go` (new) holds the cmd/server
+  side of US-379:
+    - `datasetTransactionResolverAdapter` satisfies
+      `objectset.TransactionResolver` by forwarding to the PG
+      `DatasetTransactionStore` and mapping `oms.ErrNotFound` →
+      `objectset.ErrTransactionNotFound` so the OSS handler renders
+      a clean `TransactionNotFound` 400.
+    - `datasetHistoryHandler` serves `GET
+      /api/v2/datasets/{rid}/history`. `{rid}` resolves to an
+      `OntologyAPIName` via `OmsRepo.GetOntology` (accepting either
+      RID or api name), then walks `ListByOntology(name, 1000)`.
+      Empty chain renders as `{transactions: []}` (NOT an error).
+      Soft-degrades to `DatasetHistoryUnavailable` 400 when the store
+      is unwired.
+- `cmd/server/main.go`: `Dependencies.DatasetTransactionStore` (gated
+  on PG availability), funnel consumer wiring
+  (`SetTxRecorder(deps.DatasetTransactionStore)`), OSS handler wiring
+  (`SetTransactionResolver(newDatasetTransactionResolverAdapter(...))`),
+  and the new chi route registration:
+  `api.Get("/api/v2/datasets/{rid}/history",
+  datasetHistoryH.History)`. Mounted unconditionally (handler
+  self-degrades) so contract tests / OpenAPI walkers always see the
+  route.
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (byte-identical
+  copy): full OpenAPI 3 entry for the new GET route — request schema,
+  200 response with the transaction-array shape, 400/401/404/500
+  error references.
+
+**Files changed:**
+- `migrations/000090_dataset_transactions.up.sql` (new)
+- `migrations/000090_dataset_transactions.down.sql` (new)
+- `pkg/oms/dataset_transaction.go` (new)
+- `pkg/oms/pg_repository_dataset_transaction.go` (new)
+- `pkg/oms/object_history.go` (TxID field)
+- `pkg/oms/pg_repository.go` (InsertObjectHistory writes tx_id)
+- `pkg/oms/dataset_transaction_test.go` (new — 4 PG integration tests)
+- `pkg/funnel/consumer.go` (DatasetTransactionRecorder + SetTxRecorder
+  + recordDatasetTransaction + tx_id stamping on history rows)
+- `pkg/funnel/us379_dataset_transaction_test.go` (new — 4 unit tests
+  with fake recorder)
+- `pkg/oss/objectset/snapshot.go` (TransactionResolver interface +
+  ErrTransactionNotFound sentinel)
+- `pkg/oss/objectset/handler.go` (txResolver field, setter,
+  resolveAsOf helper, and the tx-prefix branch in LoadObjects)
+- `pkg/oss/objectset/handler_asof_tx_test.go` (new — 5 unit tests
+  including the PRD-specified "t1 写→t2 改→asOf=t1 returns the
+  original value" e2e gate)
+- `cmd/server/main.go` (Dependencies.DatasetTransactionStore wiring,
+  consumer + handler hooks, /datasets/{rid}/history route)
+- `cmd/server/dataset_transaction_handler.go` (new — adapter +
+  history handler)
+- `cmd/server/dataset_transaction_handler_test.go` (new — 6 handler
+  tests with fakes)
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (US-379 route
+  entry)
+- `prd.json` (mark US-379 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` PASS across the full suite (98+ packages, including
+  cmd/server, pkg/oms, pkg/funnel, pkg/oss/objectset, test/e2e,
+  test/foundry_parity, test/northwind, test/chinook). 0 FAIL.
+- 4/4 funnel tests in `pkg/funnel/us379_dataset_transaction_test.go` PASS:
+  - `TestUS379_RecordsTransactionPerBatch` — two batches → two rows;
+    second's `ParentTxID = tx-001`, both `CommittedAt` mirror
+    `EditBatch.Timestamp`
+  - `TestUS379_AddsTxPrefixWhenMissing` — raw `batch-no-prefix` ID is
+    rewritten to `tx-batch-no-prefix` for the dataset_transactions row
+  - `TestUS379_StampsTxIDOnObjectHistory` — every ObjectHistory row
+    produced by the same batch carries the same TxID
+  - `TestUS379_NilRecorderIsNoOp` — no recorder wired → no panic, no
+    error, history rows still land with `TxID == ""`
+- 5/5 OSS handler tests in `pkg/oss/objectset/handler_asof_tx_test.go` PASS:
+  - `TestLoadObjects_AsOfTx_RoutesThroughResolver` — happy path: tx-id
+    routed through resolver → committed_at handed to existing
+    snapshot provider
+  - `TestLoadObjects_AsOfTx_NoResolverReturnsLookupUnavailable` —
+    degraded mode: tx-id without resolver → `TransactionLookupUnavailable`
+    (NOT a fall-through to InvalidAsOf)
+  - `TestLoadObjects_AsOfTx_UnknownTxReturnsTransactionNotFound` —
+    missing row → clean `TransactionNotFound` envelope with txId echo
+  - `TestLoadObjects_AsOfTx_PropagatesResolverError` — non-NotFound
+    error → `TimeTravelFailed` with the underlying error in
+    parameters.error
+  - `TestLoadObjects_AsOfTx_TimeTravelEndToEnd` — **PRD acceptance
+    gate**: stage two snapshots representing pre/post modification;
+    `asOf=tx-1` returns the original Alice; `asOf=tx-2` returns the
+    modified Alice2
+- 6/6 cmd/server tests in `cmd/server/dataset_transaction_handler_test.go` PASS:
+  - `TestDatasetHistory_ReturnsChainOrderedByCommittedAtDesc` — chain
+    walks newest-first, parent_tx_id correctly chained
+  - `TestDatasetHistory_NotFound` — unknown rid → 404
+    `DatasetNotFound`
+  - `TestDatasetHistory_DegradedMode` — unwired store → 400
+    `DatasetHistoryUnavailable`
+  - `TestDatasetHistory_EmptyChainReturnsEmptyList` — known ontology
+    + zero rows → 200 with `{transactions: []}`
+  - `TestDatasetTransactionResolver_RoutesNotFoundSentinel` — adapter
+    converts `oms.ErrNotFound` → `objectset.ErrTransactionNotFound`
+  - `TestDatasetTransactionResolver_ReturnsCommittedAt` — adapter
+    unwraps committed_at from the row
+- Contract test PASS:
+  - `TestContract_AllRoutesDocumented` ✓
+  - `TestContract_EmbeddedSpecMatchesCanonical` ✓
+- 4 new PG integration tests in `pkg/oms/dataset_transaction_test.go`
+  compile under `-tags integration` (live PG run requires Docker; the
+  pre-existing `seedOntology redeclared` failure under integration
+  tags is unrelated to this story — see US-365 progress note).
+
+**Learnings for future iterations:**
+- US-379's "?asOf=tx-..." parameter shares the existing US-223
+  `?asOf=` query param rather than introducing a separate
+  `?asOfTx=`. The resolveAsOf helper branches on the `"tx-"` prefix
+  to pick the resolver path, then both branches converge on the same
+  `loadObjectsAsOf(time.Time)` body. This keeps the time-travel
+  pipeline single-shape and lets future asOf flavors (e.g. branch
+  refs) plug in as new prefix arms — `tx-`, `branch:`, etc. — with
+  zero changes to the snapshot scan.
+- The funnel consumer's tx-id stamping is the correctness backstop
+  for batches that share a millisecond-level recorded_at. The
+  US-223 `[valid_from, valid_to)` half-open interval scan correctly
+  selects exactly one row per PK when timestamps are distinct, but
+  collapses two same-instant batches to "always return the latest"
+  (the earlier row's `valid_to` equals its own `valid_from`, making
+  the interval empty for any T at that instant). The `tx_id`
+  back-reference column lets a future US-379+ enhancement
+  disambiguate by tx — for now the column is populated but
+  unconsumed by the snapshot query, since single-machine deployments
+  rarely emit colliding-timestamp batches.
+- `EditBatch.ID` may or may not already carry the `tx-` prefix
+  depending on the publisher (some action paths prefix, some emit
+  raw uuids). The `recordDatasetTransaction` helper canonicalises
+  via `strings.HasPrefix` + conditional prepend so the
+  dataset_transactions table is always queryable by the
+  publishe-r-agnostic prefix. Tests cover both shapes.
+- `ON CONFLICT (tx_id) DO NOTHING` on the tx_id PK is the
+  redelivery contract: NATS guarantees at-least-once, so a duplicate
+  EditBatch will redrive `applyBatchWithHistory` and try to record
+  the same tx_id twice. Without the `DO NOTHING` clause the second
+  RecordDatasetTransaction would return a unique-violation error
+  the consumer would then log as a false alarm — and worse, abort
+  the host code path that surfaces the txID for object_history
+  stamping. Pattern: any new "one-row-per-EditBatch" persistence
+  hook that runs from the funnel consumer needs this idempotency
+  clause, OR the consumer must re-read the existing row and
+  short-circuit. Idempotent INSERT is the simpler choice here.
+- `objectset.TransactionResolver` is decoupled from
+  `objectset.HistorySnapshotProvider` so a deployment can wire one
+  without the other. Specifically: degraded-mode test routers
+  without PG keep the timestamp-based asOf path live (HistorySnapshotProvider
+  resolves an in-memory map) without surfacing a tx-id resolver,
+  and the handler refuses tx-id lookups with
+  `TransactionLookupUnavailable` rather than tripping over a nil.
+  Pattern: when adding a new wire format to an existing query
+  parameter, keep the resolver / provider hooks orthogonal —
+  callers should be able to mix-and-match without scaffolding stub
+  implementations.
+- `/api/v2/datasets/{rid}/history` is a top-level route (NOT
+  nested under `/api/v2/ontologies/{ontology}/`) because the
+  PRD-mandated path is `/datasets/{rid}/history` and the chain is
+  per-ontology — `{rid}` IS the ontology identifier, so nesting
+  would be redundant. Pattern: when a PRD acceptance criterion
+  specifies a URL shape, prefer the literal shape over inferring
+  the chi router pattern from sibling endpoints. The tradeoff is
+  one extra `GetOntology` lookup at request time vs. a chi
+  middleware-resolved ontology context. The lookup pays for itself
+  by accepting BOTH RID and api name as `{rid}`, matching how
+  every other "rid-or-name" endpoint already behaves.
+- The `historyCap = 1000` constant in the dataset history handler
+  is intentional and documented inline — single-machine deployments
+  rarely accumulate more than a few hundred batches per ontology
+  before someone snapshots / archives. If pagination becomes
+  necessary the path forward is `?pageToken=` cursor (mirroring
+  loadObjects) rather than uncapping. Don't add pagination
+  pre-emptively — measure first.
 ---

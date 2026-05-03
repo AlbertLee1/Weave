@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -92,6 +93,7 @@ type Handler struct {
 	aggEngine          *aggregation.Engine
 	propertyFilter     PropertyFilterProvider
 	historySnapshots   HistorySnapshotProvider
+	txResolver         TransactionResolver
 	persistedSnapshots PersistedSnapshotStore
 	dataAccessAuditor  DataAccessAuditor
 }
@@ -133,6 +135,17 @@ func (h *Handler) SetDataAccessAuditor(a DataAccessAuditor) {
 // per-instant snapshot to filter against.
 func (h *Handler) SetHistorySnapshotProvider(p HistorySnapshotProvider) {
 	h.historySnapshots = p
+}
+
+// SetTransactionResolver wires the optional US-379 tx_id → committed_at
+// resolver. When attached, LoadObjects honours `?asOf=tx-<id>` by
+// resolving the transaction's commit timestamp and routing it through
+// the existing US-223 history-snapshot scan. Passing nil detaches the
+// hook (tx-id asOf requests then return TransactionLookupUnavailable
+// 400). The RFC3339 asOf path is unaffected and works without a
+// resolver wired.
+func (h *Handler) SetTransactionResolver(r TransactionResolver) {
+	h.txResolver = r
 }
 
 // applyPropertyVisibility is the Handler-side chokepoint that US-048
@@ -200,18 +213,18 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	ctx := WithOntologyScope(r.Context(), ontologyAPIName)
 
-	// US-223: ?asOf=<RFC3339> short-circuits to the time-travel path. We
-	// scan object_history for the snapshot covering the requested instant
-	// and skip the Bleve fetch entirely. Only "base" ObjectSets are
-	// supported because composite types (filter / union / ...) need a
-	// per-instant Bleve index that we don't materialise.
+	// US-223 / US-379: ?asOf= short-circuits to the time-travel path. The
+	// parameter accepts either an RFC3339 timestamp (US-223) or a
+	// "tx-<id>" reference into dataset_transactions (US-379) which the
+	// wired TransactionResolver maps to the committed_at instant. We then
+	// scan object_history for the snapshot covering that instant and skip
+	// the Bleve fetch entirely. Only "base" ObjectSets are supported
+	// because composite types (filter / union / ...) need a per-instant
+	// Bleve index that we don't materialise.
 	if asOfRaw := r.URL.Query().Get("asOf"); asOfRaw != "" {
-		asOf, err := time.Parse(time.RFC3339, asOfRaw)
-		if err != nil {
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAsOf", map[string]string{
-				"asOf":   asOfRaw,
-				"reason": "asOf must be an RFC3339 timestamp, e.g. 2026-01-01T00:00:00Z",
-			}))
+		asOf, apiErr := h.resolveAsOf(ctx, asOfRaw)
+		if apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
 			return
 		}
 		h.loadObjectsAsOf(w, r, ctx, ontologyAPIName, &req, asOf)
@@ -341,6 +354,53 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// resolveAsOf normalises the ?asOf= query parameter into the timestamp
+// the history-snapshot scan should target. The parameter accepts two wire
+// formats:
+//
+//   - RFC3339 timestamp ("2026-01-15T00:00:00Z") — the US-223 default.
+//   - "tx-<id>" reference into dataset_transactions — US-379 lookup that
+//     resolves to the matching CommittedAt instant via the wired
+//     TransactionResolver. A missing resolver surfaces as
+//     TransactionLookupUnavailable; an unknown tx_id surfaces as
+//     TransactionNotFound; any other resolver error becomes
+//     TimeTravelFailed.
+//
+// Errors return a non-nil *apierror.APIError so the caller can write the
+// envelope without parsing branches itself.
+func (h *Handler) resolveAsOf(ctx context.Context, asOfRaw string) (time.Time, *apierror.APIError) {
+	if strings.HasPrefix(asOfRaw, "tx-") {
+		if h.txResolver == nil {
+			return time.Time{}, apierror.NewInvalidParameter("TransactionLookupUnavailable", map[string]string{
+				"asOf":   asOfRaw,
+				"reason": "transaction resolver is not configured on this server",
+			})
+		}
+		ts, err := h.txResolver.ResolveTransaction(ctx, asOfRaw)
+		if err != nil {
+			if errors.Is(err, ErrTransactionNotFound) {
+				return time.Time{}, apierror.NewInvalidParameter("TransactionNotFound", map[string]string{
+					"txId":   asOfRaw,
+					"reason": "no dataset transaction with this id",
+				})
+			}
+			return time.Time{}, apierror.NewInvalidParameter("TimeTravelFailed", map[string]string{
+				"asOf":  asOfRaw,
+				"error": err.Error(),
+			})
+		}
+		return ts, nil
+	}
+	asOf, err := time.Parse(time.RFC3339, asOfRaw)
+	if err != nil {
+		return time.Time{}, apierror.NewInvalidParameter("InvalidAsOf", map[string]string{
+			"asOf":   asOfRaw,
+			"reason": "asOf must be an RFC3339 timestamp (e.g. 2026-01-01T00:00:00Z) or a transaction id (tx-<uuid>)",
+		})
+	}
+	return asOf, nil
 }
 
 // loadObjectsAsOf serves the US-223 time-travel branch of LoadObjects. It

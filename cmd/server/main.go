@@ -148,6 +148,13 @@ type ServerDeps struct {
 	// snapshot endpoints return SnapshotsUnavailable 400 so the routes are
 	// still mounted (and discoverable via OpenAPI / contract tests).
 	ObjectSetSnapshotStore oms.ObjectSetSnapshotStore
+	// US-379 Dataset Transaction Chain. Served by the uncached
+	// *PGRepository view onto Record/Get/List dataset_transactions so the
+	// funnel consumer's per-batch tx record + the /datasets/{rid}/history
+	// endpoint observe the authoritative chain. Nil in degraded mode
+	// leaves /datasets/{rid}/history returning DatasetHistoryUnavailable
+	// 400 and the OSS asOf=tx- path returning TransactionLookupUnavailable.
+	DatasetTransactionStore oms.DatasetTransactionStore
 	// US-343: bulk-mark-read on the notifications table. Wired from the
 	// uncached *PGRepository so the /api/v2/notifications/read-all endpoint
 	// always observes the authoritative read-state. Nil in degraded mode
@@ -904,6 +911,14 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.OmsRepo != nil && deps.HistorySnapshotStore != nil {
 				objSetHandler.SetHistorySnapshotProvider(newHistorySnapshotAdapter(deps.OmsRepo, deps.HistorySnapshotStore))
 			}
+			// US-379: tx_id → committed_at resolver for ?asOf=tx-... lookups.
+			// Reuses the same dataset_transactions store the funnel consumer
+			// writes into; degraded-mode routers without PG leave the hook
+			// unset and tx-id asOf requests fall through to
+			// TransactionLookupUnavailable 400 while RFC3339 asOf stays live.
+			if deps.DatasetTransactionStore != nil {
+				objSetHandler.SetTransactionResolver(newDatasetTransactionResolverAdapter(deps.DatasetTransactionStore))
+			}
 			// US-224: persisted ObjectSet snapshots. Wire only when a
 			// PG-backed catalog is available; without it the snapshot routes
 			// degrade to SnapshotsUnavailable 400 instead of materialising
@@ -956,6 +971,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				api.Get("/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe", sseHandler.ServeHTTP)
 			}
 		}
+
+		// US-379: GET /api/v2/datasets/{rid}/history returns the
+		// per-ontology dataset_transactions chain so SDK clients can walk
+		// the audit trail and resolve ?asOf=tx-... lookups. The handler
+		// is mounted unconditionally (it self-degrades when the store is
+		// nil) so the route is always discoverable via OpenAPI / contract
+		// tests.
+		datasetHistoryH := newDatasetHistoryHandler(deps.OmsRepo, deps.DatasetTransactionStore)
+		api.Get("/api/v2/datasets/{rid}/history", datasetHistoryH.History)
 
 		// Admin: index rebuild (US-011). Gated to admin-level roles via
 		// PermUserManage — it reindexes Bleve from the authoritative
@@ -1442,6 +1466,11 @@ func main() {
 		// Create/GetObjectSetSnapshot methods live on *PGRepository, not
 		// on the cached metadata Repository.
 		deps.ObjectSetSnapshotStore = pgRepo
+		// US-379: dataset_transactions chain. Same pattern — the
+		// RecordDatasetTransaction / GetDatasetTransaction / ListByOntology
+		// methods live on *PGRepository, not on the cached metadata
+		// Repository, so we point at pgRepo directly.
+		deps.DatasetTransactionStore = pgRepo
 		// US-312: per-object activity timeline reads from the uncached
 		// *PGRepository's ListObjectHistoryPage so the cursor-paginated
 		// endpoint always observes the authoritative tail (the metadata
@@ -2295,6 +2324,15 @@ func main() {
 		// it unset and the consumer silently no-ops.
 		if deps.OmsRepo != nil {
 			deps.FunnelConsumer.SetLinkPropagationResolver(newLinkPropagationResolver(deps.OmsRepo))
+		}
+
+		// US-379: per-batch dataset_transactions recording. Wired only when
+		// the PG-backed store is available; degraded-mode routers without
+		// PG leave the hook unset and the consumer silently no-ops on the
+		// chain (the asOf=tx- lookup then returns TransactionLookupUnavailable
+		// while the RFC3339 asOf path still works against object_history).
+		if deps.DatasetTransactionStore != nil {
+			deps.FunnelConsumer.SetTxRecorder(deps.DatasetTransactionStore)
 		}
 
 		// US-263: PII auto-detection. The scanner uses pure-Go regexes

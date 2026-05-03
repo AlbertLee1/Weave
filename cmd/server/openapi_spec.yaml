@@ -8704,6 +8704,77 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/datasets/{rid}/history:
+    get:
+      operationId: getDatasetHistory
+      summary: Walk the dataset_transactions chain for a dataset (US-379).
+      description: |
+        Returns the per-ontology dataset_transactions chain so SDK
+        clients can audit the edit history and resolve `?asOf=tx-...`
+        lookups against the OSS load API. Each EditBatch processed by
+        the funnel consumer lands one row whose `txId` is the
+        canonical "tx-<id>" reference and whose `parentTxId` points at
+        the previous transaction for the same ontology (empty for the
+        chain genesis).
+
+        `{rid}` accepts either the ontology RID or its api name —
+        matching the rest of the `/api/v2/ontologies/{ontologyApiName}`
+        surface — and resolves through the OMS GetOntology lookup.
+
+        Ordering is `committed_at` DESC (newest first); the listing is
+        capped at 1000 rows for response-size sanity. Returns
+        `DatasetHistoryUnavailable` 400 when the dataset_transactions
+        store is not configured (degraded-mode deployments without PG).
+      tags: [DatasetTransactions]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          schema:
+            type: string
+          description: Ontology RID or api name to fetch the chain for.
+      responses:
+        "200":
+          description: Transaction chain for the dataset, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transactions]
+                properties:
+                  transactions:
+                    type: array
+                    items:
+                      type: object
+                      required: [txId, ontologyApiName, committedAt, editsCount]
+                      properties:
+                        txId:
+                          type: string
+                          description: Canonical "tx-<id>" reference.
+                        parentTxId:
+                          type: string
+                          description: Previous tx in the chain (empty for genesis).
+                        ontologyApiName:
+                          type: string
+                        committedAt:
+                          type: string
+                          format: date-time
+                        editsCount:
+                          type: integer
+                        userId:
+                          type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          description: Dataset not found (no ontology matches the supplied rid).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/actions/{rid}/impact:
     get:
       operationId: getActionImpact

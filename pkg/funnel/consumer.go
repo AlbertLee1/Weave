@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,6 +44,18 @@ const (
 type HistoryRecorder interface {
 	InsertObjectHistory(ctx context.Context, h *oms.ObjectHistory) error
 	LatestUserEditAt(ctx context.Context, objectTypeRID, primaryKey string) (time.Time, bool, error)
+}
+
+// DatasetTransactionRecorder is the narrow surface the consumer uses to
+// stamp one dataset_transactions row per applied EditBatch (US-379). The
+// chain is per-OntologyAPIName: ParentTxID points at the previous tx for
+// the same ontology so /datasets/{rid}/history can walk it back to the
+// genesis tx. Pass nil to disable transaction recording — every other
+// downstream feature (object_history, US-223 asOf-by-timestamp, asOf=tx-
+// lookup) degrades cleanly when the recorder is absent.
+type DatasetTransactionRecorder interface {
+	RecordDatasetTransaction(ctx context.Context, tx *oms.DatasetTransaction) error
+	LatestForOntology(ctx context.Context, ontologyAPIName string) (*oms.DatasetTransaction, error)
 }
 
 // LinkEdgeWriter is the minimal interface for writing M2M link edges.
@@ -172,6 +185,12 @@ type Consumer struct {
 	// embedFields holds the optional embedding side-channel state. See
 	// embeddings.go for the wiring methods and the per-batch hook.
 	embedFields
+
+	// txRecorder records one dataset_transactions row per applied batch
+	// (US-379). Nil disables recording and the asOf=tx- lookup degrades
+	// to "TransactionNotFound" — but US-223 timestamp-based asOf still
+	// works against object_history, so this hook is purely additive.
+	txRecorder DatasetTransactionRecorder
 }
 
 // NewConsumer creates a new edit consumer.
@@ -201,6 +220,16 @@ func (c *Consumer) SetDLQPublish(fn DLQPublishFunc) {
 // Pass nil to disable. Safe to call before Start().
 func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
 	c.historyRepo = repo
+}
+
+// SetTxRecorder wires the optional US-379 dataset_transactions recorder.
+// When set, every successful applyBatchWithHistory writes a row capturing
+// (tx_id=batch.ID, parent_tx_id=prior tx for the ontology, committed_at=
+// batch.Timestamp, edits_count=len(edits)) and stamps the same tx_id on
+// each ObjectHistory row inserted by the same batch. Pass nil to disable.
+// Safe to call before Start().
+func (c *Consumer) SetTxRecorder(r DatasetTransactionRecorder) {
+	c.txRecorder = r
 }
 
 // SetLinkEdgeWriter enables M2M link-edge persistence for LINK_CREATE edits.
@@ -970,6 +999,12 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	// so a failed embed cannot strand a half-applied batch.
 	c.generateEmbeddings(ctx, batch)
 
+	// US-379: record one dataset_transactions row per applied batch and
+	// surface its tx_id on every subsequent object_history row. Failures
+	// downgrade the back-reference but never abort the batch — the index
+	// commit is the source of truth for read paths.
+	txID := c.recordDatasetTransaction(ctx, batch)
+
 	if c.historyRepo == nil {
 		return nil
 	}
@@ -1014,6 +1049,7 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 			Source:        source,
 			UserID:        batch.UserID,
 			RecordedAt:    batch.Timestamp,
+			TxID:          txID,
 		}
 		if err := c.historyRepo.InsertObjectHistory(ctx, row); err != nil {
 			log.Printf("funnel: history insert error for %s/%s: %v",
@@ -1082,6 +1118,55 @@ func (c *Consumer) fetchDocument(ontologyAPIName, objectType, primaryKey string)
 		out[k] = v
 	}
 	return out
+}
+
+// recordDatasetTransaction is the US-379 hook that lands a row in
+// dataset_transactions for the just-applied EditBatch. The tx_id derives
+// from batch.ID (prefixed with "tx-" so the OSS asOf parser can route on
+// the prefix); parent_tx_id resolves to the most-recent prior tx for the
+// same ontology so /datasets/{rid}/history can walk a linear chain.
+//
+// Returns the stamped tx_id (or empty string when recording is disabled
+// or fails), so the caller can stamp the same id onto every
+// object_history row produced by the batch. Failures are logged but never
+// abort the batch — the index commit is the source of truth.
+func (c *Consumer) recordDatasetTransaction(ctx context.Context, batch EditBatch) string {
+	if c.txRecorder == nil {
+		return ""
+	}
+	if batch.ID == "" || batch.OntologyAPIName == "" {
+		return ""
+	}
+	txID := batch.ID
+	if !strings.HasPrefix(txID, oms.DatasetTransactionIDPrefix) {
+		txID = oms.DatasetTransactionIDPrefix + txID
+	}
+
+	var parentID string
+	if prior, err := c.txRecorder.LatestForOntology(ctx, batch.OntologyAPIName); err != nil {
+		log.Printf("funnel: tx parent lookup error for %s: %v", batch.OntologyAPIName, err)
+	} else if prior != nil {
+		parentID = prior.TxID
+	}
+
+	committedAt := batch.Timestamp
+	if committedAt.IsZero() {
+		committedAt = time.Now().UTC()
+	}
+
+	row := &oms.DatasetTransaction{
+		TxID:            txID,
+		ParentTxID:      parentID,
+		OntologyAPIName: batch.OntologyAPIName,
+		CommittedAt:     committedAt,
+		EditsCount:      len(batch.Edits),
+		UserID:          batch.UserID,
+	}
+	if err := c.txRecorder.RecordDatasetTransaction(ctx, row); err != nil {
+		log.Printf("funnel: tx record error for %s: %v", batch.OntologyAPIName, err)
+		return ""
+	}
+	return txID
 }
 
 // nextVersion returns the next monotonically increasing version number for

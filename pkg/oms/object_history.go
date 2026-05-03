@@ -42,6 +42,11 @@ type ObjectHistory struct {
 	ActionLogRID  string          `json:"actionLogRid,omitempty"`
 	UserID        string          `json:"userId,omitempty"`
 	RecordedAt    time.Time       `json:"recordedAt"`
+	// TxID is the dataset_transactions.tx_id back-reference (US-379). Stamped
+	// by the funnel consumer when a DatasetTransactionStore is wired so an
+	// ?asOf=tx-... lookup can disambiguate between multiple batches that
+	// share a millisecond-level recorded_at. Empty for legacy rows.
+	TxID string `json:"txId,omitempty"`
 }
 
 // ObjectActivityStore is the narrow read surface backing the per-object

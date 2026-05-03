@@ -1941,24 +1941,25 @@ func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory
 		err = r.pool.QueryRow(ctx,
 			`INSERT INTO object_history
 			   (object_type_rid, primary_key, version, prev_state, new_state,
-			    edit_type, source, action_log_rid, user_id, recorded_at, valid_from)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+			    edit_type, source, action_log_rid, user_id, recorded_at, valid_from, tx_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)
 			 RETURNING id, recorded_at`,
 			h.ObjectTypeRID, h.PrimaryKey, h.Version,
 			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
 			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID),
-			h.RecordedAt).
+			h.RecordedAt, nilIfEmpty(h.TxID)).
 			Scan(&h.ID, &h.RecordedAt)
 	} else {
 		err = r.pool.QueryRow(ctx,
 			`INSERT INTO object_history
 			   (object_type_rid, primary_key, version, prev_state, new_state,
-			    edit_type, source, action_log_rid, user_id, valid_from)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+			    edit_type, source, action_log_rid, user_id, valid_from, tx_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)
 			 RETURNING id, recorded_at`,
 			h.ObjectTypeRID, h.PrimaryKey, h.Version,
 			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
-			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID)).
+			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID),
+			nilIfEmpty(h.TxID)).
 			Scan(&h.ID, &h.RecordedAt)
 	}
 	if err != nil {
