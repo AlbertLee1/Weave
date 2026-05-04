@@ -114,7 +114,12 @@ func (s *pgVectorStore) FindNearestNeighbors(ctx context.Context, q objectset.NN
 // buildEmbeddingProvider returns the configured embeddings.Provider, or nil
 // when no provider is enabled.
 //
-// Selection order:
+// Explicit selection (US-436): WEAVE_EMBED_PROVIDER picks one of
+// `mock` / `openai` / `ollama` / `sentence_transformers` (case-insensitive,
+// `-` and `_` interchangeable). When set, the matching backend is wired
+// using its provider-specific env vars and the legacy fallbacks are skipped.
+//
+// Legacy fallback (preserved so existing setups keep working):
 //  1. WEAVE_EMBED_MOCK=1 → MockProvider (deterministic, offline-friendly)
 //  2. WEAVE_OPENAI_API_KEY set → OpenAI provider (text-embedding-3-small)
 //  3. otherwise → nil (disabled)
@@ -122,6 +127,9 @@ func (s *pgVectorStore) FindNearestNeighbors(ctx context.Context, q objectset.NN
 // The mock takes precedence so a developer who explicitly opts into the
 // deterministic backend isn't surprised by an OPENAI_API_KEY in their shell.
 func buildEmbeddingProvider() embeddings.Provider {
+	if explicit := strings.TrimSpace(os.Getenv("WEAVE_EMBED_PROVIDER")); explicit != "" {
+		return buildEmbeddingProviderFor(strings.ToLower(strings.ReplaceAll(explicit, "-", "_")))
+	}
 	if v := os.Getenv("WEAVE_EMBED_MOCK"); v == "1" || strings.EqualFold(v, "true") {
 		log.Printf("[EMBED] mock provider enabled (deterministic)")
 		return embeddings.NewMockProvider()
@@ -131,6 +139,92 @@ func buildEmbeddingProvider() embeddings.Provider {
 		return embeddings.NewOpenAIProvider(embeddings.OpenAIConfig{APIKey: key})
 	}
 	return nil
+}
+
+// buildEmbeddingProviderFor materialises one of the named providers. When
+// a provider's required configuration is missing (e.g. no API key for
+// OpenAI, no shim URL for sentence-transformers), the function logs a
+// warning and returns nil so the server boots in disabled mode rather than
+// crashing — matching the legacy fallback semantics.
+func buildEmbeddingProviderFor(name string) embeddings.Provider {
+	switch name {
+	case "mock":
+		log.Printf("[EMBED] mock provider enabled (WEAVE_EMBED_PROVIDER=mock)")
+		return embeddings.NewMockProvider()
+	case "openai":
+		key := os.Getenv("WEAVE_OPENAI_API_KEY")
+		if key == "" {
+			key = os.Getenv("OPENAI_API_KEY")
+		}
+		if key == "" {
+			log.Printf("[EMBED] WEAVE_EMBED_PROVIDER=openai but no API key set; provider disabled")
+			return nil
+		}
+		cfg := embeddings.OpenAIConfig{APIKey: key}
+		if base := os.Getenv("WEAVE_EMBED_OPENAI_BASE_URL"); base != "" {
+			cfg.BaseURL = base
+		}
+		if model := os.Getenv("WEAVE_EMBED_MODEL"); model != "" {
+			cfg.Model = model
+		}
+		log.Printf("[EMBED] OpenAI provider enabled (model=%s)", embeddingModelOrDefault(cfg.Model, "text-embedding-3-small"))
+		return embeddings.NewOpenAIProvider(cfg)
+	case "ollama":
+		cfg := embeddings.OllamaConfig{}
+		if base := os.Getenv("WEAVE_EMBED_OLLAMA_BASE_URL"); base != "" {
+			cfg.BaseURL = base
+		}
+		if model := os.Getenv("WEAVE_EMBED_MODEL"); model != "" {
+			cfg.Model = model
+		}
+		if dims := parsePositiveInt(os.Getenv("WEAVE_EMBED_DIMENSIONS")); dims > 0 {
+			cfg.Dimensions = dims
+		}
+		log.Printf("[EMBED] Ollama provider enabled (base=%s, model=%s)",
+			embeddingModelOrDefault(cfg.BaseURL, "http://localhost:11434"),
+			embeddingModelOrDefault(cfg.Model, "nomic-embed-text"))
+		return embeddings.NewOllamaProvider(cfg)
+	case "sentence_transformers", "sentencetransformers", "st":
+		base := os.Getenv("WEAVE_EMBED_ST_BASE_URL")
+		if base == "" {
+			log.Printf("[EMBED] WEAVE_EMBED_PROVIDER=sentence_transformers but WEAVE_EMBED_ST_BASE_URL not set; provider disabled")
+			return nil
+		}
+		cfg := embeddings.SentenceTransformersConfig{BaseURL: base}
+		if model := os.Getenv("WEAVE_EMBED_MODEL"); model != "" {
+			cfg.Model = model
+		}
+		if dims := parsePositiveInt(os.Getenv("WEAVE_EMBED_DIMENSIONS")); dims > 0 {
+			cfg.Dimensions = dims
+		}
+		if key := os.Getenv("WEAVE_EMBED_ST_API_KEY"); key != "" {
+			cfg.APIKey = key
+		}
+		log.Printf("[EMBED] sentence-transformers provider enabled (base=%s, model=%s)",
+			cfg.BaseURL, embeddingModelOrDefault(cfg.Model, "sentence-transformers/all-MiniLM-L6-v2"))
+		return embeddings.NewSentenceTransformersProvider(cfg)
+	default:
+		log.Printf("[EMBED] unknown WEAVE_EMBED_PROVIDER=%q; provider disabled", name)
+		return nil
+	}
+}
+
+func embeddingModelOrDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+func parsePositiveInt(s string) int {
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // buildEmbeddingRateLimiter returns the rate limiter that gates funnel

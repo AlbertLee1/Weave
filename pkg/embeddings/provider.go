@@ -24,7 +24,10 @@ type Provider interface {
 	Model() string
 
 	// Dimensions returns the vector dimensionality of every Embed() output.
-	// The Weave schema currently fixes this at 1536 (ada-002 / 3-small),
-	// so providers must agree or be wrapped in an adapter.
+	// Common production values are 384 (MiniLM-style), 768 (mpnet / many
+	// Ollama models), and 1536 (OpenAI ada-002 / text-embedding-3-small).
+	// Storage backends (e.g. pgvector columns) are typed against a fixed
+	// dimension, so the configured Provider.Dimensions() MUST match the
+	// schema dim of the column it writes to or the insert will fail.
 	Dimensions() int
 }
