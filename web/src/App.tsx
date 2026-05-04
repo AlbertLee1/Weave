@@ -29,6 +29,7 @@ import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
+import { SagaDLQPage } from './components/sagaDLQ/SagaDLQPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
 import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
@@ -126,6 +127,22 @@ export default function App() {
               <Route path="apps/:rid" element={<AppEditorRoute />} />
               <Route path="approvals" element={<ApprovalsPage />} />
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
+              <Route
+                path="admin/saga-dlq"
+                element={
+                  <PermissionRoute permission="ontology.write">
+                    <SagaDLQPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/:ontology/saga-dlq"
+                element={
+                  <AdminGuard>
+                    <SagaDLQPage />
+                  </AdminGuard>
+                }
+              />
               <Route path="permission-requests" element={<PermissionRequestsPage />} />
               <Route path="mentions" element={<MentionsPage />} />
               <Route path="marketplace" element={<MarketplacePage />} />

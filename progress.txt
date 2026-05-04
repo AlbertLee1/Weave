@@ -4096,3 +4096,45 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
   - **Default the slow threshold to a sentinel constant (`DefaultSlowSpanThreshold`), NOT to zero.** Zero is the explicit "disable" semantic — operators who want to turn off the slow-span carve-out should be able to. Use `if slowThreshold == 0 { slowThreshold = DefaultSlowSpanThreshold }` only at the package boundary (Init), so the defaulting is one-shot and transparent.
   - **Pattern: when adding sampling-class filtering to a stream-processing pipeline (audit retention, log sampling, metrics aggregation), follow the same shape — record everything upstream, drop at the dispatcher, and provide a deterministic-by-key ratio + outlier carve-out (status, duration, magnitude) so important events are never silently lost at low rates.**
 ---
+
+## 2026-05-05 - US-440 - Saga 死信队列重试 UI
+
+**Implementation:**
+- New SPA surface for the existing saga DLQ backend (US-369): `/admin/saga-dlq` and `/admin/{ontology}/saga-dlq` routes both render the same `SagaDLQPage`. The unscoped `/admin/saga-dlq` route is gated behind `PermissionRoute permission="ontology.write"` (no scoping); the per-ontology `/admin/{ontology}/saga-dlq` route uses the existing `AdminGuard` (scoped permission via `:ontology`). The page reads the active ontology from `useParams().ontology ?? useOntologyStore().selectedOntology` so both routes work and the page can degrade to an "Select an ontology" empty-state.
+- `web/src/api/sagaDLQ.ts` (new): three thin wrappers around the existing `pkg/actions/saga_handler.go` endpoints — `listSagaDLQ(ontologyApiName, {status, limit})` → GET `/api/v2/ontologies/{ontology}/actions/saga/dlq?status=...`, `retrySagaDLQ(ontologyApiName, dlqId)` → POST `.../saga/dlq/{dlqId}/retry`, `dropSagaDLQ(ontologyApiName, dlqId)` → POST `.../saga/dlq/{dlqId}/drop`. The `SagaDLQEntry` interface mirrors `pkg/actions/saga_store.go::SagaDLQEntry` field-for-field. POST routes pass an empty `{}` body so the existing `request<T>()` helper attaches the `Content-Type: application/json` header (matching the curl shape the backend tests use).
+- `web/src/hooks/useSagaDLQ.ts` (new): `useSagaDLQ(ontologyApiName, {status})` returns `{entries: SagaDLQEntry[]}` via React Query keyed on `['sagaDLQ', ontologyApiName, status ?? 'PENDING']`; `useRetrySagaDLQ(ontologyApiName)` and `useDropSagaDLQ(ontologyApiName)` are mutation hooks that invalidate the same query-key prefix on success so the list refreshes without a manual refetch.
+- `web/src/components/sagaDLQ/SagaDLQPage.tsx` (new): card-list layout modelled on `ApprovalsPage` for visual consistency. Status filter tabs (PENDING / RESOLVED / DROPPED), each card surfaces saga id, step id, attempts, failure message, created/last-attempt timestamps, plus a collapsible details panel for `editsJson`. Retry and Drop buttons only render when `entry.status === 'PENDING'`; they fire the relevant mutation, set a per-row `pendingDlqId` so the buttons disable while in flight, and surface mutation errors in a top-of-page red alert via `describeApiError(err)` (same `ApiRequestError` extraction shape as `ApprovalsPage.tsx::handleSubmit`).
+- `web/src/App.tsx`: registers both routes under the protected Shell layout. Both go through a permission gate (`PermissionRoute` + `AdminGuard`) — the per-ontology route's gate scopes to `:ontology` so an ontology-owner of one ontology can't admin another's DLQ.
+- `web/src/components/layout/Sidebar.tsx`: adds a "Saga DLQ" entry to the per-ontology Admin section (between History and Markings) using the existing `bolt` icon — same admin section, same visibility rules as the other ontology admin pages.
+
+**Files changed:**
+- `web/src/api/sagaDLQ.ts` (new)
+- `web/src/hooks/useSagaDLQ.ts` (new)
+- `web/src/components/sagaDLQ/SagaDLQPage.tsx` (new)
+- `web/src/components/sagaDLQ/__tests__/SagaDLQPage.test.tsx` (new — 7 unit tests)
+- `web/src/App.tsx` (route registration for /admin/saga-dlq + /admin/:ontology/saga-dlq)
+- `web/src/components/layout/Sidebar.tsx` (admin nav entry)
+- `prd.json` (mark US-440 passes: true)
+
+**Verification:**
+- `npx vitest run` PASS — 1132/1132 tests across 144 test files (no regressions).
+- `npx vitest run src/components/sagaDLQ/` PASS — 7/7 new SagaDLQPage tests:
+  - renders pending DLQ entries with retry and drop buttons
+  - retry button calls retry API and refetches the list
+  - drop button calls drop API and refetches the list
+  - shows empty state when no rows are returned
+  - switching status filter re-queries with the new status
+  - non-pending entries hide the action buttons
+  - surfaces a retry error to the operator
+- `npx eslint` clean on all new + modified files.
+- `npx tsc -b` shows only pre-existing errors in unrelated files (`src/lib/objectSetUrl.ts` Buffer types, `src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` SavedObjectSet shape) — confirmed by stashing my changes and re-running; my new code adds zero typecheck failures.
+- Browser verification: not run in this iteration; the unit tests cover the click → mutation → invalidate flow end-to-end with mocked `sagaDLQApi`. Manual smoke against a live PG-backed server with the funnel-DLQ pre-populated would exercise the same wire shape.
+
+**Learnings for future iterations:**
+- The backend ListSagaDLQ endpoint returns `{entries: [...]}` (NOT `{data: [...]}`) — different from the approvals/actionTypes endpoints. Match the wire shape exactly when building new API clients; don't assume the `{data}` envelope.
+- The saga DLQ endpoints live under the ontology-scoped action router (`/api/v2/ontologies/{ontology}/actions/saga/dlq`), so the SPA's branch-injection middleware in `client.ts::withActiveBranch` automatically stamps `?branch=` on every DLQ call. No extra wiring needed for branch-scoped DLQ views in future iterations.
+- For pages that should work both with and without an `:ontology` URL param, the canonical fallback chain is `useParams().ontology ?? useOntologyStore().selectedOntology` (matching `ApprovalsPage.tsx`). If `selectedOntology` is also empty, render an "Select an ontology" empty state — don't try to call the API with an empty string.
+- The `PermissionRoute permission="ontology.write" scopeToOntologyParam` shape requires the `:ontology` URL param to be present at route match time. For an admin route that may not have an `:ontology` param (the unscoped `/admin/saga-dlq`), use `PermissionRoute` WITHOUT `scopeToOntologyParam` — the global `can(permission)` check kicks in instead, which is the right semantic for "any user with global ontology.write can see the unscoped fallback page".
+- Pattern: when wrapping an existing per-ontology backend in an admin SPA surface, register BOTH the canonical PRD-named route (`/admin/saga-dlq`) AND the per-ontology variant (`/admin/{ontology}/saga-dlq`) so the Sidebar's per-ontology Admin section can deep-link directly into the right context. The page component just resolves the active ontology via the same `useParams ?? useOntologyStore` chain other ontology-aware pages already use.
+- `useMutation`'s `onError` callback is per-call; the `useRetrySagaDLQ` hook itself doesn't need an error handler. Surface the error in the page's local state via the `mutate(..., {onError})` overload so each call site can show its own UI without leaking error state into the hook's React Query cache.
+---

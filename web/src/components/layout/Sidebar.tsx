@@ -207,6 +207,11 @@ export function Sidebar() {
           icon: 'clock',
         },
         {
+          to: `/admin/${activeOntology}/saga-dlq`,
+          label: 'Saga DLQ',
+          icon: 'bolt',
+        },
+        {
           to: '/admin/markings',
           label: 'Markings',
           icon: 'shield',
