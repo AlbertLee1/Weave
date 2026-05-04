@@ -800,7 +800,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 52,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

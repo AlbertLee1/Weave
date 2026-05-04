@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/liyang/weave/pkg/funcrepo"
 	"github.com/liyang/weave/pkg/oms"
@@ -36,6 +37,29 @@ func (a *funcRepoStoreAdapter) Commit(ctx context.Context, rid string, in oms.Fu
 		Author:     c.Author,
 		Email:      c.Email,
 		AuthorDate: c.AuthorDate,
+	}, nil
+}
+
+func (a *funcRepoStoreAdapter) GetCommit(ctx context.Context, rid string, hash string) (oms.FunctionRepoCommitWithSource, error) {
+	c, source, err := a.mgr.GetCommit(ctx, rid, hash)
+	if err != nil {
+		switch {
+		case errors.Is(err, funcrepo.ErrCommitNotFound):
+			return oms.FunctionRepoCommitWithSource{}, oms.ErrFunctionRepoCommitNotFound
+		case errors.Is(err, funcrepo.ErrNoCommits):
+			return oms.FunctionRepoCommitWithSource{}, oms.ErrFunctionRepoNoCommits
+		}
+		return oms.FunctionRepoCommitWithSource{}, err
+	}
+	return oms.FunctionRepoCommitWithSource{
+		FunctionRepoCommit: oms.FunctionRepoCommit{
+			Hash:       c.Hash,
+			Message:    c.Message,
+			Author:     c.Author,
+			Email:      c.Email,
+			AuthorDate: c.AuthorDate,
+		},
+		SourceCode: source,
 	}, nil
 }
 

@@ -46,6 +46,26 @@ type FunctionRepoCommitInput struct {
 	When       time.Time
 }
 
+// FunctionRepoCommitWithSource pairs the commit metadata with the source
+// blob attached at that revision. US-416's diff UI consumes this shape so
+// it can fetch any historical source code without re-walking the log on
+// the client.
+type FunctionRepoCommitWithSource struct {
+	FunctionRepoCommit
+	SourceCode string `json:"sourceCode"`
+}
+
+// ErrFunctionRepoCommitNotFound is the typed sentinel returned by
+// FunctionRepoStore.GetCommit when the supplied hash does not resolve to
+// a commit object on the repo. The HTTP layer maps this to 404
+// FunctionRepoCommitNotFound; missing-repo cases come through as
+// ErrFunctionRepoNoCommits and map to 404 FunctionRepoNoCommits so the
+// SPA can surface a friendlier "no history yet" empty state.
+var (
+	ErrFunctionRepoCommitNotFound = errors.New("function repo commit not found")
+	ErrFunctionRepoNoCommits      = errors.New("function repo has no commits")
+)
+
 // FunctionRepoStore is the narrow interface the OMS handler depends on.
 // pkg/funcrepo.Manager satisfies this via structural typing — pkg/oms
 // stays free of the go-git import. When the store is nil the routes still
@@ -53,6 +73,7 @@ type FunctionRepoCommitInput struct {
 type FunctionRepoStore interface {
 	Commit(ctx context.Context, rid string, in FunctionRepoCommitInput) (FunctionRepoCommit, error)
 	Log(ctx context.Context, rid string, limit int) ([]FunctionRepoCommit, error)
+	GetCommit(ctx context.Context, rid string, hash string) (FunctionRepoCommitWithSource, error)
 }
 
 // SetFunctionRepoStore wires the optional Function code-repository store
@@ -187,4 +208,59 @@ func (h *OMSHandler) ListFunctionRepoCommits(w http.ResponseWriter, r *http.Requ
 		commits = []FunctionRepoCommit{}
 	}
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": commits})
+}
+
+// GetFunctionRepoCommit handles GET
+// /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}.
+//
+// Returns the commit metadata and the source-code blob attached at that
+// revision so US-416's diff UI can compare any two arbitrary commits
+// against each other. The hash MUST match the form Log/HeadCommit return
+// (full 40-char hex). Path params are validated against the existing
+// resolveFunctionRef chain so the bare repo is keyed on the canonical
+// RID even when callers POST against the human name.
+func (h *OMSHandler) GetFunctionRepoCommit(w http.ResponseWriter, r *http.Request) {
+	if h.functionRepoStore == nil {
+		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"errorCode": "FunctionRepoNotConfigured",
+			"reason":    "no FunctionRepoStore wired",
+		})
+		return
+	}
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	fnIdentifier := chi.URLParam(r, "functionRid")
+	hash := chi.URLParam(r, "hash")
+
+	fn, err := h.resolveFunctionRef(r.Context(), ontologyAPIName, fnIdentifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("FunctionNotFound", map[string]string{
+				"functionRid": fnIdentifier,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetFunctionFailed", nil))
+		return
+	}
+
+	commit, err := h.functionRepoStore.GetCommit(r.Context(), fn.RID, hash)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrFunctionRepoCommitNotFound):
+			apierror.WriteJSON(w, apierror.NewNotFound("FunctionRepoCommitNotFound", map[string]string{
+				"functionRid": fn.RID,
+				"hash":        hash,
+			}))
+		case errors.Is(err, ErrFunctionRepoNoCommits):
+			apierror.WriteJSON(w, apierror.NewNotFound("FunctionRepoNoCommits", map[string]string{
+				"functionRid": fn.RID,
+			}))
+		default:
+			apierror.WriteJSON(w, apierror.NewInternal("FunctionRepoGetCommitFailed", map[string]string{
+				"reason": err.Error(),
+			}))
+		}
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, commit)
 }

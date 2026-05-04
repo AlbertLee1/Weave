@@ -5402,6 +5402,53 @@ paths:
                 properties:
                   errorCode: { type: string }
                   reason: { type: string }
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}:
+    get:
+      operationId: getFunctionRepoCommit
+      summary: Read a Function code-repo commit and its source blob (US-416)
+      description: |
+        Returns the commit metadata and the source-code blob attached at the
+        supplied commit hash. The diff UI uses this to fetch the source at
+        any historical revision so it can render a side-by-side diff between
+        any two commits without re-walking the log.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: hash
+          required: true
+          schema:
+            type: string
+            description: Commit SHA-1 hex (40 chars).
+      responses:
+        "200":
+          description: Commit and source code at that revision.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/FunctionRepoCommit"
+                  - type: object
+                    required: [sourceCode]
+                    properties:
+                      sourceCode:
+                        type: string
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          description: Function repo store not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  reason: { type: string }
   /api/v2/ontologies/{ontologyApiName}/branches:
     post:
       operationId: createBranch

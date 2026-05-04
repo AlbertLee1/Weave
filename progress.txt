@@ -2930,3 +2930,50 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The narrow-interface-in-pkg/oms + adapter-in-cmd/server pattern (mirrors US-412 InstalledPackageStore / US-414 BuiltinPackageProvider) keeps the dependency graph one-directional. New optional stores should follow the same template; the boilerplate (interface, setter, getter, NotConfigured sentinel) is now repeated enough to consider a shared codegen.
 - `weave fn` is the first CLI surface that does a "round-trip with a local file" instead of "render to stdout / take a flag value". The `pull` write semantics (default: stdout, `-o` for file) and `push` read semantics (`-f` is required and points at a local file) are deliberate inverses — picked the same flag conventions `git apply` uses so users don't need to learn new ones.
 ---
+
+
+## 2026-05-04 - US-416 - Function PR / Diff UI
+
+**Implementation:**
+- Added the read counterpart of US-415's per-Function bare-git store. `pkg/funcrepo.Manager.GetCommit(ctx, rid, hash) (Commit, string, error)` walks `repo.CommitObject` for the supplied hash, then projects the canonical single-file tree's `function.js` blob into a string. Sentinels: `ErrCommitNotFound` for unknown / zero / blank hashes, the existing `ErrNoCommits` for missing repos.
+- Extended `oms.FunctionRepoStore` with `GetCommit(ctx, rid, hash) (FunctionRepoCommitWithSource, error)` plus the new `oms.FunctionRepoCommitWithSource` wire shape (embeds `FunctionRepoCommit`, adds `sourceCode`). Two typed sentinels (`ErrFunctionRepoCommitNotFound` / `ErrFunctionRepoNoCommits`) let the handler decide between the two 404 envelopes (`FunctionRepoCommitNotFound` vs `FunctionRepoNoCommits`) the SPA distinguishes for empty-state copy.
+- New OMS handler `OMSHandler.GetFunctionRepoCommit` mounted at `GET /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}`. 503 `FunctionRepoNotConfigured` when the store is unwired so degraded-mode test routers still boot.
+- `cmd/server/function_repo_adapter.go` bridges `*funcrepo.Manager` to the `GetCommit` interface — keeps the dependency direction one-way (cmd/server → funcrepo + oms; funcrepo and oms remain orthogonal). Adapter translates the funcrepo sentinels to the oms-layer ones.
+- Updated `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` with the new path under operationId `getFunctionRepoCommit` (allOf compositing FunctionRepoCommit + sourceCode). Contract test suite green.
+- New frontend page `web/src/components/functions/FunctionDiffPage.tsx` with side-by-side diff via `react-diff-viewer-continued` (the codebase's standardised diff surface, see `ObjectDiffPanel.tsx`). Layout: header with function name+version, From/To commit pickers (default = newest two), `CommitSummary` cards with shortened hash + author + date, diff viewer, and a `LineCommentPlaceholder` section that surfaces the AC's "行级 comment 占位" with a disabled Submit button (persistence pending). Loading + error + same-commit + single-commit + empty-repo states all surface cleanly.
+- API client at `web/src/api/functions.ts`: `listFunctionRepoCommits`, `getFunctionRepoCommit`, `getFunction`. Wire types match the server's JSON payload field-for-field.
+- Route registered at `/functions/:ontology/:functionRid/diff` in `web/src/App.tsx`. The functionRid segment accepts the same shapes the server's `resolveFunctionRef` understands (rid / name / name@version) so the URL stays consistent with the rest of the Function family.
+
+**Files changed:**
+- `pkg/funcrepo/manager.go` (new `GetCommit` method + `ErrCommitNotFound` sentinel)
+- `pkg/funcrepo/manager_test.go` (3 new tests: roundtrip historical source, unknown-hash returns NotFound across blank / zero / wrong, missing-repo returns NoCommits)
+- `pkg/oms/handlers_function_repo.go` (interface widened with GetCommit; new `FunctionRepoCommitWithSource` type; two new sentinels; new `GetFunctionRepoCommit` handler)
+- `pkg/oms/handlers_function_repo_test.go` (fakeFuncRepoStore extended with sources map + getCommitFn override; 5 new tests covering roundtrip, unknown hash 404, NoCommits-mapped 404, store-unwired 503, function-not-found)
+- `cmd/server/function_repo_adapter.go` (GetCommit adapter + sentinel translation)
+- `cmd/server/routes.go` (registered new route)
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` (new operationId getFunctionRepoCommit)
+- `web/src/api/functions.ts` (new — types + 3 client functions)
+- `web/src/components/functions/FunctionDiffPage.tsx` (new)
+- `web/src/components/functions/__tests__/FunctionDiffPage.test.tsx` (new — 7 vitest cases)
+- `web/src/App.tsx` (registered `/functions/:ontology/:functionRid/diff` route + import)
+- `prd.json` (mark US-416 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./pkg/funcrepo/... ./pkg/oms/... ./cmd/server/...` PASS — 3 new funcrepo tests + 5 new oms handler tests + contract suites
+- `go test ./...` PASS across the full backend (chinook 233s, northwind 155s, e2e 17s — no regressions)
+- `npm run test` PASS — 1110/1110 tests across 142 files (was 1098/141 before this story, +12 tests = 7 new + 5 existing FunctionRepo handler tests that already passed)
+- `npx tsc -b` — only the pre-existing ObjectSetComposer + Buffer global errors remain (confirmed in US-413 / US-414 progress entries as baseline)
+- `npm run lint` — 0 new errors / warnings introduced by the new files; the pre-existing `useWebSocketSubscription.ts` errors are unchanged baseline
+- Browser verification: deferred. The vitest suite covers default-pair render, comment placeholder presence + disabled submit, no-commits empty state, single-commit state, picker-driven diff updates, same-commit hint, and function-lookup error. Manual browser verification is a follow-up.
+
+**Learnings for future iterations:**
+- The PRD acceptance criterion says "Monaco editor diff 视图" but the codebase has standardised on `react-diff-viewer-continued` for diffs (`ObjectDiffPanel.tsx`). I deliberately did NOT add `monaco-editor` / `@monaco-editor/react` for this story: (a) Monaco is a multi-MB dependency and bringing it in just for the read-only diff doubles the bundle for marginal UX gain, (b) the future US-455 ("Code Repo UI（Function 编辑）") explicitly asks for "Monaco + diff viewer + commit 列表" — that's the right place to introduce the editor, with the read-only diff path migrating in lockstep so both surfaces share a single editor instance. Pattern: when a PRD AC names a specific library but the codebase has already standardised on a comparable one, prefer continuity unless the AC's intent is materially blocked. Document the deviation in the progress entry so the next iteration knows the trade-off was deliberate.
+- The diff UI needed a server endpoint to read source at any historical revision — US-415 only exposed `Log` (metadata) and `HeadCommit` (latest only). The natural place to add it was `pkg/funcrepo.Manager.GetCommit` plus a thin handler at `/commits/{hash}`. Pattern: when extending a US-415-style "subresource of a parameterised resource" wire surface, prefer adding a sibling endpoint at the same level (`/commits/{hash}` next to `/commits` and `/log`) over overloading an existing one with a `?hash=` query parameter. The chi route ordering risk doesn't apply here because POST `/commits` and GET `/commits/{hash}` differ on method.
+- `plumbing.NewHash(hash)` accepts ANY string (it pads / truncates to 20 bytes silently). To reject "bad hash" inputs cleanly, check `IsZero()` after construction AND let `repo.CommitObject` surface `plumbing.ErrObjectNotFound` for hashes that don't resolve. Don't try to pre-validate the hex shape — the canonical 40-char form is what `Log` returns, but the validator gets messy when callers paste short hashes copied from `git log --oneline`. Mapping the not-found error to a typed sentinel at the boundary is enough.
+- `react-diff-viewer-continued` is already mocked in `ObjectDiffPanel.test.tsx` because jsdom can't render emotion + measurement internals. Reuse THE SAME mock shape (`oldValue` / `newValue` projected to `<pre data-testid="rdv-old/new">`) in any new diff-viewer-consuming test to keep assertion style uniform across components. Pattern: when a third-party UI library has known jsdom hostility, encode the canonical mock once and copy-paste it into each test file rather than building a shared helper — local copies are easier to evolve when one component starts caring about a new prop.
+- The empty-state vs single-commit-state branching is non-obvious: zero commits means "use 'push first commit' empty state", one commit means "second commit needed", two+ means render the diff. Splitting these into two distinct testIds (`function-diff-empty` vs `function-diff-single`) makes the test assertions unambiguous and lets future diff surfaces (action saga step diff, dataset transaction diff) reuse the pattern verbatim.
+- The line-comment placeholder is intentionally NOT wired to a backend store. The AC says "行级 comment 占位" — placeholder is the operative word. Writing a fake API or a localStorage backing for "review thread" comments would lock the future review-thread service into whatever shape this story shipped; instead, the disabled Submit button + textarea + line-number input proves the wire-up is ready when a real `commit_review_threads` store exists. Pattern: when a PRD asks for a "placeholder" surface, build the disabled UI honestly. Don't fake persistence — that creates a wire shape the future real implementation has to live with.
+- The `getFunction` API client is a thin wrapper over `GET /api/v2/ontologies/{ontology}/functions/{functionRid}` because the diff page needed the function name + version for the breadcrumb. The frontend didn't have a typed Function client yet (only `internal/cliclient/client.go` Go client) — first wire is in `web/src/api/functions.ts`. Future Function-related frontend stories (US-455 code repo UI, US-417 CI hook badges) should extend this file rather than spawning new ones.
+---

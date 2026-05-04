@@ -128,6 +128,83 @@ func TestManager_HeadCommit_MissingReturnsSentinel(t *testing.T) {
 	}
 }
 
+func TestManager_GetCommit_RoundtripsHistoricalSource(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+	ctx := context.Background()
+	rid := "ri.ontology.main.function.diff"
+
+	first, err := mgr.Commit(ctx, rid, CommitInput{
+		Message:    "v1",
+		SourceCode: "function v() { return 1; }\n",
+		Author:     "alice",
+		Email:      "alice@example.com",
+		When:       time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	if _, err := mgr.Commit(ctx, rid, CommitInput{
+		Message:    "v2",
+		SourceCode: "function v() { return 2; }\n",
+		Author:     "bob",
+		Email:      "bob@example.com",
+		When:       time.Date(2026, 5, 4, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("second commit: %v", err)
+	}
+
+	// GetCommit on the older revision must return the original source —
+	// the head must not bleed back into historical reads.
+	commit, source, err := mgr.GetCommit(ctx, rid, first.Hash)
+	if err != nil {
+		t.Fatalf("GetCommit: %v", err)
+	}
+	if commit.Hash != first.Hash {
+		t.Fatalf("hash mismatch: %s vs %s", commit.Hash, first.Hash)
+	}
+	if source != "function v() { return 1; }\n" {
+		t.Fatalf("source mismatch: %q", source)
+	}
+}
+
+func TestManager_GetCommit_UnknownHashReturnsNotFound(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+	ctx := context.Background()
+	rid := "ri.ontology.main.function.diff2"
+
+	if _, err := mgr.Commit(ctx, rid, CommitInput{
+		Message:    "v1",
+		SourceCode: "x",
+		Author:     "alice",
+		Email:      "alice@example.com",
+		When:       time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	if _, _, err := mgr.GetCommit(ctx, rid, "0000000000000000000000000000000000000000"); !errors.Is(err, ErrCommitNotFound) {
+		t.Fatalf("zero hash: expected ErrCommitNotFound, got %v", err)
+	}
+	if _, _, err := mgr.GetCommit(ctx, rid, ""); !errors.Is(err, ErrCommitNotFound) {
+		t.Fatalf("blank hash: expected ErrCommitNotFound, got %v", err)
+	}
+	if _, _, err := mgr.GetCommit(ctx, rid, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); !errors.Is(err, ErrCommitNotFound) {
+		t.Fatalf("unknown hash: expected ErrCommitNotFound, got %v", err)
+	}
+}
+
+func TestManager_GetCommit_MissingRepoReturnsNoCommits(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+
+	_, _, err := mgr.GetCommit(context.Background(), "ri.ontology.main.function.never", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	if !errors.Is(err, ErrNoCommits) {
+		t.Fatalf("expected ErrNoCommits, got %v", err)
+	}
+}
+
 func TestManager_Commit_RejectsBlankInputs(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(dir)

@@ -305,6 +305,92 @@ func (m *Manager) Log(ctx context.Context, rid string, limit int) ([]Commit, err
 	return out, nil
 }
 
+// ErrCommitNotFound is returned by GetCommit when the supplied hash does
+// not resolve to a commit object on the repo. Callers map this to 404 at
+// the HTTP layer.
+var ErrCommitNotFound = errors.New("commit not found")
+
+// GetCommit returns the commit identified by `hash` and the source blob it
+// points at on the canonical single-file tree. The hash must be a full
+// 40-character hex string (the same form `Log` and `HeadCommit` return).
+// ErrNoCommits is returned when the repo / branch is missing entirely;
+// ErrCommitNotFound is returned when the hash does not resolve.
+//
+// This is the read counterpart of `Commit` used by the diff UI (US-416)
+// to fetch the source code at any historical revision so two arbitrary
+// commits can be diffed against each other without re-walking the whole
+// log on the client.
+func (m *Manager) GetCommit(ctx context.Context, rid, hash string) (Commit, string, error) {
+	if err := ctx.Err(); err != nil {
+		return Commit{}, "", err
+	}
+	if strings.TrimSpace(hash) == "" {
+		return Commit{}, "", ErrCommitNotFound
+	}
+	repoPath, err := m.repoPath(rid)
+	if err != nil {
+		return Commit{}, "", err
+	}
+
+	lock := m.repoLock(rid)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		return Commit{}, "", ErrNoCommits
+	} else if err != nil {
+		return Commit{}, "", err
+	}
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return Commit{}, "", fmt.Errorf("open repo: %w", err)
+	}
+	commitHash := plumbing.NewHash(hash)
+	if commitHash.IsZero() {
+		return Commit{}, "", ErrCommitNotFound
+	}
+	commit, err := repo.CommitObject(commitHash)
+	if err != nil {
+		if errors.Is(err, plumbing.ErrObjectNotFound) {
+			return Commit{}, "", ErrCommitNotFound
+		}
+		return Commit{}, "", fmt.Errorf("load commit: %w", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return Commit{}, "", fmt.Errorf("load tree: %w", err)
+	}
+	source := ""
+	for _, entry := range tree.Entries {
+		if entry.Name != DefaultFilename {
+			continue
+		}
+		blob, err := repo.BlobObject(entry.Hash)
+		if err != nil {
+			return Commit{}, "", fmt.Errorf("load blob: %w", err)
+		}
+		reader, err := blob.Reader()
+		if err != nil {
+			return Commit{}, "", fmt.Errorf("blob reader: %w", err)
+		}
+		buf := make([]byte, blob.Size)
+		_, readErr := readFull(reader, buf)
+		_ = reader.Close()
+		if readErr != nil {
+			return Commit{}, "", fmt.Errorf("blob read: %w", readErr)
+		}
+		source = string(buf)
+		break
+	}
+	return Commit{
+		Hash:       commit.Hash.String(),
+		Message:    commit.Message,
+		Author:     commit.Author.Name,
+		Email:      commit.Author.Email,
+		AuthorDate: commit.Author.When,
+	}, source, nil
+}
+
 // HeadCommit returns the most recent commit on the default branch and the
 // source-code blob attached to it. ErrNoCommits is returned when the repo
 // exists but has no commits yet (or doesn't exist at all) — callers that

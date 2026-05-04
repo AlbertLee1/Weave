@@ -20,10 +20,12 @@ import (
 // shape of pkg/funcrepo.Manager but stays free of go-git, so the handler
 // tests can assert wire behaviour without spinning up a filesystem repo.
 type fakeFuncRepoStore struct {
-	mu       sync.Mutex
-	commits  map[string][]oms.FunctionRepoCommit
-	commitFn func(rid string, in oms.FunctionRepoCommitInput) (oms.FunctionRepoCommit, error)
-	logFn    func(rid string, limit int) ([]oms.FunctionRepoCommit, error)
+	mu          sync.Mutex
+	commits     map[string][]oms.FunctionRepoCommit
+	sources     map[string]map[string]string
+	commitFn    func(rid string, in oms.FunctionRepoCommitInput) (oms.FunctionRepoCommit, error)
+	logFn       func(rid string, limit int) ([]oms.FunctionRepoCommit, error)
+	getCommitFn func(rid, hash string) (oms.FunctionRepoCommitWithSource, error)
 }
 
 func (f *fakeFuncRepoStore) Commit(ctx context.Context, rid string, in oms.FunctionRepoCommitInput) (oms.FunctionRepoCommit, error) {
@@ -52,7 +54,36 @@ func (f *fakeFuncRepoStore) Commit(ctx context.Context, rid string, in oms.Funct
 		commit.AuthorDate = time.Now()
 	}
 	f.commits[rid] = append([]oms.FunctionRepoCommit{commit}, f.commits[rid]...)
+	if f.sources == nil {
+		f.sources = make(map[string]map[string]string)
+	}
+	if f.sources[rid] == nil {
+		f.sources[rid] = make(map[string]string)
+	}
+	f.sources[rid][commit.Hash] = in.SourceCode
 	return commit, nil
+}
+
+func (f *fakeFuncRepoStore) GetCommit(ctx context.Context, rid, hash string) (oms.FunctionRepoCommitWithSource, error) {
+	if f.getCommitFn != nil {
+		return f.getCommitFn(rid, hash)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	commits := f.commits[rid]
+	for _, c := range commits {
+		if c.Hash == hash {
+			source := ""
+			if f.sources != nil {
+				source = f.sources[rid][hash]
+			}
+			return oms.FunctionRepoCommitWithSource{
+				FunctionRepoCommit: c,
+				SourceCode:         source,
+			}, nil
+		}
+	}
+	return oms.FunctionRepoCommitWithSource{}, oms.ErrFunctionRepoCommitNotFound
 }
 
 func (f *fakeFuncRepoStore) Log(ctx context.Context, rid string, limit int) ([]oms.FunctionRepoCommit, error) {
@@ -76,6 +107,7 @@ func setupFunctionRepoRouter(repo oms.Repository, store oms.FunctionRepoStore) *
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits", handler.CreateFunctionRepoCommit)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/log", handler.ListFunctionRepoCommits)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}", handler.GetFunctionRepoCommit)
 	return r
 }
 
@@ -296,6 +328,113 @@ func TestListFunctionRepoCommits_EmptyRepoReturns200(t *testing.T) {
 	}
 	if len(resp.Data) != 0 {
 		t.Fatalf("want empty array, got %v", resp.Data)
+	}
+}
+
+func TestGetFunctionRepoCommit_RoundtripsSource(t *testing.T) {
+	repo := us415SeedRepo()
+	store := &fakeFuncRepoStore{}
+	router := setupFunctionRepoRouter(repo, store)
+
+	createBody := `{"message":"first","sourceCode":"function v1() { return 1; }"}`
+	createReq := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/northwind/functions/hello/commits",
+		bytes.NewBufferString(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	router.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create: %d body=%s", createW.Code, createW.Body.String())
+	}
+	var created oms.FunctionRepoCommit
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/northwind/functions/hello/commits/"+created.Hash, nil)
+	getW := httptest.NewRecorder()
+	router.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("get: want 200, got %d body=%s", getW.Code, getW.Body.String())
+	}
+	var got oms.FunctionRepoCommitWithSource
+	if err := json.Unmarshal(getW.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.Hash != created.Hash {
+		t.Fatalf("hash mismatch: %s vs %s", got.Hash, created.Hash)
+	}
+	if got.SourceCode != "function v1() { return 1; }" {
+		t.Fatalf("source mismatch: %q", got.SourceCode)
+	}
+}
+
+func TestGetFunctionRepoCommit_NotFound(t *testing.T) {
+	repo := us415SeedRepo()
+	router := setupFunctionRepoRouter(repo, &fakeFuncRepoStore{})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/northwind/functions/hello/commits/deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetFunctionRepoCommit_NoCommitsReturns404(t *testing.T) {
+	repo := us415SeedRepo()
+	store := &fakeFuncRepoStore{
+		getCommitFn: func(rid, hash string) (oms.FunctionRepoCommitWithSource, error) {
+			return oms.FunctionRepoCommitWithSource{}, oms.ErrFunctionRepoNoCommits
+		},
+	}
+	router := setupFunctionRepoRouter(repo, store)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/northwind/functions/hello/commits/abc", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["errorName"] != "FunctionRepoNoCommits" {
+		t.Fatalf("expected errorName FunctionRepoNoCommits, got %v", resp)
+	}
+}
+
+func TestGetFunctionRepoCommit_StoreUnwiredReturns503(t *testing.T) {
+	repo := us415SeedRepo()
+	router := setupFunctionRepoRouter(repo, nil)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/northwind/functions/hello/commits/abc", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetFunctionRepoCommit_FunctionNotFound(t *testing.T) {
+	repo := us415SeedRepo()
+	router := setupFunctionRepoRouter(repo, &fakeFuncRepoStore{})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v2/ontologies/northwind/functions/missing/commits/abc", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 

@@ -132,6 +132,10 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// is wired so degraded-mode test routers still boot cleanly.
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits", omsHandler.CreateFunctionRepoCommit)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/log", omsHandler.ListFunctionRepoCommits)
+	// US-416 Function PR / Diff UI: fetch one historical revision (commit
+	// metadata + source code blob) so the SPA can render a side-by-side
+	// diff between any two commits without re-walking the log.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}", omsHandler.GetFunctionRepoCommit)
 
 	// Ontology Branches (US-113, US-116)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.CreateBranch)
