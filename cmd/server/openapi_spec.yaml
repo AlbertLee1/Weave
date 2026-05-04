@@ -7670,6 +7670,45 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+    delete:
+      operationId: deleteActionJob
+      summary: Delete (cancel) an in-flight async action job (US-426)
+      description: |
+        REST-style alias of POST /jobs/{jobId}/cancel. Signals the in-flight
+        worker for jobId to stop AND durably flips the job row to CANCELED in
+        a single step so the response carries the post-cancel state inline.
+        202 Accepted with the (now CANCELED) ActionJob row when the job was
+        in-flight; 404 when the jobId is unknown; 409 ActionJobAlreadyTerminal
+        when the job has already reached SUCCEEDED / FAILED / CANCELED.
+        Idempotent on the durable side — the cancel signal itself is best
+        effort and may report no-op when the runner already finished but its
+        flush race lost.
+
+        A background reaper drops terminal-state rows older than 24h (hourly
+        sweep), so callers should not rely on GET /jobs/{jobId} returning the
+        cancelled row indefinitely.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: jobId
+          required: true
+          description: Async job ID to cancel.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Cancel accepted; row is now CANCELED.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionJob"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}/cancel:
     post:
       operationId: cancelActionJob

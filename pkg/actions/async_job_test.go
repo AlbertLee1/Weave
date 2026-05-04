@@ -49,6 +49,23 @@ func (m *memActionJobStore) GetActionJob(_ context.Context, id string) (*ActionJ
 	return &copy, nil
 }
 
+func (m *memActionJobStore) ReapOldActionJobs(_ context.Context, olderThan time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for id, j := range m.jobs {
+		if !isTerminalJobStatus(j.Status) {
+			continue
+		}
+		if !j.UpdatedAt.Before(olderThan) {
+			continue
+		}
+		delete(m.jobs, id)
+		n++
+	}
+	return n, nil
+}
+
 func (m *memActionJobStore) UpdateActionJob(_ context.Context, id string, upd ActionJobUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

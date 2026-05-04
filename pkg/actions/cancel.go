@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // jobCancelRegistry tracks in-flight async jobs so a remote
@@ -70,4 +71,37 @@ func (e *Executor) UnregisterJobCancel(jobID string) {
 // CANCELED in its own time; this call does not block on the persisted state.
 func (e *Executor) CancelJob(jobID string) bool {
 	return e.cancelRegistry.cancel(jobID)
+}
+
+// RunActionJobReaperLoop drives ReapOldActionJobs on a fixed interval until
+// ctx is cancelled. Terminal-state rows (SUCCEEDED / FAILED / CANCELED) older
+// than `retention` are dropped each tick. Failures are reported through
+// `onError` (non-blocking) so a transient PG hiccup doesn't kill the loop.
+// Per-tick reap counts go to `onReap` for observability when set. US-426.
+//
+// Modelled on PGSavedStore.RunReaperLoop (US-365) — same shape so operators
+// reading /metrics or logs see consistent telemetry across the codebase.
+func RunActionJobReaperLoop(ctx context.Context, store ActionJobStore, interval, retention time.Duration, onReap func(int64), onError func(error)) {
+	if store == nil || interval <= 0 || retention <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := store.ReapOldActionJobs(ctx, time.Now().Add(-retention))
+			if err != nil {
+				if onError != nil {
+					onError(err)
+				}
+				continue
+			}
+			if n > 0 && onReap != nil {
+				onReap(n)
+			}
+		}
+	}
 }

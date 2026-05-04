@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -101,6 +102,20 @@ func (s *pgActionJobStore) UpdateActionJob(ctx context.Context, id string, upd a
 		return oms.ErrNotFound
 	}
 	return nil
+}
+
+// ReapOldActionJobs deletes terminal-state rows older than `olderThan`.
+// PENDING / RUNNING rows are preserved so an in-flight worker is never
+// surprised by its row vanishing mid-flight. US-426.
+func (s *pgActionJobStore) ReapOldActionJobs(ctx context.Context, olderThan time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM action_jobs
+		 WHERE status IN ('SUCCEEDED', 'FAILED', 'CANCELED')
+		   AND updated_at < $1`, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // coerceJSON substitutes "{}" for nil json.RawMessage. pgx encodes a raw nil

@@ -62,6 +62,12 @@ type ActionJobStore interface {
 	CreateActionJob(ctx context.Context, job *ActionJob) error
 	GetActionJob(ctx context.Context, id string) (*ActionJob, error)
 	UpdateActionJob(ctx context.Context, id string, upd ActionJobUpdate) error
+	// ReapOldActionJobs deletes terminal-state rows (SUCCEEDED / FAILED /
+	// CANCELED) whose updated_at is older than `olderThan`. Returns the
+	// number of rows deleted. Non-terminal rows (PENDING / RUNNING) are
+	// always preserved so an in-flight job is never garbage-collected
+	// out from under its worker. US-426.
+	ReapOldActionJobs(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // AsyncApplyResponse is the 202 Accepted envelope returned by the async

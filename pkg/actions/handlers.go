@@ -549,6 +549,74 @@ func isTerminalJobStatus(s string) bool {
 	return false
 }
 
+// DeleteJob handles DELETE /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}.
+// REST-style alias of CancelJob: marks the job CANCELED and signals the
+// in-flight worker to stop. 202 Accepted with the (now CANCELED) job row when
+// a runner was signalled, 404 when the jobId is unknown, 409 when already
+// terminal. US-426.
+//
+// Distinct from CancelJob in two ways: (1) the underlying status is flipped to
+// CANCELED *here* (not deferred to the worker) so the response carries the
+// post-cancel state inline — this matches the DELETE semantics ("the
+// resource is now in the deleted state from the caller's perspective"); the
+// worker then observes ctx.Done() and exits without re-stamping. (2) When the
+// runner finished but its status flush race lost (no registered cancel)
+// DeleteJob still flips the row to CANCELED and returns 202 — DELETE is
+// idempotent on the durable side, the cancel signal is best-effort.
+func (h *Handler) DeleteJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "jobId")
+	if jobID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingJobId", nil))
+		return
+	}
+	store := h.executor.ActionJobStore()
+	if store == nil {
+		apierror.WriteJSON(w, apierror.NewNotFound("ActionJobNotFound",
+			map[string]string{"jobId": jobID}))
+		return
+	}
+	job, err := store.GetActionJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ActionJobNotFound",
+				map[string]string{"jobId": jobID}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionJobLoadFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	if isTerminalJobStatus(job.Status) {
+		apierror.WriteJSON(w, apierror.NewConflict("ActionJobAlreadyTerminal",
+			map[string]string{"jobId": jobID, "status": job.Status}))
+		return
+	}
+	// Signal the worker first so the next iteration boundary observes ctx
+	// cancellation. CancelJob is best-effort: a finished-but-not-flushed
+	// runner returns false but the durable flip below still owns the row's
+	// terminal state, which is the contract DELETE callers actually care
+	// about.
+	_ = h.executor.CancelJob(jobID)
+
+	// Durably flip the row to CANCELED so the response and any subsequent
+	// GET observe the post-cancel state without waiting for the worker's
+	// next tick. The worker's own UpdateActionJob writes that fire from
+	// runAsyncApplyBatch's ctx.Err() branch are idempotent against this
+	// flip — they re-stamp CANCELED with the last progress percent.
+	cancelMsg := "canceled"
+	if err := store.UpdateActionJob(r.Context(), jobID, ActionJobUpdate{
+		Status:       ActionJobStatusCanceled,
+		ErrorMessage: &cancelMsg,
+	}); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ActionJobUpdateFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	job.Status = ActionJobStatusCanceled
+	job.ErrorMessage = cancelMsg
+	httputil.WriteJSON(w, http.StatusAccepted, job)
+}
+
 // GetJob handles GET /api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}.
 // Returns the current ActionJob row as JSON. 404 if the job does not exist.
 // When no ActionJobStore is wired (degraded mode) the endpoint returns 404 so

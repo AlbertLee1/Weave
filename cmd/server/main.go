@@ -924,6 +924,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// 404 ActionJobNotFound. Already-terminal jobs report 409
 			// ActionJobAlreadyTerminal so callers don't silently accept a no-op.
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}/cancel", actionHandler.CancelJob)
+			// US-426: REST-style cancellation. DELETE on the job resource
+			// signals the worker AND flips the row to CANCELED in one step.
+			// Same 202 / 404 / 409 envelope as the POST cancel above so SDKs
+			// can pick whichever shape fits their HTTP client idiom.
+			api.Delete("/api/v2/ontologies/{ontologyApiName}/actions/jobs/{jobId}", actionHandler.DeleteJob)
 			// US-242: approval-workflow endpoints. Always registered when the
 			// executor is wired; return 404 if no approval store is attached.
 			// US-243: ListApprovals backs the /approvals UI page.
@@ -2694,7 +2699,19 @@ func main() {
 			// pkg/actions import (actions already imports oms). In degraded
 			// mode (no PG) the handler silently falls back to sync Apply —
 			// see serveAsyncApply in pkg/actions/handlers.go.
-			deps.ActionExecutor.SetActionJobStore(newPGActionJobStore(deps.PGPool))
+			actionJobStore := newPGActionJobStore(deps.PGPool)
+			deps.ActionExecutor.SetActionJobStore(actionJobStore)
+			// US-426: hourly reaper drops terminal-state rows (SUCCEEDED /
+			// FAILED / CANCELED) older than 24h so the action_jobs table
+			// doesn't grow unbounded for a deployment with steady async
+			// traffic. PENDING / RUNNING rows are always preserved by the
+			// query so an in-flight worker is never surprised. The cadence
+			// + retention follow the AC verbatim; future tuning can drop
+			// to env vars without churning the wiring shape.
+			go actions.RunActionJobReaperLoop(ctx, actionJobStore, time.Hour, 24*time.Hour,
+				func(n int64) { log.Printf("[ACTION-JOB-REAP] dropped %d terminal jobs", n) },
+				func(err error) { log.Printf("[ACTION-JOB-REAP] %v", err) },
+			)
 			// US-242: approval-workflow store persists pending / terminal
 			// approval rows. Wired in the same PG-gated block as the job
 			// store — degraded-mode (no PG) routers keep the sync-apply
