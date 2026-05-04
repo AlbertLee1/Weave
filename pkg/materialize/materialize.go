@@ -32,6 +32,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/metrics"
 )
 
 const (
@@ -141,9 +142,11 @@ func (m *Materializer) MaterializeBatch(_ context.Context, batch funnel.EditBatc
 		if err != nil {
 			return err
 		}
-		if err := m.writeFile(batch.OntologyAPIName, ot, ts, records); err != nil {
+		size, err := m.writeFile(batch.OntologyAPIName, ot, ts, records)
+		if err != nil {
 			return err
 		}
+		metrics.MaterializeFileWritten(batch.OntologyAPIName, ot, m.nowFn().Sub(ts), size)
 	}
 	return nil
 }
@@ -177,13 +180,13 @@ func (m *Materializer) buildRecords(batch funnel.EditBatch, ts time.Time, edits 
 	return records, nil
 }
 
-func (m *Materializer) writeFile(ontology, objectType string, ts time.Time, records []EditRecord) error {
+func (m *Materializer) writeFile(ontology, objectType string, ts time.Time, records []EditRecord) (int64, error) {
 	if len(records) == 0 {
-		return nil
+		return 0, nil
 	}
 	dir := filepath.Join(m.rootDir, ontology, objectType)
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("materialize: mkdir %s: %w", dir, err)
+		return 0, fmt.Errorf("materialize: mkdir %s: %w", dir, err)
 	}
 	name := fmt.Sprintf("%s_%020d.parquet", ts.Format("20060102T150405"), records[0].PatchOffset)
 	path := filepath.Join(dir, name)
@@ -191,29 +194,33 @@ func (m *Materializer) writeFile(ontology, objectType string, ts time.Time, reco
 
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
 	if err != nil {
-		return fmt.Errorf("materialize: open %s: %w", tmp, err)
+		return 0, fmt.Errorf("materialize: open %s: %w", tmp, err)
 	}
 	w := parquet.NewGenericWriter[EditRecord](f)
 	if _, err := w.Write(records); err != nil {
 		_ = w.Close()
 		_ = f.Close()
 		_ = os.Remove(tmp)
-		return fmt.Errorf("materialize: write rows: %w", err)
+		return 0, fmt.Errorf("materialize: write rows: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
-		return fmt.Errorf("materialize: close writer: %w", err)
+		return 0, fmt.Errorf("materialize: close writer: %w", err)
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("materialize: close file: %w", err)
+		return 0, fmt.Errorf("materialize: close file: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("materialize: rename %s: %w", tmp, err)
+		return 0, fmt.Errorf("materialize: rename %s: %w", tmp, err)
 	}
-	return nil
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return 0, nil
+	}
+	return info.Size(), nil
 }
 
 // encodePropertiesJSON returns the JSON encoding of an edit's properties

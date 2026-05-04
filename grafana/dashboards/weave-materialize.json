@@ -1,0 +1,279 @@
+{
+  "uid": "weave-materialize",
+  "title": "Weave Materialization (Parquet)",
+  "description": "Operational dashboard for the Edit-to-Parquet materialization subsystem (US-405..US-409). Panels surface materialization lag, parquet file production rate, cumulative bytes on disk, and per-ObjectType file size distribution. All queries use metrics exported at /metrics.",
+  "tags": ["weave", "materialize", "parquet"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "hide": 0,
+        "refresh": 1,
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "prometheus"
+        }
+      },
+      {
+        "name": "ontology",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(weave_parquet_files_total, ontology)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "label": "Ontology"
+      },
+      {
+        "name": "object_type",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(weave_parquet_files_total{ontology=~\"$ontology\"}, object_type)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "label": "ObjectType"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "expr": "changes(weave_build_info[1m]) > 0",
+        "titleFormat": "Weave deploy",
+        "textFormat": "{{version}} / {{commit}}"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "materialize_lag — batch-to-disk lag (p50 / p95 / p99)",
+      "description": "Wall-clock delta between an EditBatch's Timestamp and the moment its parquet file lands on disk, measured per (ontology, object_type). Sustained lag above a few seconds means the funnel materializer is falling behind the writer; check disk I/O and parquet writer back-pressure first.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(weave_materialize_lag_seconds_bucket{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(weave_materialize_lag_seconds_bucket{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(weave_materialize_lag_seconds_bucket{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 10}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "parquet_files — file-write throughput",
+      "description": "Per-second rate of parquet files produced, broken down by ontology + object_type. One file is produced per (batch, objectType) tuple, so a write-heavy ObjectType drives this independent of payload size.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (ontology, object_type) (rate(weave_parquet_files_total{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m]))",
+          "legendFormat": "{{ontology}}/{{object_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "wps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "parquet_bytes — cumulative bytes written rate",
+      "description": "Per-second rate of parquet bytes flushed to disk, derived from the histogram _sum series. Use the time-range integral as a coarse estimate of disk-space growth across the materialized tier.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (ontology, object_type) (rate(weave_parquet_size_bytes_sum{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m]))",
+          "legendFormat": "{{ontology}}/{{object_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "parquet_size — per-file size distribution (p50 / p95)",
+      "description": "Per-file parquet payload size in bytes. p95 climbing without a corresponding p50 jump usually means the writer is bursting on a single ObjectType (large EditBatch). Sustained large files reduce small-file overhead but increase per-rebuild cost.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(weave_parquet_size_bytes_bucket{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(weave_parquet_size_bytes_bucket{ontology=~\"$ontology\", object_type=~\"$object_type\"}[5m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total parquet files (lifetime, current snapshot)",
+      "description": "Counter total of parquet files ever produced by the running process. Resets on restart — for on-disk file count, run the materialize CLI's listing helper instead.",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(weave_parquet_files_total{ontology=~\"$ontology\", object_type=~\"$object_type\"})",
+          "instant": true,
+          "legendFormat": "files"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Cumulative bytes written (lifetime, current snapshot)",
+      "description": "Histogram _sum total of all parquet bytes flushed by this process. Resets on restart. Use the time-range Bps panel above for steady-state disk-growth estimation.",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(weave_parquet_size_bytes_sum{ontology=~\"$ontology\", object_type=~\"$object_type\"})",
+          "instant": true,
+          "legendFormat": "bytes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    }
+  ]
+}

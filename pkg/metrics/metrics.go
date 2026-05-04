@@ -125,6 +125,42 @@ var (
 	)
 )
 
+// Materialization metrics (US-409).
+//
+// Lag is the wall-clock delta between a batch's Timestamp and the moment its
+// parquet file is durably written. The histogram buckets cover sub-second
+// (steady state) up through 10 minutes (significant backlog). FilesTotal is a
+// per-(ontology, object_type) counter incremented once per parquet file
+// produced. SizeBytes is a histogram of per-file byte size — its _sum gives
+// cumulative bytes written and _count is redundant with FilesTotal by design
+// (Prometheus dashboards routinely consume one or the other and we want both
+// surfaces to stay self-consistent without cross-metric joins).
+var (
+	materializeLagSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "weave_materialize_lag_seconds",
+			Help:    "Wall-clock delta between an edit batch's Timestamp and the moment its parquet file is written, partitioned by ontology and object type.",
+			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 600},
+		},
+		[]string{"ontology", "object_type"},
+	)
+	parquetFilesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "weave_parquet_files_total",
+			Help: "Total parquet files written by the materializer, partitioned by ontology and object type.",
+		},
+		[]string{"ontology", "object_type"},
+	)
+	parquetSizeBytes = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "weave_parquet_size_bytes",
+			Help:    "Per-file parquet payload size in bytes (histogram _sum exposes cumulative bytes), partitioned by ontology and object type.",
+			Buckets: []float64{1 << 10, 1 << 12, 1 << 14, 1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24, 1 << 26, 1 << 28},
+		},
+		[]string{"ontology", "object_type"},
+	)
+)
+
 // Build info metric. Always 1; the labels carry the version information.
 var buildInfo = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
@@ -152,6 +188,9 @@ func allCollectors() []prometheus.Collector {
 		actionsDuration,
 		apiRequestsTotal,
 		apiRequestDuration,
+		materializeLagSeconds,
+		parquetFilesTotal,
+		parquetSizeBytes,
 		buildInfo,
 	}
 }
