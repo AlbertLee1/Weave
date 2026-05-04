@@ -46,6 +46,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runMaterialize(rest, stdout, stderr)
 	case "index":
 		return runIndex(rest, stdout, stderr)
+	case "pkg":
+		return runPkg(rest, stdout, stderr)
 	case "repl":
 		return runREPL(rest, stdin, stdout, stderr)
 	default:
@@ -71,6 +73,7 @@ Commands:
   pitr         Point-in-time recovery (restore, history)
   materialize  Rebuild snapshots from materialized parquet (rebuild)
   index        Rebuild Bleve indexes from the authoritative tail (rebuild)
+  pkg          Build distributable .weavepkg ontology archives (export)
   repl         Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)

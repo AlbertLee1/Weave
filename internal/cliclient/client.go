@@ -416,6 +416,19 @@ func (c *Client) GetOntologyFullMetadata(ctx context.Context, ontology string) (
 	return resp, nil
 }
 
+// ExportOntology returns the full ontology export envelope produced by
+// GET /api/v2/ontologies/{name}/export. The shape mirrors pkg/oms.OntologyExport
+// — every entity collection is non-nil even when empty so downstream callers
+// (weave-cli pkg export) can range over them without nil guards.
+func (c *Client) ExportOntology(ctx context.Context, ontology string) (map[string]any, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/export"
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 // ----- ObjectType extended endpoints --------------------------------------
 
 // GetObjectTypeFullMetadata returns the full metadata for an object type (preview).
