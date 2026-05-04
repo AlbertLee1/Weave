@@ -170,35 +170,51 @@ func (h *OMSHandler) PackageInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp, status, apiErr := h.installPackage(r.Context(), &req)
+	if apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+	httputil.WriteJSON(w, status, *resp)
+}
+
+// installPackage performs the full validate → conflict-detect → migrate →
+// import → record flow against an already-parsed PackageInstallRequest. It
+// is the single chokepoint shared between the JSON-bodied
+// POST /api/v2/pkg/install handler and the built-in catalog one-click
+// install path (US-414, cmd/server/builtin_packages.go) so wire-shape
+// changes stay localised.
+//
+// Returns (response, http-status, nil) on success — the caller decides
+// whether to encode 201 (fresh install) vs 200 (install applied but
+// registry recording failed). Returns (nil, 0, *apierror.APIError) on any
+// validation / conflict / migration failure.
+func (h *OMSHandler) installPackage(ctx context.Context, req *PackageInstallRequest) (*PackageInstallResponse, int, *apierror.APIError) {
 	if strings.TrimSpace(req.Manifest.Name) == "" {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:manifest.name", map[string]string{
+		return nil, 0, apierror.NewInvalidParameter("InvalidParameter:manifest.name", map[string]string{
 			"parameter": "manifest.name",
 			"reason":    "manifest.name is required",
-		}))
-		return
+		})
 	}
 	if strings.TrimSpace(req.Manifest.Version) == "" {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:manifest.version", map[string]string{
+		return nil, 0, apierror.NewInvalidParameter("InvalidParameter:manifest.version", map[string]string{
 			"parameter": "manifest.version",
 			"reason":    "manifest.version is required",
-		}))
-		return
+		})
 	}
 	if len(req.Ontology) == 0 {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:ontology", map[string]string{
+		return nil, 0, apierror.NewInvalidParameter("InvalidParameter:ontology", map[string]string{
 			"parameter": "ontology",
 			"reason":    "ontology body is required",
-		}))
-		return
+		})
 	}
 
 	if err := checkMinWeaveVersion(req.Manifest.MinWeaveVersion, WeaveServerVersion); err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("PackageMinWeaveVersionUnsatisfied", map[string]string{
+		return nil, 0, apierror.NewInvalidParameter("PackageMinWeaveVersionUnsatisfied", map[string]string{
 			"required": req.Manifest.MinWeaveVersion,
 			"server":   WeaveServerVersion,
 			"reason":   err.Error(),
-		}))
-		return
+		})
 	}
 
 	onConflict := strings.ToLower(strings.TrimSpace(req.OnConflict))
@@ -208,58 +224,55 @@ func (h *OMSHandler) PackageInstall(w http.ResponseWriter, r *http.Request) {
 	switch onConflict {
 	case "fail", "overwrite", "skip":
 	default:
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:onConflict", map[string]string{
+		return nil, 0, apierror.NewInvalidParameter("InvalidParameter:onConflict", map[string]string{
 			"parameter": "onConflict",
 			"reason":    "must be one of: fail, overwrite, skip",
-		}))
-		return
+		})
 	}
 
 	importReq, err := decodePackageOntology(req.Ontology, onConflict)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:ontology", map[string]string{
+		return nil, 0, apierror.NewInvalidParameter("InvalidParameter:ontology", map[string]string{
 			"parameter": "ontology",
 			"reason":    err.Error(),
-		}))
-		return
+		})
 	}
 
-	// 4. Conflict detection (always runs; fail / overwrite / skip diverge
-	//    on what to do with the conflicts).
-	conflicts := h.detectPackageConflicts(r.Context(), importReq)
+	conflicts := h.detectPackageConflicts(ctx, importReq)
 	if onConflict == "fail" && len(conflicts) > 0 {
-		// 409 Conflict envelope with the conflict list embedded in the
-		// parameters bag (apierror's wire-format only carries flat string
-		// fields, so we serialise the conflict list as a stable JSON
-		// blob the CLI can re-parse).
 		body, _ := json.Marshal(conflicts)
-		apierror.WriteJSON(w, apierror.NewConflict("PackageConflict", map[string]string{
+		return nil, 0, apierror.NewConflict("PackageConflict", map[string]string{
 			"package":   req.Manifest.Name,
 			"version":   req.Manifest.Version,
 			"conflicts": string(body),
 			"hint":      "rerun with --on-conflict=overwrite to replace existing entries, or --on-conflict=skip to keep existing definitions",
-		}))
-		return
+		})
 	}
 
-	// 5. Migrations.
 	migrationsRan := 0
 	if h.packageMigrationRunner != nil && len(req.Migrations) > 0 {
-		ran, runErr := h.packageMigrationRunner.RunPackageMigrations(r.Context(), req.Manifest.Name, req.Migrations)
+		ran, runErr := h.packageMigrationRunner.RunPackageMigrations(ctx, req.Manifest.Name, req.Migrations)
 		if runErr != nil {
-			apierror.WriteJSON(w, apierror.NewInternal("PackageMigrationFailed", map[string]string{
+			return nil, 0, apierror.NewInternal("PackageMigrationFailed", map[string]string{
 				"package": req.Manifest.Name,
 				"reason":  runErr.Error(),
-			}))
-			return
+			})
 		}
 		migrationsRan = ran
 	}
 
-	// 6. Apply ontology import via the shared entity path.
-	counts, ontology := h.applyImportRequest(r.Context(), importReq)
+	counts, ontology := h.applyImportRequest(ctx, importReq)
 
-	// 7. Record the install if wired.
+	resp := PackageInstallResponse{
+		Name:            req.Manifest.Name,
+		Version:         req.Manifest.Version,
+		Ontology:        ontology.APIName,
+		Imported:        counts,
+		MigrationsRan:   migrationsRan,
+		MigrationsTotal: len(req.Migrations),
+		Message:         "package installed",
+	}
+
 	if h.installedPackageStore != nil {
 		manifestJSON, _ := json.Marshal(req.Manifest)
 		filenames := make([]string, 0, len(req.Migrations))
@@ -276,34 +289,17 @@ func (h *OMSHandler) PackageInstall(w http.ResponseWriter, r *http.Request) {
 			Enabled:      true,
 		}
 		if h.actorFn != nil {
-			row.InstalledBy = h.actorFn(r.Context())
+			row.InstalledBy = h.actorFn(ctx)
 		}
-		if err := h.installedPackageStore.UpsertInstalledPackage(r.Context(), row); err != nil {
+		if err := h.installedPackageStore.UpsertInstalledPackage(ctx, row); err != nil {
 			// Recording is best-effort: the import already landed, so we
-			// don't want to fail the whole call. Surface a 200 with a
-			// warning string so operators can investigate.
-			httputil.WriteJSON(w, http.StatusOK, PackageInstallResponse{
-				Name:            req.Manifest.Name,
-				Version:         req.Manifest.Version,
-				Ontology:        ontology.APIName,
-				Imported:        counts,
-				MigrationsRan:   migrationsRan,
-				MigrationsTotal: len(req.Migrations),
-				Message:         fmt.Sprintf("install applied; recording in installed_packages failed: %v", err),
-			})
-			return
+			// surface a 200 with a warning rather than failing the call.
+			resp.Message = fmt.Sprintf("install applied; recording in installed_packages failed: %v", err)
+			return &resp, http.StatusOK, nil
 		}
 	}
 
-	httputil.WriteJSON(w, http.StatusCreated, PackageInstallResponse{
-		Name:            req.Manifest.Name,
-		Version:         req.Manifest.Version,
-		Ontology:        ontology.APIName,
-		Imported:        counts,
-		MigrationsRan:   migrationsRan,
-		MigrationsTotal: len(req.Migrations),
-		Message:         "package installed",
-	})
+	return &resp, http.StatusCreated, nil
 }
 
 // applyImportRequest is the shared path between PackageInstall and

@@ -94,6 +94,13 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// marketplace UI (US-413, US-454) renders an appropriate empty state.
 	r.Post("/api/v2/pkg/install", omsHandler.PackageInstall)
 	r.Get("/api/v2/pkg", omsHandler.ListInstalledPackages)
+	// Built-in catalog (US-414). Mounted unconditionally; the list endpoint
+	// returns an empty data array when no provider is wired, and the install
+	// endpoint surfaces 404 BuiltinPackagesNotConfigured. Both routes are
+	// declared BEFORE the {name} catch-all below so `/api/v2/pkg/builtin`
+	// doesn't collide with the parameterised `/api/v2/pkg/{name}` getter.
+	r.Get("/api/v2/pkg/builtin", omsHandler.ListBuiltinPackages)
+	r.Post("/api/v2/pkg/builtin/{slug}/install", omsHandler.InstallBuiltinPackage)
 	r.Get("/api/v2/pkg/{name}", omsHandler.GetInstalledPackage)
 	r.Post("/api/v2/pkg/{name}/enabled", omsHandler.SetInstalledPackageEnabled)
 	r.Delete("/api/v2/pkg/{name}", omsHandler.DeleteInstalledPackage)

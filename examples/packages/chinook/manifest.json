@@ -1,0 +1,8 @@
+{
+  "name": "chinook",
+  "version": "1.0.0",
+  "author": "Weave Examples",
+  "license": "MIT",
+  "description": "Chinook digital media store — Artist, Album, Track, Customer, Invoice — exercising the long-form 5-type ontology with two foreign-key links. Pairs with testdata/chinook.",
+  "minWeaveVersion": "0.42.0"
+}

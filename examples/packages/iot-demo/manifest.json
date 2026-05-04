@@ -1,0 +1,8 @@
+{
+  "name": "iot-demo",
+  "version": "1.0.0",
+  "author": "Weave Examples",
+  "license": "MIT",
+  "description": "IoT telemetry tutorial — Device, Sensor, Reading — with a foreign key from Reading to Sensor for time-series exploration.",
+  "minWeaveVersion": "0.42.0"
+}

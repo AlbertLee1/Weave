@@ -1,0 +1,126 @@
+{
+  "ontology": {
+    "apiName": "chinook",
+    "displayName": "Chinook",
+    "description": "Digital-media store ontology used by demos and the testdata/chinook dataset."
+  },
+  "objectTypes": [
+    {
+      "apiName": "Artist",
+      "displayName": "Artist",
+      "pluralDisplayName": "Artists",
+      "description": "Performing artist or band.",
+      "primaryKey": "artistId",
+      "primaryKeys": ["artistId"],
+      "titleProperty": "name",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "artistId", "displayName": "Artist ID", "baseType": "long", "isSearchable": true, "isSortable": true},
+        {"apiName": "name", "displayName": "Name", "baseType": "string", "isSearchable": true, "isSortable": true}
+      ]
+    },
+    {
+      "apiName": "Album",
+      "displayName": "Album",
+      "pluralDisplayName": "Albums",
+      "description": "Studio or live album released by an Artist.",
+      "primaryKey": "albumId",
+      "primaryKeys": ["albumId"],
+      "titleProperty": "title",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "albumId", "displayName": "Album ID", "baseType": "long", "isSearchable": true, "isSortable": true},
+        {"apiName": "title", "displayName": "Title", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "artistId", "displayName": "Artist ID", "baseType": "long", "isSearchable": true, "isSortable": true}
+      ]
+    },
+    {
+      "apiName": "Track",
+      "displayName": "Track",
+      "pluralDisplayName": "Tracks",
+      "description": "Individual song belonging to an Album.",
+      "primaryKey": "trackId",
+      "primaryKeys": ["trackId"],
+      "titleProperty": "name",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "trackId", "displayName": "Track ID", "baseType": "long", "isSearchable": true, "isSortable": true},
+        {"apiName": "name", "displayName": "Name", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "albumId", "displayName": "Album ID", "baseType": "long", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "milliseconds", "displayName": "Milliseconds", "baseType": "long", "isSortable": true, "isNullable": true},
+        {"apiName": "unitPrice", "displayName": "Unit Price", "baseType": "double", "isSortable": true, "isNullable": true}
+      ]
+    },
+    {
+      "apiName": "Customer",
+      "displayName": "Customer",
+      "pluralDisplayName": "Customers",
+      "description": "Subscriber who purchases tracks.",
+      "primaryKey": "customerId",
+      "primaryKeys": ["customerId"],
+      "titleProperty": "email",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "customerId", "displayName": "Customer ID", "baseType": "long", "isSearchable": true, "isSortable": true},
+        {"apiName": "firstName", "displayName": "First Name", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "lastName", "displayName": "Last Name", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "email", "displayName": "Email", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "country", "displayName": "Country", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true}
+      ]
+    },
+    {
+      "apiName": "Invoice",
+      "displayName": "Invoice",
+      "pluralDisplayName": "Invoices",
+      "description": "Charge raised against a Customer.",
+      "primaryKey": "invoiceId",
+      "primaryKeys": ["invoiceId"],
+      "titleProperty": "invoiceId",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "invoiceId", "displayName": "Invoice ID", "baseType": "long", "isSearchable": true, "isSortable": true},
+        {"apiName": "customerId", "displayName": "Customer ID", "baseType": "long", "isSearchable": true, "isSortable": true},
+        {"apiName": "invoiceDate", "displayName": "Invoice Date", "baseType": "timestamp", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "total", "displayName": "Total", "baseType": "double", "isSortable": true, "isNullable": true}
+      ]
+    }
+  ],
+  "linkTypes": [
+    {
+      "apiName": "artistAlbums",
+      "displayName": "Artist Albums",
+      "description": "Foreign key from Album.artistId to Artist.artistId.",
+      "objectTypeApiName": "Artist",
+      "linkedObjectTypeApiName": "Album",
+      "cardinality": "ONE_TO_MANY",
+      "foreignKeyConfig": {
+        "sourcePropertyApiName": "artistId",
+        "targetPropertyApiName": "artistId"
+      }
+    },
+    {
+      "apiName": "albumTracks",
+      "displayName": "Album Tracks",
+      "description": "Foreign key from Track.albumId to Album.albumId.",
+      "objectTypeApiName": "Album",
+      "linkedObjectTypeApiName": "Track",
+      "cardinality": "ONE_TO_MANY",
+      "foreignKeyConfig": {
+        "sourcePropertyApiName": "albumId",
+        "targetPropertyApiName": "albumId"
+      }
+    }
+  ],
+  "actionTypes": [],
+  "interfaces": [],
+  "sharedProperties": [],
+  "valueTypes": [],
+  "typeGroups": [],
+  "functions": [],
+  "queryTypes": []
+}

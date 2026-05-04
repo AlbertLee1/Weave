@@ -1,0 +1,105 @@
+{
+  "ontology": {
+    "apiName": "northwind",
+    "displayName": "Northwind",
+    "description": "Classic sales-ledger ontology used by demos and the testdata/northwind dataset."
+  },
+  "objectTypes": [
+    {
+      "apiName": "Customer",
+      "displayName": "Customer",
+      "pluralDisplayName": "Customers",
+      "description": "End-buyer organisation that places orders.",
+      "primaryKey": "customerId",
+      "primaryKeys": ["customerId"],
+      "titleProperty": "companyName",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "customerId", "displayName": "Customer ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "companyName", "displayName": "Company Name", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "country", "displayName": "Country", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "city", "displayName": "City", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true}
+      ]
+    },
+    {
+      "apiName": "Order",
+      "displayName": "Order",
+      "pluralDisplayName": "Orders",
+      "description": "Single sales transaction placed by a Customer.",
+      "primaryKey": "orderId",
+      "primaryKeys": ["orderId"],
+      "titleProperty": "orderId",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "orderId", "displayName": "Order ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "customerId", "displayName": "Customer ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "orderDate", "displayName": "Order Date", "baseType": "timestamp", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "shipCountry", "displayName": "Ship Country", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "freight", "displayName": "Freight", "baseType": "double", "isSearchable": true, "isSortable": true, "isNullable": true}
+      ]
+    },
+    {
+      "apiName": "Product",
+      "displayName": "Product",
+      "pluralDisplayName": "Products",
+      "description": "Catalog item available for purchase.",
+      "primaryKey": "productId",
+      "primaryKeys": ["productId"],
+      "titleProperty": "productName",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "productId", "displayName": "Product ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "productName", "displayName": "Product Name", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "unitPrice", "displayName": "Unit Price", "baseType": "double", "isSortable": true, "isNullable": true},
+        {"apiName": "unitsInStock", "displayName": "Units In Stock", "baseType": "long", "isSortable": true, "isNullable": true}
+      ]
+    }
+  ],
+  "linkTypes": [
+    {
+      "apiName": "customerOrders",
+      "displayName": "Customer Orders",
+      "description": "Foreign key from Order.customerId to Customer.customerId.",
+      "objectTypeApiName": "Customer",
+      "linkedObjectTypeApiName": "Order",
+      "cardinality": "ONE_TO_MANY",
+      "foreignKeyConfig": {
+        "sourcePropertyApiName": "customerId",
+        "targetPropertyApiName": "customerId"
+      }
+    }
+  ],
+  "actionTypes": [
+    {
+      "apiName": "createCustomer",
+      "displayName": "Create Customer",
+      "description": "Inserts a new Customer row.",
+      "status": "ACTIVE",
+      "parameters": {
+        "customerId": {"type": "string", "required": true},
+        "companyName": {"type": "string", "required": true},
+        "country": {"type": "string", "required": false}
+      },
+      "rules": [
+        {
+          "type": "create",
+          "objectType": "Customer",
+          "properties": {
+            "customerId": "$customerId",
+            "companyName": "$companyName",
+            "country": "$country"
+          }
+        }
+      ]
+    }
+  ],
+  "interfaces": [],
+  "sharedProperties": [],
+  "valueTypes": [],
+  "typeGroups": [],
+  "functions": [],
+  "queryTypes": []
+}

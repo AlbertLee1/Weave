@@ -1,0 +1,94 @@
+{
+  "ontology": {
+    "apiName": "iotDemo",
+    "displayName": "IoT Demo",
+    "description": "Bite-size IoT telemetry ontology — Device hosts Sensors, each Sensor emits Readings."
+  },
+  "objectTypes": [
+    {
+      "apiName": "Device",
+      "displayName": "Device",
+      "pluralDisplayName": "Devices",
+      "description": "Physical edge device deployed in the field.",
+      "primaryKey": "deviceId",
+      "primaryKeys": ["deviceId"],
+      "titleProperty": "deviceName",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "deviceId", "displayName": "Device ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "deviceName", "displayName": "Device Name", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "site", "displayName": "Site", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "firmwareVersion", "displayName": "Firmware Version", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true}
+      ]
+    },
+    {
+      "apiName": "Sensor",
+      "displayName": "Sensor",
+      "pluralDisplayName": "Sensors",
+      "description": "Single sensing element attached to a Device.",
+      "primaryKey": "sensorId",
+      "primaryKeys": ["sensorId"],
+      "titleProperty": "sensorName",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "sensorId", "displayName": "Sensor ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "sensorName", "displayName": "Sensor Name", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "deviceId", "displayName": "Device ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "metric", "displayName": "Metric", "baseType": "string", "isSearchable": true, "isSortable": true, "isNullable": true},
+        {"apiName": "unit", "displayName": "Unit", "baseType": "string", "isSortable": true, "isNullable": true}
+      ]
+    },
+    {
+      "apiName": "Reading",
+      "displayName": "Reading",
+      "pluralDisplayName": "Readings",
+      "description": "Single sample emitted by a Sensor at a point in time.",
+      "primaryKey": "readingId",
+      "primaryKeys": ["readingId"],
+      "titleProperty": "readingId",
+      "status": "ACTIVE",
+      "visibility": "NORMAL",
+      "properties": [
+        {"apiName": "readingId", "displayName": "Reading ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "sensorId", "displayName": "Sensor ID", "baseType": "string", "isSearchable": true, "isSortable": true},
+        {"apiName": "value", "displayName": "Value", "baseType": "double", "isSortable": true, "isNullable": true},
+        {"apiName": "observedAt", "displayName": "Observed At", "baseType": "timestamp", "isSearchable": true, "isSortable": true, "isNullable": true}
+      ]
+    }
+  ],
+  "linkTypes": [
+    {
+      "apiName": "deviceSensors",
+      "displayName": "Device Sensors",
+      "description": "Foreign key from Sensor.deviceId to Device.deviceId.",
+      "objectTypeApiName": "Device",
+      "linkedObjectTypeApiName": "Sensor",
+      "cardinality": "ONE_TO_MANY",
+      "foreignKeyConfig": {
+        "sourcePropertyApiName": "deviceId",
+        "targetPropertyApiName": "deviceId"
+      }
+    },
+    {
+      "apiName": "sensorReadings",
+      "displayName": "Sensor Readings",
+      "description": "Foreign key from Reading.sensorId to Sensor.sensorId.",
+      "objectTypeApiName": "Sensor",
+      "linkedObjectTypeApiName": "Reading",
+      "cardinality": "ONE_TO_MANY",
+      "foreignKeyConfig": {
+        "sourcePropertyApiName": "sensorId",
+        "targetPropertyApiName": "sensorId"
+      }
+    }
+  ],
+  "actionTypes": [],
+  "interfaces": [],
+  "sharedProperties": [],
+  "valueTypes": [],
+  "typeGroups": [],
+  "functions": [],
+  "queryTypes": []
+}

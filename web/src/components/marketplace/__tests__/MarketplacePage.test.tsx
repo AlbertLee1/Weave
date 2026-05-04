@@ -15,7 +15,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { MarketplacePage } from '../MarketplacePage';
-import type { InstalledPackage } from '../../../api/packages';
+import type {
+  BuiltinPackageMetadata,
+  InstalledPackage,
+} from '../../../api/packages';
 import { useToastStore } from '../../../stores/toastStore';
 
 const server = setupServer();
@@ -52,6 +55,33 @@ function pkg(overrides: Partial<InstalledPackage> = {}): InstalledPackage {
 
 function listHandler(packages: InstalledPackage[]) {
   return http.get('/api/v2/pkg', () => HttpResponse.json({ data: packages }));
+}
+
+function builtinListHandler(rows: BuiltinPackageMetadata[]) {
+  return http.get('/api/v2/pkg/builtin', () =>
+    HttpResponse.json({ data: rows }),
+  );
+}
+
+function builtin(
+  overrides: Partial<BuiltinPackageMetadata> = {},
+): BuiltinPackageMetadata {
+  return {
+    slug: 'northwind',
+    name: 'northwind',
+    version: '1.0.0',
+    ontologyApiName: 'northwind',
+    author: 'Weave Examples',
+    license: 'MIT',
+    description: 'Classic sales-ledger ontology.',
+    minWeaveVersion: '0.42.0',
+    objectTypeCount: 3,
+    linkTypeCount: 1,
+    actionTypeCount: 1,
+    functionCount: 0,
+    migrationCount: 0,
+    ...overrides,
+  };
 }
 
 function renderPage() {
@@ -257,5 +287,208 @@ describe('MarketplacePage (US-413)', () => {
       'marketplace-toggle-northwind',
     ) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
+  });
+});
+
+describe('MarketplacePage built-in catalog (US-414)', () => {
+  beforeEach(() => {
+    useToastStore.getState().clear();
+  });
+
+  it('renders the three built-in example packages on the Built-in tab', async () => {
+    server.use(
+      listHandler([]),
+      builtinListHandler([
+        builtin({ slug: 'chinook', name: 'chinook', ontologyApiName: 'chinook' }),
+        builtin({ slug: 'iot-demo', name: 'iot-demo', ontologyApiName: 'iotDemo' }),
+        builtin({ slug: 'northwind', name: 'northwind' }),
+      ]),
+    );
+    renderPage();
+    // Switch to the Built-in tab.
+    await waitFor(() => {
+      expect(screen.getByTestId('marketplace-tab-builtin')).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-builtin'));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-builtin-list'),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId('marketplace-builtin-card-chinook'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId('marketplace-builtin-card-iot-demo'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId('marketplace-builtin-card-northwind'),
+    ).toBeInTheDocument();
+  });
+
+  it('one-click installs a built-in package and surfaces a success toast', async () => {
+    const installCalls: string[] = [];
+    let installedListCalls = 0;
+    server.use(
+      http.get('/api/v2/pkg', () => {
+        installedListCalls++;
+        // Return empty until install fires; afterwards return the imported row.
+        if (installedListCalls === 1) {
+          return HttpResponse.json({ data: [] });
+        }
+        return HttpResponse.json({
+          data: [
+            pkg({
+              name: 'northwind',
+              version: '1.0.0',
+              ontology: 'northwind',
+              manifest: { name: 'northwind', version: '1.0.0' },
+              migrations: [],
+            }),
+          ],
+        });
+      }),
+      builtinListHandler([builtin()]),
+      http.post('/api/v2/pkg/builtin/:slug/install', ({ params }) => {
+        installCalls.push(String(params.slug));
+        return HttpResponse.json(
+          {
+            name: 'northwind',
+            version: '1.0.0',
+            ontology: 'northwind',
+            imported: { objectTypes: 3, linkTypes: 1, actionTypes: 1 },
+            migrationsRan: 0,
+            migrationsTotal: 0,
+            message: 'package installed',
+          },
+          { status: 201 },
+        );
+      }),
+    );
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-builtin'));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      ).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      );
+    });
+
+    await waitFor(() => {
+      expect(installCalls).toEqual(['northwind']);
+    });
+
+    // After install we hop back to the Installed tab.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-tab-installed'),
+      ).toHaveAttribute('data-active', 'true');
+    });
+
+    await waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(
+        toasts.some((t) =>
+          t.message.toLowerCase().includes('installed'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('disables the Install button for built-in packages already present in the registry', async () => {
+    server.use(
+      listHandler([
+        pkg({
+          name: 'northwind',
+          version: '1.0.0',
+          ontology: 'northwind',
+          manifest: { name: 'northwind', version: '1.0.0' },
+          migrations: [],
+        }),
+      ]),
+      builtinListHandler([builtin()]),
+    );
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-builtin'));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      ).toBeInTheDocument();
+    });
+    const btn = screen.getByTestId(
+      'marketplace-builtin-install-northwind',
+    ) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toContain('Installed');
+    expect(
+      screen.getByTestId('marketplace-builtin-already-northwind'),
+    ).toBeInTheDocument();
+  });
+
+  it('surfaces a toast on install failure', async () => {
+    server.use(
+      listHandler([]),
+      builtinListHandler([builtin()]),
+      http.post('/api/v2/pkg/builtin/:slug/install', () =>
+        HttpResponse.json(
+          {
+            errorCode: 'CONFLICT',
+            errorName: 'PackageConflict',
+            errorInstanceId: 'x',
+            parameters: {
+              package: 'northwind',
+              version: '1.0.0',
+              conflicts: '[]',
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-builtin'));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      ).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      );
+    });
+    await waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(
+        toasts.some(
+          (t) => t.severity === 'error' && t.message.includes('northwind'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('renders the empty state when no built-in packages are embedded', async () => {
+    server.use(listHandler([]), builtinListHandler([]));
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-builtin'));
+    });
+    await waitFor(() => {
+      expect(screen.getByText('No built-in packages')).toBeInTheDocument();
+    });
   });
 });

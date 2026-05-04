@@ -1,0 +1,8 @@
+{
+  "name": "northwind",
+  "version": "1.0.0",
+  "author": "Weave Examples",
+  "license": "MIT",
+  "description": "Classic Northwind sales ontology — Customer, Order, Product — with the Customer→Order link wired through a foreign key. Pairs with testdata/northwind for end-to-end demos.",
+  "minWeaveVersion": "0.42.0"
+}

@@ -30,6 +30,7 @@ type OMSHandler struct {
 	columnLineageStore        ColumnLineageStore
 	installedPackageStore     InstalledPackageStore
 	packageMigrationRunner    PackageMigrationRunner
+	builtinPackageProvider    BuiltinPackageProvider
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.

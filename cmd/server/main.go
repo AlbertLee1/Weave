@@ -132,6 +132,11 @@ type ServerDeps struct {
 	// when the PG DSN is empty); degraded-mode test routers leave it nil
 	// and the install handler skips the run step entirely.
 	PackageMigrationRunner oms.PackageMigrationRunner
+	// US-414: built-in example package catalog backing the Marketplace
+	// UI's "Built-in" tab. Loaded once at bootstrap from the embedded
+	// examples/packages/ FS; nil in degraded-mode tests leaves the list
+	// endpoint returning an empty array.
+	BuiltinPackageProvider oms.BuiltinPackageProvider
 	// US-312: per-object activity-timeline store. Wired from the uncached
 	// *PGRepository so the cursor-paginated history endpoint always reads
 	// the authoritative tail; nil in degraded mode leaves the
@@ -791,6 +796,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			}
 			if deps.PackageMigrationRunner != nil {
 				omsHandler.SetPackageMigrationRunner(deps.PackageMigrationRunner)
+			}
+			// US-414: built-in example package catalog. Wired
+			// unconditionally — the embedded FS is part of the binary, so
+			// the provider construction never fails at runtime.
+			if deps.BuiltinPackageProvider != nil {
+				omsHandler.SetBuiltinPackageProvider(deps.BuiltinPackageProvider)
 			}
 			RegisterRoutes(api, omsHandler)
 		}
@@ -2107,6 +2118,17 @@ func main() {
 	// even when PG isn't available, so a degraded-mode `weave pkg install`
 	// still leaves the SQL on disk for a future operator-side run.
 	deps.PackageMigrationRunner = newPGPackageMigrationRunner(cfg.DataDir, cfg.PGDSN)
+
+	// 2a-2. Built-in example package catalog (US-414). Loaded from the
+	// embedded examples/packages/ tree so the Marketplace UI's "Built-in"
+	// section can offer a one-click install for each example without
+	// shipping ZIP archives. A malformed embedded package fails boot —
+	// the catalog is part of the binary, not a runtime concern.
+	if provider, err := newBuiltinPackageProvider(); err != nil {
+		log.Printf("WARN: failed to load builtin example packages: %v", err)
+	} else {
+		deps.BuiltinPackageProvider = provider
+	}
 
 	// 2b. Attachment blob store (filesystem backend under WEAVE_DATA_DIR/attachments).
 	// Unlinked uploads older than 1h are swept by a background cleanup loop.

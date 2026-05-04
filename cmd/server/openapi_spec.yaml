@@ -5954,6 +5954,67 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/pkg/builtin:
+    get:
+      operationId: listBuiltinPackages
+      summary: List built-in example packages (US-414)
+      description: Returns the catalog of example packages embedded into the server binary (Northwind, Chinook, IoT-demo). The Marketplace UI's "Built-in" section consumes this list to offer one-click install. Returns an empty data array when the catalog is unwired (degraded mode).
+      tags: [Metadata]
+      responses:
+        "200":
+          description: Built-in package catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {type: object}
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/pkg/builtin/{slug}/install:
+    post:
+      operationId: installBuiltinPackage
+      summary: One-click install a built-in example package (US-414)
+      description: Resolves the slug against the embedded catalog and routes the package through the same install flow as POST /api/v2/pkg/install. The optional onConflict body field overrides the default "fail" behaviour ("overwrite" for replace-mode import, "skip" for merge-mode).
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                onConflict:
+                  type: string
+                  enum: [fail, overwrite, skip]
+      responses:
+        "201":
+          description: Package installed.
+          content:
+            application/json:
+              schema:
+                type: object
+        "200":
+          description: Install applied but the registry recording step failed.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: One or more apiNames in the package collide with existing entries.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/metadata:
     post:
       operationId: loadOntologyMetadata
