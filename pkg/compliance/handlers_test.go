@@ -200,3 +200,32 @@ func TestHandler_GenerateReport_FormatFromQueryString(t *testing.T) {
 		t.Errorf("Content-Type: want text/html, got %q", ct)
 	}
 }
+
+func TestHandler_GenerateReport_PDF(t *testing.T) {
+	h := NewHandler(newTestGen(), nil)
+	body := `{"format":"pdf"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/compliance/report", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = asAdmin(req)
+	rec := httptest.NewRecorder()
+
+	h.GenerateReport(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Errorf("Content-Type: want application/pdf, got %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "weave-compliance-report.pdf") {
+		t.Errorf("Content-Disposition missing filename: got %q", cd)
+	}
+	got := rec.Body.Bytes()
+	if len(got) < 4 || string(got[:4]) != "%PDF" {
+		head := got
+		if len(head) > 16 {
+			head = head[:16]
+		}
+		t.Fatalf("body does not look like PDF; first bytes = %q", head)
+	}
+}

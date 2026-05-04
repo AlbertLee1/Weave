@@ -1,6 +1,7 @@
 package compliance
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/compliance/reports"
 	"github.com/liyang/weave/pkg/httputil"
 )
 
@@ -117,10 +119,10 @@ func (h *Handler) GenerateReport(w http.ResponseWriter, r *http.Request) {
 		format = "json"
 	}
 	switch format {
-	case "json", "html":
+	case "json", "html", "pdf":
 	default:
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFormat", map[string]string{
-			"reason": "format must be one of: json, html",
+			"reason": "format must be one of: json, html, pdf",
 		}))
 		return
 	}
@@ -166,5 +168,60 @@ func (h *Handler) GenerateReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if format == "pdf" {
+		// US-442: render the SOC2 / ISO27001 evidence PDF. The
+		// classifier groups audit events by control family; we re-fetch
+		// events through the configured AuditSource so the PDF includes
+		// per-control evidence even though the JSON Report doesn't carry
+		// the raw event slice on the wire.
+		var events []audit.AuditEvent
+		if h.gen.Audit != nil {
+			fetched, ferr := h.gen.Audit.ListEvents(r.Context(), from, to)
+			if ferr != nil {
+				apierror.WriteJSON(w, apierror.NewInternal("ComplianceReportFailed", map[string]string{
+					"reason": ferr.Error(),
+				}))
+				return
+			}
+			events = fetched
+		}
+		summary := postureSummaryFromReport(report)
+		soc2 := reports.BuildSOC2Report(events, nil, summary, from, to)
+		var buf bytes.Buffer
+		if rerr := reports.RenderPDF(&buf, soc2); rerr != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ComplianceReportRenderFailed", map[string]string{
+				"reason": rerr.Error(),
+			}))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", `attachment; filename="weave-compliance-report.pdf"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+		return
+	}
+
 	httputil.WriteJSON(w, http.StatusOK, report)
+}
+
+// postureSummaryFromReport projects the existing JSON-shaped Report onto
+// the cover-page-friendly fields the SOC2 PDF renderer needs. Kept here
+// rather than in pkg/compliance/reports to avoid that package importing
+// pkg/compliance and creating an import cycle.
+func postureSummaryFromReport(rep *Report) *reports.PostureSummary {
+	if rep == nil {
+		return nil
+	}
+	return &reports.PostureSummary{
+		AccessTotal:        rep.Access.Total,
+		UniqueActors:       rep.Access.UniqueActors,
+		MarkingsTotal:      rep.Markings.Total,
+		ObjectTypesTotal:   rep.Policies.ObjectTypesTotal,
+		CoveredObjectTypes: rep.Policies.CoveredObjectTypes,
+		CoverageRatio:      rep.Policies.CoverageRatio,
+		RowPolicyTotal:     rep.Policies.RowPolicies.Total,
+		ColumnMaskTotal:    rep.Policies.ColumnMasks.Total,
+		CellMaskTotal:      rep.Policies.CellMasks.Total,
+	}
 }

@@ -23,6 +23,7 @@ require (
 	github.com/influxdata/tdigest v0.0.1
 	github.com/jackc/pglogrepl v0.0.0-20260401131349-e37c41485510
 	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/mmcloughlin/geohash v0.10.0
 	github.com/nats-io/nats.go v1.49.0
 	github.com/parquet-go/parquet-go v0.29.0
