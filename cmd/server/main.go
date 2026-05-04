@@ -40,6 +40,7 @@ import (
 	"github.com/liyang/weave/pkg/developer"
 	"github.com/liyang/weave/pkg/featureflags"
 	"github.com/liyang/weave/pkg/funcrepo"
+	fncache "github.com/liyang/weave/pkg/functions/cache"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/gdpr"
 	"github.com/liyang/weave/pkg/geotemporal"
@@ -152,6 +153,13 @@ type ServerDeps struct {
 	// lint+test runner; production deploys can override this in their own
 	// bootstrap with an eslint/vitest shell-out impl.
 	CommitJobRunner oms.CommitJobRunner
+	// US-221 / US-425: in-process Function result cache. Wired
+	// unconditionally — the cache itself needs no external state — and
+	// shared between the OMS handler (which Get/Put-s on `pure=true`
+	// execute paths and InvalidatePrefix-es on publish) and the funnel
+	// SetOnChange callback (which fans object-change events out to the
+	// dependency-driven invalidator).
+	FunctionResultCache *fncache.Cache
 	// US-312: per-object activity-timeline store. Wired from the uncached
 	// *PGRepository so the cursor-paginated history endpoint always reads
 	// the authoritative tail; nil in degraded mode leaves the
@@ -823,6 +831,21 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// fall back to the 503 FunctionRepoNotConfigured response.
 			if deps.FunctionRepoStore != nil {
 				omsHandler.SetFunctionRepoStore(deps.FunctionRepoStore)
+			}
+			// US-221 / US-425: in-process Function result cache plus the
+			// dependency-driven invalidator. The cache itself runs even
+			// in degraded-mode bootstraps (it needs no external state)
+			// so /functions/{rid}/execute always honours `pure=true`. The
+			// invalidator only fires when an OMS repo is available — it
+			// has to list functions to derive the per-ObjectType
+			// dependency reverse-index. The cache instance is shared with
+			// the funnel SetOnChange callback so a single invalidate fans
+			// across both surfaces.
+			if deps.FunctionResultCache != nil {
+				omsHandler.SetFunctionResultCache(deps.FunctionResultCache)
+				if deps.OmsRepo != nil {
+					omsHandler.SetFunctionCacheInvalidator(oms.NewFunctionCacheInvalidator(deps.OmsRepo, deps.FunctionResultCache))
+				}
 			}
 			// US-417: per-commit CI hook. The store is wired only when PG
 			// is available; the runner is wired unconditionally (Goja-based
@@ -2152,6 +2175,13 @@ func main() {
 	deps.IndexMgr = index.NewManager(cfg.DataDir)
 	defer deps.IndexMgr.Close()
 
+	// 2-bis. Function result cache (US-221 / US-425). Constructed
+	// unconditionally so the OMS handler's `pure=true` execute path AND
+	// the funnel SetOnChange callback share the same instance — the
+	// invalidator's reverse-index would otherwise point at the wrong
+	// cache.
+	deps.FunctionResultCache = fncache.NewDefault()
+
 	// 2a. Package migration runner (US-412). Wired unconditionally — it
 	// persists migrations to {DataDir}/installed_packages/{name}/migrations
 	// even when PG isn't available, so a degraded-mode `weave pkg install`
@@ -2488,6 +2518,17 @@ func main() {
 			log.Printf("[notifications] activity fanout wired")
 		}
 
+		// US-425: route change events into the Function result cache
+		// invalidator so cached entries depending on the touched
+		// ObjectType are dropped on the next request. Constructed lazily
+		// from deps so degraded-mode bootstraps (no OmsRepo) leave the
+		// hook nil and the SetOnChange callback skips the invalidation
+		// branch via a typed nil-check.
+		var fnCacheInvalidator *oms.FunctionCacheInvalidator
+		if deps.OmsRepo != nil && deps.FunctionResultCache != nil {
+			fnCacheInvalidator = oms.NewFunctionCacheInvalidator(deps.OmsRepo, deps.FunctionResultCache)
+		}
+
 		deps.FunnelConsumer.SetOnChange(func(e funnel.ChangeEvent) {
 			// US-057: carry the NATS stream sequence forward as the
 			// BroadcastEvent.Sequence so SSE subscribers can use it as the
@@ -2504,6 +2545,14 @@ func main() {
 			deps.WebSocketHub.HandleObjectChange(
 				e.ObjectType, e.PrimaryKey, string(e.EditType), e.Properties,
 			)
+
+			// US-425: drop Function cache entries whose authors flagged
+			// `e.ObjectType` in their DependsOn list. Best-effort;
+			// failures inside the invalidator log to stderr but never
+			// stall downstream consumers.
+			if fnCacheInvalidator != nil && e.OntologyAPIName != "" {
+				fnCacheInvalidator.OnObjectChange(context.Background(), e.OntologyAPIName, e.ObjectType)
+			}
 
 			// US-338: dispatch the activity fan-out for follower
 			// notifications + optional email. Best-effort — failures

@@ -77,6 +77,11 @@ type CreateFunctionRequest struct {
 	Pure      bool   `json:"pure,omitempty"`
 	CreatedBy string `json:"createdBy,omitempty"`
 	BranchID  string `json:"branchId,omitempty"`
+	// DependsOn (US-425) lists the ObjectType API names whose live state the
+	// Function reads. The cache invalidator drops every entry keyed on this
+	// Function's RID after an EditBatch touches any of the listed
+	// ObjectTypes. Empty / omitted keeps the legacy "TTL only" behaviour.
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // UpdateFunctionRequest is the request body for updating a function. Pointer
@@ -95,6 +100,11 @@ type UpdateFunctionRequest struct {
 	// impure row opts the function into the LRU+TTL result cache the next
 	// time the row is read.
 	Pure *bool `json:"pure,omitempty"`
+	// DependsOn (US-425) is a pointer so callers can distinguish "omit ⇒
+	// preserve" from "send [] ⇒ clear all dependencies". Sending a fresh
+	// list replaces the stored set verbatim; the cache invalidator then
+	// uses the new list on subsequent object changes.
+	DependsOn *[]string `json:"dependsOn,omitempty"`
 }
 
 // CreateFunction handles POST /api/v2/ontologies/{ontologyApiName}/functions.
@@ -160,6 +170,7 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		Pure:        req.Pure,
 		CreatedBy:   req.CreatedBy,
 		BranchID:    branchID,
+		DependsOn:   req.DependsOn,
 	}
 	if err := fn.Validate(); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:function", map[string]string{
@@ -199,6 +210,11 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, apierror.NewInternal("CreateFunctionFailed", nil))
 		return
 	}
+
+	// US-425: drop any cached entries for this RID (defensive — a fresh
+	// RID has none yet) and reset the dependency-index so a future object
+	// change picks up this Function's DependsOn list immediately.
+	h.invalidateFunctionCache(fn, chi.URLParam(r, "ontologyApiName"))
 
 	httputil.WriteJSON(w, http.StatusCreated, fn)
 }
@@ -339,6 +355,9 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.Pure != nil {
 		existing.Pure = *req.Pure
 	}
+	if req.DependsOn != nil {
+		existing.DependsOn = *req.DependsOn
+	}
 	if err := existing.Validate(); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:function", map[string]string{
 			"reason": err.Error(),
@@ -370,6 +389,12 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, apierror.NewInternal("UpdateFunctionFailed", nil))
 		return
 	}
+
+	// US-425: drop every cached result for this Function on publish so a
+	// fresh source / signature / dependency-list never serves a stale
+	// answer past the next request. The prefix `<rid>@` matches every
+	// version+param combination keyed under this RID.
+	h.invalidateFunctionCache(existing, "")
 
 	httputil.WriteJSON(w, http.StatusOK, existing)
 }
@@ -650,5 +675,43 @@ func (h *OMSHandler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// US-425: drop any cached entries for the now-deleted Function and
+	// rebuild the dependency-index on the next object-change event so it
+	// stops contributing to invalidation fan-out.
+	if h.functionResultCache != nil {
+		h.functionResultCache.InvalidatePrefix(fnRID + "@")
+	}
+	if h.functionCacheInvalidator != nil {
+		h.functionCacheInvalidator.Refresh(chi.URLParam(r, "ontologyApiName"))
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// invalidateFunctionCache drops every cached result keyed on the
+// Function's RID and refreshes the dependency-index entry for its
+// ontology so a freshly added or removed DependsOn item takes effect on
+// the next object-change event without a process restart (US-425).
+//
+// `ontologyAPIName` may be empty for paths (UpdateFunction) where the URL
+// segment is the function RID rather than the ontology API name; the
+// invalidator's Refresh accepts an empty string but treats it as
+// "clear-all", so we look up the API name from the Function's
+// OntologyRID via the repo when one isn't supplied.
+func (h *OMSHandler) invalidateFunctionCache(fn *Function, ontologyAPIName string) {
+	if fn == nil {
+		return
+	}
+	if h.functionResultCache != nil {
+		h.functionResultCache.InvalidatePrefix(fn.RID + "@")
+	}
+	if h.functionCacheInvalidator == nil {
+		return
+	}
+	if ontologyAPIName == "" {
+		if ont, err := h.repo.GetOntology(context.Background(), fn.OntologyRID); err == nil && ont != nil {
+			ontologyAPIName = ont.APIName
+		}
+	}
+	h.functionCacheInvalidator.Refresh(ontologyAPIName)
 }

@@ -50,6 +50,22 @@ func (c *recordingCache) Put(key string, value interface{}) {
 	c.entries[key] = value
 }
 
+func (c *recordingCache) InvalidatePrefix(prefix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if prefix == "" {
+		return 0
+	}
+	removed := 0
+	for k := range c.entries {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.entries, k)
+			removed++
+		}
+	}
+	return removed
+}
+
 func (c *recordingCache) keys() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

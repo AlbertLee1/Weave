@@ -3,6 +3,8 @@ package oms
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/liyang/weave/pkg/types"
 )
@@ -154,6 +156,34 @@ func normaliseSignatureForWrite(raw json.RawMessage) []byte {
 		return []byte("{}")
 	}
 	return trimmed
+}
+
+// normaliseDependsOnForWrite returns the canonical TEXT[] payload to persist
+// for the given DependsOn slice (US-425). The list is deduplicated, blanks
+// are dropped, and the result is sorted so persisted state is order-stable
+// (two callers writing the same logical set produce identical rows). nil /
+// empty input collapses to an empty slice so the column's NOT NULL
+// DEFAULT '{}' invariant holds — pgx encodes a nil []string as NULL, which
+// would violate the constraint.
+func normaliseDependsOnForWrite(in []string) []string {
+	if len(in) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		t := strings.TrimSpace(s)
+		if t == "" {
+			continue
+		}
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // signatureFromBytes decodes a JSONB column into the wire shape the API

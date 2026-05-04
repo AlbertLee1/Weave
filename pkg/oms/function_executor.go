@@ -36,9 +36,15 @@ type FunctionQuotaLimiter interface {
 // that contract by checking for nil before consulting the cache, so
 // degraded-mode test routers without a cache wired keep their original
 // "always re-run" semantics.
+//
+// InvalidatePrefix (US-425) drops every entry whose key starts with the
+// supplied prefix and returns the count removed. The handler invokes it
+// on Function publish/update so freshly published code never serves a
+// stale cached answer past the next request. A nil receiver returns 0.
 type FunctionResultCache interface {
 	Get(key string) (interface{}, bool)
 	Put(key string, value interface{})
+	InvalidatePrefix(prefix string) int
 }
 
 // DefaultFunctionExecutionTimeout is the per-call CPU budget the

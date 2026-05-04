@@ -618,6 +618,14 @@ type Function struct {
 	// on the branch as well. Empty input normalises to DefaultBranch
 	// ("main") at write time.
 	BranchID string `json:"branchId,omitempty"`
+	// DependsOn (US-425) lists ObjectType API names whose live state the
+	// Function reads. When non-empty, an EditBatch touching any of the
+	// listed ObjectTypes invalidates every cached result keyed on this
+	// Function's RID — so a `pure=true` Function whose output is
+	// conditional on object data cannot serve stale answers past the next
+	// mutation. Empty / nil keeps the legacy "TTL only" behaviour from
+	// US-221.
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // OntologyBranch represents a branch for isolated ontology schema changes.

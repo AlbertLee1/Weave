@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -177,6 +178,31 @@ func (c *Cache) Invalidate(key string) bool {
 	}
 	c.removeElement(elem)
 	return true
+}
+
+// InvalidatePrefix drops every entry whose key starts with prefix and
+// returns the number of entries removed (US-425). Used to flush all cached
+// results for a Function after a publish or after an upstream object
+// change — the cache key shape `<rid>@<version>#<hash>` makes a prefix
+// match on `<rid>@` (or `<rid>@<version>#`) the natural way to scope the
+// flush. An empty prefix is a no-op (returns 0) so a misconfigured caller
+// cannot accidentally clear the entire cache.
+//
+// A nil or pass-through Cache is a no-op (returns 0).
+func (c *Cache) InvalidatePrefix(prefix string) int {
+	if c == nil || c.capacity <= 0 || c.ttl <= 0 || prefix == "" {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	removed := 0
+	for k, elem := range c.entries {
+		if strings.HasPrefix(k, prefix) {
+			c.removeElement(elem)
+			removed++
+		}
+	}
+	return removed
 }
 
 // Reset discards every entry. Intended for test teardown.

@@ -1619,10 +1619,11 @@ func (r *PGRepository) CreateFunction(ctx context.Context, fn *Function) error {
 	codeHash := HashFunctionCode(fn.SourceCode)
 	sigHash := HashFunctionSignature(signature)
 	branchID := NormalizeBranchID(fn.BranchID)
+	dependsOn := normaliseDependsOnForWrite(fn.DependsOn)
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime, pure, code_hash, signature_hash, published_at, branch_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12)`,
-		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime, fn.Pure, codeHash, sigHash, branchID)
+		`INSERT INTO functions (rid, ontology_rid, name, version, source_code, created_by, signature, runtime, pure, code_hash, signature_hash, published_at, branch_id, depends_on)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12, $13)`,
+		fn.RID, fn.OntologyRID, fn.Name, version, fn.SourceCode, fn.CreatedBy, signature, runtime, fn.Pure, codeHash, sigHash, branchID, dependsOn)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -1631,6 +1632,7 @@ func (r *PGRepository) CreateFunction(ctx context.Context, fn *Function) error {
 	fn.CodeHash = codeHash
 	fn.SignatureHash = sigHash
 	fn.BranchID = branchID
+	fn.DependsOn = dependsOn
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}
@@ -1644,11 +1646,11 @@ func (r *PGRepository) GetFunction(ctx context.Context, rid string) (*Function, 
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
 		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
-		        COALESCE(branch_id, 'main')
+		        COALESCE(branch_id, 'main'), COALESCE(depends_on, '{}'::text[])
 		 FROM functions WHERE rid = $1`, rid).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
 			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
-			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID)
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID, &fn.DependsOn)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1675,7 +1677,7 @@ func (r *PGRepository) GetFunctionByName(ctx context.Context, ontologyRID, name 
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
 		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
-		        COALESCE(branch_id, 'main')
+		        COALESCE(branch_id, 'main'), COALESCE(depends_on, '{}'::text[])
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND (rid = $2 OR name = $2)
@@ -1711,7 +1713,7 @@ func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
 		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
-		        COALESCE(branch_id, 'main')
+		        COALESCE(branch_id, 'main'), COALESCE(depends_on, '{}'::text[])
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND name = $2 AND version = $3
@@ -1720,7 +1722,7 @@ func (r *PGRepository) GetFunctionByNameVersion(ctx context.Context, ontologyRID
 		 LIMIT 1`, ontologyRID, name, version, branch).
 		Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode, &fn.CreatedBy,
 			&sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
-			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID)
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID, &fn.DependsOn)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -1749,7 +1751,7 @@ func (r *PGRepository) ListFunctionVersionsByName(ctx context.Context, ontologyR
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
 		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
-		        COALESCE(branch_id, 'main')
+		        COALESCE(branch_id, 'main'), COALESCE(depends_on, '{}'::text[])
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND name = $2
@@ -1777,7 +1779,7 @@ func scanFunctions(rows pgx.Rows) ([]Function, error) {
 		var sig []byte
 		if err := rows.Scan(&fn.RID, &fn.OntologyRID, &fn.Name, &fn.Version, &fn.SourceCode,
 			&fn.CreatedBy, &sig, &fn.Runtime, &fn.Pure, &fn.CreatedAt,
-			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID); err != nil {
+			&fn.CodeHash, &fn.SignatureHash, &fn.PublishedAt, &fn.BranchID, &fn.DependsOn); err != nil {
 			return nil, err
 		}
 		fn.Signature = signatureFromBytes(sig)
@@ -1828,7 +1830,7 @@ func (r *PGRepository) ListFunctions(ctx context.Context, ontologyRID string) ([
 		`SELECT rid, ontology_rid, name, version, source_code, COALESCE(created_by, ''),
 		        COALESCE(signature, '{}'::jsonb), COALESCE(runtime, 'goja'), COALESCE(pure, FALSE), created_at,
 		        COALESCE(code_hash, ''), COALESCE(signature_hash, ''), COALESCE(published_at, created_at),
-		        COALESCE(branch_id, 'main')
+		        COALESCE(branch_id, 'main'), COALESCE(depends_on, '{}'::text[])
 		 FROM functions
 		 WHERE (ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1))
 		 AND branch_id IN ($2, 'main')
@@ -1880,11 +1882,12 @@ func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {
 	version := fn.NormalisedVersion()
 	codeHash := HashFunctionCode(fn.SourceCode)
 	sigHash := HashFunctionSignature(signature)
+	dependsOn := normaliseDependsOnForWrite(fn.DependsOn)
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE functions SET name=$1, version=$2, source_code=$3, signature=$4, runtime=$5, pure=$6,
-		   code_hash=$7, signature_hash=$8, published_at=NOW()
-		 WHERE rid=$9`,
-		fn.Name, version, fn.SourceCode, signature, runtime, fn.Pure, codeHash, sigHash, fn.RID)
+		   code_hash=$7, signature_hash=$8, published_at=NOW(), depends_on=$9
+		 WHERE rid=$10`,
+		fn.Name, version, fn.SourceCode, signature, runtime, fn.Pure, codeHash, sigHash, dependsOn, fn.RID)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -1895,6 +1898,7 @@ func (r *PGRepository) UpdateFunction(ctx context.Context, fn *Function) error {
 	fn.Version = version
 	fn.CodeHash = codeHash
 	fn.SignatureHash = sigHash
+	fn.DependsOn = dependsOn
 	if len(signature) > 0 {
 		fn.Signature = signature
 	}

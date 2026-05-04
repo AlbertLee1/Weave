@@ -156,6 +156,78 @@ func TestCache_Reset(t *testing.T) {
 	}
 }
 
+func TestCache_InvalidatePrefix(t *testing.T) {
+	c := cache.NewCache(16, time.Minute)
+	// Mimic the canonical key shape: `<rid>@<version>#<hash>`.
+	c.Put("ri.fn.alpha@1.0.0#aaa", "v1")
+	c.Put("ri.fn.alpha@1.0.0#bbb", "v2")
+	c.Put("ri.fn.alpha@2.0.0#ccc", "v3")
+	c.Put("ri.fn.beta@1.0.0#ddd", "v4")
+
+	removed := c.InvalidatePrefix("ri.fn.alpha@")
+	if removed != 3 {
+		t.Errorf("expected 3 entries removed, got %d", removed)
+	}
+	if _, ok := c.Get("ri.fn.alpha@1.0.0#aaa"); ok {
+		t.Errorf("alpha entry should be gone")
+	}
+	if v, ok := c.Get("ri.fn.beta@1.0.0#ddd"); !ok || v != "v4" {
+		t.Errorf("beta entry must survive prefix flush, got (%v, %v)", v, ok)
+	}
+	if c.Len() != 1 {
+		t.Errorf("expected len=1 after prefix flush, got %d", c.Len())
+	}
+}
+
+func TestCache_InvalidatePrefixVersionScoped(t *testing.T) {
+	c := cache.NewCache(8, time.Minute)
+	c.Put("ri.fn.alpha@1.0.0#aaa", "v1")
+	c.Put("ri.fn.alpha@2.0.0#bbb", "v2")
+
+	if removed := c.InvalidatePrefix("ri.fn.alpha@1.0.0#"); removed != 1 {
+		t.Errorf("expected 1 entry removed for version-scoped prefix, got %d", removed)
+	}
+	if _, ok := c.Get("ri.fn.alpha@2.0.0#bbb"); !ok {
+		t.Errorf("v2 entry must survive a v1-scoped flush")
+	}
+}
+
+func TestCache_InvalidatePrefixEmptyIsNoOp(t *testing.T) {
+	c := cache.NewCache(8, time.Minute)
+	c.Put("ri.fn.alpha@1.0.0#aaa", "v1")
+	if removed := c.InvalidatePrefix(""); removed != 0 {
+		t.Errorf("empty prefix must return 0, got %d", removed)
+	}
+	if c.Len() != 1 {
+		t.Errorf("empty prefix must NOT clear the cache, len=%d", c.Len())
+	}
+}
+
+func TestCache_InvalidatePrefixNoMatchReturnsZero(t *testing.T) {
+	c := cache.NewCache(8, time.Minute)
+	c.Put("ri.fn.alpha@1.0.0#aaa", "v1")
+	if removed := c.InvalidatePrefix("ri.fn.beta@"); removed != 0 {
+		t.Errorf("no match must return 0, got %d", removed)
+	}
+	if c.Len() != 1 {
+		t.Errorf("no-match flush must not clear the cache, len=%d", c.Len())
+	}
+}
+
+func TestCache_InvalidatePrefixNilSafe(t *testing.T) {
+	var c *cache.Cache
+	if removed := c.InvalidatePrefix("ri.fn"); removed != 0 {
+		t.Errorf("nil cache must return 0, got %d", removed)
+	}
+}
+
+func TestCache_InvalidatePrefixPassThrough(t *testing.T) {
+	c := cache.NewCache(0, time.Minute)
+	if removed := c.InvalidatePrefix("ri.fn"); removed != 0 {
+		t.Errorf("pass-through cache must return 0, got %d", removed)
+	}
+}
+
 func TestKey_Stable(t *testing.T) {
 	k1 := cache.Key("ri.fn", "1.0.0", map[string]interface{}{"a": 1, "b": 2})
 	k2 := cache.Key("ri.fn", "1.0.0", map[string]interface{}{"b": 2, "a": 1})

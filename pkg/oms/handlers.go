@@ -19,6 +19,7 @@ type OMSHandler struct {
 	functionExecutor          FunctionExecutor
 	functionQuotaLimiter      FunctionQuotaLimiter
 	functionResultCache       FunctionResultCache
+	functionCacheInvalidator  *FunctionCacheInvalidator
 	functionExecutionStore    FunctionExecutionStore
 	actorFn                   ActorFunc
 	linkPropertyStore         LinkPropertyStore
@@ -95,6 +96,25 @@ func (h *OMSHandler) FunctionExecutionStore() FunctionExecutionStore {
 // US-221 introduced this hook on top of.
 func (h *OMSHandler) SetFunctionResultCache(c FunctionResultCache) {
 	h.functionResultCache = c
+}
+
+// SetFunctionCacheInvalidator wires the dependency-driven cache flusher
+// used by the funnel SetOnChange callback (US-425). Publish-time
+// invalidation is handled inline by the result cache itself; this hook
+// is consulted only on object-change events to drop entries belonging to
+// Functions that listed the touched ObjectType in their DependsOn set.
+//
+// A nil or unset invalidator disables object-change invalidation — cache
+// entries still expire under the 5-minute TTL ceiling.
+func (h *OMSHandler) SetFunctionCacheInvalidator(inv *FunctionCacheInvalidator) {
+	h.functionCacheInvalidator = inv
+}
+
+// FunctionCacheInvalidator returns the wired invalidator so cmd/server
+// can route the funnel SetOnChange callback through it without exposing
+// the field directly.
+func (h *OMSHandler) FunctionCacheInvalidator() *FunctionCacheInvalidator {
+	return h.functionCacheInvalidator
 }
 
 // SetLinkPropertyStore wires the narrow LinkPropertyStore used by the

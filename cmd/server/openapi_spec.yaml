@@ -946,6 +946,17 @@ components:
         branchId:
           description: "US-384: ontology branch this Function version belongs to. Defaults to 'main'. Branch v2 of a function coexists with main v1 because the (ontology, name, version, branch) UNIQUE constraint is keyed on the branch as well."
           type: string
+        dependsOn:
+          type: array
+          items:
+            type: string
+          description: |
+            US-425: ObjectType API names whose live state the Function reads.
+            When non-empty, an EditBatch touching any listed ObjectType drops
+            every cached result keyed on this Function's RID — `pure=true`
+            Functions whose output is conditional on object data cannot serve
+            stale answers past the next mutation. Empty / omitted keeps the
+            legacy "TTL only" behaviour from US-221.
     OntologyBranch:
       type: object
       required: [id, ontologyRid, name, baseVersion, status, createdBy, createdAt, updatedAt]
