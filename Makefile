@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list
 
 test: test-unit
 
@@ -8,9 +8,37 @@ test-unit:
 test-integration:
 	go test -tags integration ./...
 
-test-contract: ## Run Pact-style consumer-driven contract tests (US-362)
-	go test ./pkg/contract/... -count=1
+test-contract: ## Run Pact-style consumer-driven contract tests (US-362, US-445)
+	go test ./pkg/contract/... ./cmd/weave-pact/... -count=1
 	go test ./cmd/server/ -run TestContract -count=1
+
+# US-445: Pact Broker integration. Targets are opt-in via the docker-compose
+# `pact` profile so the default `make docker-up` flow stays lean. Set
+# WEAVE_PACT_BROKER_URL / WEAVE_PACT_BROKER_AUTH / WEAVE_PACT_VERSION before
+# `make pact-publish` to override the local-broker defaults; the CI
+# integration job typically points these at an external broker URL.
+PACT_BROKER_URL ?= http://localhost:9292
+PACT_BROKER_AUTH ?= Basic cGFjdGJyb2tlcjpwYWN0YnJva2Vy
+PACT_VERSION ?= dev
+
+pact-broker-up: ## Start the local Pact Broker (docker compose --profile pact)
+	docker compose --profile pact up -d pact-broker-postgres pact-broker
+
+pact-broker-down: ## Stop the local Pact Broker
+	docker compose --profile pact down
+
+pact-publish: ## Publish every cmd/server/testdata/pacts/*.pact.json to the broker
+	go run ./cmd/weave-pact publish \
+		-broker $(PACT_BROKER_URL) \
+		-auth "$(PACT_BROKER_AUTH)" \
+		-dir cmd/server/testdata/pacts \
+		-version $(PACT_VERSION)
+
+pact-list: ## List the latest pacts the broker holds for the weave-server provider
+	go run ./cmd/weave-pact list \
+		-broker $(PACT_BROKER_URL) \
+		-auth "$(PACT_BROKER_AUTH)" \
+		-provider weave-server
 
 BENCH_TIME ?= 200ms
 

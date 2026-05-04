@@ -52,10 +52,15 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
-      # US-362: Pact-style consumer-driven contract tests. Surfaced as a
-      # dedicated CI step (rather than relying on the implicit `go test ./...`
-      # pass above) so a failing consumer interaction is unambiguously
-      # attributed to SDK / web-client contract drift in the build log.
+      # US-362, US-445: Pact-style consumer-driven contract tests covering
+      # the four-language SDK fan-out (py / ts / go / java) plus the SPA
+      # client. Surfaced as a dedicated CI step (rather than relying on the
+      # implicit `go test ./...` pass above) so a failing consumer
+      # interaction is unambiguously attributed to SDK / web-client contract
+      # drift in the build log. The same gate pulls in `cmd/weave-pact/...`
+      # so a regression in the Pact Broker publish/list path is caught even
+      # without booting an actual broker (broker integration runs locally
+      # via `make pact-broker-up && make pact-publish`).
       - name: Contract tests (Pact-style)
         run: make test-contract
 

@@ -1,0 +1,31 @@
+{
+  "consumer": {"name": "weave-java-sdk"},
+  "provider": {"name": "weave-server"},
+  "metadata": {
+    "pactSpecification": "weave-pact-1",
+    "documents": "Java SDK bootstrap pact: on construction the client probes /health/live (k8s-style alias) and pulls /api/openapi.yaml so generated clients can self-validate against the running server. Mirrors the TS SDK contract for openapi but uses the live alias for liveness."
+  },
+  "interactions": [
+    {
+      "description": "GET /health/live is the canonical k8s liveness alias",
+      "request": {
+        "method": "GET",
+        "path": "/health/live"
+      },
+      "response": {
+        "status": 200,
+        "body": {"status": "alive"}
+      }
+    },
+    {
+      "description": "GET /api/openapi.yaml exposes the canonical spec",
+      "request": {
+        "method": "GET",
+        "path": "/api/openapi.yaml"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

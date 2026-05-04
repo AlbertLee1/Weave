@@ -142,6 +142,45 @@ services:
     # weave-slo.json is the default SLO dashboard shipped with the repo; it
     # appears under the "Weave" folder as soon as the container starts.
 
+  # Pact Broker for the US-445 multi-language SDK contract gate. Disabled
+  # by default — start with `docker compose --profile pact up -d` so the
+  # default `make docker-up` flow stays lean. Web UI on :9292 lets
+  # operators browse the contract matrix; pact-broker-postgres is its own
+  # backing store kept off the main `postgres` volume to avoid mixing
+  # ontology data with broker bookkeeping.
+  pact-broker-postgres:
+    image: postgres:16-alpine
+    profiles: ["pact"]
+    environment:
+      POSTGRES_USER: pactbroker
+      POSTGRES_PASSWORD: pactbroker
+      POSTGRES_DB: pactbroker
+    volumes:
+      - pactbrokerdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pactbroker"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pact-broker:
+    image: pactfoundation/pact-broker:2.116.1.0
+    profiles: ["pact"]
+    ports:
+      - "9292:9292"
+    environment:
+      PACT_BROKER_DATABASE_USERNAME: pactbroker
+      PACT_BROKER_DATABASE_PASSWORD: pactbroker
+      PACT_BROKER_DATABASE_HOST: pact-broker-postgres
+      PACT_BROKER_DATABASE_NAME: pactbroker
+      PACT_BROKER_BASIC_AUTH_USERNAME: pactbroker
+      PACT_BROKER_BASIC_AUTH_PASSWORD: pactbroker
+      PACT_BROKER_LOG_LEVEL: WARN
+      PACT_BROKER_PUBLIC_HEARTBEAT: "true"
+    depends_on:
+      pact-broker-postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
   natsdata:
@@ -149,3 +188,4 @@ volumes:
   promdata:
   grafanadata:
   vmdata:
+  pactbrokerdata:

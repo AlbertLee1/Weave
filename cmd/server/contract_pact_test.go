@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/liyang/weave/pkg/contract"
@@ -41,6 +42,64 @@ func TestContract_SDKPactsVerify(t *testing.T) {
 			if len(errs) > 0 {
 				t.Fatalf("pact %q (consumer=%s) has %d failing interactions:\n%s",
 					filepath.Base(path), pact.Consumer.Name, len(errs), formatPactErrors(errs))
+			}
+		})
+	}
+}
+
+// TestContract_AllFourSDKsHaveAPactFile is the US-445 presence gate: every
+// language SDK in the multi-language fan-out (py / ts / go / java) MUST ship
+// at least one consumer-driven pact file under cmd/server/testdata/pacts/.
+// The file naming convention is `<consumer>-<topic>.pact.json` where
+// `<consumer>` starts with the canonical `<lang>-sdk` prefix; this lets the
+// gate match by filename without parsing every JSON to inspect the
+// `consumer.name` field.
+func TestContract_AllFourSDKsHaveAPactFile(t *testing.T) {
+	matches, err := filepath.Glob(filepath.Join("testdata", "pacts", "*.pact.json"))
+	if err != nil {
+		t.Fatalf("glob pacts: %v", err)
+	}
+	wantPrefixes := []string{"python-sdk", "ts-sdk", "go-sdk", "java-sdk"}
+	seen := map[string]bool{}
+	for _, path := range matches {
+		base := filepath.Base(path)
+		for _, prefix := range wantPrefixes {
+			if strings.HasPrefix(base, prefix+"-") {
+				seen[prefix] = true
+			}
+		}
+	}
+	for _, prefix := range wantPrefixes {
+		if !seen[prefix] {
+			t.Errorf("missing pact file for %s — expected at least one cmd/server/testdata/pacts/%s-*.pact.json",
+				prefix, prefix)
+		}
+	}
+}
+
+// TestContract_PactConsumerNameMatchesFilename guards the same convention
+// from the inside: every pact file's `consumer.name` MUST start with the
+// `weave-<lang>-sdk` form (or `weave-web-client` for the SPA pact). A
+// mistyped consumer name would silently fail the broker-side dedup contract
+// (re-publishes for "weave-pyhton-sdk" become a new consumer rather than a
+// new version of the existing one).
+func TestContract_PactConsumerNameMatchesFilename(t *testing.T) {
+	matches, err := filepath.Glob(filepath.Join("testdata", "pacts", "*.pact.json"))
+	if err != nil {
+		t.Fatalf("glob pacts: %v", err)
+	}
+	for _, path := range matches {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			pact, err := contract.LoadPact(path)
+			if err != nil {
+				t.Fatalf("load %s: %v", path, err)
+			}
+			name := pact.Consumer.Name
+			if !strings.HasPrefix(name, "weave-") {
+				t.Errorf("pact %s consumer.name=%q must start with 'weave-'", path, name)
+			}
+			if pact.Provider.Name != "weave-server" {
+				t.Errorf("pact %s provider.name=%q must be 'weave-server'", path, pact.Provider.Name)
 			}
 		})
 	}
