@@ -21,6 +21,13 @@ import (
 // ErasureJob is the persisted state of one right-to-be-forgotten run.
 // Mirrors actions.ActionJob (US-240) so SDK pollers see an identical
 // envelope.
+//
+// ProofHash (US-443) is a deterministic sha256 hex digest stamped on the
+// job at terminal time. It commits to the canonicalised tuple
+// (userId, status, ordered step outcomes, errorMessage, requestedBy) so
+// auditors can later prove that a specific erase run produced a specific
+// outcome without re-fetching the row. Empty until the job reaches a
+// terminal state (SUCCEEDED / FAILED).
 type ErasureJob struct {
 	JobID        string       `json:"jobId"`
 	UserID       string       `json:"userId"`
@@ -29,6 +36,7 @@ type ErasureJob struct {
 	Steps        []StepResult `json:"steps,omitempty"`
 	ErrorMessage string       `json:"errorMessage,omitempty"`
 	RequestedBy  string       `json:"requestedBy,omitempty"`
+	ProofHash    string       `json:"proofHash,omitempty"`
 	CreatedAt    time.Time    `json:"createdAt"`
 	UpdatedAt    time.Time    `json:"updatedAt"`
 }
@@ -57,11 +65,16 @@ type StepResult struct {
 // actions.ActionJobUpdate). Steps replaces the entire list when set —
 // callers are expected to append the new step then send the full slice
 // because SQL JSONB doesn't support partial-array updates portably.
+//
+// ProofHash is the terminal proof-of-erasure digest (US-443). Only the
+// terminal write sets it; intermediate progress writes leave it nil so
+// the column stays empty until SUCCEEDED / FAILED.
 type JobUpdate struct {
 	Status       string
 	Progress     *int
 	Steps        []StepResult
 	ErrorMessage *string
+	ProofHash    *string
 }
 
 // JobStore is the narrow CRUD surface the orchestrator + handler depend

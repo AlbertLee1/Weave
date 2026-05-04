@@ -152,19 +152,44 @@ func (e *Eraser) Run(ctx context.Context, jobID, userID string) (*ErasureJob, er
 		Progress:     doneProg,
 		Steps:        results,
 		ErrorMessage: finalErr,
+		RequestedBy:  e.lookupRequestedBy(ctx, jobID),
 		UpdatedAt:    e.nowFunc(),
 	}
+	// US-443: stamp a deterministic proof-of-erasure hash on the job
+	// row so auditors can later verify the recorded outcome without
+	// re-fetching every step result. Computed AFTER all per-step
+	// fields are finalised so the hash commits to the terminal state.
+	job.ProofHash = ComputeProofHash(BuildProofPayload(job))
 	if e.store != nil {
+		proofHash := job.ProofHash
 		if err := e.store.UpdateJob(ctx, jobID, JobUpdate{
 			Status:       finalStatus,
 			Progress:     &doneProg,
 			Steps:        results,
 			ErrorMessage: &finalErr,
+			ProofHash:    &proofHash,
 		}); err != nil {
 			log.Printf("gdpr: job %s: terminal write failed: %v", jobID, err)
 		}
 	}
 	return job, nil
+}
+
+// lookupRequestedBy resolves the RequestedBy actor for jobID by reading
+// the job row out of the store. Returning an empty string when the
+// store is absent or the row can't be read is intentional — the proof
+// hash already commits to whatever value lands here, so a missing
+// requester just means the proof excludes that field rather than
+// surfacing a hash mismatch.
+func (e *Eraser) lookupRequestedBy(ctx context.Context, jobID string) string {
+	if e.store == nil {
+		return ""
+	}
+	j, err := e.store.GetJob(ctx, jobID)
+	if err != nil || j == nil {
+		return ""
+	}
+	return j.RequestedBy
 }
 
 // percent computes 0..100 step-progress, rounded down. Always returns

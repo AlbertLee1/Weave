@@ -206,12 +206,23 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// US-443 wire shape: accept BOTH a JSON body ({"userId":"..."}) and a
+	// ?userId= query parameter, so SDK callers can choose the cheapest
+	// path for their toolchain (curl users get the query string, typed
+	// SDKs get the structured body). The query param takes precedence
+	// only when the body left UserID blank — this matches the precedence
+	// rule on the report endpoint's format selector.
 	var req ExportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
-			"reason": err.Error(),
-		}))
-		return
+	if r.ContentLength != 0 && r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+	}
+	if req.UserID == "" {
+		req.UserID = r.URL.Query().Get("userId")
 	}
 	if req.UserID == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingUserID", map[string]string{

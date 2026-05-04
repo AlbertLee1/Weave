@@ -4248,3 +4248,45 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - SOC2 / ISO27001 control taxonomy uses prefix-based classification: `pkg/compliance/reports/soc2.go::ControlMapping` with `ActionPrefixes []string`, sorted longest-first by `NewClassifier` so specific actions outrank generic ones (e.g. `marking_grant` → CC6.3 beats the generic `marking_` → CC6.7). When an audit Action vocabulary changes, extend `DefaultSOC2Controls` rather than the renderer; the synthesised `OTHER` bucket is a safety net for unclassified events and a non-zero count there is the operator's signal to extend the mapping. The PostureSummary struct lives in the child package (NOT pkg/compliance) to break what would otherwise be an import cycle — when a new feature in the reports subpackage needs values from the parent, mirror this pattern: a small struct in the child + a projection helper in the parent.
 
 ---
+
+## 2026-05-05 - US-443 - GDPR 报告与数据出口
+
+**Implementation:**
+- The bulk of US-443 lands as the first concrete delivery of the data-portability path on top of the existing US-267 right-to-be-forgotten chassis. Two complementary capabilities ship together so the AC's two requirements are testable end-to-end:
+  1. **Data export ZIP** — `pkg/gdpr.Exporter` aggregates the per-user payload from optional `ProfileSource` / `RoleSource` / `OntologyRoleSource` / `AuditEventSource` / `MediaAssetSource` / `MediaBlobSource` interfaces and streams a deflate ZIP containing `data.json` + `media/<safe-rid>/<filename>` blobs. Filename sanitisation forbids `..` and slash escapes, dot-only names fall back to `blob`. Missing blob = metadata kept in `data.json`, file omitted from zip ("partial > zero" matches the eraser's per-step contract). The handler `Handler.Export` hangs on `POST /api/admin/gdpr/export` and accepts userId via BOTH a JSON body AND a `?userId=` query param so a curl one-liner works (precedence: body wins; query string fills the gap when the body omits the field).
+  2. **Erasure proof hash** — `pkg/gdpr.ProofPayload` is the canonical pre-image for an audit-grade deletion proof. `ComputeProofHash(ProofPayload) string` returns `sha256:<hex>` over the canonical JSON encoding. `BuildProofPayload(*ErasureJob)` projects the terminal job into the canonical shape, intentionally DROPPING `DurationMs` so two replays on different hardware produce identical hashes. The orchestrator stamps the hash on the terminal job state (SUCCEEDED + FAILED both carry one) AFTER all per-step state is finalised — so auditors can recompute the hash from the persisted row and compare end-to-end.
+- DB plumbing: migration `000104_gdpr_erasure_proof_hash.{up,down}.sql` adds `proof_hash TEXT NOT NULL DEFAULT ''` to `gdpr_erasure_jobs`. `cmd/server/gdpr_store.go::pgGDPRJobStore` round-trips the column on Create / Get / Update; `JobUpdate.ProofHash *string` is the partial-update knob (only the terminal write sets it).
+- The `MemoryJobStore` mirrors the same shape so unit + handler tests don't need a live PG.
+- Wiring: `cmd/server/main.go` already constructs the `Handler` with the `Exporter` (via `SetExporter`) and registers `/api/admin/gdpr/export` behind `PermUserManage` — no boot-side changes needed for US-443.
+
+**Files changed:**
+- `migrations/000104_gdpr_erasure_proof_hash.up.sql` (new)
+- `migrations/000104_gdpr_erasure_proof_hash.down.sql` (new)
+- `pkg/gdpr/proof.go` (new — `ProofPayload`, `ProofPayloadStep`, `ComputeProofHash`, `BuildProofPayload`)
+- `pkg/gdpr/proof_test.go` (new — 12 unit tests covering determinism, field discrimination, duration exclusion, auditor recompute round-trip on SUCCEEDED + FAILED jobs, encoding-contract pin)
+- `pkg/gdpr/job.go` (added `ProofHash` to `ErasureJob`, `ProofHash *string` to `JobUpdate`)
+- `pkg/gdpr/eraser.go` (terminal write stamps `ProofHash` via `ComputeProofHash(BuildProofPayload(job))`; `lookupRequestedBy` resolves the requester out of the store so the hash commits to it)
+- `pkg/gdpr/handlers.go` (new `Export` handler accepting body + `?userId=` query; emits `application/zip` with `Content-Disposition: attachment; filename="gdpr-export-<id>.zip"`; audits `gdpr_export_request`)
+- `pkg/gdpr/handlers_test.go` (added `TestExport_AcceptsUserIDFromQueryParam` to pin the wire-shape AC)
+- `pkg/gdpr/memory_store.go` (`UpdateJob` round-trips `ProofHash`)
+- `cmd/server/gdpr_store.go` (PG round-trip of the new column on CRUD)
+- `prd.json` (mark US-443 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./pkg/gdpr/...` — 13 proof + 12 export/handler/eraser tests, all pass
+  - `TestComputeProofHash_Deterministic`, `TestComputeProofHash_DifferentiatesUserID`, `TestComputeProofHash_DifferentiatesStatus`, `TestComputeProofHash_DifferentiatesStepOrder`, `TestComputeProofHash_DifferentiatesRowsAffected`, `TestComputeProofHash_EmptyPayloadStillStable`, `TestBuildProofPayload_ProjectsTerminalState`, `TestBuildProofPayload_ExcludesDurationFromCanonicalShape`, `TestBuildProofPayload_NilJobReturnsEmptySteps`, `TestEraser_StampsProofHashOnTerminalJob`, `TestEraser_StampsProofHashOnFailedJob`, `TestComputeProofHash_CanonicalEncodingMatchesSHA256OfMarshal`, `TestExport_AcceptsUserIDFromQueryParam`
+- `go test ./...` — full repo green (all packages PASS, no skips that aren't standard build-tag gates)
+
+**Learnings for future iterations:**
+- The proof hash MUST commit to the terminal step ordering / rows-affected / status / userId / requestedBy — but NOT to wall-clock fields. `BuildProofPayload` is the single chokepoint that filters the canonical projection; future fields added to `ErasureJob` should stay OUT of `ProofPayload` unless they're deterministic across replays. If a future requirement adds e.g. a deterministic content hash per step, extend `ProofPayloadStep` instead of inventing a sibling proof type.
+- Two valid wire shapes for one endpoint (body + query) on the same parameter is the right pattern for short-lived debug paths that SDKs and curl callers both hit. Set body-wins precedence so a typed SDK that always emits a body is unambiguous; keep the query string as the cheap-curl fallback. Mirror this pattern when adding any new admin debug endpoint that needs to be drivable from a one-liner.
+- The eraser's terminal write does TWO `store.UpdateJob` calls in sequence (one to advance progress per step, one to stamp proof + finalise status) — the second write carries `ProofHash *string` so the column gets set exactly once at terminal time. Don't try to fold the proof hash into the per-step progress writes; the hash is only valid AFTER the step list is final, and an early write with a placeholder hash would confuse auditor recompute.
+- `pgGDPRJobStore.GetJob` SELECTs `COALESCE(proof_hash, '')` so the column scan stays compatible with rows written before the migration ran. Always wrap newly-added nullable text columns in `COALESCE` for forward compatibility — same pattern as the older snapshot persistence code.
+- The export handler audits `gdpr_export_request` BEFORE streaming the body because mid-stream errors can't emit a structured 500 response. Mirror this for any future endpoint that streams a large body: synchronous audit up front, log-only errors mid-stream.
+
+**Codebase Pattern (added at top):**
+- GDPR auditor recompute contract: `pkg/gdpr.BuildProofPayload(*ErasureJob)` + `ComputeProofHash(ProofPayload)` is the canonical recompute path auditors run against the persisted job row. The proof hash commits to `(userId, status, errorMessage, requestedBy, [stepName, stepRowsAffected, stepErrorMessage]…)` and INTENTIONALLY excludes wall-clock fields (`DurationMs`, timestamps) so two replays on different hardware produce identical hashes. When extending `ErasureJob` with new state, add deterministic fields to `ProofPayload` and update `BuildProofPayload`; non-deterministic fields stay out. Two-shape endpoint pattern (body + query param) for `POST /api/admin/gdpr/export` — body wins precedence, query fills in when body omits the field; mirror for any new admin debug endpoint where curl-one-liner ergonomics matter.
+
+---

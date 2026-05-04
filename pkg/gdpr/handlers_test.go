@@ -257,6 +257,43 @@ func TestExport_ReturnsZipWithCorrectHeaders(t *testing.T) {
 	}
 }
 
+func TestExport_AcceptsUserIDFromQueryParam(t *testing.T) {
+	// US-443 wire shape: POST /admin/gdpr/export?userId=... must work
+	// without a JSON body so curl callers can drive the endpoint with a
+	// single line.
+	exporter := NewExporter()
+	exporter.Profile = profileSourceFunc(func(_ context.Context, uid string) (*ExportProfile, error) {
+		return &ExportProfile{ID: uid}, nil
+	})
+	h := newTestHandler(t, NewMemoryJobStore(), simpleEraser(NewMemoryJobStore()))
+	h.SetExporter(exporter)
+
+	r := chi.NewRouter()
+	r.Group(func(r chi.Router) {
+		r.Use(testInjectUser("user:admin"))
+		h.RegisterRoutes(r)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/gdpr/export?userId=user:via-query", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	files := unzipFiles(t, rec.Body.Bytes())
+	raw, ok := files["data.json"]
+	if !ok {
+		t.Fatalf("zip missing data.json, keys=%v", keysOf(files))
+	}
+	var got ExportBundle
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal data.json: %v", err)
+	}
+	if got.UserID != "user:via-query" {
+		t.Errorf("data.json userId = %q, want user:via-query", got.UserID)
+	}
+}
+
 func TestExport_DegradedModeWhenUnconfigured(t *testing.T) {
 	h := newTestHandler(t, NewMemoryJobStore(), simpleEraser(NewMemoryJobStore()))
 	// h.exporter intentionally left nil.

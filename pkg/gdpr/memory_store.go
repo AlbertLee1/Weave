@@ -67,6 +67,9 @@ func (s *MemoryJobStore) UpdateJob(_ context.Context, id string, upd JobUpdate) 
 	if upd.ErrorMessage != nil {
 		j.ErrorMessage = *upd.ErrorMessage
 	}
+	if upd.ProofHash != nil {
+		j.ProofHash = *upd.ProofHash
+	}
 	j.UpdatedAt = time.Now()
 	return nil
 }

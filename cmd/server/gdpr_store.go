@@ -63,10 +63,10 @@ func (s *pgGDPRJobStore) CreateJob(ctx context.Context, job *gdpr.ErasureJob) er
 	}
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO gdpr_erasure_jobs
-		   (job_id, user_id, status, progress, steps, error_message, requested_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		   (job_id, user_id, status, progress, steps, error_message, requested_by, proof_hash)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		job.JobID, job.UserID, job.Status, job.Progress,
-		stepsJSON, job.ErrorMessage, job.RequestedBy,
+		stepsJSON, job.ErrorMessage, job.RequestedBy, job.ProofHash,
 	)
 	return err
 }
@@ -77,10 +77,12 @@ func (s *pgGDPRJobStore) GetJob(ctx context.Context, id string) (*gdpr.ErasureJo
 	err := s.pool.QueryRow(ctx,
 		`SELECT job_id, user_id, status, progress,
 		        COALESCE(steps, '[]'::jsonb), error_message, requested_by,
+		        COALESCE(proof_hash, ''),
 		        created_at, updated_at
 		 FROM gdpr_erasure_jobs WHERE job_id = $1`, id).
 		Scan(&job.JobID, &job.UserID, &job.Status, &job.Progress,
 			&stepsJSON, &job.ErrorMessage, &job.RequestedBy,
+			&job.ProofHash,
 			&job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -122,6 +124,11 @@ func (s *pgGDPRJobStore) UpdateJob(ctx context.Context, id string, upd gdpr.JobU
 	if upd.ErrorMessage != nil {
 		sets = append(sets, "error_message = $"+strconv.Itoa(argN))
 		args = append(args, *upd.ErrorMessage)
+		argN++
+	}
+	if upd.ProofHash != nil {
+		sets = append(sets, "proof_hash = $"+strconv.Itoa(argN))
+		args = append(args, *upd.ProofHash)
 		argN++
 	}
 	args = append(args, id)
