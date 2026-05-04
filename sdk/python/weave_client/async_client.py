@@ -31,6 +31,7 @@ from ._async_http import AsyncTransport
 from ._http import HTTPResponse, build_query_string, quote_path
 from ._retry import RetryPolicy
 from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
+from .subscriptions import Subscription, WebSocketTransport
 from .types import (
     ActionType,
     ApplyActionResponse,
@@ -496,6 +497,44 @@ class AsyncObjectsAPI:
         )
         body = await self._client._request("GET", path)
         return body or {}
+
+    def subscribe(
+        self,
+        ontology: str,
+        object_type: str,
+        *,
+        where: Optional[Dict[str, Any]] = None,
+        select: Optional[List[str]] = None,
+        auto_reconnect: bool = True,
+        transport_factory: Optional[Any] = None,
+    ) -> Subscription:
+        """Open a WebSocket subscription on the given ObjectType (US-418).
+
+        Yields :class:`weave_client.subscriptions.ChangeEvent` instances
+        for each ``ADDED_OR_UPDATED`` / ``DELETED`` event the server
+        delivers. Auto-reconnect resumes from the most recent cursor
+        via ``?since=<cursor>`` so a brief disconnect silently replays
+        the missed window. A connection-level ``onOutOfDate`` (cursor
+        outside the server's 5-minute / 10000-event replay window)
+        raises :class:`WeaveOutOfDate` so the caller can refresh full
+        state before re-subscribing.
+
+        ``where`` is a Weave WhereClause; ``select`` projects the
+        subset of properties to deliver. ``transport_factory`` is
+        injected by tests to script message sequences without a real
+        WebSocket; production callers should leave it None to use
+        :class:`WebsocketsTransport`.
+        """
+        return Subscription(
+            base_url=self._client.base_url,
+            ontology=ontology,
+            object_type=object_type,
+            where=where,
+            select=select,
+            token=self._client.token,
+            transport_factory=transport_factory,
+            auto_reconnect=auto_reconnect,
+        )
 
 
 class AsyncActionsAPI:

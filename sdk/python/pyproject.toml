@@ -29,10 +29,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ws = [
+    # Required for AsyncObjectsAPI.subscribe (US-418). Not included in the
+    # base install so HTTP-only consumers don't pay the dep cost.
+    "websockets>=11.0",
+]
 test = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "respx>=0.20",
+    "websockets>=11.0",
 ]
 
 [project.urls]

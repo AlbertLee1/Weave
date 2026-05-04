@@ -32,6 +32,13 @@ from .exceptions import (
     WeaveError,
     WeaveNotFoundError,
 )
+from .subscriptions import (
+    ChangeEvent,
+    Subscription,
+    WeaveOutOfDate,
+    WebSocketTransport,
+    WebsocketsTransport,
+)
 from .types import (
     ActionResults,
     ActionType,
@@ -57,6 +64,11 @@ __all__ = [
     "WeaveError",
     "WeaveAuthError",
     "WeaveNotFoundError",
+    "ChangeEvent",
+    "Subscription",
+    "WeaveOutOfDate",
+    "WebSocketTransport",
+    "WebsocketsTransport",
     "Ontology",
     "ObjectType",
     "WireObject",
