@@ -157,6 +157,162 @@ func (s *VMStore) StreamPoints(ctx context.Context, key SeriesKey) ([]Point, err
 	return out, nil
 }
 
+// DownsamplePoints pushes a per-bucket reduce down to VictoriaMetrics
+// via the PromQL `<agg>_over_time(metric[step])` family on
+// /api/v1/query_range. The wire response carries one float per bucket
+// regardless of how many raw points back the series, so a 100M-point
+// query returns a ~24 (1h step over 1d) or ~288 (5m step over 1d)
+// payload — the server does the heavy lifting.
+//
+// Empty Start/End default to (now-1h, now); callers that want "all
+// time" should set Start to a sentinel like Unix epoch and End to a
+// future-leaning value (`time.Now()` is the safer default than 50y
+// out — VictoriaMetrics caps the per-query timeframe but accepts very
+// wide windows).
+func (s *VMStore) DownsamplePoints(ctx context.Context, key SeriesKey, spec DownsampleSpec) ([]Point, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, err
+	}
+	start := spec.Start
+	end := spec.End
+	if start.IsZero() && end.IsZero() {
+		end = time.Now()
+		start = end.Add(-time.Hour)
+	} else if end.IsZero() {
+		end = time.Now()
+	} else if start.IsZero() {
+		start = end.Add(-spec.Step * 1024)
+	}
+
+	q := url.Values{}
+	q.Set("query", buildDownsamplePromQL(key, spec))
+	q.Set("start", fmt.Sprintf("%d", start.Unix()))
+	q.Set("end", fmt.Sprintf("%d", end.Unix()))
+	q.Set("step", fmt.Sprintf("%d", int64(spec.Step.Seconds())))
+
+	queryURL := s.baseURL + "/api/v1/query_range?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vm query_range: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("vm query_range: status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+
+	var body queryRangeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("vm query_range decode: %w", err)
+	}
+	if body.Status != "success" {
+		return nil, fmt.Errorf("vm query_range: status %q", body.Status)
+	}
+
+	out := make([]Point, 0)
+	for _, series := range body.Data.Result {
+		for _, pair := range series.Values {
+			ts, value, ok := decodeQueryRangeSample(pair)
+			if !ok {
+				continue
+			}
+			out = append(out, Point{
+				Time:  time.Unix(0, int64(ts*1e9)).UTC(),
+				Value: value,
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+	return out, nil
+}
+
+// buildDownsamplePromQL composes `<agg>_over_time(weave_timeseries{...}[step])`
+// with the canonical PromQL operator name corresponding to the Aggregation.
+// Step is rendered as an integer-second range selector — VictoriaMetrics
+// accepts `[Ns]` for any positive N.
+func buildDownsamplePromQL(key SeriesKey, spec DownsampleSpec) string {
+	op := promOpForAggregation(spec.Aggregation)
+	step := int64(spec.Step.Seconds())
+	if step < 1 {
+		step = 1
+	}
+	return fmt.Sprintf("%s(%s[%ds])", op, buildMatcher(key), step)
+}
+
+func promOpForAggregation(agg DownsampleAggregation) string {
+	switch agg {
+	case DownsampleSum:
+		return "sum_over_time"
+	case DownsampleMin:
+		return "min_over_time"
+	case DownsampleMax:
+		return "max_over_time"
+	case DownsampleCount:
+		return "count_over_time"
+	case DownsampleAvg:
+		fallthrough
+	default:
+		return "avg_over_time"
+	}
+}
+
+// queryRangeResponse mirrors VictoriaMetrics' /api/v1/query_range payload.
+// values pairs are [<seconds since epoch float>, "<value string>"] which
+// json-decodes into []interface{} — decodeQueryRangeSample owns the
+// per-pair coercion.
+type queryRangeResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string `json:"resultType"`
+		Result     []struct {
+			Metric map[string]string `json:"metric"`
+			Values [][]interface{}   `json:"values"`
+		} `json:"result"`
+	} `json:"data"`
+}
+
+func decodeQueryRangeSample(pair []interface{}) (float64, float64, bool) {
+	if len(pair) != 2 {
+		return 0, 0, false
+	}
+	tsRaw, ok := pair[0].(float64)
+	if !ok {
+		return 0, 0, false
+	}
+	switch v := pair[1].(type) {
+	case string:
+		f, err := parsePromFloat(v)
+		if err != nil {
+			return 0, 0, false
+		}
+		return tsRaw, f, true
+	case float64:
+		return tsRaw, v, true
+	default:
+		return 0, 0, false
+	}
+}
+
+// parsePromFloat handles VictoriaMetrics' string-encoded numerics. The
+// PromQL spec returns numbers as strings ("42.5", "+Inf", "NaN") — only
+// the finite case is meaningful here; the other two surface as failed
+// samples and are silently dropped.
+func parsePromFloat(s string) (float64, error) {
+	switch s {
+	case "+Inf", "-Inf", "NaN":
+		return 0, fmt.Errorf("non-finite sample %q", s)
+	}
+	var f float64
+	if _, err := fmt.Sscanf(s, "%g", &f); err != nil {
+		return 0, err
+	}
+	return f, nil
+}
+
 type exportLine struct {
 	Metric     map[string]string `json:"metric"`
 	Values     []float64         `json:"values"`

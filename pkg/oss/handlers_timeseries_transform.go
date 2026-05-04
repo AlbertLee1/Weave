@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
@@ -101,6 +102,24 @@ func (h *Handler) TransformTimeSeries(w http.ResponseWriter, r *http.Request) {
 			PrimaryKey: body.Source.PrimaryKey,
 			Property:   body.Source.Property,
 		}
+		// US-435: when the chain is a single resample step AND the
+		// store can downsample server-side, push the bucket reduce
+		// down. For a 100M-point series this turns a multi-second
+		// stream into a constant-time HTTP round-trip; the response
+		// payload is bounded by the downsampled bucket count, not
+		// raw cardinality.
+		if downsampler, spec, ok := pushDownDownsample(h.timeseriesStore, body.Transforms); ok {
+			downsampled, err := downsampler.DownsamplePoints(r.Context(), key, spec)
+			if err != nil {
+				writeTimeSeriesError(w, err)
+				return
+			}
+			if downsampled == nil {
+				downsampled = []timeseries.Point{}
+			}
+			writeJSONOK(w, map[string]interface{}{"points": downsampled})
+			return
+		}
 		fetched, err := h.timeseriesStore.StreamPoints(r.Context(), key)
 		if err != nil {
 			writeTimeSeriesError(w, err)
@@ -126,4 +145,44 @@ func (h *Handler) TransformTimeSeries(w http.ResponseWriter, r *http.Request) {
 		out = []timeseries.Point{}
 	}
 	writeJSONOK(w, map[string]interface{}{"points": out})
+}
+
+// pushDownDownsample inspects the transform chain and the configured
+// store. When the chain is exactly one `resample` step AND the store
+// implements timeseries.Downsampler, it returns the downsampler, the
+// translated DownsampleSpec, and true. Any other shape (multiple
+// steps, a different op, malformed params, an unsupported aggregation)
+// returns ok=false so the caller falls back to the streaming path.
+func pushDownDownsample(store timeseries.Store, chain []timeseries.TransformSpec) (timeseries.Downsampler, timeseries.DownsampleSpec, bool) {
+	if len(chain) != 1 {
+		return nil, timeseries.DownsampleSpec{}, false
+	}
+	step := chain[0]
+	if step.Op != timeseries.OpResample {
+		return nil, timeseries.DownsampleSpec{}, false
+	}
+	intervalRaw, ok := step.Params["interval"].(string)
+	if !ok {
+		return nil, timeseries.DownsampleSpec{}, false
+	}
+	interval, err := time.ParseDuration(intervalRaw)
+	if err != nil || interval <= 0 {
+		return nil, timeseries.DownsampleSpec{}, false
+	}
+	aggName := ""
+	if v, ok := step.Params["agg"].(string); ok {
+		aggName = v
+	}
+	agg, ok := timeseries.NormalizeAggregation(aggName)
+	if !ok {
+		return nil, timeseries.DownsampleSpec{}, false
+	}
+	downsampler, ok := store.(timeseries.Downsampler)
+	if !ok {
+		return nil, timeseries.DownsampleSpec{}, false
+	}
+	return downsampler, timeseries.DownsampleSpec{
+		Step:        interval,
+		Aggregation: agg,
+	}, true
 }

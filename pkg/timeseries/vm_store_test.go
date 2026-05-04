@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +48,7 @@ func newFakeVM(t *testing.T) *fakeVM {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/import", vm.handleImport)
 	mux.HandleFunc("/api/v1/export", vm.handleExport)
+	mux.HandleFunc("/api/v1/query_range", vm.handleQueryRange)
 	vm.srv = httptest.NewServer(mux)
 	t.Cleanup(vm.srv.Close)
 	return vm
@@ -86,6 +89,165 @@ func (vm *fakeVM) handleImport(w http.ResponseWriter, r *http.Request) {
 		vm.mu.Unlock()
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleQueryRange parses VictoriaMetrics-style PromQL aggregations of
+// the shape `<agg>_over_time(matcher[<step>s])` and reduces the stored
+// points per bucket. Only the operators VMStore.DownsamplePoints emits
+// are supported; anything else returns 400 so a regression in the
+// client-side query builder is caught immediately.
+func (vm *fakeVM) handleQueryRange(w http.ResponseWriter, r *http.Request) {
+	vm.mu.Lock()
+	if vm.exportErr {
+		vm.exportErr = false
+		vm.mu.Unlock()
+		http.Error(w, "forced export error", http.StatusInternalServerError)
+		return
+	}
+	vm.mu.Unlock()
+
+	q := r.URL.Query()
+	rawQuery := q.Get("query")
+	startStr := q.Get("start")
+	endStr := q.Get("end")
+	stepStr := q.Get("step")
+	if rawQuery == "" || startStr == "" || endStr == "" || stepStr == "" {
+		http.Error(w, "missing query params", http.StatusBadRequest)
+		return
+	}
+	op, matcher, _, err := parseOverTimeQuery(rawQuery)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	startSec, err := strconv.ParseFloat(startStr, 64)
+	if err != nil {
+		http.Error(w, "bad start", http.StatusBadRequest)
+		return
+	}
+	endSec, err := strconv.ParseFloat(endStr, 64)
+	if err != nil {
+		http.Error(w, "bad end", http.StatusBadRequest)
+		return
+	}
+	stepSec, err := strconv.ParseInt(stepStr, 10, 64)
+	if err != nil || stepSec <= 0 {
+		http.Error(w, "bad step", http.StatusBadRequest)
+		return
+	}
+
+	vm.mu.Lock()
+	points := append([]vmPoint(nil), vm.data[matcher]...)
+	vm.mu.Unlock()
+
+	stepMs := stepSec * 1000
+	startMs := int64(startSec * 1000)
+	endMs := int64(endSec * 1000)
+
+	type bucket struct {
+		count int
+		sum   float64
+		min   float64
+		max   float64
+	}
+	buckets := map[int64]*bucket{}
+	for _, p := range points {
+		if p.ts < startMs || p.ts > endMs {
+			continue
+		}
+		bucketStart := (p.ts / stepMs) * stepMs
+		b, ok := buckets[bucketStart]
+		if !ok {
+			b = &bucket{min: p.value, max: p.value}
+			buckets[bucketStart] = b
+		}
+		b.count++
+		b.sum += p.value
+		if p.value < b.min {
+			b.min = p.value
+		}
+		if p.value > b.max {
+			b.max = p.value
+		}
+	}
+
+	// Emit a single matrix series even when buckets is empty so the
+	// client-side decoder exercises the success path.
+	type pair = []interface{}
+	values := make([]pair, 0, len(buckets))
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	for _, k := range keys {
+		b := buckets[k]
+		var v float64
+		switch op {
+		case "avg_over_time":
+			v = b.sum / float64(b.count)
+		case "sum_over_time":
+			v = b.sum
+		case "min_over_time":
+			v = b.min
+		case "max_over_time":
+			v = b.max
+		case "count_over_time":
+			v = float64(b.count)
+		default:
+			http.Error(w, "unsupported op "+op, http.StatusBadRequest)
+			return
+		}
+		values = append(values, pair{float64(k) / 1000.0, formatPromValue(v)})
+	}
+
+	resp := map[string]interface{}{
+		"status": "success",
+		"data": map[string]interface{}{
+			"resultType": "matrix",
+			"result": []map[string]interface{}{
+				{
+					"metric": matcherToMetric(matcher),
+					"values": values,
+				},
+			},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// parseOverTimeQuery extracts (op, matcher, stepDuration) from the
+// canonical `<agg>_over_time(<matcher>[<step>s])` shape that
+// VMStore.DownsamplePoints emits.
+func parseOverTimeQuery(query string) (op, matcher string, stepSec int64, err error) {
+	openParen := strings.Index(query, "(")
+	closeParen := strings.LastIndex(query, ")")
+	if openParen < 0 || closeParen < 0 || closeParen <= openParen {
+		return "", "", 0, errors.New("malformed query")
+	}
+	op = query[:openParen]
+	inner := query[openParen+1 : closeParen]
+	openBracket := strings.LastIndex(inner, "[")
+	closeBracket := strings.LastIndex(inner, "]")
+	if openBracket < 0 || closeBracket < 0 || closeBracket <= openBracket {
+		return "", "", 0, errors.New("missing range selector")
+	}
+	matcher = inner[:openBracket]
+	stepRaw := strings.TrimSuffix(inner[openBracket+1:closeBracket], "s")
+	step, err := strconv.ParseInt(stepRaw, 10, 64)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("bad step: %w", err)
+	}
+	return op, matcher, step, nil
+}
+
+// formatPromValue mirrors the PromQL wire shape (string-encoded floats).
+// strconv.FormatFloat with 'g' precision -1 produces the shortest
+// round-tripping representation, which is what a real VictoriaMetrics
+// response carries for finite values.
+func formatPromValue(v float64) string {
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 func (vm *fakeVM) handleExport(w http.ResponseWriter, r *http.Request) {
@@ -343,5 +505,197 @@ func TestVMStore_LabelEscaping(t *testing.T) {
 		Value: 9.9,
 	}); err != nil {
 		t.Fatalf("AppendPoint with reserved-char label: %v", err)
+	}
+}
+
+// seedMinutePoints inserts `count` points one minute apart with a
+// linearly-rising value so the per-bucket reduce verdicts (avg/sum/min/
+// max/count) are deterministic and easy to compute by hand.
+func seedMinutePoints(t *testing.T, store *timeseries.VMStore, key timeseries.SeriesKey, anchor time.Time, count int) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < count; i++ {
+		ts := anchor.Add(time.Duration(i) * time.Minute)
+		if err := store.AppendPoint(ctx, key, timeseries.Point{Time: ts, Value: float64(i)}); err != nil {
+			t.Fatalf("AppendPoint %d: %v", i, err)
+		}
+	}
+}
+
+func TestVMStore_DownsamplePoints_FiveMinuteAvg(t *testing.T) {
+	vm := newFakeVM(t)
+	store := timeseries.NewVMStore(vm.URL())
+	ctx := context.Background()
+	key := testKey()
+	anchor := mustTime(t, "2026-04-01T00:00:00Z")
+	// 60 minute-spaced points → 12 five-minute buckets, value 0..59.
+	seedMinutePoints(t, store, key, anchor, 60)
+
+	out, err := store.DownsamplePoints(ctx, key, timeseries.DownsampleSpec{
+		Start:       anchor,
+		End:         anchor.Add(time.Hour),
+		Step:        5 * time.Minute,
+		Aggregation: timeseries.DownsampleAvg,
+	})
+	if err != nil {
+		t.Fatalf("DownsamplePoints: %v", err)
+	}
+	if len(out) != 12 {
+		t.Fatalf("len = %d, want 12 (got %+v)", len(out), out)
+	}
+	// Bucket k covers minutes [5k .. 5k+4]; values 5k..5k+4; mean = 5k+2.
+	for i, p := range out {
+		want := float64(5*i + 2)
+		if got := p.Value.(float64); got != want {
+			t.Errorf("bucket[%d] avg = %v, want %v", i, got, want)
+		}
+		wantTime := anchor.Add(time.Duration(5*i) * time.Minute)
+		if !p.Time.Equal(wantTime) {
+			t.Errorf("bucket[%d].Time = %v, want %v", i, p.Time, wantTime)
+		}
+	}
+}
+
+func TestVMStore_DownsamplePoints_OneHourSum(t *testing.T) {
+	vm := newFakeVM(t)
+	store := timeseries.NewVMStore(vm.URL())
+	ctx := context.Background()
+	key := testKey()
+	anchor := mustTime(t, "2026-04-01T00:00:00Z")
+	// 120 minute-spaced points → 2 one-hour buckets.
+	seedMinutePoints(t, store, key, anchor, 120)
+
+	out, err := store.DownsamplePoints(ctx, key, timeseries.DownsampleSpec{
+		Start:       anchor,
+		End:         anchor.Add(2 * time.Hour),
+		Step:        time.Hour,
+		Aggregation: timeseries.DownsampleSum,
+	})
+	if err != nil {
+		t.Fatalf("DownsamplePoints: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len = %d, want 2 (got %+v)", len(out), out)
+	}
+	// Sum of 0..59 = 1770; sum of 60..119 = 5370.
+	want := []float64{1770, 5370}
+	for i, p := range out {
+		if got := p.Value.(float64); got != want[i] {
+			t.Errorf("bucket[%d] sum = %v, want %v", i, got, want[i])
+		}
+	}
+}
+
+func TestVMStore_DownsamplePoints_AllAggregations(t *testing.T) {
+	vm := newFakeVM(t)
+	store := timeseries.NewVMStore(vm.URL())
+	ctx := context.Background()
+	key := testKey()
+	anchor := mustTime(t, "2026-04-01T00:00:00Z")
+	seedMinutePoints(t, store, key, anchor, 5) // values 0..4 in one 5m bucket
+
+	cases := []struct {
+		agg  timeseries.DownsampleAggregation
+		want float64
+	}{
+		{timeseries.DownsampleAvg, 2},   // mean(0..4)
+		{timeseries.DownsampleSum, 10},  // 0+1+2+3+4
+		{timeseries.DownsampleMin, 0},   //
+		{timeseries.DownsampleMax, 4},   //
+		{timeseries.DownsampleCount, 5}, //
+	}
+	for _, tc := range cases {
+		out, err := store.DownsamplePoints(ctx, key, timeseries.DownsampleSpec{
+			Start:       anchor,
+			End:         anchor.Add(10 * time.Minute),
+			Step:        5 * time.Minute,
+			Aggregation: tc.agg,
+		})
+		if err != nil {
+			t.Fatalf("DownsamplePoints[%s]: %v", tc.agg, err)
+		}
+		if len(out) != 1 {
+			t.Fatalf("DownsamplePoints[%s]: len = %d, want 1", tc.agg, len(out))
+		}
+		if got := out[0].Value.(float64); got != tc.want {
+			t.Errorf("DownsamplePoints[%s]: got %v, want %v", tc.agg, got, tc.want)
+		}
+	}
+}
+
+func TestVMStore_DownsamplePoints_ValidationRejectsBadSpec(t *testing.T) {
+	store := timeseries.NewVMStore("http://localhost") // no fake — validation should fire pre-network
+	cases := []struct {
+		name string
+		spec timeseries.DownsampleSpec
+	}{
+		{"zero step", timeseries.DownsampleSpec{Aggregation: timeseries.DownsampleAvg}},
+		{"negative step", timeseries.DownsampleSpec{Step: -time.Minute, Aggregation: timeseries.DownsampleAvg}},
+		{"missing aggregation", timeseries.DownsampleSpec{Step: time.Minute}},
+		{"end before start", timeseries.DownsampleSpec{
+			Start:       mustTime(t, "2026-04-02T00:00:00Z"),
+			End:         mustTime(t, "2026-04-01T00:00:00Z"),
+			Step:        time.Minute,
+			Aggregation: timeseries.DownsampleAvg,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := store.DownsamplePoints(context.Background(), testKey(), tc.spec)
+			if err == nil {
+				t.Errorf("DownsamplePoints: want validation err, got nil")
+			}
+		})
+	}
+}
+
+func TestVMStore_DownsamplePoints_PropagatesHTTPError(t *testing.T) {
+	vm := newFakeVM(t)
+	store := timeseries.NewVMStore(vm.URL())
+	ctx := context.Background()
+
+	vm.exportErr = true // shared toggle: exportErr also fires for query_range
+	_, err := store.DownsamplePoints(ctx, testKey(), timeseries.DownsampleSpec{
+		Start:       mustTime(t, "2026-04-01T00:00:00Z"),
+		End:         mustTime(t, "2026-04-01T01:00:00Z"),
+		Step:        5 * time.Minute,
+		Aggregation: timeseries.DownsampleAvg,
+	})
+	if err == nil {
+		t.Fatal("DownsamplePoints: want HTTP error, got nil")
+	}
+	if !strings.Contains(err.Error(), "vm query_range: status 500") {
+		t.Errorf("DownsamplePoints: got %q, want vm query_range status 500", err.Error())
+	}
+}
+
+func TestVMStore_ImplementsDownsampler(t *testing.T) {
+	// Compile-time gate: VMStore must satisfy timeseries.Downsampler so
+	// the OSS handler's pushdown branch fires for VM-backed deployments.
+	var _ timeseries.Downsampler = (*timeseries.VMStore)(nil)
+}
+
+func TestNormalizeAggregation(t *testing.T) {
+	cases := []struct {
+		in   string
+		want timeseries.DownsampleAggregation
+		ok   bool
+	}{
+		{"", timeseries.DownsampleAvg, true},
+		{"avg", timeseries.DownsampleAvg, true},
+		{"AVG", timeseries.DownsampleAvg, true},
+		{"mean", timeseries.DownsampleAvg, true},
+		{"sum", timeseries.DownsampleSum, true},
+		{"min", timeseries.DownsampleMin, true},
+		{"max", timeseries.DownsampleMax, true},
+		{"count", timeseries.DownsampleCount, true},
+		{"median", "", false},
+		{"p99", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := timeseries.NormalizeAggregation(tc.in)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("NormalizeAggregation(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+		}
 	}
 }
