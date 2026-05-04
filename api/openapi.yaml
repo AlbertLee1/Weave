@@ -3162,6 +3162,13 @@ paths:
         `{"status":"unready","checks":{...}}` when any configured dependency
         fails. Dependencies that are not wired (degraded mode) are reported
         as `"skipped"` and do not cause readiness to fail.
+
+        Lifecycle gate (US-446): before the server has finished wiring
+        every subsystem the response is 503 with `{"status":"starting"}`;
+        once the graceful-shutdown signal fires the response flips to 503
+        with `{"status":"draining"}` so orchestrators (k8s, load
+        balancers) pull the pod from rotation while in-flight requests
+        drain.
       tags: [Health]
       security: []
       responses:
@@ -3180,7 +3187,10 @@ paths:
                     additionalProperties:
                       type: string
         "503":
-          description: Service is unready — at least one configured dependency probe failed.
+          description: |
+            Service is not ready — either at least one configured dependency
+            probe failed (`unready`), or the server is still wiring
+            (`starting`), or graceful shutdown has begun (`draining`).
           content:
             application/json:
               schema:
@@ -3188,7 +3198,83 @@ paths:
                 properties:
                   status:
                     type: string
-                    enum: [unready]
+                    enum: [unready, starting, draining]
+                  checks:
+                    type: object
+                    additionalProperties:
+                      type: string
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness probe (Kubernetes /healthz alias)
+      description: |
+        US-446 Kubernetes-conventional alias for `/health`. Always returns
+        200 with `{"status":"alive"}` regardless of downstream dependency
+        state.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /healthz/live:
+    get:
+      operationId: getHealthzLive
+      summary: Liveness probe (Kubernetes /healthz/live alias)
+      description: |
+        US-446 Kubernetes-conventional alias for `/health/live`. Always
+        returns 200 with `{"status":"alive"}` regardless of downstream
+        dependency state.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /healthz/ready:
+    get:
+      operationId: getHealthzReady
+      summary: Readiness probe (Kubernetes /healthz/ready alias)
+      description: |
+        US-446 Kubernetes-conventional alias for `/health/ready`. Same
+        lifecycle gate (`starting` → `ready` → `draining`) and dependency
+        probe (PostgreSQL, NATS, Bleve) semantics as `/health/ready`.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service is ready (or degraded mode).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready]
+                  checks:
+                    type: object
+                    additionalProperties:
+                      type: string
+        "503":
+          description: |
+            Service is not ready — either at least one configured dependency
+            probe failed (`unready`), or the server is still wiring
+            (`starting`), or graceful shutdown has begun (`draining`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [unready, starting, draining]
                   checks:
                     type: object
                     additionalProperties:

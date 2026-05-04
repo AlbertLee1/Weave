@@ -196,6 +196,11 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		AuthCodeRepo:     stubAuthCodeRepo{},
 		OAuthTokenRepo:   stubOAuthTokenRepo{},
 	}
+	// US-446: contract / pact tests assume /health(z)/ready returns 200 in the
+	// degraded contract harness; MarkReady flips the lifecycle gate so the
+	// readiness handler runs the dependency probes (which all skip in
+	// degraded mode) instead of short-circuiting on starting.
+	deps.ServerState.MarkReady()
 	return NewFullRouter(deps)
 }
 

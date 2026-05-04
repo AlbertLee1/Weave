@@ -219,6 +219,9 @@ func TestHealthReady_NilDeps_Returns200(t *testing.T) {
 // that the liveness paths return the alive payload.
 func TestHealth_RoutesMounted(t *testing.T) {
 	deps := &ServerDeps{}
+	// Mark ready so /health/ready can be exercised end-to-end (degraded
+	// mode probes return ErrProbeUnconfigured → "skipped" → ready).
+	deps.ServerState.MarkReady()
 	router := NewFullRouter(deps)
 
 	// /health and /health/live both serve the liveness payload.

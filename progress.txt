@@ -4374,3 +4374,47 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Pact Broker integration (US-445) extends the US-362 Pact-style verification chain with a thin HTTP client at `pkg/contract.BrokerClient` plus a `cmd/weave-pact` CLI for publish + list. The broker's HAL response shape uses `_links.pacts[].href` directly (NOT `_links.pacts[].self.href`); test fakes MUST mirror the real broker's documented HAL shape so a stub never encodes a client bug. The four-SDK fan-out (python / ts / go / java) is enforced by filename convention (`<lang>-sdk-<topic>.pact.json` under `cmd/server/testdata/pacts/`) and a presence gate (`TestContract_AllFourSDKsHaveAPactFile`) that walks the directory; adding a fifth SDK is a one-line filename + one-line gate change. New pact files MUST exercise only degraded-mode-safe routes (`/health`, `/health/live`, `/health/ready`, `/api/openapi.yaml`) because the contract test router stubs OMS/OSS stores and panics on real handler invocation. The pact-broker docker-compose service is profile-gated (`profiles: ["pact"]`) so `make docker-up` stays lean — start with `make pact-broker-up`. Pattern when adding a new optional infrastructure service to docker-compose: profile-gate it, give it isolated bookkeeping volumes (separate from the main `pgdata` etc.), and ship Makefile aliases (`<feature>-up` / `<feature>-down`) instead of expecting operators to remember the `--profile` flag.
 
 ---
+
+## 2026-05-05 - US-446 健康检查与 Readiness Probe (starting/ready/draining lifecycle)
+- Added `ServerState` lifecycle marker in `cmd/server/health.go` — `atomic.Int32` over `starting (0) | ready (1) | draining (2)` with `Get()`, `MarkReady()`, `MarkDraining()`. MarkReady is starting→ready CAS-only (no-op once draining); MarkDraining is unconditional store. Default zero-value is `starting` so a freshly-built `ServerDeps` is honest about uninitialised wiring.
+- Threaded `ServerState` through `ServerDeps` and wired in `main()`: `deps.ServerState.MarkReady()` fires after `NewFullRouter(deps)` finishes assembling routes; the SIGINT/SIGTERM handler calls the new `gracefulShutdownWithState(ctx, srv, consumer, &deps.ServerState)` so the lifecycle flips to `draining` BEFORE `srv.Shutdown(ctx)` blocks on in-flight requests.
+- Extended `ReadinessHandler` with `ReadinessHandlerWithState(deps, *ServerState)`. Lifecycle gate short-circuits BEFORE the dependency probes: `starting` → 503 `{"status":"starting","checks":{}}`; `draining` → 503 `{"status":"draining","checks":{}}`; otherwise the existing PG/NATS/Bleve probe chain runs and the response stays at 200 `ready` / 503 `unready`.
+- Mounted `/healthz`, `/healthz/live`, `/healthz/ready` as kubernetes-conventional aliases alongside the legacy `/health/*` triplet — same handlers, same `ServerState` reference. Both triplets are documented in `api/openapi.yaml` (and mirrored to `cmd/server/openapi_spec.yaml`) so the contract test (`TestContract_AllRoutesDocumented`) stays green.
+- Updated `gracefulShutdown` to delegate to the new `gracefulShutdownWithState` with `state=nil` for backward compat; the original public surface is unchanged.
+- `TestHealth_RoutesMounted` and `newContractTestRouter`'s pact harness now call `deps.ServerState.MarkReady()` so the existing /health/ready and pact contract paths still observe a ready response in degraded test mode (they no longer accidentally stamp `starting` in tests that pre-date the lifecycle gate).
+
+**Files changed:**
+- `cmd/server/health.go` — added `ServerState`, `StateStarting/Ready/Draining` constants, `ReadinessHandlerWithState`, `writeReadinessLifecycle`.
+- `cmd/server/main.go` — added `ServerState` field on `ServerDeps`, wired `MarkReady()` after router build, extracted `gracefulShutdownWithState`, mounted `/healthz/*` aliases.
+- `cmd/server/health_test.go` — `TestHealth_RoutesMounted` now flips state to ready before exercising the routes.
+- `cmd/server/health_state_test.go` (new) — 8 tests covering default state, transitions, lifecycle short-circuit on starting/draining, route mount, runtime drain flip, and `gracefulShutdownWithState` ordering invariant.
+- `cmd/server/contract_test.go` — `newContractTestRouter` now calls `MarkReady()` so SDK pacts hit the ready code path.
+- `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` — added `/healthz`, `/healthz/live`, `/healthz/ready` paths; extended `/health/ready` and `/healthz/ready` 503 schema enum to `[unready, starting, draining]`.
+- `prd.json` — US-446 passes: true.
+
+**Verification:**
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `go test ./cmd/server -run 'TestServerState|TestReadinessHandler_StartingState|TestReadinessHandler_DrainingState|TestReadinessHandler_ReadyState|TestHealthz_|TestGracefulShutdown_MarksDraining' -count=1 -v` — all 8 new tests pass.
+- `go test ./cmd/server -run 'TestHealth|TestContract' -count=1` — green; `TestContract_AllRoutesDocumented`, `TestContract_NoOrphanedSpecPaths`, `TestContract_EmbeddedSpecMatchesCanonical` all pass with the new /healthz triplet.
+- `go test ./cmd/server/... -count=1` — green (cmd/server full suite).
+- `go test -short -count=1 ./...` — green across the entire repo (zero regressions).
+
+**Learnings for future iterations:**
+- Patterns discovered:
+  - Lifecycle gates on health probes belong AT THE HANDLER, not in the route mount: a single chi binding consults a runtime-mutable `*ServerState` so flipping the gate doesn't require rebuilding the router. The handler stays pure-functional w.r.t. the state pointer so unit tests can construct adversarial state machines without spinning up the full server.
+  - Default-zero state should be the most pessimistic value (`starting=0`) — a process that's still wiring up reports honestly without explicit init code, and forgetting to call `MarkReady()` fails closed (503) instead of falsely reporting healthy.
+  - Atomic encoding for state machines: store the `int32` ordinal so CAS-style upgrades (starting→ready) stay trivial; expose a string accessor on top so wire responses don't leak the integer encoding.
+  - One-way transitions matter: `MarkReady()` is CAS(starting→ready) so a drained process can't pretend to be ready again; `MarkDraining()` is unconditional store so retrying the shutdown signal is idempotent.
+  - K8s probe convention: ship BOTH `/health/*` and `/healthz/*` aliases. The two-letter `z` suffix is the canonical k8s recommendation but legacy clients (and existing pacts/contract pacts) often pin the `/health/*` form — keep both forever and let the cluster manifest pick.
+  - Graceful shutdown ORDERING is non-negotiable: state must flip BEFORE `srv.Shutdown` so a load balancer's last few health checks see `draining` and pull the pod out before the listener starts refusing connections. Captured in `TestGracefulShutdown_MarksDrainingBeforeServerStop` with a `capturingShutdownServer` that records the state observed AT the moment Shutdown is called.
+
+- Gotchas encountered:
+  - The contract pact tests (`go-sdk-health.pact.json`, `web-client-readiness.pact.json`) bind on `/health/ready` returning 200 — they break the moment the lifecycle gate defaults to `starting`. The fix is to `MarkReady()` in the test harness (`newContractTestRouter`) rather than relax the gate — tests that simulate a fully-wired server should explicitly say "ready", not silently inherit a degraded default.
+  - Adding new chi routes immediately fails `TestContract_AllRoutesDocumented` — every new GET path must land in BOTH `api/openapi.yaml` AND `cmd/server/openapi_spec.yaml` (the embedded copy). Use `cp api/openapi.yaml cmd/server/openapi_spec.yaml` after editing the canonical YAML to keep them byte-identical.
+  - Existing tests that build `&ServerDeps{}` and exercised `/health/ready` (e.g. `TestHealth_RoutesMounted`) rely on degraded-mode probes returning skipped → ready. With the lifecycle gate in place those tests must explicitly flip to `MarkReady()` first, or the gate short-circuits before the probe chain runs.
+
+- Useful context:
+  - `pkg/funnel.Consumer` is stopped *after* the HTTP server in `gracefulShutdownWithState` so in-flight `applyBatchWithHistory` calls finish writing their dataset_transactions chain before the NATS subscription releases — preserves the tx-chain monotonicity invariant established in US-379 / US-405.
+  - The `/healthz/*` triplet is registered via `r.Method(http.MethodGet, ...)` not `r.Get(...)` so the handler instances are shared with `/health/*` (same `livenessHandler` / `readinessHandler` variables); flipping the lifecycle gate at runtime affects every alias simultaneously without any per-route bookkeeping.
+---

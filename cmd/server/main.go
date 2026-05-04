@@ -455,6 +455,13 @@ type ServerDeps struct {
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
+	// US-446: lifecycle gate consulted by /healthz/ready. Default zero
+	// value is StateStarting so a freshly-built ServerDeps reports
+	// "still starting" until main.go finishes wiring and explicitly
+	// calls MarkReady. gracefulShutdown flips it to StateDraining
+	// before stopping the HTTP server so orchestrators pull the pod
+	// out of rotation before the listener closes.
+	ServerState ServerState
 }
 
 // ProbePG satisfies HealthProbes. Returns ErrProbeUnconfigured when no PG
@@ -568,9 +575,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// rolling-upgrade probeSpec can pin the explicit endpoint while legacy
 	// /health stays available for compatibility.
 	livenessHandler := LivenessHandler()
+	readinessHandler := ReadinessHandlerWithState(deps, &deps.ServerState)
 	r.Method(http.MethodGet, "/health", livenessHandler)
 	r.Method(http.MethodGet, "/health/live", livenessHandler)
-	r.Method(http.MethodGet, "/health/ready", ReadinessHandler(deps))
+	r.Method(http.MethodGet, "/health/ready", readinessHandler)
+	// US-446: /healthz/* aliases match the conventional kubernetes path so a
+	// modern probeSpec can pin the canonical endpoint while legacy /health
+	// stays available for compatibility.
+	r.Method(http.MethodGet, "/healthz", livenessHandler)
+	r.Method(http.MethodGet, "/healthz/live", livenessHandler)
+	r.Method(http.MethodGet, "/healthz/ready", readinessHandler)
 
 	// OpenAPI & Swagger UI (public)
 	r.Method(http.MethodGet, "/api/openapi.yaml", openapiSpecHandler())
@@ -1515,6 +1529,18 @@ type stoppableConsumer interface {
 // errors so the NATS subscription does not leak. The first non-nil error is
 // returned to the caller.
 func gracefulShutdown(ctx context.Context, srv shutdownableServer, consumer stoppableConsumer) error {
+	return gracefulShutdownWithState(ctx, srv, consumer, nil)
+}
+
+// gracefulShutdownWithState is the lifecycle-aware variant: when state is
+// non-nil it is flipped to draining BEFORE srv.Shutdown is invoked so
+// orchestrators (k8s, load balancers) observe /healthz/ready=503 and pull
+// the pod from rotation while in-flight requests drain. Existing callers
+// that don't need the gate keep using gracefulShutdown.
+func gracefulShutdownWithState(ctx context.Context, srv shutdownableServer, consumer stoppableConsumer, state *ServerState) error {
+	if state != nil {
+		state.MarkDraining()
+	}
 	var firstErr error
 	if srv != nil {
 		if err := srv.Shutdown(ctx); err != nil {
@@ -2808,6 +2834,10 @@ func main() {
 		log.Println("webui enabled at /")
 	}
 
+	// US-446: now that every subsystem is wired, flip the lifecycle state
+	// from starting → ready so /healthz/ready can return 200.
+	deps.ServerState.MarkReady()
+
 	// Graceful shutdown
 	srv := NewServer(router, cfg.Port)
 
@@ -2822,7 +2852,7 @@ func main() {
 		}
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
-		if err := gracefulShutdown(shutdownCtx, srv, deps.FunnelConsumer); err != nil {
+		if err := gracefulShutdownWithState(shutdownCtx, srv, deps.FunnelConsumer, &deps.ServerState); err != nil {
 			log.Printf("graceful shutdown error: %v", err)
 		}
 	}()
