@@ -110,6 +110,7 @@ func buildSchema(export *oms.OntologyExport) sdkgen.OntologySchema {
 		LinkTypes:   make([]sdkgen.LinkTypeSchema, 0, len(export.LinkTypes)),
 		ActionTypes: make([]sdkgen.ActionTypeSchema, 0, len(export.ActionTypes)),
 		Interfaces:  make([]sdkgen.InterfaceSchema, 0, len(export.Interfaces)),
+		Functions:   make([]sdkgen.FunctionSchema, 0, len(export.Functions)),
 	}
 
 	for _, ot := range export.ObjectTypes {
@@ -151,6 +152,14 @@ func buildSchema(export *oms.OntologyExport) sdkgen.OntologySchema {
 		schema.Interfaces = append(schema.Interfaces, sdkgen.InterfaceSchema{
 			APIName:     iface.APIName,
 			DisplayName: iface.DisplayName,
+		})
+	}
+
+	for _, fn := range export.Functions {
+		schema.Functions = append(schema.Functions, sdkgen.FunctionSchema{
+			RID:     fn.RID,
+			Name:    fn.Name,
+			Version: fn.Version,
 		})
 	}
 

@@ -17,6 +17,7 @@ type OntologySchema struct {
 	LinkTypes   []LinkTypeSchema   `json:"linkTypes"`
 	ActionTypes []ActionTypeSchema `json:"actionTypes"`
 	Interfaces  []InterfaceSchema  `json:"interfaces"`
+	Functions   []FunctionSchema   `json:"functions,omitempty"`
 
 	ServerURL   string          `json:"-"`
 	GeneratedAt time.Time       `json:"-"`
@@ -73,6 +74,15 @@ type ActionParamSchema struct {
 type InterfaceSchema struct {
 	APIName     string `json:"apiName"`
 	DisplayName string `json:"displayName"`
+}
+
+// FunctionSchema is a resolved Function definition for SDK generation. The
+// SDK emits a typed Execute<Name> wrapper per function so callers don't have
+// to remember the wire-format function reference (name@version).
+type FunctionSchema struct {
+	RID     string `json:"rid"`
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
 }
 
 // ParseActionParameters converts a stored JSON array of action parameter

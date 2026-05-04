@@ -652,14 +652,14 @@ func TestGoGenerator_ObjectStructs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	models, ok := filesByPath(files)["models.go"]
+	objects, ok := filesByPath(files)["pkg/myontology/objects.go"]
 	if !ok {
-		t.Fatal("expected models.go in output")
+		t.Fatal("expected pkg/myontology/objects.go in output")
 	}
 
-	// Package declaration must be present.
-	if !strings.Contains(models, "package sdk") {
-		t.Errorf("models.go missing package declaration\n%s", models)
+	// Package declaration must be the per-ontology lowercase name.
+	if !strings.Contains(objects, "package myontology") {
+		t.Errorf("objects.go missing package declaration\n%s", objects)
 	}
 
 	// Must contain a struct per ObjectType with exported field names + json tags.
@@ -678,8 +678,8 @@ func TestGoGenerator_ObjectStructs(t *testing.T) {
 		`Name         string `,
 	}
 	for _, want := range wants {
-		if !strings.Contains(models, want) {
-			t.Errorf("models.go missing %q\n%s", want, models)
+		if !strings.Contains(objects, want) {
+			t.Errorf("objects.go missing %q\n%s", want, objects)
 		}
 	}
 }
@@ -690,15 +690,15 @@ func TestGoGenerator_ActionParamStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	models := filesByPath(files)["models.go"]
+	actions := filesByPath(files)["pkg/myontology/actions.go"]
 
 	for _, want := range []string{
 		"type CreateEmployeeParams struct {",
 		`FirstName string `,
 		`Age       *int32 `, // optional params → pointer
 	} {
-		if !strings.Contains(models, want) {
-			t.Errorf("models.go missing %q\n%s", want, models)
+		if !strings.Contains(actions, want) {
+			t.Errorf("actions.go missing %q\n%s", want, actions)
 		}
 	}
 }
@@ -709,22 +709,34 @@ func TestGoGenerator_ClientMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	client, ok := filesByPath(files)["client.go"]
+	by := filesByPath(files)
+	client, ok := by["pkg/myontology/client.go"]
 	if !ok {
-		t.Fatal("expected client.go in output")
+		t.Fatal("expected pkg/myontology/client.go in output")
+	}
+	objects, ok := by["pkg/myontology/objects.go"]
+	if !ok {
+		t.Fatal("expected pkg/myontology/objects.go in output")
 	}
 
-	// Per AC: typed methods per ObjectType using net/http.
+	// Core HTTP infrastructure lives in client.go.
 	for _, want := range []string{
 		`"net/http"`,
 		"type Client struct {",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("client.go missing %q\n%s", want, client)
+		}
+	}
+	// Per-ObjectType typed methods live alongside the struct definitions.
+	for _, want := range []string{
 		"func (c *Client) GetEmployee(ctx context.Context, pk string) (*Employee, error)",
 		"func (c *Client) ListEmployee(ctx context.Context",
 		"func (c *Client) SearchEmployee(ctx context.Context, where map[string]interface{}",
 		"func (c *Client) GetDepartment(ctx context.Context, pk string) (*Department, error)",
 	} {
-		if !strings.Contains(client, want) {
-			t.Errorf("client.go missing %q\n%s", want, client)
+		if !strings.Contains(objects, want) {
+			t.Errorf("objects.go missing %q\n%s", want, objects)
 		}
 	}
 }
@@ -735,10 +747,123 @@ func TestGoGenerator_ApplyActionMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	client := filesByPath(files)["client.go"]
+	actions := filesByPath(files)["pkg/myontology/actions.go"]
 
-	if !strings.Contains(client, "func (c *Client) ApplyCreateEmployee(ctx context.Context, params CreateEmployeeParams) error") {
-		t.Errorf("client.go missing typed action method\n%s", client)
+	if !strings.Contains(actions, "func (c *Client) ApplyCreateEmployee(ctx context.Context, params CreateEmployeeParams) error") {
+		t.Errorf("actions.go missing typed action method\n%s", actions)
+	}
+}
+
+// --- Go SDK per-ontology layout tests (US-420) ---
+
+func TestGoGenerator_PerOntologyLayout(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+
+	// AC: 输出 pkg/<ontology>/{objects,actions,functions}.go — three category
+	// files plus a client.go for the shared HTTP infrastructure.
+	wantPaths := []string{
+		"pkg/myontology/client.go",
+		"pkg/myontology/objects.go",
+		"pkg/myontology/actions.go",
+		"pkg/myontology/functions.go",
+		"go.mod",
+		"examples/telemetry_otel.go",
+	}
+	for _, p := range wantPaths {
+		if _, ok := by[p]; !ok {
+			t.Errorf("expected %q in output", p)
+		}
+	}
+
+	// Every emitted .go file under pkg/<ontology>/ must declare the
+	// per-ontology lowercase package.
+	for _, name := range []string{"client.go", "objects.go", "actions.go", "functions.go"} {
+		body := by["pkg/myontology/"+name]
+		if !strings.Contains(body, "package myontology") {
+			t.Errorf("%s missing per-ontology package declaration\n%s", name, body)
+		}
+	}
+}
+
+func TestGoGenerator_FunctionsFile(t *testing.T) {
+	schema := testSchema()
+	schema.Functions = []sdkgen.FunctionSchema{
+		{RID: "ri.function.main.fn.1", Name: "computeBonus", Version: "2.0.0"},
+		{RID: "ri.function.main.fn.2", Name: "summarize"},
+	}
+
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), schema)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	functions, ok := filesByPath(files)["pkg/myontology/functions.go"]
+	if !ok {
+		t.Fatal("expected pkg/myontology/functions.go in output")
+	}
+
+	// Generic execute helper must always exist so callers can address
+	// arbitrary Functions by name@version.
+	for _, want := range []string{
+		"package myontology",
+		"type FunctionExecuteRequest struct {",
+		"type FunctionExecuteResponse struct {",
+		"func (c *Client) ExecuteFunction(ctx context.Context, ref string, params map[string]interface{}, out interface{}) error",
+	} {
+		if !strings.Contains(functions, want) {
+			t.Errorf("functions.go missing %q\n%s", want, functions)
+		}
+	}
+
+	// Schema-driven typed wrappers — one Execute<Name> per Function.
+	for _, want := range []string{
+		"func (c *Client) ExecuteComputeBonus(ctx context.Context, params map[string]interface{}, out interface{}) error",
+		`c.ExecuteFunction(ctx, "computeBonus@2.0.0"`,
+		"func (c *Client) ExecuteSummarize(ctx context.Context, params map[string]interface{}, out interface{}) error",
+		`c.ExecuteFunction(ctx, "summarize"`,
+	} {
+		if !strings.Contains(functions, want) {
+			t.Errorf("functions.go missing %q\n%s", want, functions)
+		}
+	}
+}
+
+func TestGoGenerator_FunctionsFileWithoutSchemaFunctions(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	functions, ok := filesByPath(files)["pkg/myontology/functions.go"]
+	if !ok {
+		t.Fatal("expected pkg/myontology/functions.go in output even with no Functions in schema")
+	}
+	if !strings.Contains(functions, "func (c *Client) ExecuteFunction(ctx context.Context") {
+		t.Errorf("functions.go missing generic ExecuteFunction helper\n%s", functions)
+	}
+	// No typed wrappers should be emitted when schema.Functions is empty.
+	if strings.Contains(functions, "func (c *Client) Execute") &&
+		!strings.Contains(functions, "func (c *Client) ExecuteFunction(") {
+		t.Errorf("functions.go should not emit typed wrappers when schema has no Functions\n%s", functions)
+	}
+}
+
+func TestGoGenerator_LinkedObjectsMethod(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("go")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	objects := filesByPath(files)["pkg/myontology/objects.go"]
+	// Per the linkType in testSchema (Employee → Department via "employeeDepartment").
+	if !strings.Contains(objects,
+		"func (c *Client) LinkedObjectsEmployeeEmployeeDepartment(ctx context.Context, pk string) ([]Department, error)") {
+		t.Errorf("objects.go missing linked-objects method\n%s", objects)
 	}
 }
 
@@ -782,9 +907,9 @@ func TestGoGenerator_RequestInterceptor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	client, ok := filesByPath(files)["client.go"]
+	client, ok := filesByPath(files)["pkg/myontology/client.go"]
 	if !ok {
-		t.Fatal("expected client.go in output")
+		t.Fatal("expected pkg/myontology/client.go in output")
 	}
 	for _, want := range []string{
 		"type RoundTripFunc func(*http.Request) (*http.Response, error)",
@@ -845,9 +970,9 @@ func TestGoGenerator_RetryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	client, ok := filesByPath(files)["client.go"]
+	client, ok := filesByPath(files)["pkg/myontology/client.go"]
 	if !ok {
-		t.Fatal("expected client.go in output")
+		t.Fatal("expected pkg/myontology/client.go in output")
 	}
 	for _, want := range []string{
 		"type RetryPolicy struct",
@@ -1196,9 +1321,9 @@ func TestGoGenerator_TelemetryHooks(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 	by := filesByPath(files)
-	client, ok := by["client.go"]
+	client, ok := by["pkg/myontology/client.go"]
 	if !ok {
-		t.Fatal("expected client.go in output")
+		t.Fatal("expected pkg/myontology/client.go in output")
 	}
 	for _, want := range []string{
 		"type TelemetryHooks struct",

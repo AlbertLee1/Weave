@@ -147,13 +147,16 @@ func TestGenerateSDK_Go(t *testing.T) {
 
 	found := false
 	for _, f := range zr.File {
-		if f.Name == "models.go" {
+		// US-420 restructured the Go SDK output to per-ontology subpackage
+		// `pkg/<ontology>/{objects,actions,functions,client}.go`. The "test"
+		// ontology lowercases to package `test`.
+		if f.Name == "pkg/test/objects.go" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected models.go in zip")
+		t.Error("expected pkg/test/objects.go in zip")
 	}
 }
 
