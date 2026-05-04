@@ -32,6 +32,7 @@ func TestQuickstarts_StructureMatches(t *testing.T) {
 			"src/openapi.ts", "src/transport.ts", "src/index.ts",
 		}},
 		{"go-quickstart", []string{"README.md", "main.go", "go.mod"}},
+		{"java-quickstart", []string{"README.md", "Main.java"}},
 	}
 
 	for _, tc := range cases {
