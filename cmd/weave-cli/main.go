@@ -44,6 +44,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runPitr(rest, stdout, stderr)
 	case "materialize":
 		return runMaterialize(rest, stdout, stderr)
+	case "index":
+		return runIndex(rest, stdout, stderr)
 	case "repl":
 		return runREPL(rest, stdin, stdout, stderr)
 	default:
@@ -68,6 +70,7 @@ Commands:
   fixtures   Generate synthetic test data for an ObjectType (generate)
   pitr         Point-in-time recovery (restore, history)
   materialize  Rebuild snapshots from materialized parquet (rebuild)
+  index        Rebuild Bleve indexes from the authoritative tail (rebuild)
   repl         Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)

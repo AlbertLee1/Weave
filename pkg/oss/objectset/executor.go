@@ -428,11 +428,26 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 	if err != nil {
 		return nil, fmt.Errorf("resolve policy for base objectSet %q: %w", def.ObjectType, err)
 	}
+
+	scopedKey := scopedIndexKey(ctx, e.indexMgr, def.ObjectType)
+
+	// US-408: when an index rebuild is in flight the Bleve index is
+	// either gone (between Drop and EnsureIndex) or partially populated
+	// (mid-batch). Skip the hot-tier read entirely and serve the request
+	// from the cold (Parquet) tier with a now-cutoff so callers see the
+	// full materialised set rather than a half-empty index. When no cold
+	// tier is wired we degrade to an empty result rather than surfacing
+	// an "index not found" 5xx — operators who triggered the rebuild
+	// already accepted the read-availability trade-off.
+	if e.indexMgr.IsRebuilding(scopedKey) {
+		return e.executeBaseDuringRebuild(ctx, def)
+	}
+
 	searchReq := bleve.NewSearchRequest(mergePolicyQuery(bleve.NewMatchAllQuery(), policyQ))
 	searchReq.Size = BaseExecutionCap
 	searchReq.Fields = []string{"*"}
 
-	result, err := e.indexMgr.Search(scopedIndexKey(ctx, e.indexMgr, def.ObjectType), searchReq)
+	result, err := e.indexMgr.Search(scopedKey, searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search base objectSet %q: %w", def.ObjectType, err)
 	}
@@ -459,6 +474,32 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 		ObjectType:  def.ObjectType,
 		PrimaryKeys: pks,
 		Truncated:   truncated,
+	}, nil
+}
+
+// executeBaseDuringRebuild routes a base ObjectSet read entirely through
+// the cold tier (US-408). The cutoff is e.effectiveNow() so the cold view
+// returns every materialised PK, including the rows that would normally
+// live in the hot tier — without this widening the executor would return
+// only rows older than `now - hotWindow` while the index is being
+// rebuilt, hiding live data behind the rolling window.
+//
+// When no cold tier is wired this returns an empty result. That is the
+// correct degraded-mode behaviour: the rebuild was operator-initiated
+// and the operator accepted that base reads degrade until the rebuild
+// completes.
+func (e *Executor) executeBaseDuringRebuild(ctx context.Context, def *Definition) (*Result, error) {
+	if e.tierRouter == nil {
+		return &Result{ObjectType: def.ObjectType, PrimaryKeys: nil}, nil
+	}
+	ontology := OntologyScopeFromContextOrEmpty(ctx)
+	coldPKs, err := e.tierRouter.ColdPrimaryKeys(ctx, ontology, def.ObjectType, e.effectiveNow())
+	if err != nil {
+		return nil, fmt.Errorf("cold tier base objectSet %q during rebuild: %w", def.ObjectType, err)
+	}
+	return &Result{
+		ObjectType:  def.ObjectType,
+		PrimaryKeys: coldPKs,
 	}, nil
 }
 

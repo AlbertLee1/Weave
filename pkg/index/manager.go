@@ -16,14 +16,61 @@ type Manager struct {
 	mu      sync.RWMutex
 	indexes map[string]bleve.Index // objectTypeApiName -> index
 	dataDir string
+
+	// rebuildMu guards rebuilding so a long-running Rebuild does not
+	// block read-side IsRebuilding probes that the OSS executor consults
+	// on every base query (US-408 hot-path).
+	rebuildMu  sync.RWMutex
+	rebuilding map[string]struct{} // scopedKey set, populated for the lifetime of an in-flight rebuild
 }
 
 // NewManager creates a new index manager.
 func NewManager(dataDir string) *Manager {
 	return &Manager{
-		indexes: make(map[string]bleve.Index),
-		dataDir: dataDir,
+		indexes:    make(map[string]bleve.Index),
+		dataDir:    dataDir,
+		rebuilding: make(map[string]struct{}),
 	}
+}
+
+// MarkRebuildStart records that scopedKey is undergoing an in-flight
+// rebuild. Subsequent IsRebuilding(scopedKey) calls return true until
+// MarkRebuildEnd is called. Safe for concurrent use; idempotent.
+func (m *Manager) MarkRebuildStart(scopedKey string) {
+	if scopedKey == "" {
+		return
+	}
+	m.rebuildMu.Lock()
+	if m.rebuilding == nil {
+		m.rebuilding = make(map[string]struct{})
+	}
+	m.rebuilding[scopedKey] = struct{}{}
+	m.rebuildMu.Unlock()
+}
+
+// MarkRebuildEnd clears the in-flight rebuild marker for scopedKey.
+// Safe to call when no marker is set.
+func (m *Manager) MarkRebuildEnd(scopedKey string) {
+	if scopedKey == "" {
+		return
+	}
+	m.rebuildMu.Lock()
+	delete(m.rebuilding, scopedKey)
+	m.rebuildMu.Unlock()
+}
+
+// IsRebuilding reports whether scopedKey currently has an in-flight
+// rebuild. The OSS executor's cold-tier fallback (US-408) consults this
+// to short-circuit Bleve reads during the drop+reindex window so the
+// caller transparently routes through the Parquet cold tier instead.
+func (m *Manager) IsRebuilding(scopedKey string) bool {
+	if scopedKey == "" {
+		return false
+	}
+	m.rebuildMu.RLock()
+	_, ok := m.rebuilding[scopedKey]
+	m.rebuildMu.RUnlock()
+	return ok
 }
 
 // Property describes a property for index mapping purposes.
