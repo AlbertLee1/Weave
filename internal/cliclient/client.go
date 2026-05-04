@@ -429,6 +429,36 @@ func (c *Client) ExportOntology(ctx context.Context, ontology string) (map[strin
 	return resp, nil
 }
 
+// PostInstallPackage POSTs the parsed contents of a .weavepkg archive to
+// /api/v2/pkg/install (US-412). The body shape is the wire mirror of
+// pkg/oms.PackageInstallRequest — manifest + ontology JSON + migrations +
+// onConflict knob — and the response is the loose map shape of
+// pkg/oms.PackageInstallResponse.
+//
+// 409 PackageConflict is the conflict path the CLI surfaces with a tailored
+// error message; this method just returns the typed APIError verbatim and
+// lets the caller render.
+func (c *Client) PostInstallPackage(ctx context.Context, body map[string]any) (map[string]any, error) {
+	var resp map[string]any
+	if err := c.do(ctx, http.MethodPost, "/api/v2/pkg/install", body, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// ListInstalledPackages returns every row in the installed_packages
+// registry (US-412 / US-413). The wire shape is `{data: [...]}` and the
+// returned slice is the unwrapped data array.
+func (c *Client) ListInstalledPackages(ctx context.Context) ([]map[string]any, error) {
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v2/pkg", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
 // ----- ObjectType extended endpoints --------------------------------------
 
 // GetObjectTypeFullMetadata returns the full metadata for an object type (preview).

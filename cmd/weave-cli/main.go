@@ -73,7 +73,7 @@ Commands:
   pitr         Point-in-time recovery (restore, history)
   materialize  Rebuild snapshots from materialized parquet (rebuild)
   index        Rebuild Bleve indexes from the authoritative tail (rebuild)
-  pkg          Build distributable .weavepkg ontology archives (export)
+  pkg          Build / install .weavepkg ontology archives (export, install)
   repl         Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)

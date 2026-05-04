@@ -122,6 +122,16 @@ type ServerDeps struct {
 	// /api/v2/lineage/dataset-columns/impact handlers return 404
 	// ColumnLineageNotConfigured when hit.
 	ColumnLineageStore oms.ColumnLineageStore
+	// US-412: durable installed_packages registry consumed by the pkg
+	// install flow + marketplace UI. Wired only when PG is available; nil
+	// in degraded mode leaves the install endpoint operational (no record
+	// written) and the listing endpoints return an empty data array.
+	InstalledPackageStore oms.InstalledPackageStore
+	// US-412: optional SQL migration runner for the pkg install flow.
+	// Always wired in the standard bootstrap (it persists to disk even
+	// when the PG DSN is empty); degraded-mode test routers leave it nil
+	// and the install handler skips the run step entirely.
+	PackageMigrationRunner oms.PackageMigrationRunner
 	// US-312: per-object activity-timeline store. Wired from the uncached
 	// *PGRepository so the cursor-paginated history endpoint always reads
 	// the authoritative tail; nil in degraded mode leaves the
@@ -769,6 +779,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// it nil and replay returns 503 NotConfigured.
 			if deps.PGPool != nil {
 				omsHandler.SetFunctionExecutionStore(newPGFunctionExecutionStore(deps.PGPool))
+			}
+			// US-412: package install + marketplace registry. The store is
+			// only wired when PG is available; the migration runner is
+			// always wired (it falls through to disk-only persistence when
+			// the DSN is empty). Both are constructed at bootstrap time and
+			// hung off ServerDeps so NewFullRouter can stay
+			// configuration-free.
+			if deps.InstalledPackageStore != nil {
+				omsHandler.SetInstalledPackageStore(deps.InstalledPackageStore)
+			}
+			if deps.PackageMigrationRunner != nil {
+				omsHandler.SetPackageMigrationRunner(deps.PackageMigrationRunner)
 			}
 			RegisterRoutes(api, omsHandler)
 		}
@@ -1512,6 +1534,10 @@ func main() {
 		// property-level read endpoints share a single concrete view of
 		// the table — same pattern as LineageStore above.
 		deps.ColumnLineageStore = pgRepo
+		// US-412: installed_packages registry for the pkg install flow.
+		// Constructed off the same pool — the pgInstalledPackageStore is a
+		// thin wrapper over Upsert / List / Get / Toggle / Delete.
+		deps.InstalledPackageStore = newPGInstalledPackageStore(pool)
 		// US-210: link-property schema + link-edge value stores. Same reason
 		// as MediaCatalog — these narrow stores are not on oms.Repository, so
 		// the CachedRepository decorator does not wrap them.
@@ -2075,6 +2101,12 @@ func main() {
 	// 2. Index Manager
 	deps.IndexMgr = index.NewManager(cfg.DataDir)
 	defer deps.IndexMgr.Close()
+
+	// 2a. Package migration runner (US-412). Wired unconditionally — it
+	// persists migrations to {DataDir}/installed_packages/{name}/migrations
+	// even when PG isn't available, so a degraded-mode `weave pkg install`
+	// still leaves the SQL on disk for a future operator-side run.
+	deps.PackageMigrationRunner = newPGPackageMigrationRunner(cfg.DataDir, cfg.PGDSN)
 
 	// 2b. Attachment blob store (filesystem backend under WEAVE_DATA_DIR/attachments).
 	// Unlinked uploads older than 1h are swept by a background cleanup loop.

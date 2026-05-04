@@ -16,17 +16,19 @@ import (
 	"github.com/liyang/weave/pkg/weavepkg"
 )
 
-// runPkg dispatches the `weave pkg <subcommand>` family. US-411 introduces
-// `export`; future stories add install / publish / lint subcommands without
-// touching main.go.
+// runPkg dispatches the `weave pkg <subcommand>` family. US-411 introduced
+// `export`; US-412 adds `install`. Future stories layer publish / lint on
+// top without touching main.go.
 func runPkg(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: weave pkg <export> [flags]")
+		fmt.Fprintln(stderr, "usage: weave pkg <export|install> [flags]")
 		return 2
 	}
 	switch args[0] {
 	case "export":
 		return runPkgExport(args[1:], stdout, stderr)
+	case "install":
+		return runPkgInstall(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "weave pkg: unknown subcommand %q\n", args[0])
 		return 2

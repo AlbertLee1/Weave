@@ -14,20 +14,22 @@ import (
 
 // OMSHandler provides HTTP handlers for OMS V2 and admin endpoints.
 type OMSHandler struct {
-	repo                     Repository
-	queryExecutor            QueryExecutor
-	functionExecutor         FunctionExecutor
-	functionQuotaLimiter     FunctionQuotaLimiter
-	functionResultCache      FunctionResultCache
-	functionExecutionStore   FunctionExecutionStore
-	actorFn                  ActorFunc
-	linkPropertyStore        LinkPropertyStore
-	linkEdgeStore            LinkEdgeStore
-	savedObjectSetLister     SavedObjectSetLister
-	interfaceMethodStore     InterfaceMethodStore
+	repo                      Repository
+	queryExecutor             QueryExecutor
+	functionExecutor          FunctionExecutor
+	functionQuotaLimiter      FunctionQuotaLimiter
+	functionResultCache       FunctionResultCache
+	functionExecutionStore    FunctionExecutionStore
+	actorFn                   ActorFunc
+	linkPropertyStore         LinkPropertyStore
+	linkEdgeStore             LinkEdgeStore
+	savedObjectSetLister      SavedObjectSetLister
+	interfaceMethodStore      InterfaceMethodStore
 	interfaceMethodDispatcher InterfaceMethodActionDispatcher
-	notificationBulkStore    NotificationBulkStore
-	columnLineageStore       ColumnLineageStore
+	notificationBulkStore     NotificationBulkStore
+	columnLineageStore        ColumnLineageStore
+	installedPackageStore     InstalledPackageStore
+	packageMigrationRunner    PackageMigrationRunner
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
@@ -230,7 +232,7 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
-				"ontologyApiName":  ontologyRID,
+				"ontologyApiName":   ontologyRID,
 				"objectTypeApiName": apiName,
 			}))
 			return

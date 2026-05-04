@@ -86,6 +86,18 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/import", omsHandler.ImportOntologyV2)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/metadata", omsHandler.LoadMetadataV2)
 
+	// Package install + marketplace registry (US-412). The install endpoint
+	// is mounted unconditionally; it falls back to no-op recording when no
+	// InstalledPackageStore is wired so degraded-mode boots still serve the
+	// import path. The list/toggle/delete endpoints surface 404
+	// InstalledPackagesNotConfigured in the same degraded mode so the
+	// marketplace UI (US-413, US-454) renders an appropriate empty state.
+	r.Post("/api/v2/pkg/install", omsHandler.PackageInstall)
+	r.Get("/api/v2/pkg", omsHandler.ListInstalledPackages)
+	r.Get("/api/v2/pkg/{name}", omsHandler.GetInstalledPackage)
+	r.Post("/api/v2/pkg/{name}/enabled", omsHandler.SetInstalledPackageEnabled)
+	r.Delete("/api/v2/pkg/{name}", omsHandler.DeleteInstalledPackage)
+
 	// SDK Generation (US-136)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/sdkgen", omsHandler.GenerateSDK)
 

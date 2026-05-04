@@ -5841,6 +5841,119 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/pkg/install:
+    post:
+      operationId: installPackage
+      summary: Install a .weavepkg ontology archive (US-412)
+      description: Validates the package's minWeaveVersion against the running server, detects apiName conflicts against the target ontology, optionally runs the bundled SQL migrations, and applies the ontology import. The on-conflict knob accepts "fail" (default — return 409 with the conflict list), "overwrite" (replace-mode import that drops conflicting entries), or "skip" (merge-mode import that keeps existing entries).
+      tags: [Metadata]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Package installed.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          description: One or more apiNames in the package collide with existing entries.
+  /api/v2/pkg:
+    get:
+      operationId: listInstalledPackages
+      summary: List installed packages
+      description: Returns every row in the installed_packages table (US-412 / US-413). Returns an empty data array when the registry is unwired (degraded mode).
+      tags: [Metadata]
+      responses:
+        "200":
+          description: Installed package list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {type: object}
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/pkg/{name}:
+    get:
+      operationId: getInstalledPackage
+      summary: Get one installed package row
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Installed package row.
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+    delete:
+      operationId: deleteInstalledPackage
+      summary: Remove an installed package registry row
+      description: Removes the row from installed_packages so the marketplace UI hides it. Does NOT drop ontology entities or revert migrations — those are operator workflows.
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Row removed.
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/pkg/{name}/enabled:
+    post:
+      operationId: setInstalledPackageEnabled
+      summary: Toggle the enabled flag on an installed package
+      tags: [Metadata]
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required: [enabled]
+      responses:
+        "200":
+          description: Toggle applied.
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/metadata:
     post:
       operationId: loadOntologyMetadata
