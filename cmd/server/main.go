@@ -2526,6 +2526,21 @@ func main() {
 					log.Printf("[notifications] SMTP mailer wired host=%s", mailer.Host)
 				}
 			}
+			// US-429: multi-channel dispatcher (email + slack + webhook)
+			// driven by per-user notification_preferences rows. Wired
+			// only when a PG pool is available (the prefs table lives
+			// there). Degraded-mode boots leave the dispatcher nil and
+			// the Fanout falls back to the legacy in-app + SMTP path.
+			if deps.PGPool != nil {
+				registry := buildDeliveryRegistry()
+				prefStore := newPGNotificationPreferenceStore(deps.PGPool)
+				resolver := newUserEmailResolverAdapter(deps.UserRepo)
+				dispatcher := notifications.NewDispatcher(registry, prefStore, resolver)
+				if dispatcher.HasChannels() {
+					activityFanout = activityFanout.WithDispatcher(dispatcher)
+					log.Printf("[notifications] dispatcher wired channels=%v", registry.Channels())
+				}
+			}
 			log.Printf("[notifications] activity fanout wired")
 		}
 

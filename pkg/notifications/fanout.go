@@ -71,10 +71,11 @@ type EmailResolver interface {
 
 // Fanout dispatches one Activity into N notifications + emails.
 type Fanout struct {
-	watchers WatcherLister
-	creator  NotificationCreator
-	mailer   Mailer
-	emails   EmailResolver
+	watchers   WatcherLister
+	creator    NotificationCreator
+	mailer     Mailer
+	emails     EmailResolver
+	dispatcher *Dispatcher
 }
 
 // New constructs a Fanout with the minimum required dependencies (an
@@ -96,6 +97,24 @@ func (f *Fanout) WithMailer(m Mailer, r EmailResolver) *Fanout {
 	}
 	f.mailer = m
 	f.emails = r
+	return f
+}
+
+// WithDispatcher attaches a multi-channel Dispatcher (US-429). When
+// wired, every per-recipient delivery additionally fans out across
+// the user's notification_preferences rows (email + slack + webhook).
+// Passing a nil dispatcher leaves the legacy behaviour intact.
+//
+// The dispatcher operates IN ADDITION to the legacy SMTP mailer when
+// both are wired — in practice production wiring leaves WithMailer
+// off in favour of an SMTP driver registered on the dispatcher's
+// registry, but the two paths coexist so a partial migration of the
+// SPA's preference UI doesn't strand existing watchers.
+func (f *Fanout) WithDispatcher(d *Dispatcher) *Fanout {
+	if f == nil {
+		return nil
+	}
+	f.dispatcher = d
 	return f
 }
 
@@ -143,6 +162,11 @@ func (f *Fanout) HandleActivity(ctx context.Context, a Activity) error {
 			log.Printf("notifications: in-app create failed user=%s target=%s err=%v", userID, target, err)
 		}
 		f.dispatchEmail(ctx, userID, title, body)
+		if f.dispatcher != nil {
+			if err := f.dispatcher.DispatchTo(ctx, userID, title, body, link); err != nil {
+				log.Printf("notifications: dispatcher lookup failed user=%s err=%v", userID, err)
+			}
+		}
 	}
 	return nil
 }

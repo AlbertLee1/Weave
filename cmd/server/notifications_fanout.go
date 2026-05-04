@@ -11,6 +11,7 @@ import (
 
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/notifications"
+	"github.com/liyang/weave/pkg/notifications/delivery"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/rid"
 )
@@ -113,6 +114,27 @@ func buildSMTPMailerFromEnv() *notifications.SMTPMailer {
 		From: from,
 		Auth: sauth,
 	}
+}
+
+// buildDeliveryRegistry assembles the multi-channel Driver registry
+// for US-429. SMTP is wired only when WEAVE_SMTP_HOST is non-empty;
+// Slack and Webhook are always registered because their per-user
+// target URLs come from notification_preferences.target — no
+// deployment-wide credential is required for them to no-op safely
+// when a user has no preference row.
+func buildDeliveryRegistry() *delivery.Registry {
+	registry := delivery.NewRegistry()
+	if mailer := buildSMTPMailerFromEnv(); mailer != nil {
+		registry.Register(&delivery.SMTPDriver{
+			Host: mailer.Host,
+			Port: mailer.Port,
+			From: mailer.From,
+			Auth: mailer.Auth,
+		})
+	}
+	registry.Register(&delivery.SlackDriver{})
+	registry.Register(&delivery.WebhookDriver{})
+	return registry
 }
 
 // Compile-time guards.

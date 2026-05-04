@@ -82,6 +82,19 @@ services:
     volumes:
       - weavedata:/app/data
 
+  # MailHog captures outbound SMTP for the US-429 dev-mode delivery
+  # path. The weave service routes notification emails here when
+  # WEAVE_SMTP_HOST=mailhog + WEAVE_SMTP_PORT=1025. Web UI lives on
+  # :8025 so developers can inspect every captured message without
+  # configuring a real inbox. Disabled by default — start explicitly
+  # with `docker compose up mailhog` and export the SMTP envs to see
+  # emails.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   # Prometheus scrapes the weave /metrics endpoint every 15s. The scrape
   # config is mounted read-only from grafana/prometheus.yml so a change to
   # the file in the repo is picked up on the next `docker compose up`.
