@@ -4,8 +4,10 @@ import { useParams } from 'react-router';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import {
   getFunction,
+  getFunctionCommitJob,
   getFunctionRepoCommit,
   listFunctionRepoCommits,
+  type CommitJob,
   type FunctionRepoCommit,
 } from '../../api/functions';
 import { ApiRequestError } from '../../api/client';
@@ -306,8 +308,11 @@ function CommitMeta({
       className="rounded border border-border bg-bg-elevated px-3 py-2"
       data-testid={`function-diff-meta-${side}`}
     >
-      <div className="text-text-primary truncate" title={commit.message}>
-        {commit.message || '(no message)'}
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-text-primary truncate" title={commit.message}>
+          {commit.message || '(no message)'}
+        </div>
+        <CommitJobBadge commitHash={commit.hash} />
       </div>
       <div className="text-text-secondary mt-1">
         {shortHash(commit.hash)} · {commit.author || 'unknown'} ·{' '}
@@ -315,6 +320,79 @@ function CommitMeta({
       </div>
     </div>
   );
+}
+
+// US-417: Per-commit CI status badge. Renders ✅ on success, ❌ on failure,
+// ⏳ on queued/running, ⏭️ on skipped, and nothing when the server reports
+// no row (older commits made before the hook landed). The tooltip surfaces
+// the per-phase output so operators can diagnose without leaving the diff.
+function CommitJobBadge({ commitHash }: { commitHash: string }) {
+  const params = useParams<{ ontology: string; functionRid: string }>();
+  const ontologyApiName = params.ontology ?? '';
+  const functionRid = params.functionRid ?? '';
+  const jobQuery = useQuery({
+    queryKey: ['function-diff', 'job', ontologyApiName, functionRid, commitHash],
+    queryFn: () => getFunctionCommitJob(ontologyApiName, functionRid, commitHash),
+    enabled: ontologyApiName !== '' && functionRid !== '' && commitHash !== '',
+    // Poll until the job reaches a terminal state so the badge reflects
+    // the runner's progress without forcing the user to refresh manually.
+    refetchInterval: (query) => {
+      const job = query.state.data as CommitJob | null | undefined;
+      if (!job) return false;
+      return job.status === 'queued' || job.status === 'running' ? 1500 : false;
+    },
+    retry: false,
+  });
+  const job = jobQuery.data;
+  if (!job) return null;
+  return (
+    <span
+      title={tooltipForCommitJob(job)}
+      data-testid={`function-commit-job-badge-${job.status}`}
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono ${badgeClassForStatus(job.status)}`}
+    >
+      <span aria-hidden>{symbolForStatus(job.status)}</span>
+      <span>{job.status}</span>
+    </span>
+  );
+}
+
+function symbolForStatus(status: CommitJob['status']): string {
+  switch (status) {
+    case 'success':
+      return '✅';
+    case 'failure':
+      return '❌';
+    case 'skipped':
+      return '⏭';
+    case 'queued':
+    case 'running':
+    default:
+      return '⏳';
+  }
+}
+
+function badgeClassForStatus(status: CommitJob['status']): string {
+  switch (status) {
+    case 'success':
+      return 'bg-green-500/15 text-green-300 border border-green-500/40';
+    case 'failure':
+      return 'bg-red-500/15 text-red-300 border border-red-500/40';
+    case 'skipped':
+      return 'bg-amber-500/15 text-amber-300 border border-amber-500/40';
+    case 'queued':
+    case 'running':
+    default:
+      return 'bg-bg-elevated text-text-secondary border border-border';
+  }
+}
+
+function tooltipForCommitJob(job: CommitJob): string {
+  const lines: string[] = [`status: ${job.status}`];
+  if (job.errorMessage) lines.push(`error: ${job.errorMessage}`);
+  if (job.lintOutput) lines.push(`lint: ${job.lintOutput}`);
+  if (job.testOutput) lines.push(`test: ${job.testOutput}`);
+  return lines.join('\n');
 }
 
 // LineCommentPlaceholder is the AC's "行级 comment 占位" — a stub composer

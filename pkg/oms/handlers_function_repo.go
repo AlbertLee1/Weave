@@ -89,6 +89,34 @@ func (h *OMSHandler) FunctionRepoStore() FunctionRepoStore {
 	return h.functionRepoStore
 }
 
+// SetCommitJobStore wires the optional commit_jobs registry (US-417). When
+// unset the POST /commits handler still records the commit but skips the
+// CI job row + the runner dispatch, and the GET /commits/{hash}/job
+// endpoint surfaces 503 CommitJobsNotConfigured.
+func (h *OMSHandler) SetCommitJobStore(s CommitJobStore) {
+	h.commitJobStore = s
+}
+
+// CommitJobStore returns the wired store (or nil) so route registration
+// can branch without importing the concrete PG type.
+func (h *OMSHandler) CommitJobStore() CommitJobStore {
+	return h.commitJobStore
+}
+
+// SetCommitJobRunner wires the optional CI runner (US-417). When unset the
+// POST /commits handler records the queued row but never advances it past
+// the queued state — the badge surfaces a "queued" badge until a runner
+// is wired or an out-of-band sweep completes the row.
+func (h *OMSHandler) SetCommitJobRunner(r CommitJobRunner) {
+	h.commitJobRunner = r
+}
+
+// CommitJobRunner returns the wired runner (or nil) so route registration
+// can branch.
+func (h *OMSHandler) CommitJobRunner() CommitJobRunner {
+	return h.commitJobRunner
+}
+
 // CreateFunctionRepoCommit handles POST
 // /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits.
 //
@@ -157,7 +185,124 @@ func (h *OMSHandler) CreateFunctionRepoCommit(w http.ResponseWriter, r *http.Req
 		}))
 		return
 	}
+	// US-417: record a queued CI job row + fire the runner in a background
+	// goroutine so the request returns promptly. The commit itself is
+	// already durable in the bare repo at this point — failures from this
+	// hook never roll the commit back; they surface via the badge later.
+	h.dispatchCommitCIJob(fn.RID, commit.Hash, source)
 	httputil.WriteJSON(w, http.StatusCreated, commit)
+}
+
+// dispatchCommitCIJob records the commit_jobs row in queued state and
+// fires the runner asynchronously. The function is a no-op when no store
+// is wired so degraded-mode callers (in-memory tests, demo bootstraps)
+// can keep using POST /commits without paying the CI cost.
+func (h *OMSHandler) dispatchCommitCIJob(functionRID, commitSha, sourceCode string) {
+	if h.commitJobStore == nil {
+		return
+	}
+	now := time.Now()
+	queued := &CommitJob{
+		FunctionRID: functionRID,
+		CommitSha:   commitSha,
+		Status:      CommitJobStatusQueued,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	// Use a fresh background context so the goroutine outlives the HTTP
+	// request — the runner can take longer than the client is willing to
+	// wait. Errors are swallowed: the badge will simply never advance past
+	// the queued state, which is the correct degraded behaviour.
+	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	if err := h.commitJobStore.UpsertCommitJob(bgCtx, queued); err != nil {
+		cancel()
+		return
+	}
+	if h.commitJobRunner == nil {
+		cancel()
+		return
+	}
+	go func(rid, sha, src string, jobID int64) {
+		defer cancel()
+		startedAt := time.Now()
+		running := &CommitJob{
+			ID:          jobID,
+			FunctionRID: rid,
+			CommitSha:   sha,
+			Status:      CommitJobStatusRunning,
+			StartedAt:   &startedAt,
+			CreatedAt:   queued.CreatedAt,
+		}
+		_ = h.commitJobStore.UpsertCommitJob(bgCtx, running)
+
+		result := h.commitJobRunner.RunCommitJob(bgCtx, CommitJobRunInput{
+			FunctionRID: rid,
+			CommitSha:   sha,
+			SourceCode:  src,
+		})
+		finishedAt := time.Now()
+		final := &CommitJob{
+			ID:           jobID,
+			FunctionRID:  rid,
+			CommitSha:    sha,
+			Status:       result.Status,
+			LintOutput:   result.LintOutput,
+			TestOutput:   result.TestOutput,
+			ErrorMessage: result.ErrorMessage,
+			StartedAt:    &startedAt,
+			FinishedAt:   &finishedAt,
+			CreatedAt:    queued.CreatedAt,
+		}
+		_ = h.commitJobStore.UpsertCommitJob(bgCtx, final)
+	}(functionRID, commitSha, sourceCode, queued.ID)
+}
+
+// GetFunctionRepoCommitJob handles GET
+// /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}/job.
+//
+// Returns the CI job record for the supplied commit so the SPA can render
+// the ✅ / ❌ badge next to the hash. The endpoint surfaces 503
+// CommitJobsNotConfigured when no store is wired, 404 CommitJobNotFound
+// when the row doesn't exist (commit was not picked up by the hook).
+func (h *OMSHandler) GetFunctionRepoCommitJob(w http.ResponseWriter, r *http.Request) {
+	if h.commitJobStore == nil {
+		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"errorCode": "CommitJobsNotConfigured",
+			"reason":    "no CommitJobStore wired",
+		})
+		return
+	}
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	fnIdentifier := chi.URLParam(r, "functionRid")
+	hash := chi.URLParam(r, "hash")
+
+	fn, err := h.resolveFunctionRef(r.Context(), ontologyAPIName, fnIdentifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("FunctionNotFound", map[string]string{
+				"functionRid": fnIdentifier,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetFunctionFailed", nil))
+		return
+	}
+
+	job, err := h.commitJobStore.GetCommitJob(r.Context(), fn.RID, hash)
+	if err != nil {
+		if errors.Is(err, ErrCommitJobNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("CommitJobNotFound", map[string]string{
+				"functionRid": fn.RID,
+				"hash":        hash,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetCommitJobFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, job)
 }
 
 // ListFunctionRepoCommits handles GET

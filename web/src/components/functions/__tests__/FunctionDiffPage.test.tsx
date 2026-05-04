@@ -80,6 +80,20 @@ const LOG_URL =
   '/api/v2/ontologies/northwind/functions/hello/log';
 const COMMITS_URL =
   '/api/v2/ontologies/northwind/functions/hello/commits/:hash';
+const COMMIT_JOB_URL =
+  '/api/v2/ontologies/northwind/functions/hello/commits/:hash/job';
+
+// US-417: default to "no CI row" for the badge endpoint so existing tests
+// that don't care about the badge don't have to declare a handler. Tests
+// that DO assert on the badge override this with their own handler.
+function defaultJobHandler() {
+  return http.get(COMMIT_JOB_URL, () =>
+    HttpResponse.json(
+      { errorCode: 'NOT_FOUND', errorName: 'CommitJobNotFound' },
+      { status: 404 },
+    ),
+  );
+}
 
 function fnHandler() {
   return http.get(FUNCTIONS_URL, () =>
@@ -141,6 +155,7 @@ describe('FunctionDiffPage', () => {
         ['a'.repeat(40)]: 'function v() { return 1; }',
         ['b'.repeat(40)]: 'function v() { return 2; }',
       }),
+      defaultJobHandler(),
     );
 
     renderRoute(ROUTE);
@@ -166,6 +181,7 @@ describe('FunctionDiffPage', () => {
         ['a'.repeat(40)]: 'old',
         ['b'.repeat(40)]: 'new',
       }),
+      defaultJobHandler(),
     );
 
     renderRoute(ROUTE);
@@ -216,6 +232,7 @@ describe('FunctionDiffPage', () => {
         ['b'.repeat(40)]: 'two',
         ['c'.repeat(40)]: 'three',
       }),
+      defaultJobHandler(),
     );
 
     renderRoute(ROUTE);
@@ -251,6 +268,7 @@ describe('FunctionDiffPage', () => {
         ['a'.repeat(40)]: 'old',
         ['b'.repeat(40)]: 'new',
       }),
+      defaultJobHandler(),
     );
 
     renderRoute(ROUTE);
@@ -266,6 +284,92 @@ describe('FunctionDiffPage', () => {
     await waitFor(() =>
       expect(screen.getByTestId('function-diff-same')).toBeInTheDocument(),
     );
+  });
+
+  it('renders the CI badge for each commit when the job endpoint reports a status', async () => {
+    server.use(
+      fnHandler(),
+      logHandler([
+        { hash: 'b'.repeat(40), message: 'second' },
+        { hash: 'a'.repeat(40), message: 'first' },
+      ]),
+      commitHandler({
+        ['a'.repeat(40)]: 'function v() { return 1; }',
+        ['b'.repeat(40)]: 'function v() { return 2; }',
+      }),
+      // a => failure, b => success — distinct badges per side.
+      http.get(COMMIT_JOB_URL, ({ params }) => {
+        const hash = String(params.hash);
+        if (hash === 'a'.repeat(40)) {
+          return HttpResponse.json({
+            id: 1,
+            functionRid: 'ri.ontology.main.function.f1',
+            commitSha: hash,
+            status: 'failure',
+            lintOutput: 'parse error',
+            errorMessage: 'lint failed',
+            createdAt: '2026-05-04T10:00:00Z',
+            updatedAt: '2026-05-04T10:00:00Z',
+          });
+        }
+        return HttpResponse.json({
+          id: 2,
+          functionRid: 'ri.ontology.main.function.f1',
+          commitSha: hash,
+          status: 'success',
+          lintOutput: 'lint ok',
+          testOutput: 'test ok',
+          createdAt: '2026-05-04T10:00:00Z',
+          updatedAt: '2026-05-04T10:00:00Z',
+        });
+      }),
+    );
+
+    renderRoute(ROUTE);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('function-diff-viewer')).toBeInTheDocument(),
+    );
+    // `from` side is the older commit (a) → failure badge.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('function-commit-job-badge-failure'),
+      ).toBeInTheDocument(),
+    );
+    // `to` side is the newer commit (b) → success badge.
+    expect(
+      screen.getByTestId('function-commit-job-badge-success'),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the CI badge entirely when no job row exists for a commit', async () => {
+    server.use(
+      fnHandler(),
+      logHandler([
+        { hash: 'b'.repeat(40), message: 'second' },
+        { hash: 'a'.repeat(40), message: 'first' },
+      ]),
+      commitHandler({
+        ['a'.repeat(40)]: 'old',
+        ['b'.repeat(40)]: 'new',
+      }),
+      defaultJobHandler(),
+    );
+
+    renderRoute(ROUTE);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('function-diff-viewer')).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId('function-commit-job-badge-success'),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId('function-commit-job-badge-failure'),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId('function-commit-job-badge-skipped'),
+    ).toBeNull();
   });
 
   it('surfaces a friendly error when the function lookup fails', async () => {

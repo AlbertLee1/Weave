@@ -32,6 +32,8 @@ type OMSHandler struct {
 	packageMigrationRunner    PackageMigrationRunner
 	builtinPackageProvider    BuiltinPackageProvider
 	functionRepoStore         FunctionRepoStore
+	commitJobStore            CommitJobStore
+	commitJobRunner           CommitJobRunner
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.

@@ -208,6 +208,43 @@ components:
         authorDate:
           type: string
           format: date-time
+    CommitJob:
+      type: object
+      description: |
+        One CI run for a Function code-repo commit (US-417). The lint and
+        test phases are reported via `status` plus per-phase output strings;
+        the SPA renders a ✅/❌ badge next to the commit hash from `status`
+        alone, with the output strings surfaced in a tooltip / drawer.
+      required: [id, functionRid, commitSha, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        functionRid:
+          type: string
+        commitSha:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, success, failure, skipped]
+        lintOutput:
+          type: string
+        testOutput:
+          type: string
+        errorMessage:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     Ontology:
       type: object
       required: [rid, apiName, displayName, currentVersion]
@@ -5395,6 +5432,49 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "503":
           description: Function repo store not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  reason: { type: string }
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}/job:
+    get:
+      operationId: getFunctionRepoCommitJob
+      summary: Read the CI job result for a Function code-repo commit (US-417)
+      description: |
+        Returns the lint + test pipeline outcome for the supplied commit so
+        the SPA can render a ✅/❌ badge next to the hash. The CI job is
+        recorded by the POST /commits handler in the background — this
+        endpoint is the read counterpart and returns 404 CommitJobNotFound
+        when no row exists for the (functionRid, hash) pair, or 503
+        CommitJobsNotConfigured when no store is wired.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: hash
+          required: true
+          schema:
+            type: string
+            description: Commit SHA-1 hex (40 chars).
+      responses:
+        "200":
+          description: CI job record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommitJob"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          description: Commit job store not configured.
           content:
             application/json:
               schema:

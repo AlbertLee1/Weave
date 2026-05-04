@@ -136,6 +136,13 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// metadata + source code blob) so the SPA can render a side-by-side
 	// diff between any two commits without re-walking the log.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}", omsHandler.GetFunctionRepoCommit)
+	// US-417 Function CI Hook: per-commit lint+test job state. The POST
+	// /commits handler queues the job in the background; this endpoint
+	// returns the latest result so the SPA can render a ✅/❌ badge next
+	// to the commit hash. 503 CommitJobsNotConfigured when no store is
+	// wired; 404 CommitJobNotFound when the commit was not picked up by
+	// the hook.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits/{hash}/job", omsHandler.GetFunctionRepoCommitJob)
 
 	// Ontology Branches (US-113, US-116)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.CreateBranch)

@@ -143,6 +143,15 @@ type ServerDeps struct {
 	// FunctionRepoNotConfigured when this is nil so degraded-mode test
 	// routers without a writable data dir still boot cleanly.
 	FunctionRepoStore oms.FunctionRepoStore
+	// US-417: durable commit_jobs registry consumed by the Function CI
+	// hook. Wired only when PG is available; nil in degraded mode leaves
+	// the POST /commits handler operational (no CI row written) and the
+	// GET /commits/{hash}/job endpoint returns 503 CommitJobsNotConfigured.
+	CommitJobStore oms.CommitJobStore
+	// US-417: pluggable CI runner. Wired unconditionally to a Goja-based
+	// lint+test runner; production deploys can override this in their own
+	// bootstrap with an eslint/vitest shell-out impl.
+	CommitJobRunner oms.CommitJobRunner
 	// US-312: per-object activity-timeline store. Wired from the uncached
 	// *PGRepository so the cursor-paginated history endpoint always reads
 	// the authoritative tail; nil in degraded mode leaves the
@@ -814,6 +823,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// fall back to the 503 FunctionRepoNotConfigured response.
 			if deps.FunctionRepoStore != nil {
 				omsHandler.SetFunctionRepoStore(deps.FunctionRepoStore)
+			}
+			// US-417: per-commit CI hook. The store is wired only when PG
+			// is available; the runner is wired unconditionally (Goja-based
+			// lint+test). Both are independently optional — without the
+			// store, no row is recorded; without the runner, the row stays
+			// queued. The handler's POST /commits gate is shaped around
+			// these nil-checks so degraded-mode bootstraps still serve the
+			// existing commit/log endpoints.
+			if deps.CommitJobStore != nil {
+				omsHandler.SetCommitJobStore(deps.CommitJobStore)
+			}
+			if deps.CommitJobRunner != nil {
+				omsHandler.SetCommitJobRunner(deps.CommitJobRunner)
 			}
 			RegisterRoutes(api, omsHandler)
 		}
@@ -1561,6 +1583,11 @@ func main() {
 		// Constructed off the same pool — the pgInstalledPackageStore is a
 		// thin wrapper over Upsert / List / Get / Toggle / Delete.
 		deps.InstalledPackageStore = newPGInstalledPackageStore(pool)
+		// US-417: per-commit CI job rows. Same pattern — a thin wrapper
+		// over UPSERT / SELECT against commit_jobs. The Goja runner is
+		// wired separately below so degraded-mode bootstraps that DO have
+		// PG (rare) still get a working CI pipeline.
+		deps.CommitJobStore = newPGCommitJobStore(pool)
 		// US-210: link-property schema + link-edge value stores. Same reason
 		// as MediaCatalog — these narrow stores are not on oms.Repository, so
 		// the CachedRepository decorator does not wrap them.
@@ -2148,6 +2175,15 @@ func main() {
 	// handler depends on the narrow oms.FunctionRepoStore interface and
 	// pkg/funcrepo stays unaware of the wire types.
 	deps.FunctionRepoStore = newFuncRepoStoreAdapter(funcrepo.NewManager(filepath.Join(cfg.DataDir, "repos")))
+
+	// 2a-4. Function CI runner (US-417). The default Goja-based runner
+	// is hermetic — it doesn't shell out to eslint / vitest / node. It
+	// performs a syntax-only lint pass via goja.Compile and runs an
+	// embedded `test()` function (with a synthetic expect() shim) when
+	// declared in the source. Production deploys can override this in
+	// their bootstrap by re-assigning deps.CommitJobRunner before
+	// NewFullRouter runs.
+	deps.CommitJobRunner = newGojaCommitJobRunner()
 
 	// 2b. Attachment blob store (filesystem backend under WEAVE_DATA_DIR/attachments).
 	// Unlinked uploads older than 1h are swept by a background cleanup loop.

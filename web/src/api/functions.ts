@@ -65,3 +65,49 @@ export function getFunction(
     `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/functions/${encodeURIComponent(functionRid)}`,
   );
 }
+
+// US-417: per-commit CI job. The status field drives the ✅/❌ badge in the
+// FunctionDiff UI; the per-phase output strings power the tooltip / drawer
+// the operator opens to see the raw lint / test logs.
+export type CommitJobStatus =
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'failure'
+  | 'skipped';
+
+export interface CommitJob {
+  id: number;
+  functionRid: string;
+  commitSha: string;
+  status: CommitJobStatus;
+  lintOutput?: string;
+  testOutput?: string;
+  errorMessage?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// getFunctionCommitJob returns null when the server reports 404
+// CommitJobNotFound (commit was not picked up by the hook) — call sites
+// can render an "no CI run" empty state without wrapping in try/catch.
+export async function getFunctionCommitJob(
+  ontologyApiName: string,
+  functionRid: string,
+  hash: string,
+): Promise<CommitJob | null> {
+  try {
+    return await request<CommitJob>(
+      'GET',
+      `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/functions/${encodeURIComponent(functionRid)}/commits/${encodeURIComponent(hash)}/job`,
+    );
+  } catch (err) {
+    const status = (err as { statusCode?: number })?.statusCode;
+    if (status === 404 || status === 503) {
+      return null;
+    }
+    throw err;
+  }
+}
