@@ -44,6 +44,13 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/admin/tenant-quotas/{tenant}", h.Get)
 	r.Put("/api/admin/tenant-quotas/{tenant}", h.Update)
 	r.Delete("/api/admin/tenant-quotas/{tenant}", h.Delete)
+
+	// US-438 — usage + alerts surfaces. Mounted unconditionally so the
+	// SPA can render the panel even when only quotas are wired; the
+	// handlers degrade to 503 Unavailable when no UsageStore is present.
+	r.Get("/api/admin/tenant-usage", h.ListUsage)
+	r.Get("/api/admin/tenant-usage/{tenant}", h.GetUsage)
+	r.Post("/api/admin/tenant-usage/{tenant}/{metric}", h.AddUsage)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) bool {
@@ -232,6 +239,135 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		h.manager.Reload()
 	}
 	httputil.WriteJSON(w, http.StatusOK, q)
+}
+
+// requireUsage is the US-438 counterpart of requireStore — gates the
+// /api/admin/tenant-usage handlers when the manager has no UsageStore
+// wired (degraded-mode boots without PG).
+func (h *Handler) requireUsage(w http.ResponseWriter) bool {
+	if h.manager == nil || h.manager.usage == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("TenantUsageUnavailable", map[string]string{
+			"reason": "tenant usage tracking is not configured on this deployment",
+		}))
+		return false
+	}
+	return true
+}
+
+// usageListResponse and usageRowResponse — wire-format envelopes so the
+// SPA can rely on a stable {usage: [...]} shape independent of how the
+// manager wires its underlying stores.
+type usageListResponse struct {
+	Usage []*MonthlyUsage `json:"usage"`
+}
+
+type addUsageRequest struct {
+	Delta int64 `json:"delta"`
+}
+
+type addUsageResponse struct {
+	Usage  []*MonthlyUsage `json:"usage"`
+	Fired  []Alert         `json:"firedAlerts"`
+}
+
+// ListUsage renders the current calendar month's usage rows for every
+// configured tenant — one row per (tenant, metric).
+func (h *Handler) ListUsage(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAuth(w, r) || !h.requireUsage(w) {
+		return
+	}
+	rows, err := h.manager.usage.ListMonthlyUsage(r.Context(), MonthStart(h.manager.Now()))
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("TenantUsageListFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if rows == nil {
+		rows = []*MonthlyUsage{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, usageListResponse{Usage: rows})
+}
+
+// GetUsage renders one tenant's per-metric usage rows for the current
+// calendar month.
+func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAuth(w, r) || !h.requireUsage(w) {
+		return
+	}
+	tenant := chi.URLParam(r, "tenant")
+	if err := ValidateTenant(tenant); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidTenant", map[string]string{
+			"reason": err.Error(),
+			"tenant": tenant,
+		}))
+		return
+	}
+	rows, err := h.manager.MonthlyUsageFor(r.Context(), tenant)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("TenantUsageLookupFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if rows == nil {
+		rows = []*MonthlyUsage{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, usageListResponse{Usage: rows})
+}
+
+// AddUsage atomically increments the (tenant, metric) counter by
+// `delta`. The handler returns the post-increment usage rows AND the
+// alerts that fired on this call (if any) so the SPA can surface a
+// "warning sent" badge on operator-driven adjustments.
+func (h *Handler) AddUsage(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAuth(w, r) || !h.requireUsage(w) {
+		return
+	}
+	tenant := chi.URLParam(r, "tenant")
+	if err := ValidateTenant(tenant); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidTenant", map[string]string{
+			"reason": err.Error(),
+			"tenant": tenant,
+		}))
+		return
+	}
+	metric := chi.URLParam(r, "metric")
+	if !IsValidMetric(metric) {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMetric", map[string]string{
+			"metric": metric,
+			"reason": "must be one of: objects, storage, requests",
+		}))
+		return
+	}
+	var req addUsageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	fired, err := h.manager.RecordUsage(r.Context(), tenant, metric, req.Delta)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("TenantUsageRecordFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	rows, err := h.manager.MonthlyUsageFor(r.Context(), tenant)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("TenantUsageLookupFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if rows == nil {
+		rows = []*MonthlyUsage{}
+	}
+	if fired == nil {
+		fired = []Alert{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, addUsageResponse{Usage: rows, Fired: fired})
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {

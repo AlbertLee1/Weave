@@ -2,7 +2,9 @@ package tenants
 
 import (
 	"context"
+	"log"
 	"sync"
+	"time"
 
 	"golang.org/x/time/rate"
 
@@ -38,6 +40,15 @@ type Manager struct {
 
 	mu       sync.RWMutex
 	limiters map[string]*rate.Limiter
+
+	// US-438 billing + alerting hooks. Optional — a Manager built
+	// without these still throttles QPS / object / storage at 100% via
+	// the existing Check* gates, but does not record usage or fire
+	// crossing notifications.
+	usage    UsageStore
+	alerts   AlertStore
+	notifier UsageNotifier
+	clock    func() time.Time
 }
 
 // NewManager returns a Manager wired to store. Pass nil to build a
@@ -47,7 +58,62 @@ func NewManager(store Store) *Manager {
 	return &Manager{
 		store:    store,
 		limiters: make(map[string]*rate.Limiter),
+		clock:    time.Now,
 	}
+}
+
+// WithUsageStore attaches the per-tenant monthly usage counter store.
+// Returns m for chaining. nil is safe — the manager continues to skip
+// usage tracking, RecordUsage becomes a no-op.
+func (m *Manager) WithUsageStore(s UsageStore) *Manager {
+	if m == nil {
+		return nil
+	}
+	m.usage = s
+	return m
+}
+
+// WithAlertStore attaches the dedup ledger. Without an alert store the
+// notifier fires on every threshold crossing (no dedup); the production
+// wiring always pairs WithAlertStore + WithNotifier.
+func (m *Manager) WithAlertStore(s AlertStore) *Manager {
+	if m == nil {
+		return nil
+	}
+	m.alerts = s
+	return m
+}
+
+// WithNotifier attaches the side-effect surface invoked when a fresh
+// alert is recorded. Without a notifier wired the alert is recorded in
+// the ledger but no notification fires. Returns m for chaining.
+func (m *Manager) WithNotifier(n UsageNotifier) *Manager {
+	if m == nil {
+		return nil
+	}
+	m.notifier = n
+	return m
+}
+
+// SetClock overrides the wall-clock used to derive the current
+// calendar month for usage/alert writes. Tests inject a fixed clock so
+// month rollover behaviour is reproducible. Production wiring should
+// not call this — the default time.Now is correct.
+func (m *Manager) SetClock(now func() time.Time) {
+	if m == nil || now == nil {
+		return
+	}
+	m.clock = now
+}
+
+// Now returns the manager's wall-clock instant, defaulting to time.Now
+// when SetClock was never called. Exposed so unit tests on derived
+// helpers can inspect the same clock.
+func (m *Manager) Now() time.Time {
+	if m == nil || m.clock == nil {
+		return time.Now()
+	}
+	return m.clock()
 }
 
 // CheckQPS returns true iff the tenant is allowed to make one more
@@ -150,4 +216,171 @@ func WithManager(ctx context.Context, mgr *Manager) context.Context {
 func ManagerFromContext(ctx context.Context) *Manager {
 	m, _ := ctx.Value(managerContextKey{}).(*Manager)
 	return m
+}
+
+// ----------------------------------------------------------------------
+// US-438 — usage + alerting helpers.
+// ----------------------------------------------------------------------
+
+// RecordUsage atomically increments the monthly usage counter for
+// (tenant, metric) by delta and evaluates threshold crossings. Returns
+// the alerts that fired on this call (newly-recorded only — already-
+// notified thresholds in the same calendar month return nothing).
+//
+// Empty tenant, nil receiver, missing UsageStore → silent no-op.
+// Unknown metric returns an error WITHOUT incrementing — the caller
+// would otherwise silently drop the metric on a typo.
+//
+// Per-store atomicity: AddUsage runs first; threshold evaluation reads
+// the post-increment value. Two concurrent RecordUsage calls that both
+// cross a threshold race cleanly because the AlertStore.RecordAlert
+// dedup is the single source of truth for "did anyone fire this alert
+// already this month".
+func (m *Manager) RecordUsage(ctx context.Context, tenant, metric string, delta int64) ([]Alert, error) {
+	if m == nil || m.usage == nil || tenant == "" {
+		return nil, nil
+	}
+	if !IsValidMetric(metric) {
+		return nil, errInvalidMetric{metric: metric}
+	}
+	month := MonthStart(m.Now())
+	if err := m.usage.AddUsage(ctx, tenant, month, metric, delta); err != nil {
+		return nil, err
+	}
+	return m.evaluateMetric(ctx, tenant, metric, month)
+}
+
+// EvaluateThresholds re-checks every metric for the tenant and fires
+// any pending alert without changing the recorded usage. Used by the
+// admin "force a sweep" surface and by the periodic monthly sweep job
+// so a freshly-loaded quota row doesn't have to wait for the next
+// AddUsage call to surface the alert.
+func (m *Manager) EvaluateThresholds(ctx context.Context, tenant string) ([]Alert, error) {
+	if m == nil || m.usage == nil || tenant == "" {
+		return nil, nil
+	}
+	month := MonthStart(m.Now())
+	out := []Alert{}
+	for _, metric := range ValidMetrics {
+		fired, err := m.evaluateMetric(ctx, tenant, metric, month)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, fired...)
+	}
+	return out, nil
+}
+
+// IsBlocked reports whether the tenant is currently at or above the
+// 100% cap for the named metric. Returns false on missing store / nil
+// receiver / empty tenant / unconfigured cap so the call site can
+// short-circuit gracefully — same "absence of explicit cap means
+// unlimited" contract the existing Check* helpers use.
+func (m *Manager) IsBlocked(ctx context.Context, tenant, metric string) bool {
+	if m == nil || m.usage == nil || m.store == nil || tenant == "" {
+		return false
+	}
+	if !IsValidMetric(metric) {
+		return false
+	}
+	q, err := m.store.GetQuota(ctx, tenant)
+	if err != nil || q == nil {
+		return false
+	}
+	cap := QuotaForMetric(q, metric)
+	if cap <= 0 {
+		return false
+	}
+	month := MonthStart(m.Now())
+	rows, err := m.usage.GetMonthlyUsage(ctx, tenant, month)
+	if err != nil {
+		return false
+	}
+	for _, r := range rows {
+		if r.Metric == metric {
+			return r.Amount >= cap
+		}
+	}
+	return false
+}
+
+// MonthlyUsageFor returns the per-metric MonthlyUsage rows for the
+// supplied tenant in the manager's current calendar month. nil store
+// → empty slice. Caps reflect the live tenant_quotas row.
+func (m *Manager) MonthlyUsageFor(ctx context.Context, tenant string) ([]*MonthlyUsage, error) {
+	if m == nil || m.usage == nil || tenant == "" {
+		return nil, nil
+	}
+	return m.usage.GetMonthlyUsage(ctx, tenant, MonthStart(m.Now()))
+}
+
+// errInvalidMetric is the typed error RecordUsage returns when the
+// caller passes an unknown metric — exposes the rejected name so the
+// HTTP layer can put it on the wire.
+type errInvalidMetric struct {
+	metric string
+}
+
+func (e errInvalidMetric) Error() string {
+	return "tenants: unknown metric " + e.metric
+}
+
+// evaluateMetric inspects (tenant, metric) post-increment and fires the
+// 80% / 100% alerts as needed. Each crossing is recorded through the
+// AlertStore for dedup so even a thrashing usage counter that crosses
+// the threshold many times in a month notifies once.
+func (m *Manager) evaluateMetric(ctx context.Context, tenant, metric string, month time.Time) ([]Alert, error) {
+	if m == nil || m.usage == nil {
+		return nil, nil
+	}
+	rows, err := m.usage.GetMonthlyUsage(ctx, tenant, month)
+	if err != nil {
+		return nil, err
+	}
+	var current *MonthlyUsage
+	for _, r := range rows {
+		if r.Metric == metric {
+			current = r
+			break
+		}
+	}
+	if current == nil {
+		return nil, nil
+	}
+	if current.Cap <= 0 {
+		return nil, nil
+	}
+	monthKey := FormatMonth(month)
+	fired := []Alert{}
+	for _, threshold := range AlertThresholds {
+		if current.Percent < threshold {
+			continue
+		}
+		alert := Alert{
+			Tenant:    tenant,
+			Month:     monthKey,
+			Metric:    metric,
+			Threshold: threshold,
+			Amount:    current.Amount,
+			Cap:       current.Cap,
+			Percent:   current.Percent,
+		}
+		if m.alerts != nil {
+			fresh, err := m.alerts.RecordAlert(ctx, alert)
+			if err != nil {
+				return fired, err
+			}
+			if !fresh {
+				continue
+			}
+		}
+		if m.notifier != nil {
+			if err := m.notifier.NotifyUsageAlert(ctx, alert); err != nil {
+				log.Printf("[TENANT-USAGE-ALERT] notifier failed tenant=%s metric=%s threshold=%d err=%v",
+					tenant, metric, threshold, err)
+			}
+		}
+		fired = append(fired, alert)
+	}
+	return fired, nil
 }

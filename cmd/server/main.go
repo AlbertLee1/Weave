@@ -1806,6 +1806,19 @@ func main() {
 		// authenticated request.
 		deps.TenantQuotaStore = newPGTenantQuotaStore(pool)
 		deps.TenantQuotaManager = tenants.NewManager(deps.TenantQuotaStore)
+		// US-438: per-tenant monthly usage tracking + 80%/100% alerts.
+		// The dispatcherUsageNotifier routes alerts through the same
+		// US-429 Dispatcher the activity fan-out wires later (the
+		// dispatcher itself is constructed below); WEAVE_TENANT_ALERT_RECIPIENTS
+		// is a CSV of operator user IDs that receive the broadcast.
+		// Empty recipients → fall through to LogUsageNotifier so alerts
+		// always land in the server log even on minimal deployments.
+		usageStore := newPGTenantUsageStore(pool)
+		alertStore := newPGTenantAlertStore(pool)
+		deps.TenantQuotaManager.
+			WithUsageStore(usageStore).
+			WithAlertStore(alertStore).
+			WithNotifier(buildTenantUsageNotifier(pool, deps.UserRepo, os.Getenv("WEAVE_TENANT_ALERT_RECIPIENTS")))
 
 		// US-279: AIP Threads + LLM provider registry. The PG store
 		// powers the /api/v2/aip/threads/* CRUD endpoints; the registry
@@ -2600,6 +2613,7 @@ func main() {
 					log.Printf("[notifications] fanout error: %v", err)
 				}
 			}
+
 		})
 
 		// US-261: marking inheritance via LinkType.PropagateMarkings. The
