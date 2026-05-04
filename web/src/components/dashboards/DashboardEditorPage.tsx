@@ -6,74 +6,44 @@ import {
   updateDashboard,
   type Dashboard,
 } from '../../api/dashboards';
+import { ChartView } from './widgets/ChartView';
+import { StatView } from './widgets/StatView';
+import { MapView } from './widgets/MapView';
+import type {
+  Widget,
+  WidgetType,
+  TextWidget,
+  ChartWidget,
+  TableWidget,
+  StatWidget,
+  MapWidget,
+  ChartType,
+  StatTrend,
+  WidgetDataSource,
+} from './widgets/types';
 
-// US-327 Dashboard Editor + US-328 Widget Library + US-329 Save/Share.
+// US-327 Dashboard Editor + US-328 Widget Library + US-329 Save/Share
+// + US-428 Widget Library Completion (real chart/stat/map renderers and
+// ObjectSet / Aggregation data binding — see widgets/ subfolder).
+//
 // PRD asked for react-grid-layout; the lib isn't installed and depends on
 // react-resizable + react-draggable (~80KB) which would be the only consumer.
 // Following the US-324/US-325/US-326 pattern (and learning #209 in
 // progress.txt) — when the proposed lib is uninstalled and would add a heavy
 // dep that's only used here, we ship a small native HTML5 DnD layout instead.
 //
-// Widget types live inline as a discriminated union; each type owns a small
-// display + config sub-component and a sensible default-factory.
-//
-// Persistence (US-329): the editor accepts an optional `id` prop. When set,
-// the matching dashboard is loaded on mount; Save then PUTs back to the same
-// row. When absent, Save POSTs a new row and notifies the host via onSaved
-// (the App.tsx route wrapper translates this into a navigation to
-// /dashboards/{id} so the URL becomes a shareable link).
+// Same logic for US-428: PRD asked for echarts; the codebase already
+// standardised on uplot for time-series and inline SVG for small charts
+// (see TimeSeriesChart + the dashboards/widgets/ChartView.tsx renderer).
+// Adding echarts (~500 KB) for 8-bucket categorical charts would dwarf
+// everything else in the bundle, so the new ChartView ships hand-rolled
+// SVG line / bar / pie renderers instead.
 
 const COLUMN_COUNT = 12;
 const DEFAULT_W = 4;
 const DEFAULT_H = 2;
 const ROW_HEIGHT_PX = 60;
 const DND_MIME = 'application/x-weave-dashboard';
-
-type ChartType = 'bar' | 'line' | 'pie';
-type StatTrend = 'up' | 'down' | 'neutral';
-
-interface BaseWidget {
-  id: string;
-  title: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-interface TextWidget extends BaseWidget {
-  type: 'text';
-  content: string;
-}
-
-interface ChartWidget extends BaseWidget {
-  type: 'chart';
-  chartType: ChartType;
-  values: number[];
-}
-
-interface TableWidget extends BaseWidget {
-  type: 'table';
-  columns: string[];
-  rows: string[][];
-}
-
-interface StatWidget extends BaseWidget {
-  type: 'stat';
-  value: string;
-  label: string;
-  trend: StatTrend;
-}
-
-interface MapWidget extends BaseWidget {
-  type: 'map';
-  latitude: number;
-  longitude: number;
-  zoom: number;
-}
-
-type Widget = TextWidget | ChartWidget | TableWidget | StatWidget | MapWidget;
-type WidgetType = Widget['type'];
 
 type DragKind = 'move' | 'resize';
 
@@ -693,13 +663,13 @@ function WidgetDisplay({ widget }: { widget: Widget }) {
     case 'text':
       return <TextDisplay widget={widget} />;
     case 'chart':
-      return <ChartDisplay widget={widget} />;
+      return <ChartView widget={widget} />;
     case 'table':
       return <TableDisplay widget={widget} />;
     case 'stat':
-      return <StatDisplay widget={widget} />;
+      return <StatView widget={widget} />;
     case 'map':
-      return <MapDisplay widget={widget} />;
+      return <MapView widget={widget} />;
   }
 }
 
@@ -793,36 +763,6 @@ function TextConfig({
   );
 }
 
-function ChartDisplay({ widget }: { widget: ChartWidget }) {
-  const max = widget.values.length === 0 ? 0 : Math.max(...widget.values, 0);
-  return (
-    <div
-      data-testid="dashboard-widget-chart"
-      data-chart-type={widget.chartType}
-      data-chart-values={widget.values.join(',')}
-      className="w-full h-full flex items-end justify-around gap-1"
-    >
-      {widget.values.length === 0 && (
-        <span className="text-text-secondary italic text-xs self-center">
-          No values
-        </span>
-      )}
-      {widget.values.map((v, i) => {
-        const ratio = max > 0 ? Math.max(0.05, v / max) : 0.05;
-        return (
-          <div
-            key={i}
-            data-testid="dashboard-widget-chart-bar"
-            className="flex-1 bg-accent-primary/70 rounded-sm"
-            style={{ height: `${Math.round(ratio * 100)}%`, minHeight: 2 }}
-            title={String(v)}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
 function ChartConfig({
   widget,
   onPatch,
@@ -861,6 +801,10 @@ function ChartConfig({
           className={monoInputClass}
         />
       </label>
+      <DataSourceConfig
+        source={widget.dataSource}
+        onChange={(dataSource) => onPatch({ dataSource })}
+      />
     </div>
   );
 }
@@ -940,32 +884,6 @@ function TableConfig({
   );
 }
 
-function StatDisplay({ widget }: { widget: StatWidget }) {
-  const trendSymbol =
-    widget.trend === 'up' ? '▲' : widget.trend === 'down' ? '▼' : '—';
-  const trendClass =
-    widget.trend === 'up'
-      ? 'text-accent-success'
-      : widget.trend === 'down'
-        ? 'text-accent-error'
-        : 'text-text-secondary';
-  return (
-    <div
-      data-testid="dashboard-widget-stat"
-      data-stat-trend={widget.trend}
-      className="w-full h-full flex flex-col items-center justify-center text-center"
-    >
-      <div className="text-2xl font-semibold text-text-primary">
-        {widget.value}
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-text-secondary mt-1">
-        {widget.label}
-      </div>
-      <div className={`text-xs mt-1 ${trendClass}`}>{trendSymbol}</div>
-    </div>
-  );
-}
-
 function StatConfig({
   widget,
   onPatch,
@@ -1012,24 +930,22 @@ function StatConfig({
           <option value="down">down</option>
         </select>
       </label>
-    </div>
-  );
-}
-
-function MapDisplay({ widget }: { widget: MapWidget }) {
-  return (
-    <div
-      data-testid="dashboard-widget-map"
-      data-map-lat={widget.latitude}
-      data-map-lng={widget.longitude}
-      data-map-zoom={widget.zoom}
-      className="w-full h-full flex items-center justify-center bg-bg-secondary/40 text-xs font-mono text-text-secondary relative"
-    >
-      <span className="absolute top-1 left-1">
-        {widget.latitude.toFixed(4)}, {widget.longitude.toFixed(4)} · z
-        {widget.zoom}
-      </span>
-      <span className="text-base text-accent-primary">📍</span>
+      <label className={labelClass}>
+        Sparkline (comma-separated)
+        <input
+          data-testid="dashboard-widget-stat-sparkline-input"
+          type="text"
+          defaultValue={(widget.sparkline ?? []).join(', ')}
+          onChange={(e) =>
+            onPatch({ sparkline: parseValuesInput(e.target.value) })
+          }
+          className={monoInputClass}
+        />
+      </label>
+      <DataSourceConfig
+        source={widget.dataSource}
+        onChange={(dataSource) => onPatch({ dataSource })}
+      />
     </div>
   );
 }
@@ -1089,6 +1005,162 @@ function MapConfig({
           className={monoInputClass}
         />
       </label>
+      <label className={labelClass}>
+        GeoJSON (optional)
+        <textarea
+          data-testid="dashboard-widget-map-geojson-input"
+          defaultValue={
+            widget.geojson === undefined
+              ? ''
+              : typeof widget.geojson === 'string'
+                ? widget.geojson
+                : JSON.stringify(widget.geojson)
+          }
+          onChange={(e) => {
+            const raw = e.target.value.trim();
+            if (raw === '') {
+              onPatch({ geojson: undefined });
+              return;
+            }
+            try {
+              onPatch({ geojson: JSON.parse(raw) });
+            } catch {
+              // Keep the raw string so the user can edit a partial paste
+              // without losing it; the runtime parser handles strings too.
+              onPatch({ geojson: raw });
+            }
+          }}
+          rows={3}
+          className={monoInputClass}
+        />
+      </label>
     </div>
+  );
+}
+
+// US-428: shared data-source picker for chart and stat widgets. Map widgets
+// currently bind to a static GeoJSON literal — leaflet shape data is too
+// heterogeneous to fit the same `metric / property / groupBy` shape.
+function DataSourceConfig({
+  source,
+  onChange,
+}: {
+  source: WidgetDataSource | undefined;
+  onChange: (next: WidgetDataSource | undefined) => void;
+}) {
+  const kind = source?.kind ?? 'inline';
+  const agg =
+    source && source.kind === 'aggregation'
+      ? source
+      : {
+          kind: 'aggregation' as const,
+          ontology: '',
+          objectType: '',
+          metric: 'count' as const,
+        };
+  return (
+    <fieldset
+      data-testid="dashboard-widget-data-source"
+      data-source-kind={kind}
+      className="border border-border/60 rounded p-2 mt-1"
+    >
+      <legend className={`${labelClass} px-1`}>Data Source</legend>
+      <label className={labelClass}>
+        Source
+        <select
+          data-testid="dashboard-widget-data-source-kind"
+          value={kind}
+          onChange={(e) => {
+            if (e.target.value === 'inline') {
+              onChange(undefined);
+            } else {
+              onChange({ ...agg });
+            }
+          }}
+          className={inputClass}
+        >
+          <option value="inline">Inline values</option>
+          <option value="aggregation">Aggregation</option>
+        </select>
+      </label>
+      {kind === 'aggregation' && (
+        <div className="grid grid-cols-2 gap-2 mt-2">
+          <label className={labelClass}>
+            Ontology
+            <input
+              data-testid="dashboard-widget-data-source-ontology"
+              type="text"
+              value={agg.ontology}
+              onChange={(e) =>
+                onChange({ ...agg, ontology: e.target.value })
+              }
+              className={monoInputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            Object Type
+            <input
+              data-testid="dashboard-widget-data-source-object-type"
+              type="text"
+              value={agg.objectType}
+              onChange={(e) =>
+                onChange({ ...agg, objectType: e.target.value })
+              }
+              className={monoInputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            Metric
+            <select
+              data-testid="dashboard-widget-data-source-metric"
+              value={agg.metric}
+              onChange={(e) =>
+                onChange({
+                  ...agg,
+                  metric: e.target.value as typeof agg.metric,
+                })
+              }
+              className={inputClass}
+            >
+              <option value="count">count</option>
+              <option value="sum">sum</option>
+              <option value="avg">avg</option>
+              <option value="min">min</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <label className={labelClass}>
+            Property
+            <input
+              data-testid="dashboard-widget-data-source-property"
+              type="text"
+              value={agg.property ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...agg,
+                  property: e.target.value || undefined,
+                })
+              }
+              className={monoInputClass}
+            />
+          </label>
+          <label className={`${labelClass} col-span-2`}>
+            Group By
+            <input
+              data-testid="dashboard-widget-data-source-group-by"
+              type="text"
+              value={agg.groupBy ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...agg,
+                  groupBy: e.target.value || undefined,
+                })
+              }
+              className={monoInputClass}
+            />
+          </label>
+        </div>
+      )}
+    </fieldset>
   );
 }

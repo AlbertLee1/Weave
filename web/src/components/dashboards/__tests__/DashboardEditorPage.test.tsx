@@ -23,6 +23,21 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('../../../api/dashboards', () => apiMocks);
 
+// US-428: stub the aggregation API the new widget data-source binding
+// dispatches against. Tests that don't bind a data source never reach
+// the mock; the default rejection keeps misuse loud.
+const aggMocks = vi.hoisted(() => ({
+  aggregate: vi.fn(),
+}));
+
+vi.mock('../../../api/aggregation', () => aggMocks);
+
+// react-leaflet reaches into leaflet's runtime at module-load. Stub it so
+// the editor test suite doesn't require a real map surface.
+vi.mock('../widgets/MapViewLeaflet', () => ({
+  default: () => null,
+}));
+
 import { DashboardEditorPage } from '../DashboardEditorPage';
 
 // jsdom doesn't fully model DataTransfer; supply a minimal stub so drag events
@@ -102,6 +117,8 @@ beforeEach(() => {
   apiMocks.deleteDashboard.mockReset();
   apiMocks.listDashboards.mockResolvedValue({ dashboards: [] });
   apiMocks.getDashboard.mockRejectedValue(new Error('not configured'));
+  aggMocks.aggregate.mockReset();
+  aggMocks.aggregate.mockRejectedValue(new Error('not configured'));
 });
 
 describe('DashboardEditorPage', () => {
@@ -541,5 +558,221 @@ describe('DashboardEditorPage widget library (US-328)', () => {
       target: { value: 'dash-a' },
     });
     expect(onSaved).toHaveBeenCalledWith('dash-a');
+  });
+});
+
+// US-428: real chart / stat / map renderers + ObjectSet / Aggregation
+// data binding.
+describe('DashboardEditorPage US-428 widget renderers', () => {
+  it('renders bar chart as SVG rects (one per value)', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const chart = screen.getByTestId('dashboard-widget-chart');
+    expect(within(chart).getByTestId('dashboard-widget-chart-svg')).toBeInTheDocument();
+    const bars = within(chart).getAllByTestId('dashboard-widget-chart-bar');
+    // Default chart has 5 values.
+    expect(bars).toHaveLength(5);
+  });
+
+  it('renders line chart as an SVG path with one circle per value', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-chart-type-select'),
+      { target: { value: 'line' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    const chart = within(widget).getByTestId('dashboard-widget-chart');
+    expect(chart).toHaveAttribute('data-chart-type', 'line');
+    expect(within(chart).getByTestId('dashboard-widget-chart-line')).toBeInTheDocument();
+    expect(
+      within(chart).getAllByTestId('dashboard-widget-chart-point'),
+    ).toHaveLength(5);
+  });
+
+  it('renders pie chart with one slice per non-zero value', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-chart-type-select'),
+      { target: { value: 'pie' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-chart-values-input'),
+      { target: { value: '10, 0, 30, 60' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    const slices = within(widget).getAllByTestId('dashboard-widget-chart-slice');
+    expect(slices).toHaveLength(3);
+  });
+
+  it('renders stat sparkline when configured', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-stat-sparkline-input'),
+      { target: { value: '1, 2, 3, 4, 5' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    const spark = within(widget).getByTestId('dashboard-widget-stat-sparkline');
+    expect(spark).toHaveAttribute('data-spark-values', '1,2,3,4,5');
+  });
+
+  it('omits sparkline when fewer than 2 values are configured', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    const widget = screen.getByTestId('dashboard-widget');
+    expect(
+      within(widget).queryByTestId('dashboard-widget-stat-sparkline'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('persists GeoJSON on the map widget', () => {
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-map'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-map-geojson-input'),
+      {
+        target: {
+          value:
+            '{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]}}',
+        },
+      },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    const map = within(widget).getByTestId('dashboard-widget-map');
+    expect(map).toHaveAttribute('data-map-has-geojson', 'true');
+  });
+
+  it('binds the chart widget to a live aggregation result', async () => {
+    aggMocks.aggregate.mockResolvedValue({
+      data: [
+        { group: { country: 'US' }, metrics: { count: 12 } },
+        { group: { country: 'CN' }, metrics: { count: 8 } },
+        { group: { country: 'IN' }, metrics: { count: 5 } },
+      ],
+    });
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-kind'),
+      { target: { value: 'aggregation' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-ontology'),
+      { target: { value: 'crm' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-object-type'),
+      { target: { value: 'customer' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-group-by'),
+      { target: { value: 'country' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    await waitFor(() => {
+      const chart = within(widget).getByTestId('dashboard-widget-chart');
+      expect(chart).toHaveAttribute('data-chart-source', 'live');
+      expect(chart).toHaveAttribute('data-chart-status', 'ready');
+      expect(chart).toHaveAttribute('data-chart-values', '12,8,5');
+    });
+    expect(aggMocks.aggregate).toHaveBeenCalledWith(
+      'crm',
+      'customer',
+      expect.objectContaining({
+        aggregation: [expect.objectContaining({ type: 'count' })],
+        groupBy: [{ field: 'country', type: 'exact' }],
+      }),
+    );
+  });
+
+  it('renders the chart error state when the aggregation request fails', async () => {
+    aggMocks.aggregate.mockRejectedValue(new Error('boom'));
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-chart'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-kind'),
+      { target: { value: 'aggregation' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-ontology'),
+      { target: { value: 'crm' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-object-type'),
+      { target: { value: 'customer' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    await waitFor(() => {
+      const chart = within(widget).getByTestId('dashboard-widget-chart');
+      expect(chart).toHaveAttribute('data-chart-status', 'error');
+    });
+  });
+
+  it('binds the stat widget to the latest aggregation bucket value', async () => {
+    aggMocks.aggregate.mockResolvedValue({
+      data: [
+        { group: { day: '2026-04-30' }, metrics: { sum_revenue: 100 } },
+        { group: { day: '2026-05-01' }, metrics: { sum_revenue: 150 } },
+        { group: { day: '2026-05-02' }, metrics: { sum_revenue: 220 } },
+      ],
+    });
+    render(<DashboardEditorPage />);
+    fireEvent.click(screen.getByTestId('dashboard-widget-add-stat'));
+    const widget = screen.getByTestId('dashboard-widget');
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-kind'),
+      { target: { value: 'aggregation' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-ontology'),
+      { target: { value: 'crm' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-object-type'),
+      { target: { value: 'order' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-metric'),
+      { target: { value: 'sum' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-property'),
+      { target: { value: 'revenue' } },
+    );
+    fireEvent.change(
+      within(widget).getByTestId('dashboard-widget-data-source-group-by'),
+      { target: { value: 'day' } },
+    );
+    fireEvent.click(within(widget).getByTestId('dashboard-widget-configure'));
+
+    await waitFor(() => {
+      const stat = within(widget).getByTestId('dashboard-widget-stat');
+      expect(stat).toHaveAttribute('data-stat-source', 'live');
+      expect(within(stat).getByText('220')).toBeInTheDocument();
+      expect(
+        within(stat).getByTestId('dashboard-widget-stat-sparkline'),
+      ).toHaveAttribute('data-spark-values', '100,150,220');
+    });
   });
 });
