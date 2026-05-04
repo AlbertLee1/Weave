@@ -2,6 +2,7 @@ package actiontemplates
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,21 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 )
 
+// stubResolver is a TeammateResolver returning a fixed mate map for
+// tests that exercise Scope=TEAM.
+type stubResolver struct {
+	mates map[string][]string
+}
+
+func (s stubResolver) Teammates(_ context.Context, callerID string) ([]string, error) {
+	return s.mates[callerID], nil
+}
+
 func newTestRouter(store Store, user *auth.User) http.Handler {
+	return newTestRouterWithResolver(store, user, nil)
+}
+
+func newTestRouterWithResolver(store Store, user *auth.User, resolver TeammateResolver) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -23,7 +38,7 @@ func newTestRouter(store Store, user *auth.User) http.Handler {
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})
-	NewHandler(store).RegisterRoutes(r)
+	NewHandler(store).WithTeammateResolver(resolver).RegisterRoutes(r)
 	return r
 }
 
@@ -61,8 +76,8 @@ func TestHandler_CreateListGetUpdateDelete(t *testing.T) {
 	if created.Name != "Daily Reorder" || created.CreatedBy != alice.ID || created.ID == "" {
 		t.Fatalf("create returned wrong shape: %+v", created)
 	}
-	if created.Shared {
-		t.Fatalf("default shared should be false: %+v", created)
+	if created.Shared || created.Scope != ScopePrivate {
+		t.Fatalf("default scope should be PRIVATE: %+v", created)
 	}
 
 	// Duplicate (owner, actionType, name) → 409
@@ -99,6 +114,20 @@ func TestHandler_CreateListGetUpdateDelete(t *testing.T) {
 		t.Fatalf("empty actionType POST: want 400, got %d", w.Code)
 	}
 
+	// Invalid scope → 400
+	bad = mustEncode(t, map[string]any{
+		"name":       "InvalidScopeRow",
+		"ontology":   "main",
+		"actionType": "createOrder",
+		"scope":      "ORG",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/v2/action-templates", bytes.NewReader(bad))
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid scope POST: want 400, got %d", w.Code)
+	}
+
 	// LIST scoped — single result for the (main, createOrder) tuple
 	req = httptest.NewRequest(http.MethodGet, "/api/v2/action-templates?ontology=main&actionType=createOrder", nil)
 	w = httptest.NewRecorder()
@@ -122,9 +151,9 @@ func TestHandler_CreateListGetUpdateDelete(t *testing.T) {
 		t.Fatalf("GET single: want 200, got %d", w.Code)
 	}
 
-	// PUT rename + share
-	shareTrue := true
-	rename := mustEncode(t, map[string]any{"name": "Reorder", "shared": &shareTrue})
+	// PUT rename + flip to PUBLIC via explicit scope
+	publicScope := ScopePublic
+	rename := mustEncode(t, map[string]any{"name": "Reorder", "scope": &publicScope})
 	req = httptest.NewRequest(http.MethodPut, "/api/v2/action-templates/"+created.ID, bytes.NewReader(rename))
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -135,30 +164,30 @@ func TestHandler_CreateListGetUpdateDelete(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &renamed); err != nil {
 		t.Fatalf("decode renamed: %v", err)
 	}
-	if renamed.Name != "Reorder" || !renamed.Shared {
+	if renamed.Name != "Reorder" || renamed.Scope != ScopePublic || !renamed.Shared {
 		t.Fatalf("rename+share did not persist: %+v", renamed)
 	}
 
-	// Now bob can see the row (it's shared) but cannot mutate it.
+	// Now bob can see the row (it's PUBLIC) but cannot mutate it.
 	bobR := newTestRouter(store, &auth.User{ID: "user:bob"})
 	req = httptest.NewRequest(http.MethodGet, "/api/v2/action-templates/"+created.ID, nil)
 	w = httptest.NewRecorder()
 	bobR.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("shared GET (non-owner): want 200, got %d", w.Code)
+		t.Fatalf("public GET (non-owner): want 200, got %d", w.Code)
 	}
 	bobRename := mustEncode(t, map[string]any{"name": "Hijack"})
 	req = httptest.NewRequest(http.MethodPut, "/api/v2/action-templates/"+created.ID, bytes.NewReader(bobRename))
 	w = httptest.NewRecorder()
 	bobR.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("non-owner PUT on shared row: want 404, got %d", w.Code)
+		t.Fatalf("non-owner PUT on public row: want 404, got %d", w.Code)
 	}
 	req = httptest.NewRequest(http.MethodDelete, "/api/v2/action-templates/"+created.ID, nil)
 	w = httptest.NewRecorder()
 	bobR.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("non-owner DELETE on shared row: want 404, got %d", w.Code)
+		t.Fatalf("non-owner DELETE on public row: want 404, got %d", w.Code)
 	}
 
 	// Cross-user access on a private row → 404 (id leak protection)
@@ -206,12 +235,40 @@ func TestHandler_CreateListGetUpdateDelete(t *testing.T) {
 	}
 }
 
+func TestHandler_LegacySharedField(t *testing.T) {
+	// US-320 SDK clients still POST `shared:true` without `scope` —
+	// the handler must map that to PUBLIC.
+	store := NewMemoryStore()
+	alice := &auth.User{ID: "user:alice"}
+	r := newTestRouter(store, alice)
+
+	body := mustEncode(t, map[string]any{
+		"name":       "Legacy Shared",
+		"ontology":   "main",
+		"actionType": "createOrder",
+		"shared":     true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/action-templates", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("legacy POST: want 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	var created Template
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Scope != ScopePublic || !created.Shared {
+		t.Fatalf("legacy shared=true should map to PUBLIC: %+v", created)
+	}
+}
+
 func TestHandler_ListVisibilityIncludesShared(t *testing.T) {
 	store := NewMemoryStore()
 	alice := &auth.User{ID: "user:alice"}
 	bob := &auth.User{ID: "user:bob"}
 
-	// alice creates a private template; bob creates a shared one.
+	// alice creates a private template; bob creates a PUBLIC one.
 	aR := newTestRouter(store, alice)
 	bR := newTestRouter(store, bob)
 	aliceBody := mustEncode(t, map[string]any{
@@ -225,10 +282,10 @@ func TestHandler_ListVisibilityIncludesShared(t *testing.T) {
 		t.Fatalf("alice POST: %d", w.Code)
 	}
 	bobBody := mustEncode(t, map[string]any{
-		"name":       "Bob Shared",
+		"name":       "Bob Public",
 		"ontology":   "main",
 		"actionType": "createOrder",
-		"shared":     true,
+		"scope":      "PUBLIC",
 	})
 	w = httptest.NewRecorder()
 	bR.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v2/action-templates", bytes.NewReader(bobBody)))
@@ -236,7 +293,7 @@ func TestHandler_ListVisibilityIncludesShared(t *testing.T) {
 		t.Fatalf("bob POST: %d", w.Code)
 	}
 
-	// Alice sees both rows in the list (her own + bob's shared).
+	// Alice sees both rows in the list (her own + bob's PUBLIC).
 	w = httptest.NewRecorder()
 	aR.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v2/action-templates?ontology=main&actionType=createOrder", nil))
 	var lr listResponse
@@ -247,14 +304,65 @@ func TestHandler_ListVisibilityIncludesShared(t *testing.T) {
 		t.Fatalf("alice list: want 2 rows, got %d (%+v)", len(lr.ActionTemplates), lr.ActionTemplates)
 	}
 
-	// Bob sees only his shared row (alice's is private to her).
+	// Bob sees only his PUBLIC row (alice's is private to her).
 	w = httptest.NewRecorder()
 	bR.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v2/action-templates?ontology=main&actionType=createOrder", nil))
 	if err := json.Unmarshal(w.Body.Bytes(), &lr); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(lr.ActionTemplates) != 1 || lr.ActionTemplates[0].Name != "Bob Shared" {
-		t.Fatalf("bob list: want 1 (Bob Shared), got %+v", lr.ActionTemplates)
+	if len(lr.ActionTemplates) != 1 || lr.ActionTemplates[0].Name != "Bob Public" {
+		t.Fatalf("bob list: want 1 (Bob Public), got %+v", lr.ActionTemplates)
+	}
+}
+
+func TestHandler_TeamScopeUsesResolver(t *testing.T) {
+	store := NewMemoryStore()
+	alice := &auth.User{ID: "user:alice"}
+	bob := &auth.User{ID: "user:bob"}
+	carol := &auth.User{ID: "user:carol"}
+
+	resolver := stubResolver{mates: map[string][]string{
+		"user:bob": {"user:alice"}, // bob shares a group with alice
+	}}
+
+	aR := newTestRouterWithResolver(store, alice, resolver)
+	bR := newTestRouterWithResolver(store, bob, resolver)
+	cR := newTestRouterWithResolver(store, carol, resolver)
+
+	// Alice creates a TEAM-scoped row.
+	body := mustEncode(t, map[string]any{
+		"name":       "Team Run",
+		"ontology":   "main",
+		"actionType": "createOrder",
+		"scope":      "TEAM",
+	})
+	w := httptest.NewRecorder()
+	aR.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v2/action-templates", bytes.NewReader(body)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("alice POST: %d (%s)", w.Code, w.Body.String())
+	}
+	var row Template
+	_ = json.Unmarshal(w.Body.Bytes(), &row)
+
+	// Bob (teammate) sees the row.
+	w = httptest.NewRecorder()
+	bR.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v2/action-templates/"+row.ID, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("teammate GET: want 200, got %d", w.Code)
+	}
+
+	// Carol (no shared group) does not.
+	w = httptest.NewRecorder()
+	cR.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v2/action-templates/"+row.ID, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("non-teammate GET: want 404, got %d", w.Code)
+	}
+
+	// Carol cannot mutate.
+	w = httptest.NewRecorder()
+	cR.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v2/action-templates/"+row.ID, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("non-teammate DELETE: want 404, got %d", w.Code)
 	}
 }
 

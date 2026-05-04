@@ -1,6 +1,7 @@
 package actiontemplates
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,16 @@ import (
 	"github.com/liyang/weave/pkg/httputil"
 )
 
+// TeammateResolver resolves the set of user ids who share at least
+// one auth.Group with the supplied caller. Used by the handler to
+// build a Visibility before delegating to Store. nil resolver means
+// "single-user deployment / no group memberships wired" — TEAM-scoped
+// rows from other owners stay invisible, mirroring the degraded-mode
+// shape used elsewhere in the codebase.
+type TeammateResolver interface {
+	Teammates(ctx context.Context, callerID string) ([]string, error)
+}
+
 // Handler implements the /api/v2/action-templates/* CRUD endpoints.
 //
 //	GET    /api/v2/action-templates?ontology=&actionType=
@@ -24,17 +35,27 @@ import (
 //	PUT    /api/v2/action-templates/{id}
 //	DELETE /api/v2/action-templates/{id}
 //
-// Read endpoints honour the row's `shared` flag; write endpoints
-// (POST/PUT/DELETE) are always owner-only. Cross-owner private
-// lookups surface as 404 ActionTemplateNotFound to avoid leaking ids.
+// Read endpoints honour the row's Scope (PRIVATE | TEAM | PUBLIC);
+// write endpoints (POST/PUT/DELETE) are always owner-only. Cross-
+// owner private lookups surface as 404 ActionTemplateNotFound to
+// avoid leaking ids.
 type Handler struct {
-	store Store
+	store     Store
+	teammates TeammateResolver
 }
 
 // NewHandler constructs a Handler. nil store leaves every endpoint
 // reporting ActionTemplatesUnavailable so degraded-mode test routers
 // (no PG) can keep their /api/v2 prefix mounted without 500s.
 func NewHandler(store Store) *Handler { return &Handler{store: store} }
+
+// WithTeammateResolver wires the resolver responsible for translating
+// a caller id into the set of group-mates used to evaluate
+// Scope=TEAM. Returns the receiver for fluent wiring at boot.
+func (h *Handler) WithTeammateResolver(r TeammateResolver) *Handler {
+	h.teammates = r
+	return h
+}
 
 // RegisterRoutes mounts every endpoint on r.
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -66,11 +87,30 @@ func (h *Handler) requireStore(w http.ResponseWriter) bool {
 	return true
 }
 
+// visibilityFor builds the per-request Visibility — the caller is
+// always self-visible; teammates are resolved through the optional
+// TeammateResolver. A resolver error degrades to "no teammates" so a
+// transient lookup failure can't widen visibility but also can't
+// 5xx an otherwise-healthy List.
+func (h *Handler) visibilityFor(ctx context.Context, callerID string) Visibility {
+	vis := Visibility{CallerID: callerID}
+	if h.teammates == nil {
+		return vis
+	}
+	mates, err := h.teammates.Teammates(ctx, callerID)
+	if err != nil {
+		return vis
+	}
+	vis.Teammates = mates
+	return vis
+}
+
 type createRequest struct {
 	Name       string          `json:"name"`
 	Ontology   string          `json:"ontology"`
 	ActionType string          `json:"actionType"`
-	Shared     bool            `json:"shared"`
+	Shared     *bool           `json:"shared,omitempty"`
+	Scope      string          `json:"scope,omitempty"`
 	Parameters json.RawMessage `json:"parameters"`
 }
 
@@ -78,10 +118,24 @@ type updateRequest struct {
 	Name       *string          `json:"name,omitempty"`
 	Parameters *json.RawMessage `json:"parameters,omitempty"`
 	Shared     *bool            `json:"shared,omitempty"`
+	Scope      *string          `json:"scope,omitempty"`
 }
 
 type listResponse struct {
 	ActionTemplates []*Template `json:"actionTemplates"`
+}
+
+// resolveScope picks the canonical scope from the wire shape: an
+// explicit Scope wins, otherwise the legacy boolean is mapped, else
+// PRIVATE. Wire-format errors surface as InvalidActionTemplateScope.
+func resolveScope(rawScope string, shared *bool) (string, error) {
+	if strings.TrimSpace(rawScope) != "" {
+		return NormaliseScope(rawScope)
+	}
+	if shared != nil {
+		return ScopeFromShared(*shared), nil
+	}
+	return ScopePrivate, nil
 }
 
 // Create POST /api/v2/action-templates.
@@ -111,6 +165,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	scope, err := resolveScope(req.Scope, req.Shared)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidActionTemplateScope", map[string]string{
+			"reason": err.Error(),
+			"scope":  req.Scope,
+		}))
+		return
+	}
 	params := req.Parameters
 	if len(params) == 0 {
 		params = json.RawMessage("{}")
@@ -122,7 +184,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Ontology:   req.Ontology,
 		ActionType: req.ActionType,
 		CreatedBy:  user.ID,
-		Shared:     req.Shared,
+		Scope:      scope,
+		Shared:     SharedFromScope(scope),
 		Parameters: params,
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -140,7 +203,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	stored, err := h.store.Get(r.Context(), row.ID, user.ID)
+	vis := h.visibilityFor(r.Context(), user.ID)
+	stored, err := h.store.Get(r.Context(), row.ID, vis)
 	if err != nil {
 		stored = row
 	}
@@ -155,7 +219,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	ontology := r.URL.Query().Get("ontology")
 	actionType := r.URL.Query().Get("actionType")
-	rows, err := h.store.List(r.Context(), user.ID, ontology, actionType)
+	vis := h.visibilityFor(r.Context(), user.ID)
+	rows, err := h.store.List(r.Context(), vis, ontology, actionType)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ActionTemplateListFailed", map[string]string{
 			"reason": err.Error(),
@@ -175,7 +240,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	row, err := h.store.Get(r.Context(), id, user.ID)
+	vis := h.visibilityFor(r.Context(), user.ID)
+	row, err := h.store.Get(r.Context(), id, vis)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ActionTemplateNotFound", map[string]string{"id": id}))
@@ -218,6 +284,17 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Parameters != nil {
 		upd.Parameters = req.Parameters
 	}
+	if req.Scope != nil {
+		normalised, err := NormaliseScope(*req.Scope)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidActionTemplateScope", map[string]string{
+				"reason": err.Error(),
+				"scope":  *req.Scope,
+			}))
+			return
+		}
+		upd.Scope = &normalised
+	}
 	if req.Shared != nil {
 		upd.Shared = req.Shared
 	}
@@ -239,7 +316,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	row, err := h.store.Get(r.Context(), id, user.ID)
+	vis := h.visibilityFor(r.Context(), user.ID)
+	row, err := h.store.Get(r.Context(), id, vis)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ActionTemplateLookupFailed", map[string]string{
 			"reason": err.Error(),

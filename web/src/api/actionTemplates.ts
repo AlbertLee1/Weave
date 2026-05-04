@@ -6,12 +6,20 @@ import { request } from './client';
 // evolve the parameter shape without a schema change.
 export type ActionParameters = Record<string, unknown>;
 
+// US-427: action templates are visible at three discrete levels.
+// PRIVATE = owner only; TEAM = anyone sharing an auth.Group with the
+// owner; PUBLIC = any authenticated user. The legacy `shared`
+// boolean is kept on the wire for v1 SDK compatibility and is the
+// projection `scope !== 'PRIVATE'`.
+export type ActionTemplateScope = 'PRIVATE' | 'TEAM' | 'PUBLIC';
+
 export interface ActionTemplate {
   id: string;
   name: string;
   ontology: string;
   actionType: string;
   createdBy: string;
+  scope: ActionTemplateScope;
   shared: boolean;
   parameters: ActionParameters;
   createdAt: string;
@@ -44,6 +52,10 @@ export interface CreateActionTemplateInput {
   name: string;
   ontology: string;
   actionType: string;
+  scope?: ActionTemplateScope;
+  // Legacy boolean retained for callers still on the US-320 wire.
+  // When `scope` is supplied it wins; otherwise `shared:true` maps to
+  // PUBLIC and `shared:false` (or absent) to PRIVATE.
   shared?: boolean;
   parameters: ActionParameters;
 }
@@ -57,6 +69,7 @@ export function createActionTemplate(
 export interface UpdateActionTemplateInput {
   id: string;
   name?: string;
+  scope?: ActionTemplateScope;
   shared?: boolean;
   parameters?: ActionParameters;
 }

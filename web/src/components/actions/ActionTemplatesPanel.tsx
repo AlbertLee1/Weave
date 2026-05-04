@@ -3,10 +3,12 @@ import {
   useActionTemplates,
   useCreateActionTemplate,
   useDeleteActionTemplate,
+  useUpdateActionTemplate,
 } from '../../hooks/useActionTemplates';
 import type {
   ActionParameters,
   ActionTemplate,
+  ActionTemplateScope,
 } from '../../api/actionTemplates';
 import { Modal } from '../common/Modal';
 import { useToastStore } from '../../stores/toastStore';
@@ -24,10 +26,40 @@ interface ActionTemplatesPanelProps {
   // is expected to apply the parameters to its own form state.
   onLoad: (parameters: ActionParameters) => void;
   // Optional currently-authenticated user id; rows whose createdBy
-  // matches gain a delete affordance, others render as read-only
-  // shared-by-someone-else entries.
+  // matches gain a delete + scope-edit affordance, others render as
+  // read-only entries shared by another user.
   currentUserId?: string;
 }
+
+const SCOPE_OPTIONS: Array<{ value: ActionTemplateScope; label: string; help: string }> = [
+  {
+    value: 'PRIVATE',
+    label: 'Private',
+    help: 'Only you can see this template.',
+  },
+  {
+    value: 'TEAM',
+    label: 'Team',
+    help: 'Anyone sharing a group with you can see this template.',
+  },
+  {
+    value: 'PUBLIC',
+    label: 'Public',
+    help: 'Anyone signed in can see this template.',
+  },
+];
+
+const SCOPE_BADGE_CLASS: Record<ActionTemplateScope, string> = {
+  PRIVATE: 'text-text-muted',
+  TEAM: 'text-accent-amber',
+  PUBLIC: 'text-accent-cyan',
+};
+
+const SCOPE_BADGE_LABEL: Record<ActionTemplateScope, string> = {
+  PRIVATE: 'private',
+  TEAM: 'team',
+  PUBLIC: 'public',
+};
 
 export function ActionTemplatesPanel({
   ontology,
@@ -39,17 +71,18 @@ export function ActionTemplatesPanel({
 }: ActionTemplatesPanelProps) {
   const { data: rows = [], isLoading } = useActionTemplates({ ontology, actionType });
   const createMutation = useCreateActionTemplate();
+  const updateMutation = useUpdateActionTemplate();
   const deleteMutation = useDeleteActionTemplate();
   const pushToast = useToastStore((s) => s.push);
 
   const [saveOpen, setSaveOpen] = useState(false);
   const [name, setName] = useState('');
-  const [shared, setShared] = useState(false);
+  const [scope, setScope] = useState<ActionTemplateScope>('PRIVATE');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const openSaveDialog = useCallback(() => {
     setName('');
-    setShared(false);
+    setScope('PRIVATE');
     setErrorMessage(null);
     setSaveOpen(true);
   }, []);
@@ -72,7 +105,7 @@ export function ActionTemplatesPanel({
           name: trimmed,
           ontology,
           actionType,
-          shared,
+          scope,
           parameters: currentParameters,
         });
         setSaveOpen(false);
@@ -86,7 +119,7 @@ export function ActionTemplatesPanel({
         setErrorMessage(reason);
       }
     },
-    [actionType, createMutation, currentParameters, name, ontology, pushToast, shared],
+    [actionType, createMutation, currentParameters, name, ontology, pushToast, scope],
   );
 
   const handleLoad = useCallback(
@@ -119,6 +152,31 @@ export function ActionTemplatesPanel({
       });
     },
     [deleteMutation, pushToast],
+  );
+
+  const handleScopeChange = useCallback(
+    (row: ActionTemplate, nextScope: ActionTemplateScope) => {
+      if (row.scope === nextScope) {
+        return;
+      }
+      updateMutation.mutate(
+        { id: row.id, scope: nextScope },
+        {
+          onSuccess: (saved) => {
+            pushToast({
+              message: `Scope set to ${SCOPE_BADGE_LABEL[saved.scope]}`,
+              severity: 'success',
+              ttlMs: 3000,
+            });
+          },
+          onError: (err) => {
+            const reason = err instanceof Error ? err.message : 'Failed to update scope';
+            pushToast({ message: reason, severity: 'error', ttlMs: 4000 });
+          },
+        },
+      );
+    },
+    [pushToast, updateMutation],
   );
 
   return (
@@ -158,6 +216,8 @@ export function ActionTemplatesPanel({
         <ul className="flex flex-col gap-1">
           {rows.map((row) => {
             const isOwner = !!currentUserId && row.createdBy === currentUserId;
+            const scopeLabel = SCOPE_BADGE_LABEL[row.scope] ?? 'private';
+            const scopeClass = SCOPE_BADGE_CLASS[row.scope] ?? '';
             return (
               <li
                 key={row.id}
@@ -176,10 +236,19 @@ export function ActionTemplatesPanel({
                   }
                 >
                   {row.name}
-                  {row.shared && (
+                  {row.scope !== 'PRIVATE' && (
+                    <span
+                      data-testid={`action-template-scope-badge-${row.id}`}
+                      className={`ml-2 text-[10px] uppercase tracking-wider ${scopeClass}`}
+                    >
+                      {scopeLabel}
+                    </span>
+                  )}
+                  {row.scope === 'PUBLIC' && (
                     <span
                       data-testid={`action-template-shared-badge-${row.id}`}
-                      className="ml-2 text-[10px] uppercase tracking-wider text-accent-cyan"
+                      className="hidden"
+                      aria-hidden="true"
                     >
                       shared
                     </span>
@@ -190,6 +259,23 @@ export function ActionTemplatesPanel({
                     </span>
                   )}
                 </button>
+                {isOwner && (
+                  <select
+                    value={row.scope}
+                    onChange={(e) =>
+                      handleScopeChange(row, e.target.value as ActionTemplateScope)
+                    }
+                    aria-label={`Scope for ${row.name}`}
+                    data-testid={`action-template-scope-select-${row.id}`}
+                    className="text-[10px] font-mono bg-transparent border border-border rounded px-1 py-0.5 text-text-secondary hover:text-text-primary focus:outline-none focus:border-accent-cyan"
+                  >
+                    {SCOPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {isOwner && (
                   <button
                     type="button"
@@ -224,17 +310,34 @@ export function ActionTemplatesPanel({
               className="px-2 py-1 rounded border border-border bg-bg-secondary text-xs font-mono text-text-primary outline-none focus:border-accent-cyan"
             />
           </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={shared}
-              onChange={(e) => setShared(e.target.checked)}
-              data-testid="action-template-shared-input"
-            />
-            <span className="text-xs font-mono text-text-secondary">
-              Share with other users (read-only)
-            </span>
-          </label>
+          <fieldset
+            className="flex flex-col gap-1"
+            data-testid="action-template-scope-fieldset"
+          >
+            <legend className="text-xs font-mono uppercase tracking-wider text-text-secondary">
+              Visibility
+            </legend>
+            {SCOPE_OPTIONS.map((opt) => (
+              <label
+                key={opt.value}
+                className="flex items-start gap-2 px-2 py-1 rounded border border-transparent hover:border-border cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="action-template-scope"
+                  value={opt.value}
+                  checked={scope === opt.value}
+                  onChange={() => setScope(opt.value)}
+                  data-testid={`action-template-scope-input-${opt.value}`}
+                  className="mt-0.5"
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs font-mono text-text-primary">{opt.label}</span>
+                  <span className="text-[10px] font-mono text-text-muted">{opt.help}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
           {errorMessage && (
             <p
               role="alert"

@@ -34,6 +34,7 @@ const OWN_ROW: ActionTemplate = {
   ontology: 'main',
   actionType: 'createOrder',
   createdBy: 'user:alice',
+  scope: 'PRIVATE',
   shared: false,
   parameters: { qty: 1, sku: 'WIDGET' },
   createdAt: '2026-04-28T00:00:00Z',
@@ -46,8 +47,22 @@ const SHARED_ROW: ActionTemplate = {
   ontology: 'main',
   actionType: 'createOrder',
   createdBy: 'user:bob',
+  scope: 'PUBLIC',
   shared: true,
   parameters: { qty: 5 },
+  createdAt: '2026-04-28T00:00:00Z',
+  updatedAt: '2026-04-28T00:00:00Z',
+};
+
+const TEAM_ROW: ActionTemplate = {
+  id: 'tmpl-3',
+  name: 'Team Reorder',
+  ontology: 'main',
+  actionType: 'createOrder',
+  createdBy: 'user:bob',
+  scope: 'TEAM',
+  shared: true,
+  parameters: { qty: 10 },
   createdAt: '2026-04-28T00:00:00Z',
   updatedAt: '2026-04-28T00:00:00Z',
 };
@@ -83,7 +98,7 @@ describe('ActionTemplatesPanel', () => {
 
   it('renders own + shared rows; loading delivers parameters to onLoad', async () => {
     vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
-      actionTemplates: [OWN_ROW, SHARED_ROW],
+      actionTemplates: [OWN_ROW, SHARED_ROW, TEAM_ROW],
     });
     const onLoad = vi.fn();
     renderWithProviders(
@@ -102,8 +117,13 @@ describe('ActionTemplatesPanel', () => {
     expect(
       screen.queryByTestId(`action-template-delete-${OWN_ROW.id}`),
     ).toBeInTheDocument();
+    // Private row gets no scope badge.
+    expect(
+      screen.queryByTestId(`action-template-scope-badge-${OWN_ROW.id}`),
+    ).toBeNull();
 
-    // Shared row: load button visible, delete button hidden (non-owner).
+    // Shared (PUBLIC) row: load button visible, delete button hidden, scope
+    // badge says "public".
     expect(
       screen.getByTestId(`action-template-load-${SHARED_ROW.id}`),
     ).toBeInTheDocument();
@@ -111,8 +131,13 @@ describe('ActionTemplatesPanel', () => {
       screen.queryByTestId(`action-template-delete-${SHARED_ROW.id}`),
     ).toBeNull();
     expect(
-      screen.getByTestId(`action-template-shared-badge-${SHARED_ROW.id}`),
-    ).toBeInTheDocument();
+      screen.getByTestId(`action-template-scope-badge-${SHARED_ROW.id}`),
+    ).toHaveTextContent('public');
+
+    // TEAM row badge says "team".
+    expect(
+      screen.getByTestId(`action-template-scope-badge-${TEAM_ROW.id}`),
+    ).toHaveTextContent('team');
 
     // Click load on a shared row → onLoad gets bob's parameters.
     fireEvent.click(screen.getByTestId(`action-template-load-${SHARED_ROW.id}`));
@@ -137,7 +162,7 @@ describe('ActionTemplatesPanel', () => {
     expect(btn).toBeDisabled();
   });
 
-  it('save flow opens dialog, posts to API with shared flag', async () => {
+  it('save flow opens dialog, posts to API with selected scope', async () => {
     vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
       actionTemplates: [],
     });
@@ -145,6 +170,7 @@ describe('ActionTemplatesPanel', () => {
       ...OWN_ROW,
       id: 'tmpl-3',
       name: 'Express',
+      scope: 'TEAM',
       shared: true,
     };
     const createSpy = vi
@@ -169,9 +195,9 @@ describe('ActionTemplatesPanel', () => {
     await act(async () => {
       fireEvent.change(nameInput, { target: { value: 'Express' } });
     });
-    const sharedCheckbox = screen.getByTestId('action-template-shared-input');
+    const teamRadio = screen.getByTestId('action-template-scope-input-TEAM');
     await act(async () => {
-      fireEvent.click(sharedCheckbox);
+      fireEvent.click(teamRadio);
     });
 
     const confirm = screen.getByTestId('action-template-confirm');
@@ -184,9 +210,38 @@ describe('ActionTemplatesPanel', () => {
       name: 'Express',
       ontology: 'main',
       actionType: 'createOrder',
-      shared: true,
+      scope: 'TEAM',
       parameters: { qty: 2 },
     });
+  });
+
+  it('owner can change scope inline via select', async () => {
+    vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
+      actionTemplates: [OWN_ROW],
+    });
+    const updated: ActionTemplate = { ...OWN_ROW, scope: 'PUBLIC', shared: true };
+    const updateSpy = vi.spyOn(api, 'updateActionTemplate').mockResolvedValue(updated);
+
+    renderWithProviders(
+      <ActionTemplatesPanel
+        ontology="main"
+        actionType="createOrder"
+        currentParameters={{}}
+        hasCurrentState={false}
+        onLoad={() => {}}
+        currentUserId="user:alice"
+      />,
+    );
+
+    const select = await screen.findByTestId(
+      `action-template-scope-select-${OWN_ROW.id}`,
+    );
+    await act(async () => {
+      fireEvent.change(select, { target: { value: 'PUBLIC' } });
+    });
+    await waitFor(() =>
+      expect(updateSpy).toHaveBeenCalledWith({ id: OWN_ROW.id, scope: 'PUBLIC' }),
+    );
   });
 
   it('delete button calls API after window.confirm true', async () => {
@@ -235,6 +290,9 @@ describe('ActionTemplatesPanel', () => {
     await screen.findByTestId(`action-template-load-${OWN_ROW.id}`);
     expect(
       screen.queryByTestId(`action-template-delete-${OWN_ROW.id}`),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId(`action-template-scope-select-${OWN_ROW.id}`),
     ).toBeNull();
   });
 });

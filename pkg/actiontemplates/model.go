@@ -1,13 +1,21 @@
 // Package actiontemplates implements per-user named parameter
-// templates for the Action Console (US-320). Templates capture a
-// {parameterId: value} map keyed by ontology + actionType apiName, so
-// the user can recall previously-used parameter sets without retyping
-// them.
+// templates for the Action Console (US-320, extended in US-427).
+// Templates capture a {parameterId: value} map keyed by ontology +
+// actionType apiName, so the user can recall previously-used
+// parameter sets without retyping them.
 //
-// Each row carries a `shared` flag: private templates are visible
-// only to their creator; shared templates are visible to anyone who
-// can read the parent action type. Update/Delete are always
-// owner-only — `shared` widens read access, never write access.
+// Each row carries a 3-state Scope (PRIVATE | TEAM | PUBLIC):
+//
+//   - PRIVATE: only the creator can read.
+//   - TEAM:    creator + any user who shares at least one
+//              auth.Group with the creator can read.
+//   - PUBLIC:  any authenticated user can read.
+//
+// Update/Delete are always owner-only — Scope widens read access,
+// never write access. The legacy boolean Shared (US-320) is preserved
+// in the wire shape and derived from Scope: Shared == (Scope !=
+// "PRIVATE"). On write, callers may supply either dimension; if both
+// are absent the row is private.
 package actiontemplates
 
 import (
@@ -15,6 +23,14 @@ import (
 	"errors"
 	"strings"
 	"time"
+)
+
+// Scope values. Stored verbatim in the action_parameter_templates.scope
+// column under a CHECK constraint enforced by migration 000101.
+const (
+	ScopePrivate = "PRIVATE"
+	ScopeTeam    = "TEAM"
+	ScopePublic  = "PUBLIC"
 )
 
 // Template is the wire + DB shape for a persisted parameter template.
@@ -29,6 +45,7 @@ type Template struct {
 	Ontology   string          `json:"ontology"`
 	ActionType string          `json:"actionType"`
 	CreatedBy  string          `json:"createdBy"`
+	Scope      string          `json:"scope"`
 	Shared     bool            `json:"shared"`
 	Parameters json.RawMessage `json:"parameters"`
 	CreatedAt  time.Time       `json:"createdAt"`
@@ -39,10 +56,15 @@ type Template struct {
 // existing value; non-nil overwrites. Identity columns
 // (id/ontology/actionType/createdBy) are not mutable — moving a
 // template across action types creates a new row.
+//
+// Both Scope and Shared are accepted on the wire for backwards
+// compatibility with US-320 clients. When Scope is provided it wins;
+// otherwise Shared is mapped (true→PUBLIC, false→PRIVATE).
 type Update struct {
 	Name       *string          `json:"name,omitempty"`
 	Parameters *json.RawMessage `json:"parameters,omitempty"`
 	Shared     *bool            `json:"shared,omitempty"`
+	Scope      *string          `json:"scope,omitempty"`
 }
 
 // MaxNameLength bounds the name on both create and update so the
@@ -72,4 +94,35 @@ func ValidateScope(ontology, actionType string) error {
 		return errors.New("actionType must not be empty")
 	}
 	return nil
+}
+
+// NormaliseScope maps wire input to the canonical uppercase Scope
+// constant. Unknown values surface as an error so an SDK client never
+// silently downgrades to PRIVATE.
+func NormaliseScope(raw string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "", ScopePrivate:
+		return ScopePrivate, nil
+	case ScopeTeam:
+		return ScopeTeam, nil
+	case ScopePublic:
+		return ScopePublic, nil
+	default:
+		return "", errors.New("scope must be PRIVATE, TEAM, or PUBLIC")
+	}
+}
+
+// ScopeFromShared maps the legacy boolean to the canonical Scope:
+// shared=TRUE → PUBLIC, shared=FALSE → PRIVATE.
+func ScopeFromShared(shared bool) string {
+	if shared {
+		return ScopePublic
+	}
+	return ScopePrivate
+}
+
+// SharedFromScope is the inverse projection used to keep the legacy
+// boolean visible in the wire response.
+func SharedFromScope(scope string) bool {
+	return scope != ScopePrivate
 }

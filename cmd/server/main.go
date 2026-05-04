@@ -1384,9 +1384,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 
 		// US-320: Action parameter templates per-user CRUD. Same
 		// degraded-mode shape as saved searches — the SPA hides the
-		// templates panel when the list endpoint 404s.
+		// templates panel when the list endpoint 404s. US-427 widened
+		// visibility to a 3-state Scope (PRIVATE | TEAM | PUBLIC); the
+		// TEAM scope resolves group-mates through GroupRepo when wired.
 		if deps.ActionTemplatesStore != nil {
-			actiontemplates.NewHandler(deps.ActionTemplatesStore).RegisterRoutes(api)
+			h := actiontemplates.NewHandler(deps.ActionTemplatesStore)
+			if deps.GroupRepo != nil {
+				h.WithTeammateResolver(newGroupTeammateResolver(deps.GroupRepo))
+			}
+			h.RegisterRoutes(api)
 		}
 
 		// US-329: Dashboards per-user CRUD with optional public
