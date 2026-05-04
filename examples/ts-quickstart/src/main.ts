@@ -1,69 +1,25 @@
-// Weave TypeScript quickstart — a 5 minute hello-world.
+// Weave TypeScript OSDK quickstart — a 5 minute hello-world.
 //
-// Talks to a local Weave server over its REST API using the global `fetch`
-// (Node 18+ / modern browsers / Deno / Bun). No SDK package required —
-// once you've gotten a feel for the API, generate a fully-typed SDK with
-// `weave-cli sdk gen --lang ts --ontology <api-name>` for richer ergonomics.
+// Demonstrates the OSDK's four typed clients (Object / Action / Function /
+// Subscribe). The OSDK is deliberately self-contained — uses the global
+// `fetch` (Node 18+ / modern browsers / Deno / Bun), no extra deps.
 
-interface Ontology {
-  apiName: string;
-  displayName: string;
+import { WeaveClient } from './client.js';
+import type { ObjectRow } from './openapi.js';
+
+interface CustomerRow extends ObjectRow {
+  __primaryKey?: string;
+  companyName?: string;
 }
 
-interface ObjectType {
-  apiName: string;
-  displayName: string;
-}
-
-interface ObjectPage {
-  data: Array<Record<string, unknown>>;
-  nextPageToken?: string;
-}
-
-interface ListResponse<T> {
-  data: T[];
-  nextPageToken?: string;
-}
-
-const BASE_URL = process.env.WEAVE_BASE_URL ?? 'http://localhost:9117';
-const TOKEN = process.env.WEAVE_TOKEN;
-
-async function api<T>(path: string): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (TOKEN) headers['Authorization'] = `Bearer ${TOKEN}`;
-  const res = await fetch(`${BASE_URL}${path}`, { headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Weave ${res.status}: ${body || res.statusText}`);
-  }
-  return (await res.json()) as T;
-}
-
-async function listOntologies(): Promise<Ontology[]> {
-  const resp = await api<ListResponse<Ontology>>('/api/v2/ontologies');
-  return resp.data;
-}
-
-async function listObjectTypes(ontology: string): Promise<ObjectType[]> {
-  const resp = await api<ListResponse<ObjectType>>(
-    `/api/v2/ontologies/${encodeURIComponent(ontology)}/objectTypes`,
-  );
-  return resp.data;
-}
-
-async function listObjects(
-  ontology: string,
-  objectType: string,
-  pageSize: number,
-): Promise<ObjectPage> {
-  return api<ObjectPage>(
-    `/api/v2/ontologies/${encodeURIComponent(ontology)}/objects/${encodeURIComponent(objectType)}?pageSize=${pageSize}`,
-  );
-}
+const baseUrl = process.env['WEAVE_BASE_URL'] ?? 'http://localhost:9117';
+const token = process.env['WEAVE_TOKEN'];
 
 async function main(): Promise<void> {
+  const client = new WeaveClient({ baseUrl, ...(token ? { token } : {}) });
+
   console.log('=== Ontologies ===');
-  const ontologies = await listOntologies();
+  const ontologies = await client.listOntologies();
   for (const o of ontologies) {
     console.log(`- ${o.apiName}\t${o.displayName}`);
   }
@@ -74,7 +30,7 @@ async function main(): Promise<void> {
 
   const ontology = ontologies[0]!.apiName;
   console.log(`=== Object types in ${ontology} ===`);
-  const types = await listObjectTypes(ontology);
+  const types = await client.objects.listObjectTypes(ontology);
   for (const t of types) {
     console.log(`- ${t.apiName}\t${t.displayName}`);
   }
@@ -82,13 +38,22 @@ async function main(): Promise<void> {
 
   const objectType = types[0]!.apiName;
   console.log(`=== First 5 ${objectType} ===`);
-  const page = await listObjects(ontology, objectType, 5);
+  const customers = client.objects.of<CustomerRow>(ontology, objectType);
+  const page = await customers.list({ pageSize: 5 });
   for (const row of page.data) {
     console.log(`- ${row['__primaryKey']}\t${JSON.stringify(row)}`);
   }
+
+  // Action / Function / Subscribe demos are commented out — they require
+  // ontology-specific names. Uncomment after generating fixtures.
+  //
+  //   await client.actions.apply(ontology, 'createOrder', { customerId: 'ALFKI' });
+  //   const top = await client.functions.execute(ontology, 'topProducts', { limit: 10 });
+  //   const sub = await client.subscribe.objects(ontology, { objectType });
+  //   for await (const evt of sub) console.log(evt.state, evt.object['__primaryKey']);
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

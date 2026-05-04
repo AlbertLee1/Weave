@@ -2,11 +2,20 @@
   "name": "weave-ts-quickstart",
   "version": "0.1.0",
   "private": true,
-  "description": "5-minute hello-world for the Weave REST API",
+  "description": "Weave TypeScript OSDK — typed Object/Action/Function/Subscribe clients in a 5-minute quickstart",
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "test": "tsc && node --test dist/__tests__/*.test.js",
     "start": "node --experimental-strip-types src/main.ts"
   },
   "devDependencies": {
