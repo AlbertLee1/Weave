@@ -1,6 +1,10 @@
 package masking
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/liyang/weave/pkg/masking/strategies"
+)
 
 // MaskStrategy is the US-376 wire-format strategy taxonomy
 // (REDACT | HASH | NULL | PARTIAL). It overlaps with the legacy MaskRule
@@ -79,23 +83,25 @@ func RuleFromStrategy(s MaskStrategy) MaskRule {
 
 // ApplyMaskStrategy rewrites value according to s. Unknown strategies pass
 // the value through unchanged so a stale cached policy never panics in
-// production. NULL collapses any non-nil input to nil.
+// production. NULL collapses any non-nil input to nil. The actual transform
+// implementations live in pkg/masking/strategies (US-433) — this function is
+// the strategy-taxonomy → algorithm dispatch shim.
 func ApplyMaskStrategy(s MaskStrategy, value interface{}) interface{} {
-	if s == MaskStrategyNull {
-		return nil
-	}
-	if value == nil {
-		return nil
-	}
+	return strategies.Apply(strategyToName(s), value)
+}
+
+func strategyToName(s MaskStrategy) strategies.Name {
 	switch s {
 	case MaskStrategyHash:
-		return hashValue(value)
+		return strategies.NameHash
 	case MaskStrategyRedact:
-		return "[REDACTED]"
+		return strategies.NameRedact
+	case MaskStrategyNull:
+		return strategies.NameNull
 	case MaskStrategyPartial:
-		return partialValue(value)
+		return strategies.NamePartial
 	default:
-		return value
+		return strategies.Name(s)
 	}
 }
 

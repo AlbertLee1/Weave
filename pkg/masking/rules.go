@@ -1,10 +1,7 @@
 package masking
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"strings"
+	"github.com/liyang/weave/pkg/masking/strategies"
 )
 
 // ApplyMaskRule returns the value rewritten according to rule. The transform
@@ -21,11 +18,11 @@ func ApplyMaskRule(rule MaskRule, value interface{}) interface{} {
 	}
 	switch rule {
 	case MaskRuleHash:
-		return hashValue(value)
+		return strategies.Hash(value)
 	case MaskRuleRedact:
-		return "[REDACTED]"
+		return strategies.Redact()
 	case MaskRulePartial:
-		return partialValue(value)
+		return strategies.Partial(value)
 	default:
 		return value
 	}
@@ -45,31 +42,4 @@ func ApplyTransforms(props map[string]interface{}, transforms map[string]MaskRul
 		}
 		props[k] = ApplyMaskRule(rule, props[k])
 	}
-}
-
-func hashValue(v interface{}) string {
-	s := toString(v)
-	sum := sha256.Sum256([]byte(s))
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-// partialValue reveals the first and last character of the value and replaces
-// everything in between with asterisks. Strings of length <= 2 get fully
-// masked so no source byte leaks. Non-string inputs are stringified first.
-func partialValue(v interface{}) interface{} {
-	s := toString(v)
-	if s == "" {
-		return ""
-	}
-	if len(s) <= 2 {
-		return strings.Repeat("*", len(s))
-	}
-	return s[:1] + strings.Repeat("*", len(s)-2) + s[len(s)-1:]
-}
-
-func toString(v interface{}) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return fmt.Sprint(v)
 }

@@ -53,8 +53,8 @@ func TestCellMask_TargetsSpecificInstance(t *testing.T) {
 		pk, _ := o.PrimaryKey.(string)
 		byPK[pk] = o.Properties
 	}
-	if got := byPK["emp1"]["name"]; got != "[REDACTED]" {
-		t.Fatalf("expected emp1.name=[REDACTED] for viewer, got %v", got)
+	if got := byPK["emp1"]["name"]; got != "***" {
+		t.Fatalf("expected emp1.name=*** for viewer, got %v", got)
 	}
 	// Other rows must be unaffected — cell mask is targeted.
 	if got, _ := byPK["emp2"]["name"].(string); got != "bob" {
@@ -216,15 +216,17 @@ func TestCellMask_ComposesWithColumnMask(t *testing.T) {
 		byPK[pk] = o.Properties
 	}
 	// emp1: cell mask wins (REDACT fully replaces the partial-masked value).
-	if got := byPK["emp1"]["name"]; got != "[REDACTED]" {
-		t.Fatalf("expected emp1.name=[REDACTED] (cell wins), got %v", got)
+	if got := byPK["emp1"]["name"]; got != "***" {
+		t.Fatalf("expected emp1.name=*** (cell wins), got %v", got)
 	}
-	// emp2: only column mask applies (partial "b*b" for "bob" → "b*b").
-	if got, _ := byPK["emp2"]["name"].(string); got != "b*b" {
-		t.Fatalf("expected emp2.name partial-mask 'b*b', got %v", got)
+	// emp2: only column mask applies. US-433 partial keeps first/last 2 chars,
+	// so "bob" (len 3) is fully masked to "***".
+	if got, _ := byPK["emp2"]["name"].(string); got != "***" {
+		t.Fatalf("expected emp2.name partial-mask '***' for 'bob' (<= 4 chars), got %v", got)
 	}
-	// emp3: only column mask applies (partial for "charlie" → "c*****e").
-	if got, _ := byPK["emp3"]["name"].(string); got != "c*****e" {
-		t.Fatalf("expected emp3.name partial-mask 'c*****e', got %v", got)
+	// emp3: only column mask applies. "charlie" (len 7) → "ch***ie" under
+	// the keep-first-and-last-2 rule.
+	if got, _ := byPK["emp3"]["name"].(string); got != "ch***ie" {
+		t.Fatalf("expected emp3.name partial-mask 'ch***ie', got %v", got)
 	}
 }

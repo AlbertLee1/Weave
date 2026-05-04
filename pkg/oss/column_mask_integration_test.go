@@ -120,8 +120,8 @@ func TestColumnMask_GetObjectMasked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetObject: %v", err)
 	}
-	if obj.Properties["age"] != "[REDACTED]" {
-		t.Fatalf("expected age=[REDACTED], got %v", obj.Properties["age"])
+	if obj.Properties["age"] != "***" {
+		t.Fatalf("expected age=***, got %v", obj.Properties["age"])
 	}
 	// Non-masked property unchanged.
 	if obj.Properties["name"] != "alice" {

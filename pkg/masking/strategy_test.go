@@ -66,11 +66,12 @@ func TestApplyMaskStrategy_HASH(t *testing.T) {
 }
 
 func TestApplyMaskStrategy_REDACTAndPARTIAL(t *testing.T) {
-	if got := ApplyMaskStrategy(MaskStrategyRedact, "anything"); got != "[REDACTED]" {
-		t.Fatalf("REDACT: expected [REDACTED], got %v", got)
+	// US-433: REDACT emits "***", PARTIAL keeps first/last 2 chars.
+	if got := ApplyMaskStrategy(MaskStrategyRedact, "anything"); got != "***" {
+		t.Fatalf("REDACT: expected ***, got %v", got)
 	}
-	if got := ApplyMaskStrategy(MaskStrategyPartial, "abcdefgh"); got != "a******h" {
-		t.Fatalf("PARTIAL: expected a******h, got %v", got)
+	if got := ApplyMaskStrategy(MaskStrategyPartial, "abcdefgh"); got != "ab****gh" {
+		t.Fatalf("PARTIAL: expected ab****gh, got %v", got)
 	}
 }
 

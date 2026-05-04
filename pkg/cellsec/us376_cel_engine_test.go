@@ -124,8 +124,9 @@ func TestUS376_AllFourStrategiesAppliedEndToEnd(t *testing.T) {
 			masking.MaskStrategyRedact,
 			"value",
 			func(t *testing.T, v interface{}) {
-				if v != "[REDACTED]" {
-					t.Fatalf("REDACT: expected [REDACTED], got %v", v)
+				// US-433: REDACT emits literal "***".
+				if v != "***" {
+					t.Fatalf("REDACT: expected ***, got %v", v)
 				}
 			},
 		},
@@ -155,8 +156,9 @@ func TestUS376_AllFourStrategiesAppliedEndToEnd(t *testing.T) {
 			masking.MaskStrategyPartial,
 			"abcdefgh",
 			func(t *testing.T, v interface{}) {
-				if v != "a******h" {
-					t.Fatalf("PARTIAL: expected a******h, got %v", v)
+				// US-433: PARTIAL keeps the first AND last TWO characters.
+				if v != "ab****gh" {
+					t.Fatalf("PARTIAL: expected ab****gh, got %v", v)
 				}
 			},
 		},

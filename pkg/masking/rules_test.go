@@ -27,8 +27,8 @@ func TestApplyMaskRule_Hash_NonString(t *testing.T) {
 
 func TestApplyMaskRule_Redact_String(t *testing.T) {
 	got := ApplyMaskRule(MaskRuleRedact, "secret")
-	if got != "[REDACTED]" {
-		t.Fatalf("redact: got %v, want [REDACTED]", got)
+	if got != "***" {
+		t.Fatalf("redact: got %v, want ***", got)
 	}
 }
 
@@ -46,12 +46,12 @@ func TestApplyMaskRule_Partial_Email(t *testing.T) {
 	if !ok {
 		t.Fatalf("partial: expected string, got %T", got)
 	}
-	// Keep first/last visible; mask the middle.
-	if !strings.HasPrefix(s, "a") {
-		t.Fatalf("partial: expected prefix 'a', got %q", s)
+	// US-433: keep the first AND last TWO characters visible; mask the middle.
+	if !strings.HasPrefix(s, "al") {
+		t.Fatalf("partial: expected prefix 'al', got %q", s)
 	}
-	if !strings.HasSuffix(s, "m") {
-		t.Fatalf("partial: expected suffix 'm' (last char of 'com'), got %q", s)
+	if !strings.HasSuffix(s, "om") {
+		t.Fatalf("partial: expected suffix 'om' (last 2 chars of 'com'), got %q", s)
 	}
 	if !strings.Contains(s, "*") {
 		t.Fatalf("partial: expected stars in middle, got %q", s)

@@ -220,8 +220,8 @@ func TestApplyTransforms_MutatesSpecifiedKeysOnly(t *testing.T) {
 	if props["name"] != "alice" {
 		t.Fatalf("name should be untouched, got %v", props["name"])
 	}
-	if props["ssn"] != "[REDACTED]" {
-		t.Fatalf("ssn should be redacted, got %v", props["ssn"])
+	if props["ssn"] != "***" {
+		t.Fatalf("ssn should be redacted to ***, got %v", props["ssn"])
 	}
 	if props["email"] == "alice@example.com" {
 		t.Fatalf("email should be partially masked")
