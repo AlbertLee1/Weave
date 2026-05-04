@@ -15,7 +15,7 @@ import (
 // extension installed (i.e. it is a `pgvector/pgvector:pg16` image or
 // equivalent). When false, the embedding tests skip themselves so the rest
 // of the integration suite remains green on plain `postgres:16-alpine`.
-func pgvectorAvailable(t *testing.T, repo *oms.PGRepository) bool {
+func pgvectorAvailable(t testing.TB, repo *oms.PGRepository) bool {
 	t.Helper()
 	// We use a sentinel insert and inspect the error message; this avoids
 	// poking at the pool internals or doing a separate `SELECT * FROM
@@ -194,9 +194,9 @@ func TestPGRepository_FindNearestNeighbors_OrderedByDistance(t *testing.T) {
 		pk  string
 		vec []float32
 	}{
-		{"close", linearVector(1536, 1.0, 0.001)},     // very close to query
-		{"middle", linearVector(1536, 0.5, 0.001)},    // middle distance
-		{"far", linearVector(1536, -1.0, 0.001)},      // opposite direction
+		{"close", linearVector(1536, 1.0, 0.001)},  // very close to query
+		{"middle", linearVector(1536, 0.5, 0.001)}, // middle distance
+		{"far", linearVector(1536, -1.0, 0.001)},   // opposite direction
 	}
 	for _, s := range seeds {
 		e := &oms.ObjectEmbedding{

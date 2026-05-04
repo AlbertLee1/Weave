@@ -20,7 +20,7 @@ type PGContainer struct {
 	Pool      *pgxpool.Pool
 }
 
-func StartPGContainer(t *testing.T) *PGContainer {
+func StartPGContainer(t testing.TB) *PGContainer {
 	t.Helper()
 	ctx := context.Background()
 

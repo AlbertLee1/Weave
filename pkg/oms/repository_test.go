@@ -14,7 +14,7 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 )
 
-func setupRepo(t *testing.T) *oms.PGRepository {
+func setupRepo(t testing.TB) *oms.PGRepository {
 	t.Helper()
 	pg := testutil.StartPGContainer(t)
 
@@ -301,7 +301,7 @@ func TestProperty_List(t *testing.T) {
 
 	for i, name := range []string{"id", "name", "email"} {
 		p := &oms.Property{
-			RID: "ri.ontology.main.property.p" + string(rune('1'+i)),
+			RID:           "ri.ontology.main.property.p" + string(rune('1'+i)),
 			ObjectTypeRID: ot.RID, APIName: name, BaseType: "string",
 			IsNullable: true, IsSearchable: true, IsSortable: true,
 		}
@@ -648,8 +648,8 @@ func TestInterface_Attach(t *testing.T) {
 	repo.CreateInterface(context.Background(), iface)
 
 	oti := &oms.ObjectTypeInterface{
-		ObjectTypeRID: ot.RID,
-		InterfaceRID:  iface.RID,
+		ObjectTypeRID:   ot.RID,
+		InterfaceRID:    iface.RID,
 		PropertyMapping: json.RawMessage(`{"latitude":"lat","longitude":"lng"}`),
 	}
 	err := repo.AttachInterface(context.Background(), oti)
