@@ -918,7 +918,7 @@
         "Tests pass"
       ],
       "priority": 60,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
