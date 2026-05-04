@@ -12,7 +12,6 @@ package sqlqueries
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,7 +19,10 @@ import (
 
 // ErrNotSelect is returned when a non-SELECT statement is submitted.
 // The handler maps this to the Foundry "failed" QueryStatus with the
-// "NonSelectQuery" failureReason.
+// "NonSelectQuery" failureReason. Retained for backward compatibility
+// with US-220 callers; new code should branch on the more granular
+// ValidateQuery sentinels (ErrEmptyQuery, ErrStackedStatement,
+// ErrForbiddenStatement, ErrSystemTableAccess) declared in safety.go.
 var ErrNotSelect = errors.New("only SELECT statements are allowed")
 
 // Engine executes a validated SQL query against the underlying store.
@@ -49,8 +51,8 @@ func NewPGEngine(pool *pgxpool.Pool) *PGEngine {
 
 // Execute runs the query inside a read-only transaction.
 func (e *PGEngine) Execute(ctx context.Context, query string) error {
-	if !IsSelectQuery(query) {
-		return ErrNotSelect
+	if err := ValidateQuery(query); err != nil {
+		return err
 	}
 	tx, err := e.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -68,42 +70,11 @@ func (e *PGEngine) Execute(ctx context.Context, query string) error {
 	return rows.Err()
 }
 
-// IsSelectQuery returns true when the query is a single read-only
-// SELECT (or WITH ... SELECT) statement. Anything else — INSERT, UPDATE,
-// DELETE, DDL, multi-statement, comment-prefixed injections — returns
-// false. Comparison is case-insensitive on the first non-whitespace
-// keyword and rejects any embedded ';' that would allow stacking a
-// second statement.
+// IsSelectQuery returns true when the query passes ValidateQuery — i.e.
+// a single read-only SELECT/WITH/VALUES/TABLE statement that does NOT
+// reference pg_* or information_schema.* system tables. Retained for
+// callers that just need a boolean verdict; new code should use
+// ValidateQuery directly to surface the specific failure sentinel.
 func IsSelectQuery(query string) bool {
-	q := strings.TrimSpace(query)
-	if q == "" {
-		return false
-	}
-	// Reject stacked statements. A trailing ';' is allowed only when no
-	// non-whitespace characters follow it.
-	if idx := strings.Index(q, ";"); idx >= 0 {
-		tail := strings.TrimSpace(q[idx+1:])
-		if tail != "" {
-			return false
-		}
-	}
-	upper := strings.ToUpper(q)
-	return hasKeywordPrefix(upper, "SELECT") || hasKeywordPrefix(upper, "WITH")
-}
-
-// hasKeywordPrefix returns true if s starts with kw and the next byte is
-// either absent or whitespace / '(' — preventing false positives like
-// "SELECTOR" being matched against "SELECT".
-func hasKeywordPrefix(s, kw string) bool {
-	if !strings.HasPrefix(s, kw) {
-		return false
-	}
-	if len(s) == len(kw) {
-		return true
-	}
-	switch s[len(kw)] {
-	case ' ', '\t', '\n', '\r', '(':
-		return true
-	}
-	return false
+	return ValidateQuery(query) == nil
 }

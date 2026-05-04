@@ -121,8 +121,26 @@ func TestExecute_RejectsStackedStatements(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("NonSelectQuery")) {
-		t.Fatalf("expected NonSelectQuery error, got %s", rec.Body.String())
+	if !bytes.Contains(rec.Body.Bytes(), []byte("StackedStatement")) {
+		t.Fatalf("expected StackedStatement error, got %s", rec.Body.String())
+	}
+	if engine.gotQuery != "" {
+		t.Fatalf("engine should not have been called, got %q", engine.gotQuery)
+	}
+}
+
+func TestExecute_RejectsSystemTableAccess(t *testing.T) {
+	engine := &fakeEngine{}
+	r := newRouter(engine)
+
+	rec := doPost(t, r, "/api/v2/sqlQueries/execute", map[string]interface{}{
+		"query": "SELECT * FROM pg_user",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("SystemTableAccess")) {
+		t.Fatalf("expected SystemTableAccess error, got %s", rec.Body.String())
 	}
 	if engine.gotQuery != "" {
 		t.Fatalf("engine should not have been called, got %q", engine.gotQuery)

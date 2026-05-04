@@ -67,9 +67,10 @@ func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !IsSelectQuery(body.Query) {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("NonSelectQuery", map[string]string{
-			"reason": "only single-statement SELECT queries are allowed",
+	if err := ValidateQuery(body.Query); err != nil {
+		code, reason := classifyValidationError(err)
+		apierror.WriteJSON(w, apierror.NewInvalidParameter(code, map[string]string{
+			"reason": reason,
 		}))
 		return
 	}
@@ -84,8 +85,15 @@ func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
 	queryID := newQueryID()
 	if err := h.engine.Execute(r.Context(), body.Query); err != nil {
 		reason := "ExecutionError"
-		if errors.Is(err, ErrNotSelect) {
+		switch {
+		case errors.Is(err, ErrNotSelect),
+			errors.Is(err, ErrForbiddenStatement),
+			errors.Is(err, ErrEmptyQuery):
 			reason = "NonSelectQuery"
+		case errors.Is(err, ErrStackedStatement):
+			reason = "StackedStatement"
+		case errors.Is(err, ErrSystemTableAccess):
+			reason = "SystemTableAccess"
 		}
 		httputil.WriteJSON(w, http.StatusOK, QueryStatus{
 			Type:          "failed",
@@ -109,4 +117,23 @@ func newQueryID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// classifyValidationError maps a ValidateQuery sentinel to the
+// (code, reason) pair returned by the Execute endpoint at the wire
+// level. Falls back to NonSelectQuery for any unrecognised input so a
+// future sentinel addition cannot leak a 500 to clients.
+func classifyValidationError(err error) (string, string) {
+	switch {
+	case errors.Is(err, ErrEmptyQuery):
+		return "MissingQuery", "query is empty"
+	case errors.Is(err, ErrStackedStatement):
+		return "StackedStatement", "stacked statements are not allowed"
+	case errors.Is(err, ErrSystemTableAccess):
+		return "SystemTableAccess", "queries against pg_* and information_schema are not allowed"
+	case errors.Is(err, ErrForbiddenStatement):
+		return "NonSelectQuery", "only single-statement SELECT queries are allowed"
+	default:
+		return "NonSelectQuery", "only single-statement SELECT queries are allowed"
+	}
 }
