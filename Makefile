@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update
 
 test: test-unit
 
@@ -11,6 +11,16 @@ test-integration:
 test-contract: ## Run Pact-style consumer-driven contract tests (US-362)
 	go test ./pkg/contract/... -count=1
 	go test ./cmd/server/ -run TestContract -count=1
+
+BENCH_TIME ?= 200ms
+
+bench: ## Run the US-441 perf regression suite and gate the result against bench/baseline.json
+	go test -bench='Benchmark.*_US441' -benchtime=$(BENCH_TIME) -run='^$$' ./bench/... 2>&1 \
+		| go run ./cmd/benchcheck -baseline bench/baseline.json -output bench/results.json
+
+bench-update: ## Re-record bench/baseline.json from a fresh run (use only when an intentional perf change is made)
+	go test -bench='Benchmark.*_US441' -benchtime=$(BENCH_TIME) -run='^$$' ./bench/... 2>&1 \
+		| go run ./cmd/benchcheck -update bench/baseline.json
 
 test-integration-phase6:
 	go test -tags integration ./test/integration/phase6/... -v

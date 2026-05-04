@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-05-04T22:37:55Z",
+  "thresholdRatio": 1.2,
+  "benchmarks": {
+    "BenchmarkAction_US441": {
+      "nsPerOp": 4756
+    },
+    "BenchmarkAggregate_US441": {
+      "nsPerOp": 661316
+    },
+    "BenchmarkFunction_US441": {
+      "nsPerOp": 67044
+    },
+    "BenchmarkIndex_US441": {
+      "nsPerOp": 11250
+    },
+    "BenchmarkLoad_US441": {
+      "nsPerOp": 346493
+    },
+    "BenchmarkMask_US441": {
+      "nsPerOp": 206.2
+    },
+    "BenchmarkRLS_US441": {
+      "nsPerOp": 43.79
+    },
+    "BenchmarkSearchAround_US441": {
+      "nsPerOp": 133177
+    }
+  }
+}

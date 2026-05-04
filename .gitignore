@@ -19,6 +19,9 @@ coverage.out
 coverage.html
 coverage.txt
 
+# Benchmark per-run artefacts (US-441) — bench/baseline.json IS checked in.
+bench/results.json
+
 # IDE
 .idea/
 .vscode/
