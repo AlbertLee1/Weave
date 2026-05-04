@@ -28,10 +28,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -72,7 +74,25 @@ type Config struct {
 	// resource attributes. ServiceName defaults to "weave".
 	ServiceName    string
 	ServiceVersion string
+
+	// SampleRate (US-439) is the head-based sampling probability for
+	// non-error / non-slow spans, in [0, 1]. 0 drops every span that
+	// is not force-sampled by the carve-outs; 1 keeps everything.
+	// Values outside [0, 1] are clamped. The zero value (0.0) is
+	// preserved verbatim so production deployments must opt in to
+	// full-fidelity tracing explicitly via WEAVE_TRACE_SAMPLE_RATE=1.
+	SampleRate float64
+
+	// SlowSpanThreshold (US-439) is the duration above which a span is
+	// force-sampled regardless of SampleRate. Zero disables the
+	// slow-span carve-out. Defaults to 1 second when wired through
+	// Init() with the zero value (matches PRD US-439 spec).
+	SlowSpanThreshold time.Duration
 }
+
+// DefaultSlowSpanThreshold is the SlowSpanThreshold value Init() applies
+// when the caller leaves the field zero. PRD US-439 fixes this at 1s.
+const DefaultSlowSpanThreshold = 1 * time.Second
 
 // noopShutdown is the shutdown function returned when tracing is disabled.
 // It exists so callers can always defer shutdown(ctx) without nil-checking.
@@ -133,12 +153,24 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		}
 	}
 
+	// US-439: defaultise the slow-span threshold so a config that leaves
+	// it zero still gets the PRD-spec 1s carve-out. SampleRate is NOT
+	// defaulted: the zero value is the explicit "drop everything except
+	// errors / slow requests" mode and is the recommended production
+	// setting. Operators must opt in to full-fidelity tracing.
+	slowThreshold := cfg.SlowSpanThreshold
+	if slowThreshold == 0 {
+		slowThreshold = DefaultSlowSpanThreshold
+	}
+
 	var exporter sdktrace.SpanExporter
 	switch exporterName {
 	case "none":
 		// Build a tracer provider with no exporter so spans are still
 		// generated (and observable to in-process processors) but never
-		// shipped anywhere.
+		// shipped anywhere. Still apply the sampling filter so callers
+		// that wire a recording processor downstream observe the same
+		// drop semantics as a production deployment.
 		tp := sdktrace.NewTracerProvider(sdktrace.WithResource(res))
 		otel.SetTracerProvider(tp)
 		installPropagator()
@@ -182,8 +214,16 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		return noopShutdown, fmt.Errorf("tracing: unknown exporter %q (want stdout|otlp|otlphttp|otlpgrpc|none)", exporterName)
 	}
 
+	// US-439: wrap the batch processor in the sampling filter so the
+	// SampleRate / slow-span / error-span rules apply uniformly. The
+	// batch processor itself is the canonical async exporter used in
+	// production; the sampling layer sits in front of it so dropped
+	// spans never enter the batch queue.
+	batcher := sdktrace.NewBatchSpanProcessor(exporter)
+	sampled := newSamplingProcessor(batcher, cfg.SampleRate, slowThreshold)
+
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		sdktrace.WithSpanProcessor(sampled),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
@@ -270,6 +310,14 @@ func HTTPMiddleware() func(http.Handler) http.Handler {
 				}
 			}
 			span.SetAttributes(attribute.String("http.status_code", strconv.Itoa(capture.status)))
+			// US-439: server errors (5xx) flip the span status to Error
+			// so the head-based sampler force-keeps them even at fractional
+			// SampleRate values. 4xx are client mistakes per OTel semantic
+			// conventions and intentionally stay at the default Unset
+			// status — they shouldn't dominate a low-rate trace stream.
+			if capture.status >= 500 {
+				span.SetStatus(codes.Error, http.StatusText(capture.status))
+			}
 		})
 	}
 }

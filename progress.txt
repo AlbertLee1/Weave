@@ -4074,3 +4074,25 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
   - `WEAVE_TENANT_ALERT_RECIPIENTS` is the env var the dispatcherUsageNotifier reads at boot (CSV of operator user IDs). Empty → fall through to `LogUsageNotifier`. Recipients receive the alert via the existing US-429 multi-channel registry (email/slack/webhook), routed through their `notification_preferences` rows — so an operator who never set up preferences silently no-ops at the dispatcher layer; the log line is the operator-of-last-resort signal.
   - `Manager.Now()` + `SetClock(now func() time.Time)` are the test seam for month rollover semantics. `TestManager_RecordUsage_MonthRollover_FiresAgainNextMonth` is the canonical witness that May's alerts and June's alerts are independent records — apply the same pattern when adding any "fires-once-per-month" surface in the future.
 ---
+
+## 2026-05-05 - US-439 Tracing 采样策略
+- Implemented head-based sampling with force-sample carve-outs for slow + error spans.
+- Added `pkg/tracing/sampler.go` (`samplingProcessor`) — wraps the configured `BatchSpanProcessor` and filters at `OnEnd`. Hot path is one uint64 compare against a precomputed threshold derived from `SampleRate`. Force-keeps spans whose `Status().Code == codes.Error` or whose duration exceeds `SlowSpanThreshold`. Rate clamps to `[0,1]`; negative threshold clamps to 0.
+- Wired `SampleRate float64` + `SlowSpanThreshold time.Duration` into `tracing.Config` and `Init()` via `sdktrace.WithSpanProcessor(newSamplingProcessor(batcher, ...))`. `DefaultSlowSpanThreshold = 1s` matches PRD spec; only applied when caller leaves the field zero so explicit `0` (disable) still works downstream.
+- `HTTPMiddleware` now calls `span.SetStatus(codes.Error, http.StatusText(status))` on responses with `status >= 500`. 4xx stay at `Unset` per OTel HTTP semantic conventions so client mistakes don't dominate the trace stream at low sample rates.
+- `internal/config/config.go`: new `WEAVE_TRACE_SAMPLE_RATE` (parsed as float64) and `WEAVE_TRACE_SLOW_THRESHOLD` (parsed as `time.Duration`) env vars; defaults `1.0` / `1s` so the dev profile is unchanged.
+- `cmd/server/main.go` passes the new fields to `tracing.Init`.
+- Files changed:
+  - pkg/tracing/sampler.go (new)
+  - pkg/tracing/sampler_test.go (new — 13 tests)
+  - pkg/tracing/tracing.go
+  - internal/config/config.go
+  - internal/config/config_test.go
+  - cmd/server/main.go
+- **Learnings for future iterations:**
+  - **OTel sampling carve-outs that key off runtime properties (status, duration) belong in a `SpanProcessor` filter, NOT a custom `Sampler`.** The OTel `Sampler` interface decides at span START — it has no visibility into the final `Status` or `EndTime - StartTime`. Recording every span and filtering at `OnEnd` is the canonical pattern for "tail-sampling within a single process". Cost is bounded because the sampling layer sits in front of the `BatchSpanProcessor` so dropped spans never enter the batch queue.
+  - **Trace ID hashing for ratio-based sampling: use upper 64 bits of the W3C trace ID via `binary.BigEndian.Uint64(tid[0:8])` and compare against `uint64(rate * MaxUint64)`.** Precompute the threshold once at processor construction so the hot path is one allocation-free uint64 compare. The W3C spec mandates the SDK populate trace IDs with crypto-random bytes, so the upper 64 bits are uniformly distributed — same shape OTel's stock `TraceIDRatioBased` sampler uses.
+  - **5xx → `codes.Error` mapping in HTTP middleware is the bridge between the wire-level status and the sampler's force-keep predicate.** Without it, a 1% sample rate would silently drop 99% of 500s and the on-call dashboard goes dark on outages. 4xx stays at `Unset` deliberately — those are usually validation errors the client triggered and would dominate a low-rate stream.
+  - **Default the slow threshold to a sentinel constant (`DefaultSlowSpanThreshold`), NOT to zero.** Zero is the explicit "disable" semantic — operators who want to turn off the slow-span carve-out should be able to. Use `if slowThreshold == 0 { slowThreshold = DefaultSlowSpanThreshold }` only at the package boundary (Init), so the defaulting is one-shot and transparent.
+  - **Pattern: when adding sampling-class filtering to a stream-processing pipeline (audit retention, log sampling, metrics aggregation), follow the same shape — record everything upstream, drop at the dispatcher, and provide a deterministic-by-key ratio + outlier carve-out (status, duration, magnitude) so important events are never silently lost at low rates.**
+---

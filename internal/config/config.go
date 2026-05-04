@@ -56,6 +56,18 @@ type TracingConfig struct {
 	OTLPProtocol string // "http" | "grpc"
 	OTLPInsecure bool
 	ServiceName  string
+
+	// SampleRate (US-439) is the head-based sampling probability for
+	// non-error / non-slow spans, in [0, 1]. Defaults to 1.0 in dev /
+	// test setups via the bootstrapped config; production deployments
+	// should set WEAVE_TRACE_SAMPLE_RATE=0.01 (1%) so error / slow
+	// spans dominate the trace stream.
+	SampleRate float64
+
+	// SlowSpanThreshold (US-439) is the duration above which a span is
+	// force-sampled regardless of SampleRate. Defaults to 1s; matches
+	// PRD US-439 spec.
+	SlowSpanThreshold time.Duration
 }
 
 // FunctionsConfig controls the Tier 3.2 function-backed action runtime.
@@ -277,11 +289,13 @@ func Load() (*Config, error) {
 			Path:    "/metrics",
 		},
 		Tracing: TracingConfig{
-			Enabled:      false,
-			ServiceName:  "weave",
-			Exporter:     "stdout",
-			OTLPProtocol: "http",
-			OTLPInsecure: true,
+			Enabled:           false,
+			ServiceName:       "weave",
+			Exporter:          "stdout",
+			OTLPProtocol:      "http",
+			OTLPInsecure:      true,
+			SampleRate:        1.0,
+			SlowSpanThreshold: 1 * time.Second,
 		},
 		Functions: FunctionsConfig{
 			Enabled: false,
@@ -433,6 +447,23 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid WEAVE_OTLP_INSECURE %q: %w", v, err)
 		}
 		cfg.Tracing.OTLPInsecure = b
+	}
+	// US-439: head-based sampling probability + slow-span carve-out.
+	// SampleRate values outside [0,1] reach pkg/tracing as-is and are
+	// clamped there; the config parser only enforces the float syntax.
+	if v := os.Getenv("WEAVE_TRACE_SAMPLE_RATE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_TRACE_SAMPLE_RATE %q: %w", v, err)
+		}
+		cfg.Tracing.SampleRate = f
+	}
+	if v := os.Getenv("WEAVE_TRACE_SLOW_THRESHOLD"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_TRACE_SLOW_THRESHOLD %q: %w", v, err)
+		}
+		cfg.Tracing.SlowSpanThreshold = d
 	}
 
 	if v := os.Getenv("WEAVE_FUNCTIONS_ENABLED"); v != "" {

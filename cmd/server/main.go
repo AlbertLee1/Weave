@@ -1554,13 +1554,15 @@ func main() {
 	// returned shutdown flushes any pending OTLP/stdout exports during
 	// graceful shutdown.
 	tracingShutdown, err := tracing.Init(ctx, tracing.Config{
-		Enabled:        cfg.Tracing.Enabled,
-		Exporter:       cfg.Tracing.Exporter,
-		OTLPEndpoint:   cfg.Tracing.OTLPEndpoint,
-		OTLPProtocol:   cfg.Tracing.OTLPProtocol,
-		OTLPInsecure:   cfg.Tracing.OTLPInsecure,
-		ServiceName:    cfg.Tracing.ServiceName,
-		ServiceVersion: os.Getenv("WEAVE_VERSION"),
+		Enabled:           cfg.Tracing.Enabled,
+		Exporter:          cfg.Tracing.Exporter,
+		OTLPEndpoint:      cfg.Tracing.OTLPEndpoint,
+		OTLPProtocol:      cfg.Tracing.OTLPProtocol,
+		OTLPInsecure:      cfg.Tracing.OTLPInsecure,
+		ServiceName:       cfg.Tracing.ServiceName,
+		ServiceVersion:    os.Getenv("WEAVE_VERSION"),
+		SampleRate:        cfg.Tracing.SampleRate,
+		SlowSpanThreshold: cfg.Tracing.SlowSpanThreshold,
 	})
 	if err != nil {
 		log.Fatalf("tracing init: %v", err)

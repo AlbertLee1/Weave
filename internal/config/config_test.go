@@ -292,6 +292,8 @@ func TestLoadConfig_TracingDefaults(t *testing.T) {
 	os.Unsetenv("WEAVE_TRACING_SERVICE_NAME")
 	os.Unsetenv("WEAVE_OTLP_ENDPOINT")
 	os.Unsetenv("WEAVE_TRACING_EXPORTER")
+	os.Unsetenv("WEAVE_TRACE_SAMPLE_RATE")
+	os.Unsetenv("WEAVE_TRACE_SLOW_THRESHOLD")
 
 	cfg, err := Load()
 	if err != nil {
@@ -306,6 +308,13 @@ func TestLoadConfig_TracingDefaults(t *testing.T) {
 	if cfg.Tracing.OTLPEndpoint != "" {
 		t.Errorf("Tracing.OTLPEndpoint default: got %q, want empty", cfg.Tracing.OTLPEndpoint)
 	}
+	// US-439 defaults: full-fidelity sampling in dev, 1s slow threshold.
+	if cfg.Tracing.SampleRate != 1.0 {
+		t.Errorf("Tracing.SampleRate default: got %v, want 1.0", cfg.Tracing.SampleRate)
+	}
+	if cfg.Tracing.SlowSpanThreshold != 1*time.Second {
+		t.Errorf("Tracing.SlowSpanThreshold default: got %v, want 1s", cfg.Tracing.SlowSpanThreshold)
+	}
 }
 
 func TestLoadConfig_TracingOverrides(t *testing.T) {
@@ -313,6 +322,8 @@ func TestLoadConfig_TracingOverrides(t *testing.T) {
 	t.Setenv("WEAVE_TRACING_SERVICE_NAME", "weave-prod")
 	t.Setenv("WEAVE_OTLP_ENDPOINT", "otel-collector:4318")
 	t.Setenv("WEAVE_TRACING_EXPORTER", "otlp")
+	t.Setenv("WEAVE_TRACE_SAMPLE_RATE", "0.01")
+	t.Setenv("WEAVE_TRACE_SLOW_THRESHOLD", "2s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -329,6 +340,26 @@ func TestLoadConfig_TracingOverrides(t *testing.T) {
 	}
 	if cfg.Tracing.Exporter != "otlp" {
 		t.Errorf("Tracing.Exporter: got %q", cfg.Tracing.Exporter)
+	}
+	if cfg.Tracing.SampleRate != 0.01 {
+		t.Errorf("Tracing.SampleRate: got %v, want 0.01", cfg.Tracing.SampleRate)
+	}
+	if cfg.Tracing.SlowSpanThreshold != 2*time.Second {
+		t.Errorf("Tracing.SlowSpanThreshold: got %v, want 2s", cfg.Tracing.SlowSpanThreshold)
+	}
+}
+
+func TestLoadConfig_InvalidTraceSampleRate(t *testing.T) {
+	t.Setenv("WEAVE_TRACE_SAMPLE_RATE", "not-a-float")
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected error for invalid WEAVE_TRACE_SAMPLE_RATE")
+	}
+}
+
+func TestLoadConfig_InvalidTraceSlowThreshold(t *testing.T) {
+	t.Setenv("WEAVE_TRACE_SLOW_THRESHOLD", "not-a-duration")
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected error for invalid WEAVE_TRACE_SLOW_THRESHOLD")
 	}
 }
 
