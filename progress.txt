@@ -3701,3 +3701,38 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - When a preference row carries empty Target for a non-email channel (slack/webhook), the dispatcher skips it BEFORE calling the driver — saving a wasted log line on the driver-side soft-skip. Email is special-cased because the EmailResolver fallback resolves it from the user's primary email when Target is empty.
 
 ---
+
+## 2026-05-05 - US-430 - ObjectSet Diff 算法优化
+
+**Implementation:**
+- New `pkg/oss/objectset/diff.go` ships the bloom-filter-pre-screened set diff plus the HTTP handler. The pure `DiffPrimaryKeys(left, right []string) DiffResult` is the algorithm chokepoint — no executor / handler dependencies — so future callers (snapshot rebuild, branch reconcile, parquet replay diff) can reuse it directly.
+- Algorithm: dedup-and-sort the smaller-sized side once (single allocation linear in unique count), build a 10-bits-per-key / 7-hash bloom over it (~1% target FP rate), then walk the right side once. Bloom-miss → onlyInRight; bloom-hit → binary search the sorted left side to confirm. Intersection bookkeeping rides on a bitset over left's sorted positions so we never build a `map[string]struct{}` for both sides simultaneously. Right-side dedup happens via the matched bitset for intersection hits + a small `map[string]struct{}` only for false-positives + truly-only-in-right. Memory dominated by sorted left slice + 1.25 MiB bloom + right-side outlier map; 1M vs 1M empirically lands at ~83 MiB / 511 ms on M3 Max.
+- Bloom hashing uses one FNV1a pass + a SplitMix-style mix to derive a second hash (`(h1 + i*h2) mod m` k-hash trick), so per-test cost is one 64-bit FNV hash + 7 word ops. Bit ops are SWAR popcount + word-aligned bit indexing — no math/bits dependency for hot-path inlining stability.
+- `DiffObjectSetRequest` / `DiffObjectSetResponse` are the wire types: caller submits two ObjectSet definitions; handler executes both through the existing `Executor.Execute` path (so `?branch=` / `?asOf=` semantics propagate), enforces same-ObjectType, runs `DiffPrimaryKeys`, returns sorted PK partition + per-side cardinalities + `intersectSize` mirror + `durationMs` for the diff step only (executor latency excluded so SDK clients can isolate the algorithm cost).
+- Route registered at `POST /api/v2/ontologies/{ontologyApiName}/objectSets/diff` in `cmd/server/main.go` (right after `createTemporary`, before any `{objectSetRid}` wildcard so chi resolves it as a static segment).
+- OpenAPI spec entries added in `api/openapi.yaml` (operationId `diffObjectSets` + `DiffObjectSetRequest`/`DiffObjectSetResponse` schemas) and mirrored to `cmd/server/openapi_spec.yaml` so both contract gates pass.
+
+**Files changed:**
+- `pkg/oss/objectset/diff.go` (new)
+- `pkg/oss/objectset/diff_test.go` (new — 7 unit tests + 1 benchmark)
+- `cmd/server/main.go` (wired POST .../objectSets/diff)
+- `api/openapi.yaml` (path + 2 schemas)
+- `cmd/server/openapi_spec.yaml` (mirror)
+- `prd.json` (US-430 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./...` full suite green (76s for `pkg/oss/objectset`, 600s overall)
+- 1M vs 1M memory test: heap allocation under 200 MiB cap (pass)
+- `go test -bench BenchmarkDiffPrimaryKeys -benchmem -benchtime=1x`: **511 ms / 83 MB / 3100 allocs** for 1M vs 1M with shuffled inputs and 50% overlap on M3 Max — well under the PRD 10 s / 200 MB envelope
+- `go test ./cmd/server/... -run "Contract"` green (OpenAPI spec round-trip after path + schema additions)
+
+**Learnings for future iterations:**
+- The PRD's 200 MiB / 10 s envelope is dominated by the cost of building two `map[string]struct{}` over the inputs — at ~80 bytes/entry on amd64, two 1M maps alone burn ~160 MiB before any result allocation. The bloom-filter pre-screen lets us replace ONE of those maps with a ~1.25 MiB bloom + a sorted slice + a bitset, halving the steady-state footprint. For future "compare two large PK sets" surfaces (branch reconcile diff, materialised-vs-live snapshot drift, parquet compaction dedup), reuse `DiffPrimaryKeys` rather than rolling a fresh map-based diff.
+- `runtime.HeapAlloc` deltas across `runtime.GC()` boundaries are the correct memory-budget proxy for an in-process algorithm — `MemStats.TotalAlloc` keeps growing across GC cycles, and `Sys` includes the unrelated runtime overhead. The skip-on-`-short` pattern keeps the 1M memory test out of the standard unit run while remaining a defended bound under the full suite.
+- The handler chooses to mirror the `LoadObjects` branch / asOf parsing rather than introducing new query plumbing — both ObjectSet sides resolve through one shared `?branch=` value, so a future "diff main vs feature-branch on the same ObjectSet definition" surface will need a separate `?leftBranch=&rightBranch=` shape instead of overloading the single param. Pattern: when a new endpoint accepts two ObjectSet definitions, give them a single shared scope axis up front; split into per-side scopes only when a use case demands it.
+- `executeError` (the typed `ErrQueryTooLarge` 422 / generic 400 fork at `handler.go:193`) returns an `*apierror.APIError` whose `Parameters` map is guaranteed non-nil by `newAPIError`. The diff handler decorates the error with a `side: "left"|"right"` parameter so SDK callers can identify which executor failed without having to parse the wrapped message — reuse the same enrichment pattern when a multi-side endpoint composes multiple executor results.
+- The `intersectSize` field on `DiffObjectSetResponse` is technically `len(InBoth)` and could be derived client-side, but writing it explicitly to the wire shape lets clients short-circuit the "is there any overlap" UI prompt without iterating the full PK list. Mirror this for any future multi-list response when the size is the primary disposition signal — pay one int on the wire to save the consumer an O(n) reduce.
+- Bloom-filter false positive rate × set size = expected false-positive count. At ~1% over 1M entries that's ~10K extra binary searches in the right-walk — negligible vs the 1M sort dominator. Don't bump the bits-per-key past 14 unless a future workload measurably suffers from FP-driven verification cost; the marginal memory win is real but the FP volume is already O(1%).
+---

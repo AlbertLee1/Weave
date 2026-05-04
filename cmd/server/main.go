@@ -1058,6 +1058,10 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadLinks", objSetHandler.LoadLinks)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/aggregate", objSetHandler.Aggregate)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/createTemporary", objSetHandler.CreateTemporary)
+			// US-430: bloom-filter-pre-screened set diff between two ObjectSet
+			// definitions. Both sides resolve through the same executor so
+			// branch / asOf semantics propagate unchanged.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/diff", objSetHandler.Diff)
 			// Foundry preview endpoints: multi-type + interface-scoped loads.
 			// Register these BEFORE the wildcard /{objectSetRid} so chi does
 			// not swallow the static path segments.

@@ -2236,6 +2236,46 @@ components:
       properties:
         objectSetRid:
           type: string
+    DiffObjectSetRequest:
+      type: object
+      description: |
+        Two ObjectSet definitions to diff. Both MUST resolve to the same
+        ObjectType. US-430.
+      required: [left, right]
+      properties:
+        left:
+          $ref: "#/components/schemas/ObjectSetDefinition"
+        right:
+          $ref: "#/components/schemas/ObjectSetDefinition"
+    DiffObjectSetResponse:
+      type: object
+      description: |
+        Set-diff result. PK lists are sorted ascending. `intersectSize` is
+        a convenience mirror of `len(inBoth)`. `durationMs` measures the
+        diff step only (executor latency not included).
+      properties:
+        leftObjectType:
+          type: string
+        rightObjectType:
+          type: string
+        onlyInLeft:
+          type: array
+          items: { type: string }
+        onlyInRight:
+          type: array
+          items: { type: string }
+        inBoth:
+          type: array
+          items: { type: string }
+        leftSize:
+          type: integer
+        rightSize:
+          type: integer
+        intersectSize:
+          type: integer
+        durationMs:
+          type: integer
+          format: int64
     ApplyOptions:
       type: object
       description: Options for single action apply (Foundry OSv2).
@@ -7221,6 +7261,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateTemporaryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objectSets/diff:
+    post:
+      operationId: diffObjectSets
+      summary: Compute the set diff between two ObjectSet definitions (US-430)
+      description: |
+        Bloom-filter-pre-screened set diff. Both sides resolve through the same
+        executor so `?branch=` and `?asOf=` semantics flow through unchanged.
+        Both ObjectSets MUST resolve to the same ObjectType. Result PK lists
+        are sorted ascending so SDK clients can stream-merge against existing
+        snapshots without buffering the full payload.
+      tags: [ObjectSets]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: branch
+          schema: { type: string }
+          description: Optional branch overlay (US-381). Defaults to "main".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiffObjectSetRequest"
+      responses:
+        "200":
+          description: Diff result with per-side cardinalities and execution stats.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiffObjectSetResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
