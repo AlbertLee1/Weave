@@ -210,16 +210,28 @@ type Config struct {
 	CORSOrigins []string // Parsed from WEAVE_CORS_ORIGINS (comma-separated)
 	JWT         JWTConfig
 
-	Metrics         MetricsConfig
-	Tracing         TracingConfig
-	Functions       FunctionsConfig
-	IngestRateLimit IngestRateLimitConfig
-	OIDC            OIDCConfig
-	SAML            SAMLConfig
-	LDAP            LDAPConfig
-	AuditExport     AuditExportConfig
-	TimeSeries      TimeSeriesConfig
-	ColdTier        ColdTierConfig
+	Metrics          MetricsConfig
+	Tracing          TracingConfig
+	Functions        FunctionsConfig
+	IngestRateLimit  IngestRateLimitConfig
+	OIDC             OIDCConfig
+	SAML             SAMLConfig
+	LDAP             LDAPConfig
+	AuditExport      AuditExportConfig
+	TimeSeries       TimeSeriesConfig
+	ColdTier         ColdTierConfig
+	ParquetRetention ParquetRetentionConfig
+}
+
+// ParquetRetentionConfig drives the materialize.Retainer (US-410). The
+// only operator-facing knob is RetentionDays (WEAVE_PARQUET_RETENTION_DAYS,
+// default 30) — files past that age are hard-deleted from disk. The 24h
+// compaction cadence and 7d archive threshold are PRD-fixed; future
+// stories can promote them to env knobs without breaking compatibility.
+type ParquetRetentionConfig struct {
+	CompactInterval time.Duration
+	ArchiveAfter    time.Duration
+	RetentionDays   int
 }
 
 // ColdTierConfig drives the OSS executor's hot/cold tier router (US-407).
@@ -300,6 +312,11 @@ func Load() (*Config, error) {
 		},
 		ColdTier: ColdTierConfig{
 			HotWindow: 24 * time.Hour,
+		},
+		ParquetRetention: ParquetRetentionConfig{
+			CompactInterval: 24 * time.Hour,
+			ArchiveAfter:    7 * 24 * time.Hour,
+			RetentionDays:   30,
 		},
 	}
 
@@ -753,6 +770,21 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid WEAVE_HOT_WINDOW_HOURS %q: must be >= 0", v)
 		}
 		cfg.ColdTier.HotWindow = time.Duration(hours) * time.Hour
+	}
+
+	// Parquet retention (US-410). WEAVE_PARQUET_RETENTION_DAYS is an
+	// integer count of days; a value of 0 disables hard deletion so
+	// archived files accumulate forever. Negative or non-numeric values
+	// fail loudly so a typo can't accidentally drop the floor.
+	if v := os.Getenv("WEAVE_PARQUET_RETENTION_DAYS"); v != "" {
+		days, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_PARQUET_RETENTION_DAYS %q: %w", v, err)
+		}
+		if days < 0 {
+			return nil, fmt.Errorf("invalid WEAVE_PARQUET_RETENTION_DAYS %q: must be >= 0", v)
+		}
+		cfg.ParquetRetention.RetentionDays = days
 	}
 
 	return cfg, nil

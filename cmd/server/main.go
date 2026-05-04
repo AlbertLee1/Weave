@@ -2469,6 +2469,28 @@ func main() {
 		deps.FunnelConsumer.SetEditMaterializer(mat)
 		log.Printf("[MATERIALIZE] root=%s", matRoot)
 
+		// US-410: daily Parquet compaction + 7d archive + N-day hard delete.
+		// The retainer is a tiny goroutine driven off the same matRoot the
+		// writer uses; failures are logged but never abort the server. A
+		// zero RetentionDays disables hard deletion and the archive sweep
+		// just keeps growing — operators with regulatory retention needs
+		// can set the env to 0 explicitly.
+		retCfg := materialize.RetentionConfig{
+			RootDir:         matRoot,
+			CompactInterval: cfg.ParquetRetention.CompactInterval,
+			ArchiveAfter:    cfg.ParquetRetention.ArchiveAfter,
+			DeleteAfter:     time.Duration(cfg.ParquetRetention.RetentionDays) * 24 * time.Hour,
+		}
+		if retainer, err := materialize.NewRetainer(retCfg); err != nil {
+			log.Printf("warning: parquet retainer init: %v", err)
+		} else {
+			go retainer.RunLoop(ctx, func(err error) {
+				log.Printf("[MATERIALIZE-RETENTION] %v", err)
+			})
+			log.Printf("[MATERIALIZE-RETENTION] compact=%s archive=%s delete=%dd",
+				retCfg.CompactInterval, retCfg.ArchiveAfter, cfg.ParquetRetention.RetentionDays)
+		}
+
 		// US-407: hot/cold tier router. The same Materializer that the
 		// writer uses also drives the cold-tier read path so the OSS
 		// executor's executeBase fans out to Parquet for rows older than

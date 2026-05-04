@@ -1049,3 +1049,58 @@ func TestLoadConfig_ColdTier_RejectsNonNumeric(t *testing.T) {
 		t.Fatal("expected error for non-numeric hours")
 	}
 }
+
+// US-410 — Parquet retention.
+
+func TestLoadConfig_ParquetRetention_Defaults(t *testing.T) {
+	t.Setenv("WEAVE_PARQUET_RETENTION_DAYS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ParquetRetention.RetentionDays != 30 {
+		t.Errorf("RetentionDays = %d, want 30", cfg.ParquetRetention.RetentionDays)
+	}
+	if cfg.ParquetRetention.ArchiveAfter != 7*24*time.Hour {
+		t.Errorf("ArchiveAfter = %s, want 168h", cfg.ParquetRetention.ArchiveAfter)
+	}
+	if cfg.ParquetRetention.CompactInterval != 24*time.Hour {
+		t.Errorf("CompactInterval = %s, want 24h", cfg.ParquetRetention.CompactInterval)
+	}
+}
+
+func TestLoadConfig_ParquetRetention_Override(t *testing.T) {
+	t.Setenv("WEAVE_PARQUET_RETENTION_DAYS", "90")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ParquetRetention.RetentionDays != 90 {
+		t.Errorf("RetentionDays = %d, want 90", cfg.ParquetRetention.RetentionDays)
+	}
+}
+
+func TestLoadConfig_ParquetRetention_ZeroDisablesDeletion(t *testing.T) {
+	t.Setenv("WEAVE_PARQUET_RETENTION_DAYS", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ParquetRetention.RetentionDays != 0 {
+		t.Errorf("RetentionDays = %d, want 0", cfg.ParquetRetention.RetentionDays)
+	}
+}
+
+func TestLoadConfig_ParquetRetention_RejectsNegative(t *testing.T) {
+	t.Setenv("WEAVE_PARQUET_RETENTION_DAYS", "-3")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for negative retention")
+	}
+}
+
+func TestLoadConfig_ParquetRetention_RejectsNonNumeric(t *testing.T) {
+	t.Setenv("WEAVE_PARQUET_RETENTION_DAYS", "thirty")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for non-numeric retention")
+	}
+}
