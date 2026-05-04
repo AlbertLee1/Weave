@@ -12,7 +12,8 @@ web/e2e/
 ├── phase6/                     (added US-038 onwards) Phase 6 gate specs
 ├── phase7/                     (added Phase 7)
 ├── phase8/                     (added Phase 8)
-└── phase9/                     (added Phase 9)
+├── phase9/                     (added Phase 9)
+└── us444/                      20 core-flow specs (US-444 — see us444/README.md)
 ```
 
 Historical note: in v1 (archived under `archive/2026-04-11-foundry-osv2-api-alignment/`)

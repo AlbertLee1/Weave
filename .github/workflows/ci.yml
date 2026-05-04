@@ -103,6 +103,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # US-444: Playwright spec discovery gate. The full E2E suite needs
+      # a live backend stack (`make e2e-up`) and runs locally; this step
+      # invokes Playwright in list-only mode so syntactic regressions in
+      # any spec under `web/e2e/us444/` fail CI without booting Docker.
+      - name: Playwright spec discovery (us444)
+        run: npx playwright test --list us444/
+
       - name: Upload web coverage
         uses: actions/upload-artifact@v4
         with:
