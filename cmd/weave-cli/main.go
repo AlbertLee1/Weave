@@ -48,6 +48,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runIndex(rest, stdout, stderr)
 	case "pkg":
 		return runPkg(rest, stdout, stderr)
+	case "fn":
+		return runFn(rest, stdout, stderr)
 	case "repl":
 		return runREPL(rest, stdin, stdout, stderr)
 	default:
@@ -74,6 +76,7 @@ Commands:
   materialize  Rebuild snapshots from materialized parquet (rebuild)
   index        Rebuild Bleve indexes from the authoritative tail (rebuild)
   pkg          Build / install .weavepkg ontology archives (export, install)
+  fn           Function code repository round-trip (pull, push, log)
   repl         Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)

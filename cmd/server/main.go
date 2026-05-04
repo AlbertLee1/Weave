@@ -39,6 +39,7 @@ import (
 	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/developer"
 	"github.com/liyang/weave/pkg/featureflags"
+	"github.com/liyang/weave/pkg/funcrepo"
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/gdpr"
 	"github.com/liyang/weave/pkg/geotemporal"
@@ -137,6 +138,11 @@ type ServerDeps struct {
 	// examples/packages/ FS; nil in degraded-mode tests leaves the list
 	// endpoint returning an empty array.
 	BuiltinPackageProvider oms.BuiltinPackageProvider
+	// US-415: Function code repository — per-function bare git repo at
+	// `{DataDir}/repos/{rid}/.git`. The handler reports 503
+	// FunctionRepoNotConfigured when this is nil so degraded-mode test
+	// routers without a writable data dir still boot cleanly.
+	FunctionRepoStore oms.FunctionRepoStore
 	// US-312: per-object activity-timeline store. Wired from the uncached
 	// *PGRepository so the cursor-paginated history endpoint always reads
 	// the authoritative tail; nil in degraded mode leaves the
@@ -802,6 +808,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// the provider construction never fails at runtime.
 			if deps.BuiltinPackageProvider != nil {
 				omsHandler.SetBuiltinPackageProvider(deps.BuiltinPackageProvider)
+			}
+			// US-415: per-Function bare git repo. Constructed at bootstrap
+			// from {DataDir}/repos; nil-safe so degraded-mode test routers
+			// fall back to the 503 FunctionRepoNotConfigured response.
+			if deps.FunctionRepoStore != nil {
+				omsHandler.SetFunctionRepoStore(deps.FunctionRepoStore)
 			}
 			RegisterRoutes(api, omsHandler)
 		}
@@ -2129,6 +2141,13 @@ func main() {
 	} else {
 		deps.BuiltinPackageProvider = provider
 	}
+
+	// 2a-3. Function code-repository store (US-415). Per-function bare git
+	// repos live under {DataDir}/repos/{rid}/.git so the layout is
+	// stable across server restarts. The adapter is HTTP-free — the OMS
+	// handler depends on the narrow oms.FunctionRepoStore interface and
+	// pkg/funcrepo stays unaware of the wire types.
+	deps.FunctionRepoStore = newFuncRepoStoreAdapter(funcrepo.NewManager(filepath.Join(cfg.DataDir, "repos")))
 
 	// 2b. Attachment blob store (filesystem backend under WEAVE_DATA_DIR/attachments).
 	// Unlinked uploads older than 1h are swept by a background cleanup loop.

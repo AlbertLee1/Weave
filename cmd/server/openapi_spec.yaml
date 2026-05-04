@@ -190,6 +190,24 @@ components:
         status:
           type: string
           example: ok
+    FunctionRepoCommit:
+      type: object
+      description: |
+        One commit in the per-Function bare git repository (US-415).
+      required: [hash, message, author, email, authorDate]
+      properties:
+        hash:
+          type: string
+          description: Content-addressable git commit hash (40-character SHA-1).
+        message:
+          type: string
+        author:
+          type: string
+        email:
+          type: string
+        authorDate:
+          type: string
+          format: date-time
     Ontology:
       type: object
       required: [rid, apiName, displayName, currentVersion]
@@ -5269,6 +5287,114 @@ paths:
                     additionalProperties: true
         "503":
           description: Function executor or execution store not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  reason: { type: string }
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits:
+    post:
+      operationId: createFunctionRepoCommit
+      summary: Append a commit to the Function code repository (US-415)
+      description: |
+        Records a new revision of the Function source code in the per-Function
+        bare git repository at `{DataDir}/repos/{rid}/.git`. Each commit
+        chains onto the previous head on `refs/heads/main`.
+
+        Either `sourceCode` (preferred — full new file body) or `patch` (alias
+        for `sourceCode` retained for SDK clients that prefer the git-style
+        terminology) must be supplied. The `author` and `email` fields default
+        to the system identity when blank.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  description: Commit message.
+                sourceCode:
+                  type: string
+                  description: Full new file body. Required unless `patch` is supplied.
+                patch:
+                  type: string
+                  description: Alias for `sourceCode`.
+                author:
+                  type: string
+                email:
+                  type: string
+      responses:
+        "201":
+          description: Commit recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionRepoCommit"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          description: Function repo store not configured.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errorCode: { type: string }
+                  reason: { type: string }
+  /api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/log:
+    get:
+      operationId: listFunctionRepoCommits
+      summary: List commits in the Function code repository (US-415)
+      description: |
+        Returns the commits on `refs/heads/main` for the Function's bare git
+        repo, newest-first. The optional `limit` query parameter caps the
+        response (default 100). When the repo has no commits yet the response
+        is `200` with an empty `data` array.
+      tags: [Functions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Commit list (may be empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FunctionRepoCommit"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "503":
+          description: Function repo store not configured.
           content:
             application/json:
               schema:

@@ -31,6 +31,7 @@ type OMSHandler struct {
 	installedPackageStore     InstalledPackageStore
 	packageMigrationRunner    PackageMigrationRunner
 	builtinPackageProvider    BuiltinPackageProvider
+	functionRepoStore         FunctionRepoStore
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.

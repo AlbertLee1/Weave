@@ -907,3 +907,69 @@ func (c *Client) Logout(ctx context.Context, refreshToken string) error {
 	body := map[string]any{"refresh_token": refreshToken}
 	return c.do(ctx, http.MethodPost, "/api/auth/logout", body, nil)
 }
+
+// ----- Function endpoints --------------------------------------------------
+
+// Function mirrors the wire payload for a single Function row. The fields
+// are intentionally narrow (only what `weave fn pull/push` reads) so this
+// stays decoupled from the much wider pkg/oms.Function struct.
+type Function struct {
+	RID        string `json:"rid"`
+	Name       string `json:"name"`
+	Version    string `json:"version,omitempty"`
+	SourceCode string `json:"sourceCode"`
+	Runtime    string `json:"runtime,omitempty"`
+}
+
+// FunctionRepoCommit mirrors the wire payload returned by the
+// /functions/{rid}/commits and /log endpoints (US-415).
+type FunctionRepoCommit struct {
+	Hash       string    `json:"hash"`
+	Message    string    `json:"message"`
+	Author     string    `json:"author"`
+	Email      string    `json:"email"`
+	AuthorDate time.Time `json:"authorDate"`
+}
+
+// GetFunction fetches a single Function row, accepting `rid`, `name`, or
+// `name@version` as the identifier (the server resolves the form).
+func (c *Client) GetFunction(ctx context.Context, ontology, ref string) (*Function, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/functions/" + url.PathEscape(ref)
+	var fn Function
+	if err := c.do(ctx, http.MethodGet, path, nil, &fn); err != nil {
+		return nil, err
+	}
+	return &fn, nil
+}
+
+// CreateFunctionRepoCommit posts a new commit to the per-Function bare git
+// repo (US-415). Either `sourceCode` or `patch` must be supplied; the
+// server treats `patch` as an alias for `sourceCode`.
+func (c *Client) CreateFunctionRepoCommit(ctx context.Context, ontology, ref string, body map[string]any) (*FunctionRepoCommit, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/functions/" + url.PathEscape(ref) + "/commits"
+	var commit FunctionRepoCommit
+	if err := c.do(ctx, http.MethodPost, path, body, &commit); err != nil {
+		return nil, err
+	}
+	return &commit, nil
+}
+
+// ListFunctionRepoCommits fetches the newest-first commit list for the
+// Function's bare git repo (US-415). When `limit > 0` the server caps the
+// response.
+func (c *Client) ListFunctionRepoCommits(ctx context.Context, ontology, ref string, limit int) ([]FunctionRepoCommit, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/functions/" + url.PathEscape(ref) + "/log"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var resp struct {
+		Data []FunctionRepoCommit `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}

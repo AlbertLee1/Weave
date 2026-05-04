@@ -125,6 +125,14 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// WEAVE_FUNCTION_NONDETERMINISTIC.
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay", omsHandler.ReplayFunction)
 
+	// US-415 Function code repository: per-function bare git repo at
+	// `data/repos/{rid}/.git`. POST /commits records a new revision of the
+	// source code; GET /log returns the newest-first commit list. Both
+	// routes report 503 FunctionRepoNotConfigured when no FunctionRepoStore
+	// is wired so degraded-mode test routers still boot cleanly.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/commits", omsHandler.CreateFunctionRepoCommit)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/log", omsHandler.ListFunctionRepoCommits)
+
 	// Ontology Branches (US-113, US-116)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.CreateBranch)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/branches", omsHandler.ListBranches)
