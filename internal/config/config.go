@@ -194,8 +194,8 @@ type AuditExportConfig struct {
 	// by S3Bucket + optional S3Prefix but under the RetentionS3Prefix
 	// key namespace so archive objects can be life-cycled separately
 	// from live SIEM export objects.
-	RetentionArchive   string // "none" | "s3"
-	RetentionS3Prefix  string
+	RetentionArchive  string // "none" | "s3"
+	RetentionS3Prefix string
 }
 
 // Config holds all process-wide settings loaded from env.
@@ -219,6 +219,18 @@ type Config struct {
 	LDAP            LDAPConfig
 	AuditExport     AuditExportConfig
 	TimeSeries      TimeSeriesConfig
+	ColdTier        ColdTierConfig
+}
+
+// ColdTierConfig drives the OSS executor's hot/cold tier router (US-407).
+// HotWindow is the rolling window the hot tier (Bleve) is authoritative
+// for; rows older than `now - HotWindow` are read from the Parquet cold
+// tier and merged into the hot result. Zero / negative values disable
+// cold-tier reads entirely so degraded-mode boots with no Materializer
+// stay clean.
+type ColdTierConfig struct {
+	// HotWindow defaults to 24h via WEAVE_HOT_WINDOW_HOURS=24 (PRD).
+	HotWindow time.Duration
 }
 
 // TimeSeriesConfig selects the backend for pkg/timeseries (US-400).
@@ -285,6 +297,9 @@ func Load() (*Config, error) {
 		},
 		TimeSeries: TimeSeriesConfig{
 			Backend: "auto",
+		},
+		ColdTier: ColdTierConfig{
+			HotWindow: 24 * time.Hour,
 		},
 	}
 
@@ -723,6 +738,21 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("WEAVE_TS_URL"); v != "" {
 		cfg.TimeSeries.URL = strings.TrimSpace(v)
+	}
+
+	// Cold-tier router (US-407). The PRD spells the knob as
+	// WEAVE_HOT_WINDOW_HOURS, an integer count of hours; non-numeric or
+	// negative values fail loudly so a typo doesn't silently disable the
+	// cold tier on a deploy that depends on it.
+	if v := os.Getenv("WEAVE_HOT_WINDOW_HOURS"); v != "" {
+		hours, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_HOT_WINDOW_HOURS %q: %w", v, err)
+		}
+		if hours < 0 {
+			return nil, fmt.Errorf("invalid WEAVE_HOT_WINDOW_HOURS %q: must be >= 0", v)
+		}
+		cfg.ColdTier.HotWindow = time.Duration(hours) * time.Hour
 	}
 
 	return cfg, nil

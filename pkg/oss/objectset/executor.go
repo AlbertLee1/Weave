@@ -73,6 +73,9 @@ type Executor struct {
 	embedProvider  NNEmbeddingProvider
 	policyProvider PolicyQueryProvider
 	edgeProps      EdgePropertiesProvider
+	tierRouter     TierRouter
+	hotWindow      time.Duration
+	tierNowFn      func() time.Time
 }
 
 // NewExecutor creates a new ObjectSet executor.
@@ -415,6 +418,11 @@ func (e *Executor) executeInterfaceLinkSearchAround(ctx context.Context, def *De
 // executeBase queries the Bleve index for ALL objects of the given type, up
 // to BaseExecutionCap. If the returned hit count equals the cap the result is
 // flagged as Truncated so the caller can surface an APPROXIMATE warning.
+//
+// US-407: when a TierRouter is wired the executor also fans out to the cold
+// (Parquet) tier for rows older than `now - hotWindow` and merges the two
+// streams hot-wins. Hot ordering is preserved; cold-only PKs append in the
+// order the cold tier returned them.
 func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, error) {
 	policyQ, err := e.resolvePolicyQuery(ctx, def.ObjectType)
 	if err != nil {
@@ -433,11 +441,24 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 	for _, hit := range result.Hits {
 		pks = append(pks, hit.ID)
 	}
+	truncated := len(pks) >= BaseExecutionCap
+
+	if e.tierRouter != nil {
+		ontology := OntologyScopeFromContextOrEmpty(ctx)
+		before := e.effectiveNow().Add(-e.effectiveHotWindow())
+		coldPKs, coldErr := e.tierRouter.ColdPrimaryKeys(ctx, ontology, def.ObjectType, before)
+		if coldErr != nil {
+			return nil, fmt.Errorf("cold tier base objectSet %q: %w", def.ObjectType, coldErr)
+		}
+		if len(coldPKs) > 0 {
+			pks = mergeHotColdPKs(pks, coldPKs)
+		}
+	}
 
 	return &Result{
 		ObjectType:  def.ObjectType,
 		PrimaryKeys: pks,
-		Truncated:   len(pks) >= BaseExecutionCap,
+		Truncated:   truncated,
 	}, nil
 }
 

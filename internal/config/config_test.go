@@ -1000,3 +1000,52 @@ func clearTimeSeriesEnv(t *testing.T) {
 		t.Setenv(k, "")
 	}
 }
+
+// US-407 — Cold-tier router (HotWindow).
+
+func TestLoadConfig_ColdTier_DefaultHotWindow(t *testing.T) {
+	t.Setenv("WEAVE_HOT_WINDOW_HOURS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ColdTier.HotWindow != 24*time.Hour {
+		t.Errorf("HotWindow = %s, want 24h", cfg.ColdTier.HotWindow)
+	}
+}
+
+func TestLoadConfig_ColdTier_OverrideHotWindow(t *testing.T) {
+	t.Setenv("WEAVE_HOT_WINDOW_HOURS", "48")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ColdTier.HotWindow != 48*time.Hour {
+		t.Errorf("HotWindow = %s, want 48h", cfg.ColdTier.HotWindow)
+	}
+}
+
+func TestLoadConfig_ColdTier_ZeroHoursDisablesCold(t *testing.T) {
+	t.Setenv("WEAVE_HOT_WINDOW_HOURS", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ColdTier.HotWindow != 0 {
+		t.Errorf("HotWindow = %s, want 0 (disabled)", cfg.ColdTier.HotWindow)
+	}
+}
+
+func TestLoadConfig_ColdTier_RejectsNegative(t *testing.T) {
+	t.Setenv("WEAVE_HOT_WINDOW_HOURS", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for negative hours")
+	}
+}
+
+func TestLoadConfig_ColdTier_RejectsNonNumeric(t *testing.T) {
+	t.Setenv("WEAVE_HOT_WINDOW_HOURS", "abc")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for non-numeric hours")
+	}
+}

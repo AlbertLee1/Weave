@@ -25,14 +25,18 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/actiontemplates"
 	"github.com/liyang/weave/pkg/aip"
 	aiplogic "github.com/liyang/weave/pkg/aip/logic"
+	"github.com/liyang/weave/pkg/apps"
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/cipher"
+	"github.com/liyang/weave/pkg/comments"
 	"github.com/liyang/weave/pkg/compliance"
+	"github.com/liyang/weave/pkg/dashboards"
 	"github.com/liyang/weave/pkg/developer"
 	"github.com/liyang/weave/pkg/featureflags"
 	"github.com/liyang/weave/pkg/funnel"
@@ -51,17 +55,13 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/permissionrequests"
 	"github.com/liyang/weave/pkg/pipeline"
 	"github.com/liyang/weave/pkg/pipeline/quality"
 	pipelineschema "github.com/liyang/weave/pkg/pipeline/schema"
-	"github.com/liyang/weave/pkg/rls"
-	"github.com/liyang/weave/pkg/actiontemplates"
-	"github.com/liyang/weave/pkg/apps"
-	"github.com/liyang/weave/pkg/comments"
-	"github.com/liyang/weave/pkg/dashboards"
-	"github.com/liyang/weave/pkg/permissionrequests"
 	"github.com/liyang/weave/pkg/quiver"
 	"github.com/liyang/weave/pkg/reactions"
+	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
@@ -172,16 +172,16 @@ type ServerDeps struct {
 	// uncached *PGRepository so the /api/v2/notifications/read-all endpoint
 	// always observes the authoritative read-state. Nil in degraded mode
 	// leaves the route returning 503 NotificationsBulkUnavailable.
-	NotificationBulkStore  oms.NotificationBulkStore
-	TimeSeriesStore        timeseries.Store
-	GeotemporalStore       geotemporal.Store
-	CipherDecryptor        cipher.Decryptor
-	TransactionStore       transactions.Store
-	SqlQueryEngine         sqlqueries.Engine
-	IndexDocSource         index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
-	AuditStore             audit.Store                // US-067: audit event store (nil = endpoint returns 503)
-	IngestRateLimiter      oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
-	WebSocketHub           *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
+	NotificationBulkStore oms.NotificationBulkStore
+	TimeSeriesStore       timeseries.Store
+	GeotemporalStore      geotemporal.Store
+	CipherDecryptor       cipher.Decryptor
+	TransactionStore      transactions.Store
+	SqlQueryEngine        sqlqueries.Engine
+	IndexDocSource        index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
+	AuditStore            audit.Store                // US-067: audit event store (nil = endpoint returns 503)
+	IngestRateLimiter     oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
+	WebSocketHub          *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	// US-141: Developer Console application registry. When nil the
 	// /api/v2/developer/applications routes are not registered.
 	ApplicationRepo developer.ApplicationRepository
@@ -413,7 +413,7 @@ type ServerDeps struct {
 	// so the routes stay unmounted; the SPA falls back to localStorage
 	// defaults when the GET endpoint 404s.
 	UserPreferencesStore userprefs.Store
-	CORSOrigins        []string // Allowed CORS origins (empty = disabled)
+	CORSOrigins          []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -2465,8 +2465,22 @@ func main() {
 		// but never abort the batch — the index commit is the source
 		// of truth for read paths.
 		matRoot := filepath.Join(cfg.DataDir, "materialized")
-		deps.FunnelConsumer.SetEditMaterializer(materialize.NewMaterializer(matRoot))
+		mat := materialize.NewMaterializer(matRoot)
+		deps.FunnelConsumer.SetEditMaterializer(mat)
 		log.Printf("[MATERIALIZE] root=%s", matRoot)
+
+		// US-407: hot/cold tier router. The same Materializer that the
+		// writer uses also drives the cold-tier read path so the OSS
+		// executor's executeBase fans out to Parquet for rows older than
+		// the configured hot window and merges them with Bleve hits.
+		// Setting WEAVE_HOT_WINDOW_HOURS=0 disables cold reads while
+		// keeping the writer active (useful in disaster-recovery boots
+		// where the cold tier should be rebuilt before being trusted).
+		if deps.ObjSetExecutor != nil && cfg.ColdTier.HotWindow > 0 {
+			deps.ObjSetExecutor.SetTierRouter(materialize.NewTierRouter(mat))
+			deps.ObjSetExecutor.SetHotWindow(cfg.ColdTier.HotWindow)
+			log.Printf("[COLD-TIER] hotWindow=%s root=%s", cfg.ColdTier.HotWindow, matRoot)
+		}
 
 		if err := deps.FunnelConsumer.Start(ctx); err != nil {
 			log.Printf("warning: funnel consumer start: %v", err)
