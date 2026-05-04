@@ -17,7 +17,7 @@ import (
 
 func main() {
 	ontology := flag.String("ontology", "", "Ontology API name (required)")
-	lang := flag.String("lang", "ts", "Target language: ts, python, go")
+	lang := flag.String("lang", "ts", "Target language: ts, python, go, java")
 	output := flag.String("output", "sdk-output", "Output directory")
 	serverURL := flag.String("server-url", "http://localhost:9117", "Weave server URL")
 	diff := flag.Bool("diff", false, "Compare ontology at --server-url with the previously generated SDK in --output and print changes (does not write files)")

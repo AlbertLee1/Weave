@@ -150,7 +150,8 @@ func TestTypeMapForLanguage(t *testing.T) {
 		{"ts", true},
 		{"python", true},
 		{"go", true},
-		{"java", false},
+		{"java", true},
+		{"rust", false},
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -181,7 +182,7 @@ func TestTypeMapForLanguage_AllBaseTypes(t *testing.T) {
 		types.TimeSeries, types.MediaReference, types.Marking, types.Cipher,
 	}
 
-	langs := []string{"ts", "python", "go"}
+	langs := []string{"ts", "python", "go", "java"}
 	for _, lang := range langs {
 		t.Run(lang, func(t *testing.T) {
 			m, err := sdkgen.TypeMapForLanguage(lang)
@@ -252,7 +253,7 @@ func TestTypeMapForLanguage_GoMappings(t *testing.T) {
 // --- Generator interface tests ---
 
 func TestGeneratorRegistry(t *testing.T) {
-	langs := []string{"ts", "python", "go"}
+	langs := []string{"ts", "python", "go", "java"}
 	for _, lang := range langs {
 		t.Run(lang, func(t *testing.T) {
 			g, err := sdkgen.GetGenerator(lang)
@@ -267,7 +268,7 @@ func TestGeneratorRegistry(t *testing.T) {
 }
 
 func TestGeneratorRegistry_Unknown(t *testing.T) {
-	_, err := sdkgen.GetGenerator("java")
+	_, err := sdkgen.GetGenerator("rust")
 	if err == nil {
 		t.Fatal("expected error for unsupported language")
 	}
@@ -276,7 +277,7 @@ func TestGeneratorRegistry_Unknown(t *testing.T) {
 func TestGenerator_GenerateReturnsFiles(t *testing.T) {
 	schema := testSchema()
 
-	langs := []string{"ts", "python", "go"}
+	langs := []string{"ts", "python", "go", "java"}
 	for _, lang := range langs {
 		t.Run(lang, func(t *testing.T) {
 			g, err := sdkgen.GetGenerator(lang)
@@ -1203,7 +1204,7 @@ func TestFormatChangelog_Modified(t *testing.T) {
 }
 
 func TestGenerate_EmitsMetadataAndChangelog(t *testing.T) {
-	for _, lang := range []string{"ts", "python", "go"} {
+	for _, lang := range []string{"ts", "python", "go", "java"} {
 		t.Run(lang, func(t *testing.T) {
 			schema := testSchema()
 			schema.ServerURL = "http://srv"
@@ -1378,5 +1379,247 @@ func TestPythonGenerator_TelemetryHooks(t *testing.T) {
 	}
 	if _, ok := by["examples/telemetry_otel.py"]; !ok {
 		t.Error("expected examples/telemetry_otel.py example instrumenter")
+	}
+}
+
+// --- Java SDK structure tests (US-421) ---
+
+func TestTypeMapForLanguage_JavaMappings(t *testing.T) {
+	m, err := sdkgen.TypeMapForLanguage("java")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	checks := map[types.BaseType]string{
+		types.String:  "String",
+		types.Integer: "Integer",
+		types.Long:    "Long",
+		types.Double:  "Double",
+		types.Boolean: "Boolean",
+		types.Date:    "String",
+	}
+	for bt, expected := range checks {
+		if got := m[bt]; got != expected {
+			t.Errorf("Java mapping for %q: expected %q, got %q", bt, expected, got)
+		}
+	}
+}
+
+func TestJavaGenerator_MavenLayout(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	by := filesByPath(files)
+
+	wantPaths := []string{
+		"pom.xml",
+		"src/main/java/com/weave/myontology/WeaveClient.java",
+	}
+	for _, p := range wantPaths {
+		if _, ok := by[p]; !ok {
+			t.Errorf("expected %q in output", p)
+		}
+	}
+}
+
+func TestJavaGenerator_PomXml(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	pom, ok := filesByPath(files)["pom.xml"]
+	if !ok {
+		t.Fatal("expected pom.xml in output")
+	}
+	for _, want := range []string{
+		"<modelVersion>4.0.0</modelVersion>",
+		"<groupId>com.weave.sdk</groupId>",
+		"<artifactId>weave-myontology-sdk</artifactId>",
+		"<maven.compiler.source>11</maven.compiler.source>",
+		"<maven.compiler.target>11</maven.compiler.target>",
+	} {
+		if !strings.Contains(pom, want) {
+			t.Errorf("pom.xml missing %q\n%s", want, pom)
+		}
+	}
+}
+
+func TestJavaGenerator_ObjectClasses(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client, ok := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+	if !ok {
+		t.Fatal("expected WeaveClient.java in output")
+	}
+
+	for _, want := range []string{
+		"package com.weave.myontology;",
+		"public final class WeaveClient",
+		"public static final class Employee",
+		"public String employeeId;",
+		"public String firstName;",
+		"public Integer age;",
+		"public Double salary;",
+		"public Boolean active;",
+		"public String hireDate;",
+		"public List<String> tags;",
+		"public static final class Department",
+		"public String departmentId;",
+		"public static Employee fromMap(Map<String, Object> m)",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("WeaveClient.java missing %q", want)
+		}
+	}
+}
+
+func TestJavaGenerator_ActionParamClasses(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+
+	for _, want := range []string{
+		"public static final class CreateEmployeeParams",
+		"public String firstName;",
+		"public Integer age;",
+		"Map<String, Object> toMap()",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("WeaveClient.java missing %q", want)
+		}
+	}
+}
+
+func TestJavaGenerator_PerObjectMethods(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+
+	for _, want := range []string{
+		"public Employee getEmployee(String pk) throws IOException, InterruptedException",
+		"public ListResult<Employee> listEmployee(ListOptions opts)",
+		"public ListResult<Employee> searchEmployee(Map<String, Object> where, ListOptions opts)",
+		"public Department getDepartment(String pk)",
+		"public List<Department> linkedObjectsEmployeeEmployeeDepartment(String pk)",
+		"public void applyCreateEmployee(CreateEmployeeParams params)",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("WeaveClient.java missing %q", want)
+		}
+	}
+}
+
+func TestJavaGenerator_FunctionsExecute(t *testing.T) {
+	schema := testSchema()
+	schema.Functions = []sdkgen.FunctionSchema{
+		{RID: "ri.function.main.fn.1", Name: "computeBonus", Version: "2.0.0"},
+		{RID: "ri.function.main.fn.2", Name: "summarize"},
+	}
+
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), schema)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+
+	for _, want := range []string{
+		"public Map<String, Object> executeFunction(String ref, Map<String, Object> params)",
+		"public Map<String, Object> executeComputeBonus(Map<String, Object> params)",
+		`return executeFunction("computeBonus@2.0.0",`,
+		"public Map<String, Object> executeSummarize(Map<String, Object> params)",
+		`return executeFunction("summarize",`,
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("WeaveClient.java missing %q", want)
+		}
+	}
+}
+
+func TestJavaGenerator_MiddlewareAndRetry(t *testing.T) {
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), testSchema())
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+
+	for _, want := range []string{
+		"public interface Middleware",
+		"public interface RoundTripFunc",
+		"public WeaveClient use(Middleware mw)",
+		"public WeaveClient useRetry(RetryPolicy policy)",
+		"public WeaveClient useTelemetry(TelemetryHooks hooks)",
+		"public static final class RetryPolicy",
+		"public static final class TelemetryHooks",
+		"public static Middleware retryMiddleware(",
+		"public static Middleware telemetryMiddleware(",
+		"Retry-After",
+	} {
+		if !strings.Contains(client, want) {
+			t.Errorf("WeaveClient.java missing %q", want)
+		}
+	}
+}
+
+func TestJavaGenerator_GeoPointEmittedOnDemand(t *testing.T) {
+	// Default schema has no geopoint props; GeoPoint should NOT appear.
+	g, _ := sdkgen.GetGenerator("java")
+	files, _ := g.Generate(context.Background(), testSchema())
+	plain := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+	if strings.Contains(plain, "public static final class GeoPoint") {
+		t.Error("GeoPoint should not be emitted when schema has no geopoint properties")
+	}
+
+	// Add a geopoint prop and re-generate; GeoPoint must now appear.
+	schema := testSchema()
+	schema.ObjectTypes[0].Properties = append(schema.ObjectTypes[0].Properties,
+		sdkgen.PropertySchema{APIName: "officeLocation", BaseType: "geopoint"})
+	files, _ = g.Generate(context.Background(), schema)
+	withGeo := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+	for _, want := range []string{
+		"public static final class GeoPoint",
+		"public Double lat;",
+		"public Double lon;",
+		"public GeoPoint officeLocation;",
+		"static GeoPoint asGeoPoint(",
+	} {
+		if !strings.Contains(withGeo, want) {
+			t.Errorf("WeaveClient.java missing %q", want)
+		}
+	}
+}
+
+func TestJavaGenerator_ReservedWordSafe(t *testing.T) {
+	// A property whose API name collides with a Java reserved word must be
+	// renamed at the Java field level so the generated code compiles.
+	schema := testSchema()
+	schema.ObjectTypes[0].Properties = append(schema.ObjectTypes[0].Properties,
+		sdkgen.PropertySchema{APIName: "class", BaseType: "string"})
+
+	g, _ := sdkgen.GetGenerator("java")
+	files, err := g.Generate(context.Background(), schema)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	client := filesByPath(files)["src/main/java/com/weave/myontology/WeaveClient.java"]
+
+	if !strings.Contains(client, "public String class_;") {
+		t.Errorf("WeaveClient.java should rename reserved-word property 'class' to 'class_'")
+	}
+	// The wire-level key in fromMap must still use the original API name.
+	if !strings.Contains(client, `m.get("class")`) {
+		t.Errorf("WeaveClient.java fromMap must look up the original wire key 'class'")
 	}
 }

@@ -45,6 +45,7 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - WebSocket subscription cursor + replay (US-380): `pkg/subscriptions.EventLog` is the Hub-owned sliding-window replay buffer. Every `HandleObjectChange` and `HandleActionJobProgress` first calls `eventLog.Append` UNDER hub.mu and stamps the assigned monotonic cursor on the outbound `Message.Cursor` field. The lock ordering (append + index read in one critical section) guarantees that a subscription registered at hub.mu cannot miss an event whose cursor ≤ snapshot-time-latest AND will receive every live event with cursor > snapshot-time-latest. Aggregation events are NOT logged — they are derived per-subscription state and reseed via Bleve at subscribe time. Reconnect protocol: `?since=<cursor>` is parsed BEFORE `websocket.Accept` so a malformed value can be coerced to 0 ("no replay"). The welcome envelope carries `lastEventId = eventLog.LatestID()`. If `since < earliestLive` OR `since > latest` the connection-level `onOutOfDate` (no SubscriptionID) fires immediately and `replayCursor` is set to -1 to disarm per-subscription replay. Otherwise each subscribe handler — `handleSubscribe` / `handleSubscribeObjectSet` / `handleSubscribeActionJob` — drops the `defer Unlock` pattern in favour of explicit locks so it can register the subscription, release locks, then drain `replayObjectSubscription` / `replayActionJobSubscription` onto `c.send`. Because the routing index is updated under the same hub.mu critical section as the snapshot read, there's no overlap between replayed events (id ≤ snapshot.maxID) and live events (id > snapshot.maxID). Pattern: when adding new event kinds that need replay support, give them a new `EventLogEntry.Kind` discriminator + a marshaller method on the entry, then thread them through the replay drain alongside the existing `objectChange` / `actionJobProgress` arms.
 - Python SDK WebSocket subscribe (US-418): `sdk/python/weave_client/subscriptions.py` wraps the US-380 cursor+replay protocol behind `WeaveAsyncClient.objects.subscribe(...)` which returns a `Subscription` async iterator. The wire contract MUST mirror the server: subscribe envelope is `{"type":"subscribe","data":{"objectType":...,"where":...,"select":...}}` (the `data` wrapper is required because `pkg/subscriptions/hub.go::Message.Data` is the typed `json.RawMessage` discriminator). Auth rides on `?token=` only — the WS handler at `pkg/subscriptions/handler.go` reads NO `Authorization` headers, by design, because browsers can't send custom headers on WebSocket upgrades. Cursor is tracked on the Subscription instance, supplied as `?since=<n>` on every reconnect; connection-level `onOutOfDate` (no `subscriptionId`) raises `WeaveOutOfDate` (caller refreshes full state); subscription-level `onOutOfDate` (with `subscriptionId`) is internally converted to a `ConnectionError` so the resume cursor replays the dropped window via the same reconnect path. The transport is a pluggable ABC with `WebsocketsTransport` as the default (lazy-imports the `websockets` library so HTTP-only consumers don't pay the install cost — added to `[project.optional-dependencies] ws`). Tests inject `transport_factory=ScriptedTransport` to script recv frames without a real socket. Pattern: when a PRD AC names a sync library that doesn't fit an async surface, route through a transport ABC, document the deviation, and prefer optional extras over base deps for paths only a subset of callers exercise. Critical: the `_iter` exception handler MUST check `self._closed` BEFORE the `auto_reconnect` branch so a caller-initiated `aclose()` shuts the iterator down silently rather than bubbling a confusing "transport not connected" RuntimeError past the close.
 - TypeScript OSDK layout (US-419): `examples/ts-quickstart/src/` is the canonical 4-client OSDK shape — `transport.ts` (HttpTransport interface + FetchTransport default + WeaveHttpError), four feature modules (`objects.ts`, `actions.ts`, `functions.ts`, `subscribe.ts`) each owning one wire surface, `openapi.ts` for shared wire-format types, `client.ts` aggregating all four sub-clients on a single transport, and `index.ts` as the barrel export. The Subscribe client mirrors the Python SDK's pluggable-transport pattern: `SubscribeTransport` ABC + `ScriptedTransport` test helper means subscribe tests script frame sequences without real sockets. `tsconfig.json` ships `declaration: true + declarationMap + sourceMap` so `tsc` (no `--noEmit`) emits `dist/*.d.ts` for every public module — the `examples/quickstart_test.go::TestTypeScriptQuickstart_OSDKBuildEmitsDeclarations` gate enforces this for all 8 OSDK modules. Unit tests live in `src/__tests__/*.test.ts` using `node:test` + `node:assert/strict` (no `@types/node` install needed — minimal ambient declarations live in `src/globals.d.ts`); the Go test runs `tsc && node --test dist/__tests__/*.test.js`. Imports use `.js` extensions everywhere (`from './foo.js'`) — works under both `moduleResolution: bundler` (typecheck resolves to `.ts`) AND Node's strict ESM loader at runtime (resolves to emitted `.js`). Pattern: when adding the next-language SDK (Go SDK in US-420, Java SDK in US-421) follow the same module-per-feature shape — one client per wire surface, one shared types module, one transport abstraction, mocked transport for unit tests, declaration emission verified by an explicit test, and a top-level facade owning a single transport instance.
+- Go SDK per-ontology layout (US-420): `pkg/sdkgen.GetGenerator("go")` now emits the SDK at `pkg/<ontology>/{client,objects,actions,functions}.go` plus `go.mod` + `examples/telemetry_otel.go` + `.weave-sdk.json` + `CHANGELOG.md` at root. The four-file split (vs the AC's three-file naming) keeps the per-category schema-driven content separated from the cross-cutting HTTP/middleware/retry/telemetry infrastructure that needs to live somewhere. Module name keeps APIName casing (`weave-sdk/myOntology`) for diff stability with prior SDKs; package name + directory use the lowercase sanitised form (`pkg/myontology`, `package myontology`) so the import path is `weave-sdk/<APIName>/pkg/<lowercased>`. `goPackageName` and `goSafeIdent` (`pkg/sdkgen/gen_go.go`) are the canonical sanitisers — leading digit prefixed with `_`, non-alphanumeric runes collapsed, fallback `weavesdk` / `Function`. Function-level typed wrappers ride on a new `OntologySchema.Functions []FunctionSchema` field (RID/Name/Version) populated from `OntologyExport.Functions` in `cmd/sdkgen/main.go::buildSchema`; the generic `ExecuteFunction(ctx, ref, params, out)` is always emitted so functions.go's `context`/`fmt`/`net/url` imports stay used regardless of schema shape. Integration tests run BOTH `go vet ./...` AND `go test ./...` against the generated tree (`pkg/sdkgen/gen_go_integration_test.go::TestGoSDK_GoVet` + `_GoTest`) — the latter catches cross-package symbol mismatches that vet alone misses (it links the test binary even when zero `*_test.go` files exist). Pattern for next-language generators (US-421 Java): keep schema-driven content in `<category>.<ext>` files, cross-cutting infrastructure in `client.<ext>`, and add a `go test`-equivalent step to the integration suite that loads the produced toolchain artifact.
 - Function code repository per-RID bare git (US-415): `pkg/funcrepo.Manager` owns `{DataDir}/repos/{rid}/.git` bare git repos via go-git. Commits are produced via plumbing (no worktree) — blob → single-entry tree (`function.js`) → commit chained onto previous head on `refs/heads/main`. Per-RID `sync.Mutex` map serialises commits so concurrent writers form a linear parent chain rather than forks. Path traversal validation rejects any RID containing `/`, `\`, `..`, or that fails `path.Clean(rid)==rid`. The OMS layer talks to the narrow `oms.FunctionRepoStore` interface (Commit / Log) — pkg/funcrepo doesn't import pkg/oms, and the bridge lives in `cmd/server/function_repo_adapter.go` so the wiring stays one-directional. Handler routes `POST /functions/{rid}/commits` and `GET /functions/{rid}/log` resolve `{functionRid}` via the existing `resolveFunctionRef` helper (rid / name / name@version) so the bare repo is always keyed on the canonical RID even when callers POST against the human name. Wire body accepts BOTH `sourceCode` and `patch` (alias) — the latter is retained for SDK clients that use git-style terminology, but both routes through the same Commit input. Empty-repo `Log` returns 200 with `data: []` (NOT 404) so SDK consumers don't have to special-case "no history yet". CLI `weave fn pull/push/log` rides on the same wire surface via `cliclient.GetFunction` + `cliclient.CreateFunctionRepoCommit` + `cliclient.ListFunctionRepoCommits`. Pattern: when adding a new on-disk-state-managing optional store (filesystem-backed snapshots, embedded blob stores, …) follow the layering — concrete implementation in its own package, narrow interface in `pkg/oms` declaring only the methods the handler needs, an adapter file at `cmd/server/<feature>_adapter.go` for the dependency-direction bridge, and 503 NotConfigured for degraded-mode test routers that don't wire it.
 
 ## 2026-05-02 - US-365 - ObjectSet 不可变快照持久化
@@ -3151,4 +3152,213 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - For `node:test` + `tsc` with `module: ES2022` ESM output: imports inside the test files MUST use `.js` extensions even when importing from compiled `.ts` source, because node's ESM loader doesn't auto-resolve extensions. The test files compile to `dist/__tests__/*.test.js` and the `import { ... } from '../client.js'` then resolves to `dist/client.js` cleanly. If the host repo ever adopts `tsx` or another runtime-stripping loader, this constraint relaxes — but the build+node:test pipeline used here doesn't need any extra dep.
 - Pattern for testing transport-pluggable async iterators: a `ScriptedTransport` that pops a fixed queue of frames is dramatically simpler than a state-machine mock. Each test scripts the exact frame sequence it expects (welcome → subscribed → objectChanged → ...) and the iterator drains them in order. Reuse the same shape if any future feature ships an async-iterator client (NDJSON streaming function execution, ObjectSet SSE, etc.).
 - The OSDK's `package.json` exports `dist/index.d.ts` + `dist/index.js` via the `exports` map. This is what enables IDE IntelliSense and proper ESM resolution when consumers `import { WeaveClient } from 'weave-ts-quickstart'`. Without the `exports` field, package consumers would have to import from a deep path like `'weave-ts-quickstart/dist/index.js'`.
+---
+
+## 2026-05-05 - US-420 - Go SDK 生成器
+
+**Implementation:**
+- Restructured `pkg/sdkgen/gen_go.go` so the generated SDK now lands at the
+  per-ontology layout the AC requires:
+  - `pkg/<ontology>/client.go` — Client struct, middleware/retry/telemetry
+    infrastructure, `ListOptions` / `ListResult[T]`, `do` + `appendListQuery`
+    helpers, `GeoPoint` (only when an ObjectType actually references a
+    Geopoint property — kept conditional so trivial schemas don't carry an
+    unused type).
+  - `pkg/<ontology>/objects.go` — one Go struct per ObjectType plus the typed
+    `GetX` / `ListX` / `SearchX` / `LinkedObjectsX<Y>` methods on `*Client`.
+  - `pkg/<ontology>/actions.go` — one `XParams` struct per parameterised
+    ActionType plus the `ApplyX` methods.
+  - `pkg/<ontology>/functions.go` — generic `ExecuteFunction(ctx, ref, params,
+    out)` wrapper plus per-Function typed `Execute<Name>` shims that pin
+    `ref` to `name@version` (or just `name` when the schema has no version).
+  - `go.mod` at root, `examples/telemetry_otel.go` at root, plus the
+    standard `.weave-sdk.json` + `CHANGELOG.md` from `appendVersionFiles`.
+- Added `goPackageName(s)` (sanitises `myOntology` → `myontology`, leading
+  digit prefixed with `_`, fallback `weavesdk`) and `goSafeIdent(s)` (collapses
+  arbitrary identifiers — Function names that may contain dots/hyphens — into
+  a PascalCase-friendly form before the `pascalCase` helper). Module name
+  stays `weave-sdk/<APIName as-is>` for backward compatibility with the
+  existing `TestGoGenerator_GoModName` assertion; the package directory and
+  `package <name>` declaration use the lowercase sanitised form.
+- Added `FunctionSchema` to `pkg/sdkgen/schema.go` (`RID` / `Name` / optional
+  `Version`) and threaded it through `OntologySchema.Functions`. The TS /
+  Python generators ignore it for now; the Go generator drives the per-Function
+  typed wrappers off it. `cmd/sdkgen/main.go::buildSchema` populates the new
+  field from `OntologyExport.Functions`.
+- Fail-soft no-action / no-function / no-link schemas: `actions.go` emits a
+  blank-identifier reference block so `context` / `fmt` / `net/url` stay
+  "used" when a schema has zero ActionTypes, keeping `go vet` clean.
+  `functions.go` always emits the generic `ExecuteFunction` so the
+  `context` / `fmt` / `net/url` imports are referenced regardless of whether
+  the schema exposed any typed Functions.
+- Telemetry example template now takes both the package alias and the full
+  import path so the emitted `examples/telemetry_otel.go` can `import
+  myontology "weave-sdk/myOntology/pkg/myontology"`. Five `%s` substitutions
+  (alias, importPath, alias, alias, alias) — easy to miscount, so I'm
+  documenting the substitution list at the call site.
+
+**Test changes:**
+- Updated existing Go assertions in `pkg/sdkgen/sdkgen_test.go` for the new
+  layout: `TestGoGenerator_ObjectStructs` (now reads `pkg/myontology/
+  objects.go` and asserts `package myontology`), `TestGoGenerator_
+  ActionParamStruct` (reads `actions.go`), `TestGoGenerator_ClientMethods`
+  (reads BOTH `client.go` for the Client struct + http import AND
+  `objects.go` for the per-ObjectType methods), `TestGoGenerator_
+  ApplyActionMethod` (reads `actions.go`), `TestGoGenerator_
+  RequestInterceptor` / `_RetryPolicy` / `_TelemetryHooks` (read
+  `client.go` from the per-ontology subpackage).
+- Added four new tests:
+  - `TestGoGenerator_PerOntologyLayout` — asserts the four
+    `pkg/myontology/*.go` files exist plus `go.mod` and the telemetry
+    example, AND every emitted `pkg/<ont>/*.go` declares the per-ontology
+    package.
+  - `TestGoGenerator_FunctionsFile` — feeds a schema with two Functions
+    (one versioned, one not) and asserts both the generic ExecuteFunction
+    helper AND the typed `ExecuteComputeBonus@2.0.0` / `ExecuteSummarize`
+    wrappers exist with the right `ref` strings.
+  - `TestGoGenerator_FunctionsFileWithoutSchemaFunctions` — asserts the
+    generic helper still exists when no Functions are in the schema, and
+    no extra typed wrappers leak in.
+  - `TestGoGenerator_LinkedObjectsMethod` — asserts the
+    `LinkedObjectsEmployeeEmployeeDepartment` method shape.
+- Updated `pkg/sdkgen/gen_go_integration_test.go`: factored the file-
+  writing into a `writeGoSDK(t)` helper, added `TestGoSDK_GoTest` that runs
+  `go test ./...` from the generated tree (confirms every emitted package
+  loads under the test toolchain — catches subtler cross-package symbol
+  mismatches that `go vet` alone may miss).
+- Updated `pkg/oms/handlers_sdkgen_test.go::TestGenerateSDK_Go`: the smoke
+  assertion that "the zip contains a Go file" now looks for
+  `pkg/test/objects.go` (the per-ontology layout) instead of the old
+  flat `models.go`.
+
+**Files changed:**
+- `pkg/sdkgen/schema.go` (added `FunctionSchema` + `OntologySchema.Functions`)
+- `pkg/sdkgen/gen_go.go` (rewritten layout split: client/objects/actions/
+  functions; new `goPackageName`, `goSafeIdent`, `goLinksBySource` helpers;
+  updated telemetry example template)
+- `pkg/sdkgen/sdkgen_test.go` (existing Go tests updated for new paths;
+  4 new tests for per-ontology layout + functions file)
+- `pkg/sdkgen/gen_go_integration_test.go` (added `TestGoSDK_GoTest`,
+  factored `writeGoSDK` helper)
+- `pkg/oms/handlers_sdkgen_test.go` (smoke assertion updated for new path)
+- `cmd/sdkgen/main.go` (`buildSchema` now populates `Functions`)
+- `prd.json` (mark US-420 passes: true)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `gofmt -l` of every file I touched: 0 drift
+  (pre-existing drift in `pkg/sdkgen/gen_python.go`, `pkg/sdkgen/metadata.go`,
+  `pkg/oms/handlers_sdkgen_test.go::expectedFiles` block — confirmed via
+  `git stash` round-trip on main, NOT introduced by this story)
+- `go test ./pkg/sdkgen/...` PASS (existing 9 Go-generator tests + 4 new
+  layout/functions tests, all green)
+- `go test -tags integration ./pkg/sdkgen/... -run TestGoSDK` PASS
+  (`TestGoSDK_GoVet` 0.16s, `TestGoSDK_GoTest` 0.17s — both run real
+  `go vet ./...` and `go test ./...` against the generated SDK)
+- `go test ./pkg/oms/... -run TestGenerateSDK` PASS (the handler-level zip
+  smoke tests for TS / Python / Go all green; the Go assertion was the only
+  one that needed a path update)
+- `go test ./...` PASS across all packages — long suites
+  (`test/chinook` 207.8s, `test/northwind` 134.5s) all green, zero
+  regressions outside the deliberate `TestGenerateSDK_Go` path update
+
+**Learnings for future iterations:**
+- The PRD AC reads "输出 pkg/<ontology>/{objects,actions,functions}.go" — three
+  files, one per category. In practice you also need a fourth file for the
+  shared HTTP infrastructure (Client struct, middleware, retry, telemetry),
+  otherwise either (a) one of the three category files balloons with
+  unrelated code, or (b) the three files have to declare the Client struct
+  redundantly. I treated `client.go` as the canonical location for the
+  cross-cutting infrastructure and kept the three category files focused on
+  their schema-driven contents. The AC is satisfied (the three named files
+  exist) and the layout is cleaner. Future per-language generators that need
+  to split on identical category boundaries should use the same shape:
+  `<category>.go` for schema-driven content, `client.go` for shared
+  infrastructure.
+- The Go module name (`weave-sdk/<ontology>`) is decoupled from the package
+  directory name (`pkg/<ontology>` lowercase). The module name keeps the
+  original APIName casing for stable diff with prior SDKs (existing
+  `TestGoGenerator_GoModName` asserts `module weave-sdk/myOntology`); the
+  package and directory are lowercased to satisfy Go's package naming
+  convention. The full import path is therefore
+  `weave-sdk/<APIName>/pkg/<lowercased-name>` — slightly redundant but
+  correct, and the OpenTelemetry example shows callers how to alias it
+  (`import myontology "weave-sdk/myOntology/pkg/myontology"`).
+- When a per-feature category file may legitimately be empty for some schemas
+  (e.g. `actions.go` when the ontology has zero ActionTypes), the file still
+  has to declare its imports as "used" or `go vet` will reject it. The
+  cleanest pattern is a `var _ = pkg.Symbol` blank-identifier reference
+  block at the END of the file. Don't drop the imports conditionally — they
+  may be referenced by future extensions, and the blank-ident block is one
+  static cost regardless of schema shape. `functions.go` sidesteps the issue
+  entirely by ALWAYS emitting the generic `ExecuteFunction` helper, which
+  pins context/fmt/net/url to "used" no matter what.
+- When a generator's existing tests reference flat output paths (`models.go`
+  / `client.go` at root), a layout migration cascades into both the unit
+  tests AND any handler-level smoke tests downstream (here, `pkg/oms/
+  handlers_sdkgen_test.go::TestGenerateSDK_Go` checks the zip contents). The
+  search pattern `"<filename>.go"` across the repo catches every consumer
+  in one pass — apply this whenever the generator's output paths shift.
+- The OMS `OntologyExport` already includes a `Functions []Function` slice
+  (US-415 / US-389 wired it). Threading new schema axes into the SDK
+  generators is therefore a one-line change in `cmd/sdkgen/main.go::
+  buildSchema` plus a new field in `pkg/sdkgen.OntologySchema` — the
+  OMS-side wire shape doesn't need to change. Future SDK additions (e.g.
+  ValueTypes for the Go SDK once those land in the OMS export envelope)
+  should follow the same pattern: extend `OntologySchema` with a slice +
+  per-language opt-in usage, leaving uninterested generators untouched.
+- The integration test split (`go vet` AND `go test`) is genuinely worth
+  having both. `go vet` catches static-analysis issues (printf format
+  mismatches, unused imports) but does NOT load the per-package test
+  binary. `go test` does load the test binary even when no `*_test.go`
+  files exist — the `[no test files]` exit-0 path still exercises every
+  package's compile + link sequence. Cross-package symbol mismatches show
+  up here that `vet` misses (e.g. `client.go` referencing a method moved
+  into `objects.go` works under vet but breaks under test-binary linking
+  if the move was incomplete).
+- Five `%s` substitutions in a single template format string is a code
+  smell but acceptable for a one-shot example file. Two of the five could
+  have been removed by composing the template differently, but the simple
+  per-substitution list (alias, importPath, alias, alias, alias) is at
+  least mechanically auditable. If a future template grows past 5
+  substitutions, switch to `text/template`.
+---
+
+## 2026-05-05 - US-421 - Java SDK 生成器
+
+**Implementation:**
+- New `pkg/sdkgen/gen_java.go` registers `javaGenerator` (Language() == "java") and emits a Maven project layout: `pom.xml` at root + a single `src/main/java/com/weave/<ontology>/WeaveClient.java` carrying every public type the SDK exposes (Client, Middleware, RetryPolicy, TelemetryHooks, ListOptions/ListResult, GeoPoint when needed, Json helper, plus per-ObjectType / per-Action / per-Function POJOs as nested static classes).
+- `pom.xml`: `groupId=com.weave.sdk`, `artifactId=weave-<lower>-sdk`, `version=0.1.0`, JDK 11 source/target. **No third-party dependencies** — the SDK depends only on `java.net.http.HttpClient` + `java.util.*`, so `mvn compile` succeeds without resolving any artifact other than Maven's own packaging plugins.
+- The single-file SDK design mirrors the Go SDK's per-ontology layout. Per-ObjectType POJOs are nested static classes with a `fromMap(Map<String, Object>)` factory; the factory invokes scalar coercion helpers (`asInt`, `asLong`, `asDouble`, `asBoolean`, `asString`, `asGeoPoint`, ...) defined as package-private static methods on `WeaveClient` so the generated `<Type>.fromMap` bodies stay terse.
+- Inline minimal JSON encoder/decoder (`WeaveClient.Json`, ~200 lines) handles `Map` / `Collection` / `String` / `Number` / `Boolean` / null. Decoded numbers become `Long` if integer, `Double` if fractional. Decoded objects are `LinkedHashMap`, decoded arrays `ArrayList`. Serializer fail-soft: unsupported types stringify rather than throw.
+- Middleware chain mirrors the Go SDK: `WeaveClient.use(Middleware)` registers, the chain is built in reverse so first-registered ends up at the OUTERMOST layer. `useRetry(RetryPolicy)` and `useTelemetry(TelemetryHooks)` are sugar that install the built-in middlewares.
+- `RetryMiddleware`: idempotent methods only (GET/HEAD/OPTIONS/PUT/DELETE), retriable status set `{408, 425, 429, 500, 502, 503, 504}`, exponential backoff with full jitter (`ThreadLocalRandom` by default; `RetryPolicy.rand` lets tests inject a deterministic source). Honours `Retry-After` (delta-seconds only — HTTP-date is intentionally unsupported because Java 11 has no built-in HTTP date parser).
+- `TelemetryHooks`: `Function<HttpRequest, Object> onRequest` returns a span/context/opaque value that is threaded through `TriConsumer<HttpRequest, HttpResponse<byte[]>, Object> onResponse` and `TriConsumer<HttpRequest, Throwable, Object> onError` — same shape as the Python/Go SDKs.
+- Java reserved-word safety: `javaSafeFieldName` appends a trailing `_` when an API name collides with a Java reserved word (e.g. `class` → `class_`). The wire-format key in `fromMap` still uses the original name via `m.get("class")` so JSON round-trips are lossless.
+- `javaPackageSegment` lower-cases the ontology API name and strips non-identifier characters; `javaArtifactID` produces a Maven-friendly `weave-<lower>-sdk`. Empty input falls back to `weavesdk` / `weave-sdk` so a degenerate schema still emits a parseable layout.
+
+**Files changed:**
+- `pkg/sdkgen/typemap.go` — added `javaTypeMap` + `case "java"` in `TypeMapForLanguage`
+- `pkg/sdkgen/generator.go` — registered `javaGenerator` in `GetGenerator`
+- `pkg/sdkgen/gen_java.go` (new — ~520 lines)
+- `pkg/sdkgen/gen_java_integration_test.go` (new — `TestJavaSDK_MvnCompile` + `TestJavaSDK_Javac`, both `//go:build integration`)
+- `pkg/sdkgen/sdkgen_test.go` — added 8 Java unit tests (Maven layout, pom.xml, ObjectType POJOs, Action params, per-ObjectType API methods, Functions execute, middleware/retry, GeoPoint on-demand emission, Java reserved-word safety) and updated existing tests that expected `java` to be unsupported (now use `rust`).
+- `pkg/oms/handlers_sdkgen_test.go` — `TestGenerateSDK_UnsupportedLanguage` now uses `lang=rust` instead of `lang=java`.
+- `cmd/sdkgen/main.go` — `--lang` flag help string now lists `java`.
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./pkg/sdkgen/... ./pkg/oms/... ./cmd/sdkgen/...` all green; new Java unit tests pass.
+- `go test -tags integration -run TestJavaSDK ./pkg/sdkgen/...` — `TestJavaSDK_Javac` PASS (compiles via `javac -source 11 -target 11`); `TestJavaSDK_MvnCompile` PASS via `mvn -B -q compile`.
+- Full repo `go test ./...` green after adjusting the `TestGenerateSDK_UnsupportedLanguage` fixture.
+
+**Learnings for future iterations:**
+- `t.Setenv` is the preferred way to override environment for a Maven / JDK-driven test, but you MUST also validate the existing JAVA_HOME — Homebrew Cellar entries point at version-stamped paths that disappear after upgrades, leaving JAVA_HOME set to a stale dir. The right pattern: probe `os.Getenv("JAVA_HOME")` AND verify `<home>/bin/javac` exists (`javaHomeValid`); only then accept the inherited value. Otherwise discover via `/usr/libexec/java_home` (macOS) or symlink-resolve `javac` (Linux).
+- The Java SDK is intentionally dependency-free. Adding Jackson would have shaved ~150 lines of inline JSON helper code, but `mvn compile` would then need network access OR a pre-warmed local repo — neither guaranteed in CI. The trade-off settled on "self-contained over compact" so the integration test is reliable across environments.
+- When extending the SDK generator registry to a new language with a different identifier-casing convention than camelCase: look beyond `pkg/sdkgen/sdkgen_test.go`. The OMS HTTP handler test `pkg/oms/handlers_sdkgen_test.go::TestGenerateSDK_UnsupportedLanguage` uses a hard-coded "java" probe to verify the bad-language path; any new language registration breaks that test until its fixture is updated. Search for the language identifier across `pkg/oms/`, `cmd/sdkgen/`, and `pkg/sdkgen/` before committing.
+- Java reserved-word safety on schema-driven field names is non-optional — `class`, `default`, `package`, etc. are all valid Palantir property API names. Append `_` rather than rewriting (the wire-key lookup uses the original API name verbatim so JSON round-trips are lossless). The same pattern applies if Go ever needs reserved-word handling (it doesn't — `goSafeIdent` only sanitizes characters that aren't valid identifier runes), or for any future language whose lexer reserves common English words.
+- For per-language integration tests that depend on a toolchain (mypy / mvn / npm), always allow a clean skip: `findX(t)` returns "" → `t.Skip(...)`. The base unit test suite (`go test ./pkg/sdkgen/...` without `-tags integration`) MUST remain green on every developer laptop regardless of which toolchains are installed. Only the `-tags integration` runs exercise the real builds.
+- `WeaveClient.<NestedType>.fromMap(...)` factory pattern is the cleanest fit for Java schema-driven POJOs. The alternative — generating per-type `*.java` files — pollutes the package directory and forces the caller to import each type individually. With nested static classes, callers do `WeaveClient.Employee e = client.getEmployee("...");` — one import, full type safety. This is the canonical shape for any future static-typed SDK generator that needs per-row materialisation (e.g. a hypothetical Kotlin SDK).
 ---

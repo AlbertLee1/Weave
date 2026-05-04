@@ -171,7 +171,7 @@ func TestGenerateSDK_UnsupportedLanguage(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/api/v2/ontologies/{ontologyApiName}/sdkgen", handler.GenerateSDK)
 
-	req := httptest.NewRequest("POST", "/api/v2/ontologies/test/sdkgen?lang=java", nil)
+	req := httptest.NewRequest("POST", "/api/v2/ontologies/test/sdkgen?lang=rust", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

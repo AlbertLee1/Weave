@@ -30,6 +30,8 @@ func GetGenerator(lang string) (Generator, error) {
 		return &pythonGenerator{}, nil
 	case "go":
 		return &goGenerator{}, nil
+	case "java":
+		return &javaGenerator{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported language: %q", lang)
 	}

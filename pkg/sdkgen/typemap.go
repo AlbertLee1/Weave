@@ -19,6 +19,8 @@ func TypeMapForLanguage(lang string) (TypeMap, error) {
 		return pythonTypeMap, nil
 	case "go":
 		return goTypeMap, nil
+	case "java":
+		return javaTypeMap, nil
 	default:
 		return nil, fmt.Errorf("unsupported language: %q", lang)
 	}
@@ -68,6 +70,29 @@ var pythonTypeMap = TypeMap{
 	types.Marking:        "str",
 	types.Cipher:         "str",
 	types.Union:          "Any",
+}
+
+var javaTypeMap = TypeMap{
+	types.String:         "String",
+	types.Integer:        "Integer",
+	types.Short:          "Short",
+	types.Long:           "Long",
+	types.Float:          "Float",
+	types.Double:         "Double",
+	types.Boolean:        "Boolean",
+	types.Byte:           "Byte",
+	types.Date:           "String",
+	types.Timestamp:      "String",
+	types.Decimal:        "String",
+	types.Geopoint:       "GeoPoint",
+	types.Geoshape:       "Object",
+	types.Attachment:     "String",
+	types.TimeSeries:     "String",
+	types.MediaReference: "String",
+	types.Media:          "String",
+	types.Marking:        "String",
+	types.Cipher:         "String",
+	types.Union:          "Object",
 }
 
 var goTypeMap = TypeMap{
