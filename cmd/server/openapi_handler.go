@@ -28,6 +28,13 @@ func openapiSpecHandler() http.Handler {
 // swaggerUIHTML is the minimal Swagger UI page that loads the spec from the
 // /api/openapi.yaml endpoint. The Swagger UI assets themselves are loaded
 // from a public CDN (unpkg.com) so we do not need to vendor JavaScript.
+//
+// Try-it-out (US-422) is enabled explicitly via tryItOutEnabled so the
+// contract is independent of swagger-ui-dist defaults: any future bundle
+// upgrade that flipped the default to false would silently break the SDK
+// quickstart flow without this guard. persistAuthorization keeps the bearer
+// token across page reloads so an interactive session does not have to
+// re-paste the JWT after every navigation.
 const swaggerUIHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -48,6 +55,10 @@ const swaggerUIHTML = `<!DOCTYPE html>
         url: "/api/openapi.yaml",
         dom_id: "#swagger-ui",
         deepLinking: true,
+        tryItOutEnabled: true,
+        displayRequestDuration: true,
+        persistAuthorization: true,
+        filter: true,
         presets: [
           SwaggerUIBundle.presets.apis,
           SwaggerUIStandalonePreset

@@ -123,3 +123,31 @@ func TestSwaggerUI_RedirectsBareSwagger(t *testing.T) {
 		t.Errorf("Location: got %q want /swagger/", loc)
 	}
 }
+
+// TestSwaggerUI_EnablesTryItOut (US-422) asserts that the bundled Swagger UI
+// page wires tryItOutEnabled + persistAuthorization explicitly. These
+// settings are the contract that "/swagger/ is interactive": tryItOutEnabled
+// surfaces the Try-it-out button on every operation, persistAuthorization
+// keeps the bearer token across reloads. They are guarded as defaults in
+// swagger-ui-dist, but defaults can flip across major versions, so the page
+// states them inline and this test pins them.
+func TestSwaggerUI_EnablesTryItOut(t *testing.T) {
+	router := newContractTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/swagger/", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"tryItOutEnabled: true",
+		"persistAuthorization: true",
+		"displayRequestDuration: true",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("swagger UI HTML missing %q — interactive mode is part of the US-422 contract", want)
+		}
+	}
+}
