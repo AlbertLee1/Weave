@@ -39,6 +39,7 @@ import { QuiverPage } from './components/quiver/QuiverPage';
 import { QuiverViewPage } from './components/quiver/QuiverViewPage';
 import { PermissionRequestsPage } from './components/permissionrequests/PermissionRequestsPage';
 import { MentionsPage } from './components/notifications/MentionsPage';
+import { MarketplacePage } from './components/marketplace/MarketplacePage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { useNavigate, useParams } from 'react-router';
 
@@ -126,6 +127,7 @@ export default function App() {
               <Route path="approvals/:ontology" element={<ApprovalsPage />} />
               <Route path="permission-requests" element={<PermissionRequestsPage />} />
               <Route path="mentions" element={<MentionsPage />} />
+              <Route path="marketplace" element={<MarketplacePage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="quiver/:ontology" element={<QuiverPage />} />

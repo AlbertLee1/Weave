@@ -2785,3 +2785,40 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The CLI's migration-content wire format relies on Go's default `encoding/json` `[]byte` → base64 string handling: the test stub asserts the migrations array shape but not the byte-level encoding. The server handler's `PackageMigrationEntry.Content []byte` field decodes base64 transparently. For non-text SQL bodies (rare but possible — e.g. embedded UTF-16 procedures) this round-trips cleanly without a separate encoding step. If a future US needs to ship binary blobs on the same surface, the existing `[]byte` field already covers it.
 - Stdlib `flag` parsing stops at the first non-flag argument — so `weave pkg install archive.weavepkg --on-conflict overwrite` parses with `--on-conflict overwrite` as POSITIONAL args, not flags. CLI tests must put flags BEFORE the archive path: `weave pkg install --on-conflict overwrite archive.weavepkg`. This caught us once and is the same gotcha that hit US-408's index-rebuild CLI. When designing CLI surfaces with multiple positional-after-flag arguments, prefer `--key=value` over `--key value` to make the ordering ambiguity disappear.
 ---
+
+
+## 2026-05-04 - US-413 - Marketplace UI（本地 catalog）
+
+**Implementation:**
+- New `web/src/components/marketplace/MarketplacePage.tsx` route renders the local catalog of installed .weavepkg packages (rows from `installed_packages` via the existing `GET /api/v2/pkg` endpoint US-412 wired). Each row is a card showing name, version, ontology, description, author, license, dependency chips, migration count, install timestamp, plus an enabled/disabled status badge, an enable/disable checkbox toggle, and an Uninstall button gated behind a confirmation dialog.
+- New `web/src/api/packages.ts` API client: `listInstalledPackages`, `getInstalledPackage`, `setInstalledPackageEnabled`, `deleteInstalledPackage`. Mirrors `oms.InstalledPackage`/`PackageManifest` over the wire.
+- `web/src/App.tsx`: registered `/marketplace` route under `<Shell>` (no per-ontology gating — the catalog is global).
+- `web/src/components/layout/Sidebar.tsx`: added "Marketplace" nav entry between Mentions and Settings, using the existing `layers` icon.
+- `web/src/components/marketplace/__tests__/MarketplacePage.test.tsx`: 7 vitest cases covering empty state, populated render with badge/dependencies/version, enable-toggle round-trip + success toast, uninstall dialog confirm flow + list refresh + toast, dialog cancel doesn't fire DELETE, error banner on list failure, disabled package badge state.
+- Mutations invalidate the `['marketplace', 'installed-packages']` query key on success and surface success/error feedback through `useToastStore.push` (the existing global toast surface in `<Shell>`).
+
+**Files changed:**
+- `web/src/api/packages.ts` (new)
+- `web/src/components/marketplace/MarketplacePage.tsx` (new)
+- `web/src/components/marketplace/__tests__/MarketplacePage.test.tsx` (new — 7 tests)
+- `web/src/App.tsx` (register `/marketplace` route + import MarketplacePage)
+- `web/src/components/layout/Sidebar.tsx` (Marketplace nav entry)
+- `prd.json` (mark US-413 passes: true)
+
+**Verification:**
+- `npm run test -- --run src/components/marketplace/` PASS — 7/7 tests
+- `npm run test` (full suite) PASS — 1098/1098 across 141 test files
+- `npx tsc -b` — only pre-existing errors (objectsets composer test fixture missing `versions/activeVersionId`; `objectSetUrl.ts` unrecognised `Buffer` global). Verified via `git stash` baseline that these errors exist on `main` independently of the US-413 changes.
+- `npm run lint` — 0 new errors / warnings introduced by the marketplace files (the project's existing lint failures in `useWebSocketSubscription.ts` and elsewhere are unchanged baseline).
+- `go build ./...` clean — backend untouched.
+- Browser verification: deferred. The acceptance criterion mentions "Verify in browser using dev-browser skill" but no browser tooling is wired into this iteration's environment. The vitest suite covers the rendering paths (empty, populated, toggle round-trip, uninstall confirm, cancel, error, disabled state); manual browser verification is a follow-up.
+
+**Learnings for future iterations:**
+- The US-412 iteration already shipped the FULL backend surface for US-413: handler list/get/enable/delete in `pkg/oms/handlers_pkg_list.go`, store interface + PG impl, routes mounted in `cmd/server/routes.go`. US-413 was strictly a frontend story — when an earlier story leaves a "wired but unused" wire surface, audit it FIRST before sketching anything new. The handler comment block (`// The marketplace UI (US-413, US-454) lists rows from this table…`) is the canonical signal.
+- The DELETE handler's docstring is explicit: it removes ONLY the registry row. On-disk migrations + ontology entities stay put. The Uninstall confirmation dialog must surface this trade-off to the user (the copy in `UninstallConfirmDialog` mirrors the handler comment verbatim) so they don't think a click drops tables. Future "dangerous delete" UIs in this codebase should follow the same shape — confirmation modal text explicitly mirrors the backend's destructive-vs-soft contract rather than generic "are you sure" copy.
+- `useToastStore.push` is the right surface for mutation feedback (success + error) — it's already mounted globally in `<Shell>`. New mutation pages should NOT roll their own banner state. For test isolation, call `useToastStore.getState().clear()` in the test's `beforeEach` so toasts from prior tests don't leak across the run.
+- React Query's mutation `variables` field is exposed at top level (e.g. `enableMutation.variables?.name === pkg.name`) and is the cleanest way to scope a "pending" indicator to ONE row in a list — preferable to per-row `useMutation` hooks (which would violate the rules of hooks if the list is dynamic). Pattern: pass the row identity into `mutate({...})`, then read it back from `mutation.variables` to decorate exactly the row that's mid-flight.
+- The `parameters` bag on `ApiRequestError` is `Record<string, string>` (per the apierror flat-string contract). For UI error surfaces that need richer rendering (e.g. the install-conflict list mentioned in US-412 learnings), prefer parsing the JSON-string parameter back into a typed shape at the API client layer (`packages.ts`) rather than threading raw `parameters` through the component.
+- The Sidebar nav-list construction is a top-down `if (activeOntology) navItems.push(...)` ladder. The Marketplace entry is global (no ontology dependency), so it goes in the unconditional tail block alongside Settings / Mentions / Permission Requests. New global entries follow the same shape; new per-ontology entries should sit inside the `if (activeOntology)` block.
+- The MSW DELETE handler must return `new HttpResponse(null, { status: 204 })` — `HttpResponse.json(...)` would set Content-Type even on a body-less response and the React Query mutation success branch swallows the response, but the `request<void>` parser at `web/src/api/client.ts` correctly handles empty body (`if (!text) return undefined as T`). Pattern: `void`-returning DELETE/PUT API clients pair cleanly with msw's `new HttpResponse(null, { status: 204 })`.
+---

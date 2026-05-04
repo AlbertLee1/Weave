@@ -164,6 +164,11 @@ export function Sidebar() {
     icon: 'chat',
   });
   navItems.push({
+    to: '/marketplace',
+    label: 'Marketplace',
+    icon: 'layers',
+  });
+  navItems.push({
     to: '/settings',
     label: 'Settings',
     icon: 'settings',
