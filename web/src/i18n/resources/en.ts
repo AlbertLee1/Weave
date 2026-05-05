@@ -159,6 +159,12 @@ const en = {
   offline: {
     banner: 'You are offline — showing cached data',
     reconnected: 'Reconnected, syncing…',
+    conflictTitle: 'Server data has changed',
+    conflictDescription: 'The cached snapshot diverges from the server response.',
+    keepMine: 'Keep mine',
+    useServer: 'Use server',
+    addedSummary: '{{count}} added',
+    removedSummary: '{{count}} removed',
   },
 } as const;
 

@@ -6,10 +6,8 @@ import type {
   GroupByClause,
   WireObject,
 } from '../../api/types';
-import {
-  useLoadObjectSet,
-  useAggregateObjectSet,
-} from '../../hooks/useObjectSets';
+import { useAggregateObjectSet } from '../../hooks/useObjectSets';
+import { useOfflineObjectSet } from '../../hooks/useOfflineObjectSet';
 import { useObjectType } from '../../hooks/useObjectTypes';
 import { ObjectTable } from '../browser/ObjectTable';
 import { ObjectDetail } from '../browser/ObjectDetail';
@@ -19,6 +17,7 @@ import { ResultTable } from '../aggregation/ResultTable';
 import { SimpleChart } from '../aggregation/SimpleChart';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
+import { OfflineConflictBanner } from '../common/OfflineConflictBanner';
 
 interface ObjectSetResultsProps {
   ontologyApiName: string;
@@ -164,8 +163,10 @@ export function ObjectSetResults({
     return Object.keys(staticObjectType.properties);
   }, [staticObjectType]);
 
-  // Browse data
-  const browseQuery = useLoadObjectSet({
+  // Browse data — wrapped in the offline-aware hook (US-451) so the cached
+  // snapshot fronts when the network drops AND a conflict surfaces when the
+  // server diverges from what's in IndexedDB on reconnect.
+  const browseQuery = useOfflineObjectSet({
     ontologyApiName,
     objectSet: def,
     select: selectFields,
@@ -265,6 +266,14 @@ export function ObjectSetResults({
               : undefined
         }
       />
+
+      {tab === 'browse' && (
+        <OfflineConflictBanner
+          conflict={browseQuery.conflict}
+          onKeepMine={() => void browseQuery.keepMine()}
+          onUseServer={() => void browseQuery.useServer()}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === 'browse' && (

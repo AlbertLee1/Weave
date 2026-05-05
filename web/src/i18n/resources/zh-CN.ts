@@ -163,6 +163,12 @@ const zhCN = {
   offline: {
     banner: '当前离线，正在显示缓存数据',
     reconnected: '已恢复连接，正在同步…',
+    conflictTitle: '服务端数据已更新',
+    conflictDescription: '本地缓存的快照与服务端返回的数据不一致。',
+    keepMine: '保留本地',
+    useServer: '使用服务端',
+    addedSummary: '新增 {{count}} 条',
+    removedSummary: '删除 {{count}} 条',
   },
 } as const;
 
