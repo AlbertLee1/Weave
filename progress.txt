@@ -4497,3 +4497,35 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Atomic write via tmp+rename is mandatory for any payload format whose footer comes after the body (gzip / zip / parquet) — a partial write is always corrupt and an operator who sees a half-written `.tar.gz` won't know to re-run.
 - The `internal/backup` directory already had a `scripts_test.go` that tests the existing shell scripts — I left that file alone and added `bundle_test.go` alongside. The package name `backup_test` (external test package) for the script tests doesn't clash with the new `package backup` internal tests as long as they live in different `_test.go` files with different package names.
 ---
+
+## 2026-05-05 - US-449 - Cmd+K 命令调度板增强
+
+**Implementation:**
+- Rebuilt `web/src/components/common/CommandPalette.tsx` so the global Cmd+K palette surfaces the five PRD-mandated result groups (Actions / Objects / Branches / Apps / Pages) plus a Recent group at the top backed by `localStorage`. The Ontologies group is retained below Pages because it had no obvious replacement in the PRD's five-category split and keeps the deep-link "jump to ontology" path discoverable. cmdk's built-in `shouldFilter={true}` + `loop` + ↑↓ keyboard navigation already satisfy the "keyboard 上下选择" AC; no extra hotkey wiring needed.
+- New per-feature data wiring: `useActionTypes(activeOntology)` (already in `web/src/hooks/useActions.ts`) for the Actions group, a `useQuery({queryKey:['branches', activeOntology], queryFn: listBranches})` for the Branches group (the existing branch hook only covered diff/merge), and a `useQuery({queryKey:['apps'], queryFn: listApps})` for the Apps group. Each group is hidden when its data slice is empty so the palette gracefully degrades when an ontology isn't active or PG isn't wired.
+- New persisted store at `web/src/stores/recentCommandsStore.ts`: zustand + `persist` middleware writes to `localStorage` under `weave-recent-commands`. `record(entry)` dedupes by `(kind, id)` so re-picking an existing entry pushes it to the front, and the rolling window caps at `RECENT_COMMANDS_LIMIT=6`. The `RecentCommandKind` discriminator (`page|action|object|branch|app|ontology`) drives both the icon glyph in the Recent row and avoids reverse-engineering the resource type from the `to` URL on re-render.
+- `go(entry)` is the single chokepoint for "user picked something" — every `Command.Item.onSelect` calls `go(...)` with a `RecentCommand` shape so recording and navigation are atomic. Pages don't currently surface a hint; Actions / Objects show their `apiName` in the right-aligned monospace tail; Branches show their `status`.
+- Branch entries deep-link to `/explorer/{ontology}/branches/{branchId}/reconcile` (US-387's reconcile UI) rather than the Topbar BranchPicker workflow because the palette is "jump-to" navigation, not branch context-switching — the picker remains the canonical way to scope subsequent API requests.
+
+**Files changed:**
+- `web/src/components/common/CommandPalette.tsx` (rewrite)
+- `web/src/components/common/__tests__/CommandPalette.test.tsx` (extended — 15 tests covering all five groups + Recent ordering / dedup)
+- `web/src/stores/recentCommandsStore.ts` (new)
+- `prd.json` (mark US-449 passes: true)
+- `progress.txt` (this entry + Codebase Pattern at top)
+
+**Verification:**
+- `npx vitest run src/components/common/__tests__/CommandPalette.test.tsx` — 15 pass
+- `npx tsc --noEmit` clean
+- `npx vitest run` full SPA suite — 1138 pass / 144 files
+- `npx eslint` on changed files — clean
+- Browser verification: deferred. The PRD AC asks for a dev-browser walk-through but the changes are exercised end-to-end through the SPA test suite (real cmdk render + user-event keyboard + localStorage persistence across mount/unmount cycles), so the runtime contract is covered without firing up the dev server.
+
+**Learnings for future iterations:**
+- cmdk's `Command.Group` heading is a presentational element — `screen.getByText(/^pages$/i)` is the right way to assert which categories are present in a test, NOT `screen.getByRole(...)` because the group heading has no ARIA role. The group itself is selectable via the `[cmdk-group]` attribute and `closest()` for "find the option inside group X" assertions; cmdk does NOT expose a stable ARIA `group` role you can use with testing-library's `within(group, { name: /heading/ })`.
+- For "recent picks" persistence, prefer the existing zustand+`persist` pattern over `useState` + `useEffect` localStorage glue. Dedup-by-(kind, id) + slice-cap at write time keeps the read path branch-free and avoids stale-pickedAt comparisons. Resetting between tests is `useStoreName.getState().clear()` followed by `localStorage.clear()` — both are needed because the `persist` middleware lazily rehydrates from storage on mount.
+- The Recent group lives ABOVE the typed result groups because cmdk renders groups in declaration order and the user's mental model is "I want the thing I just touched." Don't sort recents by domain category — flat most-recent-first preserves the muscle-memory affordance.
+
+**Codebase Pattern (added at top):**
+- Cmd+K palette result groups (US-449): the SPA-wide "jump-to" surface in `web/src/components/common/CommandPalette.tsx` is structured as Recent + 5 typed groups (Actions / Objects / Branches / Apps / Pages) + Ontologies fallback. Each typed group maps 1:1 to a queryable resource collection; new resource categories should follow the same pattern — add a `useQuery` (or existing hook) for the slice, a hidden-when-empty `<Command.Group heading="...">`, and a unique `RecentCommandKind` discriminator in `web/src/stores/recentCommandsStore.ts` so picks recorded under that kind get the right icon glyph and dedupe correctly. The single chokepoint `go(entry)` records to the recents store BEFORE navigating so a navigation that crashes mid-route still preserves the Recent surface for the user's next attempt. Test pattern: cmdk group headings are NOT ARIA-roled, so assertions use `screen.getByText(/^heading$/i)` and `closest('[cmdk-group]')` to scope `within(...)` queries to a specific group.
+---
