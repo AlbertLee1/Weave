@@ -216,12 +216,22 @@ export function Sidebar() {
           label: 'Markings',
           icon: 'shield',
         },
+        {
+          to: '/admin/compliance',
+          label: 'Compliance',
+          icon: 'check',
+        },
       ]
     : [
         {
           to: '/admin/markings',
           label: 'Markings',
           icon: 'shield',
+        },
+        {
+          to: '/admin/compliance',
+          label: 'Compliance',
+          icon: 'check',
         },
       ];
 

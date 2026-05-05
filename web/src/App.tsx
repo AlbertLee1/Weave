@@ -26,6 +26,7 @@ import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
+import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
@@ -215,6 +216,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <MarkingAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/compliance"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <ComplianceReportsPage />
                   </PermissionRoute>
                 }
               />
