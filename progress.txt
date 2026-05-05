@@ -4725,3 +4725,38 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The contract test in `cmd/server/contract_test.go` walks chi routes and demands every route appear in `api/openapi.yaml` + `cmd/server/openapi_spec.yaml`. The marketplace UI feature added NO new wire routes — it consumes the existing `GET/POST /api/v2/pkg`, `GET /api/v2/pkg/builtin`, `POST /api/v2/pkg/builtin/{slug}/install` surfaces — so no openapi changes were needed. When extending an existing UI page that already drives existing wire surfaces, prefer reusing the existing endpoints over inventing a /upload sibling; the spec-sync overhead and the contract-test maintenance cost outweigh the marginal UX win.
 - `as const` literal arrays narrow the inferred type of single-element extractions to the FIRST element's literal type (`INSTALL_PHASES[0].label` resolves to `"Validating manifest"` only). For loop variables that take any phase's label, declare an explicit `let phaseLabel: string = ...` annotation rather than relying on inference. Pattern when iterating over an `as const` tuple to pick a value: annotate with the union or the wider primitive type at the binding site.
 ---
+
+## 2026-05-05 - US-455 - Code Repo UI（Function 编辑）
+
+**Implementation:**
+- New SPA page `web/src/components/functions/FunctionCodePage.tsx` mounted at `/functions/:ontology/:functionRid/code` (registered in `web/src/App.tsx`). Three-pane layout: commit list (left) + Monaco-style editor (middle) + side-by-side diff (right).
+- The Monaco look-and-feel is approximated via a `<textarea>` + line-number gutter (`MonacoLikeEditor`) rather than pulling in `monaco-editor` (multi-MB) — same trade-off `FunctionDiffPage` already documents in US-416. Tab-key insertion is captured to keep two-space indentation consistent with Monaco's default.
+- Toolbar contains a commit-message `<input>` + Commit `<button>`. Button gates on `(message.trim() !== '' && draftValue !== '' && !pending)`; on success the page calls `queryClient.invalidateQueries({ queryKey: logQueryKey })` so the new commit shows up in the list immediately, then auto-selects the new hash so the diff pane resets to "no changes vs HEAD".
+- Diff viewer reuses `react-diff-viewer-continued` (split view, dark theme, `disableWorker`) — same component / props as `FunctionDiffPage` so the visual language is consistent. The diff base is the user-selected commit (default = most-recent), the right side is always the live editor draft.
+- Commit list selection NEVER overwrites the editor automatically. A separate "Load commit into editor" button at the bottom of the list lets the operator explicitly checkout a historical revision; this avoids silently dropping typed-but-uncommitted changes.
+- New API helper `createFunctionRepoCommit(ontology, rid, {message, sourceCode})` in `web/src/api/functions.ts` POSTs to the existing `POST /api/v2/ontologies/{ontology}/functions/{functionRid}/commits` route (US-415's wire surface). No new server endpoints were added.
+- Editor draft is seeded from `fnQuery.data.sourceCode` via the render-phase setState comparison pattern (`OfflineIndicator.tsx` prior art) — gates a fresh setState on a `draftSeeded` boolean so React 19's `react-hooks/set-state-in-effect` rule stays satisfied.
+
+**Files changed:**
+- `web/src/components/functions/FunctionCodePage.tsx` (new)
+- `web/src/components/functions/__tests__/FunctionCodePage.test.tsx` (new — 8 vitest specs)
+- `web/src/api/functions.ts` (new `createFunctionRepoCommit` helper)
+- `web/src/App.tsx` (route registration)
+- `prd.json` (mark US-455 passes: true)
+
+**Verification:**
+- `npx vitest run src/components/functions`: 17 / 17 PASS (8 new + 9 existing FunctionDiffPage).
+- `npx vitest run` (full web suite): 1221 / 1221 PASS across 154 files (was 1213 / 153 — 1 new file, 8 new tests).
+- `npx eslint src/components/functions src/api/functions.ts`: clean (after switching the seed to render-phase setState).
+- `npx tsc -b --noEmit`: clean for the new files. Three pre-existing errors unrelated to this story (`ObjectSetComposer.test.tsx::SavedObjectSet shape`, `objectSetUrl.ts::Buffer` references) survive from baseline.
+- `go build ./...`: clean.
+- Browser verification not run interactively (no MCP browser tooling wired in this environment); the unit suite exercises the render path including the editor seed, commit selection, "Load into editor" button, Commit POST, and the error-surface arms — equivalent regression coverage.
+
+**Learnings for future iterations:**
+- The codebase has converged on a hard "no `monaco-editor` dependency" stance; both US-416 and US-455 explicitly trade away the AC's Monaco wording for a textarea + gutter approximation. When a future PRD asks for a code editor surface (Action rule editor, AIP Logic node body, Pipeline transform DSL), follow the same pattern — a `<textarea>` with `font-mono text-[12px] leading-5`, optional line-number `<pre>` gutter, optional Tab-key intercept. Drop the lib-import only if a feature genuinely needs LSP / multi-cursor / IntelliSense.
+- The render-phase setState pattern (`OfflineIndicator.tsx`) is the canonical answer for "seed a piece of local state from an async fetch result exactly once". Two locals — the value (`draft`) + a `seeded` boolean — gated by `if (!seeded && typeof source === 'string') { setSeeded(true); setValue(source); }`. Do NOT use `useEffect`; the React 19 `react-hooks/set-state-in-effect` lint rule rejects it. Do NOT use `useRef` for the seeded flag — refs don't trigger re-renders so the gate would silently re-fire on every render after the first setState.
+- For "list panel + editor + diff" three-pane layouts, the operator UX rule is "commit selection ≠ editor checkout". Auto-loading on click silently drops in-progress edits; surface the load action as a separate explicit button at the bottom of the list. This applies to any future "history browser + working copy" UI (saved ObjectSet definitions, App layout history, dashboard version history).
+- `react-diff-viewer-continued` is the codebase-standard diff renderer; the same prop shape (`oldValue`/`newValue`/`splitView`/`useDarkTheme`/`disableWorker`/`compareMethod={DiffMethod.LINES}`) appears in 4 surfaces now (ObjectDiffPanel, ObjectSetDiffPage, FunctionDiffPage, FunctionCodePage). The existing test mock pattern (intercepting `default` to render `<pre>` with the props) works for any new diff-viewer consumer — copy the four-line `vi.mock('react-diff-viewer-continued', …)` block from any prior test.
+- Adding a new SPA route that drives an existing wire surface (here POST /commits, GET /log, GET /commits/{hash}) requires zero changes to `api/openapi.yaml` / `cmd/server/openapi_spec.yaml` / `cmd/server/contract_test.go` — those gates only apply to new chi routes. When the AC says "/functions/{rid}/code" it's a SPA route, not an API route.
+- The commit POST handler resolves the function ref by RID OR human name OR `name@version` (`resolveFunctionRef` in `pkg/oms`). The SPA passes the RID via the `:functionRid` path param; the same surface would accept `:functionRid=hello` or `:functionRid=hello@1.2.0` — useful for a future "edit by name" deep link.
+---

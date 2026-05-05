@@ -66,6 +66,28 @@ export function getFunction(
   );
 }
 
+// US-455: POST a new commit to the per-Function bare git repo. SourceCode
+// is the new file body; Message is required. The handler resolves the ref
+// by RID / name / name@version so the SPA can pass either.
+export interface CreateFunctionRepoCommitRequest {
+  message: string;
+  sourceCode: string;
+  author?: string;
+  email?: string;
+}
+
+export function createFunctionRepoCommit(
+  ontologyApiName: string,
+  functionRid: string,
+  body: CreateFunctionRepoCommitRequest,
+): Promise<FunctionRepoCommit> {
+  return request<FunctionRepoCommit>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/functions/${encodeURIComponent(functionRid)}/commits`,
+    body,
+  );
+}
+
 // US-417: per-commit CI job. The status field drives the ✅/❌ badge in the
 // FunctionDiff UI; the per-phase output strings power the tooltip / drawer
 // the operator opens to see the raw lint / test logs.

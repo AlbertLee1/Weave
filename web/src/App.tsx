@@ -43,6 +43,7 @@ import { PermissionRequestsPage } from './components/permissionrequests/Permissi
 import { MentionsPage } from './components/notifications/MentionsPage';
 import { MarketplacePage } from './components/marketplace/MarketplacePage';
 import { FunctionDiffPage } from './components/functions/FunctionDiffPage';
+import { FunctionCodePage } from './components/functions/FunctionCodePage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { useNavigate, useParams } from 'react-router';
 
@@ -150,6 +151,10 @@ export default function App() {
               <Route
                 path="functions/:ontology/:functionRid/diff"
                 element={<FunctionDiffPage />}
+              />
+              <Route
+                path="functions/:ontology/:functionRid/code"
+                element={<FunctionCodePage />}
               />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
