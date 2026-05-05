@@ -50,6 +50,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runPkg(rest, stdout, stderr)
 	case "fn":
 		return runFn(rest, stdout, stderr)
+	case "backup":
+		return runBackup(rest, stdout, stderr)
+	case "restore":
+		return runRestore(rest, stdout, stderr)
 	case "repl":
 		return runREPL(rest, stdin, stdout, stderr)
 	default:
@@ -77,6 +81,8 @@ Commands:
   index        Rebuild Bleve indexes from the authoritative tail (rebuild)
   pkg          Build / install .weavepkg ontology archives (export, install)
   fn           Function code repository round-trip (pull, push, log)
+  backup       Bundle pg_dump + data dir into a single tar.gz archive
+  restore      Restore a bundle produced by 'weave backup'
   repl         Interactive shell with tab-completion and history
 
 Run "weave <command> --help" for command-specific help.`)

@@ -4461,5 +4461,39 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 
 **Codebase Pattern (added at top):**
 - Per-ontology cost tracking (US-447): four metrics in `pkg/metrics/cost.go` (`weave_cost_{storage_bytes_total,cpu_seconds_total,nats_messages_total,pg_rows}`), each fail-closed on empty labels / non-positive observations. Producer hooks instrument three of the four at the call site (materializer for storage, funnel consumer for CPU + NATS message); the PG row gauge is refreshed by `cmd/server/cost_poller.go::runOntologyCostPoller` on a 1-minute cadence via two `GROUP BY ontology_api_name` queries. The Grafana dashboard `grafana/dashboards/weave-cost-tracking.json` exposes a single `${ontology}` template variable that drives every panel via the `ontology=~"$ontology"` regex selector. Pattern when adding the next per-ontology cost dimension: producer-counter vs poller-gauge split is the design knob; pick based on whether the dimension is a per-event delta (counter) or a snapshot (gauge), not on what's convenient to instrument first.
+- Backup / Restore CLI (US-448): `internal/backup.Bundle` is the single chokepoint that produces or replays the canonical single-tarball backup format (`manifest.json` + `db.dump` + `data/<files>`). The shell-out to `pg_dump` / `pg_restore` lives behind `PGDumpFn` / `PGRestoreFn` function fields so unit tests inject in-memory stubs without a live Postgres — the real implementations are package-level vars `defaultPGDumpFn` / `defaultPGRestoreFn` in `cmd/weave-cli/cmd_backup.go` that tests swap out via `withInjectedPG`. Manifest carries per-component sha256 + size; Restore verifies the dump's sha256 BEFORE piping into pg_restore so a corrupted bundle aborts before touching the live database. Backup is atomic via tmp+rename. Restore order is `pg_restore` first, then `RemoveAll(DataDir)` + rewrite — fails-cleanly so the operator's data dir is left untouched if Postgres rejects the dump. The bundle deliberately excludes `wal_archive/` (PITR territory belongs to the existing shell scripts under `scripts/{backup,restore,test-restore}.sh`). Pattern: when a new CLI subcommand needs to shell out to an external binary that test environments can't depend on, keep the work testable by defining a function-typed seam in the helper package (`PGDumpFn` here) and shipping the real binary call as a package-level var in the cmd binary that tests can rebind via `t.Cleanup`.
 
+---
+
+## 2026-05-05 - US-448 - Backup / Restore CLI
+
+**Implementation:**
+- New `internal/backup` package with `Bundle` struct that owns the bundle pack/unpack logic. `Bundle.Backup(ctx, dsn, outPath)` writes a single gzipped tar containing `manifest.json` + `db.dump` + `data/<relpath>` for every regular file under `DataDir`. `Bundle.Restore(ctx, dsn, inPath)` reads the bundle, verifies the manifest's sha256 + size for `db.dump`, pipes the dump into `PGRestoreFn`, then wipes and rewrites `DataDir` from the embedded files.
+- `internal/backup/bundle.go` exposes `PGDumpFn`/`PGRestoreFn` function types so unit tests run without a live Postgres. The real implementations live in `cmd/weave-cli/cmd_backup.go` as package-level vars `defaultPGDumpFn` / `defaultPGRestoreFn` that shell out to `pg_dump --format=custom` / `pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error`. Tests rebind these vars via `withInjectedPG` so the CLI suite covers the dispatcher / arg parsing / round-trip end-to-end.
+- New CLI subcommands `weave backup -o <out.tar.gz>` and `weave restore -i <in.tar.gz>`, dispatched from `cmd/weave-cli/main.go`. Both accept `--data-dir` (defaults to `$WEAVE_DATA_DIR` or `./data`), `--pg-dsn` (defaults to `$PG_DSN`), and `--json` for raw manifest output.
+- Manifest schema: `{version, timestamp, dsn (redacted), components: {db.dump: {path,size,sha256}, data: {path,size,sha256,file_count}}}`. The data component's combined sha256 is a deterministic hash over (relPath, sha256(body)) pairs so a content change anywhere in the data tree shifts the witness.
+- Atomic write: bundle is written to `<out>.tmp` then renamed; restore order is `pg_restore` first, then `RemoveAll(DataDir)` + rewrite so a Postgres failure leaves the on-disk data dir untouched and the operation re-runnable.
+- The `wal_archive/` subtree is intentionally skipped — PITR territory remains the shell-script flow under `scripts/{backup,restore,test-restore}.sh`.
+
+**Files changed:**
+- `internal/backup/bundle.go` (new)
+- `internal/backup/bundle_test.go` (new — 9 unit tests including the PRD's 备份→清库→恢复 integration witness)
+- `cmd/weave-cli/cmd_backup.go` (new)
+- `cmd/weave-cli/cmd_backup_test.go` (new — 4 CLI tests including the round-trip integration witness)
+- `cmd/weave-cli/main.go` (dispatcher arms + help text)
+- `prd.json` (mark US-448 passes: true)
+- `progress.txt` (this entry + Codebase Pattern at top)
+
+**Verification:**
+- `go build ./...` clean
+- `go vet ./...` clean
+- `go test ./internal/backup/... ./cmd/weave-cli/... -count=1` PASS
+- `go test ./...` full suite PASS (no regressions)
+
+**Learnings for future iterations:**
+- The acceptance criterion calls for `weave-cli backup -o ...` / `weave-cli restore -i ...` (a Go CLI, single tarball). The repo already had a richer shell-script flow under `scripts/{backup,restore,test-restore}.sh` (US-339? — directory layout with separate `db.dump` + `media.tar.gz` + `wal/`). I deliberately kept the two surfaces orthogonal: the CLI is a programmatic single-tarball interface for in-process testing and SDK consumers, while the shell scripts remain the operator-facing PITR-capable path.
+- Test-only injection of external-binary calls: define a function-typed seam (`PGDumpFn` / `PGRestoreFn`) in the helper package, ship the real `exec.Command` call as a package-level `var` in the cmd binary, and let tests bind it via `t.Cleanup`. This avoids having to add a second indirection layer (interface) just for a single shell-out, and keeps the helper package's public API minimal.
+- For backup-style features the order matters: validate the embedded manifest sha256 BEFORE replaying the dump into Postgres. The cost is negligible (one sha256 over already-in-memory bytes) and it converts a "corrupted bundle silently overwrote prod" failure mode into a clean error before any side effect.
+- Atomic write via tmp+rename is mandatory for any payload format whose footer comes after the body (gzip / zip / parquet) — a partial write is always corrupt and an operator who sees a half-written `.tar.gz` won't know to re-run.
+- The `internal/backup` directory already had a `scripts_test.go` that tests the existing shell scripts — I left that file alone and added `bundle_test.go` alongside. The package name `backup_test` (external test package) for the script tests doesn't clash with the new `package backup` internal tests as long as they live in different `_test.go` files with different package names.
 ---
