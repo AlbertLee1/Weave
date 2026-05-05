@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useCollabCursorPublisher } from '../../lib/collabPresenceContext';
 
 export interface InlineEditFieldProps {
   value: string;
@@ -7,6 +8,13 @@ export interface InlineEditFieldProps {
   placeholder?: string;
   ariaLabel?: string;
   testId?: string;
+  /**
+   * When set, the input element is tagged with `data-collab-field` and the
+   * field's caret/selection is published to the surrounding
+   * CollabPresenceProvider. Multiple users editing the same object see one
+   * another's cursors via `CollabCursorOverlay`.
+   */
+  collabFieldKey?: string;
 }
 
 // Click to edit, Enter to save, Esc to cancel. The display value flips to the
@@ -20,7 +28,9 @@ export function InlineEditField({
   placeholder,
   ariaLabel,
   testId = 'inline-edit',
+  collabFieldKey,
 }: InlineEditFieldProps) {
+  const publishCursor = useCollabCursorPublisher();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   // Optimistic value applied while a save is in flight. Cleared on resolve
@@ -44,6 +54,17 @@ export function InlineEditField({
   }, [editing]);
 
   const displayValue = optimistic ?? value;
+
+  const reportCursor = () => {
+    if (!collabFieldKey) return;
+    const el = inputRef.current;
+    if (!el) return;
+    publishCursor({
+      field: collabFieldKey,
+      selectionStart: el.selectionStart ?? 0,
+      selectionEnd: el.selectionEnd ?? 0,
+    });
+  };
 
   if (!editing) {
     return (
@@ -90,12 +111,14 @@ export function InlineEditField({
     if (draft === value) {
       setEditing(false);
       setError(null);
+      publishCursor(null);
       return;
     }
     const next = draft;
     setOptimistic(next);
     setEditing(false);
     setError(null);
+    publishCursor(null);
     try {
       await onSave(next);
       // Successful save — leave optimistic in place; the next prop update
@@ -110,6 +133,7 @@ export function InlineEditField({
     setEditing(false);
     setDraft(value);
     setError(null);
+    publishCursor(null);
   };
 
   return (
@@ -118,10 +142,26 @@ export function InlineEditField({
         ref={inputRef}
         type="text"
         data-testid={`${testId}-input`}
+        data-collab-field={collabFieldKey}
         value={draft}
         placeholder={placeholder}
         aria-label={ariaLabel ?? 'Edit value'}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          reportCursor();
+        }}
+        onSelect={() => {
+          reportCursor();
+        }}
+        onKeyUp={() => {
+          reportCursor();
+        }}
+        onClick={() => {
+          reportCursor();
+        }}
+        onFocus={() => {
+          reportCursor();
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { DataType, ObjectType, WireObject } from '../../api/types';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
@@ -15,6 +15,14 @@ import { WatchButton } from './WatchButton';
 import { ReactionBar } from './ReactionBar';
 import { MarkdownPreview } from '../common/MarkdownEditor';
 import { InlineEditField } from '../common/InlineEditField';
+import { CollabPresenceProvider } from '../common/CollabPresenceProvider';
+import {
+  useCollabPeers,
+  useCollabSurfaceRef,
+} from '../../lib/collabPresenceContext';
+import { CollabCursorOverlay } from '../common/CollabCursorOverlay';
+import type { PresenceClient } from '../../lib/collabPresence';
+import { AuthContext } from '../../auth/AuthContext';
 import { findModifyActionForProperty } from './findModifyAction';
 
 function baseTypeOf(dt: DataType): string {
@@ -50,6 +58,14 @@ interface ObjectDetailProps {
   open: boolean;
   onClose: () => void;
   ontologyApiName: string;
+  /**
+   * Test seam — pass a `MockPresenceClient` to drive the collaborative
+   * cursor overlay without a live y-websocket server. Production callers
+   * leave this undefined; the provider then resolves the WS URL from
+   * `import.meta.env.VITE_COLLAB_WS_URL` and silently disables the overlay
+   * when the env var is unset.
+   */
+  presenceClient?: PresenceClient | null;
 }
 
 type DetailTab = 'properties' | 'relationships' | 'activity' | 'diff' | 'comments';
@@ -68,7 +84,10 @@ export function ObjectDetail({
   open,
   onClose,
   ontologyApiName,
+  presenceClient,
 }: ObjectDetailProps) {
+  const auth = useContext(AuthContext);
+  const authUser = auth?.user ?? null;
   const { data: linkTypes } = useOutgoingLinkTypes(
     ontologyApiName,
     objectType.apiName,
@@ -131,9 +150,25 @@ export function ObjectDetail({
     ? `${objectType.displayName} - ${String(object.__primaryKey)}`
     : objectType.displayName;
 
+  const roomId = object
+    ? `weave:object:${ontologyApiName}:${objectType.apiName}:${String(object.__primaryKey)}`
+    : '';
+  const presenceUser = useMemo(
+    () => ({
+      id: authUser?.id ?? 'anon',
+      name: authUser?.name || authUser?.email || 'Anonymous',
+    }),
+    [authUser?.id, authUser?.name, authUser?.email],
+  );
+
   return (
     <SlidePanel open={open} onClose={onClose} title={title}>
       {object && (
+        <CollabPresenceProvider
+          roomId={roomId}
+          user={presenceUser}
+          client={presenceClient}
+        >
         <div className="space-y-4" data-testid="object-detail-tabs">
           <div
             className="flex justify-end -mt-2"
@@ -169,7 +204,8 @@ export function ObjectDetail({
           </div>
 
           {activeTab === 'properties' && (
-            <div className="space-y-6" data-testid="object-detail-properties">
+            <CollabPropertiesSurface>
+              <CollabPeerBadges />
               {/* Property key-value pairs */}
               <section>
                 <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
@@ -235,6 +271,7 @@ export function ObjectDetail({
                                   testId={`inline-edit-${name}`}
                                   ariaLabel={`Edit ${name}`}
                                   placeholder="-"
+                                  collabFieldKey={name}
                                 />
                               ) : (
                                 <span className="block text-xs font-mono text-text-primary break-all whitespace-pre-wrap">
@@ -296,7 +333,7 @@ export function ObjectDetail({
                   />
                 </section>
               )}
-            </div>
+            </CollabPropertiesSurface>
           )}
 
           {activeTab === 'relationships' && (
@@ -335,7 +372,63 @@ export function ObjectDetail({
             </section>
           )}
         </div>
+        </CollabPresenceProvider>
       )}
     </SlidePanel>
+  );
+}
+
+interface CollabPropertiesSurfaceProps {
+  children: ReactNode;
+}
+
+// Wraps the properties tab content in a position:relative surface and
+// registers it with the presence context so `CollabCursorOverlay` can anchor
+// peer cursors. The overlay renders inside the same element so its z-index
+// stacks correctly with the inline-edit fields.
+function CollabPropertiesSurface({ children }: CollabPropertiesSurfaceProps) {
+  const registerSurface = useCollabSurfaceRef();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const setRef = (el: HTMLDivElement | null) => {
+    ref.current = el;
+    registerSurface(el);
+  };
+  return (
+    <div
+      ref={setRef}
+      className="space-y-6 relative"
+      data-testid="object-detail-properties"
+    >
+      {children}
+      <CollabCursorOverlay />
+    </div>
+  );
+}
+
+// Tiny pill row showing connected peers — surfaced as a non-blocking
+// affordance so users can tell at a glance who else is editing this record.
+function CollabPeerBadges() {
+  const peers = useCollabPeers();
+  if (peers.length === 0) return null;
+  return (
+    <div
+      className="flex items-center gap-1 flex-wrap"
+      data-testid="collab-peer-badges"
+    >
+      <span className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+        {peers.length === 1 ? '1 collaborator' : `${peers.length} collaborators`}
+      </span>
+      {peers.map((peer) => (
+        <span
+          key={peer.clientID}
+          data-testid={`collab-peer-${peer.clientID}`}
+          className="text-[10px] font-mono px-1 py-px rounded-sm text-bg-primary"
+          style={{ backgroundColor: peer.user.color }}
+          title={peer.user.name}
+        >
+          {peer.user.name}
+        </span>
+      ))}
+    </div>
   );
 }
