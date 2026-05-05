@@ -4697,3 +4697,31 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - When wiring a SPA page that drives an existing backend endpoint, prefer adding the API client alongside the page (`web/src/api/<feature>.ts`) over reusing a generic helper; the wrapper is the right place for header/blob/filename plumbing AND for the structured-error → `ApiRequestError` translation that the page expects.
 
 ---
+
+## 2026-05-05 - US-454 - Marketplace UI（前端 catalog）
+
+**Implementation:**
+- Added a third `Browse` tab to the existing `/marketplace` page (`web/src/components/marketplace/MarketplacePage.tsx`) on top of the existing `Installed` (US-413) and `Built-in` (US-414) tabs. Browse aggregates the merged catalog from `listInstalledPackages` + `listBuiltinPackages` keyed by package name (dedup by name → installed-source overrides built-in), surfaces an `Installed` / `Available` status badge, and offers a search box that filters by name OR description case-insensitively. The `marketplace-browse-count` test id surfaces the `filtered / total` ratio so future tests can assert on the filter without parsing card counts.
+- Added an `InstallProgressBar` component that animates a 4-phase install timeline (validating → importing → migrating → finalizing, ~2.1s total) with a percent readout capped at 95% (snaps to gone when the parent unmounts on mutation resolve). Driven by `setTimeout` ticks (80ms cadence) keyed on the `slug` prop so a new install resets phase 0. Surfaces ARIA `role=progressbar`, `aria-valuenow`, `aria-valuemin/max`, and `aria-label` so screen-readers + automated a11y harnesses can consume it. Mounted in BOTH the Built-in tab AND the Browse tab while the install mutation is in flight.
+- Updated the existing test suite with a new `MarketplacePage browse catalog (US-454)` describe block: 4 tests for Browse-tab listing, search filtering, install-from-Browse with progress + toast assertion, and the no-match empty state. Added one progress-bar test under the `built-in catalog` describe so the indeterminate-while-pending → unmount-on-resolve contract is encoded for both surfaces.
+- Build-tin section keeps its existing `marketplace-builtin-list` test id stable; the install progress bar is rendered as a sibling above the list inside the wrapper div so existing tests for card rendering still pass.
+
+**Files changed:**
+- `web/src/components/marketplace/MarketplacePage.tsx`
+- `web/src/components/marketplace/__tests__/MarketplacePage.test.tsx`
+- `prd.json`
+- `progress.txt`
+
+**Verification:**
+- `npx tsc -b --noEmit` (web): clean for marketplace files. Pre-existing errors (`ObjectSetComposer.test.tsx`, `objectSetUrl.ts::Buffer` references) unchanged from baseline.
+- `npx vitest run src/components/marketplace`: 17 / 17 PASS (was 12 before — 5 new tests).
+- `npx vitest run` (full web suite): 1213 / 1213 PASS (153 files).
+- `go build ./...`: clean.
+
+**Learnings for future iterations:**
+- The Marketplace page is a single-screen multi-tab catalog; new install-style surfaces should follow the same shape — one `useMutation` for the operation, one `useQuery` per data source, a single `installingSlug` prop that doubles as both "is install pending" gate AND "which slug is the progress bar tied to". Render the progress bar as a sibling of the list (not inside a card) so it survives card re-mounts during the install→list-refresh dance.
+- For "fake progress" UI on an HTTP request that has no streaming progress events, the canonical shape is `setTimeout`-driven phase advancement keyed on the operation identifier (slug), capped below 100% (we use 95) so the bar never visibly stalls at "done" before the response resolves. Reset the timer on identifier change via `useEffect([slug])`. ARIA `role=progressbar` + `aria-valuenow` are the indispensable a11y handles — a CSS-only animated bar fails screen-reader testing.
+- Catalog dedup pattern: when merging two data sources keyed by the same logical name (built-in slug ⊕ installed name), use a `Map<string, Entry>` keyed on `name` (the canonical identifier) and let the second-pass writer overlay an `installedRow` field on existing built-in entries. This keeps "the user already installed this built-in package" rendering as a single entry rather than two-sided duplicate cards. Sort by `localeCompare(name)` for deterministic UI ordering.
+- The contract test in `cmd/server/contract_test.go` walks chi routes and demands every route appear in `api/openapi.yaml` + `cmd/server/openapi_spec.yaml`. The marketplace UI feature added NO new wire routes — it consumes the existing `GET/POST /api/v2/pkg`, `GET /api/v2/pkg/builtin`, `POST /api/v2/pkg/builtin/{slug}/install` surfaces — so no openapi changes were needed. When extending an existing UI page that already drives existing wire surfaces, prefer reusing the existing endpoints over inventing a /upload sibling; the spec-sync overhead and the contract-test maintenance cost outweigh the marginal UX win.
+- `as const` literal arrays narrow the inferred type of single-element extractions to the FIRST element's literal type (`INSTALL_PHASES[0].label` resolves to `"Validating manifest"` only). For loop variables that take any phase's label, declare an explicit `let phaseLabel: string = ...` annotation rather than relying on inference. Pattern when iterating over an `as const` tuple to pick a value: annotate with the union or the wider primitive type at the binding site.
+---

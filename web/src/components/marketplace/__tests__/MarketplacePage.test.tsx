@@ -491,4 +491,242 @@ describe('MarketplacePage built-in catalog (US-414)', () => {
       expect(screen.getByText('No built-in packages')).toBeInTheDocument();
     });
   });
+
+  it('shows the install progress bar while a built-in install is in flight', async () => {
+    let resolveInstall: ((value: unknown) => void) | null = null;
+    server.use(
+      listHandler([]),
+      builtinListHandler([builtin()]),
+      http.post('/api/v2/pkg/builtin/:slug/install', async () => {
+        await new Promise((resolve) => {
+          resolveInstall = resolve;
+        });
+        return HttpResponse.json(
+          {
+            name: 'northwind',
+            version: '1.0.0',
+            ontology: 'northwind',
+            imported: { objectTypes: 1 },
+            migrationsRan: 0,
+            migrationsTotal: 0,
+            message: 'package installed',
+          },
+          { status: 201 },
+        );
+      }),
+    );
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-builtin'));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      ).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('marketplace-builtin-install-northwind'),
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-builtin-progress'),
+      ).toBeInTheDocument();
+    });
+    const progress = screen.getByTestId('marketplace-builtin-progress');
+    expect(progress).toHaveAttribute('data-slug', 'northwind');
+    expect(progress).toHaveAttribute('role', 'progressbar');
+    expect(progress.getAttribute('aria-valuenow')).toMatch(/^\d+$/);
+
+    await act(async () => {
+      resolveInstall?.(null);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('marketplace-builtin-progress'),
+      ).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('MarketplacePage browse catalog (US-454)', () => {
+  beforeEach(() => {
+    useToastStore.getState().clear();
+  });
+
+  it('lists every catalog entry merged from built-in and installed sources', async () => {
+    server.use(
+      listHandler([
+        pkg({ name: 'northwind', ontology: 'northwind' }),
+        pkg({ name: 'custom-app', ontology: 'customApp' }),
+      ]),
+      builtinListHandler([
+        builtin({ slug: 'chinook', name: 'chinook', ontologyApiName: 'chinook' }),
+        builtin({ slug: 'iot-demo', name: 'iot-demo', ontologyApiName: 'iotDemo' }),
+        builtin({ slug: 'northwind', name: 'northwind' }),
+      ]),
+    );
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByTestId('marketplace-tab-browse')).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-browse'));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('marketplace-browse-list')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId('marketplace-browse-card-northwind'),
+    ).toHaveAttribute('data-installed', 'true');
+    expect(
+      screen.getByTestId('marketplace-browse-card-chinook'),
+    ).toHaveAttribute('data-installed', 'false');
+    expect(
+      screen.getByTestId('marketplace-browse-card-iot-demo'),
+    ).toHaveAttribute('data-installed', 'false');
+    expect(
+      screen.getByTestId('marketplace-browse-card-custom-app'),
+    ).toHaveAttribute('data-installed', 'true');
+    expect(screen.getByTestId('marketplace-browse-count').textContent).toBe(
+      '4 of 4',
+    );
+  });
+
+  it('filters the catalog when the user types into the search box', async () => {
+    server.use(
+      listHandler([]),
+      builtinListHandler([
+        builtin({ slug: 'chinook', name: 'chinook' }),
+        builtin({ slug: 'iot-demo', name: 'iot-demo' }),
+        builtin({ slug: 'northwind', name: 'northwind' }),
+      ]),
+    );
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-browse'));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('marketplace-browse-list')).toBeInTheDocument();
+    });
+    const search = screen.getByTestId(
+      'marketplace-browse-search',
+    ) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(search, { target: { value: 'iot' } });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('marketplace-browse-count').textContent).toBe(
+        '1 of 3',
+      );
+    });
+    expect(
+      screen.getByTestId('marketplace-browse-card-iot-demo'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId('marketplace-browse-card-chinook'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('installs from the Browse tab and surfaces a progress bar then a toast', async () => {
+    let resolveInstall: ((value: unknown) => void) | null = null;
+    let listCalls = 0;
+    server.use(
+      http.get('/api/v2/pkg', () => {
+        listCalls++;
+        if (listCalls === 1) {
+          return HttpResponse.json({ data: [] });
+        }
+        return HttpResponse.json({
+          data: [pkg({ name: 'northwind', ontology: 'northwind' })],
+        });
+      }),
+      builtinListHandler([builtin()]),
+      http.post('/api/v2/pkg/builtin/:slug/install', async () => {
+        await new Promise((resolve) => {
+          resolveInstall = resolve;
+        });
+        return HttpResponse.json(
+          {
+            name: 'northwind',
+            version: '1.0.0',
+            ontology: 'northwind',
+            imported: { objectTypes: 3 },
+            migrationsRan: 0,
+            migrationsTotal: 0,
+            message: 'package installed',
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-browse'));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-browse-install-northwind'),
+      ).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId('marketplace-browse-install-northwind'),
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-browse-progress'),
+      ).toBeInTheDocument();
+    });
+    const progress = screen.getByTestId('marketplace-browse-progress');
+    expect(progress.getAttribute('aria-valuenow')).toMatch(/^\d+$/);
+
+    await act(async () => {
+      resolveInstall?.(null);
+    });
+
+    // Page hops to the Installed tab on success and the progress bar unmounts.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('marketplace-tab-installed'),
+      ).toHaveAttribute('data-active', 'true');
+    });
+    await waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(
+        toasts.some((t) => t.message.toLowerCase().includes('installed')),
+      ).toBe(true);
+    });
+  });
+
+  it('shows an empty-state when filter has no matches', async () => {
+    server.use(
+      listHandler([]),
+      builtinListHandler([builtin({ slug: 'northwind', name: 'northwind' })]),
+    );
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('marketplace-tab-browse'));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('marketplace-browse-list')).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('marketplace-browse-search'), {
+        target: { value: 'nonexistent-zzz' },
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText('No packages match your search'),
+      ).toBeInTheDocument();
+    });
+  });
 });
