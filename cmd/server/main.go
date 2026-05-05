@@ -2738,6 +2738,18 @@ func main() {
 			log.Printf("warning: funnel consumer start: %v", err)
 		}
 
+		// US-447: per-ontology PG row-count poller. Refreshes
+		// weave_cost_pg_rows{ontology, table} on a one-minute cadence so
+		// the cost-tracking dashboard can answer "which ontology owns
+		// most history rows / dataset transactions". Best-effort: any
+		// query failure is logged and the gauge is left at its prior
+		// reading. Cancelling rootCtx (graceful shutdown) stops the
+		// poller alongside every other long-lived loop.
+		if deps.PGPool != nil {
+			go runOntologyCostPoller(ctx, deps.PGPool, DefaultCostPollerInterval)
+			log.Printf("[COST-POLLER] interval=%s", DefaultCostPollerInterval)
+		}
+
 		// US-291: optional CDC receiver. Subscribes to a PostgreSQL
 		// logical replication slot, decodes pgoutput events through the
 		// configured TableMappings into funnel.EditBatches, and

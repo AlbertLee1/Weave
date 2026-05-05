@@ -1,0 +1,254 @@
+{
+  "uid": "weave-cost-tracking",
+  "title": "Weave Cost Tracking (per Ontology)",
+  "description": "Per-ontology resource cost surface (US-447). Four panels each project one cost dimension — storage bytes, CPU seconds, NATS message volume, and PostgreSQL row count — under a single ontology template variable. Use to answer 'which ontology dominates disk / compute / message / row count' without per-row joins.",
+  "tags": ["weave", "cost", "ontology"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "hide": 0,
+        "refresh": 1,
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "prometheus"
+        }
+      },
+      {
+        "name": "ontology",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(weave_cost_nats_messages_total, ontology)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "label": "Ontology"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "expr": "changes(weave_build_info[1m]) > 0",
+        "titleFormat": "Weave deploy",
+        "textFormat": "{{version}} / {{commit}}"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "storage_bytes — durable storage write rate per ontology",
+      "description": "Per-second rate of bytes written to durable storage tiers, partitioned by ontology and storage kind. Currently driven by the parquet materializer (US-405); future tiers plug in with a new `kind` label without changing the panel. Use the time-range integral as a coarse estimate of disk-space growth per ontology.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (ontology, kind) (rate(weave_cost_storage_bytes_total{ontology=~\"$ontology\"}[5m]))",
+          "legendFormat": "{{ontology}} ({{kind}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "cpu_seconds — CPU rate per ontology",
+      "description": "Per-second rate of CPU seconds charged to each ontology, partitioned by producer op. The `apply_batch` op is the funnel consumer's full apply path (filtering, conflict resolution, index commit, materialize, history). Sustained > 1 cpu-sec/sec means the ontology is saturating one core.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (ontology, op) (rate(weave_cost_cpu_seconds_total{ontology=~\"$ontology\"}[5m]))",
+          "legendFormat": "{{ontology}} ({{op}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "nats_messages — message rate per ontology",
+      "description": "Per-second rate of NATS messages processed per ontology. One increment per applied EditBatch (success or failure) so a noisy ontology shows up here even when its writes are getting rejected by conflict resolution downstream.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (ontology) (rate(weave_cost_nats_messages_total{ontology=~\"$ontology\"}[5m]))",
+          "legendFormat": "{{ontology}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "mps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "pg_rows — PostgreSQL row count per ontology",
+      "description": "Current PG row count per (ontology, table) refreshed by the cmd/server cost poller every minute. `dataset_transactions` rows track per-batch commits (US-379) and `object_history` rows track per-edit history (US-009). Sudden drops indicate a retention sweep / rollback; sustained growth flags ontologies needing materialisation tuning.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (ontology, table) (weave_cost_pg_rows{ontology=~\"$ontology\"})",
+          "legendFormat": "{{ontology}} ({{table}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total NATS messages (lifetime, current snapshot)",
+      "description": "Counter total of NATS messages ever processed by the running process across all ontologies in the selected variable. Resets on restart.",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(weave_cost_nats_messages_total{ontology=~\"$ontology\"})",
+          "instant": true,
+          "legendFormat": "messages"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Total storage bytes written (lifetime, current snapshot)",
+      "description": "Counter total of bytes written to durable storage tiers ever, summed across the selected ontologies. Resets on restart.",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(weave_cost_storage_bytes_total{ontology=~\"$ontology\"})",
+          "instant": true,
+          "legendFormat": "bytes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    }
+  ]
+}

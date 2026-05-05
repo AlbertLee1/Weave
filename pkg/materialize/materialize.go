@@ -147,6 +147,7 @@ func (m *Materializer) MaterializeBatch(_ context.Context, batch funnel.EditBatc
 			return err
 		}
 		metrics.MaterializeFileWritten(batch.OntologyAPIName, ot, m.nowFn().Sub(ts), size)
+		metrics.RecordOntologyStorageBytes(batch.OntologyAPIName, metrics.CostStorageKindParquet, size)
 	}
 	return nil
 }

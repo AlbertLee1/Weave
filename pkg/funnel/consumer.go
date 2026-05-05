@@ -15,6 +15,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
 )
 
@@ -964,6 +965,19 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	if batch.OntologyAPIName == "" {
 		return fmt.Errorf("apply batch: ontologyApiName is empty")
 	}
+
+	// US-447 cost tracking: charge the entire apply path (filtering,
+	// conflict resolution, index commit, materialize, history) to the
+	// originating ontology. The NATS counter increments on entry so a
+	// failing batch still shows up in the cost surface — operators want
+	// to see "this ontology is generating noise even when nothing
+	// commits" as much as success traffic. CPU charges on the way out
+	// via defer so partial failures still account for the work done.
+	metrics.RecordOntologyNATSMessage(batch.OntologyAPIName)
+	costStart := time.Now()
+	defer func() {
+		metrics.RecordOntologyCPUSeconds(batch.OntologyAPIName, metrics.CostCPUOpApplyBatch, time.Since(costStart))
+	}()
 
 	batch.Edits = c.filterWritableProperties(batch)
 	if len(batch.Edits) == 0 {

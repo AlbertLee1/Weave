@@ -191,6 +191,10 @@ func allCollectors() []prometheus.Collector {
 		materializeLagSeconds,
 		parquetFilesTotal,
 		parquetSizeBytes,
+		costStorageBytesTotal,
+		costCPUSecondsTotal,
+		costNATSMessagesTotal,
+		costPGRows,
 		buildInfo,
 	}
 }
