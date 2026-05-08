@@ -11,6 +11,7 @@ import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
 import { RelationshipGraph } from './RelationshipGraph';
 import { CommentsTab } from './CommentsTab';
+import { ObjectTimeSeriesTab } from './ObjectTimeSeriesTab';
 import { WatchButton } from './WatchButton';
 import { ReactionBar } from './ReactionBar';
 import { MarkdownPreview } from '../common/MarkdownEditor';
@@ -68,7 +69,13 @@ interface ObjectDetailProps {
   presenceClient?: PresenceClient | null;
 }
 
-type DetailTab = 'properties' | 'relationships' | 'activity' | 'diff' | 'comments';
+type DetailTab =
+  | 'properties'
+  | 'relationships'
+  | 'activity'
+  | 'diff'
+  | 'comments'
+  | 'timeseries';
 
 const TABS: { key: DetailTab; label: string }[] = [
   { key: 'properties', label: 'Properties' },
@@ -76,6 +83,7 @@ const TABS: { key: DetailTab; label: string }[] = [
   { key: 'activity', label: 'Activity' },
   { key: 'diff', label: 'Diff' },
   { key: 'comments', label: 'Comments' },
+  { key: 'timeseries', label: 'TimeSeries' },
 ];
 
 export function ObjectDetail({
@@ -369,6 +377,16 @@ export function ObjectDetail({
           {activeTab === 'comments' && (
             <section data-testid="object-detail-comments">
               <CommentsTab targetRid={object.__rid ?? ''} />
+            </section>
+          )}
+
+          {activeTab === 'timeseries' && (
+            <section data-testid="object-detail-timeseries">
+              <ObjectTimeSeriesTab
+                ontologyApiName={ontologyApiName}
+                objectType={objectType}
+                primaryKey={String(object.__primaryKey ?? '')}
+              />
             </section>
           )}
         </div>

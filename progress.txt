@@ -4780,3 +4780,21 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - The prometheus text format has subtle escapes — label values contain `\"` for embedded quotes — and trailing per-sample timestamps that need to be ignored. The `parseSampleLine` slice-and-walk approach handles both without a regex; if you ever want to extend the parser to histogram buckets specifically, the `_bucket{le="..."}` samples already round-trip through `parsePrometheusText` unchanged.
 - Counter-reset detection (negative delta on any tracked counter) returns null from `rateBetween` rather than emitting bogus negative-rate noise. Apply the same shape if a future US adds gauge-derived rates: distinguish "monotonic counter wrapped/reset" from "arithmetic underflow" at the helper boundary.
 ---
+
+## 2026-05-08 - US-457 - Quiver 时序前端集成
+
+**Implementation:**
+- New `web/src/components/browser/ObjectTimeSeriesTab.tsx` — TimeSeries tab for the object detail panel. Discovers timeseries-typed properties via `baseTypeOf(prop.dataType) === "timeseries"` (works for both scalar and `array<timeseries>` shapes), spawns one render-less `<SeriesFetcher>` per property (mirroring the QuiverWorkbenchView pattern so each `useTimeSeriesPoints` hook lives at component-top-level), and surfaces results into `MultiSeriesChart` for charts plus typed empty-/error-state panels.
+- ObjectDetail tab strip extended with a `timeseries` entry; the new section mounts `<ObjectTimeSeriesTab />` only when its tab is active so the per-series fetches do not fire on objects whose owners never click the tab.
+
+**Verification:**
+- `npx tsc --noEmit` exit=0
+- `npx vitest run src/components/browser/__tests__/ObjectTimeSeriesTab.test.tsx` 6/6 PASS (empty state, multi-property render + spy assertions, ready/no-points/error transitions, array-of-timeseries via baseTypeOf)
+- `npx vitest run src/components/browser/__tests__/` 22/139 PASS (no regressions in the rest of the browser surface)
+
+**Learnings for future iterations:**
+- The Quiver `<SeriesFetcher>` pattern (a 30-line shim component that calls one hook + dispatches via callback) is the canonical solution whenever you need to fan out useQuery calls keyed on a dynamic list. Stick to this rather than building a `useQueries` ad-hoc — it composes cleanly with the existing per-series cache keys in `useTimeSeriesPoints`.
+- `baseTypeOf` (imported from `lib/geoParser.ts`) covers `array<X>` unwrapping; reach for it whenever a feature gate cares about the underlying scalar type. The same helper is used by ObjectDetail to decide which properties to skip on the Properties tab.
+- Mounting per-series effects only when the parent tab is active is the cheap, idiomatic way to avoid thundering-herd `streamPoints` requests on row hover. A future optimisation could co-locate this pattern with a shared cache so cross-tab navigation does not re-trigger fetches inside the 30s staleTime window.
+- vitest must be run from `web/` not the repo root — tests fail with "document is not defined" otherwise because the vitest.config.ts (with `environment: jsdom`) is only discovered relative to the package cwd. Add `cd web &&` to every script that invokes `npx vitest`.
+---
