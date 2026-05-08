@@ -24,14 +24,26 @@ test.describe('US-444 — aggregate', () => {
     );
     test.skip(!res.ok(), `aggregate endpoint unavailable: ${res.status()}`);
 
+    // The live aggregate endpoint returns metrics as `data[].metrics[]`
+    // where each entry is a `{name, value}` pair. Older drafts of this
+    // spec assumed a flat `{metrics: {total: N}}` map; accept both shapes
+    // so the spec is robust across schema iterations.
+    type Pair = { name: string; value: number };
     const body = (await res.json()) as {
-      metrics?: Record<string, number>;
-      data?: { metrics?: Record<string, number> };
+      metrics?: Record<string, number> | Pair[];
+      data?: Array<{ metrics?: Pair[] }>;
       accuracy?: string;
     };
-    const metrics = body.metrics ?? body.data?.metrics ?? {};
-    expect(Object.keys(metrics).length).toBeGreaterThan(0);
-    const total = metrics.total ?? Object.values(metrics)[0];
+    const arrayMetrics: Pair[] = Array.isArray(body.metrics)
+      ? body.metrics
+      : body.data?.[0]?.metrics ?? [];
+    const mapMetrics: Record<string, number> =
+      !Array.isArray(body.metrics) && body.metrics
+        ? body.metrics
+        : Object.fromEntries(arrayMetrics.map((m) => [m.name, m.value]));
+
+    expect(Object.keys(mapMetrics).length).toBeGreaterThan(0);
+    const total = mapMetrics.total ?? Object.values(mapMetrics)[0];
     expect(typeof total).toBe('number');
     expect(total).toBeGreaterThanOrEqual(0);
   });

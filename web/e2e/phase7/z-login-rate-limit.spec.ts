@@ -20,7 +20,7 @@ test.describe('Login rate limit', () => {
     // Exhaust the per-IP rate limit by sending wrong-password attempts
     // until the server responds with 429. The limit is configurable
     // (WEAVE_LOGIN_RATE_LIMIT), so we discover it at runtime.
-    const MAX_PROBE = 100; // safety cap
+    const MAX_PROBE = 250; // safety cap; matches WEAVE_LOGIN_RATE_LIMIT=200
     let exhausted = false;
     for (let i = 0; i < MAX_PROBE; i++) {
       const res = await request.post(`${API_BASE}/api/auth/login`, {

@@ -26,5 +26,12 @@ ALTER TABLE audit_events
 CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_events_chain_seq
     ON audit_events (chain_seq);
 
+-- The expression below needs an extra pair of parentheses around the
+-- whole cast: PG's CREATE INDEX grammar treats a top-level paren list
+-- as a column list, so `((ts AT TIME ZONE 'UTC')::DATE)` parses as a
+-- single column "(ts AT TIME ZONE 'UTC')" with a stray "::" trailing.
+-- Wrapping the cast in another paren makes it a proper expression
+-- index. Discovered while standing up a clean DB for v3 e2e (the
+-- existing dirty-state DB had stopped at this migration in v2).
 CREATE INDEX IF NOT EXISTS idx_audit_events_ts_day
-    ON audit_events ((ts AT TIME ZONE 'UTC')::DATE);
+    ON audit_events (((ts AT TIME ZONE 'UTC')::DATE));
