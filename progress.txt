@@ -4760,3 +4760,23 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Adding a new SPA route that drives an existing wire surface (here POST /commits, GET /log, GET /commits/{hash}) requires zero changes to `api/openapi.yaml` / `cmd/server/openapi_spec.yaml` / `cmd/server/contract_test.go` — those gates only apply to new chi routes. When the AC says "/functions/{rid}/code" it's a SPA route, not an API route.
 - The commit POST handler resolves the function ref by RID OR human name OR `name@version` (`resolveFunctionRef` in `pkg/oms`). The SPA passes the RID via the `:functionRid` path param; the same surface would accept `:functionRid=hello` or `:functionRid=hello@1.2.0` — useful for a future "edit by name" deep link.
 ---
+
+## 2026-05-08 - US-456 - 性能 Dashboard
+
+**Implementation:**
+- New `web/src/api/metrics.ts` — prometheus text-format scraper exposing `parsePrometheusText` (label-aware sample parser), `digestSnapshot` (counter aggregation across labels — 5xx counted by status-prefix), and `rateBetween(prev, next)` for QPS / 5xx error rate / avg latency / DB / NATS rate derivation. Counter-reset detection returns null so a process restart does not poison the dashboard.
+- New `web/src/components/admin/PerformanceDashboardPage.tsx` at `/admin/perf` (gated `user.manage`). Polls `/metrics` every 5s, renders 6 metric cards (HTTP QPS / 5xx error rate with intent-tinted card / avg latency / DB QPS / NATS publish + consume) + 60-pt sliding-window sparklines for QPS and latency via uplot, plus a raw-samples drawer for ops. Pause / Refresh controls.
+- `web/src/test/setup.ts` — jsdom `matchMedia` polyfill so any test that transitively imports uplot does not blow up at module-import time.
+- Sidebar gains a `/admin/perf` entry under the user.manage admin group.
+
+**Verification:**
+- `npx tsc --noEmit` exit=0
+- `npx vitest run src/api/__tests__/metrics.test.ts src/components/admin/__tests__/PerformanceDashboardPage.test.tsx` 18/18 PASS
+- `npx vitest run` full SPA suite **1239/1239 PASS** (was 1221 pre-story → +18 new tests landed cleanly)
+
+**Learnings for future iterations:**
+- Any new SPA component that imports `uplot` will trip the jsdom `matchMedia` gap — the polyfill in `src/test/setup.ts` covers all test files but bake the dependency into a Codebase Pattern: `uplot reads window.matchMedia at module-import time, polyfilled globally in test/setup.ts`.
+- For polling components, prefer real timers + `waitFor(...)` over fake timers. Fake timers leave fetch microtasks unresolved unless every `await Promise.resolve()` call is wired in series, which produces brittle 5s-timeout tests. The compromise: drive cadence through user-clicks (Refresh) rather than waiting for the natural setInterval tick — both cover the AC and run in milliseconds.
+- The prometheus text format has subtle escapes — label values contain `\"` for embedded quotes — and trailing per-sample timestamps that need to be ignored. The `parseSampleLine` slice-and-walk approach handles both without a regex; if you ever want to extend the parser to histogram buckets specifically, the `_bucket{le="..."}` samples already round-trip through `parsePrometheusText` unchanged.
+- Counter-reset detection (negative delta on any tracked counter) returns null from `rateBetween` rather than emitting bogus negative-rate noise. Apply the same shape if a future US adds gauge-derived rates: distinguish "monotonic counter wrapped/reset" from "arithmetic underflow" at the helper boundary.
+---

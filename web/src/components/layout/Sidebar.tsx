@@ -221,6 +221,11 @@ export function Sidebar() {
           label: 'Compliance',
           icon: 'check',
         },
+        {
+          to: '/admin/perf',
+          label: 'Performance',
+          icon: 'bolt',
+        },
       ]
     : [
         {
