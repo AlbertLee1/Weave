@@ -8,11 +8,16 @@ interface HotkeyHelpModalProps {
   onClose: () => void;
 }
 
-const GROUP_ORDER: ReadonlyArray<HotkeyGroup> = ['global', 'navigation'];
+// US-458: render order matches the PRD-mandated grouping
+// (Navigation / Editing / Search). Search lives last because power users
+// are already pressing Cmd-K to open the palette without consulting the
+// help panel.
+const GROUP_ORDER: ReadonlyArray<HotkeyGroup> = ['navigation', 'editing', 'search'];
 
 const GROUP_I18N: Record<HotkeyGroup, string> = {
-  global: 'hotkeys.groupGlobal',
   navigation: 'hotkeys.groupNavigation',
+  editing: 'hotkeys.groupEditing',
+  search: 'hotkeys.groupSearch',
 };
 
 const KEY_GLYPH: Record<string, string> = {

@@ -7,7 +7,8 @@ describe('hotkey registry', () => {
       expect(def.id).toBeTruthy();
       expect(def.keys).toBeTruthy();
       expect(def.i18nKey).toMatch(/^hotkeys\./);
-      expect(['global', 'navigation']).toContain(def.group);
+      // US-458: groups normalised to PRD's Navigation / Editing / Search.
+      expect(['navigation', 'editing', 'search']).toContain(def.group);
     }
   });
 
@@ -20,7 +21,14 @@ describe('hotkey registry', () => {
     const def = getHotkey('commandPalette');
     expect(def.keys).toContain('meta+k');
     expect(def.keys).toContain('ctrl+k');
-    expect(def.group).toBe('global');
+    expect(def.group).toBe('search');
+  });
+
+  it('US-458: each PRD group has at least one entry', () => {
+    const groups = new Set(HOTKEYS.map((h) => h.group));
+    expect(groups.has('navigation')).toBe(true);
+    expect(groups.has('editing')).toBe(true);
+    expect(groups.has('search')).toBe(true);
   });
 
   it('getHotkey throws on unknown id', () => {

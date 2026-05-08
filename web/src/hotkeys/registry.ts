@@ -2,13 +2,24 @@
 //
 // Each entry pairs a stable `id` (used by call sites and i18n) with a
 // react-hotkeys-hook key pattern. `i18nKey` resolves to a human-readable
-// description; the help panel (US-349) renders entries grouped by `group`.
+// description; the help panel (US-349 / US-458) renders entries grouped
+// by `group`.
 //
 // Sequences use `>` as the separator (e.g. `g>d` → press G then D).
 // Comma-separated alternatives bind multiple key patterns to one handler
 // (e.g. `meta+k, ctrl+k` covers Cmd on macOS and Ctrl elsewhere).
+//
+// US-458 split the legacy `global` bucket into `search` (open the
+// palette / help) + `editing` (form-level shortcuts) so the help modal
+// renders the three groups the PRD calls out: Navigation / Editing /
+// Search. `search` retains the historical bindings the rest of the app
+// already wires up; `editing` entries are informational — UI components
+// (modals, edit forms) honour these conventions but do not all dispatch
+// through `useShortcut`, since a per-component handler is the natural
+// place for them. Listing them here keeps the help panel honest about
+// what users can press.
 
-export type HotkeyGroup = 'global' | 'navigation';
+export type HotkeyGroup = 'navigation' | 'editing' | 'search';
 
 export type HotkeyId =
   | 'commandPalette'
@@ -16,7 +27,10 @@ export type HotkeyId =
   | 'goDashboard'
   | 'goObjectsets'
   | 'goPipelines'
-  | 'goApprovals';
+  | 'goApprovals'
+  | 'submitForm'
+  | 'cancelEdit'
+  | 'focusSearch';
 
 export interface HotkeyDef {
   readonly id: HotkeyId;
@@ -26,11 +40,12 @@ export interface HotkeyDef {
 }
 
 export const HOTKEYS: readonly HotkeyDef[] = [
+  // ── Search ────────────────────────────────────────────────────────────
   {
     id: 'commandPalette',
     keys: 'meta+k, ctrl+k',
     i18nKey: 'hotkeys.commandPalette',
-    group: 'global',
+    group: 'search',
   },
   {
     // `?` is Shift+/ on US/EN layouts. react-hotkeys-hook matches the
@@ -40,8 +55,15 @@ export const HOTKEYS: readonly HotkeyDef[] = [
     id: 'showHelp',
     keys: 'shift+slash',
     i18nKey: 'hotkeys.help',
-    group: 'global',
+    group: 'search',
   },
+  {
+    id: 'focusSearch',
+    keys: 'slash',
+    i18nKey: 'hotkeys.focusSearch',
+    group: 'search',
+  },
+  // ── Navigation ────────────────────────────────────────────────────────
   {
     id: 'goDashboard',
     keys: 'g>d',
@@ -65,6 +87,19 @@ export const HOTKEYS: readonly HotkeyDef[] = [
     keys: 'g>a',
     i18nKey: 'hotkeys.goApprovals',
     group: 'navigation',
+  },
+  // ── Editing ───────────────────────────────────────────────────────────
+  {
+    id: 'submitForm',
+    keys: 'meta+enter, ctrl+enter',
+    i18nKey: 'hotkeys.submitForm',
+    group: 'editing',
+  },
+  {
+    id: 'cancelEdit',
+    keys: 'escape',
+    i18nKey: 'hotkeys.cancelEdit',
+    group: 'editing',
   },
 ];
 

@@ -4798,3 +4798,21 @@ Started: 2026年 5月 2日 星期六 19时50分14秒 CST
 - Mounting per-series effects only when the parent tab is active is the cheap, idiomatic way to avoid thundering-herd `streamPoints` requests on row hover. A future optimisation could co-locate this pattern with a shared cache so cross-tab navigation does not re-trigger fetches inside the 30s staleTime window.
 - vitest must be run from `web/` not the repo root — tests fail with "document is not defined" otherwise because the vitest.config.ts (with `environment: jsdom`) is only discovered relative to the package cwd. Add `cd web &&` to every script that invokes `npx vitest`.
 ---
+
+## 2026-05-08 - US-458 - 全局快捷键帮助页
+
+**Implementation:**
+- `web/src/hotkeys/registry.ts`: split the legacy `global` group into the three PRD-mandated buckets — `navigation`, `editing`, `search`. `commandPalette` + `showHelp` move to `search`; new informational entries: `focusSearch` (slash), `submitForm` (meta+enter / ctrl+enter), `cancelEdit` (escape).
+- `web/src/components/common/HotkeyHelpModal.tsx`: render order is now `Navigation → Editing → Search` (power users open Cmd-K without needing the help panel, so `Search` lives last).
+- `web/src/i18n/resources/{en,zh-CN}.ts`: add localised group titles (`groupEditing` / `groupSearch`) plus descriptions for the three new hotkey ids; legacy `groupGlobal` retained as a fallback in case external pages still reference it.
+
+**Verification:**
+- `npx tsc --noEmit` exit=0
+- `npx vitest run src/hotkeys/ src/components/common/__tests__/HotkeyHelpModal.test.tsx` 18/18 PASS (registry tests + modal tests, both updated for the new grouping)
+- `npx vitest run` full SPA suite **1247/1247 PASS** (was 1245 pre-story → +2 new tests landed cleanly; no regressions across the 157 test files)
+
+**Learnings for future iterations:**
+- The hotkey help modal already existed (US-349) — `?` was already wired and the modal was already mounted in `Shell.tsx`. The PRD AC for US-458 was about *grouping* (Navigation / Editing / Search), so the implementation cost was a registry restructure plus i18n adjustments rather than a from-scratch modal. When picking up "modal" stories, always grep for prior versions before laying down new files.
+- Adding informational hotkey entries (no `useShortcut` call site) is fine because `useShortcut` is opt-in per call site. The registry is the source of truth for the help panel; the act of *binding* is independent. This lets the help panel honestly document conventions like Escape-to-close and Cmd-Enter-to-submit that individual modals already implement locally.
+- `HotkeyGroup` type narrowing means the `GROUP_I18N` lookup must be an exhaustive `Record<HotkeyGroup, string>` — adding a new group without a translation entry is a tsc error rather than a runtime fallback.
+---
