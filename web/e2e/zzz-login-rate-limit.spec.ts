@@ -11,6 +11,11 @@ const API_BASE = 'http://localhost:9117';
  * verifies the UI shows the appropriate banner.
  */
 test.describe('Login rate limit', () => {
+  // 250 probes × ~50ms each + UI assertions can blow past the default
+  // 30s per-test budget on slower laptops — bump it once for both
+  // specs in this file.
+  test.setTimeout(90_000);
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/login');
     await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible();
