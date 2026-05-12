@@ -6,14 +6,32 @@ import (
 	"fmt"
 )
 
+// SortKey carries one column of a compound sort cursor. It captures the
+// boundary value seen on the previous page along with the direction and
+// NULL ordering so the next page query can resume past that row without a
+// gap or duplicate. NullOrder is "first" or "last"; Direction is "asc" or
+// "desc". Empty values are tolerated for back-compat callers.
+type SortKey struct {
+	Field     string `json:"field"`
+	Value     any    `json:"value,omitempty"`
+	Direction string `json:"direction,omitempty"`
+	NullOrder string `json:"nullOrder,omitempty"`
+}
+
 // CompositeCursor represents a pagination position inside a single
 // implementing ObjectType while iterating across a multi-type ObjectSet
 // (e.g. loadObjectsOrInterfaces). A multi-type cursor carries one of these
 // per surviving sub-stream; an empty InnerCursor marks the sub-stream as
 // exhausted and ready to be dropped from the heap merge.
+//
+// SortKeys is optional — when present it pins the compound-sort boundary
+// value(s) for the next page so a NULL-aware ORDER BY can resume cleanly.
+// Older callers that paginate by InnerCursor alone keep working unchanged
+// because SortKeys is omitempty.
 type CompositeCursor struct {
-	ObjectType  string `json:"objectType"`
-	InnerCursor string `json:"innerCursor"`
+	ObjectType  string    `json:"objectType"`
+	InnerCursor string    `json:"innerCursor"`
+	SortKeys    []SortKey `json:"sortKeys,omitempty"`
 }
 
 // IsExhausted reports whether this sub-cursor should be removed from a

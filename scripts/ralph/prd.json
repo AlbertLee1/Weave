@@ -49,8 +49,8 @@
         "Tests pass"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "cursor.go 加 HMAC-SHA256 签名 + IssuedAt/MaxAge 过期（SetSigningKey / SetMaxAge 包级开关，缺省 zero-key 与历史 wire format 等价，向后兼容）；composite_cursor.go 加 SortKey（Field/Value/Direction/NullOrder）支持复合排序 + NULL 序。新增 cursor_integrity_test.go 共 37 个 t.Run 子测试覆盖 HMAC 篡改 / key 轮换 / 过期 / Apply 边界 / NextPageToken 边界 / ParsePageRequest 错误 / SortKey round-trip / MultiTypeCursor 完整。go test ./pkg/oss/pagination -cover → 98.3%（基线 66.2%）。pkg/oss/{oms,objectset,aggregation,where,computed} 与 test/integration/{,phase6,phase7} 全绿，零回归。"
     },
     {
       "id": "US-004",

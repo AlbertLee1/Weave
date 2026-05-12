@@ -34,6 +34,9 @@ Phases:
 - Playwright `testDir: '.'` + `testMatch: /(?:e2e|tests)\/.*\.spec\.ts$/` 比 glob 数组更稳；务必加 `testIgnore: ['src/**', 'node_modules/**', 'dist/**', 'coverage/**', 'playwright-report/**']`，否则会扫到 `src/**/*.test.ts` 的 vitest 测试导致诡异 `test.describe not expected here`。
 - `npx playwright test` 必须从 `web/` 目录跑，否则会落到仓库根、用默认 testMatch 扫到 `examples/ts-quickstart/.../__tests__/*.test.ts`（用 `node:test`）误执行。Bash 工具会把 cwd 重置到仓库根，所以脚本里要 `cd /Users/liyang/Documents/Community/Weave/web && npx playwright test ...`。
 - `make e2e-up` 的 seed 步骤遇 FK 阻塞（functions → ontologies）会失败但 weave/vite 已起来；可手动 `docker exec weave-postgres-1 psql -U weave -d weave -c "DELETE FROM functions WHERE ontology_rid='ri.ontology.main.ontology.northwind';"` 再 `make e2e-seed` 恢复。
+- `pkg/oss/pagination` 现支持可选的 HMAC 签名 + TTL：`SetSigningKey(k []byte)` 开启 / `SetSigningKey(nil)` 关闭；`SetMaxAge(d)` 给 cursor 加过期（0 = 不过期）。两者都是包级 sync.RWMutex 守护的全局开关，默认 zero-key + zero-age 与历史 wire format 完全等价。HTTP handlers 用 `errors.Is(err, pagination.ErrTamperedCursor)` / `errors.Is(err, pagination.ErrExpiredCursor)` 把 cursor 完整性失败映射到 400 Bad Request。
+- `pagination.CompositeCursor.SortKeys []pagination.SortKey`（Field/Value/Direction/NullOrder）让多列 ORDER BY + NULL 序的复合游标能完整 round-trip；omitempty 让老 caller 零改动。
+- `pkg/oss/pagination` 的 `Cursor.Encode()` 永不 mutate 接收者，IssuedAt / Sig 都写到本地 copy。callers 在 next page 时 reuse 同一个 `*Cursor` 不会留毒。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -101,4 +104,37 @@ Phases:
   - `verbatimModuleSyntax: true` 强制 `export type { … } from './x'` 与 `export { … } from './x'` 分开；用 `export *` 时类型 re-export 会被踢掉 — 所以 barrel 用具名 export。
   - `make e2e-up` 在 OS 升级后第一次跑会因为容器全部重建而 seed 阶段被旧 `functions` 行卡住（seed 走 wipe-and-reseed，但 ontologies 上有 functions FK）。流程是先 `docker compose up -d --wait postgres nats` 再 `make e2e-up`，遇到 FK 阻塞就 `docker exec weave-postgres-1 psql -U weave -d weave -c "DELETE FROM functions WHERE ontology_rid LIKE 'ri.ontology.main.ontology.northwind%';"` 后 `make e2e-seed`。
   - dev-browser skill 在本仓库没装；US-002 / 后续带 "Verify in browser using dev-browser skill" 的 AC，目前用 `make e2e-up` + Playwright headless（screenshot on failure / trace on retry）作为等价证据，已足够覆盖 "UI 渲染对、selector 找得到" 的诉求。
+---
+
+## 2026-05-12 19:50 - US-003 pkg/oss/pagination TDD 补强
+- `pkg/oss/pagination/cursor.go` 重写：`Cursor` 新增 `IssuedAt` + `Sig` 字段（均 omitempty 保持向后兼容）；
+  加 `SetSigningKey([]byte)` / `SetMaxAge(time.Duration)` 包级开关 + `sync.RWMutex` 守护；
+  `Encode()` 不再 mutate 接收者（IssuedAt / Sig 写到本地 copy）；
+  `DecodeCursor` 走 HMAC-SHA256 校验 + 过期检测，输出 sentinel `ErrTamperedCursor` / `ErrExpiredCursor`。
+- `pkg/oss/pagination/composite_cursor.go` 给 `CompositeCursor` 加 `SortKeys []SortKey`（omitempty），
+  `SortKey { Field, Value, Direction, NullOrder }` 支持复合排序 + NULL last/first 的游标恢复。
+- 新文件 `pkg/oss/pagination/cursor_integrity_test.go` 共 37 个 `t.Run` 子测试（≥ AC 要求的 15）：
+  - `TestCursor_HMAC` × 6：back-compat / 签名 round-trip / offset 篡改 / 缺签名 / key 轮换 / 不 mutate 接收者。
+  - `TestCursor_Expiry` × 4：默认无 iat / 新 cursor 通过 / 过期 → ErrExpired / 签名 + 过期联用。
+  - `TestApply_WindowEdges` × 6：空集 / 单元素 / 边界 last page / 偏 partial / offset==len / offset 越界。
+  - `TestNewPageResponse_NextTokenEdges` × 4：首页 / boundary / 空 dataset / 单条 dataset。
+  - `TestParsePageRequest_Errors` × 5：非数字 / 0 / 负值 pageSize / 非 base64 token / 篡改 token。
+  - `TestCompositeCursor_SortKeys` × 4：back-compat / 单列 nulls-last / 多列 nulls-first / nil 值 round-trip。
+  - `TestMultiTypeCursor` × 8：nil receiver / 空 subs / 全 exhausted / 部分活 / round-trip / 空 decode / bad base64 / bad json。
+- 验证：
+  - `go test ./pkg/oss/pagination/ -count=1 -cover` → **98.3% of statements**（基线 66.2%，AC 要求 ≥ 85%）。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/oss/...` 全绿 (`oms / oss / aggregation / objectset / pagination / where / computed`)。
+  - `go test -count=1 -short -tags integration ./test/integration/...` 全绿 (`integration / phase6 / phase7`)。
+- 文件改动：
+  - `pkg/oss/pagination/cursor.go`（重写：HMAC + expiry + sentinel）
+  - `pkg/oss/pagination/composite_cursor.go`（新增 SortKey + SortKeys 字段）
+  - `pkg/oss/pagination/cursor_integrity_test.go`（新，~370 行 / 37 subtests）
+- **Learnings for future iterations:**
+  - JSON 字段 `omitempty` + Go 默认 marshal 顺序按结构体字段声明 → 配合 `crypto/hmac.Equal` 可以做 deterministic HMAC，无需引入 `jsoniter` 或排序 hack。
+  - HTTP handlers 想把 `ErrTamperedCursor` / `ErrExpiredCursor` 映射成 400，用 `errors.Is(err, pagination.ErrTamperedCursor)`；不要 type assert，因为 `DecodeCursor` 内部 `fmt.Errorf("invalid cursor: %w", err)` 会 wrap。
+  - `Cursor.Encode()` 接收者 by-value copy 是关键：handlers 经常持有同一个 `*pagination.Cursor` 给多个 page 用，如果 Encode 写回 Sig，下一页的签名会基于上一页的 IssuedAt + Sig，导致校验失败。
+  - 测试隔离技巧：`defer resetPaginationState()` 在 top-level `TestCursor_HMAC`/`TestCursor_Expiry` 入口；每个子 `t.Run` 内首行也 reset，避免 t.Parallel 启用后被串扰。
+  - `httptest.NewRequest("GET", "/items?pageToken=%%%bad", nil)` 会因 `%%%` 被 net/url 解析失败而 query 取不到值，导致 ParsePageRequest 误以为没传 token。要构造 "URL-safe but invalid base64" 用 `!!!notbase64!!!` 这类纯字符即可。
+  - 注意 Ralph 工作流：每轮迭代会把上一轮的 `prd.json` / `progress.txt` 归档到 `archive/<branch>/`，活的副本在 `scripts/ralph/{prd.json, progress.txt}`，并通过 `.ralph-repo/` 软链接暴露。CLAUDE.md 顶部说 "PRD at prd.json (same directory as this file)" 指的是 `scripts/ralph/CLAUDE.md` 同目录的 prd.json，不是 repo 根。
 ---
