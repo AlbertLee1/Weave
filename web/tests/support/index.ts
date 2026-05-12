@@ -30,6 +30,7 @@ export {
   PipelinesPage,
   ProposalsPage,
   QuiverPage,
+  SecurityPoliciesPage,
   SettingsPage,
   ThreadsPage,
 } from './pageObjects';

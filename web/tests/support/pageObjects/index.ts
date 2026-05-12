@@ -17,5 +17,6 @@ export { ObjectTypeAdminPage } from './ObjectTypeAdminPage';
 export { PipelinesPage } from './PipelinesPage';
 export { ProposalsPage } from './ProposalsPage';
 export { QuiverPage } from './QuiverPage';
+export { SecurityPoliciesPage } from './SecurityPoliciesPage';
 export { SettingsPage } from './SettingsPage';
 export { ThreadsPage } from './ThreadsPage';

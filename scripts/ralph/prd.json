@@ -614,8 +614,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 41,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/{api/securityPolicies.ts, hooks/useSecurityPolicies.ts, components/securityPolicies/SecurityPoliciesPage.tsx} 落地；App.tsx 加 /admin/:ontology/security 路由（AdminGuard）+ Sidebar 加 Security Policies 入口（shield icon, active-ontology admin section）。三 tab shell（Row Policies / Column Masks / Cell Masks，后两 tab US-042/US-043 placeholder）。Row Policies tab 接 GET/POST/PATCH/DELETE /api/admin/row-policies 全 CRUD：列表 + Create/Edit modal + Delete confirm dialog；JSON predicate 编辑器（lint：JSON.parse 校验 + invalid 时禁用 Submit + inline error）— 与 PRD “CEL 编辑器” AC 是 honest mapping（后端 wire format 是 pkg/oss/where.WhereClause JSON，非 CEL）；AppliesTo (roles/groups/users) 多 input；Test-as-user 模拟器 client-side 复刻 pkg/rls AppliesTo.IsApplicable（无后端 simulator endpoint）。tests/feature.security-policies.row.spec.ts 5 scenarios：(1) shell 三 tab 切换 + Column/Cell placeholder 引用 US-042/US-043；(2) 列表渲染 object-type apiName resolved + AppliesTo 多 kind badges；(3) Create wire-shape POST + JSON lint reject invalid + 负 assertion 锁 cel/celExpression 字段不存在；(4) Delete confirm + DELETE endpoint 命中 + 列表 invalidate；(5) Test-as-user 模拟器 AppliesTo IsApplicable client-side 评估，三策略 role/user/group 互斥匹配。npx tsc --noEmit 干净；npx eslint 9 文件干净；vitest 1247/1247 passed；npx playwright test feature.security-policies.row 5/5 passed (~6.2s)；@smoke 全套件 58/58 passed (~52.7s) 含本 story 2 个新 @smoke。go build/vet 干净。"
     },
     {
       "id": "US-042",

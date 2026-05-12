@@ -222,6 +222,11 @@ export function Sidebar() {
           icon: 'bolt',
         },
         {
+          to: `/admin/${activeOntology}/security`,
+          label: 'Security Policies',
+          icon: 'shield',
+        },
+        {
           to: '/admin/markings',
           label: 'Markings',
           icon: 'shield',
