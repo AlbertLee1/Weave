@@ -597,8 +597,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 40,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/{api/proposals.ts,hooks/useProposals.ts,components/proposals/ProposalsPage.tsx} 落地；App.tsx 加 AdminGuard 包裹的 `/proposals/:ontology` 路由 + Sidebar 在已选 ontology 段加 'Proposals' 入口（workflow 图标）。Page 渲染 5 件套：(1) 状态四态 testid 矩阵（page/loading/error/empty/list） + per-row `data-proposal-id`/`data-status` + 5 个 filter 按钮 `data-filter={status}`；(2) 详情面板 — diff 三色（ADDED/MODIFIED/DELETED 各自 `data-change-type` + 计数 pill）+ 评论历史 + Approve/Reject/Merge 三按钮（Approve/Reject 仅 pending 启用，Merge 仅 approved 启用）；(3) BreakingChangesBanner 接 `/breaking-changes` 三态（loading/clean/banner with `data-changes-count`），banner 内每行 `data-kind={kind}` 锁住 PROPERTY_DELETED / PROPERTY_TYPE_NARROWED / PROPERTY_REQUIRED_ADDED 等枚举；(4) MergeConfirmDialog 类 GitHub typed-confirm — Confirm 按钮仅在输入框严格相等 proposal.title 时启用（不容大小写错配）；(5) 错误经 ApiRequestError 走 toast。`web/tests/feature.proposals.spec.ts` 5 scenarios + `web/tests/support/pageObjects/ProposalsPage.ts` PO。修了一处 Playwright glob 陷阱（`*` 不跨 `/`），需要给 single-resource GET 注册单独 `${PROPS_PREFIX}/*` 路由 — 否则 `/proposals/{id}` 漏掉走真实 backend 拿到 NotFound。npx tsc -b → US-040 文件零新错（3 pre-existing errors 来自 main：objectSetUrl.ts 缺 @types/node、ObjectSetComposer.test.tsx versions/activeVersionId 类型）。npx eslint US-040 文件 → 0。npx playwright test tests/feature.proposals.spec.ts → 5/5 pass（~6s）；npx playwright test --grep @smoke → 56/56 pass（53s 零回归）。"
     },
     {
       "id": "US-041",

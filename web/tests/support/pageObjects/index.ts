@@ -15,6 +15,7 @@ export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
 export { ObjectSetDiffPage } from './ObjectSetDiffPage';
 export { ObjectTypeAdminPage } from './ObjectTypeAdminPage';
 export { PipelinesPage } from './PipelinesPage';
+export { ProposalsPage } from './ProposalsPage';
 export { QuiverPage } from './QuiverPage';
 export { SettingsPage } from './SettingsPage';
 export { ThreadsPage } from './ThreadsPage';

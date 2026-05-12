@@ -28,6 +28,7 @@ export {
   ObjectSetDiffPage,
   ObjectTypeAdminPage,
   PipelinesPage,
+  ProposalsPage,
   QuiverPage,
   SettingsPage,
   ThreadsPage,

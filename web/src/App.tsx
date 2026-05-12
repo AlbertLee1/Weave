@@ -47,6 +47,7 @@ import { FunctionDiffPage } from './components/functions/FunctionDiffPage';
 import { FunctionCodePage } from './components/functions/FunctionCodePage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { AutomationRulesPage } from './components/automation/AutomationRulesPage';
+import { ProposalsPage } from './components/proposals/ProposalsPage';
 import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
@@ -164,6 +165,14 @@ export default function App() {
                 element={
                   <AdminGuard>
                     <AutomationRulesPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="proposals/:ontology"
+                element={
+                  <AdminGuard>
+                    <ProposalsPage />
                   </AdminGuard>
                 }
               />

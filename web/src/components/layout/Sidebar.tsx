@@ -152,6 +152,11 @@ export function Sidebar() {
       label: 'Automation Rules',
       icon: 'zap',
     });
+    navItems.push({
+      to: `/proposals/${activeOntology}`,
+      label: 'Proposals',
+      icon: 'workflow',
+    });
   }
   navItems.push({
     to: '/schema/infer',
