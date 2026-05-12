@@ -56,6 +56,11 @@ Phases:
 - `pkg/auth.RefreshStore.RevokeIfActive(ctx, id, reason) (won bool, err error)` 是 single-use revoke 的 CAS 原语：Memory 走锁内 double-check，PG 走 `WHERE id=$1 AND revoked_at IS NULL` + `RowsAffected==1`。`RefreshService.Rotate` 只有 won=true 的并发 caller 才会 mint 后继 token，其余命中 `RevokeChainForUser(reuse_detected)` 烧链 — 修了"两个并发 Rotate 同 plaintext 都 mint child"的 TOCTOU。所有 single-use 资源（API key rotation、approval transition、OAuth code 兑换）都该走这种 store-level CAS 而不是依赖 `Revoke` 幂等性。
 - `pkg/auth` 的 `ipRateLimiter` 是包私有；想 unit-test 必须 `package auth` 而非 `package auth_test`。LoginHandler 通过 `clientIP(r)` 解析 IP，**XFF 头优先于 RemoteAddr**，所以 httptest 注入 `req.Header.Set("X-Forwarded-For", ip)` 比改 RemoteAddr 稳。同一测试套件多个 rate-limit 子测试**必须**给彼此不同的 IP（per-IP fixed-window 是全局状态），用 `fmt.Sprintf("203.0.113.%d", time.Now().UnixNano()%200+10)` 这种"高位段+纳秒尾"避免串扰。
 - `pkg/auth.OntologyScopeMiddleware` 从 `/api/v2/ontologies/{apiName}/...` URL 抠 **api name 而非 RID**，所以测试里 `User.OntologyRoles` 的 key 要用 `"northwind"` 这种 apiName 而不是 `"ri.ontology.main.ontology.northwind"`；同理 `EnforceOntologyScope(ctx, ontologyRID, perm)` 的 `ontologyRID` 参数名带了 "RID" 后缀但中间件入参其实是 apiName — 名字误导，但这是历史包袱。生产路由如果走 RID-based 持久化要在 middleware 之后再 resolve。
+- `pkg/actions/sagapg.NewStore(pool)` 是 `actions.SagaStore` 的真正 PG 实现（**从 `cmd/server/action_saga_store.go` 提到 importable package**）。`cmd/server/main.go` 改用 `sagapg.NewStore(deps.PGPool)`；test/bdd 复用同一实现，BDD 断言可直接 `state.sagaStore.GetSaga` / `ListSagaSteps` / `ListDLQ` 验证 action_sagas / action_saga_steps / action_saga_dlq 三表的真实持久化。任何后续要把 PG store 暴露给 BDD / 集成测试的，照此把 cmd/server 里的实现搬到 `pkg/<owner-pkg>/<owner>pg/`。
+- **TRUNCATE 也要管 saga 表**：`action_sagas` / `action_saga_steps` / `action_saga_dlq` 不 FK 回 `ontologies`，所以 BDD reset 路径要 `TRUNCATE TABLE ontologies, action_sagas RESTART IDENTITY CASCADE`（saga_steps / saga_dlq 通过 ON DELETE CASCADE 跟随 action_sagas）。新增任何"非 ontology-rooted"持久化时，在 `state.go` 的 `truncateOntologyGraph` 里手工补一刀。
+- **godog 表参数惯用法**：`*godog.Table` 的 `Rows[0].Cells` 是 header，后续 `Rows[1:]` 是 data；列名 → 值的解析逻辑封到 `buildApplySagaBody`（saga_steps.go）。空 cell 视作"该 parameter 不传"——用来模拟 `bookResource` 缺 `resourceId` 触发 prepare 失败的 step-fail 路径。每个 cell value 都是 `string`，复杂类型需自己反序列化。
+- **saga 三层断言矩阵（US-014）**：HTTP（status code 200/400 + `saga.status` 字段）+ NATS（`recordingPublisher.snapshot()` 计数批次 + `setFailNext(err)` 注入失败）+ DB（`sagaStore.GetSaga(sagaID).Status` / `ListSagaSteps(sagaID)[i].Status` / `ListDLQ("PENDING")` 计数）。三类要同时校验才能区分"成功""补偿成功""补偿失败入 DLQ"三态。
+- **saga 补偿器装配顺序**：必须先 `CreateActionType` 落地 compensator（如 `deleteOrder`，**不带** `CompensateActionRID`），拿到 RID 后再 `CreateActionType` 落地 primary（如 `createOrder`，`CompensateActionRID = deleteOrderRID`）。否则 primary 创建时 compensator RID 还没存在，未来 `prepareCompensator` 走 `resolveActionType` 会 ListActionTypes fallback 命中但 RID 路径首查无果。BDD seed helper `seedSagaOntology` 是这个顺序的范式实现。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -466,3 +471,39 @@ Phases:
   - **后端 BDD 三层断言**（HTTP / API response / DB row）：仅靠 HTTP status code 不够（PRD AC 明说"不允许仅 200 即通过"），还要解析 response body 关键字段（errorCode、appliedCount、resolutionKey）+ 单独 `repo.Get*` 读 DB 验证持久化效果。Conflict scenario 特别要紧：merge 失败时 branch.status 必须仍是"open"且 main 行未变 — 失败回滚是合并语义的核心契约。
   - **构建 BranchChange.BeforeState 的诀窍**：直接 `json.Marshal(*ObjectType)` 当前 main 行作为 before，再 marshal "修改 displayName 后的副本" 作 after — 让 merge 的 `jsonEqual(BeforeState, currentMainJSON)` 在没有 main drift 时返回 true → 0 conflicts；有 main drift 时返回 false → 1 conflict。在 conflict scenario 里 main 先 update + IncrementOntologyVersion，这两件事缺一不可：`MergeProposal` 的 fast-path 是"if currentVersion <= BaseVersion: skip conflict check"，不 increment 的话即使 main 改了也直接 merge 成功。`MergeBranch` 没有这个 fast-path 总是跑 detectConflicts，但保持两条路径对称是好习惯。
   - **godog 步骤 regex 锚点务必加 `^...$`**：feature 文件里同时存在 `the branch X records a MODIFIED change on Y with new displayName Z` 和 `... with before displayName A and new displayName Z` 两个相似步骤，没有 `$` 的话短的会匹配长的前缀 → step ambiguity warning + 静默走错 handler。godog v0.15 会以警告形式提示但仍然跑，容易漏。
+
+## 2026-05-12 23:15 - US-014 BDD: action_saga_compensation.feature
+- `test/bdd/features/action_saga_compensation.feature`（新）落地 3 scenarios + 1 Background：
+  - **Happy** — createOrder + bookResource 都齐全 → 200 / saga.status="SUCCESS" / applied=2 / compensations=0 / DLQ=0 / publisher 1 batch / action_sagas 行 status="SUCCESS" / 两条 step 行 APPLIED / dlq 表 0 PENDING。
+  - **Step Fail Compensate** — bookResource 缺 resourceId 触发 prepare fail → 400 / saga.status="COMPENSATED" / compensations=1 / DLQ=0 / publisher 1 batch（**补偿**批，主批从未发布） / action_sagas COMPENSATED / step[0]=COMPENSATED + step[1]=FAILED。
+  - **DLQ** — `Given the publisher will fail the next publish` + 同上失败步骤 → 400 / saga.status="FAILED" / dlqEntries=1 / publisher 0 batch（补偿 publish 被注入 failure 拦截） / action_sagas FAILED / step[0]=COMPENSATION_FAILED + step[1]=FAILED / action_saga_dlq 1 PENDING row。
+- `test/bdd/steps/saga_steps.go`（新）落地 11 个 Given/When/Then regex：
+  - 资源构建：`the saga test ontology X is seeded with Order/Booking object types and compensating action types` 一行做完整 seed（ontology + 2 ObjectType + 4 ActionType + compensator 双向绑定）；`the publisher will fail the next publish` 设 recordingPublisher.failNext。
+  - SUT 调用：`I POST applySaga to ontology X with these steps:`（接 `*godog.Table`，列名解析 → ApplyRequest{actionType, parameters}）走 chi.Router → `actionHandler.ApplySaga` → 真实 `Executor.ApplyBatchSagaWithOptions`，与 cmd/server 的路由形状 1:1 对齐。
+  - 断言三层：HTTP `the saga HTTP status code is N`；response body `the saga response body status is X` / `... has N {applied|compensation|DLQ} entries`；NATS `the publisher captured N primary batches`；DB `the action_sagas row has status X` / `the action_saga_steps row at index I has status X` / `the action_saga_dlq table has N PENDING rows`。
+- `pkg/actions/sagapg/saga_store.go`（新，286 LOC）把 `cmd/server/action_saga_store.go` 整体提到 importable package：`type Store struct{pool *pgxpool.Pool}` + `NewStore(pool)` + 全套 `actions.SagaStore` 方法实现，零行为差异。`cmd/server/main.go` 改一行 `deps.ActionExecutor.SetSagaStore(sagapg.NewStore(deps.PGPool))`，`cmd/server/action_saga_store.go` 删除。
+- `test/bdd/steps/state.go` 扩展 saga 字段：`sagaStore` / `actionExec` / `actionHandler` / `sagaPublisher` / `sagaRouter` / `lastSagaResponse` + `actionTypeRIDs` lookup map + `recordingPublisher`（捕获 EditBatch / 注入 failNext / 安全 reset）；`ensureContainer` 增加一次性 saga wiring（在 PG 容器初始化后立即构建 executor + handler + chi.Router 注册 `/applySaga` + `/saga/dlq` 两条路由）；`truncateOntologyGraph` 改成 `TRUNCATE TABLE ontologies, action_sagas RESTART IDENTITY CASCADE` 把 action_saga_steps / action_saga_dlq 通过 ON DELETE CASCADE 一并清掉。
+- `test/bdd/steps/steps.go` 顶层 wire-up 加 `registerSagaCompensationSteps(t, sc, state)`。
+- 验证：
+  - `make test-bdd` → **9 scenarios（含原 ontology_crud 3 + branch_merge 3 + saga 3）/ 77+ steps / 全 passed / 12.4s**。3 个新 scenarios 28 个步骤全绿。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/actions/... ./cmd/server/...` → ok（actions 1.8s / server 3.1s / sagapg no tests）。验证 sagapg 提取后 server 二进制 + 既有 saga 单测无回归。
+  - `go test -count=1 -short ./pkg/... ./internal/...` → 全绿，仅 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` 30d 时窗 baseline flake（与本 story 无关，US-004/007/010/011/012/013 皆复现）。
+  - `go test -tags integration -short -count=1 ./test/integration/...` → main 77s / phase6 54s / phase7 17s 全绿。
+- 文件改动：
+  - `pkg/actions/sagapg/saga_store.go`（新）
+  - `cmd/server/main.go`（import 加 `pkg/actions/sagapg`；`newPGActionSagaStore` → `sagapg.NewStore`）
+  - `cmd/server/action_saga_store.go`（删除）
+  - `test/bdd/features/action_saga_compensation.feature`（新）
+  - `test/bdd/steps/saga_steps.go`（新）
+  - `test/bdd/steps/state.go`（扩展 saga 字段 + recordingPublisher + saga TRUNCATE）
+  - `test/bdd/steps/steps.go`（顶层注册新 step 包）
+- **Learnings for future iterations:**
+  - **把 PG store 从 `cmd/server` 提到 `pkg/<owner>/<owner>pg/`** 是让真实 PG 实现对 BDD/集成测试可用的标准动作。`cmd/server` 是 package main 不可 import，所以任何要在 test 复用的"PG-backed Store" 必须搬。改动小：搬一个文件、暴露 `NewStore(pool)`、cmd/server/main.go 改一行 SetX 调用。下一步要补 BDD 的 `ActionApprovalStore` / `ActionJobStore` 等同样照此办理。
+  - **godog `*godog.Table` 用法**：`table.Rows[0].Cells[i].Value` 是 header 字符串，`table.Rows[1:]` 是 data row；空 cell `.Value == ""` 是合法表达"该列在这一行不存在"。本 BDD 用空 cell 模拟"缺必填参数" → 触发 saga prepare fail，比单独写一个 "without parameter X" Given 步骤更紧凑。每列都是 string，复杂类型（int / array）需要在 helper 里 strconv / json.Unmarshal。
+  - **recordingPublisher 是 BDD 注入 NATS 行为的标准范式**：（1）`Publish` 实现成可观察（snapshot 切片 + atomic count）（2）`setFailNext(err)` 单次失败注入（用 `failNext bool` 而不是布尔开关，避免连环失败）（3）`reset()` 在 scenario Before 调，清空 published + 复位 failNext。其他 NATS 上游（FunctionExecutor / AutomationDispatcher）想做 BDD 时复制这个结构即可。
+  - **saga 三态判别矩阵**：仅看 saga.status 不够，需要并查（a）publisher.snapshot 长度，（b）action_sagas.status（c）action_saga_steps[i].status（d）action_saga_dlq PENDING 计数。例：Step Fail Compensate vs DLQ 两个 scenarios 的 saga.status 在 SagaResult JSON 中分别是 "COMPENSATED" / "FAILED"，唯一区别是 dlqEntries 计数 + step rows 的 COMPENSATED/COMPENSATION_FAILED 区分。漏一层就分不清"补偿成功" vs "补偿失败"。
+  - **compensator 装配顺序**：先创建 compensator ActionType（不带 CompensateActionRID），再创建 primary ActionType（带 CompensateActionRID = compensatorRID）。否则 primary 创建时 compensator RID 还没存在，未来 Saga.runCompensations 走 `resolveActionType(ctx, ontologyRID, compRID)` 时虽然能通过 `ListActionTypes` 退化匹配，但走的是错误的 fallback 路径。`seedSagaOntology` 在 saga_steps.go 是这个顺序的范式实现。
+  - **`createObject` rule 不消费 primaryKey 参数**：rules.go:221-231 的 createObject case 自己 `rid.NewObjectRID()` 生成 PK，参数里的 `primaryKey` 字段只用于通过 `ValidateParameters` 的 required 检查。这是反直觉的——名字叫 primaryKey 但运行时不被 createObject 用。`deleteObject` / `modifyObject` 才真的 `findPrimaryKey(objectType, params)` 去 params 里找。BDD seed 的 createOrder 把 `primaryKey` 标 required 仅是为了让"prepare fail" scenario 在 `bookResource` 缺 `resourceId` 时不被同样的 PK 缺失干扰——逻辑独立但 schema 对齐。
+  - **TRUNCATE 配合 ON DELETE CASCADE 的 FK 走法**：`TRUNCATE ontologies` CASCADE 只走 ontology-rooted 链（object_types/ontology_branches/...），saga 表完全游离（action_sagas.ontology 是 string 列不是 FK）。所以 BDD reset 必须显式列入 `TRUNCATE TABLE ontologies, action_sagas RESTART IDENTITY CASCADE`，且 action_saga_steps + action_saga_dlq 通过 ON DELETE CASCADE 跟随 action_sagas（migration 000083 已经配齐）。新增任何"非 ontology-rooted"持久化必须同步更新 `state.go` 的 `truncateOntologyGraph`，否则 BDD scenarios 跑久了 PG 行越积越多最终撞 unique constraint / 行为漂移。
+---

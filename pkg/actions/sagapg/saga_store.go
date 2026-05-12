@@ -1,4 +1,9 @@
-package main
+// Package sagapg ships the PostgreSQL implementation of
+// actions.SagaStore. It lives in its own package (rather than inside
+// cmd/server) so the durable saga coordinator can be exercised by tests
+// outside the server binary — notably the godog BDD suite under
+// test/bdd/, which talks to the same chi handler the server registers.
+package sagapg
 
 import (
 	"context"
@@ -13,16 +18,18 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 )
 
-// pgActionSagaStore satisfies actions.SagaStore for the durable saga
-// coordinator (US-369). Header rows live in action_sagas (one per saga
-// invocation, idempotency_key UNIQUE), per-step rows in
-// action_saga_steps, dead-letter rows in action_saga_dlq.
-type pgActionSagaStore struct {
+// Store satisfies actions.SagaStore for the durable saga coordinator
+// (US-369). Header rows live in action_sagas (one per saga invocation,
+// idempotency_key UNIQUE), per-step rows in action_saga_steps,
+// dead-letter rows in action_saga_dlq.
+type Store struct {
 	pool *pgxpool.Pool
 }
 
-func newPGActionSagaStore(pool *pgxpool.Pool) *pgActionSagaStore {
-	return &pgActionSagaStore{pool: pool}
+// NewStore returns a *Store backed by the supplied pgx pool. The pool
+// must be connected against a schema that has migration 000083 applied.
+func NewStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
 }
 
 func isUniqueViolation(err error) bool {
@@ -33,7 +40,17 @@ func isUniqueViolation(err error) bool {
 	return strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "duplicate key value")
 }
 
-func (s *pgActionSagaStore) CreateSaga(ctx context.Context, sg *actions.Saga) error {
+// coerceJSON substitutes "{}" for nil json.RawMessage. pgx encodes a
+// raw nil as the literal "null" which the JSONB column accepts but
+// breaks the "empty ⇒ omitted" round-trip.
+func coerceJSON(b []byte) []byte {
+	if len(b) == 0 {
+		return []byte("{}")
+	}
+	return b
+}
+
+func (s *Store) CreateSaga(ctx context.Context, sg *actions.Saga) error {
 	idem := sg.IdempotencyKey
 	var idemArg interface{}
 	if idem == "" {
@@ -57,7 +74,7 @@ func (s *pgActionSagaStore) CreateSaga(ctx context.Context, sg *actions.Saga) er
 	return nil
 }
 
-func (s *pgActionSagaStore) GetSagaByIdempotencyKey(ctx context.Context, key string) (*actions.Saga, error) {
+func (s *Store) GetSagaByIdempotencyKey(ctx context.Context, key string) (*actions.Saga, error) {
 	if key == "" {
 		return nil, oms.ErrNotFound
 	}
@@ -68,7 +85,7 @@ func (s *pgActionSagaStore) GetSagaByIdempotencyKey(ctx context.Context, key str
 		 FROM action_sagas WHERE idempotency_key = $1`, key)
 }
 
-func (s *pgActionSagaStore) GetSaga(ctx context.Context, sagaID string) (*actions.Saga, error) {
+func (s *Store) GetSaga(ctx context.Context, sagaID string) (*actions.Saga, error) {
 	return s.scanOneSaga(ctx,
 		`SELECT saga_id, COALESCE(idempotency_key, ''), ontology, status,
 		        requested_by, failure_message, COALESCE(result_json, 'null'::jsonb),
@@ -76,7 +93,7 @@ func (s *pgActionSagaStore) GetSaga(ctx context.Context, sagaID string) (*action
 		 FROM action_sagas WHERE saga_id = $1`, sagaID)
 }
 
-func (s *pgActionSagaStore) scanOneSaga(ctx context.Context, query string, args ...interface{}) (*actions.Saga, error) {
+func (s *Store) scanOneSaga(ctx context.Context, query string, args ...interface{}) (*actions.Saga, error) {
 	var sg actions.Saga
 	var resultJSON []byte
 	err := s.pool.QueryRow(ctx, query, args...).Scan(
@@ -96,7 +113,7 @@ func (s *pgActionSagaStore) scanOneSaga(ctx context.Context, query string, args 
 	return &sg, nil
 }
 
-func (s *pgActionSagaStore) UpdateSagaStatus(ctx context.Context, sagaID string, upd actions.SagaUpdate) error {
+func (s *Store) UpdateSagaStatus(ctx context.Context, sagaID string, upd actions.SagaUpdate) error {
 	sets := []string{"updated_at = NOW()"}
 	args := []interface{}{}
 	argN := 1
@@ -128,7 +145,7 @@ func (s *pgActionSagaStore) UpdateSagaStatus(ctx context.Context, sagaID string,
 	return nil
 }
 
-func (s *pgActionSagaStore) CreateSagaStep(ctx context.Context, step *actions.SagaStep) error {
+func (s *Store) CreateSagaStep(ctx context.Context, step *actions.SagaStep) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO action_saga_steps
 		   (step_id, saga_id, step_index, action_type, parameters, edits_json, inverse_edits_json, status)
@@ -140,7 +157,7 @@ func (s *pgActionSagaStore) CreateSagaStep(ctx context.Context, step *actions.Sa
 	return err
 }
 
-func (s *pgActionSagaStore) UpdateSagaStep(ctx context.Context, stepID string, upd actions.SagaStepUpdate) error {
+func (s *Store) UpdateSagaStep(ctx context.Context, stepID string, upd actions.SagaStepUpdate) error {
 	sets := []string{"updated_at = NOW()"}
 	args := []interface{}{}
 	argN := 1
@@ -172,7 +189,7 @@ func (s *pgActionSagaStore) UpdateSagaStep(ctx context.Context, stepID string, u
 	return nil
 }
 
-func (s *pgActionSagaStore) ListSagaSteps(ctx context.Context, sagaID string) ([]*actions.SagaStep, error) {
+func (s *Store) ListSagaSteps(ctx context.Context, sagaID string) ([]*actions.SagaStep, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT step_id, saga_id, step_index, action_type,
 		        COALESCE(parameters, '{}'::jsonb),
@@ -200,7 +217,7 @@ func (s *pgActionSagaStore) ListSagaSteps(ctx context.Context, sagaID string) ([
 	return out, rows.Err()
 }
 
-func (s *pgActionSagaStore) EnqueueDLQ(ctx context.Context, entry *actions.SagaDLQEntry) error {
+func (s *Store) EnqueueDLQ(ctx context.Context, entry *actions.SagaDLQEntry) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO action_saga_dlq
 		   (dlq_id, saga_id, step_id, ontology, edits_json, failure_message, status, attempts)
@@ -211,7 +228,7 @@ func (s *pgActionSagaStore) EnqueueDLQ(ctx context.Context, entry *actions.SagaD
 	return err
 }
 
-func (s *pgActionSagaStore) ListDLQ(ctx context.Context, status string, limit int) ([]*actions.SagaDLQEntry, error) {
+func (s *Store) ListDLQ(ctx context.Context, status string, limit int) ([]*actions.SagaDLQEntry, error) {
 	q := `SELECT dlq_id, saga_id, step_id, ontology,
 	             COALESCE(edits_json, '[]'::jsonb),
 	             failure_message, status, attempts, last_attempt_at, created_at, updated_at
@@ -246,7 +263,7 @@ func (s *pgActionSagaStore) ListDLQ(ctx context.Context, status string, limit in
 	return out, rows.Err()
 }
 
-func (s *pgActionSagaStore) UpdateDLQStatus(ctx context.Context, dlqID string, upd actions.SagaDLQUpdate) error {
+func (s *Store) UpdateDLQStatus(ctx context.Context, dlqID string, upd actions.SagaDLQUpdate) error {
 	sets := []string{"updated_at = NOW()"}
 	args := []interface{}{}
 	argN := 1

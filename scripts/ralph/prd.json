@@ -211,8 +211,8 @@
         "Tests pass"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/action_saga_compensation.feature 落地 3 scenarios（Happy / Step Fail Compensate / DLQ）+ Background；test/bdd/steps/saga_steps.go 实现 11 个 Given/When/Then 步骤；recordingPublisher（captured + failNext 注入）+ in-memory action graph（createOrder↔deleteOrder / bookResource↔deleteBooking 双向 compensator 绑定）。SUT 走真实 chi.Router + actions.NewHandler.ApplySaga → Executor.ApplyBatchSagaWithOptions → PG SagaStore；断言矩阵三层：HTTP status code 200/400 + saga.status；NATS publisher.snapshot() 计数 / setFailNext 注入；DB sagaStore.GetSaga / ListSagaSteps / ListDLQ 全直查 PG 行（action_sagas/action_saga_steps/action_saga_dlq）。配套把 cmd/server/action_saga_store.go 整体提到 pkg/actions/sagapg.NewStore（importable from BDD），cmd/server/main.go 改一行 SetSagaStore 调用，零行为差异。make test-bdd → 9 scenarios（含原有 6）/ 12.4s 全绿。go build/vet 双绿；./pkg/actions/... ./cmd/server/... -short 全绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）；test/integration -tags integration -short main/phase6/phase7 全绿。"
     },
     {
       "id": "US-015",

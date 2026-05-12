@@ -25,6 +25,7 @@ import (
 	"github.com/liyang/weave/internal/config"
 	"github.com/liyang/weave/internal/database"
 	"github.com/liyang/weave/pkg/actions"
+	"github.com/liyang/weave/pkg/actions/sagapg"
 	"github.com/liyang/weave/pkg/actiontemplates"
 	"github.com/liyang/weave/pkg/aip"
 	aiplogic "github.com/liyang/weave/pkg/aip/logic"
@@ -2801,7 +2802,7 @@ func main() {
 			// and dead-letter queue rows for failed compensators.
 			// Degraded-mode (no PG) keeps the in-memory saga path
 			// untouched.
-			deps.ActionExecutor.SetSagaStore(newPGActionSagaStore(deps.PGPool))
+			deps.ActionExecutor.SetSagaStore(sagapg.NewStore(deps.PGPool))
 			// US-299: lineage edges (lineage_edges) record where each object
 			// came from. The store is the same uncached *PGRepository every
 			// other catalog hook reuses; degraded-mode (no PG) routers leave

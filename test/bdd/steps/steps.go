@@ -27,4 +27,5 @@ func RegisterAllSteps(t testing.TB, sc *godog.ScenarioContext) {
 
 	registerOntologySteps(t, sc, state)
 	registerBranchMergeSteps(t, sc, state)
+	registerSagaCompensationSteps(t, sc, state)
 }
