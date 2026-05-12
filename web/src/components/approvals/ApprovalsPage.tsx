@@ -54,7 +54,10 @@ export function ApprovalsPage() {
 
   if (!activeOntology) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        className="flex items-center justify-center h-full"
+        data-testid="approvals-no-ontology"
+      >
         <EmptyState
           title="No Ontology Selected"
           description="Select an ontology from the Dashboard to view its approval queue."
@@ -108,7 +111,7 @@ export function ApprovalsPage() {
     approveMutation.isPending || rejectMutation.isPending;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6" data-testid="approvals-page">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold text-text-primary tracking-tight">
           Approval Queue
@@ -131,6 +134,7 @@ export function ApprovalsPage() {
               role="tab"
               aria-selected={status === opt.value}
               onClick={() => setStatus(opt.value)}
+              data-testid={`filter-status-${opt.value.toLowerCase()}`}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 status === opt.value
                   ? 'bg-bg-tertiary text-text-primary'
@@ -154,25 +158,31 @@ export function ApprovalsPage() {
       </section>
 
       {listQuery.isLoading ? (
-        <SkeletonTable rows={6} columns={4} aria-label="Loading approvals" />
+        <div data-testid="approvals-loading">
+          <SkeletonTable rows={6} columns={4} aria-label="Loading approvals" />
+        </div>
       ) : listQuery.isError ? (
-        <EmptyState
-          title="Failed to load approvals"
-          description={
-            listQuery.error instanceof Error
-              ? listQuery.error.message
-              : 'Unexpected error.'
-          }
-        />
+        <div data-testid="approvals-error">
+          <EmptyState
+            title="Failed to load approvals"
+            description={
+              listQuery.error instanceof Error
+                ? listQuery.error.message
+                : 'Unexpected error.'
+            }
+          />
+        </div>
       ) : approvals.length === 0 ? (
-        <EmptyState
-          title="No approvals match"
-          description={
-            status === 'PENDING'
-              ? 'Nothing is waiting for review right now.'
-              : 'Try a different status filter.'
-          }
-        />
+        <div data-testid="approvals-empty">
+          <EmptyState
+            title="No approvals match"
+            description={
+              status === 'PENDING'
+                ? 'Nothing is waiting for review right now.'
+                : 'Try a different status filter.'
+            }
+          />
+        </div>
       ) : (
         <ul
           className="space-y-3"
