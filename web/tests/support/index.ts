@@ -14,6 +14,7 @@ export {
   ActionHistoryPage,
   ActionTypeAdminPage,
   AggregationPage,
+  AppsBuilderPage,
   ApprovalsPage,
   BrowserPage,
   DashboardPage,

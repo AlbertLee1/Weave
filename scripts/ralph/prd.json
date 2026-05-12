@@ -559,8 +559,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 38,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/feature.apps-builder.spec.ts 落地 7 scenarios（2 @smoke + 5 regression）覆盖 PRD 全部 6 类资源 + 1 个加载 round-trip 反向锁：drag-component-to-canvas @smoke / variable-binding / preview-toggle @smoke / save-version / apply-template / delete-component / load-existing-app。配套 web/tests/support/pageObjects/AppsBuilderPage.ts 单 page object 多 helper（goto/addFromPalette/canvasInstance/removeButton/templateUseButton/variableName/variableDefault/propField），从 support/pageObjects/index.ts + support/index.ts 双重导出。SUT 走真实 React Router /apps + /apps/:rid → AppEditorRoute → AppEditorPage，靠 page.route 三 stub（GET /api/v2/apps list、POST /api/v2/apps create + body capture、GET /api/v2/apps/{rid} detail）保证 spec 与 AppsStore 是否 wire 无关。Save scenario 用 URL waitForURL `/apps/{rid}` + POST body 三段断言（status / name / layoutJson row→col[2] width=6,6）取代 saved-status 断言（onSaved navigate 同步 unmount 旧节点 saved span 来不及 paint）。零生产代码改动 — AppEditorPage.tsx 已有 91 个 data-testid（US-391/392 系列时铺好），spec 全程命中既有 testid 矩阵。验证：cd web && npx playwright test feature.apps-builder → 7/7 / 7.5s；npx playwright test --grep @smoke → 53/53 / 48.3s（含 US-002~037 既有 51 个零回归）；npx playwright test tests/ → 118/118 / 1.8m；npx tsc --noEmit → exit 0；npx vitest run → 157 files / 1247 tests passed（既有 7 个 AppEditor unit suite 全绿）。dev-browser skill 不可用，按 US-021/US-037 模板用 vite + weave + Playwright headless 等价覆盖。"
     },
     {
       "id": "US-039",
