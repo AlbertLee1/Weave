@@ -5,5 +5,6 @@ export { DashboardPage } from './DashboardPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
 export { ObjectSetDiffPage } from './ObjectSetDiffPage';
+export { ObjectTypeAdminPage } from './ObjectTypeAdminPage';
 export { PipelinesPage } from './PipelinesPage';
 export { ThreadsPage } from './ThreadsPage';

@@ -18,6 +18,7 @@ export {
   LogicFlowsPage,
   ObjectSetBuilderPage,
   ObjectSetDiffPage,
+  ObjectTypeAdminPage,
   PipelinesPage,
   ThreadsPage,
 } from './pageObjects';

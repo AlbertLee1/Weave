@@ -86,14 +86,20 @@ export function ObjectTypeAdminPage() {
 
   if (!ontologyApiName) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm">
+      <div
+        data-testid="object-type-admin-no-ontology"
+        className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm"
+      >
         Select an ontology from the dashboard first.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto">
+    <div
+      data-testid="object-type-admin-page"
+      className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto"
+    >
       <header
         className="px-6 py-4 border-b flex flex-wrap items-center gap-4"
         style={{ borderColor: 'rgba(31,41,55,0.5)' }}
@@ -107,6 +113,7 @@ export function ObjectTypeAdminPage() {
         <div className="flex-1" />
         <button
           type="button"
+          data-testid="object-type-new-btn"
           onClick={() => setCreateOpen(true)}
           className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 transition-colors"
         >
@@ -157,17 +164,24 @@ export function ObjectTypeAdminPage() {
 
       <div className="flex-1 px-6 py-4">
         {isLoading && (
-          <div className="flex items-center justify-center py-20">
+          <div
+            data-testid="object-type-admin-loading"
+            className="flex items-center justify-center py-20"
+          >
             <LoadingSpinner size="lg" />
           </div>
         )}
         {!isLoading && error && (
-          <p className="text-sm text-accent-error">
+          <p
+            data-testid="object-type-admin-error"
+            className="text-sm text-accent-error"
+          >
             Failed to load object types: {(error as Error).message}
           </p>
         )}
         {!isLoading && !error && filtered.length === 0 && (
           <div
+            data-testid="object-type-admin-empty"
             className="rounded border px-6 py-10 text-center"
             style={{
               borderColor: 'rgba(31,41,55,0.5)',
@@ -227,6 +241,7 @@ function ObjectTypeTable({
 }) {
   return (
     <div
+      data-testid="object-type-admin-table"
       className="rounded border overflow-hidden"
       style={{
         borderColor: 'rgba(31,41,55,0.5)',
@@ -248,6 +263,9 @@ function ObjectTypeTable({
           {rows.map((ot) => (
             <tr
               key={ot.rid}
+              data-testid="object-type-row"
+              data-object-type-api-name={ot.apiName}
+              data-object-type-rid={ot.rid}
               className="border-b last:border-0 hover:bg-bg-tertiary/30"
               style={{ borderColor: 'rgba(31,41,55,0.5)' }}
             >
@@ -267,6 +285,8 @@ function ObjectTypeTable({
               <td className="px-4 py-2 text-right whitespace-nowrap">
                 <button
                   type="button"
+                  data-testid="object-type-edit-btn"
+                  data-object-type-api-name={ot.apiName}
                   onClick={() => onEdit(ot)}
                   className="text-xs text-accent-cyan hover:underline mr-3"
                 >
@@ -274,6 +294,8 @@ function ObjectTypeTable({
                 </button>
                 <button
                   type="button"
+                  data-testid="object-type-delete-btn"
+                  data-object-type-api-name={ot.apiName}
                   onClick={() => onDelete(ot)}
                   className="text-xs text-accent-error hover:underline"
                 >
@@ -374,10 +396,15 @@ function CreateObjectTypeModal({
 
   return (
     <Modal open onClose={onClose} title="New Object Type">
-      <form onSubmit={onSubmit} className="flex flex-col gap-3">
+      <form
+        onSubmit={onSubmit}
+        data-testid="object-type-create-form"
+        className="flex flex-col gap-3"
+      >
         <Field label="Display Name" required>
           <input
             type="text"
+            data-testid="object-type-create-display-name"
             value={form.displayName}
             onChange={(e) => updateDisplayName(e.target.value)}
             required
@@ -398,6 +425,7 @@ function CreateObjectTypeModal({
         >
           <input
             type="text"
+            data-testid="object-type-create-api-name"
             value={form.apiName}
             onChange={(e) =>
               setForm((f) => ({
@@ -430,6 +458,7 @@ function CreateObjectTypeModal({
         <Field label="Primary Key" required hint="apiName of the PK property.">
           <input
             type="text"
+            data-testid="object-type-create-primary-key"
             value={form.primaryKey}
             onChange={(e) =>
               setForm((f) => ({ ...f, primaryKey: e.target.value }))
@@ -521,13 +550,18 @@ function CreateObjectTypeModal({
           </select>
         </Field>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="object-type-create-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="object-type-create-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -535,6 +569,7 @@ function CreateObjectTypeModal({
           </button>
           <button
             type="submit"
+            data-testid="object-type-create-submit"
             disabled={!canSubmit}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -612,10 +647,16 @@ function EditObjectTypeModal({
 
   return (
     <Modal open onClose={onClose} title={`Edit: ${objectType.displayName}`} size="xl">
-      <div className="flex gap-2 border-b mb-4" style={{ borderColor: 'rgba(31,41,55,0.5)' }} role="tablist">
+      <div
+        data-testid="object-type-edit-tabs"
+        className="flex gap-2 border-b mb-4"
+        style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+        role="tablist"
+      >
         <button
           type="button"
           role="tab"
+          data-testid="object-type-edit-tab-details"
           aria-selected={tab === 'details'}
           onClick={() => setTab('details')}
           className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
@@ -629,6 +670,7 @@ function EditObjectTypeModal({
         <button
           type="button"
           role="tab"
+          data-testid="object-type-edit-tab-properties"
           aria-selected={tab === 'properties'}
           onClick={() => setTab('properties')}
           className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
@@ -646,13 +688,21 @@ function EditObjectTypeModal({
           objectType={objectType}
         />
       ) : (
-      <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <div className="text-xs text-text-secondary font-mono">
+      <form
+        onSubmit={onSubmit}
+        data-testid="object-type-edit-form"
+        className="flex flex-col gap-3"
+      >
+        <div
+          data-testid="object-type-edit-api-name"
+          className="text-xs text-text-secondary font-mono"
+        >
           {objectType.apiName}
         </div>
         <Field label="Display Name" required>
           <input
             type="text"
+            data-testid="object-type-edit-display-name"
             value={form.displayName}
             onChange={(e) =>
               setForm((f) => ({ ...f, displayName: e.target.value }))
@@ -774,13 +824,18 @@ function EditObjectTypeModal({
           </select>
         </Field>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="object-type-edit-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="object-type-edit-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -788,6 +843,7 @@ function EditObjectTypeModal({
           </button>
           <button
             type="submit"
+            data-testid="object-type-edit-submit"
             disabled={update.isPending || !form.displayName.trim()}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -849,7 +905,11 @@ function DeleteObjectTypeModal({
 
   return (
     <Modal open onClose={onClose} title="Delete Object Type">
-      <div className="flex flex-col gap-3">
+      <div
+        data-testid="object-type-delete-modal"
+        data-object-type-api-name={objectType.apiName}
+        className="flex flex-col gap-3"
+      >
         <p className="text-sm text-text-primary">
           Delete{' '}
           <span className="font-semibold">{objectType.displayName}</span>{' '}
@@ -888,13 +948,18 @@ function DeleteObjectTypeModal({
           </p>
         </div>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="object-type-delete-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="object-type-delete-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -902,6 +967,7 @@ function DeleteObjectTypeModal({
           </button>
           <button
             type="button"
+            data-testid="object-type-delete-confirm"
             onClick={onConfirm}
             disabled={del.isPending}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-error/20 text-accent-error border border-accent-error/40 hover:bg-accent-error/30 disabled:opacity-40 disabled:cursor-not-allowed"
