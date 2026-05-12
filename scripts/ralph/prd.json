@@ -332,8 +332,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/feature.action-history.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）：list-renders / filter-status=FAILED / filter-actionType=createEmployee / detail-drawer / Undo→revert＋refresh / empty / error-500，覆盖 happy/edge/error 三类（AC 中 \"replay\" 映射为 SUCCESS 行 Undo→POST /actions/revert；AC 中 \"批量取消\" 在 ActionHistoryPage 不存在 — 该页面没有批量操作，留待 Action Console / Pending Approvals 相关 spec 覆盖）。配套生产 testid：ActionHistoryPage.tsx 加 action-history-page / action-history-loading / action-history-error / action-history-empty / action-history-no-ontology + filter-status-{all,success,failed} 6 个 testid（page object 用），未触动已有 action-history-list / action-history-row / undo-btn / view-detail-btn / action-history-detail / detail-{parameters,edits,prev-edits}。web/tests/support/pageObjects/ActionHistoryPage.ts 是新 page object（root/loading/error/empty/noOntology/filters/filterActionType/filterStatusAll/filterStatusSuccess/filterStatusFailed/filterUserId/list/rows/detail/modalOverlay locators + goto(ontologyApiName) / rowByLogId(id) / undoButton(id) / viewDetailButton(id)），从 pageObjects + 顶层 support barrel 双重导出。所有 scenarios 都用 page.route stub `**/api/v2/ontologies/{ontology}/actions/history*` / `/actionTypes` / `/actions/revert*`，stubActionHistory 内捕获 URLSearchParams 数组让 then-step 通过 expect.poll 校验最近一次请求的 query params（status=FAILED / actionType=createEmployee），把 \"UI 控件→ React Query refetch → HTTP 调用\" 三层都锁住而非仅看 DOM 表面变化。npx playwright test feature.action-history → 7/7 pass / 9.5s；tests/ 全集 15/15；@smoke 全集 8/8。npx tsc --noEmit / npx vitest run（157 files / 1247 tests）双绿。dev-browser skill 不可用，按 US-021 模式通过 Playwright headless 实际加载 React 路由验证 testid。"
     },
     {
       "id": "US-023",

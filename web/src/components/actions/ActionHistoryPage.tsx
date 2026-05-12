@@ -84,7 +84,10 @@ export function ActionHistoryPage() {
 
   if (!activeOntology) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        className="flex items-center justify-center h-full"
+        data-testid="action-history-no-ontology"
+      >
         <EmptyState
           title="No Ontology Selected"
           description="Select an ontology from the Dashboard to view action execution history."
@@ -94,7 +97,10 @@ export function ActionHistoryPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div
+      className="mx-auto max-w-6xl space-y-6"
+      data-testid="action-history-page"
+    >
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold text-text-primary tracking-tight">
           Action History
@@ -131,6 +137,7 @@ export function ActionHistoryPage() {
             className="flex items-center gap-1"
             role="tablist"
             aria-label="Status filter"
+            data-testid="filter-status"
           >
             {STATUS_OPTIONS.map((opt) => (
               <button
@@ -144,6 +151,7 @@ export function ActionHistoryPage() {
                     ? 'bg-bg-tertiary text-text-primary'
                     : 'text-text-secondary hover:bg-bg-tertiary/60 hover:text-text-primary'
                 }`}
+                data-testid={`filter-status-${opt.value.toLowerCase()}`}
               >
                 {opt.label}
               </button>
@@ -164,21 +172,27 @@ export function ActionHistoryPage() {
       </section>
 
       {historyQuery.isLoading ? (
-        <SkeletonTable rows={6} columns={5} aria-label="Loading action history" />
+        <div data-testid="action-history-loading">
+          <SkeletonTable rows={6} columns={5} aria-label="Loading action history" />
+        </div>
       ) : historyQuery.isError ? (
-        <EmptyState
-          title="Failed to load action history"
-          description={
-            historyQuery.error instanceof Error
-              ? historyQuery.error.message
-              : 'Unexpected error.'
-          }
-        />
+        <div data-testid="action-history-error">
+          <EmptyState
+            title="Failed to load action history"
+            description={
+              historyQuery.error instanceof Error
+                ? historyQuery.error.message
+                : 'Unexpected error.'
+            }
+          />
+        </div>
       ) : rows.length === 0 ? (
-        <EmptyState
-          title="No action executions"
-          description="Try a different filter or run an action from the Action Console."
-        />
+        <div data-testid="action-history-empty">
+          <EmptyState
+            title="No action executions"
+            description="Try a different filter or run an action from the Action Console."
+          />
+        </div>
       ) : (
         <div
           className="overflow-hidden rounded-lg border border-border/50"
