@@ -45,6 +45,7 @@ data/
 .claude/
 .omc/
 .ralph-repo/
+ralph/
 tasks/
 scripts/ralph/
 web/.omc/

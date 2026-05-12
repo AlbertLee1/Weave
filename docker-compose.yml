@@ -51,11 +51,11 @@ services:
       - "8428:8428"
     volumes:
       - vmdata:/storage
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8428/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+    # VictoriaMetrics ships as a distroless image (no wget/curl/sh), so the
+    # earlier wget-based healthcheck always failed under `docker compose up
+    # --wait`. Nothing in this compose file depends_on its health — the SPA
+    # admin dashboards probe /metrics directly via the weave API — so leave
+    # the healthcheck unset rather than fight the lack of a shell.
 
   weave:
     build:

@@ -15,8 +15,12 @@ import (
 	"github.com/liyang/weave/internal/testutil"
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/actions/sagapg"
+	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/index"
+	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oss"
 )
 
 // suiteState is the shared per-scenario state that step definitions read and
@@ -49,6 +53,20 @@ type suiteState struct {
 	automationRouter       chi.Router
 	lastAutomationResponse *automationHTTPResult
 
+	// US-016 cell-masking CEL BDD wiring. indexMgr backs the Bleve
+	// per-ObjectType index; cellMaskStore + cellMaskEngine drive the
+	// US-258/US-376 cellsec engine; ossService is the read-path under test
+	// with the cell-mask engine attached; cellMaskRouter exposes the OSS
+	// GetObject endpoint so step defs assert through the real HTTP wire
+	// (status code + JSON body) instead of poking the service directly.
+	// lastCellMaskResponse stashes the most recent response for Then-steps.
+	indexMgr             *index.Manager
+	cellMaskStore        *cellsec.MemoryStore
+	cellMaskEngine       *cellsec.Engine
+	ossService           *oss.ServiceImpl
+	cellMaskRouter       chi.Router
+	lastCellMaskResponse *cellMaskHTTPResult
+
 	mu                sync.Mutex
 	apiNameToRID      map[string]string // ontology apiName → RID
 	objectTypeRIDs    map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
@@ -72,6 +90,13 @@ func newSuiteState() *suiteState {
 // automationHTTPResult is the per-scenario response snapshot stashed on
 // suiteState for the US-015 automation rule lifecycle Then-steps.
 type automationHTTPResult struct {
+	statusCode int
+	body       []byte
+}
+
+// cellMaskHTTPResult is the per-scenario response snapshot stashed on
+// suiteState for the US-016 cell-masking CEL Then-steps.
+type cellMaskHTTPResult struct {
 	statusCode int
 	body       []byte
 }
@@ -227,8 +252,21 @@ func (s *suiteState) resetMaps() {
 	s.automationRuleIDs = map[string]string{}
 	s.lastSagaResponse = nil
 	s.lastAutomationResponse = nil
+	s.lastCellMaskResponse = nil
 	if s.sagaPublisher != nil {
 		s.sagaPublisher.reset()
+	}
+	// Clear cell masks between scenarios so a Mask-Hit fixture from the
+	// previous scenario does not bleed into the next. The MemoryStore is
+	// re-created and a fresh Engine is wired into the OSS service so the
+	// in-memory index reflects the empty set immediately.
+	if s.cellMaskStore != nil {
+		s.cellMaskStore = cellsec.NewMemoryStore()
+		s.cellMaskEngine = cellsec.New(s.cellMaskStore, nil)
+		_ = s.cellMaskEngine.Reload(context.Background())
+		if s.ossService != nil {
+			s.ossService.SetCellMaskEngine(s.cellMaskEngine)
+		}
 	}
 }
 
@@ -289,6 +327,26 @@ func (s *suiteState) ensureContainer(t testing.TB) error {
 	ar.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", s.handler.ResumeAutomationRule)
 	ar.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", s.handler.ListExecutions)
 	s.automationRouter = ar
+
+	// US-016 cell-masking CEL. Build the Bleve index manager (scoped under
+	// the PG container's temp dir so each TestBDD run gets a fresh tree),
+	// the cellsec memory store + engine, and the OSS service wired against
+	// the same OMS PG repo so the Bleve docs share the same ObjectType
+	// resolution. A dedicated chi.Router exposes only GetObject — Cell-
+	// masking BDD only needs the single-object read path.
+	s.indexMgr = index.NewManager(t.TempDir())
+	s.cellMaskStore = cellsec.NewMemoryStore()
+	s.cellMaskEngine = cellsec.New(s.cellMaskStore, nil)
+	linkResolver := links.NewResolver(s.repo, s.indexMgr)
+	s.ossService = oss.NewService(s.repo, s.indexMgr, linkResolver)
+	s.ossService.SetCellMaskEngine(s.cellMaskEngine)
+	ossHandler := oss.NewHandler(s.ossService)
+	cr := chi.NewRouter()
+	cr.Get(
+		"/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}",
+		ossHandler.GetObject,
+	)
+	s.cellMaskRouter = cr
 	return nil
 }
 

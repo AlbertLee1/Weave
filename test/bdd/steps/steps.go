@@ -29,4 +29,5 @@ func RegisterAllSteps(t testing.TB, sc *godog.ScenarioContext) {
 	registerBranchMergeSteps(t, sc, state)
 	registerSagaCompensationSteps(t, sc, state)
 	registerAutomationSteps(t, sc, state)
+	registerCellMaskingSteps(t, sc, state)
 }

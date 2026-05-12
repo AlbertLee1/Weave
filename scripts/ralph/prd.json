@@ -241,8 +241,8 @@
         "Tests pass"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/cell_masking_cel.feature 落地 3 scenarios（Mask-Hit / Mask-Miss / Admin-Bypass）+ Background；test/bdd/steps/cell_masking_steps.go 实现 5 个 Given/When/Then 步骤。SUT 走真实 chi.Router + pkg/oss.Handler.GetObject → ServiceImpl.GetObject 全 read-path 过滤+掩码链（applyPolicyFilter → applyMarkingFilter → applyPropertyVisibility → applyColumnMasking → applyCellMasking）；后端先把行用 PG OMSRepository 持久化 ObjectType + 4 个 Property（customerId/name/ssn/country）落地、再向 pkg/index.Manager 的 scoped Bleve 索引推 3 行（c1=Alice/PII/US, c2=Bob/-/CN, c3=Charlie/-/JP），最后用 pkg/cellsec.MemoryStore + Engine 安装一条带 CEL Expression 的 CellMask 并 Reload 引擎。断言双层：HTTP status code 200（cellsec 掩码不改 status）+ JSON body property 值（'ssn' = '***' / 明文 / 明文；'name' 永远明文）。Admin-Bypass 用 pkg/auth.User.Roles=['admin'] 走 cellsec.Engine 内 admin 短路返回明文。state.go 扩展 indexMgr/cellMaskStore/cellMaskEngine/ossService/cellMaskRouter/lastCellMaskResponse 共 6 个字段，ensureContainer 中追加 14 行启动 ossHandler.GetObject 路由，resetMaps 中追加 cellMaskStore re-create + cellMaskEngine.Reload + SetCellMaskEngine 注入串联，避免上一个 scenario 的 Mask-Hit fixture 渗透到下一个。steps.go 注册 registerCellMaskingSteps。零生产代码改动。make test-bdd → 15 scenarios（含原有 12）/ 145 steps / 0 fail / 18.6s。go build / go vet -tags bdd 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
     },
     {
       "id": "US-017",
