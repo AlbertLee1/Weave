@@ -648,8 +648,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 43,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/api/securityPolicies.ts +CellMask types/MaskStrategy enum/lintCellExpression+previewMaskedValue+effectiveMaskStrategy + listCellMasks/createCellMask/updateCellMask/deleteCellMask. web/src/hooks/useSecurityPolicies.ts +useCellMasks/useCreate/useUpdate/useDeleteCellMask. SecurityPoliciesPage.tsx 把 cell placeholder 替换为 CellMasksTab：list (objectType+pk+property+strategy badge+trigger column 渲染 expression 或 AppliesTo badges) + CellMaskEditor modal (objectType/primaryKey/property select+strategy enum select+CEL textarea w/ 结构 lint+preview output panel+AppliesTo allow list) + CellMaskDeleteDialog + CellMasksSimulatorPanel (server-side vs allow-list 双 mode 决策). SecurityPoliciesPage page object 补全 cellMasksTab + 整套 cell-mask locators. row spec 把 cellMasksPlaceholder 断言升级到 cellMasksTab 实渲染并 stub cell-masks endpoint。新 tests/feature.security-policies.cell.spec.ts 5 scenarios (list / create wire-shape / lint malformed CEL / delete confirm / simulator server-side vs exempt). typecheck/eslint/vitest 1247/1247 green. Playwright: cell spec 5/5 + 全 security-policies 14/14 + 全 smoke 62/62 全绿."
     },
     {
       "id": "US-044",

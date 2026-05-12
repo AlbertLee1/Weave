@@ -240,3 +240,252 @@ export function deleteColumnMask(rid: string): Promise<void> {
 export function isMaskExempt(applies: AppliesTo, user: SimulatedUser): boolean {
   return isPolicyApplicable(applies, user);
 }
+
+// ---------------------------------------------------------------------------
+// US-043 (PC-A07c): Cell-level masking policies (CEL).
+//
+// Mirrors pkg/cellsec.{Handler,CellMask,CreateRequest,CellMaskUpdate}.
+// Routes are mounted under /api/admin/cell-masks; the path lives outside
+// /api/(v2|admin)/ontologies/{name}/... so the global admin route is NOT
+// branch-rewritten by client.ts:30.
+//
+// Wire shape differences vs RowPolicy/ColumnMask:
+//   - PrimaryKey + PropertyAPIName together pin the mask to one specific
+//     (object instance, property) cell — column masks operate on every row
+//     for the property; cell masks operate on one row's property only.
+//   - Two distinct mask-name taxonomies coexist (US-376):
+//       * MaskRule = lowercase legacy `hash | redact | partial` (matches
+//         column-mask shape).
+//       * MaskStrategy = uppercase `REDACT | HASH | NULL | PARTIAL`. When
+//         set MaskStrategy wins; when empty backend derives strategy from
+//         MaskRule. The PRD AC nominates Cell Masks as the "CEL" surface
+//         so this UI accepts a mask-strategy enum from the start.
+//   - Expression = optional CEL predicate evaluated server-side per row at
+//     read time. When non-empty AND it returns true, MASK applies (caller
+//     receives the masked value). When empty, the engine falls back to the
+//     legacy AppliesTo allow list (matching = exempt). Note: this is the
+//     INVERSE direction from RowPolicy (matching = governed), and DIFFERENT
+//     from ColumnMask (allow list only — no Expression hook on column).
+//
+// The "Test as user" simulator panel honest-maps the dual-mode contract:
+// (a) masks with a non-empty Expression cannot be evaluated client-side
+// (CEL evaluation needs the full row + cel-go runtime), so the panel
+// surfaces them with a "server-side" marker; (b) masks with empty
+// Expression fall back to allow-list semantics shared with column masks.
+// ---------------------------------------------------------------------------
+
+export type MaskStrategy = 'REDACT' | 'HASH' | 'NULL' | 'PARTIAL';
+
+export const KNOWN_MASK_STRATEGIES: ReadonlyArray<MaskStrategy> = [
+  'REDACT',
+  'HASH',
+  'NULL',
+  'PARTIAL',
+];
+
+export interface CellMask {
+  rid: string;
+  objectTypeRid: string;
+  primaryKey: string;
+  propertyApiName: string;
+  maskRule?: MaskRule;
+  maskStrategy?: MaskStrategy;
+  expression?: string;
+  appliesTo: AppliesTo;
+  description?: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ListCellMasksResponse {
+  masks: CellMask[];
+}
+
+export interface CreateCellMaskRequest {
+  objectTypeRid: string;
+  primaryKey: string;
+  propertyApiName: string;
+  maskRule?: MaskRule;
+  maskStrategy?: MaskStrategy;
+  expression?: string;
+  appliesTo: AppliesTo;
+  description?: string;
+}
+
+export interface UpdateCellMaskRequest {
+  maskRule?: MaskRule;
+  maskStrategy?: MaskStrategy;
+  expression?: string;
+  appliesTo?: AppliesTo;
+  description?: string;
+}
+
+const CELL_MASKS_PREFIX = '/api/admin/cell-masks';
+
+export async function listCellMasks(
+  params: { objectTypeRid?: string } = {},
+): Promise<CellMask[]> {
+  const qs = new URLSearchParams();
+  if (params.objectTypeRid) qs.set('objectType', params.objectTypeRid);
+  const search = qs.toString();
+  const resp = await request<ListCellMasksResponse>(
+    'GET',
+    `${CELL_MASKS_PREFIX}${search ? `?${search}` : ''}`,
+  );
+  return resp.masks ?? [];
+}
+
+export function getCellMask(rid: string): Promise<CellMask> {
+  return request<CellMask>(
+    'GET',
+    `${CELL_MASKS_PREFIX}/${encodeURIComponent(rid)}`,
+  );
+}
+
+export function createCellMask(
+  body: CreateCellMaskRequest,
+): Promise<CellMask> {
+  return request<CellMask>('POST', CELL_MASKS_PREFIX, body);
+}
+
+export function updateCellMask(
+  rid: string,
+  body: UpdateCellMaskRequest,
+): Promise<CellMask> {
+  return request<CellMask>(
+    'PATCH',
+    `${CELL_MASKS_PREFIX}/${encodeURIComponent(rid)}`,
+    body,
+  );
+}
+
+export function deleteCellMask(rid: string): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `${CELL_MASKS_PREFIX}/${encodeURIComponent(rid)}`,
+  );
+}
+
+// Resolve the effective MaskStrategy from a CellMask the way pkg/cellsec
+// does (model.go:75 — explicit MaskStrategy wins; otherwise derive from the
+// legacy MaskRule). Returns the empty strategy when neither is set; the
+// backend rejects this case at the admin boundary but the helper stays
+// total so the UI can render "—" without exploding on transient state.
+export function effectiveMaskStrategy(
+  mask: Pick<CellMask, 'maskRule' | 'maskStrategy'>,
+): MaskStrategy | '' {
+  if (mask.maskStrategy && mask.maskStrategy !== '') return mask.maskStrategy;
+  if (!mask.maskRule) return '';
+  switch (mask.maskRule) {
+    case 'hash':
+      return 'HASH';
+    case 'redact':
+      return 'REDACT';
+    case 'partial':
+      return 'PARTIAL';
+  }
+}
+
+// previewMaskedValue renders a representative masked output for a strategy.
+// Mirrors pkg/masking.ApplyMaskStrategy intent so admins can see what their
+// callers will receive before the policy hits real data. The output here
+// is intentionally illustrative — backend strategies/strategies.go remains
+// authoritative for production values.
+export function previewMaskedValue(
+  strategy: MaskStrategy | '',
+  sample: string,
+): string {
+  if (!strategy) return sample;
+  switch (strategy) {
+    case 'REDACT':
+      return '***';
+    case 'NULL':
+      return 'null';
+    case 'HASH':
+      // sha256 hex prefix — illustrative; backend uses crypto/sha256.
+      return 'sha256:' + simulatedHashPrefix(sample);
+    case 'PARTIAL':
+      return partialMask(sample);
+  }
+}
+
+function simulatedHashPrefix(s: string): string {
+  // 12-char alpha-numeric digest — deterministic per input so spec
+  // assertions are stable without depending on Web Crypto.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  }
+  const hex = (h >>> 0).toString(16).padStart(8, '0');
+  return hex + hex.slice(0, 4);
+}
+
+function partialMask(s: string): string {
+  if (s.length <= 2) return s.replace(/./g, '*');
+  return s[0] + '*'.repeat(Math.max(1, s.length - 2)) + s[s.length - 1];
+}
+
+// lintCellExpression performs a structural lint of a CEL expression string
+// without taking on a full CEL parser. Mirrors the kind of checks
+// pkg/cellsec/celmask.Validate performs server-side; the backend is the
+// authority but client-side fast-fail keeps the editor responsive.
+//
+// Checks (cheap + deterministic):
+//   - non-empty after trim
+//   - balanced () and []
+//   - balanced single/double quotes (counting escapes so "alice\" stays well-formed)
+//   - no trailing binary operator (&&, ||, ==, !=, ., +)
+//
+// Returns null when the expression looks well-formed; otherwise a short
+// human-readable reason. Callers should treat this as advisory and let the
+// backend reject any final wire-shape violations.
+export function lintCellExpression(expr: string): string | null {
+  const trimmed = expr.trim();
+  if (trimmed === '') return 'Expression is required.';
+
+  let parens = 0;
+  let brackets = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    const prev = i > 0 ? trimmed[i - 1] : '';
+    if (inSingle) {
+      if (ch === "'" && prev !== '\\') inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"' && prev !== '\\') inDouble = false;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      continue;
+    }
+    if (ch === '(') parens++;
+    else if (ch === ')') {
+      parens--;
+      if (parens < 0) return 'Unbalanced parentheses.';
+    } else if (ch === '[') brackets++;
+    else if (ch === ']') {
+      brackets--;
+      if (brackets < 0) return 'Unbalanced brackets.';
+    }
+  }
+  if (inSingle || inDouble) return 'Unterminated string literal.';
+  if (parens !== 0) return 'Unbalanced parentheses.';
+  if (brackets !== 0) return 'Unbalanced brackets.';
+
+  if (/(&&|\|\||==|!=|\.|\+|-|\*|\/)\s*$/.test(trimmed)) {
+    return 'Trailing operator.';
+  }
+  // Empty parens like `foo()` are valid; `()` standalone is not a useful
+  // predicate but parses to a no-op — still let the backend reject it.
+
+  return null;
+}

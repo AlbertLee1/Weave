@@ -1,15 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  createCellMask,
   createColumnMask,
   createRowPolicy,
+  deleteCellMask,
   deleteColumnMask,
   deleteRowPolicy,
+  listCellMasks,
   listColumnMasks,
   listRowPolicies,
+  updateCellMask,
   updateColumnMask,
   updateRowPolicy,
+  type CreateCellMaskRequest,
   type CreateColumnMaskRequest,
   type CreateRowPolicyRequest,
+  type UpdateCellMaskRequest,
   type UpdateColumnMaskRequest,
   type UpdateRowPolicyRequest,
 } from '../api/securityPolicies';
@@ -97,6 +103,49 @@ export function useDeleteColumnMask() {
     mutationFn: (rid: string) => deleteColumnMask(rid),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: COLUMN_MASKS_KEY });
+    },
+  });
+}
+
+// US-043 (PC-A07c): cell-mask hooks. Same query-key shape as
+// column-masks so the cache invalidation prefix-matches across both
+// the unfiltered list and any per-objectType filtered list.
+const CELL_MASKS_KEY = ['cellMasks'] as const;
+
+export function useCellMasks(params: { objectTypeRid?: string } = {}) {
+  return useQuery({
+    queryKey: [...CELL_MASKS_KEY, params.objectTypeRid ?? '__all__'],
+    queryFn: () => listCellMasks(params),
+  });
+}
+
+export function useCreateCellMask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateCellMaskRequest) => createCellMask(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: CELL_MASKS_KEY });
+    },
+  });
+}
+
+export function useUpdateCellMask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { rid: string; body: UpdateCellMaskRequest }) =>
+      updateCellMask(vars.rid, vars.body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: CELL_MASKS_KEY });
+    },
+  });
+}
+
+export function useDeleteCellMask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rid: string) => deleteCellMask(rid),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: CELL_MASKS_KEY });
     },
   });
 }

@@ -146,14 +146,29 @@ async function stubEndpoints(page: Page, stubs: Stubs): Promise<void> {
     },
   );
 
-  // US-042: switching to the Column Masks tab triggers useColumnMasks()
-  // which would otherwise leak through to the real backend during the
-  // row-policies shell scenario. Stub an empty list so the column tab
-  // boots into its empty state cleanly. The column-masks spec owns the
-  // mutation / list / simulator contract; row-spec only needs absence
-  // of cross-tab fetch leakage.
+  // US-042 / US-043: switching to the Column / Cell Masks tabs triggers
+  // useColumnMasks() / useCellMasks() which would otherwise leak through
+  // to the real backend during the row-policies shell scenario. Stub
+  // empty lists so the sibling tabs boot into their empty state cleanly.
+  // The column-masks / cell-masks specs own the mutation / list /
+  // simulator contracts; row-spec only needs absence of cross-tab fetch
+  // leakage.
   await page.route(
     '**/api/admin/column-masks*',
+    async (route: Route) => {
+      if (route.request().method() !== 'GET') {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ masks: [] }),
+      });
+    },
+  );
+  await page.route(
+    '**/api/admin/cell-masks*',
     async (route: Route) => {
       if (route.request().method() !== 'GET') {
         await route.continue();
@@ -395,12 +410,14 @@ describeFeature('Security Policies — Row Policies tab', () => {
     });
 
     await Then(
-      'the Cell Masks placeholder renders citing US-043',
+      'the Cell Masks tab renders (US-043) and the panel switches',
       async () => {
-        await expect(securityPage.cellMasksPlaceholder).toBeVisible();
-        await expect(securityPage.cellMasksPlaceholder).toContainText(
-          'US-043',
-        );
+        // US-043 ships the Cell Masks (CEL) tab. The shell scenario now
+        // exercises live tab navigation across all three panes; the
+        // empty-state stub keeps the row-spec hermetic without taking on
+        // the cell-masks spec contract. Per-tab contracts live in
+        // feature.security-policies.cell.spec.ts.
+        await expect(securityPage.cellMasksTab).toBeVisible();
         await expect(securityPage.tabPanel).toHaveAttribute(
           'data-active-tab',
           'cell',

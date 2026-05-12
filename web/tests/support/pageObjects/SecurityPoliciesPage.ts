@@ -3,8 +3,9 @@ import { type Locator, type Page } from '@playwright/test';
 /**
  * Page object for `/admin/:ontology/security` — the Security Policies UI
  * rendered by `src/components/securityPolicies/SecurityPoliciesPage.tsx`
- * (US-041 row policies, US-042 column masks). Selectors mirror the
- * data-testid attributes baked into the production component.
+ * (US-041 row policies, US-042 column masks, US-043 cell masks CEL).
+ * Selectors mirror the data-testid attributes baked into the production
+ * component.
  */
 export class SecurityPoliciesPage {
   readonly page: Page;
@@ -13,7 +14,7 @@ export class SecurityPoliciesPage {
   readonly tabPanel: Locator;
   readonly rowPoliciesTab: Locator;
   readonly columnMasksTab: Locator;
-  readonly cellMasksPlaceholder: Locator;
+  readonly cellMasksTab: Locator;
   readonly loading: Locator;
   readonly errorState: Locator;
   readonly emptyState: Locator;
@@ -37,6 +38,18 @@ export class SecurityPoliciesPage {
   readonly columnMaskEditor: Locator;
   readonly columnMaskEditorForm: Locator;
   readonly columnMaskDeleteDialog: Locator;
+  // Cell Masks (US-043) — own list / editor / simulator / delete-dialog
+  // surface so per-tab BDD specs can scope independently.
+  readonly cellMasksLoading: Locator;
+  readonly cellMasksErrorState: Locator;
+  readonly cellMasksEmptyState: Locator;
+  readonly cellMasksList: Locator;
+  readonly cellMasksCreateBtn: Locator;
+  readonly cellMasksSimulatorToggleBtn: Locator;
+  readonly cellMasksSimulator: Locator;
+  readonly cellMaskEditor: Locator;
+  readonly cellMaskEditorForm: Locator;
+  readonly cellMaskDeleteDialog: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -45,9 +58,7 @@ export class SecurityPoliciesPage {
     this.tabPanel = page.getByTestId('security-policies-tab-panel');
     this.rowPoliciesTab = page.getByTestId('row-policies-tab');
     this.columnMasksTab = page.getByTestId('column-masks-tab');
-    this.cellMasksPlaceholder = page.getByTestId(
-      'security-policies-cell-placeholder',
-    );
+    this.cellMasksTab = page.getByTestId('cell-masks-tab');
     this.loading = page.getByTestId('row-policies-loading');
     this.errorState = page.getByTestId('row-policies-error');
     this.emptyState = page.getByTestId('row-policies-empty');
@@ -70,6 +81,18 @@ export class SecurityPoliciesPage {
     this.columnMaskEditor = page.getByTestId('column-mask-editor');
     this.columnMaskEditorForm = page.getByTestId('column-mask-editor-form');
     this.columnMaskDeleteDialog = page.getByTestId('column-mask-delete-dialog');
+    this.cellMasksLoading = page.getByTestId('cell-masks-loading');
+    this.cellMasksErrorState = page.getByTestId('cell-masks-error');
+    this.cellMasksEmptyState = page.getByTestId('cell-masks-empty');
+    this.cellMasksList = page.getByTestId('cell-masks-list');
+    this.cellMasksCreateBtn = page.getByTestId('cell-masks-create-btn');
+    this.cellMasksSimulatorToggleBtn = page.getByTestId(
+      'cell-masks-simulator-toggle',
+    );
+    this.cellMasksSimulator = page.getByTestId('cell-masks-simulator');
+    this.cellMaskEditor = page.getByTestId('cell-mask-editor');
+    this.cellMaskEditorForm = page.getByTestId('cell-mask-editor-form');
+    this.cellMaskDeleteDialog = page.getByTestId('cell-mask-delete-dialog');
   }
 
   async goto(ontology: string): Promise<void> {
@@ -242,6 +265,113 @@ export class SecurityPoliciesPage {
   columnMaskSimulatorDecisionRow(rid: string): Locator {
     return this.page.locator(
       `[data-testid="column-masks-simulator-decision-row"][data-mask-rid="${rid}"]`,
+    );
+  }
+
+  // ----- Cell Masks (US-043) -----
+
+  cellMaskRowByRid(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="cell-masks-row"][data-mask-rid="${rid}"]`,
+    );
+  }
+  cellMaskEditButton(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="cell-masks-edit-btn"][data-mask-rid="${rid}"]`,
+    );
+  }
+  cellMaskDeleteButton(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="cell-masks-delete-btn"][data-mask-rid="${rid}"]`,
+    );
+  }
+
+  // Cell Mask editor sub-locators
+  cellMaskEditorObjectTypeSelect(): Locator {
+    return this.page.getByTestId('cell-mask-editor-objectType');
+  }
+  cellMaskEditorPrimaryKey(): Locator {
+    return this.page.getByTestId('cell-mask-editor-primaryKey');
+  }
+  cellMaskEditorPropertyInput(): Locator {
+    return this.page.getByTestId('cell-mask-editor-property');
+  }
+  cellMaskEditorStrategySelect(): Locator {
+    return this.page.getByTestId('cell-mask-editor-strategy');
+  }
+  cellMaskEditorExpression(): Locator {
+    return this.page.getByTestId('cell-mask-editor-expression');
+  }
+  cellMaskEditorExpressionOk(): Locator {
+    return this.page.getByTestId('cell-mask-editor-expression-ok');
+  }
+  cellMaskEditorExpressionError(): Locator {
+    return this.page.getByTestId('cell-mask-editor-expression-error');
+  }
+  cellMaskEditorExpressionEmpty(): Locator {
+    return this.page.getByTestId('cell-mask-editor-expression-empty');
+  }
+  cellMaskEditorPreview(): Locator {
+    return this.page.getByTestId('cell-mask-editor-preview');
+  }
+  cellMaskEditorPreviewInput(): Locator {
+    return this.page.getByTestId('cell-mask-editor-preview-input');
+  }
+  cellMaskEditorPreviewOutput(): Locator {
+    return this.page.getByTestId('cell-mask-editor-preview-output');
+  }
+  cellMaskEditorRoles(): Locator {
+    return this.page.getByTestId('cell-mask-editor-roles');
+  }
+  cellMaskEditorGroups(): Locator {
+    return this.page.getByTestId('cell-mask-editor-groups');
+  }
+  cellMaskEditorUsers(): Locator {
+    return this.page.getByTestId('cell-mask-editor-users');
+  }
+  cellMaskEditorDescription(): Locator {
+    return this.page.getByTestId('cell-mask-editor-description');
+  }
+  cellMaskEditorSubmitBtn(): Locator {
+    return this.page.getByTestId('cell-mask-editor-submit-btn');
+  }
+  cellMaskEditorCancelBtn(): Locator {
+    return this.page.getByTestId('cell-mask-editor-cancel-btn');
+  }
+
+  // Cell Mask delete-dialog sub-locators
+  cellMaskDeleteConfirmBtn(): Locator {
+    return this.page.getByTestId('cell-mask-delete-confirm-btn');
+  }
+  cellMaskDeleteCancelBtn(): Locator {
+    return this.page.getByTestId('cell-mask-delete-cancel-btn');
+  }
+
+  // Cell Mask simulator sub-locators
+  cellMaskSimulatorUserId(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-user-id');
+  }
+  cellMaskSimulatorEmail(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-email');
+  }
+  cellMaskSimulatorRoles(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-roles');
+  }
+  cellMaskSimulatorGroups(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-groups');
+  }
+  cellMaskSimulatorExemptCount(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-exempt-count');
+  }
+  cellMaskSimulatorMaskedCount(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-masked-count');
+  }
+  cellMaskSimulatorServerSideCount(): Locator {
+    return this.page.getByTestId('cell-masks-simulator-server-side-count');
+  }
+  cellMaskSimulatorDecisionRow(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="cell-masks-simulator-decision-row"][data-mask-rid="${rid}"]`,
     );
   }
 }
