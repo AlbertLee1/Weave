@@ -34,8 +34,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/{support/{signIn,seedOntology,dataFactory,pageObjects/BrowserPage,bdd,index}.ts, README.md, feature.browser.search-and-filter.spec.ts} 落地；playwright.config.ts 切到 testDir='.' + regex testMatch + testIgnore 覆盖 e2e/ 和 tests/ 双套件。npx playwright test --grep @smoke → 2/2 pass（~3.1s，跑在 northwind/employee 实数据上）。dev-browser skill 不可用，改为通过 make e2e-up + Playwright headless 实际加载 React 路由验证。"
     },
     {
       "id": "US-003",

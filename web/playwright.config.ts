@@ -1,7 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './e2e',
+  // testDir is the web/ root so Playwright can discover both the
+  // imperative suite under `e2e/` and the BDD suite under `tests/`
+  // (introduced in US-002). testIgnore excludes the Vitest unit tests
+  // under `src/` and dependency / build artefacts.
+  testDir: '.',
+  testMatch: /(?:e2e|tests)\/.*\.spec\.ts$/,
+  testIgnore: ['src/**', 'node_modules/**', 'dist/**', 'coverage/**', 'playwright-report/**'],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

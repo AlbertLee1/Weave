@@ -25,6 +25,15 @@ Phases:
   且 `ScenarioInitializer` 每个 scenario 调一次，所以 per-scenario state（含容器句柄）独立。
 - `pkg/oms.Repository` 当前没有 `DeleteOntology`；BDD/集成场景要硬删除时直接走 `pool.Exec` 即可，
   但请同时校验 FK（snapshots/branches）级联前确认。
+- 前端 BDD 入口：`cd web && npx playwright test --grep @smoke`（或跑 `tests/` 子集）。
+  Playwright 单 config 同时覆盖两套：`web/e2e/`（已有命令式 spec）与 `web/tests/`（新 BDD）。
+- `web/tests/support/` 是前端 BDD 共享底座：`bdd.ts`（Given/When/Then + describeFeature）、
+  `signIn.ts`（AUTH_MODE-aware）、`seedOntology.ts`（reuse-or-create）、`dataFactory.ts`（uniqueName +
+  payload builders）、`pageObjects/*Page.ts`（封装 data-testid，禁止 spec 直接拼 testid）。
+- BDD spec 命名 `feature.<domain>.<scenario>.spec.ts`，scenario 标题以 `Scenario:` 开头，标签用 `@smoke`/`@regression`。
+- Playwright `testDir: '.'` + `testMatch: /(?:e2e|tests)\/.*\.spec\.ts$/` 比 glob 数组更稳；务必加 `testIgnore: ['src/**', 'node_modules/**', 'dist/**', 'coverage/**', 'playwright-report/**']`，否则会扫到 `src/**/*.test.ts` 的 vitest 测试导致诡异 `test.describe not expected here`。
+- `npx playwright test` 必须从 `web/` 目录跑，否则会落到仓库根、用默认 testMatch 扫到 `examples/ts-quickstart/.../__tests__/*.test.ts`（用 `node:test`）误执行。Bash 工具会把 cwd 重置到仓库根，所以脚本里要 `cd /Users/liyang/Documents/Community/Weave/web && npx playwright test ...`。
+- `make e2e-up` 的 seed 步骤遇 FK 阻塞（functions → ontologies）会失败但 weave/vite 已起来；可手动 `docker exec weave-postgres-1 psql -U weave -d weave -c "DELETE FROM functions WHERE ontology_rid='ri.ontology.main.ontology.northwind';"` 再 `make e2e-seed` 恢复。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -63,4 +72,33 @@ Phases:
   - `migrations/000004_ontology_snapshots.up.sql` 把 `current_version` 默认为 0；CreateOntology 不写它，
     所以 `BDD` 断言 `currentVersion=0`（不是 1）。
   - 编写 godog step regex 用 `Given/When/Then`（keyword-aware）比 `Step` 通用版更精确，避免 "And" 误绑。
+---
+
+## 2026-05-12 17:52 - US-002 Playwright BDD 共享基础设施
+- 落地前端 BDD 支撑层，把 `web/e2e/search-and-filter.spec.ts`（命令式）改写为 `web/tests/feature.browser.search-and-filter.spec.ts`（BDD 风格），并删除原文件。
+- 新文件：
+  - `web/tests/support/bdd.ts`：`Given/When/Then/And`（`test.step('<keyword> <name>', ...)` 包装）+ `describeFeature(name, body)`（`test.describe('Feature: ...', body)` 包装）。零新依赖。
+  - `web/tests/support/signIn.ts`：`signIn(request, {email, password})` POST `/api/auth/login`；返回 `{Authorization: 'Bearer …'}` 或 `{}`（AUTH_MODE=dev 短路 / 失败兜底），所有失败路径吞掉抛出。
+  - `web/tests/support/seedOntology.ts`：`seedOntology(request, {apiName, displayName, …, reuseExisting})` 先 GET `/api/v2/ontologies/{apiName}` 复用，404 才 POST `/api/admin/ontologies` 新建。
+  - `web/tests/support/dataFactory.ts`：`uniqueName(prefix)` + `ontologyPayload()` / `objectTypePayload()` 默认值 builder。
+  - `web/tests/support/pageObjects/BrowserPage.ts`：v2 Browser 页 PO，`goto(ont, type)` / `typeSearch / clearSearch / openFilters`，data-testid 集中管理。
+  - `web/tests/support/{pageObjects/index.ts, index.ts}`：barrel re-export（用具名 export + `export type`，配合 `verbatimModuleSyntax: true`）。
+  - `web/tests/README.md`：BDD 编写指南 — layout、命名 `feature.<domain>.<scenario>.spec.ts`、Given/When/Then 模板、@smoke / @regression 标签约定、新增 PO 的步骤。
+  - `web/tests/feature.browser.search-and-filter.spec.ts`：2 个 `@smoke` Scenario（search input 输入/清空、filters toggle 开合）。
+- 改动：
+  - `web/playwright.config.ts`：`testDir` 从 `'./e2e'` 改为 `'.'`，新增 `testMatch: /(?:e2e|tests)\/.*\.spec\.ts$/` 与 `testIgnore: ['src/**', 'node_modules/**', 'dist/**', 'coverage/**', 'playwright-report/**']` 同时覆盖两套件。
+  - `web/e2e/README.md`：指向新 BDD 位置，删除已迁走的 `search-and-filter.spec.ts` 文档行，把 "Single spec" 示例换成 `phase6`。
+  - 删除 `web/e2e/search-and-filter.spec.ts`。
+- 验证：
+  - `cd web && npx tsc --noEmit --strict --verbatimModuleSyntax tests/support/*.ts tests/support/pageObjects/*.ts tests/feature.browser.search-and-filter.spec.ts` 全绿（pre-existing `src/lib/objectSetUrl.ts` 的 `Buffer` 报错和 `ObjectSetComposer.test.tsx` 类型不齐属于 US-002 范围外的既有问题）。
+  - `cd web && npx eslint tests/ playwright.config.ts` 全绿。
+  - `cd web && npx playwright test --list` → 57 tests / 34 files（其中 2 个新增 BDD，55 个 e2e 历史）。
+  - `make e2e-up` 起 docker compose (postgres + nats) + weave + vite + 自动 seed（seed 第一次因 FK 失败 → 手工 `DELETE FROM functions WHERE ontology_rid='ri.ontology.main.ontology.northwind'` 后 `make e2e-seed` 恢复）。
+  - `cd web && npx playwright test --grep @smoke --reporter=list`：**2 passed / 0 failed / 3.1s**，跑在 `northwind/employee` 上真渲染 React 路由、点选 `data-testid="search-input"` 与 `toggle-filters`。
+- **Learnings for future iterations:**
+  - Bash 工具会把 cwd 重置到仓库根；Playwright 必须 `cd web && npx playwright ...`，否则 npx 会按默认 testMatch 扫到 `examples/ts-quickstart/src/__tests__/*.test.ts`（用 `node:test`）一起跑，搞出 `Cannot redefine property: Symbol($$jest-matchers-object)` + `test.describe not expected here` 这种诡异组合。
+  - `web/vite.config.ts` 同时包含 `test:` 段（vitest 配置）；vitest 的 `exclude` 列了 `**/e2e/**` 但**不含** `**/tests/**`。如果你给 `web/tests/**/*.spec.ts` 用了 `.test.ts` 或 vitest 也跑得到的命名，会和 Playwright 互踩 — 所以约定 BDD spec 只用 `*.spec.ts` 且文件名以 `feature.` 开头是有意义的隔离。
+  - `verbatimModuleSyntax: true` 强制 `export type { … } from './x'` 与 `export { … } from './x'` 分开；用 `export *` 时类型 re-export 会被踢掉 — 所以 barrel 用具名 export。
+  - `make e2e-up` 在 OS 升级后第一次跑会因为容器全部重建而 seed 阶段被旧 `functions` 行卡住（seed 走 wipe-and-reseed，但 ontologies 上有 functions FK）。流程是先 `docker compose up -d --wait postgres nats` 再 `make e2e-up`，遇到 FK 阻塞就 `docker exec weave-postgres-1 psql -U weave -d weave -c "DELETE FROM functions WHERE ontology_rid LIKE 'ri.ontology.main.ontology.northwind%';"` 后 `make e2e-seed`。
+  - dev-browser skill 在本仓库没装；US-002 / 后续带 "Verify in browser using dev-browser skill" 的 AC，目前用 `make e2e-up` + Playwright headless（screenshot on failure / trace on retry）作为等价证据，已足够覆盖 "UI 渲染对、selector 找得到" 的诉求。
 ---

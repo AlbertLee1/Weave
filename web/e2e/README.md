@@ -8,7 +8,6 @@ Integration Gate can run its own scoped suite.
 ```
 web/e2e/
 ├── helpers.ts                  Shared helpers: API fixtures + page navigation
-├── search-and-filter.spec.ts   Browser page SearchBar / FilterBuilder baseline
 ├── phase6/                     (added US-038 onwards) Phase 6 gate specs
 ├── phase7/                     (added Phase 7)
 ├── phase8/                     (added Phase 8)
@@ -16,11 +15,17 @@ web/e2e/
 └── us444/                      20 core-flow specs (US-444 — see us444/README.md)
 ```
 
+The Browser page SearchBar / FilterBuilder baseline lives at
+`web/tests/feature.browser.search-and-filter.spec.ts` since US-002 — the
+imperative variant that used to sit here was rewritten with the new BDD
+support infrastructure under `web/tests/support/`.
+
 Historical note: in v1 (archived under `archive/2026-04-11-foundry-osv2-api-alignment/`)
 this directory housed ten admin-console CRUD specs. v1 US-006 deleted the admin
 UI routes, which stranded those specs. Phase 6 gate US-028 removed them and
-re-scoped `search-and-filter.spec.ts` to the v2 Browser page
-(`/browser/:ontology/:objectType`).
+re-scoped the search-and-filter baseline to the v2 Browser page
+(`/browser/:ontology/:objectType`); US-002 moved that baseline into
+`web/tests/`.
 
 ## Running
 
@@ -28,7 +33,7 @@ re-scoped `search-and-filter.spec.ts` to the v2 Browser page
 cd web
 
 # Single spec
-npm run test:e2e -- search-and-filter
+npm run test:e2e -- phase6
 
 # Full suite (requires backend + dev server running — see below)
 npm run test:e2e
