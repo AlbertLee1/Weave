@@ -421,18 +421,27 @@ function PipelineList({
       </header>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center py-10">
+          <div
+            data-testid="pipeline-list-loading"
+            className="flex items-center justify-center py-10"
+          >
             <LoadingSpinner />
           </div>
         ) : error ? (
-          <div className="px-3 py-3 text-xs text-rose-300" role="alert">
+          <div
+            data-testid="pipeline-list-error"
+            className="px-3 py-3 text-xs text-rose-300"
+            role="alert"
+          >
             {describeError(error)}
           </div>
         ) : pipelines.length === 0 ? (
-          <EmptyState
-            title="No pipelines yet"
-            description="Pipelines created via POST /api/v2/pipelines will appear here."
-          />
+          <div data-testid="pipeline-list-empty">
+            <EmptyState
+              title="No pipelines yet"
+              description="Pipelines created via POST /api/v2/pipelines will appear here."
+            />
+          </div>
         ) : (
           pipelines.map((p) => (
             <button
@@ -508,7 +517,10 @@ function PipelineDetail({ pipelineId }: PipelineDetailProps) {
 
   if (detailQuery.isLoading && !pipeline) {
     return (
-      <section className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/60">
+      <section
+        data-testid="pipeline-detail-loading"
+        className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/60"
+      >
         <LoadingSpinner />
       </section>
     );

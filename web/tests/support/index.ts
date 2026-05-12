@@ -15,6 +15,7 @@ export {
   BrowserPage,
   DashboardPage,
   LogicFlowsPage,
+  PipelinesPage,
   ThreadsPage,
 } from './pageObjects';
 export { seedOntology } from './seedOntology';
