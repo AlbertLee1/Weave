@@ -70,14 +70,20 @@ export function LinkTypeAdminPage() {
 
   if (!ontologyApiName) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm">
+      <div
+        data-testid="link-type-admin-no-ontology"
+        className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm"
+      >
         Select an ontology from the dashboard first.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto">
+    <div
+      data-testid="link-type-admin-page"
+      className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto"
+    >
       <header
         className="px-6 py-4 border-b flex flex-wrap items-center gap-4"
         style={{ borderColor: 'rgba(31,41,55,0.5)' }}
@@ -91,6 +97,7 @@ export function LinkTypeAdminPage() {
         <div className="flex-1" />
         <button
           type="button"
+          data-testid="link-type-new-btn"
           onClick={() => setCreateOpen(true)}
           className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 transition-colors"
         >
@@ -147,17 +154,24 @@ export function LinkTypeAdminPage() {
 
       <div className="flex-1 px-6 py-4">
         {isLoading && (
-          <div className="flex items-center justify-center py-20">
+          <div
+            data-testid="link-type-admin-loading"
+            className="flex items-center justify-center py-20"
+          >
             <LoadingSpinner size="lg" />
           </div>
         )}
         {!isLoading && error && (
-          <p className="text-sm text-accent-error">
+          <p
+            data-testid="link-type-admin-error"
+            className="text-sm text-accent-error"
+          >
             Failed to load link types: {(error as Error).message}
           </p>
         )}
         {!isLoading && !error && filtered.length === 0 && (
           <div
+            data-testid="link-type-admin-empty"
             className="rounded border px-6 py-10 text-center"
             style={{
               borderColor: 'rgba(31,41,55,0.5)',
@@ -230,6 +244,7 @@ function LinkTypeTable({
 }) {
   return (
     <div
+      data-testid="link-type-admin-table"
       className="rounded border overflow-hidden"
       style={{
         borderColor: 'rgba(31,41,55,0.5)',
@@ -253,6 +268,10 @@ function LinkTypeTable({
           {rows.map((lt) => (
             <tr
               key={lt.rid}
+              data-testid="link-type-row"
+              data-link-type-api-name={lt.apiName}
+              data-link-type-rid={lt.rid}
+              data-link-type-cardinality={lt.cardinality}
               className="border-b last:border-0 hover:bg-bg-tertiary/30"
               style={{ borderColor: 'rgba(31,41,55,0.5)' }}
             >
@@ -278,6 +297,8 @@ function LinkTypeTable({
               <td className="px-4 py-2 text-right whitespace-nowrap">
                 <button
                   type="button"
+                  data-testid="link-type-edit-btn"
+                  data-link-type-api-name={lt.apiName}
                   onClick={() => onEdit(lt)}
                   className="text-xs text-accent-cyan hover:underline mr-3"
                 >
@@ -285,6 +306,8 @@ function LinkTypeTable({
                 </button>
                 <button
                   type="button"
+                  data-testid="link-type-delete-btn"
+                  data-link-type-api-name={lt.apiName}
                   onClick={() => onDelete(lt)}
                   className="text-xs text-accent-error hover:underline"
                 >
@@ -399,10 +422,15 @@ function CreateLinkTypeModal({
 
   return (
     <Modal open onClose={onClose} title="New Link Type">
-      <form onSubmit={onSubmit} className="flex flex-col gap-3">
+      <form
+        onSubmit={onSubmit}
+        data-testid="link-type-create-form"
+        className="flex flex-col gap-3"
+      >
         <Field label="Display Name" required>
           <input
             type="text"
+            data-testid="link-type-create-display-name"
             value={form.displayName}
             onChange={(e) => updateDisplayName(e.target.value)}
             required
@@ -423,6 +451,7 @@ function CreateLinkTypeModal({
         >
           <input
             type="text"
+            data-testid="link-type-create-api-name"
             value={form.apiName}
             onChange={(e) =>
               setForm((f) => ({
@@ -437,6 +466,7 @@ function CreateLinkTypeModal({
         </Field>
         <Field label="Description">
           <textarea
+            data-testid="link-type-create-description"
             value={form.description}
             onChange={(e) =>
               setForm((f) => ({ ...f, description: e.target.value }))
@@ -449,6 +479,7 @@ function CreateLinkTypeModal({
           <Field label="Source Object Type" required>
             <select
               aria-label="Source object type"
+              data-testid="link-type-create-source"
               value={form.source}
               onChange={(e) =>
                 setForm((f) => ({ ...f, source: e.target.value }))
@@ -466,6 +497,7 @@ function CreateLinkTypeModal({
           <Field label="Target Object Type" required>
             <select
               aria-label="Target object type"
+              data-testid="link-type-create-target"
               value={form.target}
               onChange={(e) =>
                 setForm((f) => ({ ...f, target: e.target.value }))
@@ -484,6 +516,7 @@ function CreateLinkTypeModal({
         <Field label="Cardinality" required>
           <select
             aria-label="Cardinality"
+            data-testid="link-type-create-cardinality"
             value={form.cardinality}
             onChange={(e) =>
               setForm((f) => ({
@@ -508,6 +541,7 @@ function CreateLinkTypeModal({
           >
             <textarea
               aria-label="Foreign key config"
+              data-testid="link-type-create-foreign-key"
               value={form.foreignKeyConfig}
               onChange={(e) =>
                 setForm((f) => ({ ...f, foreignKeyConfig: e.target.value }))
@@ -521,6 +555,7 @@ function CreateLinkTypeModal({
         <label className="flex items-center gap-2 text-xs text-text-secondary">
           <input
             type="checkbox"
+            data-testid="link-type-create-required"
             checked={form.required}
             onChange={(e) =>
               setForm((f) => ({ ...f, required: e.target.checked }))
@@ -529,13 +564,18 @@ function CreateLinkTypeModal({
           <span>Required link (non-nullable)</span>
         </label>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="link-type-create-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="link-type-create-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -543,6 +583,7 @@ function CreateLinkTypeModal({
           </button>
           <button
             type="submit"
+            data-testid="link-type-create-submit"
             disabled={!canSubmit}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -595,11 +636,22 @@ function EditLinkTypeModal({
 
   return (
     <Modal open onClose={onClose} title={`Edit: ${linkType.displayName}`}>
-      <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <div className="text-xs text-text-secondary font-mono">
+      <form
+        onSubmit={onSubmit}
+        data-testid="link-type-edit-form"
+        className="flex flex-col gap-3"
+      >
+        <div
+          data-testid="link-type-edit-api-name"
+          className="text-xs text-text-secondary font-mono"
+        >
           {linkType.apiName}
         </div>
         <div
+          data-testid="link-type-edit-relationship"
+          data-link-type-source={linkType.objectTypeApiName}
+          data-link-type-target={linkType.linkedObjectTypeApiName}
+          data-link-type-cardinality={linkType.cardinality}
           className="rounded border p-3 flex flex-col gap-1 text-xs"
           style={{
             borderColor: 'rgba(31,41,55,0.5)',
@@ -625,6 +677,7 @@ function EditLinkTypeModal({
         <Field label="Display Name" required>
           <input
             type="text"
+            data-testid="link-type-edit-display-name"
             value={form.displayName}
             onChange={(e) =>
               setForm((f) => ({ ...f, displayName: e.target.value }))
@@ -635,6 +688,7 @@ function EditLinkTypeModal({
         </Field>
         <Field label="Description">
           <textarea
+            data-testid="link-type-edit-description"
             value={form.description}
             onChange={(e) =>
               setForm((f) => ({ ...f, description: e.target.value }))
@@ -646,6 +700,7 @@ function EditLinkTypeModal({
         <label className="flex items-center gap-2 text-xs text-text-secondary">
           <input
             type="checkbox"
+            data-testid="link-type-edit-required"
             checked={form.required}
             onChange={(e) =>
               setForm((f) => ({ ...f, required: e.target.checked }))
@@ -654,13 +709,18 @@ function EditLinkTypeModal({
           <span>Required link (non-nullable)</span>
         </label>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="link-type-edit-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="link-type-edit-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -668,6 +728,7 @@ function EditLinkTypeModal({
           </button>
           <button
             type="submit"
+            data-testid="link-type-edit-submit"
             disabled={update.isPending || !form.displayName.trim()}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -717,7 +778,12 @@ function DeleteLinkTypeModal({
 
   return (
     <Modal open onClose={onClose} title="Delete Link Type">
-      <div className="flex flex-col gap-3">
+      <div
+        data-testid="link-type-delete-modal"
+        data-link-type-api-name={linkType.apiName}
+        data-link-type-rid={linkType.rid}
+        className="flex flex-col gap-3"
+      >
         <p className="text-sm text-text-primary">
           Delete <span className="font-semibold">{linkType.displayName}</span>{' '}
           <span className="text-xs text-text-secondary font-mono">
@@ -760,13 +826,18 @@ function DeleteLinkTypeModal({
           </p>
         </div>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="link-type-delete-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="link-type-delete-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -774,6 +845,7 @@ function DeleteLinkTypeModal({
           </button>
           <button
             type="button"
+            data-testid="link-type-delete-confirm"
             onClick={onConfirm}
             disabled={del.isPending}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-error/20 text-accent-error border border-accent-error/40 hover:bg-accent-error/30 disabled:opacity-40 disabled:cursor-not-allowed"

@@ -2,6 +2,7 @@ export { ActionHistoryPage } from './ActionHistoryPage';
 export { ApprovalsPage } from './ApprovalsPage';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
+export { LinkTypeAdminPage } from './LinkTypeAdminPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
 export { ObjectSetDiffPage } from './ObjectSetDiffPage';
