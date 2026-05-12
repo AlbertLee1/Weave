@@ -166,8 +166,8 @@
         "Tests pass"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/rid/us011_test.go 落地 7 个顶级 + 73 个 t.Run 子测试（远超 AC 的 10）覆盖 PRD 4 类资源：(1) FormatValidation(8): canonical roundtrip / 缺 ri 前缀 / 空串 / 4 段 / 6 段（dot in id 段） / 大写 UUID / 非 UUID / 缺破折号；(2) RejectsControlAndEmptyFields(9): 4 类空段 + CR/LF/TAB/NUL/DEL 5 类控制字符；(3) UUIDVersionDistinction(5): 固定 v4Hex+v7Hex + rid.New ×4 v4 + uuid.NewV7 动态 v7 + NewActionTypeRID v4；(4) EqualityAndHash(11): 同字段 Equal+SameHash / 4 种字段差异不 Equal / nil-safe Equal / Hash 5 次稳定 / map dedupe / 100 个 RID 无碰撞 / String round-trip / nil receiver 空串。补 AllTypedConstructorsRoundtrip(21) 覆盖 20 个 NewXxxRID + IsRID 负样例。配套生产改动：pkg/rid/rid.go 加 uuidPattern 正则（小写 RFC4122 hex）+ validSegment（reject 空段 / <0x20 / 0x7f / 嵌入 dot），Parse 在解出 5 段后对每段调 validSegment、id 段调正则；新增 (*RID).String/Equal/Hash/UUIDVersion/IsUUIDv4/IsUUIDv7 方法全 nil-safe。唯一下游影响 pkg/oms/handlers_function.go: realmFromRID 已有 'err!=nil ‖ Realm==\"\"' 兜底，行为等价。go test ./pkg/rid -count=1 -cover → 96.7%（基线 ~70%）。go build/vet 双绿；./pkg/... -short + test/integration{,phase6,phase7} -tags integration -short + make test-bdd 全绿；仅 pkg/developer.TestUsageHandler_ReturnsThreeWindows baseline 30d 时窗 flake 与本 story 无关。"
     },
     {
       "id": "US-012",

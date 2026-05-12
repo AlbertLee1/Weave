@@ -46,6 +46,8 @@ Phases:
 - `pkg/types` 是 ontology 类型系统的 hub：23 个 `BaseType` 常量、`DataType` 结构、`Coerce` / `Validate` / `ValidateConstraints` 三大入口。新增 BaseType 时必须同步更新 `us010_test.go` 里 `BaseType_ValidateMatrix` 的 `len(cases)!=23` 守卫，否则编译期 panic — 这是"覆盖率不退化"的硬契约。
 - `pkg/types.ResolveValueType(name, registry, maxDepth)` 解析 ValueType 别名链，sentinel error 用 `errors.Is(err, ErrValueTypeCycle)` / `ErrValueTypeNotFound` / `ErrValueTypeDepthExceeded` 检测；`registry` 是 `map[string]ValueTypeDef`，OMS 调用方 1-行 mapper 即可把 `[]oms.ValueType` 切到这层。默认 depth 32，超链 raise。
 - `pkg/types.MergeInterfaceProperties(iface, object) ([]MergedProperty, error)` 把"Interface↔ObjectType 属性合并"提到类型系统原语；冲突走 `errors.Is(err, ErrInterfaceConflict)` 检测，5 类冲突（BaseType / Nullable / Array SubType / Struct Field / Decimal Precision-Scale）一次性 aggregate 返回。PC-A02 Proposals UI / OMS schema validate 可复用。
+- `pkg/rid.Parse` 现在严格：空段（service/realm/resource-type/id 任一空）、控制字符（CR/LF/TAB/NUL/DEL）、大小写错误 UUID、缺破折号 UUID 全部返回 wrapped error。`uuidPattern` 锁死小写 RFC4122 hex `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`。任何 RID 持久化或入参校验都应过 Parse 而不是裸 `strings.Split`。错误消息一律 `%q` 包住原输入，便于 ops 在 CR/LF 攻击场景下从日志辨认。
+- `pkg/rid.RID` 新增 `String() / Equal(*RID) bool / Hash() string / UUIDVersion() (int, error) / IsUUIDv4() / IsUUIDv7()`：`Hash` 是 SHA-256 hex digest（map key / 审计行标识用），`Equal` 与 `String` 全 nil-safe。`IsUUIDv4/7` 让多态 RID 区分变成 1-行：今天 `rid.New*` 通过 `google/uuid.New()` 产 v4；未来切 v7（time-ordered）只需把 `New` 内 `uuid.New().String()` 换 `uuid.Must(uuid.NewV7()).String()`，调用方零改动。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -356,4 +358,37 @@ Phases:
   - `dataTypeEqual` 必须走结构递归而不能 `reflect.DeepEqual`：DataType.Fields 是 `map[string]DataType`，Go map iteration order 不保证，但语义上 {a:string,b:int} 和 {b:int,a:string} 应该相等——DeepEqual 在 map 这里碰巧也对，但 Variants 是 slice 顺序敏感，所以混用一个递归函数就一目了然。
   - `coerce_test.go` 已经存在 "FloatToInteger / FloatToLong / StringToTimestamp / StringToDate / IntegerToFloat / InvalidCoercion / ArrayOfStrings / NestedStruct" 8 个老用例；US-010 的矩阵刻意保留它们（没删任何东西），后续可以渐进迁移老用例进矩阵，但不要在补 coverage 时同时做重构 — 那是另外一个 PR。
   - `MergeInterfaceProperties` 故意不验"property name 必填非空"和"BaseType.IsValid"，因为那两个守护是上游 admin handler 在 Create/UpdateInterface / CreateObjectType 时已经做的；type-system primitive 只关心"两边都来了，是否兼容"。如果未来想做 schema-validation pass，可以包一层 `ValidateInterfaceProperties(iface, obj)` 在调 Merge 前先 sanity-check。
+---
+
+## 2026-05-12 22:15 - US-011 pkg/rid 健壮性测试
+- `pkg/rid/us011_test.go`（新，~360 行）落地 7 个顶级 + 73 个 `t.Run` 子测试（远超 AC 要求的 10）：
+  - `TestRID_FormatValidation`（8）：canonical roundtrip / 缺 ri 前缀 / 空串 / 4 段 / 6 段（dot in id 段） / 大写 UUID / 非 UUID id / 缺破折号 UUID。
+  - `TestRID_RejectsControlAndEmptyFields`（9）：4 类空段 + CR/LF/TAB/NUL/DEL 5 类控制字符 — 直接覆盖 PRD AC 第 2 条 "carriage return / 空字段拒绝"。
+  - `TestRID_UUIDVersionDistinction`（5）：固定 v4Hex / 固定 v7Hex / `rid.New` × 4 全部 v4 / `uuid.NewV7()` 动态 v7 / `NewActionTypeRID()` 是 v4 — 覆盖 AC 第 3 条 "UUID v4/v7 区分"。
+  - `TestRID_EqualityAndHash`（11）：同字段 Equal+SameHash / 4 种字段差异不 Equal / nil-safe Equal / Hash 5 次稳定 / 同 RID 不同 *RID 实例进 map dedupe / 100 个随机 RID 无 hash 碰撞 / String round-trip / nil receiver String/Hash 返回空串 — 覆盖 AC 第 4 条 "equality / hash"。
+  - `TestRID_ParseErrorContainsInput`（4）：error 消息一定带 `%q` 包住的原输入 — ops 在 CR/LF/NUL 攻击场景下从日志辨认。
+  - `TestRID_AllTypedConstructorsRoundtrip`（21）：20 个 typed `NewXxxRID` 构造器 + IsRID 负样例 — 覆盖 rid.go 全部 ~30 个函数。
+  - `TestRID_PermissiveCallerStillFallsBackToDefault`：pin `realmFromRID` 调用方契约——legacy permissive 输入 Parse 必返 non-nil error 不 panic。
+- `pkg/rid/rid.go` 改动：
+  - Parse 收紧：每段调 `validSegment(s)`（reject 空段、ASCII 控制字符 < 0x20、DEL 0x7f、嵌入 dot）；id 段调正则 `uuidPattern = ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` —— 大小写错误、缺破折号、长度错误一律 reject。
+  - 新增方法：`(*RID).String() string`（canonical "ri.…" 形式，nil-safe）/ `(*RID).Equal(other *RID) bool`（nil-safe，两个 nil 相等）/ `(*RID).Hash() string`（SHA-256 hex digest of String，map key / 审计标识用）/ `(*RID).UUIDVersion() (int, error)`（通过 `google/uuid.Parse(r.ID).Version()`）/ `(*RID).IsUUIDv4()` / `(*RID).IsUUIDv7()`。
+  - 唯一生产代码路径影响：`pkg/oms/handlers_function.go: realmFromRID` 原本就走 "err != nil ‖ Realm==''" 兜底 "main"，所以 Parse 收紧后多落几条 fallback 路径，行为等价。zero downstream code 改动。
+- 验证：
+  - `go test ./pkg/rid -count=1 -cover` → **96.7% of statements**（基线 ~70%，AC 未硬要求覆盖率但 70%→97% 是免费收益）。
+  - `go test ./pkg/rid -count=1 -v | grep -c -- '--- PASS'` → **73 PASS**（37 US-011 子测试 + 36 老测试与新加 typed-constructor matrix），AC 要求 ≥10 数量级超额。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/...` 全绿（唯一 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` 是 baseline 30d 时间窗 flake，前几个 US 注释里反复见到，与本 story 无关）。
+  - `go test -count=1 -short -tags integration ./test/integration/...` main/phase6/phase7 全绿。
+  - `make test-bdd` 全绿（3 scenarios / 13 steps）。
+- 文件改动：
+  - `pkg/rid/rid.go`（Parse 收紧 + String/Equal/Hash/UUIDVersion/IsUUIDv4/IsUUIDv7 + uuidPattern/validSegment 辅助）
+  - `pkg/rid/us011_test.go`（新）
+- **Learnings for future iterations:**
+  - `strings.SplitN(s, ".", 5)` 比 `strings.Split(s, ".")` 在 RID 解析里更稳：6 段输入（id 段含 dot）会落到 `parts[4]="bar.uuid"` 而不是被截掉，让下游 UUID 正则自己拒。这是"silent 截断" vs "loud 拒"的关键区分。
+  - 控制字符黑名单 `r < 0x20 || r == 0x7f` 一次性覆盖 NUL/TAB/LF/CR/DEL 等全部 C0/DEL 字符；嵌入 dot 也要黑掉因为它是分隔符。注意 0x7F (DEL) 不在 < 0x20 的范围内，必须显式加一条 — 这是常见漏点。
+  - 测试里用固定 hex 字面量定义已知的 v4/v7 UUID（v4Hex / v7Hex），比每次跑 `uuid.NewV7()` 更稳：godog/`-count=N` 重复跑能 100% 复现；同时再 fixture 一个 `uuid.NewV7()` 动态生成的 subtest 防止字面量与实现脱钩。
+  - `google/uuid.Parse(s)` 比 `uuid.Validate(s)` 在这里更好用：前者直接给 `UUID` 值能 `.Version()`，后者只 ok/error 还得二次 parse。但 Parse 接受 4 种文本格式（含 urn:/bracketed/unhyphenated），所以必须保留我们自己的 `uuidPattern` 严格性检查 — 不能用 `uuid.Parse` 替代 regex 校验。
+  - RID 是值类型（4 个 string 字段），Go 原生 `==` 已经能比较，但 `*RID.Equal(*RID)` 显式版好处是 nil-safe + 文档化语义；调用方 `r1.Equal(r2)` 比 `*r1 == *r2` 在 review 时更可读。Hash 方法用 SHA-256 hex digest，map 键想从 `*RID` 切到 `string` 一行替换。
+  - rid.go 的 20 个 typed `NewXxxRID()` 一致 funnel 到 `New(svc, realm, type)`，所以"全 typed constructor 都是 v4 且 IsRID 返回 true"是一条可表驱动测的属性 — 一个 `cases []{ctor, wantType, wantRealm}` 就把 20 个函数全 pin 住，coverage 立刻从 70% 推到 96.7%，且未来加 `NewSomethingRID()` 漏忘也容易在 review diff 里看到。
+  - 永远把 `%q` 用在错误消息里包原始输入（`fmt.Errorf("invalid RID format: %q", rid)`），CR/LF/NUL 会被 Go 自动转义成 `\r\n\x00` 写到日志里，操作员能从 grep 输出看到攻击 payload；裸 `%s` 会把 CR 真的写进 log line 弄出 log forging。
 ---

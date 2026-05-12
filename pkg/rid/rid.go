@@ -1,7 +1,10 @@
 package rid
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,6 +16,30 @@ type RID struct {
 	Realm        string
 	ResourceType string
 	ID           string
+}
+
+// uuidPattern is the canonical RFC 4122 textual form, lowercase only.
+// We intentionally reject uppercase to keep persisted RIDs byte-identical
+// across read paths (callers compare RIDs by string equality everywhere).
+var uuidPattern = regexp.MustCompile(
+	`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+)
+
+// validSegment reports whether s is a non-empty service/realm/resource-type
+// segment. Control characters (CR/LF/TAB/NUL/DEL/...) and embedded dots are
+// rejected — the former because RIDs frequently flow through log lines / URLs
+// where injecting a CR is a known escape vector, the latter because '.' is
+// the segment separator.
+func validSegment(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || r == '.' {
+			return false
+		}
+	}
+	return true
 }
 
 // New generates a new RID string with an auto-generated UUID.
@@ -127,10 +154,26 @@ func IsRID(s string) bool {
 
 // Parse parses a RID string into its constituent parts.
 // Expected format: ri.{service}.{realm}.{resourceType}.{uuid}
+//
+// Empty segments, control characters (including CR/LF/TAB/NUL/DEL) and
+// non-canonical / non-lowercase UUIDs are rejected. Callers like
+// realmFromRID intentionally treat any error as "fallback to defaults".
 func Parse(rid string) (*RID, error) {
 	parts := strings.SplitN(rid, ".", 5)
 	if len(parts) != 5 || parts[0] != "ri" {
 		return nil, fmt.Errorf("invalid RID format: %q", rid)
+	}
+	if !validSegment(parts[1]) {
+		return nil, fmt.Errorf("invalid RID service segment: %q", rid)
+	}
+	if !validSegment(parts[2]) {
+		return nil, fmt.Errorf("invalid RID realm segment: %q", rid)
+	}
+	if !validSegment(parts[3]) {
+		return nil, fmt.Errorf("invalid RID resource-type segment: %q", rid)
+	}
+	if !uuidPattern.MatchString(parts[4]) {
+		return nil, fmt.Errorf("invalid RID id segment (expected lowercase canonical UUID): %q", rid)
 	}
 	return &RID{
 		Service:      parts[1],
@@ -138,4 +181,63 @@ func Parse(rid string) (*RID, error) {
 		ResourceType: parts[3],
 		ID:           parts[4],
 	}, nil
+}
+
+// String returns the canonical "ri.{service}.{realm}.{resourceType}.{id}"
+// form. Nil-safe: a nil receiver returns the empty string so logging code
+// that prints %v on a nullable lookup result never panics.
+func (r *RID) String() string {
+	if r == nil {
+		return ""
+	}
+	return "ri." + r.Service + "." + r.Realm + "." + r.ResourceType + "." + r.ID
+}
+
+// Equal reports whether two RIDs have identical fields. Nil-safe: two nil
+// pointers compare equal; a nil and a non-nil compare unequal.
+func (r *RID) Equal(other *RID) bool {
+	if r == nil || other == nil {
+		return r == other
+	}
+	return r.Service == other.Service &&
+		r.Realm == other.Realm &&
+		r.ResourceType == other.ResourceType &&
+		r.ID == other.ID
+}
+
+// Hash returns a stable SHA-256 hex digest of the canonical string form.
+// Two RIDs hash to the same value iff Equal returns true.
+func (r *RID) Hash() string {
+	if r == nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(r.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+// UUIDVersion returns the version digit (1-7) parsed from the id segment.
+// Returns a non-nil error if the id is not a valid UUID.
+func (r *RID) UUIDVersion() (int, error) {
+	if r == nil {
+		return 0, fmt.Errorf("nil RID")
+	}
+	u, err := uuid.Parse(r.ID)
+	if err != nil {
+		return 0, err
+	}
+	return int(u.Version()), nil
+}
+
+// IsUUIDv4 reports whether the id segment is a UUID version 4 (random).
+// Today rid.New funnels through google/uuid.New so every RID this package
+// mints is v4; v7 (time-ordered) is permitted for future-proofing.
+func (r *RID) IsUUIDv4() bool {
+	v, err := r.UUIDVersion()
+	return err == nil && v == 4
+}
+
+// IsUUIDv7 reports whether the id segment is a UUID version 7 (time-ordered).
+func (r *RID) IsUUIDv7() bool {
+	v, err := r.UUIDVersion()
+	return err == nil && v == 7
 }
