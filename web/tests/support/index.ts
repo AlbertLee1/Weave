@@ -15,6 +15,7 @@ export {
   ActionTypeAdminPage,
   AggregationPage,
   AppsBuilderPage,
+  AuditReportPage,
   AutomationRulesPage,
   ApprovalsPage,
   BrowserPage,

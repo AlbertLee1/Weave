@@ -25,6 +25,7 @@ import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
+import { AuditReportPage } from './components/audit/AuditReportPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
@@ -274,6 +275,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <PerformanceDashboardPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="audit"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <AuditReportPage />
                   </PermissionRoute>
                 }
               />

@@ -246,6 +246,11 @@ export function Sidebar() {
           label: 'Performance',
           icon: 'bolt',
         },
+        {
+          to: '/audit',
+          label: 'Audit Report',
+          icon: 'clock',
+        },
       ]
     : [
         {
@@ -257,6 +262,11 @@ export function Sidebar() {
           to: '/admin/compliance',
           label: 'Compliance',
           icon: 'check',
+        },
+        {
+          to: '/audit',
+          label: 'Audit Report',
+          icon: 'clock',
         },
       ];
 
