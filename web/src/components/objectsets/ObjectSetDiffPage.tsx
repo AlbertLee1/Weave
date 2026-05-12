@@ -106,7 +106,10 @@ export function ObjectSetDiffPage() {
 
   if (!ontologyApiName) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        data-testid="objectset-diff-no-ontology"
+        className="flex items-center justify-center h-full"
+      >
         <EmptyState
           title="No ontology selected"
           description="Pick an ontology to compare ObjectSets."
@@ -116,7 +119,10 @@ export function ObjectSetDiffPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div
+      data-testid="objectset-diff-page"
+      className="flex flex-col h-full overflow-hidden"
+    >
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-bg-primary">
         <div>
           <h1 className="text-base font-sans font-semibold text-text-primary">
@@ -175,6 +181,7 @@ export function ObjectSetDiffPage() {
         </div>
         <button
           type="button"
+          data-testid="objectset-diff-compute-btn"
           onClick={handleCompute}
           disabled={!savedA || !savedB || loading}
           className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-40 disabled:cursor-not-allowed self-start lg:self-end"
@@ -185,35 +192,47 @@ export function ObjectSetDiffPage() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {!saved.length && !typesLoading && (
-          <EmptyState
-            title="No saved object sets"
-            description="Save at least two object sets in the Composer first."
-          />
+          <div data-testid="objectset-diff-no-saved-sets">
+            <EmptyState
+              title="No saved object sets"
+              description="Save at least two object sets in the Composer first."
+            />
+          </div>
         )}
         {saved.length > 0 && !diff && !loading && !error && (
-          <EmptyState
-            title="Pick two saved object sets"
-            description="Then click Compute Diff to compare them."
-          />
+          <div data-testid="objectset-diff-pending">
+            <EmptyState
+              title="Pick two saved object sets"
+              description="Then click Compute Diff to compare them."
+            />
+          </div>
         )}
         {loading && (
-          <div className="flex items-center justify-center py-12">
+          <div
+            data-testid="objectset-diff-loading"
+            className="flex items-center justify-center py-12"
+          >
             <LoadingSpinner />
           </div>
         )}
         {error && (
-          <div className="px-4 py-3 border border-accent-error/30 bg-accent-error/5 rounded text-xs font-mono text-accent-error">
+          <div
+            data-testid="objectset-diff-error"
+            className="px-4 py-3 border border-accent-error/30 bg-accent-error/5 rounded text-xs font-mono text-accent-error"
+          >
             {error}
           </div>
         )}
         {diff && (
-          <DiffResults
-            ontologyApiName={ontologyApiName}
-            resolvedTypeName={resolvedTypeName}
-            diff={diff}
-            savedA={savedA}
-            savedB={savedB}
-          />
+          <div data-testid="objectset-diff-results">
+            <DiffResults
+              ontologyApiName={ontologyApiName}
+              resolvedTypeName={resolvedTypeName}
+              diff={diff}
+              savedA={savedA}
+              savedB={savedB}
+            />
+          </div>
         )}
       </div>
     </div>

@@ -4,5 +4,6 @@ export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
+export { ObjectSetDiffPage } from './ObjectSetDiffPage';
 export { PipelinesPage } from './PipelinesPage';
 export { ThreadsPage } from './ThreadsPage';
