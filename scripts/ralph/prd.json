@@ -92,8 +92,8 @@
         "Tests pass"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/funnel/us006_resilience_test.go 落地 12 个顶级 + 28 个 t.Run 子测试（≥AC 8）覆盖 4 类容错语义：(1) decideOutcome 矩阵 8 子测试穷尽 Ack/Nak/Term 路径含 over-cap、at-cap、unmarshal vs apply 优先级、metadata 缺失降级；(2) DLQ 入队/round-trip + replay 反推原 subject + discard 三类辅助（IsDLQSubject / OriginalSubjectFromDLQ / ReplayDLQMessage / DiscardDLQMessage）；(3) Publisher.BuildPublishMsg 给每条发布消息打 Nats-Msg-Id 头（JetStream 原生 dedupe）+ Consumer 端可选 SetIdempotencyWindow 在内存里按 batch.ID 去重；(4) DefaultConnectOptions 新增 ReconnectJitter（plain 500ms / TLS 2s）。配套生产改动：consumer.go 重构 handleMessage 走 decideOutcome、idempotencyCache 与 applyBatchWithHistory 顶部 dedupe；publisher.go 改用 PublishMsg 并暴露 BuildPublishMsg；dlq.go 加 IsDLQSubject/OriginalSubjectFromDLQ/ReplayDLQMessage/DiscardDLQMessage；nats_setup.go 加 ReconnectJitter。go test ./pkg/funnel -short -race / -cover 全绿；覆盖率 68.4% → 71.1%（+2.7pp）。go vet ./... 干净；test/integration{,phase6,phase7} -tags integration -short 全绿。"
     },
     {
       "id": "US-007",

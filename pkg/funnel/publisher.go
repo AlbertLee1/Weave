@@ -29,6 +29,12 @@ func NewPublisher(js nats.JetStreamContext) *Publisher {
 // because subjects are scoped per ontology so the consumer can route edits
 // to the correct per-ontology Bleve index.
 // Subject format: edits.<ontologyApiName>.<objectType>
+//
+// US-006: every published message carries the batch ID as the Nats-Msg-Id
+// header so JetStream's native dedupe window collapses duplicate publishes
+// (retry storms, double-shipped saga commits) before the consumer even sees
+// the second copy. Empty batch.IDs are tolerated — the header is omitted in
+// that case and dedupe degrades to consumer-side bleve upsert idempotency.
 func (p *Publisher) Publish(batch *EditBatch) (uint64, error) {
 	if len(batch.Edits) == 0 {
 		return 0, fmt.Errorf("batch has no edits")
@@ -43,13 +49,29 @@ func (p *Publisher) Publish(batch *EditBatch) (uint64, error) {
 	}
 
 	subject := BuildSubject(batch.OntologyAPIName, batch.Edits[0].ObjectType)
+	msg := BuildPublishMsg(batch, data, subject)
 
-	ack, err := p.js.Publish(subject, data)
+	ack, err := p.js.PublishMsg(msg)
 	if err != nil {
 		return 0, fmt.Errorf("publish: %w", err)
 	}
 
 	return ack.Sequence, nil
+}
+
+// BuildPublishMsg wraps an encoded EditBatch in a *nats.Msg with the
+// JetStream-native dedupe header populated. Exposed so callers that need to
+// add their own publish options (rate-limit headers, traceparent, etc.)
+// can layer on top of the same envelope the Publisher writes. data must be
+// the JSON encoding of batch and subject must already include the per-ontology
+// scope — the helper does not re-marshal or re-derive either.
+func BuildPublishMsg(batch *EditBatch, data []byte, subject string) *nats.Msg {
+	msg := nats.NewMsg(subject)
+	msg.Data = data
+	if batch != nil && batch.ID != "" {
+		msg.Header.Set(nats.MsgIdHdr, batch.ID)
+	}
+	return msg
 }
 
 // PublishEdit is a convenience method to publish a single edit.

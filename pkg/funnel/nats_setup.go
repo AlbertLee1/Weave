@@ -9,11 +9,14 @@ import (
 )
 
 // DefaultConnectOptions returns NATS connection options with reconnection
-// handling suitable for production use.
+// handling suitable for production use. The jitter values are deliberately
+// asymmetric (TLS path is slower to recover so a slightly larger jitter
+// avoids thundering-herd on shared infrastructure).
 func DefaultConnectOptions() []nats.Option {
 	return []nats.Option{
 		nats.MaxReconnects(60),
 		nats.ReconnectWait(2 * time.Second),
+		nats.ReconnectJitter(500*time.Millisecond, 2*time.Second),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			log.Printf("funnel: NATS disconnected: %v", err)
 		}),

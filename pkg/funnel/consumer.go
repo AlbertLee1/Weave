@@ -127,6 +127,14 @@ type Consumer struct {
 	// DLQ is disabled and terminated messages are dropped with a log warning.
 	dlqPublish DLQPublishFunc
 
+	// idempotency dedupes ApplyBatch / handleMessage calls by batch.ID within
+	// a sliding window. window<=0 (default) disables the cache and every
+	// delivery is applied — JetStream's native Nats-Msg-Id dedup handles the
+	// transport layer in that mode. Operators flipping SetIdempotencyWindow on
+	// get belt-and-suspenders protection for in-process callers that bypass
+	// JetStream entirely (integration tests, future ingest shims).
+	idempotency idempotencyCache
+
 	// historyRepo writes a row per applied edit when set. Tier 2.3 wires
 	// this to the OMS PG repo. Nil = history disabled (and the US-021
 	// user-edit-wins guard degrades to a no-op).
@@ -224,6 +232,17 @@ func (c *Consumer) SetDLQPublish(fn DLQPublishFunc) {
 	c.dlqPublish = fn
 }
 
+// SetIdempotencyWindow enables in-process batch ID deduplication. Within the
+// configured window, any ApplyBatch / handleMessage call carrying a batch.ID
+// the consumer has already applied is short-circuited to a no-op (no second
+// index write, no second history row, no second DLQ enqueue). Pass
+// d <= 0 (the default) to disable. The 1024-entry bound covers a typical
+// in-flight window; oldest entries are evicted on overflow. Safe to call
+// before Start.
+func (c *Consumer) SetIdempotencyWindow(d time.Duration) {
+	c.idempotency.setWindow(d)
+}
+
 // SetHistoryRepo enables ObjectHistory recording for every applied edit.
 // Pass nil to disable. Safe to call before Start().
 func (c *Consumer) SetHistoryRepo(repo HistoryRecorder) {
@@ -319,6 +338,56 @@ func (c *Consumer) shouldTerminate(numDelivered uint64) bool {
 	return numDelivered > c.maxDeliveries
 }
 
+// MessageOutcome is the consumer's verdict on a delivered NATS message.
+type MessageOutcome int
+
+const (
+	// OutcomeAck means the message was processed successfully and should be
+	// acknowledged so JetStream advances the consumer position.
+	OutcomeAck MessageOutcome = iota
+	// OutcomeNak means processing failed and the message should be re-queued
+	// for redelivery. Used for transient errors (unmarshal, apply) that may
+	// succeed on a subsequent attempt.
+	OutcomeNak
+	// OutcomeTerm means the message has exceeded its delivery budget and
+	// should be terminated. Combined with PublishToDLQ=true the consumer
+	// also writes the original payload to the DLQ stream for inspection.
+	OutcomeTerm
+)
+
+// MessageDecision pairs an outcome with the optional DLQ flag and a reason
+// string for telemetry. Reason is empty for OutcomeAck; for Nak/Term it
+// surfaces the underlying error or termination cause.
+type MessageDecision struct {
+	Outcome      MessageOutcome
+	PublishToDLQ bool
+	Reason       string
+}
+
+// decideOutcome is the pure decision logic behind handleMessage. Given the
+// delivery count and any unmarshal/apply errors, it returns the verdict the
+// caller should act on. Termination wins over Nak so a stuck batch (apply
+// keeps failing) eventually moves to the DLQ instead of looping forever.
+// haveMetadata=false means JetStream metadata was unavailable; in that mode
+// numDelivered is ignored and the function falls back to the error-driven
+// branches (Nak on any error, Ack otherwise).
+func (c *Consumer) decideOutcome(numDelivered uint64, haveMetadata bool, unmarshalErr, applyErr error) MessageDecision {
+	if haveMetadata && c.shouldTerminate(numDelivered) {
+		return MessageDecision{
+			Outcome:      OutcomeTerm,
+			PublishToDLQ: true,
+			Reason:       fmt.Sprintf("exceeded max deliveries (%d/%d)", numDelivered, c.maxDeliveries),
+		}
+	}
+	if unmarshalErr != nil {
+		return MessageDecision{Outcome: OutcomeNak, Reason: "unmarshal error: " + unmarshalErr.Error()}
+	}
+	if applyErr != nil {
+		return MessageDecision{Outcome: OutcomeNak, Reason: "apply error: " + applyErr.Error()}
+	}
+	return MessageDecision{Outcome: OutcomeAck}
+}
+
 // SetOnChange sets a callback for change events.
 func (c *Consumer) SetOnChange(fn func(ChangeEvent)) {
 	c.onChange = fn
@@ -373,51 +442,61 @@ func (c *Consumer) LastOffset() uint64 {
 }
 
 func (c *Consumer) handleMessage(msg *nats.Msg) {
-	// Check delivery count for dead-letter logic
 	meta, metaErr := msg.Metadata()
-	if metaErr == nil && c.shouldTerminate(meta.NumDelivered) {
-		log.Printf("funnel: message exceeded max deliveries (%d/%d), terminating batch",
-			meta.NumDelivered, c.maxDeliveries)
-		// Publish to DLQ before terminating so the message is preserved for
-		// operator inspection and potential replay.
-		if err := c.publishToDLQ(msg.Subject, msg.Data, meta.NumDelivered, meta.Sequence.Stream, meta.Sequence.Consumer); err != nil {
-			log.Printf("funnel: DLQ publish error: %v", err)
+	haveMeta := metaErr == nil
+	var numDelivered, streamSeq, consumerSeq uint64
+	if haveMeta {
+		numDelivered = meta.NumDelivered
+		streamSeq = meta.Sequence.Stream
+		consumerSeq = meta.Sequence.Consumer
+	}
+
+	// Skip the work path entirely when the message is already over the
+	// delivery cap — we want to DLQ the original payload, not a partially
+	// decoded batch. decideOutcome with nil errors returns Term in that case.
+	overCap := haveMeta && c.shouldTerminate(numDelivered)
+
+	var batch EditBatch
+	var unmarshalErr, applyErr error
+	if !overCap {
+		unmarshalErr = json.Unmarshal(msg.Data, &batch)
+		if unmarshalErr == nil {
+			applyErr = c.applyBatchWithHistory(context.Background(), batch)
+		}
+	}
+
+	decision := c.decideOutcome(numDelivered, haveMeta, unmarshalErr, applyErr)
+
+	switch decision.Outcome {
+	case OutcomeTerm:
+		log.Printf("funnel: terminating batch — %s", decision.Reason)
+		if decision.PublishToDLQ {
+			if err := c.publishToDLQ(msg.Subject, msg.Data, numDelivered, streamSeq, consumerSeq); err != nil {
+				log.Printf("funnel: DLQ publish error: %v", err)
+			}
 		}
 		if err := msg.Term(); err != nil {
 			log.Printf("funnel: term error: %v", err)
 		}
 		return
-	}
-
-	var batch EditBatch
-	if err := json.Unmarshal(msg.Data, &batch); err != nil {
-		log.Printf("funnel: unmarshal error: %v", err)
+	case OutcomeNak:
+		log.Printf("funnel: %s", decision.Reason)
 		if err := msg.Nak(); err != nil {
 			log.Printf("funnel: nak error: %v", err)
 		}
 		return
 	}
 
-	if err := c.applyBatchWithHistory(context.Background(), batch); err != nil {
-		log.Printf("funnel: apply batch error: %v", err)
-		if err := msg.Nak(); err != nil {
-			log.Printf("funnel: nak error: %v", err)
-		}
-		return
-	}
-
-	// Get the sequence number from message metadata
-	meta, err := msg.Metadata()
-	if err == nil {
-		c.lastOffset.Store(meta.Sequence.Stream)
-
+	// OutcomeAck: stamp the offset, fan-out change events, then ack.
+	if haveMeta {
+		c.lastOffset.Store(streamSeq)
 		if c.onChange != nil {
 			for _, edit := range batch.Edits {
 				c.onChange(ChangeEvent{
 					ObjectType:      edit.ObjectType,
 					PrimaryKey:      edit.PrimaryKey,
 					EditType:        edit.Type,
-					Offset:          meta.Sequence.Stream,
+					Offset:          streamSeq,
 					Properties:      edit.Properties,
 					ActorID:         batch.UserID,
 					OntologyAPIName: batch.OntologyAPIName,
@@ -425,7 +504,6 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 			}
 		}
 	}
-
 	if err := msg.Ack(); err != nil {
 		log.Printf("funnel: ack error: %v", err)
 	}
@@ -964,6 +1042,10 @@ func (c *Consumer) applyBatchWithHistory(ctx context.Context, batch EditBatch) e
 	}
 	if batch.OntologyAPIName == "" {
 		return fmt.Errorf("apply batch: ontologyApiName is empty")
+	}
+	if c.idempotency.seenAndStamp(batch.ID, time.Now()) {
+		log.Printf("funnel: skipping duplicate batch ID %q (idempotency cache hit)", batch.ID)
+		return nil
 	}
 
 	// US-447 cost tracking: charge the entire apply path (filtering,

@@ -39,6 +39,10 @@ Phases:
 - `pkg/oss/pagination` 的 `Cursor.Encode()` 永不 mutate 接收者，IssuedAt / Sig 都写到本地 copy。callers 在 next page 时 reuse 同一个 `*Cursor` 不会留毒。
 - `pkg/index.Manager.DropIndex(key)` 现在即便 in-memory map 里没 entry 也会 `os.RemoveAll(indexes/<key>)`；这是冷启动 + on-disk 索引腐败的恢复路径（Rebuild 内部先 DropIndex 再 EnsureIndex，新 Manager 看不到 in-memory 句柄但能清理旧目录）。Bleve 自身的 `bleve.Open` 不会自我修复腐败文件，恢复必须经过 DropIndex → EnsureIndex 显式调用。
 - Bleve 内部 number / age 字段在 `Hit.Fields[...]` 反序列化是 `float64`，断言时记得 type-assert 成 `float64` 而不是 `int`/`int64`。
+- `pkg/funnel` 的 NATS 消息处理决策（Ack / Nak / Term + DLQ）已抽出 `Consumer.decideOutcome(numDelivered, haveMetadata, unmarshalErr, applyErr) MessageDecision`，是把"该不该 ack"从"具体 NATS 调用"解耦的标准做法——新增分支时改这里 + handleMessage switch，单元测试不需要真实 JetStream subscription。Term 永远赢 Nak 是显式契约。
+- `pkg/funnel.Publisher.Publish` 走 `JetStreamContext.PublishMsg(BuildPublishMsg(batch, data, subject))`：每条消息携带 `nats.MsgIdHdr = batch.ID`，JetStream 原生 dedup 处理传输层。Consumer 端可选的 `SetIdempotencyWindow(d)` 是 in-process 兜底（覆盖 `ApplyBatch` 直调旁路 NATS 的场景）。Default window=0 表示禁用——别在普通 NATS 路径开启避免与 JetStream 自己的 dedup 重复。
+- NATS Connect 测试别用空 URL（`nats.Connect("")` 默认连 `nats://127.0.0.1:4222`，docker-compose 跑着会假阳性），用 malformed scheme（`://not-a-url`）或 unreachable 端口（`nats://127.0.0.1:1`）。
+- DLQ 路径有完整的辅助函数：`BuildDLQSubject(suffix)` / `IsDLQSubject(s)` / `OriginalSubjectFromDLQ(s)` / `ReplayDLQMessage(env, publish)` / `DiscardDLQMessage(env)`。replay 路径反推 `OriginalSubject` 重投到 live stream，operator UI / CLI 可直接调；discard 是 audit-only marker（JetStream MaxAge 自己驱逐 DLQ entry）。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -196,4 +200,45 @@ Phases:
   - groupBy depth 校验放在 `AggregateWithQuery` 顶部而不是 `aggregateWithGroupBy`，是为了让 `aggregateCubeOrRollup` 走同一校验路径（cube/rollup 会展开 2^N 个 subset 但都共享原 `req.GroupBy` 长度上限，无需在 expansion 后二次校验）。
   - `runSubAggregations` 调 `AggregateWithQuery` 递归时会重新执行同一套校验（per-request），所以子聚合自身 GroupBy 不会绕过 MaxGroupByDepth — 这是测试 `LimitAppliesToSubAggregations` 想守护的契约。
   - HLL 30k 大集合测试用 `setupHLLIndex` 共享 helper，运行 ~3-4s。如果未来想跑 100k+，先把 batch 阈值从 500 拉到 5000 并加 `idx.SetIndexerSettings({"bolt_timeout_ms": "1000"})` 防 lock contention。
+---
+
+## 2026-05-12 20:55 - US-006 pkg/funnel 容错与 DLQ 补测
+- 重构 `pkg/funnel/consumer.go`：抽出 `MessageOutcome`/`MessageDecision` + `decideOutcome(numDelivered, haveMetadata, unmarshalErr, applyErr)` 纯决策函数；`handleMessage` 走 decideOutcome switch 三态（Ack/Nak/Term）+ over-cap 时跳过 unmarshal/apply 直接送 DLQ 防止半解码批落到 envelope；新增 `idempotencyCache` 字段 + `SetIdempotencyWindow(d)` setter；`applyBatchWithHistory` 顶部走 `idempotency.seenAndStamp(batch.ID, now)` 短路重复批。
+- 新增 `pkg/funnel/idempotency.go`：`idempotencyCache{window, seen map[string]time.Time, maxSize=1024}` + `setWindow` / `seenAndStamp(id, now) bool` / `size()`；带过期清理 + 溢出 LRU 驱逐。
+- 改 `pkg/funnel/publisher.go`：`Publish` 从 `js.Publish(subject, data)` 切到 `js.PublishMsg(BuildPublishMsg(batch, data, subject))`；`BuildPublishMsg` 公共 helper 给消息打 `nats.MsgIdHdr` = `batch.ID`（empty/nil 时省略）。
+- 扩 `pkg/funnel/dlq.go`：加 `IsDLQSubject`、`OriginalSubjectFromDLQ`、`ReplayDLQMessage(env, publish)`（原 subject 反推 + 重投 + 错误包装）、`DiscardDLQMessage(env) string`（返回 DLQ subject 给 audit/log）。
+- 改 `pkg/funnel/nats_setup.go`：`DefaultConnectOptions` 追加 `nats.ReconnectJitter(500ms, 2s)`（TLS jitter ≥ plain 防 thundering-herd）。
+- 新增 `pkg/funnel/us006_resilience_test.go`（~430 行）：12 个顶级 + 28 个 t.Run 子测试（≥AC 8），覆盖 PRD 列举的 4 类资源：
+  - `TestDecideOutcome_Matrix`（8）：happy/unmarshal-naks/apply-naks/at-cap-still-naks/over-cap-terminates-with-dlq/over-cap-wins-over-unmarshal/no-metadata-apply-naks/no-metadata-happy。
+  - `TestDLQ_RoundtripPreservesPayload` + `TestDLQ_MultipleTerminationsIsolated`：DLQ envelope round-trip byte-for-byte，3 次连续 dead-letter 拿到 3 个独立 entry。
+  - `TestDLQ_ReplayReconstructsSubjectAndRepublishes`（4）：happy_replay / inverse_subject_helper / replay_empty_payload_errors / replay_publish_failure_wraps。
+  - `TestDLQ_Discard`（3）：derives_dlq_subject_from_live / passthrough_when_already_dlq / empty_subject_returns_empty。
+  - `TestPublisher_BuildPublishMsg_SetsMsgIdHeader`（4）：populated_id_writes_header / empty_id_omits_header / nil_batch_omits_header / two_publishes_same_id_share_header。
+  - `TestConsumer_IdempotencyCache_HitSkipsApply`（3）：first_apply 录 1 行 → dup_id_within_window no-op → distinct_id 录第 2 行。
+  - `TestIdempotencyCache_Unit`（4）：disabled_window / empty_id / hit_within_window+expiry / eviction_keeps_bounded（关键 race-safe）。
+  - `TestDefaultConnectOptions_HasReconnectJitter` / `TestConnect_InvalidURL_ReturnsWrappedError` / `TestConnect_MalformedURL_FailsFast`。
+  - `TestHandleMessage_DeliveryAccounting`（2）：apply error 不动 lastOffset / onChange 仅 Ack 路径触发（验证 ApplyBatch 旁路 NATS）。
+- 验证：
+  - `go test ./pkg/funnel -count=1 -short -cover` → **71.1% of statements**（基线 68.4%，+2.7pp）。
+  - `go test ./pkg/funnel -count=1 -short -race` 全绿。
+  - `go vet ./...` 干净 / `go build ./...` 通过。
+  - `go test -count=1 -short ./pkg/funnel/ ./pkg/index/ ./pkg/oms/ -race` 全绿。
+  - `go test -count=1 -short -tags integration ./test/integration/...` main / phase6 / phase7 全绿（79.9s / 56.5s / 14.5s）。
+  - 唯一旁路失败 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` 是 US-004 progress 已记录的 baseline 30d 时间窗 flake，与 funnel 无关。
+- 文件改动：
+  - `pkg/funnel/consumer.go`（decideOutcome + idempotencyCache + 重构 handleMessage + applyBatchWithHistory dedupe）
+  - `pkg/funnel/idempotency.go`（新）
+  - `pkg/funnel/publisher.go`（PublishMsg + BuildPublishMsg）
+  - `pkg/funnel/dlq.go`（replay/discard 系列 helper）
+  - `pkg/funnel/nats_setup.go`（ReconnectJitter）
+  - `pkg/funnel/us006_resilience_test.go`（新）
+- **Learnings for future iterations:**
+  - `nats.Connect("")` 不会报错——`nats.DefaultURL = "nats://127.0.0.1:4222"` 是 zero-value，本仓库 docker-compose 已经把 NATS 跑在该端口上；要测 Connect 错误路径，用 malformed URL（`"://not-a-url"`）或 unreachable 端口（`nats://127.0.0.1:1`）。
+  - `nats.MsgIdHdr = "Nats-Msg-Id"` 在 `nats.go/js.go` 包级；JetStream 原生 dedupe 看这个 header。要在测试里看到 header，必须走 `PublishMsg(*nats.Msg)`（不是 `Publish(subject, data)` — 后者不接 header）。
+  - JetStream 的 NumDelivered 在 NAK 后递增；`shouldTerminate(numDelivered > maxDeliveries)` 让首次失败时 `numDelivered=1`，正好等于 maxDeliveries 时仍 NAK（retry-once at-cap），超过才 Term + DLQ。`decideOutcome` 把"Term 永远赢 Nak"做成显式契约，否则 apply 一直错的 batch 永远 Loop。
+  - `handleMessage` 拒绝对 over-cap 的消息 unmarshal/apply，是因为 DLQ envelope 要原始字节而不是半解码批；如果 unmarshalErr 优先级高于 over-cap，操作员看到的 envelope 就是 garbage 字节加 unmarshal log，没法 replay。
+  - In-process 的 batch ID 去重 cache 跟 JetStream 的 `Nats-Msg-Id` dedup 是 belt-and-suspenders：JetStream 的 dedup 默认 2 分钟窗口、仅作用于发布端；consumer 端 cache 守护 `ApplyBatch(ctx, batch)` 旁路（integration 测试、未来的 ingest shim 直接调）。Default window=0 表示禁用——只在 ApplyBatch 直调场景显式开启避免与 NATS-Msg-Id 重复 dedup 干扰。
+  - `idempotencyCache.seenAndStamp(id, now)` 接受外部 `now` 让测试不依赖真实时钟；生产路径 `applyBatchWithHistory` 一律传 `time.Now()`。对 in-window 命中、过期重投、size 上限驱逐三种路径都用确定性 `time.Date(...)` 表达即可。
+  - 给 NATS 发布消息后 ack.Sequence 是 PubAck 字段——切到 PublishMsg 不影响 sequence 提取，只是 header 走 *nats.Msg 而不是裸 subject+data。`Publisher.Publish` 的 `return ack.Sequence, nil` 这一行保持不变。
+  - 测试覆盖 `handleMessage` 不需要起真实 JetStream subscription：拆出来的 `decideOutcome` 让所有决策路径都可以以普通 unit test 形式驱动；只有 `lastOffset` / `onChange` 这种 Ack-path side-effect 才靠 `ApplyBatch` 的旁路（不 Ack）来反向断言"不该 fire"。
 ---
