@@ -132,6 +132,20 @@ type Engine struct {
 	MaxDocScanSize int
 }
 
+// MaxGroupByDepth caps how many groupBy layers a single aggregation request
+// may declare. Each layer fans out per-bucket facet/scan work, so deeply
+// nested requests can quickly overwhelm a single Bleve index. Tests may
+// override via a Cleanup-restored swap. The default of 8 matches the
+// per-request limit Palantir V2 documents.
+var MaxGroupByDepth = 8
+
+// MaxSubAggregationDepth caps recursive sub-aggregation nesting. Each level
+// runs an additional per-bucket aggregation pass; an unbounded spec can
+// blow the heap on a small index. The default of 8 is generous for any
+// real-world dashboard while still rejecting pathological / hand-rolled
+// adversarial specs.
+var MaxSubAggregationDepth = 8
+
 // NewEngine creates a new aggregation engine.
 func NewEngine() *Engine {
 	return &Engine{MaxDocScanSize: 10000}
@@ -150,6 +164,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		baseQuery = bleve.NewMatchAllQuery()
 	}
 
+	if len(req.GroupBy) > MaxGroupByDepth {
+		return nil, fmt.Errorf("groupBy depth %d exceeds limit %d", len(req.GroupBy), MaxGroupByDepth)
+	}
 	if err := validateSubAggregations(req.SubAggregations); err != nil {
 		return nil, err
 	}
@@ -274,10 +291,19 @@ func countScannedRows(idx bleve.Index, baseQuery query.Query) int64 {
 }
 
 // validateSubAggregations enforces non-empty Names and uniqueness within a
-// single level, recursing into nested sub-aggregations.
+// single level, recursing into nested sub-aggregations. It also caps the
+// recursion depth at MaxSubAggregationDepth so a runaway spec can't blow
+// the heap.
 func validateSubAggregations(subs []SubAggregationSpec) error {
+	return validateSubAggregationsAtDepth(subs, 1)
+}
+
+func validateSubAggregationsAtDepth(subs []SubAggregationSpec, depth int) error {
 	if len(subs) == 0 {
 		return nil
+	}
+	if depth > MaxSubAggregationDepth {
+		return fmt.Errorf("subAggregations depth %d exceeds limit %d", depth, MaxSubAggregationDepth)
 	}
 	seen := make(map[string]struct{}, len(subs))
 	for i, s := range subs {
@@ -288,7 +314,7 @@ func validateSubAggregations(subs []SubAggregationSpec) error {
 			return fmt.Errorf("subAggregations[%d]: duplicate name %q", i, s.Name)
 		}
 		seen[s.Name] = struct{}{}
-		if err := validateSubAggregations(s.SubAggregations); err != nil {
+		if err := validateSubAggregationsAtDepth(s.SubAggregations, depth+1); err != nil {
 			return fmt.Errorf("subAggregations[%d] (%s): %w", i, s.Name, err)
 		}
 	}

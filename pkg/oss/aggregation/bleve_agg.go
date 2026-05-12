@@ -193,6 +193,9 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 				}
 				metrics = append(metrics, MetricValue{Name: name, Value: val})
 			}
+
+		default:
+			return nil, false, false, fmt.Errorf("unsupported aggregation type: %q", spec.Type)
 		}
 	}
 

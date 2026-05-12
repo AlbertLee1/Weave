@@ -78,8 +78,8 @@
         "Tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/oss/aggregation/us005_boundaries_test.go 落地 5 个顶级 + 17 个 t.Run 子测试（≥AC 10）：Percentile_Extremes_P0_P100_Empty(9: approx/exact ×{p0,p100,empty-single,empty-multi,multi-endpoints})、ComputeMetrics_UnsupportedTypeErrors(3)、GroupBy_DepthLimit(3)、SubAggregation_DepthLimit(2) + 顶级 HLL 30k-cardinality 大集合误差。engine.go 新增 MaxGroupByDepth=8 / MaxSubAggregationDepth=8 包级变量（测试通过 swap+Cleanup 调节），AggregateWithQuery 顶部校验 len(req.GroupBy) 上限，validateSubAggregations 递归记录 depth。bleve_agg.go computeMetrics 加 default 报 'unsupported aggregation type'。approx_percentile.go exactPercentileFromIndex 多 percentile 空集统一返回 nil（与 approxPercentilesFromIndex 谐和）。go test ./pkg/oss/aggregation -count=1 → 38s 全绿；./pkg/oss/... ./pkg/index/... -short 全绿；test/integration{,phase6,phase7} -tags integration -short 全绿。"
     },
     {
       "id": "US-006",

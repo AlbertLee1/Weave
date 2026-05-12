@@ -165,3 +165,35 @@ Phases:
   - 子测试 `t.Run` 内不要 `t.Parallel()`：Bleve 同一 dataDir 内的索引共享句柄锁，并行会拿到 race 报告或 lock 抢占；用 `t.TempDir()` 每个子测试隔离 dataDir + 串行执行更稳。
   - 并发 search-while-write 的协调技巧：用 `atomic.Bool` 做 stop 信号 + 单独 goroutine 轮询 `DocCount` 判断 writers 完成 → 设置 stop。避免在测试里塞 sleep。
 ---
+
+## 2026-05-12 20:35 - US-005 pkg/oss/aggregation 边界补测
+- `pkg/oss/aggregation/us005_boundaries_test.go` (新，~430 行)：5 个顶级 + 17 个 `t.Run` 子测试（≥AC 10），全覆盖 PRD 列举的 5 类边界：
+  - `TestPercentile_Extremes_P0_P100_Empty`（9）：approx/exact 路径 ×{p0 返回 min、p100 返回 max、empty single → nil、empty multi → nil}，再加 `MultiPercentile_P0_P100_Endpoints` 断言 multi 模式 map 的 "0"/"100" 键值。
+  - `TestComputeMetrics_UnsupportedTypeErrors`（3）：UnknownType / EmptyType / InSubAggregation — 防止 metric type 拼错时被静默丢弃。
+  - `TestGroupBy_DepthLimit`（3）：AtCapAccepted / OverCapRejected / LimitAppliesToSubAggregations — 顶层和 sub-aggregation 内部都走同一 per-request 上限。
+  - `TestSubAggregation_DepthLimit`（2）：AtCapAccepted / OverCapRejected。
+  - `TestApproximateDistinct_LargeCardinality_ErrorBound`（顶级，`testing.Short()` 跳过）：30k 唯一值在默认 HLL precision=14 下相对误差 ≤ 1%。
+- `pkg/oss/aggregation/engine.go`：
+  - 新增包级 `var MaxGroupByDepth = 8` / `var MaxSubAggregationDepth = 8`（var 而非 const，让测试通过 swap + `t.Cleanup` 调节）。
+  - `AggregateWithQuery` 顶部新增 `len(req.GroupBy) > MaxGroupByDepth` 校验。
+  - `validateSubAggregations` 拆为 `validateSubAggregationsAtDepth(subs, depth)` 递归，超过 cap 返回 `"subAggregations depth %d exceeds limit %d"`。
+- `pkg/oss/aggregation/bleve_agg.go`：`computeMetrics` switch 加 `default: return nil, false, false, fmt.Errorf("unsupported aggregation type: %q", spec.Type)` —— 防止静默丢弃。
+- `pkg/oss/aggregation/approx_percentile.go`：`exactPercentileFromIndex` 删除"多 percentile 空集 → 空 map"分支，与 `approxPercentilesFromIndex` 谐和到统一 nil（无下游测试或调用者依赖 empty-map 形状）。
+- 验证：
+  - `go test ./pkg/oss/aggregation -count=1` → 38.4s 全绿（含 HLL 30k 大集合）。
+  - `go test -count=1 -short ./pkg/oss/... ./pkg/index/...` 全绿（oss/aggregation/computed/objectset/pagination/where + index）。
+  - `go test -count=1 -short -tags integration ./test/integration/...` main/phase6/phase7 全绿。
+  - `go build ./...` / `go vet ./...` 双绿。
+- 文件改动：
+  - `pkg/oss/aggregation/engine.go`（depth caps + validateSubAggregationsAtDepth）
+  - `pkg/oss/aggregation/bleve_agg.go`（unsupported metric default）
+  - `pkg/oss/aggregation/approx_percentile.go`（exact 多 percentile 空集 → nil）
+  - `pkg/oss/aggregation/us005_boundaries_test.go`（新）
+- **Learnings for future iterations:**
+  - `Engine` 是值类型不存任何配置之外的状态；per-request 上限放在包级 `var`（非 `const`）+ `swap + t.Cleanup` 是最干净的可测试形式，避免给 `Engine` 增字段污染既有契约。
+  - `validateSubAggregations` 递归终端注意：把 wrapper 函数保留为旧签名 `validateSubAggregations(subs)`，内部转调 `validateSubAggregationsAtDepth(subs, 1)`，可以 0 改动地保留所有 caller（含 `e.runSubAggregations` 之外的潜在 cmd-line 使用者）。
+  - approx vs exact 路径以前对"空集 multi-percentile"返回形状不一致（approx → nil，exact → empty map）；前端/JSON 消费者更喜欢"shape-uniform"的 nil，所以谐和到 nil 是对的。如果未来需要 empty-map 形状（比如 React Query 想区分 "no data" vs "loading"），统一在 handler 层做 `if val == nil { return map{} }` 而非在 engine 里分叉。
+  - groupBy depth 校验放在 `AggregateWithQuery` 顶部而不是 `aggregateWithGroupBy`，是为了让 `aggregateCubeOrRollup` 走同一校验路径（cube/rollup 会展开 2^N 个 subset 但都共享原 `req.GroupBy` 长度上限，无需在 expansion 后二次校验）。
+  - `runSubAggregations` 调 `AggregateWithQuery` 递归时会重新执行同一套校验（per-request），所以子聚合自身 GroupBy 不会绕过 MaxGroupByDepth — 这是测试 `LimitAppliesToSubAggregations` 想守护的契约。
+  - HLL 30k 大集合测试用 `setupHLLIndex` 共享 helper，运行 ~3-4s。如果未来想跑 100k+，先把 batch 阈值从 500 拉到 5000 并加 `idx.SetIndexerSettings({"bolt_timeout_ms": "1000"})` 防 lock contention。
+---

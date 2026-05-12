@@ -37,9 +37,9 @@ func exactPercentileFromIndex(idx bleve.Index, q query.Query, field string, sing
 		return nil, false, err
 	}
 	if len(values) == 0 {
-		if len(multi) > 0 {
-			return map[string]float64{}, truncated, nil
-		}
+		// Both single- and multi-percentile shapes collapse to nil on an
+		// empty input so the response stays shape-uniform across the approx
+		// and exact paths (the approx path also returns nil on empty input).
 		return nil, truncated, nil
 	}
 	sort.Float64s(values)
