@@ -136,8 +136,8 @@
         "Tests pass"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/apierror/us009_error_mapping_test.go 落地 7 个顶级 + 78 个 t.Run 子测试（≥AC 15）覆盖 16 个构造器全集（NotFound/BadRequest/InvalidParameter/PermissionDenied/Unauthorized/Conflict/Internal/TooManyRequests/RequestTimeout/ValidationEnum/QueryTooLarge/FunctionNondeterministic/FunctionCallCycle/FunctionRecursionDepthExceeded/ValidationSchema/PipelineBreakingChange）：(1) ConstructorMapping(16) 表驱动断言 HTTP StatusCode + ErrorCode + ErrorName + Parameters 保留 + ErrorInstanceID UUID 校验 + 4-key wire schema 严格 + WriteJSON 状态/Content-Type/body 对齐；(2) JSONRoundTripPreservesWireFields(16) Marshal→Unmarshal 进 wireFormat 验证 4 字段完全 round-trip；(3) RequestIDUniqueAcrossCalls 64 次连调 UUID 全互异；(4) RequestIDDistinctAcrossConstructors 跨 16 构造器 UUID 互异；(5) NilParamsNormalizedToEmptyJSONObject(16) 验证 nil params→empty map + JSON 输出 `\"parameters\":{}`；(6) ErrorMethod_FormatsCodeNameInstance(4) 验证 Error() 字符串含 code/name/instanceID；(7) WireFormat_HidesGoStateFields 验证 StatusCode/CapitalizedFields 不泄漏；(8) WriteJSON_BodyMatchesMarshalForEveryConstructor(16) 验证 WriteJSON body == Marshal body。零生产代码改动。go test ./pkg/apierror -count=1 -cover → 100.0% of statements（基线 58.3%，AC ≥90%）。go build/vet 双绿；./pkg/{apierror,oms,oss/...,index,links,funnel,actions} -short 全绿；test/integration -tags integration -short main/phase6/phase7 全绿。"
     },
     {
       "id": "US-010",

@@ -302,3 +302,30 @@ Phases:
   - `errors.Is(err, links.ErrTooManyHops)` / `errors.Is(err, context.Canceled)` 通过 `fmt.Errorf("%w", ...)` wrap 后仍能正确传递，符合 sentinel-error 习惯——HTTP handler 把 ErrTooManyHops 映射成 400 / 422 都用 `errors.Is` 而非 type assert。
   - Bleve `IndexDocument(objectType, pkVal, doc)` 的 docID 是 pkVal 字符串；后续 `bleve.NewDocIDQuery([]string{pkVal})` 可以直接命中。我的 setupChain helper 通过 `d[ot.pk].(string)` 取 doc 内嵌的 pk 字段保证 docID/pkVal 一致。
 ---
+
+## 2026-05-12 22:35 - US-009 pkg/apierror HTTP 状态码全映射表驱动测试
+- `pkg/apierror/us009_error_mapping_test.go`（新，~230 LOC）：7 个顶级 + 78 个 `t.Run` 子测试（≥AC 15），覆盖所有 4 个 AC 条目：
+  - (1) `TestUS009_ConstructorMapping`（16 子测试）：表驱动遍历全部 16 个构造器（NotFound / BadRequest / InvalidParameter / PermissionDenied / Unauthorized / Conflict / Internal / TooManyRequests / RequestTimeout / ValidationEnum / QueryTooLarge / FunctionNondeterministic / FunctionCallCycle / FunctionRecursionDepthExceeded / ValidationSchema / PipelineBreakingChange），断言：StatusCode 映射、ErrorCode wire 字符串、ErrorName 透传、Parameters 保留、ErrorInstanceID 走 `uuidRegex` 校验、JSON wire schema 严格 4 keys（errorCode/errorName/errorInstanceId/parameters）、Marshal→WriteJSON body 字节级对齐、Content-Type=application/json。
+  - (2) `TestUS009_JSONRoundTripPreservesWireFields`（16）：Marshal 后再 Unmarshal 进 `wireFormat` 内部结构体，断言 4 个 wire 字段全 round-trip 一致（含 multi-key Parameters）。
+  - (3) `TestUS009_RequestIDUniqueAcrossCalls`：64 次连调 `NewNotFound` 全部 instanceID 互异（UUID v4 collision 守护）。
+  - (4) `TestUS009_RequestIDDistinctAcrossConstructors`：跨 16 个构造器一次性调用，所有 instanceID 互异。
+  - (5) `TestUS009_NilParamsNormalizedToEmptyJSONObject`（16）：每个构造器传 `nil` params 都被 `newAPIError` 归一化成空 `map[string]string{}`；JSON 输出含 `"parameters":{}`（而非 `null`）。
+  - (6) `TestUS009_ErrorMethod_FormatsCodeNameInstance`（4）：`Error()` 字符串同时包含 ErrorCode、ErrorName、ErrorInstanceID 三段（之前覆盖率 0%）。
+  - (7) `TestUS009_WireFormat_HidesGoStateFields`：断言 wire JSON 不泄漏 Go 结构体字段名（`"StatusCode"`/`"ErrorCode"`/`"ErrorName"`/`"ErrorInstanceID"`/`"Parameters"`）也不泄漏 HTTP 状态码字面值。
+  - (8) `TestUS009_WriteJSON_BodyMatchesMarshalForEveryConstructor`（16）：HTTP body == json.Marshal(err) bytes，确保 WriteJSON 不引入任何隐性 wrapping。
+- 零生产代码改动。
+- 验证：
+  - `go test ./pkg/apierror -count=1 -cover` → **100.0% of statements**（基线 58.3%；AC ≥90%）。`go tool cover -func` 显示 14 个未覆盖函数全部归零：NewBadRequest/NewUnauthorized/NewInternal/NewTooManyRequests/NewRequestTimeout/NewValidationEnum/NewQueryTooLarge/NewFunctionNondeterministic/NewValidationSchema/Error 全部走到 100%。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/{apierror,oms,oss/...,index,links,funnel,actions}` 全绿。
+  - `go test -count=1 -short -tags integration ./test/integration/...` main 75.5s / phase6 55.5s / phase7 16.3s 全绿。
+- 文件改动：
+  - `pkg/apierror/us009_error_mapping_test.go`（新）
+- **Learnings for future iterations:**
+  - `APIError.MarshalJSON` 显式走 `wireFormat`（独立结构体）是为了让 Go 端 `StatusCode int` 这类内部 state 永不泄漏到响应 body；想验证这条契约用 forbidden-substring 黑名单（`"StatusCode"`/`"500"` 等）扫 marshal 输出，比 schema 白名单更易加新字段。
+  - JSON 序列化里 `nil` `map[string]string` 走 `omitempty=false` 会变 `"parameters":null`；`newAPIError` 在构造时把 `nil` 强转 `map[string]string{}` 是显式契约——测试要单独守护"nil 进、空对象出"的语义，否则 client/SDK 在 `parameters == null` 上崩。
+  - 表驱动遍历构造器时把"构造器函数 + want code + want status"打到一张 `us009Case` 表里，新加错误码就是 1 行表条目而非 N 个测试函数——`error.go` 后续加 `NewWeaveXXX` 时这张表就是单一改动点。
+  - `WriteJSON` 走 `json.NewEncoder(w).Encode(err)` 会在末尾追加 `\n`；body 对比要 `bytes.TrimSpace` 否则与 `json.Marshal(err)`（不带 trailing newline）误判 mismatch。
+  - 测试文件已经存在 `uuidRegex` 包级 var（在 `error_test.go` 顶部），同包 us009 文件直接复用即可——别在新文件里再 declare 一次（重复声明编译报错）。
+  - `pkg/apierror` 测试零生产代码改动是个良好信号：构造器签名已经 self-consistent，US-009 只是把"每个错误码到底打哪个 HTTP status + 哪个 wire code"形式化成表格供未来 audit。
+---
