@@ -30,4 +30,5 @@ func RegisterAllSteps(t testing.TB, sc *godog.ScenarioContext) {
 	registerSagaCompensationSteps(t, sc, state)
 	registerAutomationSteps(t, sc, state)
 	registerCellMaskingSteps(t, sc, state)
+	registerTimeTravelSteps(t, sc, state)
 }

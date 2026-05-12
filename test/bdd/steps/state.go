@@ -67,6 +67,16 @@ type suiteState struct {
 	cellMaskRouter       chi.Router
 	lastCellMaskResponse *cellMaskHTTPResult
 
+	// US-017 time-travel asOf BDD wiring. timeTravelRouter exposes the
+	// OSS loadObjects endpoint wrapped around an objectset.Handler whose
+	// HistorySnapshotProvider + TransactionResolver hooks forward to the
+	// live PG repository (object_history + dataset_transactions). The
+	// router is constructed lazily on the seed step and reused across
+	// scenarios — only the last-response snapshot carries per-scenario
+	// state, cleared by resetMaps().
+	timeTravelRouter       chi.Router
+	lastTimeTravelResponse *timeTravelHTTPResult
+
 	mu                sync.Mutex
 	apiNameToRID      map[string]string // ontology apiName → RID
 	objectTypeRIDs    map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
@@ -97,6 +107,13 @@ type automationHTTPResult struct {
 // cellMaskHTTPResult is the per-scenario response snapshot stashed on
 // suiteState for the US-016 cell-masking CEL Then-steps.
 type cellMaskHTTPResult struct {
+	statusCode int
+	body       []byte
+}
+
+// timeTravelHTTPResult is the per-scenario response snapshot stashed on
+// suiteState for the US-017 asOf time-travel Then-steps.
+type timeTravelHTTPResult struct {
 	statusCode int
 	body       []byte
 }
@@ -253,6 +270,7 @@ func (s *suiteState) resetMaps() {
 	s.lastSagaResponse = nil
 	s.lastAutomationResponse = nil
 	s.lastCellMaskResponse = nil
+	s.lastTimeTravelResponse = nil
 	if s.sagaPublisher != nil {
 		s.sagaPublisher.reset()
 	}

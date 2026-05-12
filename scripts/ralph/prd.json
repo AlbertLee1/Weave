@@ -256,8 +256,8 @@
         "Tests pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/time_travel_query.feature 落地 3 scenarios（asOf-Old-Tx / asOf-Future-Reject / asOf-NoRecord）+ Background；test/bdd/steps/time_travel_steps.go 实现 11 个 Given/When/Then 步骤。SUT 走真实 chi.Router + objectset.Handler.LoadObjects → resolveAsOf → loadObjectsAsOf 全 read-path：bddTransactionResolver 把 'tx-<id>' 映射成 dataset_transactions.committed_at；bddHistorySnapshotProvider 串 GetOntology / GetObjectTypeByAPIName / SnapshotObjectsAt 三段，对 [valid_from, valid_to) 半开区间扫 object_history。Background 用 state.repo.CreateOntology / CreateObjectType / CreateProperty ×3 落 'bdd_timetravel' + 'employee'(employeeId/name/title)；scenario-1 用 state.repo.RecordDatasetTransaction 两次（tx-tt-001@2026-01-15Z, tx-tt-002@2026-02-15Z 带 parent）+ state.repo.InsertObjectHistory 两次（emp-1 v1/v2 NewState JSON），其中 InsertObjectHistory 的 valid_to 闭合副作用让两版本天然形成 [T1, T2) [T2, ∞)；scenario-2 直接打不存在的 tx-tt-future-9999；scenario-3 让 history 行 recorded_at 在 tx committed_at 之后，asOf 命中前置真空。断言三层：HTTP status 200/400 + response body { totalCount: 'N' 字符串, data[i].name/title } + apierror envelope { errorName: 'TransactionNotFound', parameters.txId }。time-travel router 单独走 objectset.NewHandler(nil, nil, store)：asOf 分支在触碰 executor/indexMgr 前已 short-circuit（pkg/oss/objectset/handler.go:258-266），所以两个 dep 缺省即可。配套新增 suiteState.timeTravelRouter + timeTravelHTTPResult，resetMaps 中清零 lastTimeTravelResponse，steps.go 加 registerTimeTravelSteps wire-up。零生产代码改动。make test-bdd → 18 scenarios（含原有 15）/ 170 steps / 0 fail / 19.4s。go build/vet 双绿；./pkg/... -short 全绿（唯一 pkg/auth.TestJWTSigner_TamperedTokenRejected baseline flake 与本 story 无关，独立 -run 重跑通过）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
     },
     {
       "id": "US-018",

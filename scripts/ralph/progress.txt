@@ -68,6 +68,10 @@ Phases:
 - **cellsec.Engine = OSS read-path 末端的 applyCellMasking step（US-016）**：read-path 链顺序 `applyPolicyFilter → applyMarkingFilter → applyPropertyVisibility → applyColumnMasking → applyCellMasking`，cellsec 只在三元组 `(ObjectTypeRID, primaryKey, propertyApiName)` 上对每条 CellMask 做 CEL 求值。**admin role 是引擎内的短路**（不评估 CEL，直接返回明文），不是 router-level middleware；未来加 role-based bypass 也加在 `cellsec.Engine` 内而非 OSS handler 层。`cellsec.CellMask.MaskStrategy` 是 `masking.MaskStrategy` 枚举：`REDACT`（→ `***`）/ `HASH`（→ sha256 hex）/ `NULL`（→ JSON null）/ `PARTIAL`（→ 部分字符）。BDD scenario 用 REDACT 最稳，HASH/NULL 不便硬编码 expected。
 - **per-scenario cellsec 状态隔离必须 re-create MemoryStore + re-wire Engine 到 OSS Service（US-016）**：`cellsec.MemoryStore` 是 in-memory 累加，没有 Truncate。`resetMaps` 中必须依序 (a) 新建 `NewMemoryStore` (b) 新建 `cellsec.New` 用新 store (c) `Reload(ctx)` 让 Engine 把新 store 的（空）索引加载 (d) `SetCellMaskEngine` 把新 Engine 注入到 OSS `ServiceImpl`。任何一步漏了，上一个 scenario 的 Mask-Hit fixture 会污染下一个 scenario 的 Mask-Miss 断言。任何"per-scenario 必须清零的 in-memory 状态对象"都按这个 4 步模板做。
 - **godog step regex 支持单引号 vs 双引号双形（US-016）**：当 step 文本里需要嵌入引号时（如 CEL 表达式 `'user.roles.exists(r, r == "viewer")'`），外层用单引号包；但 `expression "true"` 这种纯 literal 双引号更自然。每条 Given 注册两个 regex（单引号一份、双引号一份），共享同一 fn body 即可，避免把 Gherkin 写得绕。
+- **time-travel BDD 的最小依赖（US-017）**：`pkg/oss/objectset.Handler` 的 asOf 分支在 `handler.go:258-266` short-circuit，**不碰** executor / indexMgr / Store。所以 BDD 调 `objectset.NewHandler(nil, nil, store)` + `SetHistorySnapshotProvider(repoAdapter)` + `SetTransactionResolver(repoAdapter)` 就足够覆盖整个 ?asOf=tx-... 路径。cmd/server 里的 `historySnapshotAdapter / datasetTransactionResolverAdapter` 在 package main，不可被外部 import — 在本地 step 包内复制等价 adapter（~30 LOC 直接串 `*oms.PGRepository.GetOntology / GetObjectTypeByAPIName / SnapshotObjectsAt / GetDatasetTransaction`）即可。第三个调用方出现时，再把这俩 adapter 抽到 `pkg/oss/objectsetpg`。
+- **InsertObjectHistory 自带 valid_to 闭合副作用（US-017）**：插入 version=N 的行后，pg_repository.go:2081 会 `UPDATE object_history SET valid_to = $new_recorded_at WHERE version < N AND valid_to IS NULL`。BDD seed 顺序 insert v1(RecordedAt=T1) → v2(RecordedAt=T2)，v1 的 valid_to 被自动闭合为 T2，天然 [T1, T2) 半开区间。**不要**手写 UPDATE valid_to——会与该副作用冲突。要插入"老版本 valid_to=NULL"的非标态需绕过 InsertObjectHistory 直接走 `state.pg.Pool.Exec` 原生 INSERT。
+- **OSS V2 totalCount 是 string（US-017）**：响应 `"totalCount":"1"` 字符串而非数字，大整数 SDK 转译用。BDD 断言用 `resp.TotalCount != "1"` 字符串比较，不要 Unmarshal 进 int。
+- **dataset_transactions 表 ON DELETE SET NULL（不是 CASCADE，US-017）**：parent_tx_id 走 ON DELETE SET NULL（migration 000090），不属于 ontologies FK 级联。BDD 当前 truncateOntologyGraph 不显式 TRUNCATE dataset_transactions — 容器生命周期内累计；新 scenario 复用同名 tx_id 会触发 PK 冲突，届时把 `dataset_transactions` 加入 TRUNCATE 列表。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -572,4 +576,35 @@ Phases:
   - **cellsec.CellMask.MaskStrategy 是 masking.MaskStrategy 枚举**：值 'REDACT' / 'HASH' / 'NULL' / 'PARTIAL'。REDACT 把整个 string 替换成 '***'。BDD scenario 用 REDACT 是最稳的断言型 — HASH 返回 sha256 长字符串不便于硬编码 expected，NULL 返回 nil 不便从 JSON body 中区分"key missing" vs "key=null"。
   - **godog step regex 支持单引号 vs 双引号双形**：Gherkin 步骤 'a cell mask ... expression 'user.roles.exists(r, r == "viewer")'' 里 CEL 表达式自己含双引号，所以外层用单引号包；但 Admin-Bypass scenario 用 'expression "true"' 双引号更自然。每条 Given 注册两个 regex（单引号一份、双引号一份），共享同一 fn 即可。这是当 step 文本里需要嵌入引号时的标准范式。
   - **per-scenario cellsec 状态隔离必须 re-create MemoryStore + re-wire Engine 到 OSS Service**：cellMaskStore 是 in-memory 累加的，没有 Truncate。resetMaps 中必须 (a) 新建 NewMemoryStore (b) 新建 cellsec.New 用新 store (c) Reload 让 Engine 把新 store 的（空）索引加载 (d) SetCellMaskEngine 把新 Engine 注入到 OSS Service。任何一步漏了，上一个 scenario 的 Mask-Hit fixture 会污染下一个 scenario 的 Mask-Miss 断言。
+---
+
+## 2026-05-13 00:25 - US-017 BDD: time_travel_query.feature
+- 落地 test/bdd/features/time_travel_query.feature 3 scenarios (asOf-Old-Tx / asOf-Future-Reject / asOf-NoRecord) + Background。
+- 落地 test/bdd/steps/time_travel_steps.go 11 个 Given/When/Then 步骤 + 2 个本地 adapter（bddTransactionResolver / bddHistorySnapshotProvider）让 OSS Handler 的 SetTransactionResolver / SetHistorySnapshotProvider hook 全程走真实 PG 路径。
+- suiteState 扩字段：timeTravelRouter (chi.Router) + lastTimeTravelResponse (timeTravelHTTPResult)；resetMaps 加一行 s.lastTimeTravelResponse = nil。steps.RegisterAllSteps 末尾追加 registerTimeTravelSteps(t, sc, state)。
+- SUT 走真实 chi.Router + pkg/oss/objectset.Handler.LoadObjects → resolveAsOf → loadObjectsAsOf 全 read-path：
+  - resolveAsOf 接 'tx-' 前缀 → bddTransactionResolver.ResolveTransaction → state.repo.GetDatasetTransaction → 拿 CommittedAt
+  - loadObjectsAsOf 调 bddHistorySnapshotProvider.SnapshotObjectsAt → GetOntology → GetObjectTypeByAPIName → state.repo.SnapshotObjectsAt(otRID, asOf) → 扫 object_history WHERE valid_from <= asOf AND (valid_to IS NULL OR valid_to > asOf)，跳过 DELETE 行
+- BDD seed 三步：(1) state.repo.CreateOntology + CreateObjectType + CreateProperty ×3 (employeeId/name/title)；(2) RecordDatasetTransaction 直接走 *oms.PGRepository（带 parent_tx_id chain）；(3) InsertObjectHistory 走 *oms.PGRepository，传非零 RecordedAt 让 valid_from = RecordedAt，并触发副作用 UPDATE 老版本的 valid_to = 新版本 RecordedAt，形成连续 [T_n, T_{n+1}) 半开区间。
+- 断言三层：
+  - HTTP status 200（happy + no-record）/ 400（unknown tx）
+  - body JSON：totalCount: 字符串形式的 'N'（OSS V2 规范）+ data[i].name / data[i].title
+  - apierror envelope：errorName 'TransactionNotFound' + parameters.txId == 原 tx-id
+- 文件改动：
+  - test/bdd/features/time_travel_query.feature (新, 3 scenarios)
+  - test/bdd/steps/time_travel_steps.go (新, ~280 行)
+  - test/bdd/steps/state.go (加 timeTravelRouter / lastTimeTravelResponse 字段 + timeTravelHTTPResult 类型 + resetMaps 清零行)
+  - test/bdd/steps/steps.go (注册 registerTimeTravelSteps)
+- 验证：
+  - make test-bdd → 18 scenarios (18 passed) / 170 steps (170 passed) / 19.4s
+  - go test -count=1 -short ./pkg/oss/... ./pkg/oms/... ./pkg/actions/... ./pkg/funnel/... ./pkg/index/... ./pkg/rid/... ./pkg/apierror/... ./pkg/auth/... ./pkg/types/... ./pkg/links/... ./pkg/cellsec/... ./pkg/masking/... 全绿（pkg/auth.TestJWTSigner_TamperedTokenRejected baseline flake，独立 -run 重跑通过；与本 story 无关）
+  - go test -count=1 -tags integration -short ./test/integration/... main / phase6 / phase7 全绿
+  - go build ./... + go vet ./... + go vet -tags bdd ./test/bdd/... 三绿
+- **Learnings for future iterations:**
+  - **time-travel BDD 的最小依赖：HistorySnapshotProvider + TransactionResolver 两个 hook 即可**：objectset.Handler 的 asOf 分支在 handler.go:258-266 已 short-circuit，根本不碰 executor / indexMgr / Store。所以 BDD 调 `objectset.NewHandler(nil, nil, store)` + SetHistorySnapshotProvider + SetTransactionResolver 就足够。任何"我需要拉起整套 oss.Service + Bleve + linkResolver 来跑 asOf"是过度耦合。
+  - **cmd/server 里的 historySnapshotAdapter / datasetTransactionResolverAdapter 属于 package main，不可被 import**：要在 BDD（或任何外部 test 包）复用同等行为，请在本地写小 adapter 串 `*oms.PGRepository.GetOntology / GetObjectTypeByAPIName / SnapshotObjectsAt / GetDatasetTransaction`。函数体几乎和 cmd/server 一样，~30 行。未来如果第三个调用方出现，应该把这两个 adapter 提到 `pkg/oss/objectsetpg` 之类的子包。
+  - **`*oms.PGRepository.InsertObjectHistory` 自带 valid_to 闭合副作用**：插入 version=N 的行会 `UPDATE object_history SET valid_to = $new_recorded_at WHERE version < N AND valid_to IS NULL`。BDD 顺序 insert v1(RecordedAt=T1) → v2(RecordedAt=T2) 后，v1 行的 valid_to 被自动闭合为 T2，形成天然 [T1, T2) 区间。**不要**手写 UPDATE valid_to——会和 InsertObjectHistory 自身的 SQL 打架。如果需要插入"老版本但 valid_to=NULL"的特殊形态，直接走 state.pg.Pool.Exec 绕过 InsertObjectHistory。
+  - **OSS V2 totalCount 是 string 不是 number**：响应里写 `"totalCount":"1"`（字符串），不是 `"totalCount":1`。SDK 客户端走 string→int 解析才能 round-trip 大整数。BDD 断言用 `resp.TotalCount != "1"` 字符串比较，不要 Unmarshal 进 int。
+  - **dataset_transactions 表 ON DELETE SET NULL（不是 CASCADE）**：parent_tx_id 走 ON DELETE SET NULL（migration 000090）。TRUNCATE 也不会因为 self-FK 受阻——但前提是没有跨 ontology 的 parent 链。真要彻底清表，TRUNCATE dataset_transactions RESTART IDENTITY CASCADE 即可。BDD 的 truncateOntologyGraph 目前不显式 TRUNCATE 它——因为 ensureContainer 每 scenario 重 truncate ontology + saga，dataset_transactions 不依赖 ontologies FK 所以会"在容器生命周期内累计"。这对当前 3 scenarios 无问题（tx_id 全用唯一前缀），但未来如果新 scenario 重用同名 tx_id 会触发 PK 冲突——届时把 dataset_transactions 加入 truncateOntologyGraph 的 TRUNCATE 列表。
+  - **apierror parameters 字段在 wire 上恒为 object（含 nil 时也是 `{}`）**：所以 `parameters.txId` 直接走 `env.Parameters["txId"].(string)` 即可，不需要先判 parameters 是否存在。这是 pkg/apierror 自 US-009 起的硬契约（Marshal 永远输出 `"parameters":{...}`）。
 ---
