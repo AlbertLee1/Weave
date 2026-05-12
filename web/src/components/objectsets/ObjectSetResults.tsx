@@ -238,7 +238,7 @@ export function ObjectSetResults({
   // Empty state when no def has been provided.
   if (!def) {
     return (
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full" data-testid="objectset-results-initial">
         <ResultsHeader tab={tab} setTab={setTab} shareInfo={shareInfo} />
         <div className="flex-1 flex items-center justify-center">
           <EmptyState
@@ -251,7 +251,10 @@ export function ObjectSetResults({
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div
+      className="flex flex-col h-full overflow-hidden"
+      data-testid="objectset-results"
+    >
       <ResultsHeader
         tab={tab}
         setTab={setTab}
@@ -359,7 +362,7 @@ function ResultsHeader({
         </button>
       </div>
       <div className="flex items-center gap-3 text-xs font-mono text-text-secondary">
-        {statusLine && <span>{statusLine}</span>}
+        {statusLine && <span data-testid="objectset-status-line">{statusLine}</span>}
         {shareInfo && <ShareBadge info={shareInfo} />}
       </div>
     </div>
@@ -406,32 +409,42 @@ function BrowsePane({
 }: BrowsePaneProps) {
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div
+        className="flex items-center justify-center py-12"
+        data-testid="objectset-browse-loading"
+      >
         <LoadingSpinner />
       </div>
     );
   }
   if (error) {
     return (
-      <div className="px-4 py-3 border border-accent-error/30 bg-accent-error/5 rounded text-xs font-mono text-accent-error">
+      <div
+        className="px-4 py-3 border border-accent-error/30 bg-accent-error/5 rounded text-xs font-mono text-accent-error"
+        data-testid="objectset-browse-error"
+      >
         {error instanceof Error ? error.message : 'Failed to load object set'}
       </div>
     );
   }
   if (!page) {
     return (
-      <EmptyState
-        title="No Results Yet"
-        description="Click Execute to run the object set."
-      />
+      <div data-testid="objectset-browse-pending">
+        <EmptyState
+          title="No Results Yet"
+          description="Click Execute to run the object set."
+        />
+      </div>
     );
   }
   if (page.data.length === 0) {
     return (
-      <EmptyState
-        title="No objects matched"
-        description="The object set is valid but returned zero rows."
-      />
+      <div data-testid="objectset-browse-empty">
+        <EmptyState
+          title="No objects matched"
+          description="The object set is valid but returned zero rows."
+        />
+      </div>
     );
   }
   if (!objectType) {

@@ -145,7 +145,10 @@ export function ObjectSetPage() {
 
   if (!ontologyApiName) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        className="flex items-center justify-center h-full"
+        data-testid="objectset-no-ontology"
+      >
         <EmptyState
           title="No ontology selected"
           description="Pick an ontology from the dashboard to start composing."
@@ -156,14 +159,20 @@ export function ObjectSetPage() {
 
   if (typesLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        className="flex items-center justify-center h-full"
+        data-testid="objectset-loading"
+      >
         <LoadingSpinner />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div
+      className="flex flex-col h-full overflow-hidden"
+      data-testid="objectset-page"
+    >
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-bg-primary">
         <div>
           <h1 className="text-base font-sans font-semibold text-text-primary">

@@ -16,6 +16,7 @@ export {
   BrowserPage,
   DashboardPage,
   LogicFlowsPage,
+  ObjectSetBuilderPage,
   PipelinesPage,
   ThreadsPage,
 } from './pageObjects';

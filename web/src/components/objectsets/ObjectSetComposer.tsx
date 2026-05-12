@@ -106,6 +106,7 @@ export function ObjectSetComposer({
           type="button"
           onClick={onExecute}
           disabled={!canExecute}
+          data-testid="objectset-execute-btn"
           className="bg-accent-cyan text-bg-primary px-4 py-1.5 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Execute
@@ -113,6 +114,7 @@ export function ObjectSetComposer({
         <button
           type="button"
           onClick={onSaveAs}
+          data-testid="objectset-saveas-btn"
           className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
         >
           Save As
