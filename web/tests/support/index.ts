@@ -24,6 +24,7 @@ export {
   ObjectSetDiffPage,
   ObjectTypeAdminPage,
   PipelinesPage,
+  QuiverPage,
   ThreadsPage,
 } from './pageObjects';
 export { seedOntology } from './seedOntology';
