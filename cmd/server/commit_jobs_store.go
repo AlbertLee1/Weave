@@ -11,7 +11,7 @@ import (
 
 // pgCommitJobStore persists commit_jobs rows for the Function CI hook
 // (US-417). Lives in cmd/server/ so pkg/oms doesn't import pgx — same
-// shape as pgInstalledPackageStore.
+// shape as the pkg/oms/installedpkgpg.Store wrapper.
 type pgCommitJobStore struct {
 	pool *pgxpool.Pool
 }

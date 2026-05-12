@@ -20,6 +20,7 @@ import (
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oms/installedpkgpg"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 )
@@ -102,6 +103,19 @@ type suiteState struct {
 	lastFunctionResponse    *functionHTTPResult
 	lastFunctionExecutionID string
 
+	// US-020 package install/update/uninstall BDD wiring. pkgRouter
+	// exposes the public install + uninstall endpoints (the production
+	// chi router shape from cmd/server/routes.go); pkgStore is the same
+	// pkg/oms/installedpkgpg.Store the server wires so Then-steps assert
+	// directly on the installed_packages PG row; builtinPkgProvider is a
+	// per-suite stub provider that scenarios populate with synthetic
+	// (slug → ontology export) entries on the fly. lastPackageResponse
+	// stashes the most recent response for HTTP status + body assertions.
+	pkgRouter           chi.Router
+	pkgStore            *installedpkgpg.Store
+	builtinPkgProvider  *bddBuiltinPackageProvider
+	lastPackageResponse *packageHTTPResult
+
 	mu                sync.Mutex
 	apiNameToRID      map[string]string // ontology apiName → RID
 	objectTypeRIDs    map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
@@ -153,6 +167,13 @@ type quiverHTTPResult struct {
 // functionHTTPResult is the per-scenario response snapshot stashed on
 // suiteState for the US-019 function replay + version binding Then-steps.
 type functionHTTPResult struct {
+	statusCode int
+	body       []byte
+}
+
+// packageHTTPResult is the per-scenario response snapshot stashed on
+// suiteState for the US-020 package install lifecycle Then-steps.
+type packageHTTPResult struct {
 	statusCode int
 	body       []byte
 }
@@ -313,8 +334,16 @@ func (s *suiteState) resetMaps() {
 	s.lastQuiverResponse = nil
 	s.lastFunctionResponse = nil
 	s.lastFunctionExecutionID = ""
+	s.lastPackageResponse = nil
 	if s.sagaPublisher != nil {
 		s.sagaPublisher.reset()
+	}
+	// US-020: clear the synthetic built-in catalog between scenarios so a
+	// "given a built-in package X" registered in one scenario does not
+	// satisfy a different scenario's "given …" line. The store reference
+	// stays pinned because the handler holds it via SetBuiltinPackageProvider.
+	if s.builtinPkgProvider != nil {
+		s.builtinPkgProvider.reset()
 	}
 	// US-019: drop accumulated function executions + executor result map
 	// between scenarios so a Replay-Same-Result row from the previous
@@ -454,6 +483,26 @@ func (s *suiteState) ensureContainer(t testing.TB) error {
 	fr.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute", s.handler.ExecuteFunction)
 	fr.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay", s.handler.ReplayFunction)
 	s.functionRouter = fr
+
+	// US-020 package install lifecycle. The installed_packages registry
+	// shares the same pgxpool as the rest of the BDD so Then-steps can
+	// see rows the handler just persisted. The synthetic BuiltinPackage
+	// provider is registered against the same OMSHandler used by the
+	// other BDD step packs — only the chi router is scenario-specific,
+	// so reuse of the handler keeps the per-suite wiring linear.
+	s.pkgStore = installedpkgpg.NewStore(pg.Pool)
+	s.builtinPkgProvider = newBDDBuiltinPackageProvider()
+	s.handler.SetInstalledPackageStore(s.pkgStore)
+	s.handler.SetBuiltinPackageProvider(s.builtinPkgProvider)
+	pr := chi.NewRouter()
+	pr.Post("/api/v2/pkg/install", s.handler.PackageInstall)
+	pr.Get("/api/v2/pkg", s.handler.ListInstalledPackages)
+	pr.Get("/api/v2/pkg/builtin", s.handler.ListBuiltinPackages)
+	pr.Post("/api/v2/pkg/builtin/{slug}/install", s.handler.InstallBuiltinPackage)
+	pr.Get("/api/v2/pkg/{name}", s.handler.GetInstalledPackage)
+	pr.Post("/api/v2/pkg/{name}/enabled", s.handler.SetInstalledPackageEnabled)
+	pr.Delete("/api/v2/pkg/{name}", s.handler.DeleteInstalledPackage)
+	s.pkgRouter = pr
 	return nil
 }
 
@@ -472,10 +521,15 @@ func (s *suiteState) truncateOntologyGraph() error {
 	// function_rid + ontology_rid as plain strings, so the row survives
 	// a function being deleted). Truncate it explicitly so US-019 BDD
 	// scenarios observe a clean audit log between runs.
+	//
+	// installed_packages (migration 000097) records the pkg install
+	// registry. It has no FK back to ontologies — the row outlives the
+	// imported ontology entities by design — so we wipe it explicitly so
+	// US-020 BDD scenarios observe a clean catalog between runs.
 	_, err := s.pg.Pool.Exec(context.Background(),
-		`TRUNCATE TABLE ontologies, action_sagas, function_executions RESTART IDENTITY CASCADE`)
+		`TRUNCATE TABLE ontologies, action_sagas, function_executions, installed_packages RESTART IDENTITY CASCADE`)
 	if err != nil {
-		return fmt.Errorf("truncate ontologies + sagas + function_executions: %w", err)
+		return fmt.Errorf("truncate ontologies + sagas + function_executions + installed_packages: %w", err)
 	}
 	return nil
 }

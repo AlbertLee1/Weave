@@ -55,6 +55,7 @@ import (
 	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/notifications"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oms/installedpkgpg"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
@@ -1647,9 +1648,11 @@ func main() {
 		// the table — same pattern as LineageStore above.
 		deps.ColumnLineageStore = pgRepo
 		// US-412: installed_packages registry for the pkg install flow.
-		// Constructed off the same pool — the pgInstalledPackageStore is a
-		// thin wrapper over Upsert / List / Get / Toggle / Delete.
-		deps.InstalledPackageStore = newPGInstalledPackageStore(pool)
+		// Constructed off the same pool — installedpkgpg.NewStore is a
+		// thin wrapper over Upsert / List / Get / Toggle / Delete, lifted
+		// into pkg/oms/installedpkgpg so the BDD suite can wire the same
+		// implementation against its own pgxpool.
+		deps.InstalledPackageStore = installedpkgpg.NewStore(pool)
 		// US-417: per-commit CI job rows. Same pattern — a thin wrapper
 		// over UPSERT / SELECT against commit_jobs. The Goja runner is
 		// wired separately below so degraded-mode bootstraps that DO have

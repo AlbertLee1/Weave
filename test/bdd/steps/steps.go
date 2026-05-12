@@ -33,4 +33,5 @@ func RegisterAllSteps(t testing.TB, sc *godog.ScenarioContext) {
 	registerTimeTravelSteps(t, sc, state)
 	registerQuiverSteps(t, sc, state)
 	registerFunctionReplaySteps(t, sc, state)
+	registerPackageInstallSteps(t, sc, state)
 }
