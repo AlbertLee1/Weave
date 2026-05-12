@@ -28,7 +28,7 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
   const labelClass = 'text-xs text-text-secondary font-sans mb-1';
 
   return (
-    <div className="flex flex-col gap-3">
+    <div data-testid="groupby-section" className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <label className={labelClass}>Group By</label>
         <button

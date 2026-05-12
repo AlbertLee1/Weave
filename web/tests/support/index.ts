@@ -13,6 +13,7 @@ export type {
 export {
   ActionHistoryPage,
   ActionTypeAdminPage,
+  AggregationPage,
   ApprovalsPage,
   BrowserPage,
   DashboardPage,

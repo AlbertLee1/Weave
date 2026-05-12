@@ -28,12 +28,13 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
   const labelClass = 'text-xs text-text-secondary font-sans mb-1';
 
   return (
-    <div className="flex flex-col gap-3">
+    <div data-testid="metrics-section" className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <label className={labelClass}>Metrics</label>
         <button
           type="button"
           onClick={addMetric}
+          data-testid="metric-add"
           className="bg-bg-tertiary border border-border text-text-primary px-4 py-2 rounded text-sm hover:bg-bg-elevated"
         >
           + Add Metric
@@ -41,14 +42,22 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
       </div>
 
       {metrics.length === 0 && (
-        <div className="text-xs text-text-secondary">No metrics configured. Add at least one metric.</div>
+        <div data-testid="metrics-empty" className="text-xs text-text-secondary">
+          No metrics configured. Add at least one metric.
+        </div>
       )}
 
       {metrics.map((metric, index) => (
-        <div key={index} className="flex items-center gap-2">
+        <div
+          key={index}
+          data-testid={`metric-row-${index}`}
+          data-metric-type={metric.type}
+          className="flex items-center gap-2"
+        >
           <select
             value={metric.type}
             onChange={(e) => updateMetric(index, { type: e.target.value as AggregationMetric['type'] })}
+            data-testid={`metric-${index}-type`}
             className={`${inputClass} flex-shrink-0`}
           >
             {metricTypes.map((t) => (
@@ -62,6 +71,7 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
             <select
               value={metric.field ?? ''}
               onChange={(e) => updateMetric(index, { field: e.target.value || undefined })}
+              data-testid={`metric-${index}-field`}
               className={`${inputClass} flex-1`}
             >
               <option value="">Select field...</option>
@@ -78,12 +88,14 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
             value={metric.name ?? ''}
             onChange={(e) => updateMetric(index, { name: e.target.value || undefined })}
             placeholder="alias"
+            data-testid={`metric-${index}-name`}
             className={`${inputClass} w-28`}
           />
 
           <button
             type="button"
             onClick={() => removeMetric(index)}
+            data-testid={`metric-${index}-remove`}
             className="bg-accent-error/15 text-accent-error border border-accent-error/30 px-4 py-2 rounded text-sm hover:bg-accent-error/25"
           >
             Remove

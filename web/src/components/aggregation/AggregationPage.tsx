@@ -54,7 +54,10 @@ export function AggregationPage() {
 
   if (!ontology || !objectType) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        data-testid="aggregation-no-params"
+        className="flex items-center justify-center h-full"
+      >
         <EmptyState title="Missing Parameters" description="Ontology and object type are required." />
       </div>
     );
@@ -62,16 +65,27 @@ export function AggregationPage() {
 
   if (typeLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div
+        data-testid="aggregation-typeloading"
+        className="flex items-center justify-center h-full"
+      >
         <LoadingSpinner />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div
+      data-testid="aggregation-page"
+      data-ontology={ontology}
+      data-object-type={objectType}
+      className="flex flex-col h-full overflow-hidden"
+    >
       {/* Config panel */}
-      <div className="border-b border-border bg-bg-primary p-4 flex flex-col gap-4">
+      <div
+        data-testid="aggregation-config-panel"
+        className="border-b border-border bg-bg-primary p-4 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-medium text-text-primary">Aggregation</h2>
@@ -106,20 +120,29 @@ export function AggregationPage() {
       {/* Results panel */}
       <div className="flex-1 overflow-y-auto p-4">
         {aggLoading ? (
-          <div className="flex items-center justify-center py-12">
+          <div
+            data-testid="aggregation-loading"
+            className="flex items-center justify-center py-12"
+          >
             <LoadingSpinner />
           </div>
         ) : isError ? (
-          <div className="text-sm text-accent-error">
+          <div data-testid="aggregation-error" className="text-sm text-accent-error">
             Error: {error instanceof Error ? error.message : 'Aggregation failed'}
           </div>
         ) : !aggResult ? (
-          <EmptyState
-            title="No Results Yet"
-            description="Configure metrics and group by, then click Execute."
-          />
+          <div data-testid="aggregation-empty-state">
+            <EmptyState
+              title="No Results Yet"
+              description="Configure metrics and group by, then click Execute."
+            />
+          </div>
         ) : (
-          <div className="flex flex-col gap-6">
+          <div
+            data-testid="aggregation-results"
+            data-bucket-count={aggResult.data.length}
+            className="flex flex-col gap-6"
+          >
             {aggResult.accuracy && (
               <div
                 data-testid="aggregation-accuracy-badge"
@@ -137,7 +160,11 @@ export function AggregationPage() {
             )}
             <ResultTable data={aggResult.data} />
             {aggResult.data.length > 0 && chartMetricKey && groupBy.length > 0 && (
-              <div className="border border-border rounded p-4 bg-bg-tertiary">
+              <div
+                data-testid="aggregation-chart"
+                data-chart-type="bar"
+                className="border border-border rounded p-4 bg-bg-tertiary"
+              >
                 <h3 className="text-xs font-medium text-text-primary mb-3">Chart</h3>
                 <SimpleChart data={aggResult.data} metricKey={chartMetricKey} />
               </div>

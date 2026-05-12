@@ -7,7 +7,12 @@ interface ResultTableProps {
 export function ResultTable({ data }: ResultTableProps) {
   if (data.length === 0) {
     return (
-      <div className="text-xs text-text-secondary py-4">No aggregation results.</div>
+      <div
+        data-testid="aggregation-empty-results"
+        className="text-xs text-text-secondary py-4"
+      >
+        No aggregation results.
+      </div>
     );
   }
 
