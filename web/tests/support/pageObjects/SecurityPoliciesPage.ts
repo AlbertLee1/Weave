@@ -3,8 +3,8 @@ import { type Locator, type Page } from '@playwright/test';
 /**
  * Page object for `/admin/:ontology/security` — the Security Policies UI
  * rendered by `src/components/securityPolicies/SecurityPoliciesPage.tsx`
- * (US-041, PC-A07a). Selectors mirror the data-testid attributes baked
- * into the production component.
+ * (US-041 row policies, US-042 column masks). Selectors mirror the
+ * data-testid attributes baked into the production component.
  */
 export class SecurityPoliciesPage {
   readonly page: Page;
@@ -12,7 +12,7 @@ export class SecurityPoliciesPage {
   readonly tabs: Locator;
   readonly tabPanel: Locator;
   readonly rowPoliciesTab: Locator;
-  readonly columnMasksPlaceholder: Locator;
+  readonly columnMasksTab: Locator;
   readonly cellMasksPlaceholder: Locator;
   readonly loading: Locator;
   readonly errorState: Locator;
@@ -24,6 +24,19 @@ export class SecurityPoliciesPage {
   readonly editor: Locator;
   readonly editorForm: Locator;
   readonly deleteDialog: Locator;
+  // Column Masks (US-042) — own list / editor / simulator / delete-dialog
+  // surface so per-tab BDD specs can scope independently without cross
+  // contamination from the row-policies testid namespace.
+  readonly columnMasksLoading: Locator;
+  readonly columnMasksErrorState: Locator;
+  readonly columnMasksEmptyState: Locator;
+  readonly columnMasksList: Locator;
+  readonly columnMasksCreateBtn: Locator;
+  readonly columnMasksSimulatorToggleBtn: Locator;
+  readonly columnMasksSimulator: Locator;
+  readonly columnMaskEditor: Locator;
+  readonly columnMaskEditorForm: Locator;
+  readonly columnMaskDeleteDialog: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -31,9 +44,7 @@ export class SecurityPoliciesPage {
     this.tabs = page.getByTestId('security-policies-tabs');
     this.tabPanel = page.getByTestId('security-policies-tab-panel');
     this.rowPoliciesTab = page.getByTestId('row-policies-tab');
-    this.columnMasksPlaceholder = page.getByTestId(
-      'security-policies-column-placeholder',
-    );
+    this.columnMasksTab = page.getByTestId('column-masks-tab');
     this.cellMasksPlaceholder = page.getByTestId(
       'security-policies-cell-placeholder',
     );
@@ -47,6 +58,18 @@ export class SecurityPoliciesPage {
     this.editor = page.getByTestId('row-policy-editor');
     this.editorForm = page.getByTestId('row-policy-editor-form');
     this.deleteDialog = page.getByTestId('row-policy-delete-dialog');
+    this.columnMasksLoading = page.getByTestId('column-masks-loading');
+    this.columnMasksErrorState = page.getByTestId('column-masks-error');
+    this.columnMasksEmptyState = page.getByTestId('column-masks-empty');
+    this.columnMasksList = page.getByTestId('column-masks-list');
+    this.columnMasksCreateBtn = page.getByTestId('column-masks-create-btn');
+    this.columnMasksSimulatorToggleBtn = page.getByTestId(
+      'column-masks-simulator-toggle',
+    );
+    this.columnMasksSimulator = page.getByTestId('column-masks-simulator');
+    this.columnMaskEditor = page.getByTestId('column-mask-editor');
+    this.columnMaskEditorForm = page.getByTestId('column-mask-editor-form');
+    this.columnMaskDeleteDialog = page.getByTestId('column-mask-delete-dialog');
   }
 
   async goto(ontology: string): Promise<void> {
@@ -139,6 +162,86 @@ export class SecurityPoliciesPage {
   simulatorDecisionRow(rid: string): Locator {
     return this.page.locator(
       `[data-testid="row-policies-simulator-decision-row"][data-policy-rid="${rid}"]`,
+    );
+  }
+
+  // ----- Column Masks (US-042) -----
+
+  columnMaskRowByRid(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="column-masks-row"][data-mask-rid="${rid}"]`,
+    );
+  }
+  columnMaskEditButton(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="column-masks-edit-btn"][data-mask-rid="${rid}"]`,
+    );
+  }
+  columnMaskDeleteButton(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="column-masks-delete-btn"][data-mask-rid="${rid}"]`,
+    );
+  }
+
+  // Column Mask editor sub-locators
+  columnMaskEditorObjectTypeSelect(): Locator {
+    return this.page.getByTestId('column-mask-editor-objectType');
+  }
+  columnMaskEditorPropertyInput(): Locator {
+    return this.page.getByTestId('column-mask-editor-property');
+  }
+  columnMaskEditorRuleSelect(): Locator {
+    return this.page.getByTestId('column-mask-editor-rule');
+  }
+  columnMaskEditorRoles(): Locator {
+    return this.page.getByTestId('column-mask-editor-roles');
+  }
+  columnMaskEditorGroups(): Locator {
+    return this.page.getByTestId('column-mask-editor-groups');
+  }
+  columnMaskEditorUsers(): Locator {
+    return this.page.getByTestId('column-mask-editor-users');
+  }
+  columnMaskEditorDescription(): Locator {
+    return this.page.getByTestId('column-mask-editor-description');
+  }
+  columnMaskEditorSubmitBtn(): Locator {
+    return this.page.getByTestId('column-mask-editor-submit-btn');
+  }
+  columnMaskEditorCancelBtn(): Locator {
+    return this.page.getByTestId('column-mask-editor-cancel-btn');
+  }
+
+  // Column Mask delete-dialog sub-locators
+  columnMaskDeleteConfirmBtn(): Locator {
+    return this.page.getByTestId('column-mask-delete-confirm-btn');
+  }
+  columnMaskDeleteCancelBtn(): Locator {
+    return this.page.getByTestId('column-mask-delete-cancel-btn');
+  }
+
+  // Column Mask simulator sub-locators
+  columnMaskSimulatorUserId(): Locator {
+    return this.page.getByTestId('column-masks-simulator-user-id');
+  }
+  columnMaskSimulatorEmail(): Locator {
+    return this.page.getByTestId('column-masks-simulator-email');
+  }
+  columnMaskSimulatorRoles(): Locator {
+    return this.page.getByTestId('column-masks-simulator-roles');
+  }
+  columnMaskSimulatorGroups(): Locator {
+    return this.page.getByTestId('column-masks-simulator-groups');
+  }
+  columnMaskSimulatorExemptCount(): Locator {
+    return this.page.getByTestId('column-masks-simulator-exempt-count');
+  }
+  columnMaskSimulatorMaskedCount(): Locator {
+    return this.page.getByTestId('column-masks-simulator-masked-count');
+  }
+  columnMaskSimulatorDecisionRow(rid: string): Locator {
+    return this.page.locator(
+      `[data-testid="column-masks-simulator-decision-row"][data-mask-rid="${rid}"]`,
     );
   }
 }

@@ -631,8 +631,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 42,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/api/securityPolicies.ts +ColumnMask types/funcs + isMaskExempt; web/src/hooks/useSecurityPolicies.ts +useColumnMasks/useCreate/useUpdate/useDeleteColumnMask; web/src/components/securityPolicies/SecurityPoliciesPage.tsx 替换 column placeholder 为 ColumnMasksTab (列表 + 编辑器 modal w/ objectType+property select + maskRule enum select + AppliesTo 三段 + 删除确认 + 模拟器). AppliesToBadges 加 testidPrefix prop 复用 row/column 两路. Page object SecurityPoliciesPage 加 columnMasksTab + 整套 column-mask locators. tests/feature.security-policies.column.spec.ts 4 scenarios (list / create wire-shape / delete confirm / simulator exempt-vs-masked). row spec 同步把 column placeholder assertion 升级为 tab render. typecheck/eslint/vitest 1247/1247 green. Playwright: column-mask spec 4/4 + row spec 5/5 + 全 smoke 60/60 全绿."
     },
     {
       "id": "US-043",

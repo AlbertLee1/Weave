@@ -128,3 +128,115 @@ export function isPolicyApplicable(
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// US-042 (PC-A07b): Column-level masking policies.
+//
+// Mirrors pkg/masking.{Handler,ColumnMask,AppliesTo,ColumnMaskUpdate}. The
+// backend exposes CRUD under /api/admin/column-masks. Like row-policies the
+// path lives outside /api/(v2|admin)/ontologies/{name}/... so the global
+// admin route is NOT branch-rewritten by client.ts:30.
+//
+// Semantic flip vs. RowPolicy.AppliesTo:
+//   - RowPolicy.AppliesTo identifies callers GOVERNED by the predicate. A
+//     match means "this policy filters my reads".
+//   - ColumnMask.AppliesTo identifies callers ALLOWED to see the CLEAR
+//     value. A match means "I am exempt from this mask — the column reads
+//     untouched". Non-matching callers receive the masked value.
+//
+// The simulator UI surfaces both terms explicitly so operators don't
+// confuse the two; see pkg/masking/model.go:52 for the canonical comment.
+// ---------------------------------------------------------------------------
+
+export type MaskRule = 'hash' | 'redact' | 'partial';
+
+export const KNOWN_MASK_RULES: ReadonlyArray<MaskRule> = [
+  'hash',
+  'redact',
+  'partial',
+];
+
+export interface ColumnMask {
+  rid: string;
+  objectTypeRid: string;
+  propertyApiName: string;
+  maskRule: MaskRule;
+  appliesTo: AppliesTo;
+  description?: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ListColumnMasksResponse {
+  masks: ColumnMask[];
+}
+
+export interface CreateColumnMaskRequest {
+  objectTypeRid: string;
+  propertyApiName: string;
+  maskRule: MaskRule;
+  appliesTo: AppliesTo;
+  description?: string;
+}
+
+export interface UpdateColumnMaskRequest {
+  maskRule?: MaskRule;
+  appliesTo?: AppliesTo;
+  description?: string;
+}
+
+const COLUMN_MASKS_PREFIX = '/api/admin/column-masks';
+
+export async function listColumnMasks(
+  params: { objectTypeRid?: string } = {},
+): Promise<ColumnMask[]> {
+  const qs = new URLSearchParams();
+  if (params.objectTypeRid) qs.set('objectType', params.objectTypeRid);
+  const search = qs.toString();
+  const resp = await request<ListColumnMasksResponse>(
+    'GET',
+    `${COLUMN_MASKS_PREFIX}${search ? `?${search}` : ''}`,
+  );
+  return resp.masks ?? [];
+}
+
+export function getColumnMask(rid: string): Promise<ColumnMask> {
+  return request<ColumnMask>(
+    'GET',
+    `${COLUMN_MASKS_PREFIX}/${encodeURIComponent(rid)}`,
+  );
+}
+
+export function createColumnMask(
+  body: CreateColumnMaskRequest,
+): Promise<ColumnMask> {
+  return request<ColumnMask>('POST', COLUMN_MASKS_PREFIX, body);
+}
+
+export function updateColumnMask(
+  rid: string,
+  body: UpdateColumnMaskRequest,
+): Promise<ColumnMask> {
+  return request<ColumnMask>(
+    'PATCH',
+    `${COLUMN_MASKS_PREFIX}/${encodeURIComponent(rid)}`,
+    body,
+  );
+}
+
+export function deleteColumnMask(rid: string): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `${COLUMN_MASKS_PREFIX}/${encodeURIComponent(rid)}`,
+  );
+}
+
+// Mirrors the same set-intersection algorithm pkg/masking.AppliesTo
+// uses (model.go:64). Reuses isPolicyApplicable because the matching
+// logic is identical even though the semantic meaning of a hit is
+// inverted ("exempt from mask" rather than "governed by policy"). The
+// simulator UI is in charge of labeling the hit correctly.
+export function isMaskExempt(applies: AppliesTo, user: SimulatedUser): boolean {
+  return isPolicyApplicable(applies, user);
+}

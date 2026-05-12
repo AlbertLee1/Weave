@@ -146,6 +146,27 @@ async function stubEndpoints(page: Page, stubs: Stubs): Promise<void> {
     },
   );
 
+  // US-042: switching to the Column Masks tab triggers useColumnMasks()
+  // which would otherwise leak through to the real backend during the
+  // row-policies shell scenario. Stub an empty list so the column tab
+  // boots into its empty state cleanly. The column-masks spec owns the
+  // mutation / list / simulator contract; row-spec only needs absence
+  // of cross-tab fetch leakage.
+  await page.route(
+    '**/api/admin/column-masks*',
+    async (route: Route) => {
+      if (route.request().method() !== 'GET') {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ masks: [] }),
+      });
+    },
+  );
+
   // Row policies single-resource (PATCH / DELETE / GET /{rid}). Register
   // before the catch-all list so Playwright's LIFO dispatch picks the
   // single-resource handler for `/row-policies/{rid}` and the catch-all
@@ -354,12 +375,14 @@ describeFeature('Security Policies — Row Policies tab', () => {
     });
 
     await Then(
-      'the Column Masks placeholder renders citing US-042',
+      'the Column Masks tab renders (US-042) and the panel switches',
       async () => {
-        await expect(securityPage.columnMasksPlaceholder).toBeVisible();
-        await expect(securityPage.columnMasksPlaceholder).toContainText(
-          'US-042',
-        );
+        // US-042 ships the Column Masks tab. The shell scenario still
+        // exercises tab navigation but now the panel renders the live
+        // ColumnMasksTab (empty state for the unconfigured stub) rather
+        // than the US-041 placeholder. The next scenario (Cell Masks)
+        // still hits the US-043 placeholder.
+        await expect(securityPage.columnMasksTab).toBeVisible();
         await expect(securityPage.tabPanel).toHaveAttribute(
           'data-active-tab',
           'column',
