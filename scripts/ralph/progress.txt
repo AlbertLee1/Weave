@@ -642,3 +642,40 @@ Phases:
   - **BDD 用 ID-prefixed unique ontology apiName 避免跨 scenario state 串扰**：`bdd_quiver`（US-018）/ `bdd_cellmask`（US-016）/ `bdd_timetravel`（US-017）/ `bdd_automation`（US-015）/ `bdd_saga_*`（US-014）。每个 step 包独占自己 apiName 前缀，TRUNCATE CASCADE 之外再加一道天然隔离——同一 PG container 复用 跑 21 scenarios 时不会因 apiName 相同把对方的种子读到。
   - **DateTimeField + RFC3339 字符串是 timestamp seed 最简组合**：`index.Property{BaseType: "timestamp", IsSearchable: true}` → `mapping.NewDateTimeFieldMapping()`；文档存 `"2026-05-13T00:15:00Z"` 字符串，bleve 自动解析+索引。`aggregation.getDurationEntries` 从 Hit.Fields[field] 读回 `string`（RFC3339）→ `time.Parse` → epoch → bucket。不要 hand-roll epoch float64 + NumericField，可读性差且与 OSS read-path 真实行为脱节。
 ---
+
+## 2026-05-13 01:35 - US-019 BDD: function_replay_versioning.feature
+- 落地 `test/bdd/features/function_replay_versioning.feature` 3 scenarios + Background：
+  - **Replay-Same-Result** — 创建 `compute@1.0.0`/`compute@2.0.0`，execute compute@1.0.0 → 记录 executionId → POST replay → 200 / match=true / originalHash == replayHash / functionVersion="1.0.0" / store 中 2 行（1 execute + 1 replay）/ replay 行 ReplayOf 反向指针指向原始 executionId。
+  - **Pin-Old-Version** — execute compute@1.0.0 → 之后再 publish compute@3.0.0 → replay 历史 executionId → 200 / functionVersion="1.0.0" / store 行 [1] is_replay=true 且 version="1.0.0"。证明 ReplayFunction 通过 `original.FunctionVersion` 而非 `getLatest()` 解析，新版本发布不会污染历史 replay 路径。
+  - **Default-Latest** — execute compute（裸名）→ 200 / response.functionRid == GetFunctionByName(compute).RID（即 2.0.0 的 RID）/ store 行 [0] version="2.0.0" 且 is_replay=false。验证 `resolveFunctionRef` 走 `GetFunctionByName` + `SortFunctionsByVersionDesc` 选最高 semver。
+- 落地 `test/bdd/steps/function_replay_steps.go` 11 个 Given/When/Then 步骤 + 2 个本地 fake 实现：
+  - `bddFunctionExecutor` 满足 `oms.FunctionExecutor`，按 `name + "@" + version` map 派发返回值，因此每个 seed 步骤声明的 (version, result) 元组进入 Executor，handler 调用 `Execute(ctx, fn, params)` 时按 `fn.Name + "@" + fn.NormalisedVersion()` lookup —— 无需 Goja runtime，replay 路径用同一 Executor 跑也得到 byte-identical hash。
+  - `bddFunctionExecStore` 满足 `oms.FunctionExecutionStore`，slice-backed in-memory store，提供 `snapshot()` + `reset()` 让 Then-step 拿稳定快照、resetMaps 跨 scenario 清零。比把 cmd/server 的 `pgFunctionExecutionStore` 提到 `pkg/oms/functionspg/` 更直接（unit 单测已覆盖 PG 实现，BDD 关心 handler 契约即可）。
+- 配套 `test/bdd/steps/state.go` 扩展：
+  - suiteState 加 `functionRouter / functionExec / functionExecStore / lastFunctionResponse / lastFunctionExecutionID` 五字段 + `functionHTTPResult` 类型。
+  - `ensureContainer` 末尾 wire 4 条路由：POST `/api/v2/ontologies/{ontologyApiName}/functions`、GET `/.../functions/{functionRid}`、POST `/.../functions/{functionRid}/execute`、POST `/.../functions/{functionRid}/replay`，并 `s.handler.SetFunctionExecutor(s.functionExec)` + `s.handler.SetFunctionExecutionStore(s.functionExecStore)`。
+  - `resetMaps` 每个 scenario 清零 `lastFunctionResponse` / `lastFunctionExecutionID`、reset store、**重建** `bddFunctionExecutor`（map 跨 scenario 累加会污染下一个 scenario 的 GetFunctionByName 结果路径）并 SetFunctionExecutor 注入新实例。
+  - `truncateOntologyGraph` 把 `function_executions` 加入 TRUNCATE 列表（无 FK 到 ontologies，CASCADE 走不到）。
+- 配套 `test/bdd/steps/steps.go` 顶层注册 `registerFunctionReplaySteps(t, sc, state)`。零生产代码改动。
+- 验证：
+  - `make test-bdd` → **24 scenarios（含原 21）/ 217 steps / 0 fail / 32.98s**。3 个新 scenarios 21 个步骤全绿。
+  - `go build ./...` / `go vet -tags bdd ./test/bdd/...` 双绿。
+  - `go test -count=1 -short ./pkg/...` 全绿（pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）。
+  - `go test -count=1 -short ./cmd/... ./internal/...` 全绿。
+  - `go test -count=1 -tags integration -short ./test/integration/...` main / phase6 / phase7 全绿（phase7 第一次 testcontainer 卡 port 5432 取不到，retry 一次绿；这是 OS 网络栈瞬态，跟 US-019 无关）。
+- 文件改动：
+  - test/bdd/features/function_replay_versioning.feature (新)
+  - test/bdd/steps/function_replay_steps.go (新)
+  - test/bdd/steps/state.go (扩展 function 字段 + ensureContainer 4 条路由注册 + resetMaps 清零 + truncateOntologyGraph 加 function_executions)
+  - test/bdd/steps/steps.go (注册 registerFunctionReplaySteps)
+- **Learnings for future iterations:**
+  - **`oms.OMSHandler` 的 4 个 Function 路由（CreateFunction / GetFunctionV2 / ExecuteFunction / ReplayFunction）已经在 pkg/oms/handlers_function.go + handlers_function_replay.go 完整实现**，BDD 只需 wire 一个 chi.Router 暴露这 4 条 path 然后注入 Executor + ExecutionStore 即可。**不要**复刻 cmd/server/main.go 的 NotificationHub / FunctionCacheInvalidator / FunctionQuotaLimiter 全套依赖——BDD 关心 handler 契约不关心 quota 限流路径。`pkg/oms` 不依赖 cmd/server 的 wiring，所以单独 wire handler 就够。
+  - **ReplayFunction 的版本解析锚点是 store row 的 FunctionVersion，不是 URL ref**：`handlers_function_replay.go:108` 把 `got.FunctionVersion` 赋给 version，然后 `resolveFunctionForReplay(ctx, ontologyAPIName, fnIdentifier, version)` 走 `GetFunctionByNameVersion(name, version)`。所以 Pin-Old-Version scenario 用 `compute` 裸名 + 旧 executionId，handler 仍能 pin 到 1.0.0；URL ref 仅决定 name 的查找路径。这是"Pinned replay" 的核心契约，BDD 用单独 scenario 验证。
+  - **resolveFunctionRef 的 `(rid, name, name@version)` 三态分发**：`pkg/oms/handlers_function.go:268`，`splitFunctionRef(ref)` 用 `@` 切分，有 `@` 走 `GetFunctionByNameVersion`，没有走 `GetFunctionByName`（PGRepository 内部 SQL 用 `WHERE rid=$2 OR name=$2`，所以裸 RID 也能命中）。Default-Latest scenario 用裸 name 触发 `GetFunctionByName` + `SortFunctionsByVersionDesc` 路径——这是 OSv2 SDK "永远默认最新" 的契约入口，必须有 BDD 覆盖。
+  - **BDD-local FunctionExecutor 按 `(name, version)` 派发是 replay 确定性的关键**：执行路径 `Execute(ctx, fn, params)` 时 fn 已是从 PG 解析出的精确版本，所以 BDD executor 用 `fn.Name + "@" + fn.NormalisedVersion()` 做 lookup key 就能保证：（a）`compute@1.0.0` 一直返回 "alpha-v1"；（b）replay 同一 executionId 解析回 1.0.0 后仍返回 "alpha-v1"；（c）2.0.0 / 3.0.0 published 后裸名解析变 2.0.0 / 3.0.0 但 replay 路径不动。Goja 真实 runtime 也是按 fn.Version pin 的执行——BDD-local fake 只是把"determinism" 从 JS 源码层换成 lookup 表层。
+  - **resetMaps 必须重建 bddFunctionExecutor 而非清空 map**：如果只 `executor.results = map[string]string{}`，下一个 scenario seed 期间又 set 进同样 key 没问题；但如果用了 SetFunctionExecutor 注入到 handler，handler 持有的是引用。安全的做法是 **重建 executor + SetFunctionExecutor 重注入** —— 这跟 US-016 cellMaskStore 重建 + SetCellMaskEngine 重注入是同一种范式。任何"per-scenario 必须清零的 in-memory adapter" 都按这个 (a) 新建实例 (b) 重 wire 到 Service 的 2 步模板做。
+  - **function_executions 表无 FK 到 ontologies/functions**：migration 000084 故意把 function_rid / ontology_rid 存为 plain TEXT 而非 FK，让 Function 行删除后 audit 行存活（"deleted function 的历史执行不应消失"）。所以 TRUNCATE ontologies CASCADE 走不到 function_executions —— 必须在 truncateOntologyGraph 里显式列出。模板与 US-014 的 `action_sagas` 一样：任何"audit / log 表故意不挂 FK"的，BDD reset 路径要手工补一刀。
+  - **`memExecutionStore` 在 pkg/oms 测试包 (`oms_test`) 里是 package-private** —— BDD 不能 import。在 BDD step 包内复制 ~50 LOC 的等价实现即可（slice + mutex + snapshot/reset helpers）。任何"在 testfile 里定义的 in-memory adapter" 都要这样复制，不要打开测试 visibility 给非 test 包用。
+  - **不要复刻 cmd/server/function_execution_store.go 的 PG 实现到 pkg/oms/functionspg/**：跟 sagapg 不同，function_executions 已有完整 unit 测试（handlers_function_replay_test.go 用 memExecutionStore），且生产路径 cmd/server 直接 NewPGFunctionExecutionStore 也无外部 caller。BDD 只关心 handler 契约不关心 PG SQL 兼容性，所以 in-memory 实现已经足够。只有当未来出现第三方 caller（CLI / 远程 audit replay 工具）时才需要把它提到 importable package。
+  - **Function.SourceCode 在 BDD seed 时不能为空**（`function_semver.go:65` Validate 校验），但内容随意。用 `fmt.Sprintf("// bdd stub: %s@%s -> %q", fnName, version, result)` 把版本和预期返回值嵌进 source comment 让调试 PG 行时一眼能看出哪个 BDD scenario seed 的，但运行时它根本不被 Goja 执行（BDD executor 按 (name,version) 直接派发）。
+---

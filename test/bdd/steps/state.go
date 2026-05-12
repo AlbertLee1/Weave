@@ -88,6 +88,20 @@ type suiteState struct {
 	quiverRouter       chi.Router
 	lastQuiverResponse *quiverHTTPResult
 
+	// US-019 function replay + version binding BDD wiring. functionRouter
+	// exposes the Function create/execute/replay endpoints; functionExec
+	// dispatches on (name, version) → seeded result so the executor is
+	// fully deterministic; functionExecStore is an in-memory implementation
+	// of oms.FunctionExecutionStore that the handler writes recorded /
+	// replayed rows into so Then-steps can assert row counts + per-row
+	// metadata. lastFunctionExecutionID is set after every execute so the
+	// replay When-step can target the just-recorded row.
+	functionRouter          chi.Router
+	functionExec            *bddFunctionExecutor
+	functionExecStore       *bddFunctionExecStore
+	lastFunctionResponse    *functionHTTPResult
+	lastFunctionExecutionID string
+
 	mu                sync.Mutex
 	apiNameToRID      map[string]string // ontology apiName → RID
 	objectTypeRIDs    map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
@@ -132,6 +146,13 @@ type timeTravelHTTPResult struct {
 // quiverHTTPResult is the per-scenario response snapshot stashed on
 // suiteState for the US-018 Quiver aggregation Then-steps.
 type quiverHTTPResult struct {
+	statusCode int
+	body       []byte
+}
+
+// functionHTTPResult is the per-scenario response snapshot stashed on
+// suiteState for the US-019 function replay + version binding Then-steps.
+type functionHTTPResult struct {
 	statusCode int
 	body       []byte
 }
@@ -290,8 +311,22 @@ func (s *suiteState) resetMaps() {
 	s.lastCellMaskResponse = nil
 	s.lastTimeTravelResponse = nil
 	s.lastQuiverResponse = nil
+	s.lastFunctionResponse = nil
+	s.lastFunctionExecutionID = ""
 	if s.sagaPublisher != nil {
 		s.sagaPublisher.reset()
+	}
+	// US-019: drop accumulated function executions + executor result map
+	// between scenarios so a Replay-Same-Result row from the previous
+	// scenario does not bleed into Pin-Old-Version's row indexing.
+	if s.functionExecStore != nil {
+		s.functionExecStore.reset()
+	}
+	if s.functionExec != nil {
+		s.functionExec = newBDDFunctionExecutor()
+		if s.handler != nil {
+			s.handler.SetFunctionExecutor(s.functionExec)
+		}
 	}
 	// Clear cell masks between scenarios so a Mask-Hit fixture from the
 	// previous scenario does not bleed into the next. The MemoryStore is
@@ -399,6 +434,26 @@ func (s *suiteState) ensureContainer(t testing.TB) error {
 		ossHandler.AggregateObjects,
 	)
 	s.quiverRouter = qr
+
+	// US-019 function replay + version binding. The Function create /
+	// execute / replay endpoints share the OMSHandler already constructed
+	// above; an in-memory executor returns whichever string the seed step
+	// declared for each (name, version) so /execute and /replay run with
+	// a deterministic, version-aware return value (no Goja required).
+	// The in-memory FunctionExecutionStore captures the audit rows the
+	// /execute and /replay handlers persist so Then-steps can assert on
+	// row counts + is_replay flags without standing up the PG-backed
+	// store from cmd/server.
+	s.functionExec = newBDDFunctionExecutor()
+	s.functionExecStore = newBDDFunctionExecStore()
+	s.handler.SetFunctionExecutor(s.functionExec)
+	s.handler.SetFunctionExecutionStore(s.functionExecStore)
+	fr := chi.NewRouter()
+	fr.Post("/api/v2/ontologies/{ontologyApiName}/functions", s.handler.CreateFunction)
+	fr.Get("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}", s.handler.GetFunctionV2)
+	fr.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/execute", s.handler.ExecuteFunction)
+	fr.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay", s.handler.ReplayFunction)
+	s.functionRouter = fr
 	return nil
 }
 
@@ -412,10 +467,15 @@ func (s *suiteState) truncateOntologyGraph() error {
 	// action_saga_steps + action_saga_dlq reference action_sagas with
 	// ON DELETE CASCADE so they are wiped automatically when the saga
 	// header table is truncated CASCADE.
+	//
+	// function_executions has no FK back to ontologies (it stores the
+	// function_rid + ontology_rid as plain strings, so the row survives
+	// a function being deleted). Truncate it explicitly so US-019 BDD
+	// scenarios observe a clean audit log between runs.
 	_, err := s.pg.Pool.Exec(context.Background(),
-		`TRUNCATE TABLE ontologies, action_sagas RESTART IDENTITY CASCADE`)
+		`TRUNCATE TABLE ontologies, action_sagas, function_executions RESTART IDENTITY CASCADE`)
 	if err != nil {
-		return fmt.Errorf("truncate ontologies + sagas: %w", err)
+		return fmt.Errorf("truncate ontologies + sagas + function_executions: %w", err)
 	}
 	return nil
 }

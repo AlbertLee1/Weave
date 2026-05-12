@@ -286,8 +286,8 @@
         "Tests pass"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/function_replay_versioning.feature 落地 3 scenarios（Replay-Same-Result / Pin-Old-Version / Default-Latest）+ Background；test/bdd/steps/function_replay_steps.go 实现 11 个 Given/When/Then 步骤 + 2 个本地 fake（bddFunctionExecutor 按 (name, version) 派发返回值 / bddFunctionExecStore 满足 oms.FunctionExecutionStore，捕获 IsReplay/ReplayOf/FunctionVersion）。SUT 走真实 chi.Router + pkg/oms.OMSHandler.CreateFunction / ExecuteFunction / ReplayFunction，与 cmd/server 路由形状 1:1 对齐：Background 用 PG 直写 CreateFunction 两条版本（1.0.0 + 2.0.0）；Scenarios POST execute (`/functions/{ref}/execute`) 或 replay (`/functions/{name}/replay` with executionId) 落到三层断言：HTTP status 200 + response body { match=true, originalHash==replayHash, functionRid=latest.RID, functionVersion='1.0.0' } + function_executions in-memory store 行计数 / 版本字段 / IsReplay+ReplayOf 反向指针。Pin-Old-Version 验证 publishedNew@3.0.0 不会污染原始 executionId 的 replay 路径（Handler 通过 store row.FunctionVersion 而非 latest 解析）。Default-Latest 验证 bare 'compute' 名解析到最高 semver 2.0.0（GetFunctionByName + SortFunctionsByVersionDesc）。配套 suiteState 加 functionRouter / functionExec / functionExecStore / lastFunctionResponse / lastFunctionExecutionID 五字段；ensureContainer 注册 4 条 functions 路由 + SetFunctionExecutor + SetFunctionExecutionStore；resetMaps 在每个 scenario 重建 bddFunctionExecutor + reset bddFunctionExecStore 防止结果映射跨 scenario 污染；truncateOntologyGraph 把 function_executions（无 FK 到 ontologies，CASCADE 走不到）加入 TRUNCATE 列表。零生产代码改动。make test-bdd → 24 scenarios（含原 21）/ 217 steps / 0 fail / 32.98s。go build / go vet -tags bdd 双绿；./pkg/... -short 全绿（pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关，US-004/007/010/011/012/013/014/015/017 反复见）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
     },
     {
       "id": "US-020",
