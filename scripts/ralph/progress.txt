@@ -273,3 +273,32 @@ Phases:
   - `pkg/actions` 已经 5 个 mock store（`mockOmsRepo` / `memActionJobStore` / `memActionApprovalStore` / `memSagaStore` / `recordingPublisher`）——新写 wrapper 优先嵌入 `*memXxxStore` 复用 mu/map，不要 fork 整个 mock。`slowApprovalStore` / `casApprovalStore` 都是这个模式。
   - Approval Handler `reviewApproval` 的 5xx 路径用 `ApprovalUpdateFailed`（500，generic internal error）而不是 `ApprovalConflict`（409）——store 层的 ctx err 走 internal 通道，handler 的 PENDING 重审走 conflict 通道。区分这两类失败需要看 HTTP status code，不能只看 error name。
 ---
+
+## 2026-05-12 22:05 - US-008 pkg/links FK 解析与循环引用补测
+- `pkg/links/traverse.go`（新，~120 LOC）：新增多跳遍历 helper `(r *Resolver).TraverseHops(ctx, startObjectTypeRID, startPKs, hops, opts)` + 类型组 `Hop{LinkTypeRID, Direction}` / `PermissionFilter func(ctx, hopIndex, outObjectTypeRID, pk) bool` / `TraverseOptions{MaxHops, Permission, DisableCycleGuard}` / `TraverseAudit{Inputs, Outputs, Pruned, Denied}` + sentinel `ErrTooManyHops`。每 hop 一次 `r.getLinkType` 取 outOT，然后直调 package-private `r.dispatch` 单次（绕过 `ResolveLinked` 的二次 getLinkType），输出 `uniqueStrings` dedupe → cycle prune (`visitedKey(objectTypeRID, pk)`) → optional `Permission` filter；working set 为空即填零审计槽短路剩余 hop（保证 `len(audit.Inputs) == len(hops)`）；`MaxHops>0` 配合 `errors.Is(err, links.ErrTooManyHops)` 卡过深 path。`uniqueStrings` 是顺序保留 dedupe helper，可被未来 traversal/aggregation 路径复用。
+- `pkg/links/us008_fk_resolution_test.go`（新，~370 LOC）：5 个顶级 + 17 个 t.Run 子测试（≥AC 8），覆盖 PRD 列举的 4 类资源：
+  - `TestUS008_LinkTypeCache_FKResolution_HitInvalidationTTL`（3）：warm-cache 5 次 TraverseHops 仅 1 repo call（LinkTypeCache hit）/ `InvalidateAll()` 强制 refetch / `SetNowFunc` + TTL 过期触发 refetch。验证 cache 经 `r.getLinkType` 链路正确生效。
+  - `TestUS008_TraverseHops_CycleDetection`（3）：direct loop A→B→A 用两个 forward 链 (`ab` + `ba`) prune 回到 seed 的 a1 → 空集 / triangle A→B→C→A 3-hop prune 第三 hop 输出 a1 → 空集 / `DisableCycleGuard=true` 关闭后 a1 正常返回（验证开关）。
+  - `TestUS008_TraverseHops_MultiHopPropagation`（3）：2-hop a→b→c 全集 {c1, c2} / fan-in dedup intermediate（a1+a3 都指向 b1 → working set 收敛到 [b1]）/ empty intermediate 短路（起点 unindexed → hop1 输出 0 → hop2 填零审计槽，不调 resolver）。
+  - `TestUS008_TraverseHops_PermissionTrim`（3）：deny c1 后最终输出仅 {c2}，`Denied[1]=1` / deny 中间 b1 → 完整 propagation 链被切，最终仅 c2 / deny-all 后 hop1 输出 0 → 后续 hop 短路且 `Denied[1]=0`（不重复扣减）。
+  - `TestUS008_TraverseHops_BoundaryConditions`（5）：empty startPKs → nil result / empty hops → unique(startPKs) / `MaxHops=1` + 2 hops → `errors.Is(err, links.ErrTooManyHops)` / pre-canceled ctx → `errors.Is(err, context.Canceled)`（首个 ctx.Err() 检查在 hop loop 顶部）/ 未知 linkTypeRID → wrapped error 不 panic。
+- fixture helper `setupChain(ots []chainOT, lts []chainLT)` 把 Bleve 索引 + mockRepo 资源声明化生成；复用 `cached_resolver_test.go` 的 `countingLinkRepo`（嵌入 `*mockRepo`）做 `GetLinkType` 调用计数。`sortedStrs` 本地排序 helper，避免和 `pkg/oss/objectset` 同名 `sorted` 跨包冲突。
+- 验证：
+  - `go test ./pkg/links -count=1 -cover` → **89.4% of statements**（基线 ~84%）。
+  - `go test ./pkg/links -count=1 -run TestUS008` → 5/5 顶级 + 17/17 子测试 PASS / ~1.9s。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/links/ ./pkg/oss/... ./pkg/index/ ./pkg/oms/` 全绿。
+  - `go test -count=1 -short -tags integration ./test/integration/` 全绿 (58.7s)。
+- 文件改动：
+  - `pkg/links/traverse.go`（新）
+  - `pkg/links/us008_fk_resolution_test.go`（新）
+- **Learnings for future iterations:**
+  - `pkg/links/resolver.go` 的 `dispatch(ctx, lt, pks, dir)` 是 package-private，可在同包新文件（如 `traverse.go`）直调，避免 `ResolveLinked` 顶部的 `r.getLinkType` 二次查询——TraverseHops 在循环里已经持有 *LinkType，复用即可。LinkTypeCache 的 cache miss 通过 RWMutex 串行化，二次查询本可以走 cache hit 但仍多一次锁竞争，单次 dispatch 更干净。
+  - Cycle 检测的语义选型：(1) 按 `(objectTypeRID, pk)` key 而非裸 pk（避免 ObjectType A 的 "1" 与 B 的 "1" 误判）；(2) 起点先入种 visited（startObjectTypeRID + 每个 startPK），否则 direct A→B→A 在 hop2 还没 prune 到回路；(3) 只 prune `output` 不 prune `input`，因为 input 已经是上一 hop 的 output（已被 prune 过）。这是 `pkg/oss/objectset` searchAround_path 已经在用的 contract，US-008 把它复刻到 `pkg/links` 层。
+  - `next[:0]` 在 cycle prune 里就地复用切片底层数组是安全的（read pos ≥ write pos），但下一个阶段（permission filter）必须 `make([]string, 0, len(next))` 新建，否则 audit 报告里 `len(next)` 已经不是原始输出长度——这是测试观察 `audit.Denied[i]` 想看到的 raw deny count。
+  - `len(audit.Inputs) == len(hops)` 是契约：working set 一旦清零，循环还要填 `Inputs/Outputs/Pruned/Denied = 0` 各一槽再返回，让 caller 总能按 hop index 取审计字段不越界。
+  - countingLinkRepo 在 `cached_resolver_test.go` 已经存在，US-008 复用 `&countingLinkRepo{mockRepo: &mockRepo{...}}` 字段直接覆盖即可，避免 fork 整个 mock。`countingLinkRepo` 的 atomic 计数允许并发但本测试是 sequential。
+  - `links.NewLinkTypeCache(60*Second).SetNowFunc(fn)` 是 TTL 过期测试的关键 hook；不要 `time.Sleep` 让测试变 flaky。
+  - `errors.Is(err, links.ErrTooManyHops)` / `errors.Is(err, context.Canceled)` 通过 `fmt.Errorf("%w", ...)` wrap 后仍能正确传递，符合 sentinel-error 习惯——HTTP handler 把 ErrTooManyHops 映射成 400 / 422 都用 `errors.Is` 而非 type assert。
+  - Bleve `IndexDocument(objectType, pkVal, doc)` 的 docID 是 pkVal 字符串；后续 `bleve.NewDocIDQuery([]string{pkVal})` 可以直接命中。我的 setupChain helper 通过 `d[ot.pk].(string)` 取 doc 内嵌的 pk 字段保证 docID/pkVal 一致。
+---

@@ -120,8 +120,8 @@
         "Tests pass"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/links/traverse.go 新增 TraverseHops/Hop/PermissionFilter/TraverseOptions/TraverseAudit/ErrTooManyHops（~120 LOC）：以 (objectTypeRID, pk) 为键的 visited set 做环检测，输入 set 由 startObjectTypeRID 入种；每 hop 跑 r.dispatch 单次（绕过 ResolveLinked 的双 getLinkType）、dedupe → cycle prune → optional Permission filter；空 working set 即填零审计槽短路剩余 hop；MaxHops>0 配合 errors.Is(ErrTooManyHops) 卡过深 path。pkg/links/us008_fk_resolution_test.go 落地 5 个顶级 + 17 个 t.Run 子测试（≥AC 8）覆盖 PRD 4 类资源：(1) LinkTypeCache_FKResolution_HitInvalidationTTL(3)：warm-cache 单 repo call / InvalidateAll 强制 refetch / TTL 过期 refetch；(2) CycleDetection(3)：direct A→B→A 用 ab+ba 两个 forward 链 prune seed / triangle abc 3-hop prune 第三 hop / DisableCycleGuard 关闭后 a1 返回；(3) MultiHopPropagation(3)：2-hop a→b→c 全集 / fan-in dedup intermediate / empty intermediate 短路；(4) PermissionTrim(3)：deny 目标 pk drop / deny 中间 pk break propagation / deny-all 短路；(5) BoundaryConditions(5)：empty startPKs / empty hops dedupe / MaxHops 超限 ErrTooManyHops / ctx canceled / 未知 linkType wrapped error。fixture helper setupChain(ots, lts) 构建 Bleve+countingLinkRepo 资源，复用 cached_resolver_test 的 countingLinkRepo 做 GetLinkType 计数。go test ./pkg/links -count=1 -cover → 89.4% of statements。./pkg/links/oss/index/oms -short + test/integration -tags integration -short 全绿，零回归。"
     },
     {
       "id": "US-009",
