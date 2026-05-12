@@ -14,6 +14,7 @@ export {
   ActionHistoryPage,
   BrowserPage,
   DashboardPage,
+  LogicFlowsPage,
   ThreadsPage,
 } from './pageObjects';
 export { seedOntology } from './seedOntology';

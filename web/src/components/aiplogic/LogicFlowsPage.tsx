@@ -486,7 +486,10 @@ function LogicFlowsInner() {
   };
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-9rem)] max-w-[1400px] gap-4">
+    <div
+      className="mx-auto flex h-[calc(100vh-9rem)] max-w-[1400px] gap-4"
+      data-testid="logic-flows-page"
+    >
       <FlowList
         flows={flows}
         loading={flowsQuery.isLoading}
@@ -624,18 +627,26 @@ function FlowList({
       </div>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center py-10">
+          <div
+            className="flex items-center justify-center py-10"
+            data-testid="logic-flow-list-loading"
+          >
             <LoadingSpinner />
           </div>
         ) : error ? (
-          <div className="px-3 py-3 text-xs text-rose-300">
+          <div
+            className="px-3 py-3 text-xs text-rose-300"
+            data-testid="logic-flow-list-error"
+          >
             {describeError(error)}
           </div>
         ) : flows.length === 0 ? (
-          <EmptyState
-            title="No flows yet"
-            description="Create a new flow to start designing a workflow."
-          />
+          <div data-testid="logic-flow-list-empty">
+            <EmptyState
+              title="No flows yet"
+              description="Create a new flow to start designing a workflow."
+            />
+          </div>
         ) : (
           flows.map((flow) => (
             <button
@@ -960,7 +971,10 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
 
   if (loading && !flow) {
     return (
-      <section className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/60">
+      <section
+        className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/60"
+        data-testid="logic-flow-editor-loading"
+      >
         <LoadingSpinner />
       </section>
     );
@@ -968,7 +982,10 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
 
   if (!flow) {
     return (
-      <section className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/60">
+      <section
+        className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/60"
+        data-testid="logic-flow-editor-empty"
+      >
         <EmptyState
           title="No flow selected"
           description="Pick a flow on the left, or create a new one to start editing."
@@ -1787,10 +1804,13 @@ function RunPanel({ run }: { run: AIPLogicRun }) {
         </pre>
       )}
       {(run.trace ?? []).length > 0 && (
-        <ul className="mt-1 space-y-0.5">
+        <ul className="mt-1 space-y-0.5" data-testid="run-trace-list">
           {run.trace?.map((t, i) => (
             <li
               key={`${t.nodeId}-${i}`}
+              data-testid="run-trace-item"
+              data-node-id={t.nodeId}
+              data-status={t.status}
               className={`flex items-center gap-2 rounded px-1 py-0.5 ${
                 t.status === 'failed'
                   ? 'bg-rose-500/10 text-rose-300'
