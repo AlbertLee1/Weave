@@ -27,7 +27,7 @@ import (
 func TestBDD(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
-			steps.RegisterOntologySteps(t, sc)
+			steps.RegisterAllSteps(t, sc)
 		},
 		Options: &godog.Options{
 			Format:    "pretty",

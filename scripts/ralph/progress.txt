@@ -23,6 +23,11 @@ Phases:
   Paths: []string{"features"}, TestingT: t}}`；步骤注册用 `sc.Given/When/Then(regex, fn)`。
 - 不要把 `*testing.T` 在多 scenario 共享时假设为同一个 — godog 给每个 scenario 走 subtest，
   且 `ScenarioInitializer` 每个 scenario 调一次，所以 per-scenario state（含容器句柄）独立。
+- **godog step 包共享 suiteState 的范式（US-013）**：每个 step 包导出私有 `registerXxxSteps(t, sc, *suiteState)` 而非各自 `RegisterXxxSteps`，然后由顶层 `steps.RegisterAllSteps(t, sc)` 在自己内部 `newSuiteState()` 后注入下去。`test/bdd/steps/state.go` 是状态中枢（apiNameToRID / objectTypeRIDs / branchIDs / proposalIDs lookup map + ensureContainer + truncateOntologyGraph）；`steps.go` 是 wire-up。新 step 包（automation_steps、cell_masking_steps 等）按这个范式增量加，零容器复制。
+- **BDD 三层断言（HTTP status / response body / DB row）**：仅看 HTTP 200 不够 — 必须解析 response 关键字段（errorCode / appliedCount / resolutionKey）+ 调 repo Get 读 DB 验证持久化。Conflict / failure 场景要额外断言"未变化"（branch.status 仍"open"、main 行未被改写），失败回滚是合并/事务语义的核心契约。
+- **BDD SUT 必须是 chi 路由 + handler**，不是直接 repo 方法。POST `/branches/{id}/merge` 经过 `MergeBranch` 才覆盖 JSON 反序列化、conflict detection 调度、状态机推进、错误响应 schema。直接调 repo 就退化成 unit test，丢失业务规则层。
+- **`TRUNCATE ontologies RESTART IDENTITY CASCADE` 一条搞定 schema 重置**：FK CASCADE 走 ontology → object_types / ontology_branches → ontology_branch_changes / ontology_proposals → proposal_reviews。前提是底表都 ON DELETE CASCADE 配齐（migrations 000001/000024/000025 都符合）。新增 ontology-rooted 表时务必带 ON DELETE CASCADE，否则 BDD reset 路径会被 FK 违反卡住。
+- **godog step regex 必须 `^...$` 双锚点**：相似前缀的步骤（"records a MODIFIED change on X with new displayName Y" 与 "...with before displayName A and new displayName Y"）没锚点会被短的吃掉前缀触发 step ambiguity；godog v0.15 仅 warning 不 fail，容易隐性走错 handler。
 - `pkg/oms.Repository` 当前没有 `DeleteOntology`；BDD/集成场景要硬删除时直接走 `pool.Exec` 即可，
   但请同时校验 FK（snapshots/branches）级联前确认。
 - 前端 BDD 入口：`cd web && npx playwright test --grep @smoke`（或跑 `tests/` 子集）。
@@ -427,3 +432,37 @@ Phases:
   - `EnforceOntologyScope` 的契约：admin 全局角色 → bypass 全 ontology；OntologyRoles[rid] 的 scoped role 必须**也**有对应 perm 才放行。所以 viewer scope + `PermObjectTypeWrite` 要 deny，而 viewer scope + `PermObjectRead` 要 allow — 这是测 "rate limit threshold" 之外最容易写错的不对称。
   - `OntologyScopeMiddleware` 从 URL `/api/v2/ontologies/{apiName}/...` 中抠 api name（不是 RID），所以 `OntologyRoles` map 的 key 在测试里用 `"northwind"` 而不是 `"ri.ontology.main.ontology.northwind"`。生产路由会有把 apiName 翻译成 RID 的步骤但 middleware 自己就用 apiName 做 key — 否则中间件层根本来不及 resolve RID。这是 `scope_middleware.go` 上方注释里早就说过的事，但跨 story 容易忘。
 ---
+
+## 2026-05-12 22:50 - US-013 BDD: ontology_branch_merge.feature
+- `test/bdd/features/ontology_branch_merge.feature`（新）落地 3 个 scenarios：
+  - **Happy** — open branch + 1 MODIFIED change，POST `/branches/{id}/merge` 不带 conflictResolution → 200 / appliedCount=1 / skippedCount=0 / branch.status="merged" / main.objectType.displayName 已更新。
+  - **Conflict** — open branch 拍下 before=v1 的 MODIFIED change，**之后**在 main 把同一 ObjectType 改成另一个 displayName 并 IncrementOntologyVersion，POST merge → 409 / errorCode="MERGE_CONFLICT" / conflicts[*].resolutionKey="objectType:Customer" / branch.status 仍"open" / main 仍是 drift 后的值（merge 失败不回写）。
+  - **Approve-Reject** — proposal "p1" by alice → bob approve → 验 status="approved" → carol reject → 验 status="rejected" → POST `/proposals/{id}/merge` → 409（status!="approved"）/ branch 仍"open"。
+- `test/bdd/steps/branch_steps.go`（新）落地 17 个 Given/When/Then regex：
+  - 资源构建：`an objectType X with displayName Y exists in ontology Z` / `an open branch X off ontology Y` / `the branch X records a MODIFIED change on Y with new displayName Z`（含 before/after 双显参变体） / `main updates the objectType X displayName to Y`（顺便 IncrementOntologyVersion 触发冲突检测）/ `a proposal P authored by U targets branch B with title T`。
+  - SUT 调用：`I POST merge for branch X with no conflict resolution` / `I POST merge for branch X with conflict resolution body '<JSON>'` / `U approves proposal P` / `U rejects proposal P` / `I POST merge for proposal P` — 全走 chi 路由 + `state.handler.MergeBranch/MergeProposal/ApproveProposal/RejectProposal`，与 cmd/server/routes.go 上线的路由形状 1:1 对齐。
+  - 断言：`the merge response status is N` / `the merge response has appliedCount A and skippedCount S` / `the merge response errorCode is E` / `the merge response lists a conflict on K` / `the proposal merge response status is N` / `the branch X has status S in the database`（GetBranch → b.Status）/ `the objectType X in ontology Y has displayName Z in the database`（GetObjectTypeByAPIName → ot.DisplayName）/ `the proposal P has status S in the database`（GetProposal → p.Status）。
+- `test/bdd/steps/state.go`（新）把 suiteState 抽到独立文件并扩展 4 个 lookup map（apiNameToRID / objectTypeRIDs / branchIDs / proposalIDs），新增 `truncateOntologyGraph()`（FK CASCADE 一条 TRUNCATE 清掉 object_types / ontology_branches / ontology_branch_changes / ontology_proposals / proposal_reviews 全部依赖）。
+- `test/bdd/steps/steps.go`（新）暴露 `RegisterAllSteps(t, sc)` — 它内部 `newSuiteState()` 然后 `registerOntologySteps` + `registerBranchMergeSteps` 共享同一份 *PGRepository + *OMSHandler，让 Background 里 `Given an ontology X exists` 一行能被后续 `Given an open branch off X` 看到。
+- `test/bdd/steps/ontology_steps.go` 重构：把状态从函数内闭包变量改为通过参数注入；`RegisterOntologySteps(t, sc)` 保留为 backward-compat shim 但 `bdd_test.go` 已切到 `RegisterAllSteps`。
+- 验证：
+  - `make test-bdd` → **6 scenarios（含原 ontology_crud 3）/ 49 steps / 全 passed / 7.9s**。新 3 个 scenarios 含 27 步全绿。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/oms/...` → ok 0.872s（refactor 没回归 OMS 既有单测）。
+  - `go test -count=1 -short ./pkg/... ./internal/... ./cmd/...` → 全绿（唯一 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` 30d 时窗 baseline flake 与本 story 无关，US-004/007/010/011/012 都反复 hit 同一 flake）。
+  - `go test -tags integration -short -count=1 ./test/integration/...` → main 73s / phase6 53s / phase7 16s 全绿。
+- 文件改动：
+  - `test/bdd/features/ontology_branch_merge.feature`（新）
+  - `test/bdd/steps/branch_steps.go`（新）
+  - `test/bdd/steps/state.go`（新）
+  - `test/bdd/steps/steps.go`（新）
+  - `test/bdd/steps/ontology_steps.go`（重构：state 改参数注入，保留 RegisterOntologySteps shim）
+  - `test/bdd/bdd_test.go`（一行：`RegisterOntologySteps` → `RegisterAllSteps`）
+- **Learnings for future iterations:**
+  - **godog `ScenarioInitializer` 每个 scenario 调一次**，所以在 initializer 闭包里 `state := newSuiteState()` 意味着每个 scenario 走独立 state + 独立 PG 容器。容器在 `t.Cleanup` 注册（forwarded via `Options.TestingT`），所以全部容器在 TestBDD 父 t 结束时统一回收。6 scenarios 跑下来 ~7.9s 主要是容器并行启动 cache 友好（pgvector:pg16 image 已 pull 过），cold pull 第一次会 5-10s。如果未来 scenarios 多到 10+，再优化成包级 `sync.Once` 共享单容器 + per-scenario TRUNCATE。
+  - **Step 包复用同一份 suiteState 的范式**：每个 step 包导出私有的 `registerXxxSteps(t, sc, *suiteState)` 而不是 `RegisterXxxSteps(t, sc)`，然后由顶层 `RegisterAllSteps(t, sc)` 在自己内部 `newSuiteState()` 后把 state 注入下去。这避免了"每个 step 包自己 newSuiteState 跑各自的 PG 容器"的灾难，也让 Background 步骤（在一个包里）能被后续步骤（在另一个包里）看到 lookup map。
+  - **BDD 真正的 SUT 必须是 HTTP 路由**（chi.Router + handler）而非直接调 repo 方法。POST `/branches/{id}/merge` 经过 `MergeBranch` handler 才能验到：JSON 反序列化（`conflictResolution` 解析）、conflict detection 调用（`detectConflicts`）、状态机推进（branch.status="merged"）+ 422/409 错误响应包 schema（`errorCode`/`conflicts`/`unresolved`）。如果只调 `repo.UpdateBranchStatus` 就跳过了整个业务规则层，scenario 就退化成 unit test。
+  - **`TRUNCATE ontologies RESTART IDENTITY CASCADE` 一条搞定 schema 重置**：FK CASCADE 走 ontology → object_types / ontology_branches → ontology_branch_changes / ontology_proposals → proposal_reviews，无需逐表 TRUNCATE。但前提是底表都 ON DELETE CASCADE 配齐（000024/000025 migrations 确认了 OK）；新增 ontology-rooted 表时务必加 ON DELETE CASCADE 否则 BDD reset 路径会报 FK 违反。
+  - **后端 BDD 三层断言**（HTTP / API response / DB row）：仅靠 HTTP status code 不够（PRD AC 明说"不允许仅 200 即通过"），还要解析 response body 关键字段（errorCode、appliedCount、resolutionKey）+ 单独 `repo.Get*` 读 DB 验证持久化效果。Conflict scenario 特别要紧：merge 失败时 branch.status 必须仍是"open"且 main 行未变 — 失败回滚是合并语义的核心契约。
+  - **构建 BranchChange.BeforeState 的诀窍**：直接 `json.Marshal(*ObjectType)` 当前 main 行作为 before，再 marshal "修改 displayName 后的副本" 作 after — 让 merge 的 `jsonEqual(BeforeState, currentMainJSON)` 在没有 main drift 时返回 true → 0 conflicts；有 main drift 时返回 false → 1 conflict。在 conflict scenario 里 main 先 update + IncrementOntologyVersion，这两件事缺一不可：`MergeProposal` 的 fast-path 是"if currentVersion <= BaseVersion: skip conflict check"，不 increment 的话即使 main 改了也直接 merge 成功。`MergeBranch` 没有这个 fast-path 总是跑 detectConflicts，但保持两条路径对称是好习惯。
+  - **godog 步骤 regex 锚点务必加 `^...$`**：feature 文件里同时存在 `the branch X records a MODIFIED change on Y with new displayName Z` 和 `... with before displayName A and new displayName Z` 两个相似步骤，没有 `$` 的话短的会匹配长的前缀 → step ambiguity warning + 静默走错 handler。godog v0.15 会以警告形式提示但仍然跑，容易漏。

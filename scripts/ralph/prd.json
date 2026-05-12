@@ -196,8 +196,8 @@
         "Tests pass"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/ontology_branch_merge.feature 落地 3 scenarios (Happy/Conflict/Approve-Reject)；test/bdd/steps/branch_steps.go 实现 branch + proposal 全套 Given/When/Then；test/bdd/steps/state.go 把 suiteState 抽出来让 ontology/branch step 包共享同一份 *PGRepository 与 *OMSHandler；test/bdd/steps/steps.go 暴露 RegisterAllSteps(t, sc) 一次性组合两个 step 包。SUT 是真实 chi 路由 + OMSHandler.MergeBranch / ApproveProposal / RejectProposal / MergeProposal，断言双重：HTTP status code + errorCode + appliedCount/skippedCount + conflicts[i].resolutionKey；以及 DB 行（branches.status、object_types.display_name via GetObjectTypeByAPIName、ontology_proposals.status via GetProposal）。make test-bdd → 6 scenarios（含原有 ontology_crud 3）/ 49 steps / 0 fail，7.9s。go vet / go build ./... 双绿；./pkg/... -short + test/integration{,phase6,phase7} -tags integration -short 全绿；仅 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关。"
     },
     {
       "id": "US-014",
