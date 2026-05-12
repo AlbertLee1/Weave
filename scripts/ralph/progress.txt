@@ -43,6 +43,9 @@ Phases:
 - `pkg/funnel.Publisher.Publish` 走 `JetStreamContext.PublishMsg(BuildPublishMsg(batch, data, subject))`：每条消息携带 `nats.MsgIdHdr = batch.ID`，JetStream 原生 dedup 处理传输层。Consumer 端可选的 `SetIdempotencyWindow(d)` 是 in-process 兜底（覆盖 `ApplyBatch` 直调旁路 NATS 的场景）。Default window=0 表示禁用——别在普通 NATS 路径开启避免与 JetStream 自己的 dedup 重复。
 - NATS Connect 测试别用空 URL（`nats.Connect("")` 默认连 `nats://127.0.0.1:4222`，docker-compose 跑着会假阳性），用 malformed scheme（`://not-a-url`）或 unreachable 端口（`nats://127.0.0.1:1`）。
 - DLQ 路径有完整的辅助函数：`BuildDLQSubject(suffix)` / `IsDLQSubject(s)` / `OriginalSubjectFromDLQ(s)` / `ReplayDLQMessage(env, publish)` / `DiscardDLQMessage(env)`。replay 路径反推 `OriginalSubject` 重投到 live stream，operator UI / CLI 可直接调；discard 是 audit-only marker（JetStream MaxAge 自己驱逐 DLQ entry）。
+- `pkg/types` 是 ontology 类型系统的 hub：23 个 `BaseType` 常量、`DataType` 结构、`Coerce` / `Validate` / `ValidateConstraints` 三大入口。新增 BaseType 时必须同步更新 `us010_test.go` 里 `BaseType_ValidateMatrix` 的 `len(cases)!=23` 守卫，否则编译期 panic — 这是"覆盖率不退化"的硬契约。
+- `pkg/types.ResolveValueType(name, registry, maxDepth)` 解析 ValueType 别名链，sentinel error 用 `errors.Is(err, ErrValueTypeCycle)` / `ErrValueTypeNotFound` / `ErrValueTypeDepthExceeded` 检测；`registry` 是 `map[string]ValueTypeDef`，OMS 调用方 1-行 mapper 即可把 `[]oms.ValueType` 切到这层。默认 depth 32，超链 raise。
+- `pkg/types.MergeInterfaceProperties(iface, object) ([]MergedProperty, error)` 把"Interface↔ObjectType 属性合并"提到类型系统原语；冲突走 `errors.Is(err, ErrInterfaceConflict)` 检测，5 类冲突（BaseType / Nullable / Array SubType / Struct Field / Decimal Precision-Scale）一次性 aggregate 返回。PC-A02 Proposals UI / OMS schema validate 可复用。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -328,4 +331,29 @@ Phases:
   - `WriteJSON` 走 `json.NewEncoder(w).Encode(err)` 会在末尾追加 `\n`；body 对比要 `bytes.TrimSpace` 否则与 `json.Marshal(err)`（不带 trailing newline）误判 mismatch。
   - 测试文件已经存在 `uuidRegex` 包级 var（在 `error_test.go` 顶部），同包 us009 文件直接复用即可——别在新文件里再 declare 一次（重复声明编译报错）。
   - `pkg/apierror` 测试零生产代码改动是个良好信号：构造器签名已经 self-consistent，US-009 只是把"每个错误码到底打哪个 HTTP status + 哪个 wire code"形式化成表格供未来 audit。
+---
+
+## 2026-05-12 23:10 - US-010 pkg/types 基础测试（23 BaseType + ValueType + Interface 合并）
+- `pkg/types/us010_test.go`（新，~310 LOC）：4 个顶级 + **66 个 `t.Run` 子测试**（≥AC 25）：
+  - `TestUS010_BaseType_ValidateMatrix`（23）：把全 23 个 BaseType 各放进一个表项，good[] / bad[] 输入跑 `Validate`；表里写死 `len(cases) != 23` 编译期 panic 守卫——后续新加 BaseType 必须同时更新这个矩阵，零侥幸漏测。
+  - `TestUS010_BaseType_CoerceMatrix`（22）：表驱动 `Coerce`，覆盖 string<->int / float, long-from-string, integer-rejects-fractional, boolean-rejects-string, date/timestamp 格式正负、array sub-type 传播、struct known/unknown field、permissive types(vector/marking) 直通、nil 短路；time 类型走 `.Equal()`，其他走 `json.Marshal` 比对避免 deep-equal map iteration 差异。
+  - `TestUS010_ValueType_Resolve`（11）：DirectBaseType / AliasChain / AccumulatesConstraintsOutermostFirst / DirectCycle(A→B→A) / SelfReferentialCycle / ThreeNodeCycle / NotFound / NotFoundMidChain / EmptyBaseTypeRejected / DepthExceeded / DefaultDepthAccepts32Hops。
+  - `TestUS010_InterfaceMerge`（10）：InterfaceOnlyAndObjectOnlyCombine / CompatiblePropertyMerged / BaseTypeConflict / NullableConflict / ArraySubTypeConflict / StructFieldConflict / DecimalPrecisionConflict / AggregatesMultipleConflicts / DeterministicOrder（sorted by APIName） / EmptyInputsReturnEmpty。
+- `pkg/types/valuetype.go`（新，~90 LOC）：`ValueTypeDef{APIName,BaseType,Constraints}` + `ResolveValueType(name, registry, maxDepth)` + sentinel error `ErrValueTypeCycle / ErrValueTypeNotFound / ErrValueTypeDepthExceeded` + 包级 const `DefaultMaxValueTypeDepth=32`。把 ValueType 别名链解析逻辑独立到 pkg/types，与 `pkg/oms.ValueType` 持久层解耦——OMS admin 路径未来可以在 `CreateValueType` 路径里调用它做服务端反环校验（目前是接受任意 baseType 字符串）。
+- `pkg/types/interface_merge.go`（新，~95 LOC）：`PropertyDef{APIName,DataType,Nullable}` + `MergedProperty{PropertyDef, Source}` + `MergeInterfaceProperties(iface, object) ([]MergedProperty, error)`，5 类冲突（BaseType / Nullable / Array SubType / Struct Field / Decimal Precision-Scale）走结构相等 `dataTypeEqual`；冲突错误用 `fmt.Errorf("%w: %v", ErrInterfaceConflict, conflicts)` 包裹，调用方用 `errors.Is(err, ErrInterfaceConflict)` 检测，list 排序后嵌入。
+- 验证：
+  - `go test ./pkg/types -count=1 -cover` → **85.6% of statements**（基线 69.4%）。AC 未指定数值阈值；超过项目 80% 门槛。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/...` 仅 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` 失败——baseline 30d 时间窗 flake，US-004 / US-007 / US-009 已记录，与本 story 无关。
+  - `go test -count=1 -short -tags integration ./test/integration/...` main 79s / phase6 57s / phase7 16s 全绿。
+- 文件改动：
+  - `pkg/types/valuetype.go`（新）
+  - `pkg/types/interface_merge.go`（新）
+  - `pkg/types/us010_test.go`（新，~310 LOC / 66 subtests）
+- **Learnings for future iterations:**
+  - PRD 说 "pkg/types 当前为 0 文件" — 实际 `basetype.go / coerce.go / validate.go / constraints.go / union_test.go / formula/` 都已经存在，story 描述过时了；老 BaseType 列表的覆盖是间接的（散落在多个 *_test.go），US-010 用单一矩阵把"每个 BaseType 都被走一遍"的契约形式化。后续加 BaseType 时 `len(cases) != 23` 守卫是唯一阻塞，比"散弹枪去掉某个测试也不报错"安全得多。
+  - `pkg/oms.ValueType` 是持久层 model，跟 pkg/types 的 `ValueTypeDef` 是不同抽象——前者带 RID/Version/CreatedAt 等持久字段，后者只关心解析行为。把环检测放在 pkg/types 一边方便后续 OMS handler / package install / 前端 admin UI 共享，OMS handler 调时把 oms.ValueType 切到 ValueTypeDef 的 mapper 一行即可。
+  - `dataTypeEqual` 必须走结构递归而不能 `reflect.DeepEqual`：DataType.Fields 是 `map[string]DataType`，Go map iteration order 不保证，但语义上 {a:string,b:int} 和 {b:int,a:string} 应该相等——DeepEqual 在 map 这里碰巧也对，但 Variants 是 slice 顺序敏感，所以混用一个递归函数就一目了然。
+  - `coerce_test.go` 已经存在 "FloatToInteger / FloatToLong / StringToTimestamp / StringToDate / IntegerToFloat / InvalidCoercion / ArrayOfStrings / NestedStruct" 8 个老用例；US-010 的矩阵刻意保留它们（没删任何东西），后续可以渐进迁移老用例进矩阵，但不要在补 coverage 时同时做重构 — 那是另外一个 PR。
+  - `MergeInterfaceProperties` 故意不验"property name 必填非空"和"BaseType.IsValid"，因为那两个守护是上游 admin handler 在 Create/UpdateInterface / CreateObjectType 时已经做的；type-system primitive 只关心"两边都来了，是否兼容"。如果未来想做 schema-validation pass，可以包一层 `ValidateInterfaceProperties(iface, obj)` 在调 Merge 前先 sanity-check。
 ---

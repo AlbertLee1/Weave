@@ -152,8 +152,8 @@
         "Tests pass"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/types/us010_test.go 落地 4 个顶级 + 66 个 t.Run 子测试（≥AC 25）覆盖 PRD 三类资源：(1) BaseType_ValidateMatrix(23): 全 23 个 BaseType 各跑一个 t.Run，good/bad 输入表驱动，编译期 len==23 守卫防止新增 BaseType 漏测；(2) BaseType_CoerceMatrix(22): 表驱动 coerce 路径覆盖 string<->int/float、long string、boolean rejects string、date/timestamp 格式校验、array sub-type 传播、struct 已知/未知字段、permissive types 直通、nil 短路；(3) ValueType_Resolve(11): DirectBaseType / AliasChain / AccumulatesConstraintsOutermostFirst / DirectCycle(A→B→A) / SelfReferentialCycle / ThreeNodeCycle / NotFound / NotFoundMidChain / EmptyBaseTypeRejected / DepthExceeded / DefaultDepthAccepts32Hops；(4) InterfaceMerge(10): InterfaceOnly+ObjectOnly 合并 / 兼容属性 merged / BaseType/Nullable/Array-subType/Struct-field/Decimal-precision 5 类冲突 / AggregatesMultipleConflicts / DeterministicOrder（sorted by APIName） / Empty 输入。配套新建生产代码：valuetype.go(ResolveValueType + ErrValueTypeCycle/NotFound/DepthExceeded sentinel + DefaultMaxValueTypeDepth=32) 与 interface_merge.go(MergeInterfaceProperties + ErrInterfaceConflict + dataTypeEqual 结构相等)，前者解耦于 pkg/oms.ValueType 持久层但语义对齐 admin_handlers.go 的 CreateValueType；后者把 Interface↔ObjectType 属性合并规则提到 pkg/types 公共原语，便于 PC-A02 Proposals UI / OMS validate 复用。go test ./pkg/types -count=1 -cover → 85.6%（基线 69.4%）。go build/vet 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows baseline 30d 时窗 flake 与本 story 无关）；test/integration{,phase6,phase7} -tags integration -short 全绿。"
     },
     {
       "id": "US-011",
