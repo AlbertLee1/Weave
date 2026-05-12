@@ -61,6 +61,9 @@ Phases:
 - **godog 表参数惯用法**：`*godog.Table` 的 `Rows[0].Cells` 是 header，后续 `Rows[1:]` 是 data；列名 → 值的解析逻辑封到 `buildApplySagaBody`（saga_steps.go）。空 cell 视作"该 parameter 不传"——用来模拟 `bookResource` 缺 `resourceId` 触发 prepare 失败的 step-fail 路径。每个 cell value 都是 `string`，复杂类型需自己反序列化。
 - **saga 三层断言矩阵（US-014）**：HTTP（status code 200/400 + `saga.status` 字段）+ NATS（`recordingPublisher.snapshot()` 计数批次 + `setFailNext(err)` 注入失败）+ DB（`sagaStore.GetSaga(sagaID).Status` / `ListSagaSteps(sagaID)[i].Status` / `ListDLQ("PENDING")` 计数）。三类要同时校验才能区分"成功""补偿成功""补偿失败入 DLQ"三态。
 - **saga 补偿器装配顺序**：必须先 `CreateActionType` 落地 compensator（如 `deleteOrder`，**不带** `CompensateActionRID`），拿到 RID 后再 `CreateActionType` 落地 primary（如 `createOrder`，`CompensateActionRID = deleteOrderRID`）。否则 primary 创建时 compensator RID 还没存在，未来 `prepareCompensator` 走 `resolveActionType` 会 ListActionTypes fallback 命中但 RID 路径首查无果。BDD seed helper `seedSagaOntology` 是这个顺序的范式实现。
+- **BDD When-step 不要重复 `ensureContainer`（US-015）**：`Background: Given a fresh weave database with migrations applied` 已经把容器拉起 + 走 `truncateOntologyGraph`；后续 When/Then-steps **只读** `state.repo` / `state.pg` / `state.automationRouter` 等。若在 When 里再调 `state.ensureContainer(t)`，会在 scenario 中段再 TRUNCATE CASCADE 一遍，抹掉 Background 刚 seed 的 ontology / objectType / actionType 行，导致 handler 报 OntologyNotFound 404。所有新增的 step 包都遵循此规则：只有"fresh weave database" 这种"重新启动"语义的 Given 才有资格调 ensureContainer。
+- **缺真实 async executor 的 lifecycle BDD 用"in-test 触发模拟器"（US-015）**：当 ontology 系统的某个子模块 (automation rule 的 cron-executor、function replay 的 functionRepo 调度器、saga 的真实 NATS event-driven retry 等) handlers + migrations + repo 全在但 trigger fire 路径没接上时，**不要** mock 出假 executor 注入到生产代码。改在 BDD step 里写一段"模拟器"：从 PG re-fetch 资源，按 lifecycle contract（状态 gate + 条件 gate）顺次评估，最后通过同一份 repo 写 result 行。好处：（a）合同的不变式（paused/condition-fail 不应有 execution 行）被文档化为可执行测试；（b）未来真实 executor 接上后，feature 文件零改动，模拟器换成真实 trigger fire 即可；（c）生产代码保持黑盒，BDD 与实现解耦。`automation_steps.go` 里 `fires with payload` step 是这种模拟器的范式实现（extractCondition + active-status gate + repo.InsertExecution）。
+- **chi URL `{ontologyApiName}` 段是"原样字符串"（US-015）**：pkg/oms/handlers_automation.go 里 `Create` 走 `resolveOntologyRID(ctx, chi.URLParam(...))`（apiName 或 RID 都通），但 `List` / `Get` / `Pause` / `Resume` / `ListExecutions` 直接把 URL 段当 RID 用（无 resolve），见 handlers_automation.go:111。所以 list 必须传 RID，create 可传 apiName。BDD 走 pause/resume/executions 端点要么传 RID，要么使用 ruleId 路径（这些操作以 ruleId 为 PK，不依赖 ontologyRID 路径段）。同步规则适用 pkg/oms 其他 read-path handlers；BDD/前端/集成测试时遇到 404 先检查传的是 RID 还是 apiName。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -507,3 +510,37 @@ Phases:
   - **`createObject` rule 不消费 primaryKey 参数**：rules.go:221-231 的 createObject case 自己 `rid.NewObjectRID()` 生成 PK，参数里的 `primaryKey` 字段只用于通过 `ValidateParameters` 的 required 检查。这是反直觉的——名字叫 primaryKey 但运行时不被 createObject 用。`deleteObject` / `modifyObject` 才真的 `findPrimaryKey(objectType, params)` 去 params 里找。BDD seed 的 createOrder 把 `primaryKey` 标 required 仅是为了让"prepare fail" scenario 在 `bookResource` 缺 `resourceId` 时不被同样的 PK 缺失干扰——逻辑独立但 schema 对齐。
   - **TRUNCATE 配合 ON DELETE CASCADE 的 FK 走法**：`TRUNCATE ontologies` CASCADE 只走 ontology-rooted 链（object_types/ontology_branches/...），saga 表完全游离（action_sagas.ontology 是 string 列不是 FK）。所以 BDD reset 必须显式列入 `TRUNCATE TABLE ontologies, action_sagas RESTART IDENTITY CASCADE`，且 action_saga_steps + action_saga_dlq 通过 ON DELETE CASCADE 跟随 action_sagas（migration 000083 已经配齐）。新增任何"非 ontology-rooted"持久化必须同步更新 `state.go` 的 `truncateOntologyGraph`，否则 BDD scenarios 跑久了 PG 行越积越多最终撞 unique constraint / 行为漂移。
 ---
+
+## 2026-05-12 23:35 - US-015 BDD: automation_rule_lifecycle.feature
+- test/bdd/features/automation_rule_lifecycle.feature 落地 3 scenarios + Background:
+  - Create-Trigger-Succeed (active rule + condition='true' → InsertExecution status='success')
+  - Pause-NoTrigger (pause / resume 双向，paused rule 丢弃 trigger fire；resume 后再 fire 写入 execution)
+  - ConditionFails-NoAction (active + condition='false' → no-op；重复 pause 触发 409 AlreadyPaused)
+- test/bdd/steps/automation_steps.go 新增 13 个 Given/When/Then 步骤：
+  - Create: POST /api/v2/ontologies/{apiName}/automationRules (triggerType+condition→trigger_config)
+  - Pause/Resume: POST /...rules/{ruleId}/{pause|resume}
+  - Trigger emulator: extractCondition(trigger_config) + active-status gate → InsertExecution
+  - DB assertions: repo.GetAutomationRule.Status / repo.ListExecutions / GET .../executions 真实 HTTP round-trip
+- 配套 state.go 扩展：
+  - 新增 automationRouter chi.Router (8 路由: CRUD + pause/resume + executions)
+  - 新增 automationRuleIDs map[string]string + rememberAutomationRule/automationRuleIDFor
+  - 新增 lastAutomationResponse *automationHTTPResult
+  - resetMaps 把新 map 与 lastAutomationResponse 都纳入 per-scenario 重置
+- steps.go 加 registerAutomationSteps(t, sc, state) wire-up（4 个 register 函数共享同一 suiteState）
+- 零生产代码改动（automation rule handlers / repo / migrations 全不动）
+- 验证：
+  - `make test-bdd` → 12 scenarios（原 9 + 新 3）/ 124 steps / 0 fail / 16.1s
+  - `go build ./...` / `go vet ./...` 双绿
+  - `go test -short -count=1 ./pkg/...` 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）
+  - `go test -tags integration -short -count=1 ./test/integration/...` main/phase6/phase7 全绿
+- 文件改动：
+  - test/bdd/features/automation_rule_lifecycle.feature (新)
+  - test/bdd/steps/automation_steps.go (新)
+  - test/bdd/steps/state.go (扩展 automation 字段 + ensureContainer 多串路由)
+  - test/bdd/steps/steps.go (注册 registerAutomationSteps)
+- **Learnings for future iterations:**
+  - **BDD When-step 不要重复调 ensureContainer**：Background 的第一个 Given 已经把容器拉起 + truncate 干净，per-scenario 状态由顶层 sc.Before 的 resetMaps 重置。在 When 里再调 ensureContainer 会 TRUNCATE CASCADE 把 Background 刚 seed 的 ontology 行抹掉，导致 handler 报 OntologyNotFound 404。仅"fresh weave database with migrations applied" 这种顶层 Given 应该负责 ensureContainer，其他 step 顶多读取 state.repo / state.pg 即可。
+  - **chi 路由 ontologyApiName URL 段是"原样字符串"**：CreateAutomationRule 内部走 resolveOntologyRID（apiName 或 RID 都可），但 ListAutomationRules / GetAutomationRule / Pause / Resume / ListExecutions 各种"读"路径直接把 URL 段当 RID 用（无 resolve），见 pkg/oms/handlers_automation.go:111。所以 list/get 必须传 RID，create 可传 apiName。BDD 走 pause/resume/executions 端点要么传 RID，要么直接绕开（用 ruleId 路径，因为这些操作不依赖 ontologyRID）。
+  - **缺真实 async executor 的 lifecycle BDD 用 in-test 模拟器最稳**：automation rule 系统未连 cron / NATS executor（migrations + handlers + repo 齐全，但 trigger 真实 fire 路径不存在）。BDD 不要 mock 出一个假 executor 注入到生产代码，而是在 step 里写一段"模拟器"：从 PG 读 rule、按 lifecycle 合同（status='active' && condition='true' → 写 execution；else no-op）走，然后用 repo.InsertExecution 把模拟执行结果落库。这样：（a）合同的不变式（paused/condition-fail 不应有 execution 行）被文档化为可执行测试；（b）未来真实 executor 接上后只需复用 feature 文件，把模拟器换成真实 trigger fire 即可；（c）零生产代码改动，BDD 始终是黑盒。
+  - **trigger_config 是 JSONB**：`extractCondition` 把 JSON 反序列化成 map[string]interface{} 然后取 "condition" string 字段。生产代码未来会换成 CEL evaluator，但 JSON 字段名 contract 已经在 feature file 里钉死，迁移时不会破坏 BDD。
+  - **Pause / Resume 是 idempotent-safe 但报 409**：PauseAutomationRule 当 status=='paused' 时返回 apierror.NewConflict("AlreadyPaused")，errorCode='CONFLICT' / errorName='AlreadyPaused'。同理 Resume on already-active。BDD 用 `errorName` 字段做断言（"AlreadyPaused"）而非 errorCode（"CONFLICT"），因为 errorName 是语义粒度更细的"动作类型"，未来加更多冲突态时 errorName 才能区分。

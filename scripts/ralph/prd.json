@@ -226,8 +226,8 @@
         "Tests pass"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/automation_rule_lifecycle.feature 落地 3 scenarios（Create-Trigger-Succeed / Pause-NoTrigger / ConditionFails-NoAction）+ Background；test/bdd/steps/automation_steps.go 实现 13 个 Given/When/Then 步骤。SUT 走真实 chi.Router + OMSHandler.CreateAutomationRule / PauseAutomationRule / ResumeAutomationRule / ListExecutions；断言三层：HTTP status code（201 / 200 / 409）+ response body（status='active'|'paused' / triggerType='manual' / errorName='AlreadyPaused'）+ DB rows via repo.GetAutomationRule / ListExecutions / 真实 executions HTTP endpoint round-trip。'fires with payload' 是 in-test 触发模拟器（系统无真实 cron / async executor）：从 PG re-fetch rule，rule.status != 'active' → no-op；trigger_config.condition != 'true' → no-op；二者皆满足 → InsertExecution status='success'，与未来真实 executor 的 lifecycle 不变式严格对齐。state.go 扩展 automationRouter / automationRuleIDs map / lastAutomationResponse / rememberAutomationRule + automationRuleIDFor + automationHTTPResult，ensureContainer 多串一条 chi.Router 注册自动化规则 8 个路由（CRUD + pause / resume + executions）。steps.go 加 registerAutomationSteps wire-up。零生产代码改动。make test-bdd → 12 scenarios（含原有 9）/ 124 steps / 0 fail / 16.1s。go build / go vet 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
     },
     {
       "id": "US-016",

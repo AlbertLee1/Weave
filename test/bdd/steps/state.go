@@ -42,22 +42,38 @@ type suiteState struct {
 	// applySaga call so Then-steps can assert against status + body.
 	lastSagaResponse *sagaHTTPResult
 
-	mu              sync.Mutex
-	apiNameToRID    map[string]string // ontology apiName → RID
-	objectTypeRIDs  map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
-	actionTypeRIDs  map[string]string // "<ontologyApiName>/<atApiName>" → ActionType RID
-	branchIDs       map[string]string // branch name → branch ID
-	proposalIDs     map[string]string // proposal alias → proposal ID
+	// US-015 automation rule lifecycle BDD wiring. automationRouter wires
+	// the same OMSHandler against the automation rule + executions
+	// endpoints so step defs drive real chi-routed handlers.
+	// lastAutomationResponse stashes the latest response for Then-steps.
+	automationRouter       chi.Router
+	lastAutomationResponse *automationHTTPResult
+
+	mu                sync.Mutex
+	apiNameToRID      map[string]string // ontology apiName → RID
+	objectTypeRIDs    map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
+	actionTypeRIDs    map[string]string // "<ontologyApiName>/<atApiName>" → ActionType RID
+	branchIDs         map[string]string // branch name → branch ID
+	proposalIDs       map[string]string // proposal alias → proposal ID
+	automationRuleIDs map[string]string // automation rule name → rule ID
 }
 
 func newSuiteState() *suiteState {
 	return &suiteState{
-		apiNameToRID:   map[string]string{},
-		objectTypeRIDs: map[string]string{},
-		actionTypeRIDs: map[string]string{},
-		branchIDs:      map[string]string{},
-		proposalIDs:    map[string]string{},
+		apiNameToRID:      map[string]string{},
+		objectTypeRIDs:    map[string]string{},
+		actionTypeRIDs:    map[string]string{},
+		branchIDs:         map[string]string{},
+		proposalIDs:       map[string]string{},
+		automationRuleIDs: map[string]string{},
 	}
+}
+
+// automationHTTPResult is the per-scenario response snapshot stashed on
+// suiteState for the US-015 automation rule lifecycle Then-steps.
+type automationHTTPResult struct {
+	statusCode int
+	body       []byte
 }
 
 // sagaHTTPResult is the per-scenario response snapshot stashed on
@@ -171,6 +187,19 @@ func (s *suiteState) branchIDFor(name string) (string, bool) {
 	return id, ok
 }
 
+func (s *suiteState) rememberAutomationRule(name, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.automationRuleIDs[name] = id
+}
+
+func (s *suiteState) automationRuleIDFor(name string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.automationRuleIDs[name]
+	return id, ok
+}
+
 func (s *suiteState) rememberProposal(alias, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,7 +224,9 @@ func (s *suiteState) resetMaps() {
 	s.actionTypeRIDs = map[string]string{}
 	s.branchIDs = map[string]string{}
 	s.proposalIDs = map[string]string{}
+	s.automationRuleIDs = map[string]string{}
 	s.lastSagaResponse = nil
+	s.lastAutomationResponse = nil
 	if s.sagaPublisher != nil {
 		s.sagaPublisher.reset()
 	}
@@ -243,6 +274,21 @@ func (s *suiteState) ensureContainer(t testing.TB) error {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actions/applySaga", s.actionHandler.ApplySaga)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq", s.actionHandler.ListSagaDLQ)
 	s.sagaRouter = r
+
+	// US-015 automation rule lifecycle. The OMSHandler already constructed
+	// above is reused; we just expose its automation-rule + executions
+	// endpoints on a dedicated chi router so BDD step defs drive real
+	// HTTP semantics (status code + body schema) on top of PG persistence.
+	ar := chi.NewRouter()
+	ar.Post("/api/v2/ontologies/{ontologyApiName}/automationRules", s.handler.CreateAutomationRule)
+	ar.Get("/api/v2/ontologies/{ontologyApiName}/automationRules", s.handler.ListAutomationRules)
+	ar.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", s.handler.GetAutomationRule)
+	ar.Put("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", s.handler.UpdateAutomationRule)
+	ar.Delete("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}", s.handler.DeleteAutomationRule)
+	ar.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/pause", s.handler.PauseAutomationRule)
+	ar.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", s.handler.ResumeAutomationRule)
+	ar.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", s.handler.ListExecutions)
+	s.automationRouter = ar
 	return nil
 }
 
