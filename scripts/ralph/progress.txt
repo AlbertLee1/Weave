@@ -77,6 +77,17 @@ Phases:
 - **`approximateDistinct` facet 需要 KeywordField 才能精确小集合计数（US-018）**：`index.Property{Analyzer: "not_analyzed"}` → KeywordFieldMapping。`approximateDistinct` 在 AccuracyRequireAccurate 下走 exactDistinct（基于 Bleve facet term iteration）；如果字段是 TextField + standardAnalyzer，"host-a" 会被 token 化成 "host", "a"，distinct 计数错位。任何 distinct / topValues / groupBy=exact 的字段都该标 not_analyzed。
 - **percentile / distinct metric 名按约定 "<field>.<aggType>" 自动生成（US-018）**：bleve_agg.go 第 52-58 行：`if spec.Name == "" { name = spec.Type; if spec.Field != "" { name = spec.Field + "." + spec.Type } }`。所以 `{Type: "approximateDistinct", Field: "host"}` 输出名 = `"host.approximateDistinct"`；`{Type: "approximatePercentile", Field: "value"}` 即使 accuracy=REQUIRE_ACCURATE 也仍叫 `"value.approximatePercentile"`（名字按 spec.Type 而非引擎实际走的 exact 路径来定）。要稳的话显式 `Name: "myMetric"` 覆盖。
 - **多 percentile 输出是 map[string]float64，key 用 fmt.Sprintf("%g", p)（US-018）**：approx_percentile.go:50 / approxPercentilesFromIndex 用 `"%g"` 格式化，所以 `[]float64{50, 95, 99}` 的输出 key 是 `"50"`, `"95"`, `"99"`（无小数点）；`[]float64{99.9}` 输出 key 是 `"99.9"`。BDD 断言用 `pctMap["50"]` 即可，**不要** 写 `pctMap["50.0"]`。
+- **`pkg/oms/installedpkgpg.NewStore(pool)` 是 `oms.InstalledPackageStore` 的真正 PG 实现（US-020）**：从 `cmd/server/installed_packages_store.go` 提到 importable package（与 US-014 sagapg 同模式）。`cmd/server/main.go` 改用 `installedpkgpg.NewStore(pool)`；BDD 复用同一实现，Then-steps 可直接 `state.pkgStore.GetInstalledPackage` 验证 `installed_packages` 真实 PG 行。**模板：任何 `cmd/server/*_store.go` 里的 oms 接口 PG 实现，被 BDD/集成测试需要时都按此提到 `pkg/oms/<owner>pg/`**（已迁出 sagapg / installedpkgpg；候选 commit_jobs_store / function_execution_store）。
+- **BDD seeding 步骤里"幂等地准备 fixture"的 Given 步骤不要调 `state.ensureContainer(t)`（US-020）**：与 US-015 同一陷阱不同表现形式 — Background 的 "fresh weave database" 步骤已经把容器拉起 + truncate；但 Update-Version 这类 scenario 有 **两个** "Given a built-in package ..." 行（一个是初始 v1.0.0，另一个是 update 前重新声明 v1.1.0），如果该 Given 也调 ensureContainer，**第二次调用会在 scenario 中段再 TRUNCATE 一遍**，把已经成功安装的 widget 行抹掉。守则：仅 `Given a fresh weave database with migrations applied` 这种**字面要求"重启"语义**的 step 可以调 ensureContainer；其他 Given 至多检查 `state.repo == nil` 返回友好错误，不能调 ensure。
+- **`installed_packages` 表 ON DELETE 没挂 FK 回 ontologies（US-020）**：migration 000097 故意把 `ontology` 字段存为 plain TEXT（marketplace 行需要 outlive 被删除的 ontology），所以 TRUNCATE ontologies CASCADE 走不到 installed_packages。BDD reset 路径要在 `truncateOntologyGraph` 里显式列出（与 `action_sagas`、`function_executions` 同一类）。模板复用：任何"非 ontology-rooted 的 audit/registry 表"都按这个模板补一刀。
+- **`oms.OMSHandler` 的 7 个 Pkg 路由（PackageInstall / ListInstalledPackages / ListBuiltinPackages / InstallBuiltinPackage / GetInstalledPackage / SetInstalledPackageEnabled / DeleteInstalledPackage）已经在 pkg/oms/handlers_pkg_*.go 完整实现（US-020）**，BDD 只需 wire 一个 chi.Router 暴露这 7 条 path 然后 SetInstalledPackageStore + SetBuiltinPackageProvider 即可。**不要**复刻 cmd/server/main.go 的 PackageMigrationRunner / golang-migrate runner — `req.Migrations==nil` 时整段跳过；ActorFn / NotificationHub / Featureflag 也都是 optional 注入，BDD 留空。
+- **`BuiltinPackageProvider` 是 narrow 2-方法接口（List + Get），BDD 可以 5 分钟内手写一个 map-backed stub（US-020）**：`bddBuiltinPackageProvider` 在 step 包内 ~50 LOC 实现 set/reset/List/Get，scenarios 在 Given step 内合成 `*PackageInstallRequest`（含 `OntologyExport` JSON 字面量）注册到 map。**不要**复刻 cmd/server/builtin_packages.go 的 embedded FS + pkg/weavepkg 加载路径——那是为 examples/packages/{slug}/ 目录树设计的，BDD 想要 in-test 合成包就走 stub。同样模板适用任何"narrow 接口 + 嵌入 FS 加载实现"的对子。
+- **`OntologyExport` 是 OnConflict 控制下 import path 的入口（US-020）**：`decodePackageOntology` 把 `req.Ontology` 当 `oms.OntologyExport` 解，必填 `ontology.apiName`。最小合成 export = `{Ontology: {APIName, DisplayName}, ObjectTypes: [{APIName, DisplayName, PrimaryKey, PrimaryKeys, Status: "ACTIVE", Visibility: "PROMINENT"}]}`，没有 Properties 也合法 — importObjectTypes 永远先 GetObjectTypeByAPIName 看是否 merge，再 fallthrough 创建。onConflict="fail" 默认；"skip" → mode=merge（不删存量、添加新增）；"overwrite" → mode=replace（先 deleteOntologyEntities）。BDD update 走 "skip" 验证累加，"overwrite" 走 replace 验证替换语义。
+- **package install 是 registry-only delete（US-020）**：`DELETE /api/v2/pkg/{name}` 只删 installed_packages 行，**不**级联删 ontology 实体（widget / gadget ObjectTypes 行依然在）。Uninstall 后再次 install 走 merge-mode 不会重复 — installed_packages 是 UPSERT ON CONFLICT(name)。BDD Uninstall scenario **必须**显式断言 ObjectType 残留来锁住这个契约（不然 future PR 给 uninstall 加级联删除时这个 BDD 拒收）。
+- **`/api/admin/*` 路由在 US-006 已整体拆除（US-021）**：tests/support/seedOntology.ts 的 fallthrough POST `/api/admin/ontologies` 路径**会 404 落到 SPA fallback** 返回 `<!doctype html>` — 任何前端 BDD 走 admin 写路径都得改方案。`reuseExisting:true` 命中 GET 是 OK 的（northwind 是 `make e2e-up` 期间用 seed pipeline 跑出来的，不靠 admin POST），但**不要**指望 seedOntology 给你创建一个新 apiName。要"屏幕上多一个 ontology card"就在 spec 里 `page.route('**/api/v2/ontologies', ...)` 注入合成 row + `**/api/v2/ontologies/{apiName}/objectTypes` 返回 `{data:[]}`（OntologyCardWithCount 每张卡都 useObjectTypes 拉对应 objectTypes）。Stub 不仅简单还能精确锁住"grid 把数据正确渲染成 card"这个不变式。
+- **vitest 必须排除 `tests/**`（与 e2e/** 对称，US-021）**：US-002 加 web/tests/feature.*.spec.ts 当时只给 vite.config.ts 的 vitest exclude 列了 `**/e2e/**`，没列 `tests/**`，导致 `npm test` 跑时 vitest 会扫到 Playwright `feature.*.spec.ts` 报 `test.describe not expected here` 的 file-level 错（test 总数不变但 file-level fail）。修法：vite.config.ts test.exclude 加 `'tests/**'`。模板：以后再有第三套测试目录（如 storybook test-runner / cypress），同步加 vitest exclude。
+- **Dashboard 主页可测的 testid 矩阵（US-021）**：DashboardPage.tsx `dashboard-page`（loaded root）/ `dashboard-loading` / `dashboard-error` / `dashboard-stats-bar` / `dashboard-ontology-grid` / `dashboard-empty-state`；StatsBar.tsx `stat-ontologies` + `stat-object-types` + 内嵌 `stat-value`；OntologyCardWithCount wrapper 加 `dashboard-ontology-card-wrapper` + `data-ontology-api-name="<apiName>"`。后续要在 page object 里 locate 特定 ontology card 走 `page.locator('[data-ontology-api-name="..."]')` 即可。**OntologyCard 的 click target 是子 `<button aria-label="Open ontology <displayName>">`**，所以 page.openOntology 走 `data-ontology-api-name + getByRole('button', { name: /open ontology/i }).first()`。
+- **Playwright `page.route` 是 BDD spec 注入 happy/error/empty 三态最稳的方式（US-021）**：empty state mock `**/api/v2/ontologies` GET 返回 `{data:[]}`，error state 返回 500（React Query retry=1 后 isError=true→ Dashboard.error 分支渲染）。注意 `**/api/v2/ontologies` 通配会同时匹配 `/api/v2/ontologies/{apiName}/*`（顺序敏感）—要做 GET-only 拦截就在 handler 内 `if (request.method() !== 'GET') return route.continue()`，把 PUT/POST 透传给真实 backend。同样模板适用 list+detail 双端点共表 prefix 的所有页面。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -678,4 +689,96 @@ Phases:
   - **`memExecutionStore` 在 pkg/oms 测试包 (`oms_test`) 里是 package-private** —— BDD 不能 import。在 BDD step 包内复制 ~50 LOC 的等价实现即可（slice + mutex + snapshot/reset helpers）。任何"在 testfile 里定义的 in-memory adapter" 都要这样复制，不要打开测试 visibility 给非 test 包用。
   - **不要复刻 cmd/server/function_execution_store.go 的 PG 实现到 pkg/oms/functionspg/**：跟 sagapg 不同，function_executions 已有完整 unit 测试（handlers_function_replay_test.go 用 memExecutionStore），且生产路径 cmd/server 直接 NewPGFunctionExecutionStore 也无外部 caller。BDD 只关心 handler 契约不关心 PG SQL 兼容性，所以 in-memory 实现已经足够。只有当未来出现第三方 caller（CLI / 远程 audit replay 工具）时才需要把它提到 importable package。
   - **Function.SourceCode 在 BDD seed 时不能为空**（`function_semver.go:65` Validate 校验），但内容随意。用 `fmt.Sprintf("// bdd stub: %s@%s -> %q", fnName, version, result)` 把版本和预期返回值嵌进 source comment 让调试 PG 行时一眼能看出哪个 BDD scenario seed 的，但运行时它根本不被 Goja 执行（BDD executor 按 (name,version) 直接派发）。
+---
+
+## 2026-05-13 01:18 - US-020 BDD: package_install_lifecycle.feature
+- 落地 `test/bdd/features/package_install_lifecycle.feature` 3 scenarios + Background：
+  - **Install-BuiltIn** — 注册合成 `bdd-demo@1.0.0` builtin（ontology `bdd_pkg_install_demo` + ObjectType `widget`），POST `/api/v2/pkg/builtin/bdd-demo/install` → 201 / response.version=1.0.0 / response.ontology=bdd_pkg_install_demo / installed_packages 行存在 enabled=true / repo.GetObjectTypeByAPIName(widget) 成功。
+  - **Update-Version** — 在同一 slug 上先安装 v1.0.0/widget，然后 set provider entry 为 v1.1.0/gadget，POST install 带 body `{"onConflict":"skip"}` → mode=merge → 201 / installed_packages 行 version=1.1.0（UPSERT in place，行数 COUNT=1） / 旧 widget + 新 gadget 都在 ontology 里。
+  - **Uninstall** — 安装后 DELETE `/api/v2/pkg/bdd-demo` → 204 / `state.pkgStore.GetInstalledPackage` 返回 `oms.ErrInstalledPackageNotFound` / ObjectType widget 行**仍然存在**（uninstall 是 registry-only delete，不级联 ontology 实体）。
+- 落地 `test/bdd/steps/package_install_steps.go` 9 个 Given/When/Then 步骤：
+  - `Given a built-in package "<slug>" version "<v>" targeting ontology "<o>" with object type "<ot>"` — 在 stub provider map 内合成 (slug → PackageInstallRequest + BuiltinPackageMetadata) 元组（`buildSyntheticOntologyExport` 装最小 `oms.OntologyExport`）；**不调** ensureContainer（避免重复 truncate）。
+  - `Given the operator has installed the built-in package "<slug>"` — 先决条件 install + 断言 201。
+  - `When the operator installs the built-in package "<slug>"` / `... with onConflict "<mode>"` — POST builtin install，可选带 body `{"onConflict": mode}`。
+  - `When the operator uninstalls the package "<name>"` — DELETE pkg。
+  - `Then the install/uninstall response status is <int>` / `... says version "<v>" was applied to ontology "<api>"` — HTTP + body 三层。
+  - `Then the installed_packages row "<name>" exists with version "<v>" and enabled (true|false)` — `pkgStore.GetInstalledPackage` 验证。
+  - `Then no installed_packages row exists for name "<name>"` — 断 `errors.Is(err, ErrInstalledPackageNotFound)`。
+  - `Then exactly N installed_packages row(s) exist(s) for name "<name>"` — 原生 `SELECT COUNT(*) FROM installed_packages WHERE name=$1`，验证 UPSERT 不重复。
+  - `Then the ontology "<api>" has object type "<api>"` — `repo.GetOntology` + `repo.GetObjectTypeByAPIName` 验导入。
+- 落地 `bddBuiltinPackageProvider`（in-package stub，~70 LOC）：sync.Mutex-protected map[slug]bddBuiltinEntry，实现 List + Get + set + reset；Get 路径 deep-clones `OntologyRequest.Ontology` 避免 `InstallBuiltinPackage` handler 的 OnConflict mutation 在 scenarios 间渗透。
+- 配套生产改动（最小 lift，零行为差异）：
+  - **新增** `pkg/oms/installedpkgpg/store.go`（~140 LOC）：1:1 复制 `cmd/server/installed_packages_store.go` 实现，包名/类型名调到 `installedpkgpg.Store` / `NewStore(pool)`，方法签名保留 `oms.InstalledPackageStore` 接口契约。
+  - **删除** `cmd/server/installed_packages_store.go`（被新包替代）。
+  - **修改** `cmd/server/main.go`：import `pkg/oms/installedpkgpg`，`deps.InstalledPackageStore = installedpkgpg.NewStore(pool)`。
+  - **修改** `cmd/server/commit_jobs_store.go` 注释：从 "same shape as pgInstalledPackageStore" 改为 "same shape as the pkg/oms/installedpkgpg.Store wrapper"。
+- 配套 `test/bdd/steps/state.go` 扩展：
+  - suiteState 加 `pkgRouter chi.Router / pkgStore *installedpkgpg.Store / builtinPkgProvider *bddBuiltinPackageProvider / lastPackageResponse *packageHTTPResult` 四字段 + `packageHTTPResult` 类型。
+  - `ensureContainer` 末尾 wire 7 条 `/api/v2/pkg/*` 路由 + `SetInstalledPackageStore(installedpkgpg.NewStore(pg.Pool))` + `SetBuiltinPackageProvider(newBDDBuiltinPackageProvider())`。
+  - `resetMaps` 清零 `lastPackageResponse` + `builtinPkgProvider.reset()`（保持引用稳定，handler 已经 hold 引用）。
+  - `truncateOntologyGraph` 把 `installed_packages` 加入 TRUNCATE 列表（无 FK 到 ontologies，CASCADE 走不到）。
+- 配套 `test/bdd/steps/steps.go` 顶层注册 `registerPackageInstallSteps(t, sc, state)`。
+- 验证：
+  - `make test-bdd` → **27 scenarios（含原 24）/ 36.5s / 0 fail**。3 个新 scenarios 全绿。
+  - `go build ./...` / `go vet ./...` / `go vet -tags bdd ./test/bdd/...` 三绿。
+  - `go test -count=1 -short ./pkg/...` 全绿（pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关，US-004/007/010/011/012/013/014/015/017/019 反复见）。
+  - `go test -count=1 -short ./cmd/server/...` 全绿。
+  - `go test -count=1 -tags integration -short ./test/integration/...` main / phase6 / phase7 全绿。
+- 文件改动：
+  - test/bdd/features/package_install_lifecycle.feature (新, 3 scenarios + Background)
+  - test/bdd/steps/package_install_steps.go (新, ~330 行: 9 个 step regex + buildSyntheticOntologyExport + postInstallBuiltin + assertPackageStatus + bddBuiltinPackageProvider stub)
+  - test/bdd/steps/state.go (扩展 pkg 4 字段 + packageHTTPResult 类型 + ensureContainer 7 条路由注册 + resetMaps 清零 + truncateOntologyGraph 加 installed_packages)
+  - test/bdd/steps/steps.go (注册 registerPackageInstallSteps)
+  - pkg/oms/installedpkgpg/store.go (新, ~140 行 1:1 lifted PG store)
+  - cmd/server/installed_packages_store.go (删除)
+  - cmd/server/main.go (import + 1 行调用切换 to installedpkgpg.NewStore)
+  - cmd/server/commit_jobs_store.go (注释更新)
+- **Learnings for future iterations:**
+  - **BDD seeding 步骤里"幂等地准备 fixture"的 Given 不能调 `state.ensureContainer(t)`**：与 US-015 同陷阱不同表现。Background "Given a fresh weave database" 已经把容器拉起；Update-Version scenario 有**两个** "Given a built-in package ..."（v1.0.0 + v1.1.0），如果 Given 也调 ensureContainer，**第二次会 mid-scenario TRUNCATE** 把刚安装的 widget 抹掉。Then 步 GetObjectTypeByAPIName 报 NotFound。守则：仅字面要求"重启"语义的 Given 可调 ensure；其他 Given 至多检查 `state.repo == nil` 返回友好错误。新增 step pack 都按此守则。
+  - **`pkg/oms/installedpkgpg.NewStore(pool)` lift 模板（与 US-014 sagapg 同模式）**：任何 `cmd/server/*_store.go` 里实现 oms 接口的 PG store，**当 BDD/集成测试需要它时**就提到 `pkg/oms/<owner>pg/`。最小迁移工件：(a) 新包 `package <owner>pg` 含 `type Store struct + NewStore(pool) *Store + 接口方法集`；(b) cmd/server/main.go 改用 `<owner>pg.NewStore`；(c) 删除原文件；(d) 更新引用旧名的注释。零行为差异 — SQL 不动。**已迁出**：sagapg, installedpkgpg。**候选未来迁出**：commit_jobs_store / function_execution_store / pg_action_approval_store 等（当被第二份 caller 需要时）。
+  - **`BuiltinPackageProvider` 是 narrow 2-方法接口**：`List(ctx) []BuiltinPackageMetadata` + `Get(ctx, slug) (*PackageInstallRequest, *BuiltinPackageMetadata, bool)`。BDD ~70 LOC 即可实现 map-backed stub（set/reset/List/Get + sync.Mutex），scenarios 在 Given step 内合成 (slug → PackageInstallRequest) 注册到 map。**不要**复刻 cmd/server/builtin_packages.go 的 embedded FS + pkg/weavepkg 加载路径——那是 examples/packages/{slug}/ 树设计的；BDD 想合成包就走 stub。Get 时务必 deep-clone Ontology RawMessage，避免 handler 内 `req.OnConflict = body.OnConflict` mutation 渗透到下一个 scenario。
+  - **`installed_packages` 表 ON DELETE 没挂 FK 回 ontologies**：migration 000097 故意把 `ontology` 字段存 plain TEXT — marketplace 行要 outlive 被删除的 ontology。所以 `TRUNCATE ontologies CASCADE` 走不到 installed_packages，BDD reset 路径要在 `truncateOntologyGraph` 显式列出。**模板复用**：任何"非 ontology-rooted 的 audit/registry/log 表"（action_sagas / function_executions / installed_packages …）BDD reset 都要手工补一刀。
+  - **package install/uninstall 的契约不变式必须被 BDD 显式断言**：(a) `Install-BuiltIn` 的 ObjectType 行检查锁住"install 必须 materialise ontology 实体"；(b) `Update-Version` 的 COUNT=1 锁住 UPSERT 语义（不重复行）；(c) `Update-Version` 的 widget + gadget 都在锁住 mode=merge 不删存量；(d) `Uninstall` 显式断言 widget 依然在锁住"DELETE pkg 只删 registry 行，不级联删 ontology"。这四个不变式如果 future PR 破坏（比如给 uninstall 加级联删除），BDD 会直接 fail — 这是契约文档化的核心价值。
+  - **最小合成 OntologyExport**：`{Ontology: {APIName, DisplayName, Description}, ObjectTypes: [{APIName, DisplayName, PrimaryKey, PrimaryKeys, Status: "ACTIVE", Visibility: "PROMINENT"}]}`。Properties 可省（importProperties 对空 props 是 no-op）。`PrimaryKey="id"` + `PrimaryKeys=["id"]` 同步设置兼容 pre-US-211 单 PK 和 US-211 composite-PK 双码路径。`Status` 不给会被 importObjectTypes 默认为 "ACTIVE" 但显式给一份避免 BDD 依赖默认行为。
+  - **`InstallBuiltinPackage` 的 body 是 optional**：handler `handlers_pkg_builtin.go:111` 检查 `r.ContentLength > 0` 才 decode；body 为空时 onConflict 默认 "fail"。BDD `postInstallBuiltin` 用 `bytes.Buffer{}` 作 empty body（Len()=0 → ContentLength=0 → handler 跳过 decode）；有 onConflict 时 marshal `BuiltinInstallRequest{OnConflict}` 进 Buffer，httptest.NewRequest 自动从 buffer.Len() 推 ContentLength。**不要**手动 `req.ContentLength = ...`（httptest 已经做了）。
+---
+
+## 2026-05-13 01:36 - US-021 Playwright BDD: feature.dashboard.spec.ts
+- 实施目标：为 Dashboard 主页（`/` 落地路由 → `src/components/dashboard/DashboardPage.tsx`）补完整 BDD spec，覆盖登录后跳转 / ontology 切换 / 卡片渲染 / 快捷入口 / 空状态 / 错误态六类场景，把 US-002 的 Given/When/Then helper 实战落到一个核心页面上。
+- 实施步骤：
+  - 第 1 步：审计 DashboardPage.tsx + StatsBar.tsx + OntologyCard.tsx + EmptyState.tsx，发现整页只有 1 个 testid（`dashboard-loading`），其余靠 CSS 选择器不稳。增补 testid 矩阵：DashboardPage 加 `dashboard-page` / `dashboard-error` / `dashboard-stats-bar` / `dashboard-ontology-grid` / `dashboard-empty-state`，OntologyCardWithCount wrapper 加 `dashboard-ontology-card-wrapper` + `data-ontology-api-name="<apiName>"`，StatsBar 的 StatItem 加可选 `testId` prop + 内嵌 `stat-value`。
+  - 第 2 步：新建 `web/tests/support/pageObjects/DashboardPage.ts`，导出 root/loading/error/statsBar/statOntologies/statObjectTypes/ontologyGrid/emptyState locators + goto()/ontologyCard(apiName)/openOntology(apiName) actions；从 pageObjects/index.ts 与顶层 support/index.ts 双重 barrel re-export。
+  - 第 3 步：新建 `web/tests/feature.dashboard.spec.ts`，落 6 个 scenarios：
+    1. **Scenario: navigating to / renders the Dashboard after login @smoke** — 验证 ProtectedRoute → Shell → DashboardPage 渲染链路；`signIn(request)` 拿 AUTH_MODE-aware bearer（dev 模式空对象），`expect(dashboard.root).toBeVisible()` + `expect(dashboard.loading).toBeHidden()`。
+    2. **Scenario: the stats bar and Ontologies section heading are visible @smoke** — 验证 StatsBar 两格 stat（ontologies + object types）都 visible 且文本是数字。
+    3. **Scenario: clicking the seeded northwind card switches to the Explorer @smoke** — `seedOntology(request, {apiName:'northwind'})` reuse 现有 seed → goto / → 等 ontologyGrid visible → `dashboard.openOntology('northwind')` → `page.waitForURL(/\/explorer\/northwind/)` 锁定 react-router push。
+    4. **Scenario: the grid surfaces a newly registered ontology on refresh** — `page.route('**/api/v2/ontologies', GET)` 注入 1 条合成 ontology row（`bdd_dash_synthetic` + rid + displayName + description）+ `objectTypes` 端点返回 `{data:[]}`；断言新 card visible + stats `1`。
+    5. **Scenario: the Dashboard renders the empty state when there are no ontologies** — `page.route(... → {data:[]})` 触发 EmptyState 分支，断言 `dashboard-empty-state` visible + `dashboard-ontology-grid` count=0。
+    6. **Scenario: the Dashboard renders the error state when /ontologies fails** — `page.route(... → 500)` 触发 query error 分支（QueryClient retry:1 后 isError=true），断言 `dashboard-error` visible + grid count=0。
+  - 第 4 步：发现 vitest run 跑 `feature.dashboard.spec.ts` 时报 `test.describe not expected here`（playwright spec 被 vitest 误扫）。回归基线 stash -u 后确认是 US-002 起遗留问题（`feature.browser.search-and-filter.spec.ts` 也触发同样 file-level error，只是 1247 tests pass 数没变所以没人注意）。修复：`vite.config.ts` test.exclude 加 `'tests/**'`（与 `**/e2e/**` 对称），让 vitest 完全跳过 Playwright BDD 目录。
+- 测试结果：
+  - `npx playwright test feature.dashboard --reporter=list` → **6/6 pass / 6.7s**（4 个 @smoke + 2 个 regression）。
+  - `npx playwright test tests/` → **8/8 pass / 8.0s**（含 US-002 既有 2 + US-021 新增 6）。
+  - `npx playwright test --grep @smoke` → **5/5 pass / 6.2s**。
+  - `npm test -- --run`（vitest）→ **157 files / 1247 tests / 13.13s 全绿**（修复 `tests/**` exclude 后从 2 file-level fail → 0 fail）。
+  - `npx tsc --noEmit` → 干净。
+  - `npx eslint <changed files>` → 干净（仓库余 40 errors / 12 warnings 全属 pre-existing，与本 story 无关，US-004/006/007/010/011/012/013/014/015/017/019/020 反复见）。
+- 浏览器手工验证：dev-browser skill 不可用，使用 `curl http://localhost:5173` + Playwright headless 实际加载 React 路由验证 testid 矩阵 + click handler。
+- 文件改动：
+  - web/tests/feature.dashboard.spec.ts （新, ~220 行 / 6 scenarios）
+  - web/tests/support/pageObjects/DashboardPage.ts （新, ~65 行）
+  - web/tests/support/pageObjects/index.ts （barrel 加 DashboardPage 导出）
+  - web/tests/support/index.ts （顶层 barrel 加 DashboardPage 导出）
+  - web/src/components/dashboard/DashboardPage.tsx （加 5 个 testid + OntologyCardWithCount wrapper 加 data-ontology-api-name）
+  - web/src/components/dashboard/StatsBar.tsx （StatItem 加可选 testId prop + 内嵌 stat-value testid + 2 callsite 注入 stat-ontologies/stat-object-types）
+  - web/vite.config.ts （vitest test.exclude 加 `'tests/**'`）
+  - scripts/ralph/prd.json （US-021 passes=true + notes）
+  - scripts/ralph/progress.txt （Codebase Patterns 加 5 条 + 本条 ## entry）
+- **Learnings for future iterations:**
+  - **`/api/admin/*` 整个被 US-006 拆除**：tests/support/seedOntology.ts 的 fallback POST 会落到 SPA fallback 返回 HTML — 任何前端 BDD 想"创建新 fixture"必须改用 `page.route` 注入合成 row 路径，**不能**指望 admin write 端点存活。`reuseExisting:true` 命中 GET 路径是 OK 的（northwind 由 `make e2e-up` 的 seed pipeline 产出，不靠 admin POST），但 fresh-row scenario 必须 stub。
+  - **Dashboard testid 矩阵设计原则**：把"逻辑分支"（loading / error / empty / loaded grid）和"内容子组件"（stats 两格 + ontology card 单卡）分两层加 testid。逻辑分支 testid 让 spec 一行 `expect(toBeVisible)` 就锁住分支选择；内容 testid 让 spec 能进单卡片做精确断言。**每张 ontology card** 用 `data-ontology-api-name="..."` 属性而非每张独立 testid——因为 apiName 是稳定标识符，spec 用 `page.locator('[data-ontology-api-name="northwind"]')` 直接 lookup，避免 nth-child 等脆弱选择器。
+  - **`page.route(GET-only)` 拦截模式**：通配 `**/api/v2/ontologies` 同时匹配 `/api/v2/ontologies/{apiName}/*`（顺序敏感）；要做 GET-only 拦截就 `if (request.method() !== 'GET') return route.continue()`，让 PUT/POST 透传真实 backend。同样模板适用 list+detail 共表 prefix 的所有页面。**第二个 mock**（`**/api/v2/ontologies/{apiName}/objectTypes`）是为了避免 OntologyCardWithCount 的 useObjectTypes 拉真实后端导致 console-error 噪音；按下游 hooks 链路完整 mock。
+  - **vitest 与 playwright 共仓库时的目录排除模板**：vite.config.ts test.exclude 必须**与** playwright.config.ts testIgnore **对称**——前者排除 e2e/ + tests/（playwright），后者排除 src/ + node_modules/（vitest）。任何新增第三套测试目录（cypress / storybook test-runner / chromatic）都得同步给两边的 exclude 各加一条；不对称会出现 file-level error 不影响 test count 的"幽灵失败"，CI 上仅看 test pass 数会漏。
+  - **Dashboard 的 error 分支不带 testid 时只能靠文案选择**：原始 code 仅 `dashboard-loading` 一个 testid，error/empty 分支必须给 testid 才能稳定写 spec —— 否则 spec 要 grep i18n 字符串非常脆弱。这条经验适用所有"按状态分支渲染的页面"：loading / error / empty / loaded 四态各加 testid 是稳定的 spec contract。后续 US-022~038 BDD 也都按这条规范预先给 page 加 testid。
+  - **`page.goto('/')` 触发 full doc reload**：BrowserRouter SPA 内部跳转是 history.pushState（不发新 HTTP req），但 page.goto 是真实导航——所以**每个 scenario 都从 cold start** load JS、重建 QueryClient、重发 `/api/v2/me` 等首屏请求。这保证 scenarios 之间 React Query cache 不串扰，但每次都付了首屏 ~500ms 成本。如果未来需要快速 in-page 切路由测多步骤，用 `page.click(navLink)` + `page.waitForURL` 不要用 page.goto。
 ---

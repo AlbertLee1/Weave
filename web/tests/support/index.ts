@@ -10,7 +10,7 @@ export type {
   ObjectTypeVisibility,
   OntologyPayload,
 } from './dataFactory';
-export { BrowserPage } from './pageObjects';
+export { BrowserPage, DashboardPage } from './pageObjects';
 export { seedOntology } from './seedOntology';
 export type { SeedOntologyOptions, SeededOntology } from './seedOntology';
 export { signIn } from './signIn';

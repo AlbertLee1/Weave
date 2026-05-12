@@ -11,11 +11,13 @@ interface StatItemProps {
   value: number;
   color: string;
   delay: number;
+  testId?: string;
 }
 
-function StatItem({ icon, label, value, color, delay }: StatItemProps) {
+function StatItem({ icon, label, value, color, delay, testId }: StatItemProps) {
   return (
     <div
+      data-testid={testId}
       className="flex items-center gap-3 px-5 py-3.5 rounded-xl flex-1"
       style={{
         background: 'rgba(13,17,23,0.6)',
@@ -35,6 +37,7 @@ function StatItem({ icon, label, value, color, delay }: StatItemProps) {
       </div>
       <div>
         <div
+          data-testid="stat-value"
           className="text-xl font-semibold leading-none"
           style={{ color, fontFamily: 'var(--font-sans)' }}
         >
@@ -62,6 +65,7 @@ export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
         value={ontologyCount}
         color="#F59E0B"
         delay={0}
+        testId="stat-ontologies"
       />
       <StatItem
         icon={
@@ -76,6 +80,7 @@ export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
         value={objectTypeCount}
         color="#14B8A6"
         delay={80}
+        testId="stat-object-types"
       />
     </div>
   );

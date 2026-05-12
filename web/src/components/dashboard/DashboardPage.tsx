@@ -11,7 +11,11 @@ import { StatsBar } from './StatsBar';
 function OntologyCardWithCount({ ontology, onClick, index }: { ontology: Ontology; onClick: () => void; index: number }) {
   const { data: objectTypes } = useObjectTypes(ontology.apiName);
   return (
-    <div style={{ animation: `fadeInUp 420ms ${80 + index * 60}ms ease-out both` }}>
+    <div
+      data-testid="dashboard-ontology-card-wrapper"
+      data-ontology-api-name={ontology.apiName}
+      style={{ animation: `fadeInUp 420ms ${80 + index * 60}ms ease-out both` }}
+    >
       <OntologyCard
         ontology={ontology}
         objectTypeCount={objectTypes?.length ?? 0}
@@ -48,7 +52,10 @@ export function DashboardPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div
+        className="flex items-center justify-center h-96"
+        data-testid="dashboard-error"
+      >
         <p className="text-sm text-accent-error">
           {t('dashboardPage.failedToLoad', { message: (error as Error).message })}
         </p>
@@ -57,7 +64,7 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-primary p-6 pb-16">
+    <div className="min-h-screen bg-bg-primary p-6 pb-16" data-testid="dashboard-page">
 
       {/* ── Hero Header ──────────────────────────────────────────── */}
       <div
@@ -145,7 +152,7 @@ export function DashboardPage() {
       </div>
 
       {/* ── Stats Bar ─────────────────────────────────────────────── */}
-      <div className="mb-8">
+      <div className="mb-8" data-testid="dashboard-stats-bar">
         <StatsBar
           ontologyCount={ontologies?.length ?? 0}
           objectTypeCount={totalObjectTypes}
@@ -182,12 +189,17 @@ export function DashboardPage() {
 
       {/* ── Ontology Grid / Empty State ───────────────────────────── */}
       {!ontologies || ontologies.length === 0 ? (
-        <EmptyState
-          title={t('dashboardPage.emptyTitle')}
-          description={t('dashboardPage.emptyDescription')}
-        />
+        <div data-testid="dashboard-empty-state">
+          <EmptyState
+            title={t('dashboardPage.emptyTitle')}
+            description={t('dashboardPage.emptyDescription')}
+          />
+        </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+          data-testid="dashboard-ontology-grid"
+        >
           {ontologies.map((ontology, i) => (
             <OntologyCardWithCount
               key={ontology.rid}

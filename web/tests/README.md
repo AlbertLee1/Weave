@@ -20,6 +20,7 @@ web/tests/
 │   ├── signIn.ts                               AUTH_MODE-aware login helper
 │   ├── pageObjects/
 │   │   ├── BrowserPage.ts                      /browser/:ontology/:objectType
+│   │   ├── DashboardPage.ts                    /
 │   │   └── index.ts                            barrel re-export
 │   └── index.ts                                barrel re-export of everything
 └── feature.<domain>.<scenario>.spec.ts         BDD specs (see naming below)

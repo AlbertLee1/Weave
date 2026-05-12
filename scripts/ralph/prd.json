@@ -301,8 +301,8 @@
         "Tests pass"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/package_install_lifecycle.feature 落地 3 scenarios（Install-BuiltIn / Update-Version / Uninstall）+ Background；test/bdd/steps/package_install_steps.go 实现 9 个 Given/When/Then 步骤 + 1 个本地 stub provider（bddBuiltinPackageProvider 满足 oms.BuiltinPackageProvider，map 形式注册合成 (slug → PackageInstallRequest) 元组）。SUT 走真实 chi.Router + pkg/oms.OMSHandler.PackageInstall / InstallBuiltinPackage / DeleteInstalledPackage，与 cmd/server/routes.go 路由形状 1:1 对齐：Background ensureContainer 一次性 wire 7 条 /api/v2/pkg/* 路由 + SetInstalledPackageStore(installedpkgpg.NewStore(pg.Pool)) + SetBuiltinPackageProvider(stub)。Scenarios POST `/api/v2/pkg/builtin/{slug}/install`（Install/Update）或 DELETE `/api/v2/pkg/{name}`（Uninstall），三层断言：HTTP status 201/204 + PackageInstallResponse{version, ontology} 字段精确比对 + installed_packages 真实 PG 行（pkgStore.GetInstalledPackage 拿 version/enabled、原生 SELECT COUNT 验唯一性、ErrInstalledPackageNotFound 断言删除）+ ontology 副作用（repo.GetOntology + repo.GetObjectTypeByAPIName 验 ObjectType 真实导入）。Update-Version 在同一 slug 上 onConflict=skip → mode=merge 二次安装，证明 widget(v1.0.0) + gadget(v1.1.0) 共存且 installed_packages 行 UPSERT 不重复（COUNT=1）。Uninstall 显式断言 ObjectType 行残留——uninstall 是 registry-only delete，不级联 ontology 实体。配套生产工件：把 cmd/server/installed_packages_store.go 整体提到 pkg/oms/installedpkgpg.Store（与 US-014 sagapg 模式对齐），cmd/server/main.go 改用 installedpkgpg.NewStore(pool)，零行为差异；commit_jobs_store.go 注释更新指向新包。state.go 扩展 pkgRouter / pkgStore / builtinPkgProvider / lastPackageResponse 四字段 + packageHTTPResult 类型，ensureContainer 中追加 ~16 行 pkg 路由注册 + store + provider 注入，resetMaps 清零 lastPackageResponse + provider.reset()（保持引用稳定，handler 已经 hold 引用），truncateOntologyGraph 把 installed_packages 加入 TRUNCATE 列表（无 FK 到 ontologies）。steps.go 末尾追加 registerPackageInstallSteps wire-up。make test-bdd → 27 scenarios（含原 24）/ 0 fail / 36.5s。go build / go vet -tags bdd 双绿；./pkg/... -short 全绿（pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关，US-004/007/010/011/012/013/014/015/017/019 反复见）；./cmd/server -short 全绿；test/integration -tags integration -short main / phase6 / phase7 全绿。"
     },
     {
       "id": "US-021",
@@ -317,8 +317,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/feature.dashboard.spec.ts 落地 6 scenarios（1 navigate-renders @smoke + 2 stats-visible @smoke + 3 northwind-card-switch @smoke + 4 grid-surfaces-new-ontology + 5 empty-state + 6 error-state）；前 3 个挂 @smoke，后 3 个属 regression。配套生产 testid：DashboardPage.tsx 加 dashboard-page / dashboard-error / dashboard-stats-bar / dashboard-ontology-grid / dashboard-empty-state，StatsBar.tsx 加 stat-ontologies / stat-object-types / stat-value，OntologyCardWithCount wrapper 加 data-testid=\"dashboard-ontology-card-wrapper\" + data-ontology-api-name=\"<apiName>\"。tests/support/pageObjects/DashboardPage.ts 是新 page object（goto / root / loading / error / statsBar / statOntologies / statObjectTypes / ontologyGrid / emptyState / ontologyCard(apiName) / openOntology(apiName)），从 support 顶 barrel + pageObjects barrel 双重导出。empty/error 走 page.route('**/api/v2/ontologies') stub（GET 返回 [] / 500），seed-fresh-ontology 走 stub 注入合成 row 而非真实 POST（/api/admin/ontologies 已在 US-006 拆除）。北风 card switch 用真实 seed reuse + 真实 chi 路由 + react-router push 验证。同步修 vite.config.ts vitest exclude 加 tests/**（与 e2e/** 对称）— 修了 US-002 起就遗留但仅产生 file-level 不影响 case 数的 vitest 误扫；现在 vitest 157 files / 1247 tests 全绿。npx playwright test feature.dashboard → 6/6 pass / 6.7s；npx playwright test tests/ → 8/8（含 US-002 既有 2 case）；npx playwright test --grep @smoke → 5/5 全绿；npx tsc --noEmit / 局部 eslint 双绿。"
     },
     {
       "id": "US-022",
