@@ -1,0 +1,44 @@
+# Ralph Progress Log
+Started: 2026年 5月10日 星期日 09时50分00秒 CST
+Branch: ralph/frontend-backend-gap-coverage
+Source PRD: tasks/prd-frontend-backend-gap-coverage.md
+Total stories: 35 (US-001 ~ US-035)
+---
+
+## Codebase Patterns
+- Frontend ↔ Backend gap-coverage PRD：先 grep 既有 `// US-XXX` 注释；本期前 35 story 中有相当部分已经在 v1/v2/v3 parity 轮次落地（如 US-001 ↔ US-147 Property admin），写代码前先确认现状再追加。
+- 写操作 React Query 失效模式：每个写 hook 调 `qc.invalidateQueries({ queryKey: ['<entity>', ontology, ...] })`，同时连带失效父集合（如 Property mutation 失效 properties + objectTypes 双 key）。
+- `web/vite.config.ts` 同时承载 vitest 配置；Playwright BDD spec 若放 `web/tests/**` 需加入 vitest exclude，否则会被当成 vitest spec 触发 "Playwright Test did not expect test.describe()" 错误。
+- 前端代码默认 browser-only，禁止用 `Buffer` fallback；`btoa`/`atob` 在 jsdom + 现代浏览器都已就位。
+- `SavedObjectSet` 类型现在强制要求 `versions` + `activeVersionId` 字段，老测试 fixture 需补齐。
+
+## Open Questions
+(参考 tasks/prd-frontend-backend-gap-coverage.md 第 10 节)
+1. AutomationRules 的 trigger 表达式语法是 SQL-like 还是 JSON DSL？需查后端 pkg/automation 实现确认
+2. OAuth 应用管理是否需要独立路由，还是嵌在 SettingsPage 里？
+3. Dataset 回滚的破坏性较强，是否需要审批流（接入 approvals API）？
+4. ObjectSet SSE 在多 tab 同时订阅时的连接复用策略？
+5. Lineage 列级追踪在大规模 dataset 下的渲染性能上限？
+
+## 2026-05-12 - US-001 — Property CRUD 面板（ObjectTypeAdminPage）
+- 现状：该 story 实际由 OSv2 v2 parity 时期的 US-147 一并交付，全部 AC 已经满足。
+- 验证 AC：
+  - ✅ `web/src/api/ontologies.ts:261-304` 含 `listProperties` / `createProperty` / `updateProperty` / `deleteProperty` 四个方法
+  - ✅ `ObjectTypeAdminPage` 的 `EditObjectTypeModal` 自带 Details / Properties 双 tab（components/admin/ObjectTypeAdminPage.tsx:614-642），Properties tab 内嵌 `<PropertiesEditor>`
+  - ✅ `PropertiesEditor` 列表调 `useProperties(ontology, objectTypeRid)` → `GET /api/v2/ontologies/{ont}/objectTypes/byRid/{rid}/properties`
+  - ✅ "+ Add Property" 弹表单含 apiName / displayName / baseType / isNullable / description（PRD 提"required"，前端取倒数 `isNullable` 等价语义）调 POST
+  - ✅ 行内 Edit / Delete 分别 PUT/DELETE `…/properties/byRid/{propRid}`
+  - ✅ DeletePropertyForm 弹确认框写明 `property.apiName`
+  - ✅ `useCreateProperty` / `useUpdateProperty` / `useDeleteProperty` (`hooks/useProperties.ts`) 三个 mutation 都 `qc.invalidateQueries({ queryKey: ['properties', ont, rid] })` 同时连带 `['objectTypes', ont]`
+  - ✅ `npx tsc -b` exit 0（同步修复 3 个不相关基线错误，详见 Files changed）
+  - ✅ `npx vitest run` 157 files / 1247 tests 全绿（PropertiesEditor.test 13 个、ObjectTypeAdminPage.test 16 个全部通过）
+  - ⏸ Browser verify：本会话无 dev-browser MCP 工具，需人工 `make dev` 后到 `/admin/{ontology}` → 任一 ObjectType → Edit → Properties 标签页确认 CRUD
+- Files changed (drive-by 修复，未触 US-001 主功能代码)：
+  - `web/src/lib/objectSetUrl.ts`: 去掉 `Buffer.from(...)` 死分支（browser-only 文件，jsdom + 现代浏览器都有 `btoa`/`atob`）
+  - `web/src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`: fixture 补 `versions` + `activeVersionId` 适配新版 `SavedObjectSet` 类型
+  - `web/vite.config.ts`: vitest exclude 增加 `**/tests/**` 防 US-002 Playwright BDD spec 被 vitest 加载
+- **Learnings for future iterations:**
+  - "Frontend backend gap coverage" 的前段 user story 编号低 (US-001~010) 多与前几轮 parity（US-100~210）重叠，**写实现前必读** PropertiesEditor / LinkTypeAdminPage / InterfaceAdminPage 等已有页面，再 grep `// US-` 注释定位旧 PR
+  - `web/vite.config.ts` 同时是 vite + vitest 配置文件；新增 Playwright spec 目录前先看其 `test.exclude` glob 是否覆盖
+  - 触发 "Playwright Test did not expect test.describe() to be called here" → 99% 是 vitest 把 Playwright spec 当成 vitest 文件加载，加 exclude 即可
+---

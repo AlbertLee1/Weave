@@ -27,7 +27,7 @@ function toBase64Url(input: string): string {
   for (let i = 0; i < utf8.length; i += 1) {
     binary += String.fromCharCode(utf8[i]);
   }
-  const b64 = typeof btoa === 'function' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+  const b64 = btoa(binary);
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
@@ -38,7 +38,7 @@ function fromBase64Url(input: string): string | null {
   const standard = padded + '='.repeat(padLen);
   if (!/^[A-Za-z0-9+/=]*$/.test(standard)) return null;
   try {
-    const binary = typeof atob === 'function' ? atob(standard) : Buffer.from(standard, 'base64').toString('binary');
+    const binary = atob(standard);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) {
       bytes[i] = binary.charCodeAt(i);

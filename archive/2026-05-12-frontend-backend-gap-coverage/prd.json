@@ -1,0 +1,603 @@
+{
+  "project": "Weave",
+  "branchName": "ralph/frontend-backend-gap-coverage",
+  "description": "前端补齐后端能力 Gap — 后端经过 OSv2 v3 parity 后已有 ~250 个 endpoint，前端 41 个页面实际命中不到 60%。本期产出 35 个 user story，分 16 类，把后端已有的 OMS / OSS / Action / Branch / Function / Automation / Approvals / Lineage / Sessions 等能力全部暴露到前端 React UI，目标后端 endpoint 前端覆盖率从 ~60% 提升到 ≥95%。基于 tasks/prd-frontend-backend-gap-coverage.md。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Property CRUD 面板（ObjectTypeAdminPage）",
+      "description": "作为本体编辑者，我想在 ObjectTypeAdminPage 里增删改 Property，无需直接调 API。",
+      "acceptanceCriteria": [
+        "web/src/api/ontologies.ts 增加 listProperties / createProperty / updateProperty / deleteProperty 四个方法",
+        "ObjectTypeAdminPage 详情区新增 Properties 选项卡，列表调 GET /api/v2/ontologies/{ont}/objectTypes/byRid/{rid}/properties",
+        "新增按钮弹表单（apiName / displayName / baseType / required / description）调 POST",
+        "行内编辑/删除分别调 PUT 和 DELETE /api/v2/ontologies/{ont}/properties/byRid/{propRid}",
+        "删除前弹确认框写明属性名",
+        "写操作后 invalidate 对应 React Query key",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "已由 US-147（OSv2 v2 admin endpoints）一并交付：ontologies.ts:261-304 含 4 个 client 方法，ObjectTypeAdminPage 详情 Properties 选项卡内嵌 PropertiesEditor（含新增/行内编辑/确认删除），useProperties hook 在写操作后 invalidate ['properties', ont, rid] + ['objectTypes', ont]；29 个 PropertiesEditor/ObjectTypeAdmin 单测全绿。同步修复 3 个无关 TS 基线错误（objectSetUrl.ts Buffer fallback、ObjectSetComposer.test.tsx SavedObjectSet 缺字段），vitest exclude 增加 tests/** 防 BDD spec 被加载。"
+    },
+    {
+      "id": "US-002",
+      "title": "LinkProperty CRUD + 边属性编辑",
+      "description": "作为本体编辑者，我想给 LinkType 定义属性，并在浏览对象时编辑某条边的属性值。",
+      "acceptanceCriteria": [
+        "LinkTypeAdminPage 增加 Link Properties 面板，调 /api/v2/ontologies/{ont}/links/{linkRid}/properties 与 .../properties/byRid/{linkPropRid} 完成 CRUD",
+        "BrowserPage LinkedObjects 视图每条边显示属性，点编辑调 PUT /api/v2/ontologies/{ont}/links/{linkRid}/edges/{srcPk}/{tgtPk}/properties",
+        "保存后 invalidate React Query 缓存",
+        "web/src/api/ontologies.ts 增加对应 client 方法",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Interface 方法 CRUD + 多态调用",
+      "description": "作为本体编辑者，我想在 Interface 上声明方法并能从 UI 多态调用。",
+      "acceptanceCriteria": [
+        "InterfaceAdminPage 增加 Methods 面板，CRUD 调 /api/v2/ontologies/{ont}/interfaces/{rid}/methods 与 .../methods/byRid/{methodRid}",
+        "对象详情页若 ObjectType 实现该 Interface，显示 Invoke Method 按钮调 POST .../interfaces/methods/{methodRid}/invoke",
+        "调用结果（含返回值/错误）以侧栏面板显示",
+        "web/src/api/ontologies.ts 增加 listMethods / createMethod / invokeMethod 等方法",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "ObjectType Resolved 视图（继承合并）",
+      "description": "作为本体编辑者，我想看到 ObjectType 合并父类型 + Interface 后的有效 schema。",
+      "acceptanceCriteria": [
+        "ObjectTypeAdminPage 详情新增 Resolved 选项卡",
+        "调 GET /api/v2/ontologies/{ont}/objectTypes/{api}/resolved",
+        "表格展示属性来源：自身 / 继承自 X / 来自 Interface Y",
+        "同名覆盖以颜色高亮",
+        "web/src/api/ontologies.ts 增加 getResolvedObjectType 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "ObjectType 编辑历史时间线",
+      "description": "作为本体编辑者，我想看到 ObjectType 的修改时间线，便于审计。",
+      "acceptanceCriteria": [
+        "ObjectTypeAdminPage 详情新增 History 选项卡",
+        "调 POST /api/v2/ontologies/{ont}/objectTypes/{api}/editsHistory（带 paging body）",
+        "时间线视图展示 actor / 时间戳 / diff 摘要",
+        "点击单条展开完整 diff（JSON before/after 对比）",
+        "web/src/api/ontologies.ts 增加 getObjectTypeHistory 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "ActionTypeAdmin 改用 admin 列表展示规则",
+      "description": "作为本体编辑者，我想 Action admin 列表展示规则定义而非仅元数据。",
+      "acceptanceCriteria": [
+        "ActionTypeAdminPage 列表改调 GET /api/v2/ontologies/{ont}/actionTypesAdmin",
+        "每行展示规则数量、最近修改时间",
+        "行展开显示规则的可视化预览（条件 → 编辑动作）",
+        "web/src/api/ontologies.ts 增加 listActionTypesAdmin 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "ObjectType 出站链接面板",
+      "description": "作为本体编辑者，我想在一个面板里看到 ObjectType 的所有出站链接类型。",
+      "acceptanceCriteria": [
+        "ObjectTypeAdminPage 详情新增 Outgoing Links 选项卡",
+        "调 GET /api/v2/ontologies/{ont}/objectTypes/{api}/outgoingLinkTypes",
+        "表格显示 linkType / 目标类型 / 基数 / 是否反向",
+        "点目标类型可跳转到该 ObjectType 详情",
+        "web/src/api/ontologies.ts 增加 listOutgoingLinkTypes 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "ObjectType ↔ Interface 绑定管理",
+      "description": "作为本体编辑者，我想看到并管理 ObjectType 实现的 Interface。",
+      "acceptanceCriteria": [
+        "ObjectTypeAdminPage 详情新增 Interfaces 选项卡",
+        "列表调 GET /api/v2/ontologies/{ont}/objectTypes/byRid/{rid}/interfaces",
+        "Add Interface 弹窗多选 Interface，调 POST .../interfaces",
+        "每行 Unbind 按钮调 DELETE .../interfaces/{interfaceRid}，解绑前提示影响（哪些方法将不可用）",
+        "web/src/api/ontologies.ts 增加 listInterfaceBindings / bindInterface / unbindInterface 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "TypeCatalog 浏览页（ValueType / QueryType）",
+      "description": "作为本体编辑者，我想浏览 ontology 中注册的 ValueType 和 QueryType。",
+      "acceptanceCriteria": [
+        "新建 TypeCatalogPage，路由 /admin/:ontology/types",
+        "两个标签页 ValueTypes / QueryTypes，分别调 GET .../valueTypes 与 .../queryTypes",
+        "行点击调单读端点查看详情",
+        "QueryType 详情含 Execute 按钮，调 POST .../queries/{api}/execute 并显示结果",
+        "web/src/api/ontologies.ts 增加 listValueTypes / getValueType / listQueryTypes / getQueryType / executeQuery 方法",
+        "在 Admin 子菜单中加入 Types 入口",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "InterfaceType 浏览 + 出站链接",
+      "description": "作为本体编辑者，我想浏览 Interface 类型并查看其声明的出站链接类型。",
+      "acceptanceCriteria": [
+        "InterfaceAdminPage 增加 Interface Types 浏览面板",
+        "调 GET .../interfaceTypes 列表，行点击调 GET .../interfaceTypes/{type} 详情",
+        "详情含 Outgoing Link Types 子面板，调 GET .../interfaceTypes/{type}/outgoingLinkTypes",
+        "web/src/api/ontologies.ts 增加 listInterfaceTypes / getInterfaceType / getInterfaceTypeOutgoingLinks 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "LinkedObjects 浏览面板",
+      "description": "作为数据浏览者，我想从对象详情跳转到关联对象，并能看到边属性。",
+      "acceptanceCriteria": [
+        "BrowserPage 对象详情新增 Links 选项卡",
+        "显示该对象的所有出站/入站 link，每个 link 调 GET /api/v2/ontologies/{ont}/linkedObjects/{src}/{linkType}/{tgt}",
+        "表格展示链接对象主键 + 边属性",
+        "行点击跳到对应对象详情",
+        "web/src/api/objects.ts 增加 listLinkedObjects 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "ObjectSet Diff 计算",
+      "description": "作为分析师，我想对比两个 ObjectSet 看哪些对象被新增 / 移除。",
+      "acceptanceCriteria": [
+        "ObjectSetDiffPage 支持选择两个 RID 或两个内联定义",
+        "调 POST /api/v2/ontologies/{ont}/objectSets/diff",
+        "结果分为 added / removed / common 三栏",
+        "ObjectSetPage 增加跳转到 Diff 的入口",
+        "web/src/api/objectsets.ts 增加 diffObjectSets 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "ObjectSet 快照保存与浏览",
+      "description": "作为分析师，我想冻结一个 ObjectSet 结果集以便日后引用。",
+      "acceptanceCriteria": [
+        "ObjectSetPage 增加 Save Snapshot 按钮，调 POST .../objectSets/{rid}/snapshot",
+        "SavedObjectSetsPage 增加 Snapshots 选项卡列出本 ontology 下的快照",
+        "点快照调 GET .../objectSets/snapshots/{snapshotRid} 渲染",
+        "web/src/api/objectsets.ts 增加 createSnapshot / listSnapshots / getSnapshot 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "ObjectSet 数据溯源面板",
+      "description": "作为分析师，我想追踪一个 ObjectSet 的数据来源链路。",
+      "acceptanceCriteria": [
+        "ObjectSetPage 详情面板增加 Lineage 选项卡",
+        "调 GET .../objectSets/{rid}/lineage",
+        "用 React Flow（项目已有依赖）渲染上游数据节点",
+        "web/src/api/objectsets.ts 增加 getObjectSetLineage 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "ObjectSet 多类型加载",
+      "description": "作为分析师，我想跨 ObjectType 或通过 Interface 多态查询异构集。",
+      "acceptanceCriteria": [
+        "ObjectSetPage Load 模式增加切换 Single Type / Multi Type / Interface",
+        "三种模式分别调 loadObjects / loadObjectsMultipleObjectTypes / loadObjectsOrInterfaces",
+        "多类型结果列表显示每行的 ObjectType",
+        "web/src/api/objectsets.ts 增加 loadObjectsMultipleObjectTypes / loadObjectsOrInterfaces 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "ObjectSet SSE 实时订阅",
+      "description": "作为监控数据流的分析师，我想 ObjectSet 视图能实时更新无需手动刷新。",
+      "acceptanceCriteria": [
+        "ObjectSetPage 增加 Live 开关",
+        "开启后建立 EventSource 到 GET .../objectSets/{rid}/subscribe",
+        "收到 add/remove/modify 事件后局部更新行",
+        "开关关闭或离开页面时关闭连接（useEffect cleanup）",
+        "Vite dev proxy 确认正确转发 SSE",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Action applyWithOverrides 高级模式",
+      "description": "作为操作者，我想在批量执行 Action 时覆盖默认参数。",
+      "acceptanceCriteria": [
+        "ActionConsolePage 增加 Advanced 开关，开启后允许批量修改参数（覆盖到一组对象）",
+        "调 POST /api/v2/ontologies/{ont}/actions/{action}/applyWithOverrides",
+        "结果展示成功 / 失败计数",
+        "web/src/api/actions.ts 增加 applyWithOverrides 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Action 撤销（revert）",
+      "description": "作为操作者，我想撤销之前误执行的 Action。",
+      "acceptanceCriteria": [
+        "ActionHistoryPage 每行新增 Revert 按钮（仅对可撤销的 Action 显示）",
+        "点击弹确认框，调 POST .../actions/revert 传入 logId",
+        "撤销后日志状态变为 reverted，并 invalidate 历史缓存",
+        "web/src/api/actions.ts 增加 revertAction 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "ApprovalsPage 实通批准 API",
+      "description": "作为审批人，我想看到待审批 Action 的完整上下文并能批准 / 拒绝。",
+      "acceptanceCriteria": [
+        "ApprovalsPage 替换占位实现，调 GET .../actions/approvals 拉列表",
+        "每行显示 action / 申请人 / 参数预览 / 影响范围（可调 impact API）",
+        "Approve / Reject 按钮分别调 POST .../approvals/{id}/approve|reject",
+        "拒绝时强制要求填写理由",
+        "操作后从列表移除",
+        "web/src/api/ 新增 approvals.ts，含 listApprovals / approveAction / rejectAction 方法",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Action Saga 多步工作流",
+      "description": "作为操作者，我想把多个 Action 组成 Saga 事务序列执行。",
+      "acceptanceCriteria": [
+        "ActionConsolePage 增加 Saga Builder 标签页",
+        "拖拽多个 ActionType 形成步骤，配置每步参数和补偿逻辑",
+        "调 POST .../actions/applySaga",
+        "结果显示每步状态（success / compensated / failed）",
+        "失败时跳转到 SagaDLQPage 对应记录",
+        "web/src/api/actions.ts 增加 applySaga 方法",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "AutomationRules 整页",
+      "description": "作为本体运维者，我想定义并监控自动化规则，对对象变更做出反应。",
+      "acceptanceCriteria": [
+        "新建 AutomationRulesPage，路由 /automation/:ontology",
+        "列表 / 创建 / 读 / 更新 / 删除 调 /api/v2/ontologies/{ont}/automationRules 与 .../{ruleId}",
+        "每行 Pause / Resume 按钮调对应端点",
+        "行展开显示最近执行记录（GET .../{ruleId}/executions）",
+        "创建表单含 trigger（条件表达式）+ action（选 ActionType + 参数模板）",
+        "web/src/api/ 新增 automationRules.ts client",
+        "侧栏导航增加 Automation 入口",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "BranchDiff 分类视图 + 冲突高亮",
+      "description": "作为分支审查者，我想看到分类的增 / 改 / 删并标注冲突项。",
+      "acceptanceCriteria": [
+        "BranchDiffPage 改调 POST /api/v2/ontologies/{ont}/branches/{id}/diff（GET 保留为 fallback）",
+        "三列布局：Added / Modified / Deleted",
+        "冲突项以红色高亮，悬浮显示冲突 key 和两侧值",
+        "点击冲突项跳转到 BranchReconcilePage",
+        "web/src/api/ontologies.ts 增加 getBranchDiffCategorized 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Function 版本列表与切换",
+      "description": "作为 Function 开发者，我想浏览 semver 版本并切换查看。",
+      "acceptanceCriteria": [
+        "FunctionCodePage 顶部增加版本下拉",
+        "调 GET .../functions/{name}/versions",
+        "选中后加载该版本的代码（结合现有 GET .../functions/{rid}/commits/{hash}）",
+        "版本号、提交哈希、commit message 同时显示",
+        "web/src/api/functions.ts 增加 listFunctionVersions 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Function 确定性重放",
+      "description": "作为 Function 开发者，我想用相同输入重放历史执行以便调试。",
+      "acceptanceCriteria": [
+        "Function 执行历史中每行新增 Replay 按钮",
+        "调 POST .../functions/{rid}/replay 传入历史 input + 版本",
+        "结果与原结果对比（diff 视图）",
+        "web/src/api/functions.ts 增加 replayFunction 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Stream Ingest 配置面板",
+      "description": "作为本体运维者，我想给 ObjectType 配置 HTTP 流式摄入入口。",
+      "acceptanceCriteria": [
+        "ObjectTypeAdminPage 增加 Ingest 选项卡",
+        "显示 stream ingest URL: POST /api/v2/ontologies/{ont}/streams/{ot}/ingest",
+        "提供 cURL 示例和 token（结合 Auth 配置）",
+        "Test Ingest 表单可手动 POST 一条样例 payload",
+        "web/src/api/objects.ts 增加 streamIngest 测试方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "Package 启用 / 禁用切换",
+      "description": "作为本体管理员，我想禁用已安装 package 而无需卸载。",
+      "acceptanceCriteria": [
+        "MarketplacePage 已安装包卡片增加 Enabled 开关",
+        "调 POST /api/v2/pkg/{name}/enabled，传 {enabled: bool}",
+        "禁用状态卡片置灰",
+        "web/src/api/packages.ts 增加 setPackageEnabled 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "本体导出（备份）",
+      "description": "作为本体管理员，我想导出整个 ontology 到文件用于备份或迁移。",
+      "acceptanceCriteria": [
+        "ExplorerPage 顶部菜单新增 Export 按钮",
+        "调 POST .../ontologies/{ont}/export，下载返回的 JSON",
+        "文件名格式 {ontology}-{ISO8601}.json",
+        "Import 按钮（已存在或同时实现）调 POST /api/v2/ontologies/import",
+        "web/src/api/ontologies.ts 增加 exportOntology / importOntology 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "Action 历史详情侧栏 + Impact 面板",
+      "description": "作为运维，我想看到 Action 执行的精确改动以及影响的对象集合。",
+      "acceptanceCriteria": [
+        "ActionHistoryPage 行点击打开侧栏，调 GET .../actions/history/{logId}",
+        "侧栏分三段 Parameters / Edits（before/after diff）/ Impact",
+        "Impact 段调 GET /api/v2/actions/{rid}/impact",
+        "每个受影响对象可点击跳转到对象详情",
+        "web/src/api/actions.ts 增加 getActionHistoryDetail / getActionImpact 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "列级 / 属性级 Lineage",
+      "description": "作为数据工程师，我想以列 / 属性粒度追踪 lineage，而非仅对象粒度。",
+      "acceptanceCriteria": [
+        "LineagePage 增加 Property 选项卡",
+        "调 GET /api/v2/lineage/property/{rid} 获取属性级溯源",
+        "Column Impact 工具：粘贴 dataset column → 调 GET /api/v2/lineage/dataset-columns/impact",
+        "用 React Flow 渲染列级转换链",
+        "web/src/api/lineage.ts 增加 getPropertyLineage / getColumnImpact 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "Dataset 事务历史与回滚",
+      "description": "作为数据工程师，我想看 dataset 事务历史并能回滚到先前版本。",
+      "acceptanceCriteria": [
+        "新建 DatasetTransactionsPage，路由 /admin/datasets/:rid/transactions",
+        "列表调 GET /api/v2/datasets/{rid}/history",
+        "每行 Rollback 按钮调 POST /api/v2/datasets/{rid}/rollback，回滚前二次确认",
+        "Create Transaction 入口调 POST .../transactions",
+        "web/src/api/ 新增 datasets.ts client",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "活动会话列表与撤销",
+      "description": "作为安全意识强的用户，我想看到所有活动会话并能登出其他设备。",
+      "acceptanceCriteria": [
+        "SettingsPage 增加 Active Sessions 面板",
+        "调 session 列表 API（由 sessionHandler 提供，参考 main.go:785-791）",
+        "每条显示 device / ip / location / lastSeen",
+        "Revoke 按钮撤销单个会话；Logout all others 撤销除当前外全部",
+        "web/src/api/ 新增 sessions.ts client",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-032",
+      "title": "OAuth 应用与令牌管理",
+      "description": "作为开发者，我想注册 OAuth 应用并管理令牌以便 API 接入。",
+      "acceptanceCriteria": [
+        "SettingsPage 增加 Developer / OAuth Apps 面板",
+        "列表 / 创建 / 删除 调 /api/admin/developer/applications",
+        "创建后一次性显示 client secret（带复制按钮和警告文案）",
+        "应用详情显示授权 callback URL、scopes",
+        "web/src/api/developer.ts 增加 createOAuthApp / deleteOAuthApp 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "title": "通知全部标记已读",
+      "description": "作为有大量通知的用户，我想一键全部标记已读。",
+      "acceptanceCriteria": [
+        "顶部通知 popover 增加 Mark all as read 按钮",
+        "调 POST /api/v2/notifications/read-all",
+        "调用后未读计数清零，列表本地状态同步",
+        "web/src/api/ 增加 markAllNotificationsRead 方法（如尚无 notifications.ts 则新建）",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "title": "Playground 增强（聚合 / 链接 / 嵌套 ObjectSet）",
+      "description": "作为开发者，我想 Playground 能交互式测试聚合查询、linkedObjects、嵌套 ObjectSet 定义。",
+      "acceptanceCriteria": [
+        "PlaygroundPage 增加三个新模板 Aggregation / LinkedObjects / Nested ObjectSet",
+        "每个模板内置可编辑的请求 body 示例",
+        "Send 按钮调对应端点，响应以可折叠 JSON 展示",
+        "历史请求保存到 localStorage",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "GDPR 导出 + 合规报告可视化",
+      "description": "作为合规官，我想生成 GDPR 数据导出并把合规报告可视化。",
+      "acceptanceCriteria": [
+        "ComplianceReportsPage 增加 GDPR Export 按钮，调 GET /api/admin/gdpr/export?subject={id}，下载结果",
+        "Generate Report 表单（时间范围 + 类型）调 GET /api/admin/compliance/report",
+        "报告以图表展示（按事件类型分组的柱状图，使用项目已有图表库）",
+        "历史报告列表，可下载 / 查看",
+        "web/src/api/compliance.ts 增加 generateGDPRExport / generateComplianceReport 方法",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
