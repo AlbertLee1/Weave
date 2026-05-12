@@ -545,8 +545,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 37,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/feature.explorer.branch.spec.ts 落地 6 scenarios (4 @smoke + 2 regression) 覆盖 BranchPicker（topbar） + BranchDiffPage(/branches/{id}/diff) + BranchReconcilePage(/branches/{id}/reconcile) 三 surface：(1) 打开 picker 菜单列出 main + server branches；(2) 切换分支翻转 trigger data-branch attr + 关闭菜单；(3) 三色 diff 摘要 +1/~1/-1 + entity-type filter chip + Open Reconcile link；(4) 零冲突 merge → POST body {conflictResolution:{}} + 200 后 navigate 离开 /reconcile；(5) 双冲突场景 — 未解前 merge button disabled 含计数、解决后 enabled、点击后 409 留在 /reconcile + error banner visible；(6) honest-mapping 锁 \"创建分支\" gap — picker 菜单内三 role absence (button/link/menuitem regex create/new/add/fork) + page.on('request') 监听 POST /branches 计数=0。新增 ExplorerBranchPage page object（~120 行 / 多 surface 单 class，含 explorerRoot / picker* / diff* / reconcile* + per-conflict-key & per-resolution-key 复合 testid lookup）。零生产代码改动 — BranchDiffPage/BranchReconcilePage/BranchPicker 既有 testid 矩阵已齐。验证：cd web && npx playwright test feature.explorer.branch → 6 passed / 12.6s；--grep @smoke → 50 passed / 1.3m（admin.object-type 1 个偶发 flake 与本 story 无关，独立重跑 6/6 绿）；npx tsc --noEmit -p tsconfig.app.json → 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx 2 条 pre-existing 错误（US-034 已记录），零新增 type 错误；npx eslint 新文件 → exit 0。dev-browser skill 不可用，按 US-002 模板用 make e2e-up + Playwright headless 等价覆盖。"
     },
     {
       "id": "US-038",
