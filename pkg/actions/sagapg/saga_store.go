@@ -189,6 +189,60 @@ func (s *Store) UpdateSagaStep(ctx context.Context, stepID string, upd actions.S
 	return nil
 }
 
+func (s *Store) ListSagas(ctx context.Context, params actions.ListSagasParams) ([]*actions.Saga, error) {
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	q := `SELECT saga_id, COALESCE(idempotency_key, ''), ontology, status,
+	             requested_by, failure_message, COALESCE(result_json, 'null'::jsonb),
+	             created_at, updated_at
+	      FROM action_sagas`
+	args := []interface{}{}
+	conds := []string{}
+	if params.Ontology != "" {
+		conds = append(conds, "ontology = $"+strconv.Itoa(len(args)+1))
+		args = append(args, params.Ontology)
+	}
+	if params.Status != "" {
+		conds = append(conds, "status = $"+strconv.Itoa(len(args)+1))
+		args = append(args, params.Status)
+	}
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += " ORDER BY created_at DESC"
+	q += " LIMIT $" + strconv.Itoa(len(args)+1)
+	args = append(args, limit)
+	if params.Offset > 0 {
+		q += " OFFSET $" + strconv.Itoa(len(args)+1)
+		args = append(args, params.Offset)
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]*actions.Saga, 0)
+	for rows.Next() {
+		var sg actions.Saga
+		var resultJSON []byte
+		if err := rows.Scan(&sg.SagaID, &sg.IdempotencyKey, &sg.Ontology, &sg.Status,
+			&sg.RequestedBy, &sg.FailureMessage, &resultJSON,
+			&sg.CreatedAt, &sg.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if len(resultJSON) > 0 && string(resultJSON) != "null" {
+			sg.ResultJSON = json.RawMessage(resultJSON)
+		}
+		out = append(out, &sg)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListSagaSteps(ctx context.Context, sagaID string) ([]*actions.SagaStep, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT step_id, saga_id, step_index, action_type,

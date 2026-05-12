@@ -928,7 +928,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			//   GET  /api/v2/ontologies/{ontology}/actions/saga/dlq
 			//   POST /api/v2/ontologies/{ontology}/actions/saga/dlq/{dlqId}/retry
 			//   POST /api/v2/ontologies/{ontology}/actions/saga/dlq/{dlqId}/drop
+			// US-044 (PC-A08): saga / job monitoring read-paths.
+			//   GET  /api/v2/ontologies/{ontology}/actions/sagas
+			//   GET  /api/v2/ontologies/{ontology}/actions/sagas/{sagaId}
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/applySaga", actionHandler.ApplySaga)
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/sagas", actionHandler.ListSagas)
+			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}", actionHandler.GetSaga)
 			api.Get("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq", actionHandler.ListSagaDLQ)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq/{dlqId}/retry", actionHandler.RetrySagaDLQ)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/saga/dlq/{dlqId}/drop", actionHandler.DropSagaDLQ)

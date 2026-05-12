@@ -120,6 +120,11 @@ type SagaStore interface {
 	UpdateSagaStep(ctx context.Context, stepID string, upd SagaStepUpdate) error
 	// ListSagaSteps returns all steps for a saga ordered by step_index.
 	ListSagaSteps(ctx context.Context, sagaID string) ([]*SagaStep, error)
+	// ListSagas returns saga headers filtered by the supplied params,
+	// ordered by created_at DESC. Empty status returns every row;
+	// empty ontology returns every row across ontologies. limit <= 0
+	// is treated as the default page size (100).
+	ListSagas(ctx context.Context, params ListSagasParams) ([]*Saga, error)
 
 	// EnqueueDLQ records a compensator failure for manual / scheduled
 	// retry.
@@ -131,6 +136,17 @@ type SagaStore interface {
 	// after a successful retry, or PENDING → DROPPED after manual
 	// dismissal).
 	UpdateDLQStatus(ctx context.Context, dlqID string, upd SagaDLQUpdate) error
+}
+
+// ListSagasParams filters ListSagas. Status matches the action_sagas
+// CHECK constraint values; Ontology matches the ontology column on the
+// saga header. Limit clamps the page size — defaults to 100, caps at
+// 1000. Offset is the SQL OFFSET (page navigation).
+type ListSagasParams struct {
+	Ontology string
+	Status   string
+	Limit    int
+	Offset   int
 }
 
 // SagaUpdate is the partial-update payload for action_sagas. Pointer

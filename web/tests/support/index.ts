@@ -30,6 +30,7 @@ export {
   PipelinesPage,
   ProposalsPage,
   QuiverPage,
+  SagaJobsPage,
   SecurityPoliciesPage,
   SettingsPage,
   ThreadsPage,

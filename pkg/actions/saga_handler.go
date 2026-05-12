@@ -86,6 +86,80 @@ func writeSagaErrorResponse(w http.ResponseWriter, status int, result *SagaResul
 	httputil.WriteJSON(w, status, body)
 }
 
+// ListSagas handles GET
+// /api/v2/ontologies/{ontologyApiName}/actions/sagas (US-044, PC-A08).
+// Returns saga headers for the active ontology ordered by created_at
+// DESC, with optional ?status=RUNNING|SUCCESS|COMPENSATING|COMPENSATED|FAILED
+// filter plus ?limit / ?offset for pagination. When no SagaStore is
+// configured (e.g. degraded-mode test rigs) the response is an empty
+// list so the UI renders the empty state instead of an error.
+func (h *Handler) ListSagas(w http.ResponseWriter, r *http.Request) {
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	store := h.executor.SagaStore()
+	if store == nil {
+		httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": []any{}})
+		return
+	}
+	params := ListSagasParams{Ontology: ontologyRID}
+	params.Status = r.URL.Query().Get("status")
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+			params.Limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			params.Offset = n
+		}
+	}
+	sagas, err := store.ListSagas(r.Context(), params)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("SagaListFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": sagas})
+}
+
+// GetSaga handles GET
+// /api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}
+// (US-044, PC-A08). Returns the saga header plus its ordered step
+// timeline so the detail drawer can render the per-step status chain,
+// compensation markers, and link out to DLQ rows by step.
+func (h *Handler) GetSaga(w http.ResponseWriter, r *http.Request) {
+	store := h.executor.SagaStore()
+	if store == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("SagaStoreNotConfigured", nil))
+		return
+	}
+	sagaID := chi.URLParam(r, "sagaId")
+	if sagaID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingSagaID", nil))
+		return
+	}
+	sg, err := store.GetSaga(r.Context(), sagaID)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("SagaNotFound",
+				map[string]string{"sagaId": sagaID}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("SagaGetFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	steps, err := store.ListSagaSteps(r.Context(), sagaID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("SagaStepsListFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"saga":  sg,
+		"steps": steps,
+	})
+}
+
 // ListSagaDLQ handles GET
 // /api/v2/ontologies/{ontologyApiName}/actions/saga/dlq (US-369). Returns
 // PENDING DLQ rows (default) or a status-filtered view via

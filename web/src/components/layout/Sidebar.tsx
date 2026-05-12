@@ -148,6 +148,11 @@ export function Sidebar() {
       icon: 'clock',
     });
     navItems.push({
+      to: `/actions/${activeOntology}/jobs`,
+      label: 'Saga Jobs',
+      icon: 'bolt',
+    });
+    navItems.push({
       to: `/automation/${activeOntology}`,
       label: 'Automation Rules',
       icon: 'zap',

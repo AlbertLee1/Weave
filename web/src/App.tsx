@@ -32,6 +32,7 @@ import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
 import { SagaDLQPage } from './components/sagaDLQ/SagaDLQPage';
+import { SagaJobsPage } from './components/sagaJobs/SagaJobsPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
 import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
@@ -123,6 +124,14 @@ export default function App() {
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="actions/:ontology/history" element={<ActionHistoryPage />} />
               <Route path="actions/history" element={<ActionHistoryPage />} />
+              <Route
+                path="actions/:ontology/jobs"
+                element={
+                  <AdminGuard>
+                    <SagaJobsPage />
+                  </AdminGuard>
+                }
+              />
               <Route path="threads" element={<ThreadsPage />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="pipelines" element={<PipelinesPage />} />

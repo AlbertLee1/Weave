@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -146,6 +147,42 @@ func (s *memSagaStore) ListSagaSteps(_ context.Context, sagaID string) ([]*SagaS
 		out[i] = &cp
 	}
 	return out, nil
+}
+
+func (s *memSagaStore) ListSagas(_ context.Context, params ListSagasParams) ([]*Saga, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	all := make([]*Saga, 0, len(s.sagas))
+	for _, sg := range s.sagas {
+		if params.Ontology != "" && sg.Ontology != params.Ontology {
+			continue
+		}
+		if params.Status != "" && sg.Status != params.Status {
+			continue
+		}
+		cp := *sg
+		all = append(all, &cp)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+	if params.Offset > 0 {
+		if params.Offset >= len(all) {
+			return []*Saga{}, nil
+		}
+		all = all[params.Offset:]
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }
 
 func (s *memSagaStore) EnqueueDLQ(_ context.Context, entry *SagaDLQEntry) error {
