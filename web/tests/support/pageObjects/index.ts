@@ -12,4 +12,5 @@ export { ObjectSetDiffPage } from './ObjectSetDiffPage';
 export { ObjectTypeAdminPage } from './ObjectTypeAdminPage';
 export { PipelinesPage } from './PipelinesPage';
 export { QuiverPage } from './QuiverPage';
+export { SettingsPage } from './SettingsPage';
 export { ThreadsPage } from './ThreadsPage';
