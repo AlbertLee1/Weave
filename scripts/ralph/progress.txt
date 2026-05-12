@@ -242,3 +242,34 @@ Phases:
   - 给 NATS 发布消息后 ack.Sequence 是 PubAck 字段——切到 PublishMsg 不影响 sequence 提取，只是 header 走 *nats.Msg 而不是裸 subject+data。`Publisher.Publish` 的 `return ack.Sequence, nil` 这一行保持不变。
   - 测试覆盖 `handleMessage` 不需要起真实 JetStream subscription：拆出来的 `decideOutcome` 让所有决策路径都可以以普通 unit test 形式驱动；只有 `lastOffset` / `onChange` 这种 Ack-path side-effect 才靠 `ApplyBatch` 的旁路（不 Ack）来反向断言"不该 fire"。
 ---
+
+## 2026-05-12 21:30 - US-007 pkg/actions Saga 多 step 补偿 + 失败恢复补测
+- `pkg/actions/us007_saga_resilience_test.go`（新，~540 行）：5 个顶级 + 18 个 `t.Run` 子测试（≥AC 12），逐项覆盖 PRD 列举的 5 类资源：
+  - `TestUS007_ThreeStepSaga_Step3FailsReverseCompensate`（5 子测试）：3 步 saga stepA/stepB/stepC_fails，stepC prepare 失败 → 反向补偿 compB → compA；断言 BatchError.FailedActionIndex=2、compensations[0]=compB、compensations[1]=compA、primary 永不 publish（仅 1 次 compensation publish）、step rows 推进到 COMPENSATED/COMPENSATED/FAILED + InverseEditsJSON 已写、`SagaStatusCompensated` + DLQ 空。
+  - `TestUS007_ApprovalTimeout`（3 子测试）：`slowApprovalStore` wrapper（嵌入 `*memActionApprovalStore` + 配置 `delay`，在 `UpdateActionApproval` 里 `select { time.After(delay); ctx.Done() }`）配合 `ctx.WithTimeout(5ms)` / `ctx.WithCancel` 三路径——Store 直调返 `context.DeadlineExceeded` 且 row 保持 PENDING；Approval Handler 接 timeout → 500 ApprovalUpdateFailed；mid-flight cancel 返 `context.Canceled`。
+  - `TestUS007_ConcurrentApprovalActors`（3 子测试）：(a) Sequential approve→reject 走 handler 路径，第二个 reviewer 命中 `approval.Status != PENDING` → 409 ApprovalAlreadyReviewed；(b) `casApprovalStore`（PENDING→terminal compare-and-set wrapper，非 PENDING 时返 errStaleApproval）10 个并发 goroutine 抢同一个 PENDING approval，断言精确 1 winner + 9 conflict losers；(c) 错配 actor（roles=[viewer]）→ 403 ApprovalForbidden 不变更状态。
+  - `TestUS007_SagaEditCollapseBoundaries`（4 子测试）：跨 action collapse 边界——(a) `createOrModifyObject + deleteObject` 同 PK：UPSERT→CREATE（无 ObjectExistenceChecker 兜底 CREATE）再 + DELETE 在 `CollapseEdits` 内 `existing.removed=true`，CommitBatch 检测 `len(collapsed)==0` 短路 publish → `pub.calls==0` + `result.Status==SUCCESS`；(b) `LINK_CREATE+LINK_DELETE` 同 triple 抵消；(c) `LINK_DELETE+LINK_CREATE` 同 triple → 终局 LINK_CREATE（last-write-wins 恢复语义）；(d) 两个 MODIFY 同 PK，后写 name='Alicia' 覆盖前写 'Alice' 并合 age 键。
+  - `TestUS007_AsyncBatch_ContextDeadlineExceeded`（3 子测试）：`slowPublisher`（40ms 阻塞 + atomic call counter） + `runAsyncApplyBatch` 直调（避免 HTTP boilerplate）配 `ctx.WithTimeout(60ms)` → 第 1 次 Apply 成功 ~40ms，第 2 次循环顶部 `ctx.Err()` 命中 → ActionJobStatusCanceled + Progress<100 + 'canceled' 终局事件；预取消 ctx → publisher 0 calls；空 batch + 取消 ctx → SUCCEEDED + Progress=100（短路逻辑优先于 ctx 检查）。
+- 配套新增内嵌测试 fixture（全部在测试文件内）：
+  - `slowApprovalStore{*memActionApprovalStore, delay time.Duration}`：ctx-respecting 慢 store，验证 ctx 信号正确传播。
+  - `casApprovalStore{*memActionApprovalStore}` + `errStaleApproval`：在 mu 锁内做 PENDING→terminal compare-and-set，模拟 PG `WHERE status='PENDING'` 行为。
+  - `slowPublisher{delay, calls (int64), offset}`：实现 `Publisher` 接口，`time.Sleep(delay)` + `atomic.AddInt64` 让 race-safe 断言"没调用过"和"调用 N 次"。
+- 零生产代码改动。
+- 验证：
+  - `go test ./pkg/actions -count=1 -run 'TestUS007_' -v` → 5/5 顶级 + 18/18 子测试 PASS / ~1.0s。
+  - `go test ./pkg/actions -count=1 -short -race` 全绿 / 3.7s。
+  - `go test ./pkg/actions -count=1 -cover` → **77.7%** of statements。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/...`：唯一旁路失败 `pkg/developer.TestUsageHandler_ReturnsThreeWindows`（30d 时窗 baseline flake，US-004/US-005 progress 已记录；stash US-007 文件后仍复现，与本 story 无关）。
+  - `go test -count=1 -short -tags integration ./test/integration/...` → main 77.5s / phase6 55.2s / phase7 18.1s 全绿。
+- 文件改动：
+  - `pkg/actions/us007_saga_resilience_test.go`（新）
+- **Learnings for future iterations:**
+  - 跨 action collapse 测试要用 `createOrModifyObject`（resolveUpsertEdits 兜底走 CREATE 分支）+ 显式 `primaryKey` 参数，**不要** 用 `createObject` —— 后者走 `rid.NewObjectRID()` 每次产生新 PK，跨 action 同 PK 抵消的语义就被打破了。`createOrModifyObject` 通过 `findPrimaryKey` 走参数（candidates: `primaryKey` / `<ObjectType>Id` / `id`），与 `deleteObject` 共享 PK 来源。
+  - `mockOmsRepo` 不感知 ctx，所以纯 Mock 路径的 ctx-timeout 测试不会自然短路 —— 测 timeout 用 (a) ctx-aware wrapper store（slowApprovalStore）拦截 Update 调用，或 (b) 走 async batch path（`runAsyncApplyBatch` 显式 `ctx.Err()` 检查）。CommitBatch / Prepare / Publish 都不检查 ctx，纯 saga 路径 ctx 形同虚设——这是 production-side 的 gap，未来若加 ctx-aware publisher 需要补 saga.go 顶部的 `if err := ctx.Err(); err != nil` 早返。
+  - 并发 approval 竞争最干净的测法是 wrapper store 做 compare-and-set，而非 race-y 的 HTTP 双发 —— 后者依赖 mem store 的 read-then-write 时序，结果非确定（可能两个都拿到 PENDING 然后都 Update 成功）。CAS wrapper 让"PENDING → terminal"是原子的，断言"精确 1 winner"是 race-safe 的。
+  - `slowPublisher` 的 atomic int64 call counter 是必要的——`fakePublisher{calls int}` 在并发场景下不 race-safe。async batch 测试要么用 atomic 计数要么用 mutex；前者更轻。
+  - `runAsyncApplyBatch` 接受 `cancel context.CancelFunc` 参数会 `defer cancel()` 但同时也允许早期返回时调一次 —— 测试直接传 `WithTimeout` 的 cancel 即可，函数会安全调用第 N 次（idempotent CancelFunc）。
+  - `pkg/actions` 已经 5 个 mock store（`mockOmsRepo` / `memActionJobStore` / `memActionApprovalStore` / `memSagaStore` / `recordingPublisher`）——新写 wrapper 优先嵌入 `*memXxxStore` 复用 mu/map，不要 fork 整个 mock。`slowApprovalStore` / `casApprovalStore` 都是这个模式。
+  - Approval Handler `reviewApproval` 的 5xx 路径用 `ApprovalUpdateFailed`（500，generic internal error）而不是 `ApprovalConflict`（409）——store 层的 ctx err 走 internal 通道，handler 的 PENDING 重审走 conflict 通道。区分这两类失败需要看 HTTP status code，不能只看 error name。
+---
