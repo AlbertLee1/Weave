@@ -37,6 +37,8 @@ Phases:
 - `pkg/oss/pagination` 现支持可选的 HMAC 签名 + TTL：`SetSigningKey(k []byte)` 开启 / `SetSigningKey(nil)` 关闭；`SetMaxAge(d)` 给 cursor 加过期（0 = 不过期）。两者都是包级 sync.RWMutex 守护的全局开关，默认 zero-key + zero-age 与历史 wire format 完全等价。HTTP handlers 用 `errors.Is(err, pagination.ErrTamperedCursor)` / `errors.Is(err, pagination.ErrExpiredCursor)` 把 cursor 完整性失败映射到 400 Bad Request。
 - `pagination.CompositeCursor.SortKeys []pagination.SortKey`（Field/Value/Direction/NullOrder）让多列 ORDER BY + NULL 序的复合游标能完整 round-trip；omitempty 让老 caller 零改动。
 - `pkg/oss/pagination` 的 `Cursor.Encode()` 永不 mutate 接收者，IssuedAt / Sig 都写到本地 copy。callers 在 next page 时 reuse 同一个 `*Cursor` 不会留毒。
+- `pkg/index.Manager.DropIndex(key)` 现在即便 in-memory map 里没 entry 也会 `os.RemoveAll(indexes/<key>)`；这是冷启动 + on-disk 索引腐败的恢复路径（Rebuild 内部先 DropIndex 再 EnsureIndex，新 Manager 看不到 in-memory 句柄但能清理旧目录）。Bleve 自身的 `bleve.Open` 不会自我修复腐败文件，恢复必须经过 DropIndex → EnsureIndex 显式调用。
+- Bleve 内部 number / age 字段在 `Hit.Fields[...]` 反序列化是 `float64`，断言时记得 type-assert 成 `float64` 而不是 `int`/`int64`。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -137,4 +139,29 @@ Phases:
   - 测试隔离技巧：`defer resetPaginationState()` 在 top-level `TestCursor_HMAC`/`TestCursor_Expiry` 入口；每个子 `t.Run` 内首行也 reset，避免 t.Parallel 启用后被串扰。
   - `httptest.NewRequest("GET", "/items?pageToken=%%%bad", nil)` 会因 `%%%` 被 net/url 解析失败而 query 取不到值，导致 ParsePageRequest 误以为没传 token。要构造 "URL-safe but invalid base64" 用 `!!!notbase64!!!` 这类纯字符即可。
   - 注意 Ralph 工作流：每轮迭代会把上一轮的 `prd.json` / `progress.txt` 归档到 `archive/<branch>/`，活的副本在 `scripts/ralph/{prd.json, progress.txt}`，并通过 `.ralph-repo/` 软链接暴露。CLAUDE.md 顶部说 "PRD at prd.json (same directory as this file)" 指的是 `scripts/ralph/CLAUDE.md` 同目录的 prd.json，不是 repo 根。
+---
+
+## 2026-05-12 20:15 - US-004 pkg/index TDD 失败恢复 + 并发 + 隔离 + 句柄释放
+- `pkg/index/manager_us004_test.go`（新，~470 行）：5 个顶级 `TestManager_*` 下挂 18 个 `t.Run` 子测试（AC 要求 ≥ 12）：
+  - `CorruptionRecovery`（3）：DropAndRecreateAfterScramble / RebuildAfterCorruptionRestoresState / DropIndexToleratesPartialCorruption。用 `scrambleIndexDir` helper 把整个 indexes/<key>/ 目录下所有正则文件覆盖为 garbage 字节，再走 DropIndex → EnsureIndex 或 Rebuild 验证恢复。
+  - `Concurrency`（4）：ConcurrentIndexDocumentDistinctIDs（8 writer × 25 docs）/ ConcurrentEnsureIndexSameKeyReturnsOneHandle（16 callers 同 key 拿到同一个 idx）/ ConcurrentSearchWhileIndexing（4 writer + 6 reader，writer 完成后停 reader）/ ConcurrentApplyBatchAndDelete（4 inserter ApplyBatch + 1 deleter 50 个 DeleteDocument 并发）。`-race` 通过。
+  - `JetStreamReplayCompensation`（3）：PartialStateRecoveredByRebuild（手工注入 1/3 文档模拟丢消息，Rebuild 收敛到 3/3）/ ReplayAfterMissedEdits_ApplyBatchIdempotent（同 PK 三次 upsert 仅留最新版本）/ DeleteThenReindexCovergesToReindexedDoc（INDEX → DELETE → INDEX 序列收敛）。
+  - `PerObjectTypeIsolation`（3）：SearchScopedToObjectType（emp ≠ cust 搜索域）/ DropOneIndexLeavesOthers（drop b，a/c 仍可写读）/ ScopedKeyIsolatesIdenticalTypeAcrossOntologies（同名 ObjectType 跨 ontology 经 `ScopedKey` 隔离）。
+  - `HandleRelease`（5）：CloseFlushesAndReleasesLocks（同 dataDir 第二个 Manager 能再开同 index）/ ReopenAfterCloseSeesPersistedDocs（持久化 3 行重启可见）/ DropIndexClosesHandleAndRemovesDir（assert `os.Stat` 返回 IsNotExist）/ DoubleCloseSafe（幂等）/ EnsureIndexAfterDropReusesPath（drop 后 EnsureIndex 走 New 分支）。
+- `pkg/index/manager.go`：`DropIndex` 调整为即便 in-memory map 没条目也清理 on-disk `indexes/<key>/` 目录。这是冷启动腐败恢复的必要语义：新 Manager 看不到旧句柄但仍需把坏目录清掉再让 EnsureIndex 走 `bleve.New`。原行为是 in-memory 不存在就 return nil，导致 Rebuild on a fresh manager 无法清掉腐败目录。
+- 验证：
+  - `go test ./pkg/index -count=1 -race -cover` → **79.5% of statements**（基线 78.2%，AC 要求 ≥ 75%）。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/...` 全绿（唯一 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` 是 baseline 已存在的 30d 时间窗口 flake，与 US-004 无关 — 上一轮 commit 即可复现）。
+  - `go test -count=1 -short -tags integration ./test/integration/...` 全绿（main / phase6 / phase7）。
+- 文件改动：
+  - `pkg/index/manager.go`（DropIndex 兜底清理 on-disk dir）
+  - `pkg/index/manager_us004_test.go` (新)
+- **Learnings for future iterations:**
+  - Bleve `bleve.Open(path)` 对 corrupted files 直接报错且不自愈；`bleve.New(path, mapping)` 在 path 已存在时报 `"cannot create new index, path already exists"`。所以索引恢复链必须是：DropIndex（`os.RemoveAll` 整个 dir）→ EnsureIndex（走 `bleve.New`）。
+  - 当多个 Manager 实例共享同一个 `WEAVE_DATA_DIR` 时，老的 `DropIndex` 仅在自己 in-memory map 里有句柄才清磁盘 — 现在改为始终清磁盘，这与 EnsureIndex 的"先 Open 后 New"语义对齐：DropIndex 是"让 EnsureIndex 走 New"的保证。
+  - Bleve 通过 BoltDB / scorch 持久化；`Manager.Close()` 必须释放文件锁，否则同 dataDir 的下一个 Manager 会拿到 `lock held` 错误。`TestManager_HandleRelease/CloseFlushesAndReleasesLocks` 是这条契约的回归保险。
+  - `Hit.Fields[<numeric_field>]` 反序列化 Bleve 数字字段为 `float64`，不是 `int` / `int64`。
+  - 子测试 `t.Run` 内不要 `t.Parallel()`：Bleve 同一 dataDir 内的索引共享句柄锁，并行会拿到 race 报告或 lock 抢占；用 `t.TempDir()` 每个子测试隔离 dataDir + 串行执行更稳。
+  - 并发 search-while-write 的协调技巧：用 `atomic.Bool` 做 stop 信号 + 单独 goroutine 轮询 `DocCount` 判断 writers 完成 → 设置 stop。避免在测试里塞 sleep。
 ---

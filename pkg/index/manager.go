@@ -130,20 +130,21 @@ func (m *Manager) GetIndex(objectType string) bleve.Index {
 	return m.indexes[objectType]
 }
 
-// DropIndex closes and removes the index for the given object type.
+// DropIndex closes and removes the index for the given object type. The
+// on-disk directory is always cleared, even when no in-memory handle exists:
+// this is the cold-recovery path used by Rebuild after a process restart
+// against a corrupted Bleve directory, where the new Manager hasn't yet
+// observed the stale on-disk state.
 func (m *Manager) DropIndex(objectType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	idx, ok := m.indexes[objectType]
-	if !ok {
-		return nil
+	if idx, ok := m.indexes[objectType]; ok {
+		if err := idx.Close(); err != nil {
+			return err
+		}
+		delete(m.indexes, objectType)
 	}
-
-	if err := idx.Close(); err != nil {
-		return err
-	}
-	delete(m.indexes, objectType)
 
 	indexPath := filepath.Join(m.dataDir, "indexes", objectType)
 	return os.RemoveAll(indexPath)

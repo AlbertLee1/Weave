@@ -64,8 +64,8 @@
         "Tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/index/manager_us004_test.go 落地 5 个顶级 / 18 个 t.Run 子测试（≥AC 12）：CorruptionRecovery(3) / Concurrency(4) / JetStreamReplayCompensation(3) / PerObjectTypeIsolation(3) / HandleRelease(5）。Manager.DropIndex 调整为即便没有 in-memory 句柄也清理 on-disk 目录（冷启动腐败恢复）。go test ./pkg/index -count=1 -race -cover → 79.5%（基线 78.2%，AC ≥75%）。go build / go vet / 全 ./pkg/... -short + test/integration（main/phase6/phase7）全绿；唯一 pkg/developer 的 TestUsageHandler_ReturnsThreeWindows baseline flake 与本 story 无关。"
     },
     {
       "id": "US-005",
