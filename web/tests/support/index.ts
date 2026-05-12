@@ -12,6 +12,7 @@ export type {
 } from './dataFactory';
 export {
   ActionHistoryPage,
+  ActionTypeAdminPage,
   ApprovalsPage,
   BrowserPage,
   DashboardPage,

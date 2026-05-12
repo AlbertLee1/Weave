@@ -1,4 +1,5 @@
 export { ActionHistoryPage } from './ActionHistoryPage';
+export { ActionTypeAdminPage } from './ActionTypeAdminPage';
 export { ApprovalsPage } from './ApprovalsPage';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';

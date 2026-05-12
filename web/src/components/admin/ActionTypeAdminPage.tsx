@@ -81,14 +81,20 @@ export function ActionTypeAdminPage() {
 
   if (!ontologyApiName) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm">
+      <div
+        data-testid="action-type-admin-no-ontology"
+        className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm"
+      >
         Select an ontology from the dashboard first.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto">
+    <div
+      data-testid="action-type-admin-page"
+      className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto"
+    >
       <header
         className="px-6 py-4 border-b flex flex-wrap items-center gap-4"
         style={{ borderColor: 'rgba(31,41,55,0.5)' }}
@@ -102,6 +108,7 @@ export function ActionTypeAdminPage() {
         <div className="flex-1" />
         <button
           type="button"
+          data-testid="action-type-new-btn"
           onClick={() => setCreateOpen(true)}
           className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 transition-colors"
         >
@@ -141,17 +148,24 @@ export function ActionTypeAdminPage() {
 
       <div className="flex-1 px-6 py-4">
         {isLoading && (
-          <div className="flex items-center justify-center py-20">
+          <div
+            data-testid="action-type-admin-loading"
+            className="flex items-center justify-center py-20"
+          >
             <LoadingSpinner size="lg" />
           </div>
         )}
         {!isLoading && error && (
-          <p className="text-sm text-accent-error">
+          <p
+            data-testid="action-type-admin-error"
+            className="text-sm text-accent-error"
+          >
             Failed to load action types: {(error as Error).message}
           </p>
         )}
         {!isLoading && !error && filtered.length === 0 && (
           <div
+            data-testid="action-type-admin-empty"
             className="rounded border px-6 py-10 text-center"
             style={{
               borderColor: 'rgba(31,41,55,0.5)',
@@ -216,6 +230,7 @@ function ActionTypeTable({
 }) {
   return (
     <div
+      data-testid="action-type-admin-table"
       className="rounded border overflow-hidden"
       style={{
         borderColor: 'rgba(31,41,55,0.5)',
@@ -234,43 +249,59 @@ function ActionTypeTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((at) => (
-            <tr
-              key={at.rid}
-              className="border-b last:border-0 hover:bg-bg-tertiary/30"
-              style={{ borderColor: 'rgba(31,41,55,0.5)' }}
-            >
-              <td className="px-4 py-2 text-text-primary">{at.displayName}</td>
-              <td className="px-4 py-2 font-mono text-xs text-text-secondary">
-                {at.apiName}
-              </td>
-              <td className="px-4 py-2 text-xs">
-                <Badge variant="info">{at.status}</Badge>
-              </td>
-              <td className="px-4 py-2 text-xs text-text-secondary">
-                {Object.keys(at.parameters ?? {}).length}
-              </td>
-              <td className="px-4 py-2 text-xs text-text-secondary">
-                {Array.isArray(at.rules) ? at.rules.length : 0}
-              </td>
-              <td className="px-4 py-2 text-right whitespace-nowrap">
-                <button
-                  type="button"
-                  onClick={() => onEdit(at)}
-                  className="text-xs text-accent-cyan hover:underline mr-3"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(at)}
-                  className="text-xs text-accent-error hover:underline"
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
+          {rows.map((at) => {
+            const paramCount = Object.keys(at.parameters ?? {}).length;
+            const ruleCount = Array.isArray(at.rules) ? at.rules.length : 0;
+            return (
+              <tr
+                key={at.rid}
+                data-testid="action-type-row"
+                data-action-type-api-name={at.apiName}
+                data-action-type-rid={at.rid}
+                data-action-type-status={at.status}
+                data-action-type-parameter-count={paramCount}
+                data-action-type-rule-count={ruleCount}
+                className="border-b last:border-0 hover:bg-bg-tertiary/30"
+                style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+              >
+                <td className="px-4 py-2 text-text-primary">
+                  {at.displayName}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-text-secondary">
+                  {at.apiName}
+                </td>
+                <td className="px-4 py-2 text-xs">
+                  <Badge variant="info">{at.status}</Badge>
+                </td>
+                <td className="px-4 py-2 text-xs text-text-secondary">
+                  {paramCount}
+                </td>
+                <td className="px-4 py-2 text-xs text-text-secondary">
+                  {ruleCount}
+                </td>
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  <button
+                    type="button"
+                    data-testid="action-type-edit-btn"
+                    data-action-type-api-name={at.apiName}
+                    onClick={() => onEdit(at)}
+                    className="text-xs text-accent-cyan hover:underline mr-3"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="action-type-delete-btn"
+                    data-action-type-api-name={at.apiName}
+                    onClick={() => onDelete(at)}
+                    className="text-xs text-accent-error hover:underline"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -553,11 +584,16 @@ function ActionTypeBuilderModal({
       title={isEdit ? `Edit: ${editing.displayName}` : 'New Action Type'}
       size="xl"
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <form
+        onSubmit={onSubmit}
+        data-testid={isEdit ? 'action-type-edit-form' : 'action-type-create-form'}
+        className="flex flex-col gap-4"
+      >
         <div className="grid grid-cols-2 gap-3">
           <Field label="Display Name" required>
             <input
               type="text"
+              data-testid="action-type-display-name"
               value={form.displayName}
               onChange={(e) => updateDisplayName(e.target.value)}
               required
@@ -576,6 +612,7 @@ function ActionTypeBuilderModal({
           >
             <input
               type="text"
+              data-testid="action-type-api-name"
               value={form.apiName}
               onChange={(e) =>
                 setForm((f) => ({
@@ -593,6 +630,7 @@ function ActionTypeBuilderModal({
         <div className="grid grid-cols-[1fr_12rem] gap-3">
           <Field label="Description">
             <textarea
+              data-testid="action-type-description"
               value={form.description}
               onChange={(e) =>
                 setForm((f) => ({ ...f, description: e.target.value }))
@@ -604,6 +642,7 @@ function ActionTypeBuilderModal({
           <Field label="Status">
             <select
               aria-label="Status"
+              data-testid="action-type-status"
               value={form.status}
               onChange={(e) =>
                 setForm((f) => ({ ...f, status: e.target.value }))
@@ -621,9 +660,11 @@ function ActionTypeBuilderModal({
 
         <Section
           title="Parameters"
+          testId="action-type-parameters-section"
           action={
             <button
               type="button"
+              data-testid="action-type-add-parameter"
               onClick={() =>
                 setForm((f) => ({
                   ...f,
@@ -647,9 +688,11 @@ function ActionTypeBuilderModal({
 
         <Section
           title="Rules"
+          testId="action-type-rules-section"
           action={
             <button
               type="button"
+              data-testid="action-type-add-rule"
               onClick={() =>
                 setForm((f) => ({ ...f, rules: [...f.rules, emptyRule()] }))
               }
@@ -683,13 +726,26 @@ function ActionTypeBuilderModal({
         </Section>
 
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid={
+              isEdit
+                ? 'action-type-edit-error'
+                : 'action-type-create-error'
+            }
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2">
           <button
             type="button"
+            data-testid={
+              isEdit
+                ? 'action-type-edit-cancel'
+                : 'action-type-create-cancel'
+            }
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -697,6 +753,11 @@ function ActionTypeBuilderModal({
           </button>
           <button
             type="submit"
+            data-testid={
+              isEdit
+                ? 'action-type-edit-submit'
+                : 'action-type-create-submit'
+            }
             disabled={!canSubmit}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -1175,7 +1236,12 @@ function DeleteActionTypeModal({
 
   return (
     <Modal open onClose={onClose} title="Delete Action Type">
-      <div className="flex flex-col gap-3">
+      <div
+        data-testid="action-type-delete-modal"
+        data-action-type-api-name={actionType.apiName}
+        data-action-type-rid={actionType.rid}
+        className="flex flex-col gap-3"
+      >
         <p className="text-sm text-text-primary">
           Delete <span className="font-semibold">{actionType.displayName}</span>{' '}
           <span className="text-xs text-text-secondary font-mono">
@@ -1188,13 +1254,18 @@ function DeleteActionTypeModal({
           updated. This cannot be undone.
         </p>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="action-type-delete-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="action-type-delete-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -1202,6 +1273,7 @@ function DeleteActionTypeModal({
           </button>
           <button
             type="button"
+            data-testid="action-type-delete-confirm"
             onClick={onConfirm}
             disabled={del.isPending}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-error/20 text-accent-error border border-accent-error/40 hover:bg-accent-error/30 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1251,15 +1323,17 @@ function Field({
 
 function Section({
   title,
+  testId,
   action,
   children,
 }: {
   title: string;
+  testId?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div data-testid={testId} className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-widest text-text-secondary">
           {title}
