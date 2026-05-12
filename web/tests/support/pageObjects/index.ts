@@ -3,6 +3,7 @@ export { ActionTypeAdminPage } from './ActionTypeAdminPage';
 export { ApprovalsPage } from './ApprovalsPage';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
+export { InterfaceAdminPage } from './InterfaceAdminPage';
 export { LinkTypeAdminPage } from './LinkTypeAdminPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';

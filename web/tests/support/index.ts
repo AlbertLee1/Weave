@@ -16,6 +16,7 @@ export {
   ApprovalsPage,
   BrowserPage,
   DashboardPage,
+  InterfaceAdminPage,
   LinkTypeAdminPage,
   LogicFlowsPage,
   ObjectSetBuilderPage,

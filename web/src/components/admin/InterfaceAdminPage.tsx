@@ -70,14 +70,20 @@ export function InterfaceAdminPage() {
 
   if (!ontologyApiName) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm">
+      <div
+        data-testid="interface-admin-no-ontology"
+        className="flex items-center justify-center h-[calc(100vh-3rem)] text-text-secondary text-sm"
+      >
         Select an ontology from the dashboard first.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto">
+    <div
+      data-testid="interface-admin-page"
+      className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto"
+    >
       <header
         className="px-6 py-4 border-b flex flex-wrap items-center gap-4"
         style={{ borderColor: 'rgba(31,41,55,0.5)' }}
@@ -91,6 +97,7 @@ export function InterfaceAdminPage() {
         <div className="flex-1" />
         <button
           type="button"
+          data-testid="interface-new-btn"
           onClick={() => setCreateOpen(true)}
           className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 transition-colors"
         >
@@ -104,6 +111,7 @@ export function InterfaceAdminPage() {
       >
         <input
           type="search"
+          data-testid="interface-search-input"
           aria-label="Search interfaces"
           placeholder="Search by name or apiName…"
           value={search}
@@ -114,17 +122,24 @@ export function InterfaceAdminPage() {
 
       <div className="flex-1 px-6 py-4">
         {isLoading && (
-          <div className="flex items-center justify-center py-20">
+          <div
+            data-testid="interface-admin-loading"
+            className="flex items-center justify-center py-20"
+          >
             <LoadingSpinner size="lg" />
           </div>
         )}
         {!isLoading && error && (
-          <p className="text-sm text-accent-error">
+          <p
+            data-testid="interface-admin-error"
+            className="text-sm text-accent-error"
+          >
             Failed to load interfaces: {(error as Error).message}
           </p>
         )}
         {!isLoading && !error && filtered.length === 0 && (
           <div
+            data-testid="interface-admin-empty"
             className="rounded border px-6 py-10 text-center"
             style={{
               borderColor: 'rgba(31,41,55,0.5)',
@@ -192,6 +207,7 @@ function InterfaceTable({
 }) {
   return (
     <div
+      data-testid="interface-admin-table"
       className="rounded border overflow-hidden"
       style={{
         borderColor: 'rgba(31,41,55,0.5)',
@@ -218,6 +234,12 @@ function InterfaceTable({
             return (
               <tr
                 key={iface.rid}
+                data-testid="interface-row"
+                data-interface-api-name={iface.apiName}
+                data-interface-rid={iface.rid}
+                data-interface-shared-property-count={sharedCount}
+                data-interface-link-type-count={linkCount}
+                data-interface-extends-api-name={parent ? parent.apiName : ''}
                 className="border-b last:border-0 hover:bg-bg-tertiary/30"
                 style={{ borderColor: 'rgba(31,41,55,0.5)' }}
               >
@@ -246,6 +268,8 @@ function InterfaceTable({
                 <td className="px-4 py-2 text-right whitespace-nowrap">
                   <button
                     type="button"
+                    data-testid="interface-edit-btn"
+                    data-interface-api-name={iface.apiName}
                     onClick={() => onEdit(iface)}
                     className="text-xs text-accent-cyan hover:underline mr-3"
                   >
@@ -253,6 +277,8 @@ function InterfaceTable({
                   </button>
                   <button
                     type="button"
+                    data-testid="interface-delete-btn"
+                    data-interface-api-name={iface.apiName}
                     onClick={() => onDelete(iface)}
                     className="text-xs text-accent-error hover:underline"
                   >
@@ -287,6 +313,9 @@ function ImplementingObjectTypesCell({
     <>
       <button
         type="button"
+        data-testid="interface-manage-btn"
+        data-interface-api-name={iface.apiName}
+        data-interface-implementing-count={attached.length}
         onClick={() => setOpen(true)}
         className="text-xs text-accent-cyan hover:underline"
       >
@@ -429,6 +458,7 @@ function InterfaceBuilderModal({
     }
   }
 
+  const modePrefix = isEdit ? 'interface-edit' : 'interface-create';
   return (
     <Modal
       open
@@ -436,11 +466,16 @@ function InterfaceBuilderModal({
       title={isEdit ? `Edit: ${editing.displayName}` : 'New Interface'}
       size="xl"
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <form
+        onSubmit={onSubmit}
+        data-testid={`${modePrefix}-form`}
+        className="flex flex-col gap-4"
+      >
         <div className="grid grid-cols-2 gap-3">
           <Field label="Display Name" required>
             <input
               type="text"
+              data-testid="interface-display-name"
               value={form.displayName}
               onChange={(e) => updateDisplayName(e.target.value)}
               required
@@ -459,6 +494,7 @@ function InterfaceBuilderModal({
           >
             <input
               type="text"
+              data-testid="interface-api-name"
               value={form.apiName}
               onChange={(e) =>
                 setForm((f) => ({
@@ -476,6 +512,7 @@ function InterfaceBuilderModal({
         <div className="grid grid-cols-[1fr_16rem] gap-3">
           <Field label="Description">
             <textarea
+              data-testid="interface-description"
               value={form.description}
               onChange={(e) =>
                 setForm((f) => ({ ...f, description: e.target.value }))
@@ -488,6 +525,7 @@ function InterfaceBuilderModal({
           <Field label="Extends">
             <select
               aria-label="Parent interface"
+              data-testid="interface-extends"
               value={form.extendsRid}
               onChange={(e) =>
                 setForm((f) => ({ ...f, extendsRid: e.target.value }))
@@ -506,9 +544,11 @@ function InterfaceBuilderModal({
 
         <Section
           title="Shared Properties"
+          testId="interface-shared-properties-section"
           action={
             <button
               type="button"
+              data-testid="interface-add-shared-property"
               onClick={() =>
                 setForm((f) => ({
                   ...f,
@@ -534,9 +574,11 @@ function InterfaceBuilderModal({
 
         <Section
           title="Outgoing Link Types"
+          testId="interface-link-types-section"
           action={
             <button
               type="button"
+              data-testid="interface-add-link-type"
               onClick={() =>
                 setForm((f) => ({
                   ...f,
@@ -567,13 +609,18 @@ function InterfaceBuilderModal({
         </Section>
 
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid={`${modePrefix}-error`}
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2">
           <button
             type="button"
+            data-testid={`${modePrefix}-cancel`}
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -581,6 +628,7 @@ function InterfaceBuilderModal({
           </button>
           <button
             type="submit"
+            data-testid={`${modePrefix}-submit`}
             disabled={!canSubmit}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -792,7 +840,12 @@ function DeleteInterfaceModal({
 
   return (
     <Modal open onClose={onClose} title="Delete Interface">
-      <div className="flex flex-col gap-3">
+      <div
+        data-testid="interface-delete-modal"
+        data-interface-api-name={iface.apiName}
+        data-interface-rid={iface.rid}
+        className="flex flex-col gap-3"
+      >
         <p className="text-sm text-text-primary">
           Delete <span className="font-semibold">{iface.displayName}</span>{' '}
           <span className="text-xs text-text-secondary font-mono">
@@ -805,13 +858,18 @@ function DeleteInterfaceModal({
           properties and outgoing link types. This cannot be undone.
         </p>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="interface-delete-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
+            data-testid="interface-delete-cancel"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -819,6 +877,7 @@ function DeleteInterfaceModal({
           </button>
           <button
             type="button"
+            data-testid="interface-delete-confirm"
             onClick={onConfirm}
             disabled={del.isPending}
             className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-error/20 text-accent-error border border-accent-error/40 hover:bg-accent-error/30 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -886,22 +945,39 @@ function ImplementingObjectTypesModal({
 
   return (
     <Modal open onClose={onClose} title={`Implementing — ${iface.displayName}`} size="lg">
-      <div className="flex flex-col gap-4">
-        <section className="flex flex-col gap-2">
+      <div
+        data-testid="interface-implementing-modal"
+        data-interface-api-name={iface.apiName}
+        data-interface-rid={iface.rid}
+        className="flex flex-col gap-4"
+      >
+        <section
+          data-testid="interface-implementing-attached-section"
+          className="flex flex-col gap-2"
+        >
           <span className="text-[10px] uppercase tracking-widest text-text-secondary">
             Currently implementing
           </span>
           {attached.length === 0 ? (
-            <p className="text-xs text-text-muted italic">
+            <p
+              data-testid="interface-implementing-empty"
+              className="text-xs text-text-muted italic"
+            >
               No ObjectType implements this interface yet.
             </p>
           ) : (
-            <ul className="flex flex-col gap-1">
+            <ul
+              data-testid="interface-implementing-list"
+              className="flex flex-col gap-1"
+            >
               {attached.map((a) => {
                 const ot = objectTypes.find((o) => o.rid === a.objectTypeRid);
                 return (
                   <li
                     key={a.objectTypeRid}
+                    data-testid="interface-implementing-row"
+                    data-object-type-rid={a.objectTypeRid}
+                    data-object-type-api-name={ot?.apiName ?? ''}
                     className="flex items-center gap-3 px-3 py-2 rounded border"
                     style={{
                       borderColor: 'rgba(31,41,55,0.5)',
@@ -916,6 +992,8 @@ function ImplementingObjectTypesModal({
                     </span>
                     <button
                       type="button"
+                      data-testid="interface-implementing-detach-btn"
+                      data-object-type-api-name={ot?.apiName ?? ''}
                       aria-label={`Detach ${ot?.apiName ?? a.objectTypeRid}`}
                       onClick={() => onDetach(a.objectTypeRid)}
                       disabled={detach.isPending}
@@ -936,6 +1014,7 @@ function ImplementingObjectTypesModal({
           <div className="flex items-center gap-2">
             <select
               aria-label="Object type to attach"
+              data-testid="interface-implementing-attach-select"
               value={selected}
               onChange={(e) => setSelected(e.target.value)}
               className={inputClass + ' text-xs flex-1'}
@@ -949,6 +1028,7 @@ function ImplementingObjectTypesModal({
             </select>
             <button
               type="button"
+              data-testid="interface-implementing-attach-btn"
               onClick={onAttach}
               disabled={!selected || attach.isPending}
               className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -964,13 +1044,18 @@ function ImplementingObjectTypesModal({
           )}
         </section>
         {submitError && (
-          <p role="alert" className="text-xs text-accent-error">
+          <p
+            role="alert"
+            data-testid="interface-implementing-error"
+            className="text-xs text-accent-error"
+          >
             {submitError}
           </p>
         )}
         <div className="flex justify-end">
           <button
             type="button"
+            data-testid="interface-implementing-close"
             onClick={onClose}
             className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
           >
@@ -1071,14 +1156,16 @@ function Field({
 function Section({
   title,
   action,
+  testId,
   children,
 }: {
   title: string;
   action?: React.ReactNode;
+  testId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" data-testid={testId}>
       <div className="flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-widest text-text-secondary">
           {title}
