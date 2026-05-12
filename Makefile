@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list
 
 test: test-unit
 
@@ -55,6 +55,9 @@ test-integration-phase6:
 
 test-integration-phase7:
 	go test -tags integration ./test/integration/phase7/... -v
+
+test-bdd: ## Run the godog Cucumber BDD suite (test/bdd, requires Docker for testcontainers)
+	go test -tags bdd -count=1 -v ./test/bdd/...
 
 test-cover:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
