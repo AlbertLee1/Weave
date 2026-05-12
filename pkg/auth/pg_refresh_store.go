@@ -71,6 +71,20 @@ func (s *PGRefreshStore) Revoke(ctx context.Context, id, reason string) error {
 	return nil
 }
 
+// RevokeIfActive performs the SQL-level CAS via a partial-update WHERE clause:
+// only rows whose revoked_at is still NULL are touched. The boolean return
+// reports whether THIS statement was the one that flipped the bit, letting
+// the Rotate path detect a concurrent rotation that already burned the token.
+func (s *PGRefreshStore) RevokeIfActive(ctx context.Context, id, reason string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = now(), revocation_reason = $2 WHERE id = $1 AND revoked_at IS NULL`,
+		id, reason)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (s *PGRefreshStore) RevokeChainForUser(ctx context.Context, userID, reason string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE refresh_tokens SET revoked_at = now(), revocation_reason = $2

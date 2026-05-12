@@ -37,6 +37,11 @@ type RefreshStore interface {
 	Create(ctx context.Context, t *RefreshTokenRecord) error
 	GetByHash(ctx context.Context, hash string) (*RefreshTokenRecord, error)
 	Revoke(ctx context.Context, id, reason string) error
+	// RevokeIfActive performs a compare-and-set transition from active to
+	// revoked. Returns (true, nil) only when THIS call performed the
+	// transition; (false, nil) when the row was already revoked. Used by
+	// Rotate to detect concurrent rotation attempts on the same token.
+	RevokeIfActive(ctx context.Context, id, reason string) (bool, error)
 	RevokeChainForUser(ctx context.Context, userID, reason string) error
 	RevokeAllForUser(ctx context.Context, userID, reason string) error
 	MarkUsed(ctx context.Context, id string, when time.Time) error
@@ -99,6 +104,27 @@ func (s *MemoryRefreshStore) Revoke(_ context.Context, id, reason string) error 
 	rec.RevokedAt = &now
 	rec.RevocationReason = reason
 	return nil
+}
+
+// RevokeIfActive atomically transitions the row from active to revoked under
+// the store's write lock. Returns (true, nil) only when THIS call performed
+// the transition; (false, nil) when the row was already revoked. Surfaces
+// ErrRefreshTokenNotFound when the id does not exist so the caller can
+// distinguish "lost the race" from "token never existed".
+func (s *MemoryRefreshStore) RevokeIfActive(_ context.Context, id, reason string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.byID[id]
+	if !ok {
+		return false, ErrRefreshTokenNotFound
+	}
+	if rec.RevokedAt != nil {
+		return false, nil
+	}
+	now := time.Now()
+	rec.RevokedAt = &now
+	rec.RevocationReason = reason
+	return true, nil
 }
 
 func (s *MemoryRefreshStore) RevokeChainForUser(_ context.Context, userID, reason string) error {

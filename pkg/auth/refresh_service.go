@@ -96,7 +96,10 @@ func (s *RefreshService) Lookup(ctx context.Context, plain string) (*RefreshToke
 //  2. Not found        → ErrRefreshTokenNotFound
 //  3. Revoked already  → ErrRefreshTokenReuseDetected + revoke entire chain
 //  4. Expired          → ErrRefreshTokenExpired
-//  5. Otherwise        → revoke old, insert new with parent_id chained.
+//  5. Otherwise        → CAS active→revoked; only the CAS winner inserts a
+//                        new chained child. Losers fall through to reuse
+//                        detection so two simultaneous presentations of the
+//                        same token cannot both mint successor tokens.
 func (s *RefreshService) Rotate(ctx context.Context, plain string) (string, *RefreshTokenRecord, error) {
 	old, err := s.store.GetByHash(ctx, HashRefreshToken(plain))
 	if err != nil {
@@ -112,9 +115,16 @@ func (s *RefreshService) Rotate(ctx context.Context, plain string) (string, *Ref
 		return "", nil, ErrRefreshTokenExpired
 	}
 
-	// Mark old revoked, insert new chained child.
-	if err := s.store.Revoke(ctx, old.ID, "rotated"); err != nil {
+	// CAS active→revoked. Only the goroutine that actually flips the bit
+	// is permitted to mint the successor; concurrent presentations of the
+	// same token race here and the losers see won=false → reuse path.
+	won, err := s.store.RevokeIfActive(ctx, old.ID, "rotated")
+	if err != nil {
 		return "", nil, err
+	}
+	if !won {
+		_ = s.store.RevokeChainForUser(ctx, old.UserID, "reuse_detected")
+		return "", nil, ErrRefreshTokenReuseDetected
 	}
 	return s.Generate(ctx, old.UserID, old.ID)
 }

@@ -48,6 +48,9 @@ Phases:
 - `pkg/types.MergeInterfaceProperties(iface, object) ([]MergedProperty, error)` 把"Interface↔ObjectType 属性合并"提到类型系统原语；冲突走 `errors.Is(err, ErrInterfaceConflict)` 检测，5 类冲突（BaseType / Nullable / Array SubType / Struct Field / Decimal Precision-Scale）一次性 aggregate 返回。PC-A02 Proposals UI / OMS schema validate 可复用。
 - `pkg/rid.Parse` 现在严格：空段（service/realm/resource-type/id 任一空）、控制字符（CR/LF/TAB/NUL/DEL）、大小写错误 UUID、缺破折号 UUID 全部返回 wrapped error。`uuidPattern` 锁死小写 RFC4122 hex `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`。任何 RID 持久化或入参校验都应过 Parse 而不是裸 `strings.Split`。错误消息一律 `%q` 包住原输入，便于 ops 在 CR/LF 攻击场景下从日志辨认。
 - `pkg/rid.RID` 新增 `String() / Equal(*RID) bool / Hash() string / UUIDVersion() (int, error) / IsUUIDv4() / IsUUIDv7()`：`Hash` 是 SHA-256 hex digest（map key / 审计行标识用），`Equal` 与 `String` 全 nil-safe。`IsUUIDv4/7` 让多态 RID 区分变成 1-行：今天 `rid.New*` 通过 `google/uuid.New()` 产 v4；未来切 v7（time-ordered）只需把 `New` 内 `uuid.New().String()` 换 `uuid.Must(uuid.NewV7()).String()`，调用方零改动。
+- `pkg/auth.RefreshStore.RevokeIfActive(ctx, id, reason) (won bool, err error)` 是 single-use revoke 的 CAS 原语：Memory 走锁内 double-check，PG 走 `WHERE id=$1 AND revoked_at IS NULL` + `RowsAffected==1`。`RefreshService.Rotate` 只有 won=true 的并发 caller 才会 mint 后继 token，其余命中 `RevokeChainForUser(reuse_detected)` 烧链 — 修了"两个并发 Rotate 同 plaintext 都 mint child"的 TOCTOU。所有 single-use 资源（API key rotation、approval transition、OAuth code 兑换）都该走这种 store-level CAS 而不是依赖 `Revoke` 幂等性。
+- `pkg/auth` 的 `ipRateLimiter` 是包私有；想 unit-test 必须 `package auth` 而非 `package auth_test`。LoginHandler 通过 `clientIP(r)` 解析 IP，**XFF 头优先于 RemoteAddr**，所以 httptest 注入 `req.Header.Set("X-Forwarded-For", ip)` 比改 RemoteAddr 稳。同一测试套件多个 rate-limit 子测试**必须**给彼此不同的 IP（per-IP fixed-window 是全局状态），用 `fmt.Sprintf("203.0.113.%d", time.Now().UnixNano()%200+10)` 这种"高位段+纳秒尾"避免串扰。
+- `pkg/auth.OntologyScopeMiddleware` 从 `/api/v2/ontologies/{apiName}/...` URL 抠 **api name 而非 RID**，所以测试里 `User.OntologyRoles` 的 key 要用 `"northwind"` 这种 apiName 而不是 `"ri.ontology.main.ontology.northwind"`；同理 `EnforceOntologyScope(ctx, ontologyRID, perm)` 的 `ontologyRID` 参数名带了 "RID" 后缀但中间件入参其实是 apiName — 名字误导，但这是历史包袱。生产路由如果走 RID-based 持久化要在 middleware 之后再 resolve。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -391,4 +394,36 @@ Phases:
   - RID 是值类型（4 个 string 字段），Go 原生 `==` 已经能比较，但 `*RID.Equal(*RID)` 显式版好处是 nil-safe + 文档化语义；调用方 `r1.Equal(r2)` 比 `*r1 == *r2` 在 review 时更可读。Hash 方法用 SHA-256 hex digest，map 键想从 `*RID` 切到 `string` 一行替换。
   - rid.go 的 20 个 typed `NewXxxRID()` 一致 funnel 到 `New(svc, realm, type)`，所以"全 typed constructor 都是 v4 且 IsRID 返回 true"是一条可表驱动测的属性 — 一个 `cases []{ctor, wantType, wantRealm}` 就把 20 个函数全 pin 住，coverage 立刻从 70% 推到 96.7%，且未来加 `NewSomethingRID()` 漏忘也容易在 review diff 里看到。
   - 永远把 `%q` 用在错误消息里包原始输入（`fmt.Errorf("invalid RID format: %q", rid)`），CR/LF/NUL 会被 Go 自动转义成 `\r\n\x00` 写到日志里，操作员能从 grep 输出看到攻击 payload；裸 `%s` 会把 CR 真的写进 log line 弄出 log forging。
+---
+
+## 2026-05-12 21:20 - US-012 pkg/auth 多租户与速率限制补测
+- `pkg/auth/us012_test.go`（新，~480 行）：4 个顶级 + 24 个 `t.Run` 子测试（≥AC 10），覆盖 PRD 全部 4 类资源：
+  - `TestUS012_RLSPolicyEvaluation`（8）：Hit_AllowMatchingRoleGrantsObject / Miss_RoleDoesNotMatch_DefaultDeny / Miss_UserIDSubjectNotInList_DefaultDeny / DenyPrecedenceOverAllow（mask 必须为空）/ UnionOfMultipleAllowGrantsForSameSubject / MalformedRowSkippedAtConstructTimeAllowStillApplies（坏 JSON sibling 不影响好 row）/ NilEvaluator_DefaultDeny / PropertyMasks_DedupAcrossMultipleAllowGrants（"ssn" 跨两 policy 只出现一次）。
+  - `TestUS012_TokenRefreshRace`（5）：RevokeIfActiveCAS_OnlyFirstCallSucceeds（直接打 store 原语；missing id 返回 ErrRefreshTokenNotFound）/ ConcurrentRotate_SamePlaintext_AtMostOneWinsRestBurnChain（16 goroutine × `<-start` 同步 race，断言 successes==1 且 sum==16）/ ConcurrentRotate_DifferentChains_NoCrossContamination（alice+bob 并发各自成功）/ StaleTokenAfterRotation_StillBurnsChain（顺序场景，plain2 也被吃链）/ ExpiredTokenRotateDoesNotBurnChain（过期 ≠ 失窃；plain row 不变 + 同用户其它 chain 不被烧）。
+  - `TestUS012_MultiOntologyIsolation`（6）：ScopedRoleOnTenantA_GrantsTenantAOnly / AdminGlobalRole_OverridesAllOntologies（含 "anything-new" 没显式配置过的 tenant）/ ScopedRoleWithoutMatchingPerm_StillDenies（viewer 读 OK 写 deny）/ UnauthenticatedRequest_RejectedWithUnauthorized（nil user）/ HTTPMiddleware_CrossTenantRequestReturns403（chi router + WithUser + OntologyScopeMiddleware，tenant A 200 / tenant B 403）/ RoleResolverCachePerUser_DoesNotBleedAcrossUsers（alice 看不到 bob 的 tenantB，反之亦然）。
+  - `TestUS012_LoginRateLimitThresholds`（5）：AllowsUpToMaxThenRejectsWith429AndRetryAfter（X-Forwarded-For 注入 + 断言 errorCode==RATE_LIMITED + Retry-After 头存在）/ DistinctIPsTrackedIndependently / DisabledLimiter_RateLimitZeroNeverRejects（5 次循环避免 bcrypt 拖慢）/ IPRateLimiter_WindowExpiryReopensSlot（50ms 窗口 + 60ms sleep，直接打 unexported `newIPRateLimiter`）/ IPRateLimiter_RetryAfterShrinksWithinWindow（断言 retry-after 单调不增）。
+- 配套生产改动（解决 Rotate 并发 race 的真实 bug）：
+  - `pkg/auth/refresh_store.go`：`RefreshStore` 接口新增 `RevokeIfActive(ctx, id, reason) (revoked bool, err error)`，`MemoryRefreshStore` 实现走 `Lock` + 二次检查 `RevokedAt==nil` 后 stamp now，missing id 返回 `ErrRefreshTokenNotFound`，已经 revoked 返回 `(false, nil)`。
+  - `pkg/auth/pg_refresh_store.go`：`PGRefreshStore.RevokeIfActive` 用 `UPDATE … WHERE id=$1 AND revoked_at IS NULL` 让 PG 做 SQL-level CAS，`RowsAffected()==1` 才返回 true。
+  - `pkg/auth/refresh_service.go`：`Rotate` 改用 CAS — 把原本 `s.store.Revoke(ctx, old.ID, "rotated")` 换成 `won, err := s.store.RevokeIfActive(...)`，`won=false`（输给并发同 plaintext 的另一 caller）的 caller 命中 `RevokeChainForUser(reuse_detected)` 烧链并返回 `ErrRefreshTokenReuseDetected`。修复了 N 个并发 caller 同时呈现同一 plaintext 时 N 个 chained children 全部被 mint 的 TOCTOU race。
+- 验证：
+  - `go test ./pkg/auth -run TestUS012 -count=1 -v` → **24/24 PASS**。
+  - `go test ./pkg/auth -count=1 -race` → 全绿（34s）。
+  - `go test ./pkg/auth -count=1 -cover` → **55.9%**（基线 55.7%；新增 `Memory.RevokeIfActive` 100% / `Rotate` 80% / `PolicyEvaluator` 核心 `NewPolicyEvaluator`/`Evaluate`/`subjectMatches` 全 100%。pkg/auth 总覆盖小幅提升因为 OIDC/SAML/MFA handler 大量代码不在 US-012 范围）。
+  - `go build ./...` / `go vet ./...` 双绿。
+  - `go test -count=1 -short ./pkg/...` 全绿（唯一 `pkg/developer.TestUsageHandler_ReturnsThreeWindows` baseline 30d 时窗 flake 与本 story 无关，stash 后重跑仍复现 — 与 US-004/US-007/US-010/US-011 注释里反复见到的同一 flake）。
+  - `go test -tags integration -short ./test/integration/...` main/phase6/phase7 全绿。
+- 文件改动：
+  - `pkg/auth/refresh_store.go`（接口加 RevokeIfActive + Memory 实现）
+  - `pkg/auth/pg_refresh_store.go`（PG 实现 RevokeIfActive）
+  - `pkg/auth/refresh_service.go`（Rotate 改 CAS）
+  - `pkg/auth/us012_test.go`（新）
+- **Learnings for future iterations:**
+  - `RefreshService.Rotate` 原本 `Get→IsRevoked→Revoke→Generate` 之间有 TOCTOU：两个并发 caller 都读到 `RevokedAt=nil` 时都会 `Revoke`（idempotent，两次都 ok）然后都 `Generate`，产生两个 children 并 fork chain。`Revoke(id, reason)` 是幂等所以无法用它做"我赢了 race"的信号。修复模式：在 store 层暴露 CAS 原语 `RevokeIfActive` 返回 `(won bool, err error)`，Rotate 用 won 决定是否 mint 后继。这是任何"single-use revoke"语义都该走的范式。Memory 实现锁内 double-check，PG 实现走 `WHERE x IS NULL + RowsAffected==1` 让 DB 替我们 CAS。
+  - 想要并发测试可复现：N 个 goroutine 每个 `<-start` 阻塞，主测试 `close(start)` 一次性放枪。N=16 + 短临界区 + Memory store mutex → 看到的 race 窗口确实只有 1 winner，未加 CAS 前 successes 会 == N（全错）。
+  - `LoginHandler` 的 `ipRateLimiter` 是包私有；测试想直接打 `newIPRateLimiter(max, window).allow(ip)` 必须用 `package auth` 而非 `package auth_test`。这也是 `login_handler_test.go` 选 `package auth` 的原因。X-Forwarded-For 注入比改 `RemoteAddr` 更稳：handler 里 `clientIP` 优先认 XFF 头。
+  - 测试用的 fake repo `fakeUserRepo` 已在 `role_resolver_test.go` 提供完整 in-memory 实现（含 MFA / role / 错误注入）；新增 auth 子测试**复用**它而不是重定义，否则 method-set 漂移导致编译错误。`seedUser(t, repo, id, email, password, name, roles...)` 也是这个文件里的工具，password 走真 bcrypt 不会跑测时 0ms — `DisabledLimiter` 子测试做 20 次会拖到 5s，改 5 次足够 detect 回归。
+  - 同一 `pkg/auth` 测试套件里多个 rate-limit 子测试**必须**给不同 IP，否则共享 per-IP fixed-window 会让后跑的子测试随机失败。`fmt.Sprintf("203.0.113.%d", time.Now().UnixNano()%200+10)` 这种"高位段+纳秒尾"够分散；并行场景下也安全。
+  - `EnforceOntologyScope` 的契约：admin 全局角色 → bypass 全 ontology；OntologyRoles[rid] 的 scoped role 必须**也**有对应 perm 才放行。所以 viewer scope + `PermObjectTypeWrite` 要 deny，而 viewer scope + `PermObjectRead` 要 allow — 这是测 "rate limit threshold" 之外最容易写错的不对称。
+  - `OntologyScopeMiddleware` 从 URL `/api/v2/ontologies/{apiName}/...` 中抠 api name（不是 RID），所以 `OntologyRoles` map 的 key 在测试里用 `"northwind"` 而不是 `"ri.ontology.main.ontology.northwind"`。生产路由会有把 apiName 翻译成 RID 的步骤但 middleware 自己就用 apiName 做 key — 否则中间件层根本来不及 resolve RID。这是 `scope_middleware.go` 上方注释里早就说过的事，但跨 story 容易忘。
 ---
