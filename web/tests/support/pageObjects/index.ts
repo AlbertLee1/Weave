@@ -4,6 +4,7 @@ export { AggregationPage } from './AggregationPage';
 export { ApprovalsPage } from './ApprovalsPage';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
+export { ImportWizardPage } from './ImportWizardPage';
 export { InterfaceAdminPage } from './InterfaceAdminPage';
 export { LinkTypeAdminPage } from './LinkTypeAdminPage';
 export { LogicFlowsPage } from './LogicFlowsPage';

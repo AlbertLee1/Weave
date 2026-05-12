@@ -531,8 +531,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 36,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/feature.import-wizard.spec.ts 落地 4 scenarios（@smoke happy path + schema inference 警告 + 字段映射 skip + 错误回滚），全部走 page.route 三端点 stub（GET objectTypes / GET actionTypes / POST actions/{action}/apply）+ 真渲染 /import/northwind 路由。新增 web/tests/support/pageObjects/ImportWizardPage.ts 封装 uploadCsv(setInputFiles) + stepBadge/mappingSelect/warningBadge 三个 testid-工厂；注册到 support/{index,pageObjects/index}.ts。npx playwright test feature.import-wizard → 4/4 pass（~5.5s）；npx playwright test --grep @smoke → 47/47 pass（含新 1 个 @smoke）。npx tsc 干净；npx eslint 干净；vitest ImportWizardPage.test.tsx 6/6 不回归。dev-browser skill 未装，按 US-002 模板用 make e2e-up + Playwright headless 等价覆盖。"
     },
     {
       "id": "US-037",
