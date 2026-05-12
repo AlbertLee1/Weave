@@ -93,14 +93,6 @@ describe('ObjectSetComposer', () => {
             name: 'My saved query',
             def: baseDef,
             createdAt: '2026-04-06T00:00:00Z',
-            versions: [
-              {
-                versionId: 'v1',
-                def: baseDef,
-                createdAt: '2026-04-06T00:00:00Z',
-              },
-            ],
-            activeVersionId: 'v1',
           },
         ]}
         onLoadSaved={() => {}}
