@@ -21,6 +21,7 @@ import (
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
+	"github.com/liyang/weave/pkg/oss/aggregation"
 )
 
 // suiteState is the shared per-scenario state that step definitions read and
@@ -77,6 +78,16 @@ type suiteState struct {
 	timeTravelRouter       chi.Router
 	lastTimeTravelResponse *timeTravelHTTPResult
 
+	// US-018 Quiver aggregation BDD wiring. The aggregation engine + index
+	// manager are wired onto the same OSS handler used by the cell-masking
+	// flow via SetAggregation; quiverRouter exposes the per-ObjectType
+	// /aggregate endpoint so step defs drive real HTTP semantics through
+	// pkg/oss.Handler.AggregateObjects. lastQuiverResponse stashes the most
+	// recent response for Then-step assertions.
+	aggEngine          *aggregation.Engine
+	quiverRouter       chi.Router
+	lastQuiverResponse *quiverHTTPResult
+
 	mu                sync.Mutex
 	apiNameToRID      map[string]string // ontology apiName → RID
 	objectTypeRIDs    map[string]string // "<ontologyApiName>/<otApiName>" → ObjectType RID
@@ -114,6 +125,13 @@ type cellMaskHTTPResult struct {
 // timeTravelHTTPResult is the per-scenario response snapshot stashed on
 // suiteState for the US-017 asOf time-travel Then-steps.
 type timeTravelHTTPResult struct {
+	statusCode int
+	body       []byte
+}
+
+// quiverHTTPResult is the per-scenario response snapshot stashed on
+// suiteState for the US-018 Quiver aggregation Then-steps.
+type quiverHTTPResult struct {
 	statusCode int
 	body       []byte
 }
@@ -271,6 +289,7 @@ func (s *suiteState) resetMaps() {
 	s.lastAutomationResponse = nil
 	s.lastCellMaskResponse = nil
 	s.lastTimeTravelResponse = nil
+	s.lastQuiverResponse = nil
 	if s.sagaPublisher != nil {
 		s.sagaPublisher.reset()
 	}
@@ -365,6 +384,21 @@ func (s *suiteState) ensureContainer(t testing.TB) error {
 		ossHandler.GetObject,
 	)
 	s.cellMaskRouter = cr
+
+	// US-018 Quiver aggregation. The aggregation engine is wired against
+	// the same Bleve index manager + OSS handler so a separate chi router
+	// can mount /objects/{objectType}/aggregate without spinning up a
+	// second OSS service. AccuracyRequireAccurate is set per-request in
+	// the step definitions so percentile and distinct metrics return
+	// byte-exact results suitable for hard-coded assertions.
+	s.aggEngine = aggregation.NewEngine()
+	ossHandler.SetAggregation(s.aggEngine, s.indexMgr)
+	qr := chi.NewRouter()
+	qr.Post(
+		"/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate",
+		ossHandler.AggregateObjects,
+	)
+	s.quiverRouter = qr
 	return nil
 }
 

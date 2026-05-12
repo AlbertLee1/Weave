@@ -31,4 +31,5 @@ func RegisterAllSteps(t testing.TB, sc *godog.ScenarioContext) {
 	registerAutomationSteps(t, sc, state)
 	registerCellMaskingSteps(t, sc, state)
 	registerTimeTravelSteps(t, sc, state)
+	registerQuiverSteps(t, sc, state)
 }

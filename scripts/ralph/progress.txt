@@ -72,6 +72,11 @@ Phases:
 - **InsertObjectHistory 自带 valid_to 闭合副作用（US-017）**：插入 version=N 的行后，pg_repository.go:2081 会 `UPDATE object_history SET valid_to = $new_recorded_at WHERE version < N AND valid_to IS NULL`。BDD seed 顺序 insert v1(RecordedAt=T1) → v2(RecordedAt=T2)，v1 的 valid_to 被自动闭合为 T2，天然 [T1, T2) 半开区间。**不要**手写 UPDATE valid_to——会与该副作用冲突。要插入"老版本 valid_to=NULL"的非标态需绕过 InsertObjectHistory 直接走 `state.pg.Pool.Exec` 原生 INSERT。
 - **OSS V2 totalCount 是 string（US-017）**：响应 `"totalCount":"1"` 字符串而非数字，大整数 SDK 转译用。BDD 断言用 `resp.TotalCount != "1"` 字符串比较，不要 Unmarshal 进 int。
 - **dataset_transactions 表 ON DELETE SET NULL（不是 CASCADE，US-017）**：parent_tx_id 走 ON DELETE SET NULL（migration 000090），不属于 ontologies FK 级联。BDD 当前 truncateOntologyGraph 不显式 TRUNCATE dataset_transactions — 容器生命周期内累计；新 scenario 复用同名 tx_id 会触发 PK 冲突，届时把 `dataset_transactions` 加入 TRUNCATE 列表。
+- **OSS aggregate-path BDD seed（US-018）**：与 cell-masking 的 read-path（GetObject）共享同一套 OMS PG + Bleve scoped index 二段 seed。多出来的一段是 `aggregation.NewEngine()` + `ossHandler.SetAggregation(eng, indexMgr)` — 单 OSS handler 同时支撑 GetObject + AggregateObjects，无需第二份 ServiceImpl/Handler。BDD scenarios POST `/api/v2/ontologies/{ontologyRID}/objects/{objectType}/aggregate`，body 推 `accuracy=REQUIRE_ACCURATE` 让 approximatePercentile / approximateDistinct 透明降到 exactPercentile（nearestRank）/ exactDistinct，断言 byte-exact 数值。
+- **Bleve DateTimeFieldMapping + RFC3339 string 是 timestamp seed 的最简组合（US-018）**：`index.Property{BaseType: "timestamp", IsSearchable: true}` → `mapping.NewDateTimeFieldMapping()`；`IndexDocument(..., {"timestamp": "2026-05-13T00:15:00Z"})` Bleve 自动解析。后续 aggregation engine 的 `getDurationEntries` 把 stored field 当 `string` 解析回 RFC3339 → epoch，再桶化。**不要用** epoch 秒数 + NumericFieldMapping 在 BDD 里——会与"timestamp 看起来是 timestamp" 的可读性脱节，给未来调试增加难度。
+- **`approximateDistinct` facet 需要 KeywordField 才能精确小集合计数（US-018）**：`index.Property{Analyzer: "not_analyzed"}` → KeywordFieldMapping。`approximateDistinct` 在 AccuracyRequireAccurate 下走 exactDistinct（基于 Bleve facet term iteration）；如果字段是 TextField + standardAnalyzer，"host-a" 会被 token 化成 "host", "a"，distinct 计数错位。任何 distinct / topValues / groupBy=exact 的字段都该标 not_analyzed。
+- **percentile / distinct metric 名按约定 "<field>.<aggType>" 自动生成（US-018）**：bleve_agg.go 第 52-58 行：`if spec.Name == "" { name = spec.Type; if spec.Field != "" { name = spec.Field + "." + spec.Type } }`。所以 `{Type: "approximateDistinct", Field: "host"}` 输出名 = `"host.approximateDistinct"`；`{Type: "approximatePercentile", Field: "value"}` 即使 accuracy=REQUIRE_ACCURATE 也仍叫 `"value.approximatePercentile"`（名字按 spec.Type 而非引擎实际走的 exact 路径来定）。要稳的话显式 `Name: "myMetric"` 覆盖。
+- **多 percentile 输出是 map[string]float64，key 用 fmt.Sprintf("%g", p)（US-018）**：approx_percentile.go:50 / approxPercentilesFromIndex 用 `"%g"` 格式化，所以 `[]float64{50, 95, 99}` 的输出 key 是 `"50"`, `"95"`, `"99"`（无小数点）；`[]float64{99.9}` 输出 key 是 `"99.9"`。BDD 断言用 `pctMap["50"]` 即可，**不要** 写 `pctMap["50.0"]`。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -607,4 +612,33 @@ Phases:
   - **OSS V2 totalCount 是 string 不是 number**：响应里写 `"totalCount":"1"`（字符串），不是 `"totalCount":1`。SDK 客户端走 string→int 解析才能 round-trip 大整数。BDD 断言用 `resp.TotalCount != "1"` 字符串比较，不要 Unmarshal 进 int。
   - **dataset_transactions 表 ON DELETE SET NULL（不是 CASCADE）**：parent_tx_id 走 ON DELETE SET NULL（migration 000090）。TRUNCATE 也不会因为 self-FK 受阻——但前提是没有跨 ontology 的 parent 链。真要彻底清表，TRUNCATE dataset_transactions RESTART IDENTITY CASCADE 即可。BDD 的 truncateOntologyGraph 目前不显式 TRUNCATE 它——因为 ensureContainer 每 scenario 重 truncate ontology + saga，dataset_transactions 不依赖 ontologies FK 所以会"在容器生命周期内累计"。这对当前 3 scenarios 无问题（tx_id 全用唯一前缀），但未来如果新 scenario 重用同名 tx_id 会触发 PK 冲突——届时把 dataset_transactions 加入 truncateOntologyGraph 的 TRUNCATE 列表。
   - **apierror parameters 字段在 wire 上恒为 object（含 nil 时也是 `{}`）**：所以 `parameters.txId` 直接走 `env.Parameters["txId"].(string)` 即可，不需要先判 parameters 是否存在。这是 pkg/apierror 自 US-009 起的硬契约（Marshal 永远输出 `"parameters":{...}`）。
+---
+
+## 2026-05-13 01:05 - US-018 BDD: quiver_aggregation.feature
+- 实现：`test/bdd/features/quiver_aggregation.feature` 落地 3 scenarios（Sum-by-1h / Percentile / Cardinality）+ Background；`test/bdd/steps/quiver_steps.go` 实现 8 个 Given/When/Then 步骤。SUT 走真实 chi.Router + `pkg/oss.Handler.AggregateObjects` → `pkg/oss/aggregation.Engine`：
+  - Background seed：`state.repo.CreateOntology` + `CreateObjectType("metric_point")` + `CreateProperty ×4`（pointId / timestamp BaseType=timestamp / value BaseType=double / host BaseType=string analyzer=not_analyzed）落 PG；`state.indexMgr.EnsureIndex(ScopedKey(ontologyRID,"metric_point"), props)` + `IndexDocument ×6` 落 Bleve；六行分布在 2026-05-13 00:15 / 00:45 / 01:10 / 01:30 / 02:05 / 02:50（3 个 1h bucket）× 3 hosts（host-a/b/c），value 升序 10/20/30/40/50/60。
+  - Scenarios POST `/api/v2/ontologies/{ontologyRID}/objects/metric_point/aggregate` with `accuracy=REQUIRE_ACCURATE`：
+    - Sum-by-1h：`groupBy:[{type:"duration", field:"timestamp", value:{unit:"HOURS", value:1}}]` + `aggregation:[{type:"sum", field:"value"}]` → 3 buckets 各 30 / 70 / 110。
+    - Percentile：`aggregation:[{type:"approximatePercentile", field:"value", percentiles:[50,95,99]}]` → AccuracyRequireAccurate 让 engine 走 exactPercentileFromIndex（nearestRank），p50=30 / p95=60 / p99=60。
+    - Cardinality：`aggregation:[{type:"approximateDistinct", field:"host"}]` → AccuracyRequireAccurate 让 engine 走 computeExactDistinct，distinct=3。
+  - 断言三层：HTTP status 200 + response data 长度（3 buckets / 1 row）+ metric 数值精确比对（math.Abs ≤ 1e-6）。
+- 文件改动：
+  - `test/bdd/features/quiver_aggregation.feature` (新, 3 scenarios + Background)
+  - `test/bdd/steps/quiver_steps.go` (新, ~440 行：8 个 step regex + decodeAggregateData / findAggMetric / toFloat64 / parsePercentileList / postAggregate / seedQuiverOntology helpers)
+  - `test/bdd/steps/state.go`：导入 `pkg/oss/aggregation`；新增 aggEngine / quiverRouter / lastQuiverResponse 三字段 + quiverHTTPResult 类型；ensureContainer 中追加 6 行 `aggregation.NewEngine()` + `ossHandler.SetAggregation(eng, indexMgr)` + 单 chi 路由注册（共用 cell-masking 已构造的 OSSService + ossHandler）；resetMaps 清零 lastQuiverResponse。
+  - `test/bdd/steps/steps.go`：在 RegisterAllSteps 末尾追加 `registerQuiverSteps(t, sc, state)`。
+- 验证：
+  - `make test-bdd` → **21 scenarios（含原有 18）/ 0 fail / 29.8s**。
+  - `go test -count=1 -short ./pkg/oss/... ./pkg/index/... ./pkg/oms/...` 全绿。
+  - `go test -count=1 -short -tags integration ./test/integration/...` 全绿（main / phase6 / phase7）。
+  - `go build ./...` + `go vet -tags bdd ./test/bdd/...` 双绿。
+  - 零生产代码改动（aggregation 引擎本身覆盖足够，AC 仅要求 BDD 层）。
+- **Learnings for future iterations:**
+  - **OSS aggregate-path BDD 与 cell-masking read-path 共享同一套 ossHandler / indexMgr**：单次 ensureContainer 把 OMS PG + Bleve + cellsec.Engine + aggregation.Engine 一次性 wire 到同一个 ossHandler，然后让 cellMaskRouter 只挂 GetObject、quiverRouter 只挂 AggregateObjects。BDD 状态隔离靠 chi.Router 分裂而非多个 Service 实例——共享 OSSServiceImpl 让 seed 路径只跑一遍。
+  - **AccuracyRequireAccurate 是稳定 BDD percentile 断言的关键**：t-digest 的输出对小集合（n=6）会偏离 nearestRank 结果。`accuracy: "REQUIRE_ACCURATE"` 在 wire 上一字段触发 engine 透明降级到 exactPercentile / exactDistinct（promoteApproximateToExact 路径在 bleve_agg.go computeMetrics 内），让 BDD 可以硬编码 expected 数值。同步规则适用 approximateDistinct 在小集合（< 1<<(p-2) cardinality）的场景——HLL sparse representation 通常已经精确，但 ACCURATE flag 把"通常"变成"始终"。
+  - **`approximateDistinct` 的字段必须是 KeywordField 才能正确计数（即便 ACCURATE）**：BDD 跑过的 hard-won 教训。`host` 字段如果用默认 TextFieldMapping + standardAnalyzer，bleve token 化 "host-a" → ["host", "a"]，distinct 算到 4（host + a + b + c）而不是 3（host-a / host-b / host-c）。`index.Property{Analyzer: "not_analyzed"}` → KeywordFieldMapping 一行解决。任何 distinct / topValues / groupBy=exact 字段都该标 not_analyzed——否则 facet 结果 silently 错位。
+  - **metric 名按约定 "<field>.<aggType>" 自动生成，不按"engine 实际走的路径"**：`{Type: "approximateDistinct", Field: "host"}` 在 ACCURATE 下虽然走 exactDistinct，但输出 metric name 仍是 `"host.approximateDistinct"`（bleve_agg.go:52-58 `name = spec.Field + "." + spec.Type`）。BDD 断言要按 `spec.Type` 写。如果要稳定 metric 名独立于内部 promotion，显式 `Name: "myMetric"` 覆盖。
+  - **多 percentile 输出 map[string]float64，key 用 `fmt.Sprintf("%g", p)`**：`[]float64{50, 95, 99}` → keys = `"50"`, `"95"`, `"99"`；`[]float64{99.9}` → key = `"99.9"`。**不要** 写 `pctMap["50.0"]` 或 `pctMap["50%"]`。
+  - **BDD 用 ID-prefixed unique ontology apiName 避免跨 scenario state 串扰**：`bdd_quiver`（US-018）/ `bdd_cellmask`（US-016）/ `bdd_timetravel`（US-017）/ `bdd_automation`（US-015）/ `bdd_saga_*`（US-014）。每个 step 包独占自己 apiName 前缀，TRUNCATE CASCADE 之外再加一道天然隔离——同一 PG container 复用 跑 21 scenarios 时不会因 apiName 相同把对方的种子读到。
+  - **DateTimeField + RFC3339 字符串是 timestamp seed 最简组合**：`index.Property{BaseType: "timestamp", IsSearchable: true}` → `mapping.NewDateTimeFieldMapping()`；文档存 `"2026-05-13T00:15:00Z"` 字符串，bleve 自动解析+索引。`aggregation.getDurationEntries` 从 Hit.Fields[field] 读回 `string`（RFC3339）→ `time.Parse` → epoch → bucket。不要 hand-roll epoch float64 + NumericField，可读性差且与 OSS read-path 真实行为脱节。
 ---

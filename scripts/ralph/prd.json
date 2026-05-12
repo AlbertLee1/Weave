@@ -271,8 +271,8 @@
         "Tests pass"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/bdd/features/quiver_aggregation.feature 落地 3 scenarios（Sum-by-1h / Percentile / Cardinality）+ Background；test/bdd/steps/quiver_steps.go 实现 8 个 Given/When/Then 步骤。SUT 走真实 chi.Router + pkg/oss.Handler.AggregateObjects → pkg/oss/aggregation.Engine 全 aggregate-path：Background 先 CreateOntology + CreateObjectType + CreateProperty ×4（pointId/timestamp/value/host，host 标 not_analyzed 让 distinct facet 走 KeywordField）落 PG，再 EnsureIndex(ScopedKey(ontologyRID, 'metric_point')) + IndexDocument ×6 落 Bleve（六行分布在 2026-05-13 00:00/01:00/02:00 三个小时 + 三台 host）；scenarios POST 到 /api/v2/ontologies/{ontologyRID}/objects/metric_point/aggregate，body 用 accuracy=REQUIRE_ACCURATE 让 approximatePercentile → exactPercentile（nearestRank）、approximateDistinct → exactDistinct 走精确路径，断言 byte-exact。断言三层：HTTP status 200 + response data 长度（3 buckets / 1 row）+ metric 数值：Sum-by-1h 三 bucket 各 30/70/110（key=row.Group['timestamp'] RFC3339）；Percentile p50=30/p95=60/p99=60（map[string]float64，key='%g'）；Cardinality host.approximateDistinct=3。配套 state.go 新增 aggEngine/quiverRouter/lastQuiverResponse 三字段，ensureContainer 中追加 6 行 aggregation.NewEngine() + ossHandler.SetAggregation(eng, indexMgr) + 单 chi 路由注册（共用 cell-masking 已构造的 OSSService + ossHandler）；resetMaps 清零 lastQuiverResponse；steps.go 加 registerQuiverSteps wire-up。零生产代码改动。make test-bdd → 21 scenarios（含原有 18）/ 0 fail / 29.8s。go build / go vet -tags bdd 双绿；./pkg/oss/... ./pkg/index/... ./pkg/oms/... -short 全绿；test/integration -tags integration -short main / phase6 / phase7 全绿。"
     },
     {
       "id": "US-019",
