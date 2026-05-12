@@ -2,6 +2,7 @@ export { ActionHistoryPage } from './ActionHistoryPage';
 export { ActionTypeAdminPage } from './ActionTypeAdminPage';
 export { AggregationPage } from './AggregationPage';
 export { AppsBuilderPage } from './AppsBuilderPage';
+export { AutomationRulesPage } from './AutomationRulesPage';
 export { ApprovalsPage } from './ApprovalsPage';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';

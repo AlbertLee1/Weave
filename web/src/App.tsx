@@ -46,6 +46,7 @@ import { MarketplacePage } from './components/marketplace/MarketplacePage';
 import { FunctionDiffPage } from './components/functions/FunctionDiffPage';
 import { FunctionCodePage } from './components/functions/FunctionCodePage';
 import { SettingsPage } from './components/settings/SettingsPage';
+import { AutomationRulesPage } from './components/automation/AutomationRulesPage';
 import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
@@ -158,6 +159,14 @@ export default function App() {
                 element={<FunctionCodePage />}
               />
               <Route path="settings" element={<SettingsPage />} />
+              <Route
+                path="automation/:ontology"
+                element={
+                  <AdminGuard>
+                    <AutomationRulesPage />
+                  </AdminGuard>
+                }
+              />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
               <Route path="quiver/:ontology" element={<QuiverPage />} />
               <Route path="quiver/:ontology/:rid" element={<QuiverPage />} />

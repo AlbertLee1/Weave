@@ -147,6 +147,11 @@ export function Sidebar() {
       label: 'Action History',
       icon: 'clock',
     });
+    navItems.push({
+      to: `/automation/${activeOntology}`,
+      label: 'Automation Rules',
+      icon: 'zap',
+    });
   }
   navItems.push({
     to: '/schema/infer',
