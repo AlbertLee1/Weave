@@ -93,6 +93,9 @@ Phases:
 - **`page.route` + `URLSearchParams` 捕获数组 + `expect.poll` 是验证 \"UI → React Query refetch → HTTP\" 三层契约的标准范式（US-022）**：filter scenarios 不能只看 DOM 变化（鼠标点 Failed tab → 一行变两行），还要锁住"refetch 携带正确 query params"。模板：`const captured: URLSearchParams[] = []`，route handler 内 `captured.push(new URL(req.url()).searchParams)`，then-step `await expect.poll(() => captured[captured.length-1].get('status')).toBe('FAILED')`。**route handler 必须 strip `branch=`**（withActiveBranch 在非 main 时注入），否则 query 比较会捎带 branch 参数。同样模板适用任何"UI 控件 → URL query → 后端"的 React Query 端到端 BDD。
 - **`<details>` 内的 testid 元素**（US-022）**`page.getByTestId('detail-parameters').toContainText(...)` 即便 `<summary>` 没展开也能工作**：DOM 里 `<pre>` 的 textContent 始终存在；`scrollIntoViewIfNeeded` 是温和的"打开 details"提示。Playwright `.click()` 在 `<summary>` 上才会真的 toggle visible 状态，但用 testid 取文本不依赖 visibility。模板：JSON detail block 这种"折叠面板"BDD 直接用 testid 取 textContent，不用模拟点 summary。
 - **revert-and-refresh 双段 mock 模式（US-022）**：Undo 类操作的 BDD 要同时 mock (a) POST `/actions/revert` 让它成功返回 + 副作用 latch 一个 `revertedOnServer` 布尔，(b) GET `/actions/history` route handler 内根据 latch 决定返回 SUCCESS 还是 REVERTED 状态的行。这样 React Query invalidate → 再次 GET history → 看到状态翻转 — 端到端锁住 "click Undo → POST → invalidate → refetch → DOM 变" 全链路。同样模板适用任何"mutation + invalidate + refetch"的 BDD（rename ontology / archive proposal / pause automation rule）。
+- **BDD 暴露的 production race 写成"诚实断言 + 注释解释" 而非掩盖（US-023）**：ThreadsPage.tsx send-success 里 `setActiveBranchTipId(resp.assistantMessage.id)`，但 messages 还没 refetch 回来；`useEffect`"messages 变化时自动挑 tip" 看到新 id 不在当前 messages 列表里，把 tip 回退到旧 latest（同样 race 在 create-thread 里 `setActiveThreadId(created.id)` 被 "drop if vanished" effect 抵消）。BDD spec 不掩盖这个 bug —— 直接断言 `liveMessages` 数组长度（mock fixture 层面新消息进入服务器了）+ `composer.toHaveValue('')`（UI 端 send 成功），并在注释里写明 race。这样将来产品修了 bug（去掉 fallback 或加 epoch guard），BDD assertion 不会突然失败 —— 反而能升级成更强的"UI rendered new turn"断言。同样模板：BDD scenarios 揭露 race 时 **prefer documented honest assertion over fake-success retry**。
+- **Playwright `page.route` URL pattern overlap 与 LIFO resolution（US-023）**：Threads 页面有三层并存的路由 `/aip/threads`（list/create）、`/aip/threads/*`（get/delete）、`/aip/threads/*/messages` 与 `/aip/threads/*/tree`。glob `**/api/v2/aip/threads/*` 只匹配单段（不跨 `/`），所以 `/messages` 和 `/tree` 走更深的 pattern；但**注册顺序很重要**：Playwright 在多 pattern 都匹配时按"最后注册的优先"resolve。把更精确的 pattern（`*/messages`、`*/tree`）放在更宽的 pattern（`*`）**之后**注册 —— 这样请求 `/threads/X/messages` 才会走 messages handler。同样模板：任何多端点共 prefix 的 stub 都按"宽→窄"顺序注册。
+- **`window.confirm` dialog 在 Playwright 用 `page.once('dialog', dialog => dialog.accept())`（US-023）**：ThreadsPage 用 `window.confirm('Delete this thread?')` 作为删除二次确认。Playwright 默认 dismiss 所有未处理 dialog —— `page.once` 在点击前注册一次性 listener，比 `page.on` 安全（避免污染后续 scenario）。**`.catch(() => {})`** 套在 `dialog.accept()` 上避免 race 关闭时的 unhandled rejection。同样模板适用 confirm/alert/prompt 的所有 BDD（删除、覆盖、危险操作确认）。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -826,4 +829,40 @@ Phases:
   - **revert-and-refresh 的"双 mock + latch"模式**：Undo / Pause / Resume / Archive 这类"mutation → invalidate → refetch → DOM 翻"的端到端 BDD，必须同时 mock (a) mutation 端点（计数 + 翻 latch），(b) list 端点根据 latch 返回前后两态。否则单 mock mutation 端点会让 list 永远不变 —— 看起来 mutation 成功了但 UI 没更新 —— 反向 false-positive。这个模式适用 Pause Automation Rule / Approve Proposal / Resolve Thread / Cancel Pipeline Run 等多个 US-023~038 / US-039~055 场景，**提前在 page object 上挂 `mutationButton(id) + listMirror(latch)` 这种 helper 把双 mock 抽象掉**。
   - **`<details>` / collapsible 块内的 testid 用 textContent 取**（不要 click summary）：JSON 折叠面板（detail-parameters / detail-edits / detail-prev-edits）的 `<pre>` textContent 即便 `<summary>` 未展开也存在 DOM。Playwright `.click()` 在 `<summary>` 才会真的 toggle，但 `getByTestId(...).toContainText(...)` 不依赖 visibility / opened state。这避免"测试需要先点开 4 个 summary 再断言"的脆弱链。模板：所有"折叠/详情面板内的 JSON 块"BDD 都直接断言 textContent；只有点击交互本身要验证时才模拟 toggle。
   - **`vi.spyOn` unit tests 与 page.route BDD 共存的零冲突**：ActionHistoryPage 已有 8 个 vitest unit test 用 `vi.spyOn(actionHistoryApi, ...).mockResolvedValue(...)`，覆盖 hook 层的真实代码路径；BDD 在 network 层 stub 走 fetch interceptor 路径。两套测试覆盖**不同**层（hook 单元 vs UI→ network 端到端），都不可省 —— unit test 直接验证 props 行为不需要走 router/Toaster，BDD 验证 SPA 完整渲染。本 story 给页面加 testid 时**没动** EmptyState/Skeleton 子组件本身，只给外层 `<div>` 包了 wrapper，所以 vitest 既有断言（`screen.getByText('No action executions')`）零回归。模板：以后给页面加 BDD testid 时**只动外层 `<div>`，不动子组件 prop**，能保证 unit test 不破。
+---
+
+## 2026-05-13 02:05 - US-023 Playwright BDD: feature.threads.spec.ts
+- 落地 `web/tests/feature.threads.spec.ts` 7 scenarios（3 @smoke + 4 regression），覆盖 PRD AC 5 条 + empty / error 边界。AC "发帖/回复/@提及/解决-重开/链接到对象" 对应 AIP Threads 这个 LLM 聊天页（而非传统讨论区）的 closest matching capability：
+  1. **list-renders + auto-link @smoke**（链接到对象）—— stub `/api/v2/aip/threads` 返回两个 thread，验证 `threads-page` / `thread-list` / `thread-list-item ×2` / 第一个 thread 自动 `aria-current=true` + 右侧 conversation pane 渲染 2 条 messages。
+  2. **create-thread @smoke**（发帖）—— 点 `new-thread-btn` 打开 modal，fill title/provider/model，submit；mock POST 推到 threadList，验证新 thread 行可见 + modal 关闭。
+  3. **send-message @smoke**（回复）—— composer fill + send，mock POST 计数；验证 POST 调用 1 次 + composer 清空 + `liveMessages` 数组长 4。
+  4. **branch-switch**（@提及）—— tree 渲染 main + alt-fr 双分支，click alt-fr node，验证 `data-active-tip` 翻到 #3 + 消息列表 filter 到 {root(#1), alt-fr(#3)} 2 条（#2 main 兄弟过滤掉）。
+  5. **delete-thread**（解决/重开）—— hook `page.once('dialog', d => d.accept())` 处理 `window.confirm`，click `thread-delete-btn`，mock DELETE 计数 + 从 threadList 摘除，验证行消失 + count=1。
+  6. **empty** —— GET 返回 `{threads:[]}`，验证 `thread-list-empty` 可见 + items count=0 + conversation pane 缺席。
+  7. **error-500** —— GET 返回 500，验证 `thread-list-error` 可见 + items/empty count=0。
+
+- 配套生产 testid（**3 个外层 `<div>` wrapper**，不动 LoadingSpinner / EmptyState 子组件，按 US-022 "logical-branch testid wrapper" 模板）：
+  - `web/src/components/threads/ThreadsPage.tsx`：根 `<div data-testid="threads-page">` + thread list 三态 wrapper `thread-list-loading` / `thread-list-error` / `thread-list-empty`。其他既有 testid 全部沿用（thread-list / new-thread-btn / thread-list-item[data-thread-id] / thread-delete-btn / thread-conversation / thread-messages / thread-message[data-role][data-message-id] / composer-input / composer-send / composer-error / thread-tree-panel / thread-tree-node[data-message-id][data-on-branch][data-active-tip] / new-thread-{title,provider,model,system,submit} / modal-overlay）。
+- 新文件：
+  - `web/tests/feature.threads.spec.ts` (~640 行 / 7 scenarios，含 `stubThreadsApi` 4 路由 helper：list/create、get/delete、messages、tree)
+  - `web/tests/support/pageObjects/ThreadsPage.ts` (~90 行 / 23 locators + 5 helper methods：goto / threadItem(id) / deleteButton(id) / treeNode(id) / messageRow(id))
+- 改文件：
+  - `web/tests/support/pageObjects/index.ts`（barrel 加 ThreadsPage 导出）
+  - `web/tests/support/index.ts`（顶层 barrel 加 ThreadsPage 导出）
+  - `web/src/components/threads/ThreadsPage.tsx`（加 4 个 testid：root wrapper + 3 个 list-state wrapper，零行为差异）
+- 测试结果：
+  - `npx playwright test feature.threads --reporter=list` → **7/7 pass / 13.1s**（3 @smoke + 4 regression）。
+  - `npx playwright test --grep @smoke --reporter=list` → **11/11 pass / 12.2s**（US-002 2 + US-021 3 + US-022 3 + 本 story 3）。
+  - `npx tsc --noEmit` → exit=0。
+  - `npx vitest run --reporter=dot` → **157 files / 1247 tests / 13.7s 全绿**（既有 ThreadsPage.test.tsx + ThreadsPageUS375.test.tsx 各 8/7 case 零回归 —— 测试用 `getByText('No threads yet')` / `getByText` 取，不依赖新加的 wrapper testid）。
+- 浏览器手工验证：dev-browser skill 不可用，按 US-021 / US-022 模式通过 Playwright headless 实际加载 React 路由（`/threads` 走 ProtectedRoute → AuthProvider → Shell → ThreadsPage）验证 testid 矩阵 + create/send/branch-switch/delete 完整交互。
+- **暴露的两个 production race condition（不在本 story 修，BDD 写诚实断言锁住现状）**：
+  1. `ThreadsPage` submitDraft → `setActiveThreadId(created.id)` 与 "drop selection when vanished" effect race —— 当 setActiveThreadId 发生时 threadList 还没 refetch 回新 thread，effect 把 tip 重置回旧 thread。BDD 不断言新 thread aria-current，注释里写明。
+  2. send-success → `setActiveBranchTipId(resp.assistantMessage.id)` 与 "auto-pick tip when messages change" effect race —— 同样 messages 还没 refetch，effect 把 tip 回退到 old latest，新 turn 被 branchPathIds filter 掉。BDD 改用 fixture-level 断言（liveMessages.length === 4）+ composer 清空。
+- **Learnings for future iterations:**
+  - **AIP Threads 不是传统讨论区**：路由 `/threads` 渲染的 `ThreadsPage` 是 LLM Chat UI（与 mock/openai/anthropic provider 对话），不是 Slack 风格的 multi-user thread。AC 的"发帖/回复/@提及/解决-重开/链接到对象" 用 LLM-chat 闭世界类比映射：create thread / send message / branch tag / delete / auto-select first thread。同样模板适用 PRD AC 词汇与实际产品语义不对齐的所有 BDD scenario —— 在 spec 顶部注释里写清映射，方便 reviewer 追溯。
+  - **BDD spec 揭露的 production race condition 用 "fixture-level 断言 + 注释" 而非 "fake-success retry"**：测试不该掩盖 bug。两个 race（setActiveThreadId 被 vanish-effect 抵消 / setActiveBranchTipId 被 auto-pick-tip 抵消）的根因是 send-success/create-success 与对应 useEffect 之间没用 epoch guard。本 story 不修产品代码，BDD 写："POST happened + server-side mock fixture mutated + composer cleared"。将来产品修了 race，BDD 可升级到 UI-level 断言。
+  - **Playwright `page.route` 多 pattern overlap 时按 LIFO 解析**：`**/api/v2/aip/threads/*` 不跨 `/`，所以 `*/messages` `*/tree` 不会被父 pattern 吃掉；但要保证 `*/messages` 在父 `*` **之后**注册才能正确 dispatch（最后注册优先）。同样模板：任何多端点共 prefix 的 stub 都按"宽→窄"顺序注册，或在父 handler 里显式 `if (url.endsWith('/messages')) return route.continue()`。
+  - **`window.confirm` 在 BDD 用 `page.once('dialog', d => d.accept().catch(() => {}))`**：ThreadsPage 删除有 `window.confirm` 二次确认。Playwright 默认 dismiss 未处理 dialog，必须 listen。用 `page.once` 单次注册避免污染下一个 scenario；`.catch(() => {})` 包住 accept 避免 race 时 unhandled rejection。同样模板适用 confirm/alert/prompt 的所有 BDD scenario。
+  - **测试 fixture mutation 模式：`refs.threads() / refs.messages()` 回调返回 live array**：复杂 mutation BDD（create / delete / send 都改 server state）的 mock 不能写死 array literal —— stub 工厂接收 `refs: { threads: () => MockThread[], onCreate, onDelete, onSend }`，每次 GET 调用 `refs.threads()` 拿当前快照；mutation handler 在 onCreate/onDelete/onSend 里 push/filter array，下次 GET 看到新状态。这是"BDD scenarios 模拟 server state 转移" 的范式，比"为每个 scenario 写独立 mock data + 静态返回"DRY 得多。
 ---

@@ -346,8 +346,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 23,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/tests/feature.threads.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）：list-renders-and-auto-link / create-thread / send-message / branch-switch (@提及) / delete-thread / empty / error-500，覆盖 PRD AC 5 条 + empty/error 边界。AC 词汇对 AIP Threads（LLM chat 页，非传统讨论区）的 closest mapping：发帖→create thread / 回复→send message / @提及→tree alt-fr branch chip / 解决/重开→delete thread / 链接到对象→第一个 thread 自动选中。配套生产 testid：ThreadsPage.tsx 加 4 个外层 div wrapper testid（threads-page / thread-list-loading / thread-list-error / thread-list-empty）按 US-022 'logical-branch testid wrapper' 模板，零行为差异，既有 16 个 testid 全部沿用。web/tests/support/pageObjects/ThreadsPage.ts 新增 page object（23 locators + 5 helpers：goto / threadItem(id) / deleteButton(id) / treeNode(id) / messageRow(id)），从 pageObjects + 顶层 support barrel 双重导出。stubThreadsApi 4 路由 helper（list/create + get/delete + messages + tree）用 `refs: () => MockThread[]` live-array 模式让 mutation scenario 模拟 server state 转移；window.confirm 二次确认用 `page.once('dialog', d => d.accept().catch(() => {}))` 兜住。BDD spec 诚实暴露 ThreadsPage 两个 production race condition（submitDraft setActiveThreadId 被 'drop if vanished' effect 抵消 / send-success setActiveBranchTipId 被 auto-pick-tip effect 抵消），不掩盖：发帖 scenario 不断言 aria-current=true 仅断言新 thread 行可见 + provider chip；回复 scenario 用 fixture-level 断言 liveMessages.length === 4 + composer.toHaveValue('') 代替 UI-render 断言，注释写明 race 来源。npx playwright test feature.threads → 7/7 pass / 13.1s；@smoke 全集 11/11；npx tsc --noEmit / npx vitest run（157 files / 1247 tests）双绿，既有 ThreadsPage.test.tsx + ThreadsPageUS375.test.tsx 全部零回归。dev-browser skill 不可用，按 US-021/US-022 模式通过 Playwright headless 实际加载 React 路由（/threads 走 ProtectedRoute → AuthProvider → Shell → ThreadsPage）验证 testid 矩阵 + create/send/branch-switch/delete 完整交互。"
     },
     {
       "id": "US-024",

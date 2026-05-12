@@ -141,7 +141,10 @@ export function ThreadsPage() {
   };
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-9rem)] max-w-7xl gap-4">
+    <div
+      className="mx-auto flex h-[calc(100vh-9rem)] max-w-7xl gap-4"
+      data-testid="threads-page"
+    >
       <ThreadList
         threads={threads}
         loading={threadsQuery.isLoading}
@@ -293,18 +296,25 @@ function ThreadList({
       </div>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center py-10">
+          <div
+            data-testid="thread-list-loading"
+            className="flex items-center justify-center py-10"
+          >
             <LoadingSpinner />
           </div>
         ) : error ? (
           <div
             role="alert"
+            data-testid="thread-list-error"
             className="m-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
           >
             {describeError(error)}
           </div>
         ) : threads.length === 0 ? (
-          <div className="px-3 py-10 text-center text-xs text-text-secondary">
+          <div
+            data-testid="thread-list-empty"
+            className="px-3 py-10 text-center text-xs text-text-secondary"
+          >
             No threads yet. Click <span className="font-mono">New</span> to start.
           </div>
         ) : (
