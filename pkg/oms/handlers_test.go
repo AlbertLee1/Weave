@@ -36,6 +36,12 @@ type mockRepo struct {
 	automationRules []oms.AutomationRule
 	executions      []oms.AutomationExecution
 	notifications   []oms.Notification
+	// datasourceBindings backs CreateDatasourceBinding /
+	// GetDatasourceBinding / ListDatasourceBindings /
+	// UpdateDatasourceBinding / DeleteDatasourceBinding so US-052 tests
+	// can drive the V2-mounted admin handlers end-to-end without
+	// Postgres.
+	datasourceBindings []oms.DatasourceBinding
 	// interfaceAttachments backs AttachInterface / ListObjectTypeInterfaces
 	// so US-214 tests can assert "this ObjectType does/does not implement
 	// the target Interface" via the real code path. Prior tests only read
@@ -613,20 +619,65 @@ func (m *mockRepo) ListPropertyUsagesByBaseType(_ context.Context, baseType stri
 	return out, nil
 }
 
-// DatasourceBinding stubs
-func (m *mockRepo) CreateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
+// DatasourceBinding state-tracking implementation (US-052). Earlier stubs
+// returned static nil/ErrNotFound; the V2 admin handler tests need the
+// mock to round-trip Create/List/Get/Update/Delete so a single test can
+// exercise the full handler lifecycle without spinning up Postgres.
+func (m *mockRepo) CreateDatasourceBinding(_ context.Context, db *oms.DatasourceBinding) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.datasourceBindings = append(m.datasourceBindings, *db)
 	return nil
 }
-func (m *mockRepo) GetDatasourceBinding(_ context.Context, _ string) (*oms.DatasourceBinding, error) {
+func (m *mockRepo) GetDatasourceBinding(_ context.Context, rid string) (*oms.DatasourceBinding, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for i := range m.datasourceBindings {
+		if m.datasourceBindings[i].RID == rid {
+			b := m.datasourceBindings[i]
+			return &b, nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
-func (m *mockRepo) ListDatasourceBindings(_ context.Context, _ string) ([]oms.DatasourceBinding, error) {
-	return nil, nil
+func (m *mockRepo) ListDatasourceBindings(_ context.Context, objectTypeRID string) ([]oms.DatasourceBinding, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var out []oms.DatasourceBinding
+	for i := range m.datasourceBindings {
+		if m.datasourceBindings[i].ObjectTypeRID == objectTypeRID {
+			out = append(out, m.datasourceBindings[i])
+		}
+	}
+	return out, nil
 }
-func (m *mockRepo) UpdateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {
-	return nil
+func (m *mockRepo) UpdateDatasourceBinding(_ context.Context, db *oms.DatasourceBinding) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	for i := range m.datasourceBindings {
+		if m.datasourceBindings[i].RID == db.RID {
+			m.datasourceBindings[i] = *db
+			return nil
+		}
+	}
+	return oms.ErrNotFound
 }
-func (m *mockRepo) DeleteDatasourceBinding(_ context.Context, _ string) error { return nil }
+func (m *mockRepo) DeleteDatasourceBinding(_ context.Context, rid string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	for i := range m.datasourceBindings {
+		if m.datasourceBindings[i].RID == rid {
+			m.datasourceBindings = append(m.datasourceBindings[:i], m.datasourceBindings[i+1:]...)
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
 
 // QueryType methods
 func (m *mockRepo) CreateQueryType(_ context.Context, qt *oms.QueryType) error {

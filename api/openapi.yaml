@@ -1312,6 +1312,60 @@ components:
           type: string
         objectTypeApiName:
           type: string
+    DatasourceBinding:
+      type: object
+      required: [rid, datasetRid, branch, columnMapping, isPrimary]
+      properties:
+        rid:
+          type: string
+        datasetRid:
+          type: string
+          description: |
+            Foundry-style RID of the source dataset. The current Weave ontology
+            stores the *dataset* identifier verbatim; the underlying table name
+            (when relevant) lives inside the column_mapping payload.
+        branch:
+          type: string
+          description: Dataset branch this binding reads from. Defaults to "main".
+        columnMapping:
+          type: object
+          additionalProperties: true
+          description: |
+            Map from ObjectType property apiName to source column name. Drives
+            both materialization and column-level lineage edge derivation
+            (US-377).
+        isPrimary:
+          type: boolean
+          description: |
+            One ObjectType may bind to multiple datasets; exactly one binding
+            should be marked primary. Lineage queries prefer the primary
+            binding when resolving the canonical source column for a property.
+    CreateDatasourceBindingRequest:
+      type: object
+      required: [datasetRid]
+      properties:
+        datasetRid:
+          type: string
+        branch:
+          type: string
+        columnMapping:
+          type: object
+          additionalProperties: true
+        isPrimary:
+          type: boolean
+    UpdateDatasourceBindingRequest:
+      type: object
+      required: [datasetRid]
+      properties:
+        datasetRid:
+          type: string
+        branch:
+          type: string
+        columnMapping:
+          type: object
+          additionalProperties: true
+        isPrimary:
+          type: boolean
     ActionLog:
       type: object
       required: [id, actionTypeRid, userId, status, createdAt]
@@ -5122,6 +5176,141 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ValueTypeUsage"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/datasourceBindings:
+    get:
+      operationId: listDatasourceBindings
+      summary: List datasource bindings for an object type (admin)
+      description: |
+        Returns the DatasourceBindings that map this ObjectType to one or
+        more upstream datasets. Drives the Bindings tab in the ObjectType
+        admin editor (US-052 / PC-A06) and the column-level lineage view
+        (US-377).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Binding list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DatasourceBinding"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+    post:
+      operationId: createDatasourceBinding
+      summary: Create a datasource binding for an object type (admin)
+      description: |
+        Adds a binding from the given ObjectType to an upstream dataset. The
+        server synchronously derives column-level lineage edges from the
+        provided column_mapping (US-377) — failures in lineage derivation do
+        not roll back the binding write.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDatasourceBindingRequest"
+      responses:
+        "201":
+          description: Created binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBinding"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}:
+    get:
+      operationId: getDatasourceBinding
+      summary: Get a single datasource binding by RID (admin)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: datasourceBindingRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBinding"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateDatasourceBinding
+      summary: Update an existing datasource binding (admin)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: datasourceBindingRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDatasourceBindingRequest"
+      responses:
+        "200":
+          description: Updated binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasourceBinding"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteDatasourceBinding
+      summary: Delete a datasource binding (admin)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: datasourceBindingRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

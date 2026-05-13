@@ -18,6 +18,7 @@ import type {
   MergeBranchResponse,
   MergeConflictBody,
   OntologyBranch,
+  DatasourceBinding,
 } from './types';
 
 // --- Ontology endpoints ---
@@ -676,6 +677,71 @@ export async function listValueTypeUsages(
     `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/valueTypes/byRid/${encodeURIComponent(valueTypeRid)}/usages`,
   );
   return resp.data;
+}
+
+// --- DatasourceBinding admin endpoints (US-052 / PC-A06) ---
+//
+// The backend stores a JSON object for column_mapping (apiName → upstream
+// column name). The UI deals with the parsed object form; the wire keeps
+// it nestable for future shape evolution (e.g. ingest-time transforms).
+
+export interface CreateDatasourceBindingRequest {
+  datasetRid: string;
+  branch?: string;
+  columnMapping?: Record<string, string>;
+  isPrimary?: boolean;
+}
+
+export interface UpdateDatasourceBindingRequest {
+  datasetRid: string;
+  branch?: string;
+  columnMapping?: Record<string, string>;
+  isPrimary?: boolean;
+}
+
+export async function listDatasourceBindings(
+  ontologyApiName: string,
+  objectTypeRid: string,
+): Promise<DatasourceBinding[]> {
+  const resp = await request<{ data: DatasourceBinding[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/datasourceBindings`,
+  );
+  return resp.data;
+}
+
+export function createDatasourceBinding(
+  ontologyApiName: string,
+  objectTypeRid: string,
+  body: CreateDatasourceBindingRequest,
+): Promise<DatasourceBinding> {
+  return request<DatasourceBinding>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/datasourceBindings`,
+    body,
+  );
+}
+
+export function updateDatasourceBinding(
+  ontologyApiName: string,
+  bindingRid: string,
+  body: UpdateDatasourceBindingRequest,
+): Promise<DatasourceBinding> {
+  return request<DatasourceBinding>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/datasourceBindings/byRid/${encodeURIComponent(bindingRid)}`,
+    body,
+  );
+}
+
+export function deleteDatasourceBinding(
+  ontologyApiName: string,
+  bindingRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/datasourceBindings/byRid/${encodeURIComponent(bindingRid)}`,
+  );
 }
 
 // --- QueryType endpoints ---

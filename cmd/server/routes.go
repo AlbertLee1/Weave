@@ -91,6 +91,18 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}", omsHandler.DeleteValueType)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}/usages", omsHandler.ListValueTypeUsages)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes/{valueType}", omsHandler.GetValueTypeV2)
+	// DatasourceBinding admin CRUD (US-052 / PC-A06). The handlers were
+	// authored for the deleted /api/admin/objectTypes/{rid}/datasourceBindings
+	// and /api/admin/datasourceBindings/{rid} routes (US-006); this re-mounts
+	// them under the Foundry-aligned V2 paths so the ObjectType Bindings tab
+	// (web/src/components/admin/BindingsEditor) can drive Create / List /
+	// Get / Update / Delete. The handlers also synchronously derive
+	// column-level lineage edges (US-377) — that side-effect is preserved.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/datasourceBindings", omsHandler.ListDatasourceBindings)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/datasourceBindings", omsHandler.CreateDatasourceBinding)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}", omsHandler.GetDatasourceBinding)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}", omsHandler.UpdateDatasourceBinding)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}", omsHandler.DeleteDatasourceBinding)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes", omsHandler.ListQueryTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}", omsHandler.GetQueryTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/fullMetadata", omsHandler.GetFullMetadata)

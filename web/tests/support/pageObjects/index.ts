@@ -5,6 +5,7 @@ export { AppsBuilderPage } from './AppsBuilderPage';
 export { AuditReportPage } from './AuditReportPage';
 export { AutomationRulesPage } from './AutomationRulesPage';
 export { ApprovalsPage } from './ApprovalsPage';
+export { BindingsTab } from './BindingsTab';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
 export { ExplorerBranchPage } from './ExplorerBranchPage';

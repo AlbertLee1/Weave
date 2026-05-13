@@ -18,6 +18,7 @@ export {
   AuditReportPage,
   AutomationRulesPage,
   ApprovalsPage,
+  BindingsTab,
   BrowserPage,
   DashboardPage,
   ExplorerBranchPage,

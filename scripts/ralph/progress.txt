@@ -1915,3 +1915,56 @@ Phases:
   - **TestContract_AllRoutesDocumented + TestContract_EmbeddedSpecMatchesCanonical 双闸（US-051）**：加新 chi 路由必须同步两件事：(1) `api/openapi.yaml` 加 `paths` 条目（不然 `AllRoutesDocumented` 红）；(2) `cp api/openapi.yaml cmd/server/openapi_spec.yaml`（embedded copy 同步，不然 `EmbeddedSpecMatchesCanonical` 红）。第二步常被忽略 — embedded spec 是 Swagger UI 在 server 自带的内嵌副本，必须跟主 spec 字节一致。模板：**任何**修改 `api/openapi.yaml` 后立即 `cp`，避免分两个 PR 修同一个抽象。
   - **constraint editor 走 "kind selector + 仅 emit active key" 三件套（US-051）**：可变形约束（pattern / range / enum / none）的 wire 表达通常是 `Record<string, unknown>`。前端坑：如果 UI form 总是 emit `{pattern: '', min: '', max: '', enum: []}`，server 就要 disambiguate "用户把它清空" vs "用户从未输入"。改用 `inputsToConstraints(kind, ...)` 只 emit `kind === 'pattern'` 那一支的 key — 不活跃的 kind 的 input state 在 React 内部留着（用户切回去能保 last-typed），但不漏 wire。同模板适用 any 多形态 union-like JSON payload（visibility = public/team/private 三态各带 metadata / scheduling = cron/interval/manual 等）。
   - **"Used By" 反向引用 = JOIN + 不 cache + 按 apiName 而非 rid（US-051）**：反向 lookup 在 admin UI 是 delete-confirmation 之前的关键步骤。三个约束：(a) 必须 JOIN 到拿 apiName，否则 UI 渲染要二次 fetch；(b) **不**走 CachedRepository（admin 流量低 + stale 数据会误导 delete 决策 — 漏掉真实 ref 是 cache miss 也是 user trust loss）；(c) 用 ValueType.apiName 而不是 RID — 因为 Property.base_type 列存的是 string apiName（既兼容 base type 字面如 'string'，也兼容 ValueType 引用如 'EmailAddress'）。模板适用 SharedProperty.base_type / Interface.sharedProperties[*].baseType 等同形态反向查找。
+---
+
+## 2026-05-13 10:24 - US-052 新功能: DatasourceBindings 管理 UI（PC-A06）
+- 后端：5 个 handlers `CreateDatasourceBinding / ListDatasourceBindings / GetDatasourceBinding / UpdateDatasourceBinding / DeleteDatasourceBinding`（pkg/oms/admin_handlers.go:3130/3184/3203/3222/3276 早已实现，US-006 拆 /api/admin/* 后悬空）重新挂到 V2：
+  - POST /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/datasourceBindings
+  - GET  /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/datasourceBindings
+  - GET  /api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}
+  - PUT  /api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}
+  - DELETE /api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}
+  routes.go +5 行 + 注释 cite US-377 lineage 副作用契约。chi URL param `objectTypeRid` / `datasourceBindingRid` 与 handler 一致（admin_handlers.go 没改）。
+- 后端 TDD：pkg/oms/handlers_test.go mockRepo 5 个 binding 方法（之前是 stub 静态返回 nil/ErrNotFound）升级为 state-tracking — 新增 `datasourceBindings []oms.DatasourceBinding` 字段 + Create/Get/List/Update/Delete 全实现。pkg/oms/handlers_datasource_binding_admin_test.go new：1 顶级 `TestUS052_DatasourceBinding_Admin_CRUD_V2` + 6 子测试覆盖 201-with-columnMapping / 400-missing-datasetRid / list-data-envelope-scoped-by-objectType（含跨 objectType 不漏不串）/ 404-unknown / PUT-roundtrip-with-isPrimary-toggle / 204-and-removes-row 全契约。
+- OpenAPI: api/openapi.yaml + cmd/server/openapi_spec.yaml 同步 2 新 path operation block（list+create 共 prefix；get+put+delete 共 byRid prefix）+ 3 schema（DatasourceBinding / CreateDatasourceBindingRequest / UpdateDatasourceBindingRequest）。`cp` 同步规则严守（US-051 模板）。
+- 前端 API：web/src/api/ontologies.ts +5 fn（listDatasourceBindings / createDatasourceBinding / updateDatasourceBinding / deleteDatasourceBinding + 2 Request interface），imports DatasourceBinding from types.ts。types.ts 既有 `DatasourceBinding` interface 复用（field 含 rid / objectTypeRid? / datasetRid / branch / columnMapping?: unknown / isPrimary）。
+- 前端 hooks：web/src/hooks/useDatasourceBindings.ts new — 4 hook（useDatasourceBindings list + useCreate/Update/Delete mutation）。每个 mutation onSuccess 都 `qc.invalidateQueries({queryKey: ['datasourceBindings', ontology, objectTypeRid]})` 触发 list refetch；queryKey 三段（不止 [ontology] / [ontology, ot]）让一个 ObjectType 的 binding 编辑不污染另一个 ObjectType 的缓存。
+- 前端 UI：web/src/components/admin/BindingsEditor.tsx new ~570 LOC — 4 态 wrapper（loading / error / empty / table）+ Create/Edit/Delete 3 modal + `MappingEditor` 子组件（property/column array 行级编辑 ↔ wire Record<string,string> 双向转换：`mappingToRows` / `rowsToMapping`，与 US-031 ActionType param wire-map↔builder-array 同模式）。Lineage trigger 列从 columnMapping 派生（`mappingCount > 0 ? "on" : "off"`），matches US-377 自动派生 lineage 边契约。
+- 集成到 ObjectTypeAdminPage：Edit modal tab union 从 `'details' | 'properties'` 改成 `'details' | 'properties' | 'bindings'`，第 3 个 tab 加 `<button data-testid="object-type-edit-tab-bindings">`，tab 切换时挂载 `<BindingsEditor>`（与 PropertiesEditor 同 props shape：`{ontologyApiName, objectType}`）。
+- Per-row data attrs：`<tr data-binding-rid={b.rid} data-binding-dataset-rid={b.datasetRid} data-binding-branch={b.branch} data-binding-is-primary={...} data-binding-mapping-count={N} data-binding-lineage-triggers={true|false}>` + 2 affordance（`bindings-edit-btn` / `bindings-delete-btn`）各自带 `data-binding-rid` 复合 selector。继承 US-022/026/029 行级 lookup 范式。
+- BDD：web/tests/feature.admin.bindings.spec.ts 4 scenarios（2 @smoke）：
+  - list-renders-rows-with-mapping-and-lineage-badge @smoke：2 binding（primary mapping=3 lineage=on / mirror branch=preview mapping=0 lineage=off）seed，开 Edit modal → 切 Bindings tab → 锁全 6 个 data-binding-* attr。
+  - create-flow-posts-binding-with-mapping-and-refreshes @smoke：empty seed → New Binding → 填 datasetRid + 2 mapping row（1 默认 + 1 add） + check isPrimary → requestSubmit() → 锁 POST body matchObject(datasetRid/branch/isPrimary) + columnMapping equal({employeeId:'employee_id', firstName:'first_name'})。
+  - delete-flow-removes-row：1 binding seed → Delete button → confirm modal → submit → DELETE 1 调用 + empty 状态显示。
+  - update-flow-puts-mapping-and-bumps-row：1 binding seed (3 mapping) → Edit → 换 datasetRid + mappingAdd → row 3 填 title→job_title → requestSubmit() → 锁 PUT body 4 entry mapping + row 数据属性翻 4。
+- Page object：web/tests/support/pageObjects/BindingsTab.ts new — 13 locator（editor / loading / error / empty / table / rows / count / newButton + 3 modal 各自的 form/inputs/submit/cancel/error）+ 4 helper（rowByRid / editButtonFor / deleteButtonFor / mappingPropertyAt-mappingColumnAt-mappingAddButton）。tests/support/{pageObjects/index.ts, index.ts} 同步加 export。
+- 验证：
+  - `go test ./pkg/oms/ -run TestUS052_DatasourceBinding_Admin_CRUD_V2 -v` → 6/6 pass / 0.70s
+  - `go build ./...` / `go vet ./...` 双绿
+  - `go test -short ./pkg/oms/... ./pkg/oss/... ./pkg/index/... ./pkg/links/... ./pkg/actions/...` → 全绿（含新 state-tracking mockRepo）
+  - `go test -short ./test/e2e/... ./test/northwind/... ./test/chinook/...` → 全绿
+  - `npx tsc --noEmit` 干净
+  - `npx vitest run` → 159 files / 1267 tests 全绿（12.43s）
+  - `npx playwright test tests/feature.admin.bindings.spec.ts` → 4/4 pass / 7.6s（真实 Vite dev server，跑 React 路由）
+  - `npx playwright test --grep @smoke` → 83/83 pass / 1.4m（前期 81 case 零回归 + 新增 2 @smoke）
+  - 唯一红：`TestContract_AllRoutesDocumented` 对 `actions/sagas` 两 routes 仍报 missing — `git stash` 验证为 pre-existing baseline（US-051 progress.txt 早 cite），与本 story 无关。
+- 文件改动：
+  - `pkg/oms/handlers_test.go`（+ datasourceBindings field + 5 state-tracking 方法）
+  - `pkg/oms/handlers_datasource_binding_admin_test.go`（new — 6 子测试）
+  - `cmd/server/routes.go`（+ 5 V2 routes）
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml`（+ 2 path operation + 3 schema）
+  - `web/src/api/ontologies.ts`（+ 5 fn + 2 interface + DatasourceBinding import）
+  - `web/src/hooks/useDatasourceBindings.ts`（new）
+  - `web/src/components/admin/BindingsEditor.tsx`（new — ~570 LOC）
+  - `web/src/components/admin/ObjectTypeAdminPage.tsx`（+ BindingsEditor import + Bindings tab）
+  - `web/tests/feature.admin.bindings.spec.ts`（new — 4 scenarios）
+  - `web/tests/support/pageObjects/BindingsTab.ts`（new）
+  - `web/tests/support/pageObjects/index.ts`（+ export）
+  - `web/tests/support/index.ts`（+ export）
+- **Learnings for future iterations:**
+  - **mockRepo stub 升级为 state-tracking 是 admin handler BDD 的最小代价路径（US-052）**：weave 项目的 `pkg/oms.mockRepo` 早期对很多 entity 只有 nil 返回的纯 stub（DatasourceBinding 就是这样）。当一个 admin handler 套件需要走完整 CRUD 持久化（Create→Get→List→Update→Delete 全链路），最便宜的方式不是引 testcontainers PG 而是 (a) 在 mockRepo 加 `<entity> []oms.<Entity>` slice 字段，(b) 5 个方法都用闭包写法管理：Create push、List filter by FK、Get/Update/Delete linear scan by RID。state-tracking + state.<entity> 字段在 `&mockRepo{...}` 直接初始化 seed，比 PG container 起停快 100x，且不需要 -tags integration。模板适用任何 `pkg/oms` repo 接口的 admin handler 测试。
+  - **`json:"-"` 字段在 handler response 中不能用于 BDD 验证（US-052）**：`oms.DatasourceBinding.ObjectTypeRID` 字段标 `json:"-"`（URL 路径已经 carry，不重复 marshal）。BDD 测试用 `json.Unmarshal(body, &got)` 后直接断 `got.ObjectTypeRID == "ri.ot.customer"` 会失败（永远是空字符串）。守则：(a) 验证 list 是"scoped by objectType"用 RID set + 反向断言不在该 scope 的 RID 缺席（"NOT in customer list"）；(b) 验证持久化 scope 走 repo state（`repo.datasourceBindings[0].ObjectTypeRID == expected`）；(c) 千万别仅相信 response body 反序列化。同模板：任何 `json:"-"` 字段的 wire-shape 验证都该走 repo state + 反向断言，不能依赖 response body。
+  - **复杂表单 wire-shape: array-state↔map-wire 双向转换是 admin builder 范式（US-052 复用 US-031）**：当 wire format 用 `map<string, string>` 表示一组 key-value 关系（column mapping / parameter map / metadata），但 builder UI 用 `Array<{key, value}>` 让用户可添加/删除/重排，必须 (a) `wireToRows(wire)` Object.entries 转 array；(b) `rowsToWire(rows)` filter 空 key + reduce 成 object；(c) 在 useEffect/useState init 一次性转 array；(d) submit 时一次性转回。**不要**在每次 onChange 都做转换 — 失焦时空 key 会被静默吞，user 困惑。BDD POST body 上断言 wire-map shape（`columnMapping equal {a:'b'}`），UI 内部 array-shape 不暴露。
+  - **不能直接 click 视口外 submit 按钮：Modal 没 max-h + 大表单 → `form.requestSubmit()` 是标准 workaround（US-052 复用 US-029）**：当 Create/Edit modal 内表单 + mapping editor 行多了，content 高度超过视口；Modal.tsx 是 fixed center + content-sized 无 overflow，submit 按钮挂在视口外。Playwright `submitBtn.click()` 会一直 retry "outside viewport"。改 `form.evaluate(f => (f as HTMLFormElement).requestSubmit())` 触发 React onSubmit 同代码路径，保留所有 actionability 检查（包括 React state 的 `canSubmit`），仅绕开视口限制。**不要**用 `click({force: true})` — 会真的在不可见按钮上点击，掩盖 prod-side 真正的 a11y bug。
+  - **`DatasourceBinding.objectTypeRid` 在 admin handler URL 路径段 vs response body 不一致 — BDD seed 需手动一致（US-052）**：handler `CreateDatasourceBinding` 从 chi URLParam("objectTypeRid") 抠 RID 写入 `db.ObjectTypeRID`，但 response body 因 `json:"-"` 不返回这个字段。BDD stub state 里 seed binding 时**必须**把 `objectTypeRid` 也写进 fixture（用于 list scope 反向验证），否则 list scope 测试会通过假阳性。同模板适用任何"server fills X from URL path, X is `json:\"-\"`"的 entity（很多 hierarchy resource 都这样）。
+  - **第 3 个 tab 加到既有 modal：tab union 扩展 + tab 切换分支扩展双改（US-052）**：`useState<'details'|'properties'>('details')` 改成 `useState<'details'|'properties'|'bindings'>('details')` + 3-way ternary `tab === 'properties' ? <P/> : tab === 'bindings' ? <B/> : <DefaultForm/>`。**不要**用 default-fall-through `<DefaultForm/>` 当 'bindings'，否则点 bindings tab 啥也不发生（aria-selected 是 true 但内容是 details）。第 3 个 tab 加 dedicated `data-testid="<entity>-edit-tab-<name>"` 与既有 tab 命名一致。模板适用任何"既有 modal 加新 tab" 的扩展。

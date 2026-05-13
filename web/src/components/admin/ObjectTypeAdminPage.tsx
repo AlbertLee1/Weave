@@ -26,6 +26,7 @@ import { Badge, statusVariant } from '../common/Badge';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { MarkdownEditor } from '../common/MarkdownEditor';
 import { PropertiesEditor } from './PropertiesEditor';
+import { BindingsEditor } from './BindingsEditor';
 
 type StatusFilter =
   | 'ALL'
@@ -603,7 +604,9 @@ function EditObjectTypeModal({
   onClose: () => void;
 }) {
   const update = useUpdateObjectType(ontologyApiName);
-  const [tab, setTab] = useState<'details' | 'properties'>('details');
+  const [tab, setTab] = useState<'details' | 'properties' | 'bindings'>(
+    'details',
+  );
   const [form, setForm] = useState<EditFormState>({
     displayName: objectType.displayName,
     pluralDisplayName: objectType.pluralDisplayName ?? '',
@@ -681,9 +684,28 @@ function EditObjectTypeModal({
         >
           Properties
         </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="object-type-edit-tab-bindings"
+          aria-selected={tab === 'bindings'}
+          onClick={() => setTab('bindings')}
+          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+            tab === 'bindings'
+              ? 'border-accent-cyan text-accent-cyan'
+              : 'border-transparent text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          Bindings
+        </button>
       </div>
       {tab === 'properties' ? (
         <PropertiesEditor
+          ontologyApiName={ontologyApiName}
+          objectType={objectType}
+        />
+      ) : tab === 'bindings' ? (
+        <BindingsEditor
           ontologyApiName={ontologyApiName}
           objectType={objectType}
         />
