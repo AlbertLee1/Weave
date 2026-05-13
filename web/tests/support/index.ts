@@ -30,6 +30,7 @@ export {
   LineagePage,
   LinkTypeAdminPage,
   LogicFlowsPage,
+  MarketplacePage,
   NotificationsPage,
   ObjectSetBuilderPage,
   ObjectSetDiffPage,

@@ -839,8 +839,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 54,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "扩展 web/src/components/marketplace/MarketplacePage.tsx 落地 PC-A12 完整化：(1) 详情抽屉 PackageDetailsDrawer 在 Installed / Built-in / Browse 三个 tab 均可打开，渲染 Changelog（manifest.description 或 builtin.description）/ Dependencies（manifest.dependencies map 或 builtin.dependencies array 统一化为 [name, version]）/ References（builtin 走 objectType/linkType/actionType/migration counts；installed 走 migrations.length + manifest.contents 数值化键值 + minWeaveVersion）三段 + author/license/installedAt/cross-link 元信息底栏；(2) Installed card 在 builtinByName 命中且 version 不一致时挂 data-update-available=true + 黄色 'Update to vX' 徽标 + 'Update' 按钮，POST /api/v2/pkg/builtin/{slug}/install onConflict=overwrite；(3) 共享的 InstallProgressBar 复用为 marketplace-update-progress 显示更新进度；(4) 所有 card 新增 data-package-name 数据属性 + Details 按钮 testid（marketplace-details-{name} / marketplace-builtin-details-{slug} / marketplace-browse-details-{name}）。新增 web/tests/support/pageObjects/MarketplacePage.ts page object（card / 详情抽屉 / 抽屉内三段 / 依赖行 / 引用行 / Update 按钮 / Uninstall dialog 全套 locator + lookup helper）+ feature.marketplace.spec.ts 4 @smoke scenarios（tabs 分组 / 详情抽屉 changelog+deps+refs / Update 流程 wire-shape 锁 onConflict=overwrite / Uninstall 二次确认与 cancel）。npx tsc -b 仅 4 个 pre-existing 报错；npx vitest run 1267/1267 ✓；npx playwright test --grep @smoke 91/91 ✓（含新 4）。"
     },
     {
       "id": "US-055",

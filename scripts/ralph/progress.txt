@@ -168,6 +168,8 @@ Phases:
 - **AC 已有小 surface + 新增完整页时只补 gap 不重写共享层（US-050）**：当 PRD AC 多条且其中前几条已在另一 surface 实现（TopBar bell + NotificationCenter slide panel），新页面**复用** hooks（`useNotifications` / `useMarkAllNotificationsRead`）让 React Query cache 在多 surface 间天然同步；新 testid 用复数前缀（`notifications-*` vs 既有 `notification-*`）避免冲突；只补缺位的"完整页+过滤+分页"AC。同模板适用任何 mini-surface + full-page 对子（commands palette + page / search dropdown + page / approvals modal + page）。
 - **客户端分页 state 防止 out-of-range 用 render-time clamp 而非 setState（US-050）**：`safePage = Math.max(0, Math.min(page, totalPages - 1))` 局部 derived，所有 UI 用 safePage；Prev/Next onClick 也走 `setPage(p => clamp)`。避免 setState-in-render（react-hooks 警告）和 setState-in-effect（同 lint 拒收）。模板适用任何"用户手动 nav state + 数据可能外部 shrink"的对子（pagination / focus-row index / selected-tab 当 tab list 动态变化）。
 - **`const x = data?.data ?? []` 在 useMemo deps 数组触发 react-hooks/exhaustive-deps（US-050）**：logical-OR fallback 每 render 创建新 `[]` 实例。修法：`useMemo(() => data?.data ?? [], [data])` 把 items 自身 wrap useMemo，稳定 reference。或改 deps 数组到 `[data]` 而非 `[items]`。模板适用任何 `useQuery → data?.field`-then-`useMemo` 的链。
+- **多端点共 prefix 的 Playwright stub 改用单 catch-all + 内部 dispatch（US-054）**：3+ 端点共 prefix 时，多 `page.route` LIFO 链 + `route.continue()`/`route.fallback()` 极易踩坑（continue 送 network 绕过链；fallback 才走链）。最稳：注册**单个** `'**/api/v2/<prefix>**'` catch-all（双 `*` 跨段），内部按 `url.pathname` 字面值 + `request.method()` switch dispatch，零 LIFO 依赖。同 US-040 / US-042 / US-054 marketplace/saga/column-masks 模板的统一收敛。
+- **`installBuiltinPackage(slug, onConflict)` 三态 'fail'/'skip'/'overwrite' 是 marketplace install / update / merge-import 共享 endpoint（US-054）**：后端 `cmd/server/handlers_pkg_*.go` 同一 POST `/api/v2/pkg/builtin/{slug}/install` 同时支撑 fresh install + in-place update + skip-existing 三种语义，前端 `web/src/api/packages.ts:installBuiltinPackage(slug, onConflict?)` 第二参 optional。任何 "Update X" UI 都该用同一 endpoint + 不同 onConflict，**不**为 update 单独开端点。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -2023,4 +2025,36 @@ Phases:
     `committedAt > target.committedAt` 完全等价于 `pkg/oms.ListAfterCommittedAt` 的 SQL `WHERE committed_at > $1`。
     把"server filter 翻译成 client filter"做成对称是 wizard "honest preview" 的契约——避免预览说"会改 5 行"实际改 3 行
     的体验失真。任何 destructive endpoint 的 preview UI 都该照此对齐 server filter 语义。
+---
+
+## 2026-05-13 11:10 - US-054 Marketplace UI 完整化（PC-A12）
+- 扩展 `web/src/components/marketplace/MarketplacePage.tsx`：
+  - 新增 `PackageDetailsDrawer` slide-in 面板（Changelog / Dependencies / References / Author·License·Installed·Cross-link 四段），同时为 Installed / Built-in / Browse 三个 tab 的卡片增加 'Details' 按钮，data-testid 命名空间区分 surface 来源。
+  - 新增 `updateBuiltinMutation`（独立于 `installBuiltinMutation`）使用 `installBuiltinPackage(slug, 'overwrite')` 调 POST `/api/v2/pkg/builtin/{slug}/install`，参数 `onConflict=overwrite` 走 `pkg/oms` importer 的 replace-mode。
+  - InstalledSection 在 `builtinByName.get(pkg.name)?.version !== pkg.version` 时挂出 `data-update-available=true` + amber 'Update to vX' 徽标 + 'Update' 按钮；共享 `InstallProgressBar` 复用为 `marketplace-update-progress`（加 `label` prop 区分 'Installing' / 'Updating' 文案 + aria-label）。
+  - 所有 card 加 `data-package-name` / `data-package-version` 数据属性，配合既有 testid 让 page-object lookup 与 nth-child 解耦（同 US-029 / US-032 模板）。
+- 新增 `web/tests/support/pageObjects/MarketplacePage.ts`：暴露 tabs / installed-list / builtin-list / browse-list / 详情抽屉 + 抽屉内三段 + dependencyRow(name) + referenceRow(key) + updateButtonFor(name) + uninstallButtonFor(name) 全套 locator。
+- 新增 `web/tests/feature.marketplace.spec.ts` 4 @smoke scenarios：
+  1. tabs 分组：Installed tab 只见 local install，Built-in tab 只见 embedded catalog 三件套（northwind/chinook/iot-demo）。
+  2. 详情抽屉：opens drawer for built-in northwind，断言 changelog 文本、依赖行 `data-dependency-version`、references reference-key=Object Types/Link Types/Action Types/Migrations 数值。
+  3. Update 流程：installed v1.0.0 + catalog v1.1.0 → `data-update-available=true` + 'Update to v1.1.0' 徽标；点 Update 触发 POST install，wire-shape 锁 `slug=northwind` + `onConflict=overwrite`；refetch 后卡片 `data-package-version=1.1.0` + 徽标消失。
+  4. Uninstall 流程：点 Uninstall → dialog visible 但 DELETE 未发；Cancel 取消 → dialog 消失 + card 保留 + DELETE 仍为 0；再次打开并 Confirm → DELETE 发一次 + card 从列表消失。
+- 同步更新 `web/tests/support/index.ts` + `web/tests/support/pageObjects/index.ts` re-export 新 page object。
+- 验证：
+  - `npx tsc -b` 仅 4 个 pre-existing 报错（与本 story 无关：securityPolicies MaskStrategy / ObjectSetComposer.test fixture / objectSetUrl Buffer ×2）。
+  - `npx vitest run` 1267 tests / 159 files all passed。
+  - `npx playwright test --grep @smoke` 91/91 passed（含新 4）。
+  - `go build ./...` 双绿。
+- 文件改动：
+  - `web/src/components/marketplace/MarketplacePage.tsx`（+~310 行）
+  - `web/tests/support/pageObjects/MarketplacePage.ts`（新，168 行）
+  - `web/tests/support/pageObjects/index.ts` / `web/tests/support/index.ts`（barrel re-export）
+  - `web/tests/feature.marketplace.spec.ts`（新，~550 行）
+- **Learnings for future iterations:**
+  - **多端点共 prefix 的 Playwright stub 改用单 catch-all + 内部 dispatch 的范式（US-054）**：marketplace 共 prefix `/api/v2/pkg`，下挂 6 个端点（GET list / GET builtin / POST install / POST enabled / DELETE / GET single）。多 `page.route` 注册的 LIFO 链遇到 `route.continue()` **不会**走下一个 handler——`route.continue()` 直接送到 network，**`route.fallback()` 才**继续走 LIFO 链。两种坑都很容易踩，最稳的范式是注册**单个**`'**/api/v2/pkg**'`（注意双 `*`：匹配 zero-or-more 跨段）catch-all + 内部按 `url.pathname` 字面值 + `request.method()` switch dispatch，零 LIFO 依赖、零 fallback 误用。同 US-040 saga jobs / US-042 column-masks 多端点共 prefix 模板的进一步加固——任何超过 3 个端点共 prefix 的 BDD stub 都该走单 catch-all dispatch 而不是多 `page.route`。
+  - **`route.continue()` vs `route.fallback()` 是 Playwright 易混淆原语，文档读不清就会写出沉默 bug（US-054）**：`route.continue()` 把请求送到**网络**（绕过所有后续 handler）；`route.fallback()` 把请求**让给 LIFO 链上的下一个匹配 handler**。多 `page.route` 链上想"这个 handler 不感兴趣，让下一个"必须用 `fallback()`，**不是** `continue()`。第一次 BDD 出现 "stub 看似没生效" 但 fixture 里数据明明已经 set 的现象，第一反应该是 grep `route.continue()` 看是否本意是 `fallback()`。本次 BDD 在第二条 / 第三条 scenario 失败时这个 bug 暴露，因为 catch-all `**/api/v2/pkg/*` 注册顺序 LIFO 最高优先级，遇到 `/api/v2/pkg/builtin` 时 `last === 'builtin'` 走 `route.continue()` 直接送到真 backend，跳过了 `**/api/v2/pkg/builtin` 的精确 handler。**Generalized fix**：要么改 `fallback()`，要么干脆合并为单 catch-all dispatch（本 PR 选后者，更稳）。
+  - **`installBuiltinPackage(slug, 'overwrite')` 是 marketplace "更新"路径的 wire 入口（US-054）**：后端 `cmd/server/handlers_pkg_*.go` 的 install 端点同时支撑 fresh install (默认 `onConflict='fail'`) 与 in-place update (`onConflict='overwrite'`)；前端 `web/src/api/packages.ts:installBuiltinPackage(slug, onConflict?)` 第二参 optional。任何 "Update" UI 都用同一 endpoint + 不同 onConflict 三态（'fail' / 'skip' / 'overwrite'）切语义，**不要**为 update 单独开端点。BDD 锁这条 wire 的方法：捕获 `state.installs[].onConflict` 数组，scenario 内 `expect(last.onConflict).toBe('overwrite')` —— 同 US-030 narrow DTO 字段断言模板的应用。
+  - **共享 progress bar 组件的"语义化 label" prop 让 install / update / migrate 三态视觉重用（US-054）**：`InstallProgressBar({ slug, testId, label? })` 把"Installing"文案做成 optional prop 默认 'Installing'，allowing update path 传 `label="Updating"`。aria-label 同步走 `${label ?? 'Installing'} ${slug}`，无障碍语义不被覆盖。模板适用任何"同一进度动画跑多种 mutation"的 page（marketplace install/update/uninstall / saga retry/cancel / data import/export）。
+  - **details 抽屉的"discriminated union content + 单一 React 渲染分支"范式（US-054）**：`type DetailsContent = { kind: 'installed', installed, builtin? } | { kind: 'builtin', builtin, installed? }` + drawer 内统一 `description / dependencies / references` 派生函数按 `content.kind` 分支取数据。比"两个独立 DrawerInstalled / DrawerBuiltin 组件"少一半代码，跨 kind 的 cross-link（"Built-in 版本 vX.X" / "已安装 vY.Y"）也天然好写。模板适用任何"一个 modal 服务多种 entity 类型 + 跨类型 cross-reference"的 UI。
+  - **drawer 的 click-outside 关闭走 `onClick={(e) => { if (e.target === e.currentTarget) onClose() }}` (US-054)**：overlay div 自身的 onClick + `target === currentTarget` 校验只在点 overlay 本体（不在 panel 内部）时 fire。比 `e.stopPropagation()` 模板更简单——panel 内部点击不需要任何额外 handler；overlay 是唯一注册点。模板适用任何"slide-in drawer + click-outside-to-dismiss"的对偶（fixed overlay + panel）。
 ---

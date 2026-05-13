@@ -18,6 +18,7 @@ export { LineagePage } from './LineagePage';
 export { LinkTypeAdminPage } from './LinkTypeAdminPage';
 export { NotificationsPage } from './NotificationsPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
+export { MarketplacePage } from './MarketplacePage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
 export { ObjectSetDiffPage } from './ObjectSetDiffPage';
 export { ObjectTypeAdminPage } from './ObjectTypeAdminPage';

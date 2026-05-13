@@ -44,11 +44,24 @@ const INSTALL_TOTAL_MS = INSTALL_PHASES.reduce(
 // POST /api/v2/pkg/builtin/{slug}/install with a phase-based progress bar
 // while the request is in flight; uploaded archives continue to land via
 // the CLI (`weave-cli pkg install`).
+//
+// US-054 / PC-A12 completion: each card exposes a "Details" affordance
+// that opens a slide-out drawer rendering changelog / dependencies /
+// reference docs; the Installed section adds an "Update" button when a
+// built-in equivalent reports a different version, which calls the
+// install endpoint with `onConflict=overwrite`.
+type DetailsTarget =
+  | { source: 'installed'; name: string }
+  | { source: 'builtin'; slug: string };
+
 export function MarketplacePage() {
   const queryClient = useQueryClient();
   const pushToast = useToastStore((s) => s.push);
   const [tab, setTab] = useState<Tab>('installed');
   const [browseQuery, setBrowseQuery] = useState('');
+  const [detailsTarget, setDetailsTarget] = useState<DetailsTarget | null>(
+    null,
+  );
 
   const packagesQuery = useQuery({
     queryKey: PACKAGES_KEY,
@@ -121,6 +134,27 @@ export function MarketplacePage() {
     },
   });
 
+  // US-054: "Update" reuses the install endpoint with onConflict=overwrite
+  // so the importer runs in `replace` mode against the existing ontology
+  // entities. We split it from `installBuiltinMutation` so the toast +
+  // progress bar can distinguish "fresh install" from "in-place update".
+  const updateBuiltinMutation = useMutation({
+    mutationFn: (slug: string) => installBuiltinPackage(slug, 'overwrite'),
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: PACKAGES_KEY });
+      pushToast({
+        message: `${resp.name} updated to v${resp.version}`,
+        severity: 'success',
+      });
+    },
+    onError: (err, slug) => {
+      pushToast({
+        message: `Failed to update ${slug}: ${formatError(err)}`,
+        severity: 'error',
+      });
+    },
+  });
+
   const packages = useMemo(
     () => packagesQuery.data?.data ?? [],
     [packagesQuery.data],
@@ -136,6 +170,50 @@ export function MarketplacePage() {
     for (const p of packages) set.add(p.name);
     return set;
   }, [packages]);
+
+  // US-054: per-name lookup so the Installed card can offer an "Update"
+  // affordance when a built-in equivalent reports a different version.
+  // Keyed by package name (mirrors how the registry deduplicates rows on
+  // the way in via `installed_packages.name`).
+  const builtinByName = useMemo(() => {
+    const map = new Map<string, BuiltinPackageMetadata>();
+    for (const b of builtinPackages) map.set(b.name, b);
+    return map;
+  }, [builtinPackages]);
+
+  const detailsContent = useMemo<DetailsContent | null>(() => {
+    if (!detailsTarget) return null;
+    if (detailsTarget.source === 'installed') {
+      const row = packages.find((p) => p.name === detailsTarget.name);
+      if (!row) return null;
+      const builtin = builtinByName.get(row.name);
+      return {
+        kind: 'installed',
+        name: row.name,
+        installed: row,
+        builtin,
+      };
+    }
+    const row = builtinPackages.find((b) => b.slug === detailsTarget.slug);
+    if (!row) return null;
+    const installedRow = packages.find((p) => p.name === row.name);
+    return {
+      kind: 'builtin',
+      name: row.name,
+      builtin: row,
+      installed: installedRow,
+    };
+  }, [detailsTarget, packages, builtinPackages, builtinByName]);
+
+  // US-054: any in-flight install or update should keep the progress bar
+  // tied to the slug actually being mutated (overwrite vs fresh install
+  // share the same backend endpoint but the UI affordance differs).
+  const installingSlug = installBuiltinMutation.isPending
+    ? installBuiltinMutation.variables ?? null
+    : null;
+  const updatingSlug = updateBuiltinMutation.isPending
+    ? updateBuiltinMutation.variables ?? null
+    : null;
 
   return (
     <div className="flex flex-col h-full" data-testid="marketplace-page">
@@ -183,15 +261,21 @@ export function MarketplacePage() {
             isError={packagesQuery.isError}
             error={packagesQuery.error}
             packages={packages}
+            builtinByName={builtinByName}
             onToggle={(name, enabled) =>
               enableMutation.mutate({ name, enabled })
             }
             onRequestUninstall={(name) => setPendingUninstall(name)}
+            onUpdate={(slug) => updateBuiltinMutation.mutate(slug)}
+            onShowDetails={(name) =>
+              setDetailsTarget({ source: 'installed', name })
+            }
             togglingName={
               enableMutation.isPending
                 ? enableMutation.variables?.name ?? null
                 : null
             }
+            updatingSlug={updatingSlug}
           />
         )}
 
@@ -203,11 +287,10 @@ export function MarketplacePage() {
             packages={builtinPackages}
             installedSlugs={installedSlugs}
             onInstall={(slug) => installBuiltinMutation.mutate(slug)}
-            installingSlug={
-              installBuiltinMutation.isPending
-                ? installBuiltinMutation.variables ?? null
-                : null
+            onShowDetails={(slug) =>
+              setDetailsTarget({ source: 'builtin', slug })
             }
+            installingSlug={installingSlug}
           />
         )}
 
@@ -222,11 +305,8 @@ export function MarketplacePage() {
             search={browseQuery}
             onSearch={setBrowseQuery}
             onInstall={(slug) => installBuiltinMutation.mutate(slug)}
-            installingSlug={
-              installBuiltinMutation.isPending
-                ? installBuiltinMutation.variables ?? null
-                : null
-            }
+            onShowDetails={(target) => setDetailsTarget(target)}
+            installingSlug={installingSlug}
           />
         )}
       </div>
@@ -237,6 +317,13 @@ export function MarketplacePage() {
           pending={uninstallMutation.isPending}
           onCancel={() => setPendingUninstall(null)}
           onConfirm={() => uninstallMutation.mutate(pendingUninstall)}
+        />
+      )}
+
+      {detailsContent && (
+        <PackageDetailsDrawer
+          content={detailsContent}
+          onClose={() => setDetailsTarget(null)}
         />
       )}
     </div>
@@ -274,9 +361,13 @@ interface InstalledSectionProps {
   isError: boolean;
   error: unknown;
   packages: InstalledPackage[];
+  builtinByName: Map<string, BuiltinPackageMetadata>;
   onToggle: (name: string, enabled: boolean) => void;
   onRequestUninstall: (name: string) => void;
+  onUpdate: (slug: string) => void;
+  onShowDetails: (name: string) => void;
   togglingName: string | null;
+  updatingSlug: string | null;
 }
 
 function InstalledSection({
@@ -284,9 +375,13 @@ function InstalledSection({
   isError,
   error,
   packages,
+  builtinByName,
   onToggle,
   onRequestUninstall,
+  onUpdate,
+  onShowDetails,
   togglingName,
+  updatingSlug,
 }: InstalledSectionProps) {
   if (isLoading) {
     return (
@@ -317,20 +412,39 @@ function InstalledSection({
     );
   }
   return (
-    <ul
-      className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-      data-testid="marketplace-list"
-    >
-      {packages.map((pkg) => (
-        <PackageCard
-          key={pkg.name}
-          pkg={pkg}
-          onToggle={(enabled) => onToggle(pkg.name, enabled)}
-          onRequestUninstall={() => onRequestUninstall(pkg.name)}
-          togglePending={togglingName === pkg.name}
+    <div className="flex flex-col gap-4">
+      {updatingSlug && (
+        <InstallProgressBar
+          slug={updatingSlug}
+          testId="marketplace-update-progress"
+          label="Updating"
         />
-      ))}
-    </ul>
+      )}
+      <ul
+        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+        data-testid="marketplace-list"
+      >
+        {packages.map((pkg) => {
+          const builtin = builtinByName.get(pkg.name);
+          const updateAvailable =
+            builtin !== undefined && builtin.version !== pkg.version;
+          return (
+            <PackageCard
+              key={pkg.name}
+              pkg={pkg}
+              updateAvailable={updateAvailable}
+              builtinMatch={builtin}
+              onToggle={(enabled) => onToggle(pkg.name, enabled)}
+              onRequestUninstall={() => onRequestUninstall(pkg.name)}
+              onUpdate={builtin ? () => onUpdate(builtin.slug) : undefined}
+              onShowDetails={() => onShowDetails(pkg.name)}
+              togglePending={togglingName === pkg.name}
+              updatePending={builtin ? updatingSlug === builtin.slug : false}
+            />
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -341,6 +455,7 @@ interface BuiltinSectionProps {
   packages: BuiltinPackageMetadata[];
   installedSlugs: Set<string>;
   onInstall: (slug: string) => void;
+  onShowDetails: (slug: string) => void;
   installingSlug: string | null;
 }
 
@@ -351,6 +466,7 @@ function BuiltinSection({
   packages,
   installedSlugs,
   onInstall,
+  onShowDetails,
   installingSlug,
 }: BuiltinSectionProps) {
   if (isLoading) {
@@ -396,6 +512,7 @@ function BuiltinSection({
             pkg={pkg}
             alreadyInstalled={installedSlugs.has(pkg.name)}
             onInstall={() => onInstall(pkg.slug)}
+            onShowDetails={() => onShowDetails(pkg.slug)}
             installPending={installingSlug === pkg.slug}
           />
         ))}
@@ -414,6 +531,7 @@ interface BrowseSectionProps {
   search: string;
   onSearch: (q: string) => void;
   onInstall: (slug: string) => void;
+  onShowDetails: (target: DetailsTarget) => void;
   installingSlug: string | null;
 }
 
@@ -437,6 +555,7 @@ function BrowseSection({
   search,
   onSearch,
   onInstall,
+  onShowDetails,
   installingSlug,
 }: BrowseSectionProps) {
   const entries = useMemo<BrowseEntry[]>(() => {
@@ -556,6 +675,13 @@ function BrowseSection({
               key={entry.key}
               entry={entry}
               onInstall={(slug) => onInstall(slug)}
+              onShowDetails={() =>
+                onShowDetails(
+                  entry.builtin
+                    ? { source: 'builtin', slug: entry.builtin.slug }
+                    : { source: 'installed', name: entry.name },
+                )
+              }
               installPending={
                 entry.builtin ? installingSlug === entry.builtin.slug : false
               }
@@ -570,10 +696,16 @@ function BrowseSection({
 interface BrowseEntryCardProps {
   entry: BrowseEntry;
   onInstall: (slug: string) => void;
+  onShowDetails: () => void;
   installPending: boolean;
 }
 
-function BrowseEntryCard({ entry, onInstall, installPending }: BrowseEntryCardProps) {
+function BrowseEntryCard({
+  entry,
+  onInstall,
+  onShowDetails,
+  installPending,
+}: BrowseEntryCardProps) {
   const installable = !entry.installed && entry.builtin;
   const version = entry.builtin?.version ?? entry.installedRow?.version ?? '';
   const ontology =
@@ -581,6 +713,7 @@ function BrowseEntryCard({ entry, onInstall, installPending }: BrowseEntryCardPr
   return (
     <li
       data-testid={`marketplace-browse-card-${entry.name}`}
+      data-package-name={entry.name}
       data-installed={entry.installed ? 'true' : 'false'}
       className="border border-border rounded-lg bg-bg-secondary/50 p-4 flex flex-col gap-3"
     >
@@ -626,27 +759,37 @@ function BrowseEntryCard({ entry, onInstall, installPending }: BrowseEntryCardPr
         >
           {entry.source === 'builtin' ? 'Built-in catalog' : 'Local install'}
         </span>
-        {installable && entry.builtin ? (
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => onInstall(entry.builtin!.slug)}
-            disabled={installPending}
-            data-testid={`marketplace-browse-install-${entry.name}`}
-            className={[
-              'px-2.5 py-1 text-[11px] font-medium rounded transition-colors border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10',
-              installPending ? 'opacity-60 cursor-wait' : '',
-            ].join(' ')}
+            onClick={onShowDetails}
+            data-testid={`marketplace-browse-details-${entry.name}`}
+            className="px-2.5 py-1 text-[11px] font-medium rounded transition-colors border border-border text-text-secondary hover:bg-bg-tertiary"
           >
-            {installPending ? 'Installing…' : 'Install'}
+            Details
           </button>
-        ) : (
-          <span
-            className="text-[11px] text-text-secondary"
-            data-testid={`marketplace-browse-already-${entry.name}`}
-          >
-            Already installed
-          </span>
-        )}
+          {installable && entry.builtin ? (
+            <button
+              type="button"
+              onClick={() => onInstall(entry.builtin!.slug)}
+              disabled={installPending}
+              data-testid={`marketplace-browse-install-${entry.name}`}
+              className={[
+                'px-2.5 py-1 text-[11px] font-medium rounded transition-colors border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10',
+                installPending ? 'opacity-60 cursor-wait' : '',
+              ].join(' ')}
+            >
+              {installPending ? 'Installing…' : 'Install'}
+            </button>
+          ) : (
+            <span
+              className="text-[11px] text-text-secondary"
+              data-testid={`marketplace-browse-already-${entry.name}`}
+            >
+              Already installed
+            </span>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -655,6 +798,7 @@ function BrowseEntryCard({ entry, onInstall, installPending }: BrowseEntryCardPr
 interface InstallProgressBarProps {
   slug: string;
   testId: string;
+  label?: string;
 }
 
 // InstallProgressBar drives a deterministic phase-based progress animation
@@ -663,7 +807,7 @@ interface InstallProgressBarProps {
 // resolved) the timer restarts from phase 0. The component never reaches
 // 100% on its own; the parent unmounts it when the mutation resolves so the
 // final state is "snap to gone" rather than "linger at full".
-function InstallProgressBar({ slug, testId }: InstallProgressBarProps) {
+function InstallProgressBar({ slug, testId, label }: InstallProgressBarProps) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const startedAtRef = useRef<number>(0);
 
@@ -706,14 +850,15 @@ function InstallProgressBar({ slug, testId }: InstallProgressBarProps) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
-      aria-label={`Installing ${slug}`}
+      aria-label={`${label ?? 'Installing'} ${slug}`}
       data-testid={testId}
       data-slug={slug}
       className="border border-accent-cyan/30 bg-accent-cyan/5 rounded-md px-3 py-2 flex flex-col gap-1.5"
     >
       <div className="flex items-center justify-between text-[11px] text-text-secondary">
         <span>
-          Installing <span className="text-text-primary font-mono">{slug}</span>
+          {label ?? 'Installing'}{' '}
+          <span className="text-text-primary font-mono">{slug}</span>
           {' · '}
           <span data-testid={`${testId}-phase`}>{phaseLabel}</span>
         </span>
@@ -733,16 +878,26 @@ function InstallProgressBar({ slug, testId }: InstallProgressBarProps) {
 
 interface PackageCardProps {
   pkg: InstalledPackage;
+  updateAvailable: boolean;
+  builtinMatch?: BuiltinPackageMetadata;
   onToggle: (enabled: boolean) => void;
   onRequestUninstall: () => void;
+  onUpdate?: () => void;
+  onShowDetails: () => void;
   togglePending: boolean;
+  updatePending: boolean;
 }
 
 function PackageCard({
   pkg,
+  updateAvailable,
+  builtinMatch,
   onToggle,
   onRequestUninstall,
+  onUpdate,
+  onShowDetails,
   togglePending,
+  updatePending,
 }: PackageCardProps) {
   const manifest = pkg.manifest ?? null;
   const dependencies = manifestDependencies(manifest);
@@ -753,7 +908,10 @@ function PackageCard({
   return (
     <li
       data-testid={`marketplace-card-${pkg.name}`}
+      data-package-name={pkg.name}
+      data-package-version={pkg.version}
       data-enabled={pkg.enabled ? 'true' : 'false'}
+      data-update-available={updateAvailable ? 'true' : 'false'}
       className="border border-border rounded-lg bg-bg-secondary/50 p-4 flex flex-col gap-3"
     >
       <div className="flex items-start justify-between gap-3">
@@ -768,17 +926,28 @@ function PackageCard({
             v{pkg.version} · ontology <span className="text-text-primary">{pkg.ontology}</span>
           </p>
         </div>
-        <span
-          className={[
-            'inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full border',
-            pkg.enabled
-              ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10'
-              : 'border-border text-text-secondary bg-bg-tertiary',
-          ].join(' ')}
-          data-testid={`marketplace-status-${pkg.name}`}
-        >
-          {pkg.enabled ? 'Enabled' : 'Disabled'}
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span
+            className={[
+              'inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full border',
+              pkg.enabled
+                ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10'
+                : 'border-border text-text-secondary bg-bg-tertiary',
+            ].join(' ')}
+            data-testid={`marketplace-status-${pkg.name}`}
+          >
+            {pkg.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+          {updateAvailable && builtinMatch && (
+            <span
+              className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border border-amber-500/40 text-amber-200 bg-amber-500/10"
+              data-testid={`marketplace-update-badge-${pkg.name}`}
+              data-target-version={builtinMatch.version}
+            >
+              Update to v{builtinMatch.version}
+            </span>
+          )}
+        </div>
       </div>
 
       {description && (
@@ -840,14 +1009,38 @@ function PackageCard({
           />
           <span>{pkg.enabled ? 'Enabled' : 'Disabled'}</span>
         </label>
-        <button
-          type="button"
-          onClick={onRequestUninstall}
-          data-testid={`marketplace-uninstall-${pkg.name}`}
-          className="px-2.5 py-1 text-[11px] font-medium text-rose-300 border border-rose-500/40 rounded hover:bg-rose-500/10 transition-colors"
-        >
-          Uninstall
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onShowDetails}
+            data-testid={`marketplace-details-${pkg.name}`}
+            className="px-2.5 py-1 text-[11px] font-medium text-text-secondary border border-border rounded hover:bg-bg-tertiary transition-colors"
+          >
+            Details
+          </button>
+          {updateAvailable && onUpdate && (
+            <button
+              type="button"
+              onClick={onUpdate}
+              disabled={updatePending}
+              data-testid={`marketplace-update-${pkg.name}`}
+              className={[
+                'px-2.5 py-1 text-[11px] font-medium text-amber-200 border border-amber-500/40 rounded hover:bg-amber-500/10 transition-colors',
+                updatePending ? 'opacity-60 cursor-wait' : '',
+              ].join(' ')}
+            >
+              {updatePending ? 'Updating…' : 'Update'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRequestUninstall}
+            data-testid={`marketplace-uninstall-${pkg.name}`}
+            className="px-2.5 py-1 text-[11px] font-medium text-rose-300 border border-rose-500/40 rounded hover:bg-rose-500/10 transition-colors"
+          >
+            Uninstall
+          </button>
+        </div>
       </div>
     </li>
   );
@@ -857,6 +1050,7 @@ interface BuiltinPackageCardProps {
   pkg: BuiltinPackageMetadata;
   alreadyInstalled: boolean;
   onInstall: () => void;
+  onShowDetails: () => void;
   installPending: boolean;
 }
 
@@ -864,11 +1058,15 @@ function BuiltinPackageCard({
   pkg,
   alreadyInstalled,
   onInstall,
+  onShowDetails,
   installPending,
 }: BuiltinPackageCardProps) {
   return (
     <li
       data-testid={`marketplace-builtin-card-${pkg.slug}`}
+      data-package-name={pkg.name}
+      data-package-slug={pkg.slug}
+      data-package-version={pkg.version}
       data-already-installed={alreadyInstalled ? 'true' : 'false'}
       className="border border-border rounded-lg bg-bg-secondary/50 p-4 flex flex-col gap-3"
     >
@@ -945,25 +1143,35 @@ function BuiltinPackageCard({
             Embedded in this server build
           </span>
         )}
-        <button
-          type="button"
-          onClick={onInstall}
-          disabled={installPending || alreadyInstalled}
-          data-testid={`marketplace-builtin-install-${pkg.slug}`}
-          className={[
-            'px-2.5 py-1 text-[11px] font-medium rounded transition-colors',
-            alreadyInstalled
-              ? 'border border-border text-text-secondary cursor-not-allowed'
-              : 'border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10',
-            installPending && !alreadyInstalled ? 'opacity-60 cursor-wait' : '',
-          ].join(' ')}
-        >
-          {installPending && !alreadyInstalled
-            ? 'Installing…'
-            : alreadyInstalled
-              ? 'Installed'
-              : 'Install'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onShowDetails}
+            data-testid={`marketplace-builtin-details-${pkg.slug}`}
+            className="px-2.5 py-1 text-[11px] font-medium rounded transition-colors border border-border text-text-secondary hover:bg-bg-tertiary"
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            onClick={onInstall}
+            disabled={installPending || alreadyInstalled}
+            data-testid={`marketplace-builtin-install-${pkg.slug}`}
+            className={[
+              'px-2.5 py-1 text-[11px] font-medium rounded transition-colors',
+              alreadyInstalled
+                ? 'border border-border text-text-secondary cursor-not-allowed'
+                : 'border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10',
+              installPending && !alreadyInstalled ? 'opacity-60 cursor-wait' : '',
+            ].join(' ')}
+          >
+            {installPending && !alreadyInstalled
+              ? 'Installing…'
+              : alreadyInstalled
+                ? 'Installed'
+                : 'Install'}
+          </button>
+        </div>
       </div>
     </li>
   );
@@ -1030,6 +1238,292 @@ function manifestDependencies(
 ): Array<[string, string]> {
   if (!manifest?.dependencies) return [];
   return Object.entries(manifest.dependencies).map(([k, v]) => [k, String(v)]);
+}
+
+// US-054: details drawer state shape. `kind` discriminates whether the row
+// originated from the .weavepkg registry (`installed`) or the embedded
+// example catalog (`builtin`); the matching peer is folded in so the
+// drawer can cross-reference an installed row with its catalog version.
+type DetailsContent =
+  | {
+      kind: 'installed';
+      name: string;
+      installed: InstalledPackage;
+      builtin?: BuiltinPackageMetadata;
+    }
+  | {
+      kind: 'builtin';
+      name: string;
+      builtin: BuiltinPackageMetadata;
+      installed?: InstalledPackage;
+    };
+
+interface PackageDetailsDrawerProps {
+  content: DetailsContent;
+  onClose: () => void;
+}
+
+// PackageDetailsDrawer is the AC's "包详情抽屉" — a slide-in panel that
+// surfaces the manifest's changelog/description, the dependency graph,
+// and any reference docs (manifest contents for installed rows, ontology
+// + entity counts for built-in rows). The drawer is render-only — every
+// affordance (install / update / uninstall) lives back on the card so
+// the operator can always see the state badge while deciding.
+function PackageDetailsDrawer({ content, onClose }: PackageDetailsDrawerProps) {
+  const manifest =
+    content.kind === 'installed' ? content.installed.manifest : null;
+  const builtin =
+    content.kind === 'builtin' ? content.builtin : content.builtin;
+  const installed =
+    content.kind === 'installed' ? content.installed : content.installed;
+  const dependencies = (() => {
+    if (content.kind === 'installed') {
+      return manifestDependencies(manifest);
+    }
+    return (content.builtin.dependencies ?? []).map(
+      (d) => [d.name, d.version] as [string, string],
+    );
+  })();
+  const description =
+    content.kind === 'installed'
+      ? manifest?.description ?? ''
+      : content.builtin.description ?? '';
+  const author =
+    content.kind === 'installed'
+      ? manifest?.author ?? ''
+      : content.builtin.author ?? '';
+  const license =
+    content.kind === 'installed'
+      ? manifest?.license ?? ''
+      : content.builtin.license ?? '';
+  const version =
+    content.kind === 'installed'
+      ? content.installed.version
+      : content.builtin.version;
+  const ontology =
+    content.kind === 'installed'
+      ? content.installed.ontology
+      : content.builtin.ontologyApiName;
+  const contents = manifest?.contents ?? null;
+  // References surface differs by source — for installed rows we list
+  // the manifest's referenced `contents` blocks; for built-in rows we
+  // expose the catalog stats (object types, link types, etc).
+  const references: Array<[string, string]> = (() => {
+    const out: Array<[string, string]> = [];
+    if (content.kind === 'builtin') {
+      out.push(['Object Types', String(content.builtin.objectTypeCount)]);
+      out.push(['Link Types', String(content.builtin.linkTypeCount)]);
+      if (content.builtin.actionTypeCount > 0) {
+        out.push(['Action Types', String(content.builtin.actionTypeCount)]);
+      }
+      if (content.builtin.functionCount > 0) {
+        out.push(['Functions', String(content.builtin.functionCount)]);
+      }
+      if (content.builtin.migrationCount > 0) {
+        out.push(['Migrations', String(content.builtin.migrationCount)]);
+      }
+      if (content.builtin.minWeaveVersion) {
+        out.push(['Min Weave', content.builtin.minWeaveVersion]);
+      }
+    } else {
+      out.push(['Migrations', String(content.installed.migrations.length)]);
+      if (contents) {
+        for (const key of Object.keys(contents)) {
+          const v = contents[key];
+          if (typeof v === 'number') {
+            out.push([key, String(v)]);
+          } else if (Array.isArray(v)) {
+            out.push([key, String(v.length)]);
+          }
+        }
+      }
+      if (manifest?.minWeaveVersion) {
+        out.push(['Min Weave', manifest.minWeaveVersion]);
+      }
+    }
+    return out;
+  })();
+  const installedAt =
+    content.kind === 'installed' ? content.installed.installedAt : '';
+  const showCrossLink = content.kind === 'installed' ? builtin : installed;
+  const crossLinkLabel = (() => {
+    if (content.kind === 'installed' && builtin) {
+      if (builtin.version === content.installed.version) {
+        return `Up-to-date with built-in v${builtin.version}`;
+      }
+      return `Built-in catalog ships v${builtin.version}`;
+    }
+    if (content.kind === 'builtin' && installed) {
+      return `Currently installed at v${installed.version}`;
+    }
+    return '';
+  })();
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Package details for ${content.name}`}
+      data-testid="marketplace-details-drawer"
+      data-package-name={content.name}
+      data-source={content.kind}
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      onClick={(e) => {
+        // Click outside the drawer panel closes the drawer.
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <aside
+        className="h-full w-full max-w-md bg-bg-secondary border-l border-border shadow-2xl flex flex-col"
+        data-testid="marketplace-details-panel"
+      >
+        <header className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border">
+          <div className="min-w-0">
+            <h2 className="text-sm font-sans font-semibold text-text-primary truncate">
+              {content.name}
+            </h2>
+            <p className="text-[11px] font-mono text-text-secondary mt-1">
+              v{version}
+              {ontology ? (
+                <>
+                  {' · ontology '}
+                  <span className="text-text-primary">{ontology}</span>
+                </>
+              ) : null}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="marketplace-details-close"
+            className="px-2 py-1 text-[11px] text-text-secondary border border-border rounded hover:bg-bg-tertiary transition-colors"
+          >
+            Close
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
+          <section data-testid="marketplace-details-changelog">
+            <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-1.5">
+              Changelog
+            </h3>
+            {description ? (
+              <p
+                className="text-xs text-text-primary whitespace-pre-wrap"
+                data-testid="marketplace-details-changelog-body"
+              >
+                {description}
+              </p>
+            ) : (
+              <p
+                className="text-xs text-text-secondary italic"
+                data-testid="marketplace-details-changelog-empty"
+              >
+                No changelog provided by the package manifest.
+              </p>
+            )}
+          </section>
+
+          <section data-testid="marketplace-details-dependencies">
+            <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-1.5">
+              Dependencies
+            </h3>
+            {dependencies.length === 0 ? (
+              <p
+                className="text-xs text-text-secondary italic"
+                data-testid="marketplace-details-dependencies-empty"
+              >
+                No dependencies declared.
+              </p>
+            ) : (
+              <ul
+                className="flex flex-col gap-1 text-xs"
+                data-testid="marketplace-details-dependencies-list"
+              >
+                {dependencies.map(([name, ver]) => (
+                  <li
+                    key={name}
+                    data-testid={`marketplace-details-dependency-${name}`}
+                    data-dependency-name={name}
+                    data-dependency-version={ver}
+                    className="font-mono text-text-primary flex items-center justify-between gap-3 border border-border/60 rounded px-2 py-1"
+                  >
+                    <span>{name}</span>
+                    <span className="text-text-secondary">{ver}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section data-testid="marketplace-details-references">
+            <h3 className="text-[11px] uppercase tracking-wider text-text-secondary mb-1.5">
+              References
+            </h3>
+            {references.length === 0 ? (
+              <p
+                className="text-xs text-text-secondary italic"
+                data-testid="marketplace-details-references-empty"
+              >
+                No references declared.
+              </p>
+            ) : (
+              <dl
+                className="text-xs grid grid-cols-2 gap-y-1"
+                data-testid="marketplace-details-references-list"
+              >
+                {references.map(([key, value]) => (
+                  <div
+                    key={key}
+                    className="contents"
+                    data-testid={`marketplace-details-reference-${key.toLowerCase().replace(/\s+/g, '-')}`}
+                    data-reference-key={key}
+                    data-reference-value={value}
+                  >
+                    <dt className="text-text-secondary">{key}</dt>
+                    <dd className="text-text-primary font-mono truncate">
+                      {value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </section>
+
+          <section
+            className="text-[11px] text-text-secondary border-t border-border/60 pt-3 flex flex-col gap-1"
+            data-testid="marketplace-details-meta"
+          >
+            {author && (
+              <div>
+                <span className="text-text-secondary">Author: </span>
+                <span className="text-text-primary">{author}</span>
+              </div>
+            )}
+            {license && (
+              <div>
+                <span className="text-text-secondary">License: </span>
+                <span className="text-text-primary">{license}</span>
+              </div>
+            )}
+            {installedAt && (
+              <div>
+                <span className="text-text-secondary">Installed: </span>
+                <span className="text-text-primary">
+                  {formatTimestamp(installedAt)}
+                </span>
+              </div>
+            )}
+            {showCrossLink && crossLinkLabel && (
+              <div data-testid="marketplace-details-cross-link">
+                {crossLinkLabel}
+              </div>
+            )}
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
 }
 
 function formatTimestamp(iso: string): string {
