@@ -515,6 +515,17 @@ type ValueType struct {
 	CreatedAt   time.Time       `json:"-"`
 }
 
+// PropertyUsage is a denormalised Property+ObjectType pair surfaced by the
+// "Used By" reverse lookup on the ValueType admin view. The shape pairs
+// each Property's identity with the apiName of its parent ObjectType so
+// the UI can render `Employee.email` without a per-row metadata fanout.
+type PropertyUsage struct {
+	PropertyRID       string `json:"propertyRid"`
+	PropertyAPIName   string `json:"propertyApiName"`
+	ObjectTypeRID     string `json:"objectTypeRid"`
+	ObjectTypeAPIName string `json:"objectTypeApiName"`
+}
+
 // SharedProperty defines a reusable property definition across object types.
 type SharedProperty struct {
 	RID         string          `json:"rid"`

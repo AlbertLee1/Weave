@@ -2390,6 +2390,43 @@ func (h *OMSHandler) DeleteValueType(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListValueTypeUsages handles GET /api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}/usages.
+// It resolves the ValueType by RID, then fans out to the repository to find
+// every Property whose base_type references the ValueType's apiName. The
+// response envelope mirrors other V2 list endpoints ({data: [...]}).
+//
+// ValueTypes are global, not ontology-scoped, but the route is mounted
+// under /ontologies/... to keep URL conventions consistent with the rest
+// of the admin surface. The ontologyApiName URL segment is intentionally
+// not used for filtering — a single ValueType may be referenced by
+// Properties on ObjectTypes belonging to any ontology, and the admin view
+// must surface all of them.
+func (h *OMSHandler) ListValueTypeUsages(w http.ResponseWriter, r *http.Request) {
+	vtRID := chi.URLParam(r, "valueTypeRid")
+
+	vt, err := h.repo.GetValueType(r.Context(), vtRID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ValueTypeNotFound", map[string]string{
+				"valueTypeRid": vtRID,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetValueTypeFailed", nil))
+		return
+	}
+
+	usages, err := h.repo.ListPropertyUsagesByBaseType(r.Context(), vt.APIName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListValueTypeUsagesFailed", nil))
+		return
+	}
+	if usages == nil {
+		usages = []PropertyUsage{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": usages})
+}
+
 // ListActionLogs handles GET /api/admin/actionTypes/{actionTypeRid}/logs.
 func (h *OMSHandler) ListActionLogs(w http.ResponseWriter, r *http.Request) {
 	actionTypeRID := chi.URLParam(r, "actionTypeRid")

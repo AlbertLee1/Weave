@@ -1867,3 +1867,51 @@ Phases:
   - **page 内 setState during render 不需要的最佳替代：render-time clamp + 局部 derived state（US-050）**：当 pagination state 因外部数据变化可能落到 out-of-range（如 backend refetch 让 list 缩窄到现 page 之外），**不**用 setState-in-render（react-hooks 警告 + extra commit）也**不**用 useEffect-setState（同 lint 拒收）。改用 `safePage = Math.max(0, Math.min(page, totalPages - 1))` 局部 derived state，所有 UI 渲染走 safePage，Prev/Next 按钮的 onClick 也 `setPage(p => max/min)` clamp。这把 state 漂移变成 render-time clamping，副作用零。模板适用任何"用户手动 nav state + 数据可能外部 shrink"的对子（pagination / focus-row index / selected-tab when tabs list 动态变化）。
   - **`const items = data?.data ?? []` 在 useMemo deps 数组里触发 react-hooks/exhaustive-deps 警告（US-050）**：logical-OR fallback 每次 render 创建新 `[]` 实例，让 dependent useMemo recompute；React 19 + eslint plugin 拒收。修法两个等价：(a) `useMemo(() => data?.data ?? [], [data])` — items 自身 wrap useMemo，stable empty-array reference；(b) 改 deps 数组到 `[data]` 而不是 `[items]`。模板适用任何"hook 返回 nullable wrapper → 拆出内部数组 → 后续 useMemo"的链路（useQuery → data?.items / data?.rows / data?.events 等）。
   - **`/api/v2/notifications` 端点家族的 stub 三路注册顺序（US-050）**：单一 page.route catch-all 会吃掉所有 sub-pattern，但 single-read `/notifications/<id>/read` + bulk-read `/notifications/read-all` 两个 sub-pattern 必须各自 fulfil 200/204 + 副作用 mutate 内存 fixture。注册顺序：`'/notifications/*/read'` precise sub-pattern 先 → `'/notifications/read-all*'` 第二 → `'/notifications*'` catch-all GET 最后。catch-all handler 内 `if (pathOnly.endsWith('/read') || pathOnly.endsWith('/read-all')) route.continue()` 兜底防 race（精确 routes 注册前的瞬时请求）。同模板适用任何"list endpoint + per-id action + bulk action"三件套的 stub（approvals + per-id approve/reject + bulk-approve / saga + per-id retry + bulk-replay 等）。
+---
+
+## 2026-05-13 09:40 - US-051 新功能: ValueTypes Admin UI（PC-A05）
+- 后端：`pkg/oms/admin_handlers.go` 既有 CreateValueType/UpdateValueType/DeleteValueType handlers 重新挂到 V2 路径（5 条 route 添到 `cmd/server/routes.go`：POST `/valueTypes`、GET `/valueTypesAdmin`、PUT/DELETE `/valueTypes/byRid/{valueTypeRid}`、GET `/valueTypes/byRid/{valueTypeRid}/usages`）。US-006 删除 `/api/admin/*` 路由后这些 handlers 一直存活但断挂；本期 V2 化补齐。
+- 新 handler `ListValueTypeUsages`（admin_handlers.go:2392）走 GetValueType → ListPropertyUsagesByBaseType 两段：先验证 RID 存在（404 ValueTypeNotFound），再查 properties 表反向引用，返回 `{data: []PropertyUsage}` 信封。新 `Repository.ListPropertyUsagesByBaseType(ctx, baseType) ([]PropertyUsage, error)` 接口 + `PGRepository` 实现走 `SELECT p.rid, p.api_name, ot.rid, ot.api_name FROM properties p JOIN object_types ot ON ot.rid = p.object_type_rid WHERE p.base_type = $1 ORDER BY ot.api_name, p.api_name`。`CachedRepository` 走 pass-through（admin 反向查询低流量 + 缓存 stale 会误导 delete 决策）。
+- Repository 接口扩展同步 9 处实现：`pg_repository.go` / `cached_repository.go` 真实实现 + 6 个 mock：`handlers_test.go` mockRepo / `cached_repository_test.go` noopRepo / `test/northwind|chinook|e2e/_test.go` inMemoryOmsRepo / `pkg/links/resolver_test.go` mockRepo / `pkg/oss/service_test.go` mockOmsRepo / `pkg/actions/actions_test.go` mockOmsRepo / `pkg/index/rehydrate_test.go` stubRehydrateRepo。新模型 `oms.PropertyUsage{PropertyRID, PropertyAPIName, ObjectTypeRID, ObjectTypeAPIName}`（`models.go` 紧挨着 SharedProperty）。
+- OpenAPI: `api/openapi.yaml` + `cmd/server/openapi_spec.yaml` 同步追加 6 个 path operation（POST + listValueTypesAdmin GET + byRid PUT + byRid DELETE + usages GET，加既有 /valueTypes/{valueType} GET）+ 3 schema（`CreateValueTypeRequest`/`UpdateValueTypeRequest`/`ValueTypeUsage`），TestContract_AllRoutesDocumented 对 ValueType 路由不再报 missing（仅遗留 `actions/sagas` 先前 baseline missing entry）+ TestContract_EmbeddedSpecMatchesCanonical 恢复绿。
+- 前端 API：`web/src/api/ontologies.ts` 加 `listValueTypesAdmin / createValueType / updateValueType / deleteValueType / listValueTypeUsages` 5 个 function + `CreateValueTypeRequest / UpdateValueTypeRequest / ValueTypeUsage` 3 个 interface。新 `web/src/hooks/useValueTypes.ts` 提供 `useValueTypesAdmin / useCreateValueType / useUpdateValueType / useDeleteValueType / useValueTypeUsages` 5 个 React Query hook（mutation 走 invalidateQueries(['valueTypesAdmin', ontologyApiName]) 让 list 自动刷新）。
+- 前端 UI：`web/src/components/admin/ValueTypeAdminPage.tsx` 落地：table（DisplayName / APIName / Base Type / Constraint kind / Actions）+ 4 个 modal（Create / Edit 共享 BuilderModal，Delete confirm，Usages "Used by"）。Builder 走 constraint kind 选择器（none / pattern / range / enum）+ per-kind 输入控件 + JSON preview。`inputsToConstraints` 只 emit active kind 的键（避免 server 区分 unset vs intentionally empty）；`classifyConstraint` 反向把 server 返回的 constraints 映射回 'pattern' / 'range' / 'enum' / 'none' 标签（行级 data-value-type-constraint-kind 暴露给 BDD）。Usages modal 走 useValueTypeUsages hook，按 `objectTypeApiName.propertyApiName` 渲染每行 + data-object-type-api-name + data-property-api-name 双 anchor。
+- 路由 + 导航：`web/src/App.tsx` 加 `admin/:ontology/valueTypes` 路由（AdminGuard 包装），`web/src/components/layout/Sidebar.tsx` adminItems 新增 'Value Types' 条目（紧随 Interfaces 之后，settings icon）。
+- TDD spec-first：先写 `web/tests/support/pageObjects/ValueTypeAdminPage.ts`（7-state + modal 锁 + per-row composite-attr 选择器）+ `web/tests/feature.admin.value-type.spec.ts` 7 个 scenarios（list / pattern create / range create / enum edit / delete / usages reverse-lookup with empty fallback / duplicate-apiName guardrail with no POST），然后实现 UI 让 spec 全绿。3 个 @smoke 标签（list / pattern create / usages）让 main BDD smoke pipeline 自动覆盖。
+- 后端 TDD：`pkg/oms/handlers_value_type_admin_test.go` 单 `TestUS051_ValueType_Admin_CRUD_AND_Usages` 顶级测试 + 6 子测试：CreateValueType_V2 (201 + constraints round-trip + repo persist) / ListValueTypesAdmin_V2 (data 信封无 preview gate) / UpdateValueType_V2 (constraints swap pattern→enum 后 DisplayName + version bump) / DeleteValueType_V2 (204 + repo drop) / ListValueTypeUsages_V2 (reverse refs 2 命中 + Currency empty array 非 nil) / ListValueTypeUsages_404 (unknown valueTypeRid)。
+- 验证：
+  - `go test ./pkg/oms/ -run TestUS051_ValueType_Admin_CRUD_AND_Usages -v` → 6/6 pass / 0.69s
+  - `go build ./...` 干净；`go vet ./...` 干净
+  - `go test -short ./pkg/oms/... ./pkg/oss/... ./pkg/links/... ./pkg/index/... ./pkg/actions/...` 全绿（含新 PropertyUsage 接口扩展）
+  - `go test -short ./test/e2e/... ./test/northwind/... ./test/chinook/...` 全绿（inMemoryOmsRepo stubs 跟着扩了）
+  - `npx playwright test tests/feature.admin.value-type.spec.ts` → 7/7 pass / 8.8s（真实 Vite dev server，不是 fixture-only）
+  - `npx tsc --noEmit` 干净
+  - `npx vitest run` → 159 files / 1267 tests pass（admin-removed.test.tsx 偶发 5s timeout 但 isolation run 通过 — pre-existing flake，无关本 story）
+  - 唯一红：`TestContract_AllRoutesDocumented` 对 `actions/sagas` 两 routes 报 missing（git stash 验证 pre-existing，主 main 也红）；`pkg/developer.TestUsageHandler_ReturnsThreeWindows` 也是 progress.txt 多处标注的 baseline flake — 两者均与 US-051 无关。
+- 文件改动：
+  - `pkg/oms/models.go`（+ PropertyUsage struct）
+  - `pkg/oms/repository.go`（+ ListPropertyUsagesByBaseType to interface）
+  - `pkg/oms/pg_repository.go`（+ SQL join 实现）
+  - `pkg/oms/cached_repository.go`（+ pass-through）
+  - `pkg/oms/cached_repository_test.go`（noopRepo +1）
+  - `pkg/oms/handlers_test.go`（mockRepo + ListPropertyUsagesByBaseType via filter）
+  - `pkg/oms/admin_handlers.go`（+ ListValueTypeUsages handler ~30 LOC）
+  - `pkg/oms/handlers_value_type_admin_test.go`（new — 6 子测试）
+  - `cmd/server/routes.go`（+ 5 V2 routes）
+  - `api/openapi.yaml` + `cmd/server/openapi_spec.yaml`（+ 6 path operation + 3 schema）
+  - `pkg/links/resolver_test.go` / `pkg/oss/service_test.go` / `pkg/actions/actions_test.go` / `pkg/index/rehydrate_test.go` / `test/northwind|chinook|e2e/_test.go`（+ ListPropertyUsagesByBaseType stub）
+  - `web/src/api/ontologies.ts`（+ 5 fn + 3 interface）
+  - `web/src/hooks/useValueTypes.ts`（new）
+  - `web/src/components/admin/ValueTypeAdminPage.tsx`（new — ~620 LOC）
+  - `web/src/App.tsx`（+ import + Route）
+  - `web/src/components/layout/Sidebar.tsx`（+ Value Types 条目）
+  - `web/tests/feature.admin.value-type.spec.ts`（new — 7 scenarios）
+  - `web/tests/support/pageObjects/ValueTypeAdminPage.ts`（new）
+  - `web/tests/support/pageObjects/index.ts`（+ export）
+  - `web/tests/support/index.ts`（+ export）
+- **Learnings for future iterations:**
+  - **/api/admin/* 被 US-006 删干净后，admin handler 函数体仍存活在 admin_handlers.go（US-051）**：US-006 拆掉了所有 `/api/admin/*` 路由注册，但**没有**删 admin_handlers.go 里那些函数 — 它们以"未挂载 handler"的形式继续编译。这意味着 PC-A05 / A06 / A10 等"接 V2 入口"类 story 大概率只是 routes.go 上几行 + URL param 名对齐（如 `valueTypeRid` 仍是 chi 期望的 key），handler 本身不用重写。**模板**：补 V2 admin UI 入口前先 `grep -rn "func.*<EntityName>" pkg/oms/admin_handlers.go` 看 handler 是否已在；如果在，工作量缩到 1/10。本期 `CreateValueType / UpdateValueType / DeleteValueType / ListValueTypes` 4 个都是这个情况；只新增 `ListValueTypeUsages` 一个 handler + 一个 Repository 方法。
+  - **Repository 接口加新方法要扩展 9 处实现（US-051）**：weave 项目 Repository 接口被 1 真实现（pg_repository）+ 1 cache wrapper + 7 测试 mock 实现。新增接口方法**必须**同步全部 9 处，否则 cross-package build 即失败（`*OmsService 缺 Repository 实现`）。`grep -rln "DeleteValueType.*context.Context.*string"`（或任何稳定接口方法签名）一次扫到全部位点。模板适用任何 Repository / Store / Service 接口扩展。
+  - **TestContract_AllRoutesDocumented + TestContract_EmbeddedSpecMatchesCanonical 双闸（US-051）**：加新 chi 路由必须同步两件事：(1) `api/openapi.yaml` 加 `paths` 条目（不然 `AllRoutesDocumented` 红）；(2) `cp api/openapi.yaml cmd/server/openapi_spec.yaml`（embedded copy 同步，不然 `EmbeddedSpecMatchesCanonical` 红）。第二步常被忽略 — embedded spec 是 Swagger UI 在 server 自带的内嵌副本，必须跟主 spec 字节一致。模板：**任何**修改 `api/openapi.yaml` 后立即 `cp`，避免分两个 PR 修同一个抽象。
+  - **constraint editor 走 "kind selector + 仅 emit active key" 三件套（US-051）**：可变形约束（pattern / range / enum / none）的 wire 表达通常是 `Record<string, unknown>`。前端坑：如果 UI form 总是 emit `{pattern: '', min: '', max: '', enum: []}`，server 就要 disambiguate "用户把它清空" vs "用户从未输入"。改用 `inputsToConstraints(kind, ...)` 只 emit `kind === 'pattern'` 那一支的 key — 不活跃的 kind 的 input state 在 React 内部留着（用户切回去能保 last-typed），但不漏 wire。同模板适用 any 多形态 union-like JSON payload（visibility = public/team/private 三态各带 metadata / scheduling = cron/interval/manual 等）。
+  - **"Used By" 反向引用 = JOIN + 不 cache + 按 apiName 而非 rid（US-051）**：反向 lookup 在 admin UI 是 delete-confirmation 之前的关键步骤。三个约束：(a) 必须 JOIN 到拿 apiName，否则 UI 渲染要二次 fetch；(b) **不**走 CachedRepository（admin 流量低 + stale 数据会误导 delete 决策 — 漏掉真实 ref 是 cache miss 也是 user trust loss）；(c) 用 ValueType.apiName 而不是 RID — 因为 Property.base_type 列存的是 string apiName（既兼容 base type 字面如 'string'，也兼容 ValueType 引用如 'EmailAddress'）。模板适用 SharedProperty.base_type / Interface.sharedProperties[*].baseType 等同形态反向查找。

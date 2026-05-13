@@ -87,6 +87,13 @@ type Repository interface {
 	ListValueTypes(ctx context.Context) ([]ValueType, error)
 	UpdateValueType(ctx context.Context, vt *ValueType) error
 	DeleteValueType(ctx context.Context, rid string) error
+	// ListPropertyUsagesByBaseType returns every Property whose base_type
+	// references the given ValueType apiName, joined with its ObjectType so
+	// the admin "Used By" view can render human-readable identifiers
+	// without a per-row fanout. Properties on archived/deprecated
+	// ObjectTypes are included — the operator wants the complete reverse
+	// reference set before deleting a ValueType.
+	ListPropertyUsagesByBaseType(ctx context.Context, baseType string) ([]PropertyUsage, error)
 
 	// SecurityPolicy
 	CreateSecurityPolicy(ctx context.Context, sp *SecurityPolicy) error

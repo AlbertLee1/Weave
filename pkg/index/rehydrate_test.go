@@ -179,6 +179,9 @@ func (s *stubRehydrateRepo) UpdateValueType(context.Context, *oms.ValueType) err
 	return nil
 }
 func (s *stubRehydrateRepo) DeleteValueType(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) ListPropertyUsagesByBaseType(context.Context, string) ([]oms.PropertyUsage, error) {
+	return nil, nil
+}
 func (s *stubRehydrateRepo) CreateSecurityPolicy(context.Context, *oms.SecurityPolicy) error {
 	return nil
 }

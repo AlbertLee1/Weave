@@ -217,6 +217,11 @@ export function Sidebar() {
           icon: 'share',
         },
         {
+          to: `/admin/${activeOntology}/valueTypes`,
+          label: 'Value Types',
+          icon: 'settings',
+        },
+        {
           to: `/admin/${activeOntology}/graph`,
           label: 'Schema Graph',
           icon: 'graph',

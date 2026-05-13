@@ -166,6 +166,9 @@ func (m *mockRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueTyp
 func (m *mockRepo) ListValueTypes(context.Context) ([]oms.ValueType, error) { return nil, nil }
 func (m *mockRepo) UpdateValueType(context.Context, *oms.ValueType) error   { return nil }
 func (m *mockRepo) DeleteValueType(context.Context, string) error           { return nil }
+func (m *mockRepo) ListPropertyUsagesByBaseType(context.Context, string) ([]oms.PropertyUsage, error) {
+	return nil, nil
+}
 
 // DatasourceBinding stubs
 func (m *mockRepo) CreateDatasourceBinding(context.Context, *oms.DatasourceBinding) error {

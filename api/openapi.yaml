@@ -1276,6 +1276,42 @@ components:
           additionalProperties: true
         version:
           type: integer
+    CreateValueTypeRequest:
+      type: object
+      required: [apiName, displayName, baseType]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        baseType:
+          type: string
+        constraints:
+          type: object
+          additionalProperties: true
+    UpdateValueTypeRequest:
+      type: object
+      required: [displayName, baseType]
+      properties:
+        displayName:
+          type: string
+        baseType:
+          type: string
+        constraints:
+          type: object
+          additionalProperties: true
+    ValueTypeUsage:
+      type: object
+      required: [propertyRid, propertyApiName, objectTypeRid, objectTypeApiName]
+      properties:
+        propertyRid:
+          type: string
+        propertyApiName:
+          type: string
+        objectTypeRid:
+          type: string
+        objectTypeApiName:
+          type: string
     ActionLog:
       type: object
       required: [id, actionTypeRid, userId, status, createdAt]
@@ -4953,6 +4989,143 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+    post:
+      operationId: createValueType
+      summary: Create a new value type (admin)
+      description: |
+        Persists a new ValueType. ValueTypes are global (not ontology-scoped)
+        but the route is mounted under /ontologies/... for URL convention
+        consistency. Re-mounted under /api/v2 in US-051 after the deleted
+        /api/admin/value-types routes (US-006).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateValueTypeRequest"
+      responses:
+        "201":
+          description: Created value type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypesAdmin:
+    get:
+      operationId: listValueTypesAdmin
+      summary: List value types (admin)
+      description: |
+        Admin counterpart of /valueTypes — returns the same envelope without
+        the preview-gate the runtime list enforces. Used by the Ontology
+        Manager Value Types editor (US-051 / PC-A05).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Value type list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ValueType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}:
+    put:
+      operationId: updateValueType
+      summary: Update an existing value type (admin)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: valueTypeRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateValueTypeRequest"
+      responses:
+        "200":
+          description: Updated value type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValueType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteValueType
+      summary: Delete a value type (admin)
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: valueTypeRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}/usages:
+    get:
+      operationId: listValueTypeUsages
+      summary: List properties that reference a value type
+      description: |
+        Returns every Property whose base_type equals the ValueType's apiName,
+        joined with its parent ObjectType for human-readable display. Used by
+        the "Used By" reverse-reference modal in the Value Types admin UI
+        before an operator commits to a delete.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: valueTypeRid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Usage list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ValueTypeUsage"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/valueTypes/{valueType}:
     get:
       operationId: getValueType

@@ -788,8 +788,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 51,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "web/src/components/admin/ValueTypeAdminPage.tsx + useValueTypes hook + createValueType/updateValueType/deleteValueType/listValueTypesAdmin/listValueTypeUsages API clients + sidebar 'Value Types' entry + admin/:ontology/valueTypes route 落地。后端：admin_handlers.go 既有 CreateValueType/UpdateValueType/DeleteValueType 重新挂到 /api/v2/ontologies/{ontologyApiName}/{valueTypes, valueTypesAdmin, valueTypes/byRid/{rid}, valueTypes/byRid/{rid}/usages} 五条 V2 路由（US-006 删掉 /api/admin/* 之后空缺补回）；新增 ListValueTypeUsages handler + Repository.ListPropertyUsagesByBaseType 反向引用 （properties JOIN object_types WHERE base_type=$1，9 个 Repository 实现 + 6 mock 已同步）；PropertyUsage 模型 + ValueTypeUsage frontend type。TDD：先写 page object + feature.admin.value-type.spec.ts 7 scenarios（list / pattern create / range create / enum edit / delete / usages reverse-lookup / duplicate apiName guardrail），再实现页面让 spec 全绿。constraint editor 走 kind 选择器 + per-kind 输入 + inputsToConstraints 序列化（仅 active key emit，避免 server 区分 unset vs empty）。后端 6 个 TDD 子测试 (TestUS051_ValueType_Admin_CRUD_AND_Usages) 覆盖 Create/AdminList/Update/Delete/Usages(reverse + empty)/Usages-404 全绿。OpenAPI: api/openapi.yaml + cmd/server/openapi_spec.yaml 同步 6 个 path + 3 schema (CreateValueTypeRequest/UpdateValueTypeRequest/ValueTypeUsage)。go build / go vet / go test -short ./... 全绿（除 2 个先存在的 baseline flake: actions/sagas 未文档化 + TestUsageHandler_ReturnsThreeWindows）；playwright `feature.admin.value-type.spec.ts` 7/7 pass on real Vite dev server (~8.8s)。tsc --noEmit 干净。"
     },
     {
       "id": "US-052",

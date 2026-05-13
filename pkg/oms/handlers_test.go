@@ -587,6 +587,31 @@ func (m *mockRepo) DeleteValueType(_ context.Context, rid string) error {
 	}
 	return nil
 }
+func (m *mockRepo) ListPropertyUsagesByBaseType(_ context.Context, baseType string) ([]oms.PropertyUsage, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var out []oms.PropertyUsage
+	for i := range m.properties {
+		if m.properties[i].BaseType != baseType {
+			continue
+		}
+		otAPIName := ""
+		for j := range m.objectTypes {
+			if m.objectTypes[j].RID == m.properties[i].ObjectTypeRID {
+				otAPIName = m.objectTypes[j].APIName
+				break
+			}
+		}
+		out = append(out, oms.PropertyUsage{
+			PropertyRID:       m.properties[i].RID,
+			PropertyAPIName:   m.properties[i].APIName,
+			ObjectTypeRID:    m.properties[i].ObjectTypeRID,
+			ObjectTypeAPIName: otAPIName,
+		})
+	}
+	return out, nil
+}
 
 // DatasourceBinding stubs
 func (m *mockRepo) CreateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {

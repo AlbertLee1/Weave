@@ -39,6 +39,7 @@ export {
   SecurityPoliciesPage,
   SettingsPage,
   ThreadsPage,
+  ValueTypeAdminPage,
 } from './pageObjects';
 export { seedOntology } from './seedOntology';
 export type { SeedOntologyOptions, SeededOntology } from './seedOntology';

@@ -542,6 +542,9 @@ func (r *inMemoryOmsRepo) ListValueTypes(_ context.Context) ([]oms.ValueType, er
 }
 func (r *inMemoryOmsRepo) UpdateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
 func (r *inMemoryOmsRepo) DeleteValueType(_ context.Context, _ string) error         { return nil }
+func (r *inMemoryOmsRepo) ListPropertyUsagesByBaseType(_ context.Context, _ string) ([]oms.PropertyUsage, error) {
+	return nil, nil
+}
 
 // DatasourceBinding stubs
 func (r *inMemoryOmsRepo) CreateDatasourceBinding(_ context.Context, _ *oms.DatasourceBinding) error {

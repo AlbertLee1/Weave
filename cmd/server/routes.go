@@ -78,6 +78,18 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes", omsHandler.ListInterfaceOutgoingLinkTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}", omsHandler.GetInterfaceTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes", omsHandler.ListValueTypesV2)
+	// ValueType admin CRUD + Used-By reverse lookup (US-051 / PC-A05). The
+	// `valueTypesAdmin` list endpoint returns the same envelope without the
+	// preview-gate the runtime V2 list above enforces, mirroring the
+	// `interfacesAdmin` / `actionTypesAdmin` admin-list pattern. Mutations
+	// reuse the existing CreateValueType / UpdateValueType / DeleteValueType
+	// handlers — they were authored for the deleted `/api/admin/value-types`
+	// routes (US-006) and remain correct in shape, just newly re-mounted.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypesAdmin", omsHandler.ListValueTypes)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/valueTypes", omsHandler.CreateValueType)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}", omsHandler.UpdateValueType)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}", omsHandler.DeleteValueType)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes/byRid/{valueTypeRid}/usages", omsHandler.ListValueTypeUsages)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/valueTypes/{valueType}", omsHandler.GetValueTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes", omsHandler.ListQueryTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}", omsHandler.GetQueryTypeV2)

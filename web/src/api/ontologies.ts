@@ -602,6 +602,82 @@ export function getValueType(
   );
 }
 
+// --- ValueType admin endpoints (US-051 / PC-A05) ---
+
+export interface CreateValueTypeRequest {
+  apiName: string;
+  displayName: string;
+  baseType: string;
+  constraints?: Record<string, unknown>;
+}
+
+export interface UpdateValueTypeRequest {
+  displayName: string;
+  baseType: string;
+  constraints?: Record<string, unknown>;
+}
+
+export interface ValueTypeUsage {
+  propertyRid: string;
+  propertyApiName: string;
+  objectTypeRid: string;
+  objectTypeApiName: string;
+}
+
+export async function listValueTypesAdmin(
+  ontologyApiName: string,
+): Promise<ValueType[]> {
+  const resp = await request<{ data: ValueType[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/valueTypesAdmin`,
+  );
+  return resp.data;
+}
+
+export function createValueType(
+  ontologyApiName: string,
+  body: CreateValueTypeRequest,
+): Promise<ValueType> {
+  return request<ValueType>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/valueTypes`,
+    body,
+  );
+}
+
+export function updateValueType(
+  ontologyApiName: string,
+  valueTypeRid: string,
+  body: UpdateValueTypeRequest,
+): Promise<ValueType> {
+  return request<ValueType>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/valueTypes/byRid/${encodeURIComponent(valueTypeRid)}`,
+    body,
+  );
+}
+
+export function deleteValueType(
+  ontologyApiName: string,
+  valueTypeRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/valueTypes/byRid/${encodeURIComponent(valueTypeRid)}`,
+  );
+}
+
+export async function listValueTypeUsages(
+  ontologyApiName: string,
+  valueTypeRid: string,
+): Promise<ValueTypeUsage[]> {
+  const resp = await request<{ data: ValueTypeUsage[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/valueTypes/byRid/${encodeURIComponent(valueTypeRid)}/usages`,
+  );
+  return resp.data;
+}
+
 // --- QueryType endpoints ---
 
 export async function listQueryTypes(

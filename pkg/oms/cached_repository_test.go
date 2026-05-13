@@ -257,6 +257,9 @@ func (*noopRepo) GetValueTypeByAPIName(context.Context, string) (*oms.ValueType,
 func (*noopRepo) ListValueTypes(context.Context) ([]oms.ValueType, error) { return nil, nil }
 func (*noopRepo) UpdateValueType(context.Context, *oms.ValueType) error   { return nil }
 func (*noopRepo) DeleteValueType(context.Context, string) error           { return nil }
+func (*noopRepo) ListPropertyUsagesByBaseType(context.Context, string) ([]oms.PropertyUsage, error) {
+	return nil, nil
+}
 func (*noopRepo) CreateSecurityPolicy(context.Context, *oms.SecurityPolicy) error {
 	return nil
 }

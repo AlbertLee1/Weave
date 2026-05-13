@@ -1286,6 +1286,34 @@ func (r *PGRepository) DeleteValueType(ctx context.Context, rid string) error {
 	return nil
 }
 
+// ListPropertyUsagesByBaseType returns every Property+ObjectType pair whose
+// Property.base_type equals the supplied apiName. The join is keyed on
+// properties.object_type_rid → object_types.rid; ordering matches the UI's
+// expected display ordering (ObjectType apiName first, then Property
+// apiName) so the wire shape is stable without client-side resorting.
+func (r *PGRepository) ListPropertyUsagesByBaseType(ctx context.Context, baseType string) ([]PropertyUsage, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT p.rid, p.api_name, ot.rid, ot.api_name
+		 FROM properties p
+		 JOIN object_types ot ON ot.rid = p.object_type_rid
+		 WHERE p.base_type = $1
+		 ORDER BY ot.api_name, p.api_name`, baseType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []PropertyUsage
+	for rows.Next() {
+		var u PropertyUsage
+		if err := rows.Scan(&u.PropertyRID, &u.PropertyAPIName, &u.ObjectTypeRID, &u.ObjectTypeAPIName); err != nil {
+			return nil, err
+		}
+		result = append(result, u)
+	}
+	return result, nil
+}
+
 // wrapPGError maps common PG errors to domain errors.
 func nilIfEmpty(s string) interface{} {
 	if s == "" {

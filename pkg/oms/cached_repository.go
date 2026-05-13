@@ -605,3 +605,10 @@ func (c *CachedRepository) DeleteValueType(ctx context.Context, rid string) erro
 	c.InvalidateAll()
 	return err
 }
+
+// ListPropertyUsagesByBaseType is a pass-through: admin "Used By" lookups
+// are low-traffic and span every ObjectType, so caching the result is more
+// risk than reward (stale rows would mislead the operator before a delete).
+func (c *CachedRepository) ListPropertyUsagesByBaseType(ctx context.Context, baseType string) ([]PropertyUsage, error) {
+	return c.Repository.ListPropertyUsagesByBaseType(ctx, baseType)
+}

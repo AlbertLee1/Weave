@@ -26,3 +26,4 @@ export { SagaJobsPage } from './SagaJobsPage';
 export { SecurityPoliciesPage } from './SecurityPoliciesPage';
 export { SettingsPage } from './SettingsPage';
 export { ThreadsPage } from './ThreadsPage';
+export { ValueTypeAdminPage } from './ValueTypeAdminPage';
