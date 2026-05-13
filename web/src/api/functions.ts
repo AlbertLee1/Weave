@@ -133,3 +133,76 @@ export async function getFunctionCommitJob(
     throw err;
   }
 }
+
+// US-046: Versions list for the Function code-repository switcher.
+// Mirrors `oms.Function` (pkg/oms/models.go) — the wire shape returned
+// by GET /functions/{functionName}/versions is `{ name, data: [...] }`
+// with the rows sorted latest-first by the backend.
+export interface FunctionVersion {
+  rid: string;
+  name: string;
+  version: string;
+  sourceCode: string;
+  runtime?: string;
+  pure?: boolean;
+  createdBy?: string;
+  createdAt?: string;
+  codeHash?: string;
+  signatureHash?: string;
+  publishedAt?: string;
+}
+
+export interface FunctionVersionsResponse {
+  name: string;
+  data: FunctionVersion[];
+}
+
+export function listFunctionVersions(
+  ontologyApiName: string,
+  functionName: string,
+): Promise<FunctionVersionsResponse> {
+  return request<FunctionVersionsResponse>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/functions/${encodeURIComponent(functionName)}/versions`,
+  );
+}
+
+// US-046: Replay endpoint wire shape (pkg/oms/handlers_function_replay.go,
+// US-370). At minimum the caller passes `input` (parameter map) and an
+// optional `version` pin; passing `executionId` instead replays a stored
+// historical invocation by id. The server returns the fresh result plus
+// determinism metadata (`match`, `originalHash`, `replayHash`).
+export interface ReplayFunctionRequest {
+  executionId?: string;
+  version?: string;
+  input?: Record<string, unknown>;
+}
+
+export interface ReplayFunctionWarning {
+  code: string;
+  message: string;
+}
+
+export interface ReplayFunctionResponse {
+  functionRid: string;
+  functionVersion: string;
+  executionId?: string;
+  originalHash?: string;
+  replayHash: string;
+  match: boolean;
+  result: unknown;
+  warning?: ReplayFunctionWarning;
+  original?: unknown;
+}
+
+export function replayFunction(
+  ontologyApiName: string,
+  functionRid: string,
+  body: ReplayFunctionRequest,
+): Promise<ReplayFunctionResponse> {
+  return request<ReplayFunctionResponse>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/functions/${encodeURIComponent(functionRid)}/replay`,
+    body,
+  );
+}

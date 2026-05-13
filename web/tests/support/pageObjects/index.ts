@@ -8,6 +8,7 @@ export { ApprovalsPage } from './ApprovalsPage';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
 export { ExplorerBranchPage } from './ExplorerBranchPage';
+export { FunctionRepoPage } from './FunctionRepoPage';
 export { ImportWizardPage } from './ImportWizardPage';
 export { InterfaceAdminPage } from './InterfaceAdminPage';
 export { LinkTypeAdminPage } from './LinkTypeAdminPage';

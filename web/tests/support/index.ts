@@ -21,6 +21,7 @@ export {
   BrowserPage,
   DashboardPage,
   ExplorerBranchPage,
+  FunctionRepoPage,
   ImportWizardPage,
   InterfaceAdminPage,
   LinkTypeAdminPage,
