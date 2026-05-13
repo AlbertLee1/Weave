@@ -108,6 +108,91 @@ describe('Sidebar admin section', () => {
     expect(screen.queryByTestId('sidebar-admin-section')).not.toBeInTheDocument();
   });
 
+  // Dogfood report #3 + #5: when no ontology is selected, Query Builder
+  // and Quiver TS were falling back to "/" (Dashboard), producing dead links
+  // and duplicate React keys. They should only appear once an ontology is
+  // active.
+  it('hides Query Builder and Quiver TS when no ontology is selected', async () => {
+    useOntologyStore.setState({
+      selectedOntology: null,
+      selectedObjectType: null,
+      sidebarCollapsed: false,
+      recentlyViewed: [],
+    });
+    renderSidebar({
+      id: 'viewer',
+      email: '',
+      name: '',
+      roles: ['viewer'],
+      ontologyRoles: {},
+      permissions: ['ontology.read'],
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Query Builder')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quiver TS')).not.toBeInTheDocument();
+  });
+
+  it('shows Query Builder and Quiver TS scoped to the active ontology', async () => {
+    renderSidebar({
+      id: 'viewer',
+      email: '',
+      name: '',
+      roles: ['viewer'],
+      ontologyRoles: {},
+      permissions: ['ontology.read'],
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Query Builder')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Query Builder').closest('a')).toHaveAttribute(
+      'href',
+      '/objectsets/northwind',
+    );
+    expect(screen.getByText('Quiver TS').closest('a')).toHaveAttribute(
+      'href',
+      '/quiver/northwind',
+    );
+  });
+
+  it('uses unique React keys even when sidebar items share routes', async () => {
+    // Spy on console.error to catch the "two children with the same key"
+    // warning that the previous implementation emitted when activeOntology
+    // was null.
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+      original(...(args as Parameters<typeof console.error>));
+    };
+    useOntologyStore.setState({
+      selectedOntology: null,
+      selectedObjectType: null,
+      sidebarCollapsed: false,
+      recentlyViewed: [],
+    });
+    try {
+      renderSidebar({
+        id: 'viewer',
+        email: '',
+        name: '',
+        roles: ['viewer'],
+        ontologyRoles: {},
+        permissions: ['ontology.read'],
+      });
+      await waitFor(() => {
+        expect(screen.getByText('Dashboard')).toBeInTheDocument();
+      });
+    } finally {
+      console.error = original;
+    }
+    const duplicateKeyWarnings = errors.filter((m) =>
+      m.includes('two children with the same key'),
+    );
+    expect(duplicateKeyWarnings).toEqual([]);
+  });
+
   it('admin links point to /admin/:ontology/{section}', async () => {
     renderSidebar({
       id: 'admin',

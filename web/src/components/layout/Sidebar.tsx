@@ -114,24 +114,24 @@ export function Sidebar() {
     { to: '/', label: 'Dashboard', icon: 'grid' },
     { to: '/dashboards', label: 'Dashboards', icon: 'bar-chart' },
     { to: '/apps', label: 'Apps', icon: 'grid' },
-    {
-      to: activeOntology ? `/objectsets/${activeOntology}` : '/',
-      label: 'Query Builder',
-      icon: 'layers',
-    },
     { to: '/threads', label: 'AIP Threads', icon: 'chat' },
     { to: '/logic-flows', label: 'AIP Logic', icon: 'workflow' },
-    {
-      to: activeOntology ? `/quiver/${activeOntology}` : '/',
-      label: 'Quiver TS',
-      icon: 'clock',
-    },
     { to: '/pipelines', label: 'Pipelines', icon: 'pipeline' },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
   ];
 
   if (activeOntology) {
+    navItems.push({
+      to: `/objectsets/${activeOntology}`,
+      label: 'Query Builder',
+      icon: 'layers',
+    });
+    navItems.push({
+      to: `/quiver/${activeOntology}`,
+      label: 'Quiver TS',
+      icon: 'clock',
+    });
     navItems.push({
       to: `/import/${activeOntology}`,
       label: 'Import Data',
@@ -324,7 +324,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 py-2 overflow-y-auto">
         {navItems.map((item) => (
-          <SidebarLink key={item.to} item={item} collapsed={collapsed} />
+          <SidebarLink key={item.label} item={item} collapsed={collapsed} />
         ))}
 
         {showAdminSection && adminItems.length > 0 && (
@@ -340,7 +340,7 @@ export function Sidebar() {
               </div>
             )}
             {adminItems.map((item) => (
-              <SidebarLink key={item.to} item={item} collapsed={collapsed} />
+              <SidebarLink key={item.label} item={item} collapsed={collapsed} />
             ))}
           </div>
         )}
