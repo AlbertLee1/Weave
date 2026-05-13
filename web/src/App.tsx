@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GlobalErrorBoundary } from './components/common/ErrorBoundary';
 import { AuthProvider } from './auth/AuthContext';
@@ -145,6 +145,7 @@ export default function App() {
               />
               <Route path="threads" element={<ThreadsPage />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
+              <Route path="aip-logic" element={<Navigate to="/logic-flows" replace />} />
               <Route path="pipelines" element={<PipelinesPage />} />
               <Route path="lineage/:rid" element={<LineagePage />} />
               <Route path="dashboards" element={<DashboardEditorRoute />} />
@@ -318,6 +319,7 @@ export default function App() {
                   </PermissionRoute>
                 }
               />
+              <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
             </Route>
           </Routes>
         </AuthProvider>
