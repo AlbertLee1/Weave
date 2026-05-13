@@ -1800,3 +1800,31 @@ Phases:
   - **store-backed `<Component>` 在 react-refresh 体系下必须把 hooks 与 component 拆 module（US-048）**：当一个 `.tsx` 同时 `export function FooToolbar()` 组件和 `export function useFoo*()` hooks，`react-refresh/only-export-components` 报 "Fast refresh only works when a file only exports components"。**修法**：把 hooks 提到同目录新 `useFoo.ts`，组件 module 只 export 组件 / 常量类型即可。**不要**用 `// eslint-disable-next-line react-refresh/only-export-components` —— 它治标不治本，且让该组件的 HMR 退化为 full-reload。模板适用任何"component + 内部封装 hook"的对子（Provider + useProvider / Modal + useModalState / Toolbar + useToolbarState）。
   - **`dataset_transactions` chain 是 time-travel UI 的真实 wire 源（US-048）**：cmd/server/dataset_transaction_handler.go GET `/api/v2/datasets/{ridOrApiName}/history` 返回 `{transactions: [...]}` 包 `committed_at-DESC`，rows 是 pkg/oms.DatasetTransaction 的 JSON 1:1 镜像；前端 `web/src/api/datasets.ts` 与 `useDatasetHistory.ts` 是这个端点的 client + React Query wrapper。`?asOf=tx-...` 走 pkg/oss/objectset/handler.go:258 的 short-circuit 分支转 RFC3339 instant 后 fall through history-snapshot scan（pkg/oms.SnapshotObjectsAt）。**前端任何"按 dataset transaction 走时间旅行"的 UI** 都走 datasets.ts / useDatasetHistory.ts，不要再新写端点 wrapper；后端任何新 asOf 路径都该叠在 objectset/handler.go 的 asOf short-circuit 后面而不是单独平行 handler。
 ---
+
+## 2026-05-13 08:55 - US-049 Lineage 列级 ReactFlow DAG 升级（PC-A13）
+- Lineage 页面从自管 SVG + d3-force 升级为 ReactFlow DAG：
+  - `web/src/components/lineage/LineagePage.tsx`：完全重写。`@xyflow/react` 当渲染层，自定义 `LineageNodeComponent` 用 `data-testid="lineage-node"` + `data-rid` + `data-node-type` + `data-expanded` + `data-selected` + `data-in-degree` + `data-out-degree` 暴露完整 BDD contract。分层 BFS 布局（按到 root 的距离分列）替代 force simulation — DAG 视角更直观且 deterministic（位置不抖动）。
+  - 节点点击 → 右侧 `lineage-detail-panel` slide-in：RID / 资源类型 / 上下游 edge 计数 / 上下游 transform 列表（每条 edge 一个 `lineage-detail-edge` row 带 `data-edge-direction` + `data-edge-operation`）。
+  - 每个非 root 节点自带 `lineage-node-expand-btn`：点一次拉 `?direction=...&depth=1` 拼新 hop 到合并图；再点变 collapse 仅删该 owner 贡献的 nodes + edges（用 `ExtraGraph.byOwner` 记录归属，已有节点不被重复删除）。
+- 测试：
+  - `web/src/components/lineage/__tests__/LineagePage.test.tsx`：全部重写，11 个 cases 全绿。`vi.mock('@xyflow/react')` 给最小 pass-through shell（forward `nodeTypes` 渲染自定义 node component），让 jsdom 跑过 ReactFlow 的 ResizeObserver / 视口测量依赖。
+  - `web/tests/feature.lineage.spec.ts`：4 个 BDD scenarios @smoke — render DAG / 选中节点开 detail panel / expand+collapse / truncated badge。全绿（5.6s）。
+  - `web/tests/support/pageObjects/LineagePage.ts`：page object 暴露 nodes / nodeByRid / expandButtonForRid / detailEdgeRows + 头部计数 + 控件 testid。
+- Verification：
+  - `npx vitest run`：159 files / 1267 tests 全绿（13.45s）。
+  - `npx tsc --noEmit -p tsconfig.app.json`：lineage 文件零错误；4 个 pre-existing 错误（securityPolicies.ts / ObjectSetComposer.test.tsx / objectSetUrl.ts × 2）与本 story 无关。
+  - `npx playwright test tests/feature.lineage.spec.ts`：4 scenarios 全绿。
+  - 浏览器 visual check：截图确认 DAG 渲染 + dataset/object-type 双类型 badge + root badge + expand 按钮 + edge 标签（pipeline-run / ingest-csv） + 详情面板（RID / 资源类型 / upstream/downstream edge 计数 / Downstream transforms 列表 with operation 名 + ISO timestamp）。
+- 文件改动：
+  - `web/src/components/lineage/LineagePage.tsx`（rewrite）
+  - `web/src/components/lineage/__tests__/LineagePage.test.tsx`（rewrite + @xyflow/react mock）
+  - `web/tests/feature.lineage.spec.ts`（new — 4 scenarios）
+  - `web/tests/support/pageObjects/LineagePage.ts`（new）
+  - `web/tests/support/pageObjects/index.ts`（+ LineagePage export）
+  - `web/tests/support/index.ts`（+ LineagePage export）
+- **Learnings for future iterations:**
+  - **ReactFlow 升级既有 SVG 页时把 testid 全部挂到自定义 node component 上保留 BDD 兼容（US-049）**：当从自管 SVG `<g>` 节点升级到 `@xyflow/react`，ReactFlow 自身 wrap 每个节点为 `.react-flow__node`，但 customer 提供的 component 渲染在其内部，所以稳定的 `data-testid="lineage-node"` + `data-rid` 应该挂在**自定义 node 组件根 div**而非 ReactFlow wrapper。这让 (a) 既有 unit test 的 testid 选择器零改动可重用，(b) 新的 Playwright spec 直接走同一 testid 不用换 `.react-flow__node[data-id="..."]` 这种内部 selector — 后者会随 ReactFlow 内部 DOM 调整漂移。模板适用任何"自管 SVG/canvas → 库渲染层"的升级（Lineage / Logic Flows / Dashboards / 任何图编辑器）。
+  - **jsdom 单元测试 mock `@xyflow/react` 的最小 shell：forward `nodes` + `nodeTypes` 即可（US-049 复用 US-373 LogicFlowsPage 模板的扩展）**：当组件用 `nodeTypes={ lineage: LineageNodeComponent }` 注册自定义 node component，单元测试 mock 必须把 `nodes` 数组里每个 entry 的 `n.type` 当 key 查 `nodeTypes` map，然后 `<Comp id={n.id} data={n.data} />` 渲染出来 — 这样 customer 自定义 component 内部的 testid（如 `lineage-node-expand-btn`、`lineage-node-type-badge`）依然 reachable。同模式适用任何"自定义 node component"为主要 BDD surface 的页面（Lineage / 任何"上下游/inputs-outputs"风格 graph）。**不要**只 mock 一个 shell `<div data-testid={n.id}>{label}</div>` —— 那会让 customer 的 testid 整片消失，逼测试改用 ReactFlow 内部选择器，反向耦合。
+  - **DAG 分层 BFS 布局比 force simulation 在 lineage 场景下更稳（US-049）**：lineage 是天然的 DAG（无环 + 有方向），按"到 root 的距离"分列（upstream → 左、downstream → 右、both → 双向延伸）的 deterministic 布局比 d3-force 的 stochastic simulation 更适合 (a) UI screenshot 比较稳定（同一数据每次 layout 一致），(b) BDD scenario 不依赖 simulation iteration 数量，(c) 跨 expand/collapse 互动不会让既存节点位置抖动。模板：所有"有向无环且方向语义清晰"的图（lineage / dataset transformation pipeline / 依赖图 / 影响分析）用 layered-BFS 替代 force；force 留给"双向连接 + 无明确层级"的图（社交网络 / interface 实现关系图）。
+  - **expand/collapse "ownership tracking" 是合并图正确 collapse 的关键（US-049）**：当 expand button 既要新增节点也要保证"已被多 expand 共同贡献的节点不被某次 collapse 误删"，需要在 ExtraGraph 上额外维护 `byOwner: Record<rid, {nodes: rid[], edges: edgeKey[]}>` 记录每次 expand 实际**新增**的 nodes/edges（不是它返回的全集）。collapse 只删 owner 的私有贡献。新 nodes：在 set merge 时 only-push-if-not-in `prev.nodes ∪ data.nodes` 并 record 进 owner list。模板适用任何"用户可累加查询结果且要支持取消单次查询"的合并 UI（saved searches result merge / multi-expand tree / time-window stacked aggregation）。
+  - **slide-in detail panel 在 graph 页面比 modal 更稳（US-049）**：graph 操作（pan/zoom/click 其他节点）时 modal 会遮挡视图，且 modal 强制阻塞背景交互。改用 320-360px 宽 right-aside slide-in（持续可见、不阻塞 graph 交互、随时切换选中节点同步更新）。同 ApprovalsPage 的 review modal 在 list 视图上的"行内 detail flyout" 模板互补 — modal 适合 mutation form，aside 适合 read-only context inspection。

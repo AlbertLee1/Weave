@@ -25,6 +25,7 @@ export {
   ImportWizardPage,
   InterfaceAdminPage,
   InterfaceMethodsPage,
+  LineagePage,
   LinkTypeAdminPage,
   LogicFlowsPage,
   ObjectSetBuilderPage,
