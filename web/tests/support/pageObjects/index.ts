@@ -8,6 +8,7 @@ export { ApprovalsPage } from './ApprovalsPage';
 export { BindingsTab } from './BindingsTab';
 export { BrowserPage } from './BrowserPage';
 export { DashboardPage } from './DashboardPage';
+export { DatasetRollbackPage } from './DatasetRollbackPage';
 export { ExplorerBranchPage } from './ExplorerBranchPage';
 export { FunctionRepoPage } from './FunctionRepoPage';
 export { ImportWizardPage } from './ImportWizardPage';

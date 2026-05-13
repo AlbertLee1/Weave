@@ -822,8 +822,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 53,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新增 web/src/components/admin/DatasetRollbackPage.tsx — 4 步向导（pick / preview / confirm / success），radio 表选 tx → 预览受影响 tx 数 + edits 总数 → 二次输入 dataset apiName 解锁红色 Roll back 按钮 → 进度条 modal + 成功 toast；POST /api/v2/datasets/{rid}/rollback?to=tx-... 命中 cmd/server/dataset_rollback_handler.go。新增 rollbackDataset / DatasetRollbackResponse 到 web/src/api/datasets.ts。挂 Route + Sidebar 入口 'Dataset Rollback'（PermissionRoute permission='ontology.write' gate）。新增 web/tests/support/pageObjects/DatasetRollbackPage.ts + feature.admin.dataset-rollback.spec.ts 4 @smoke scenarios（picker / 全流程 pick→preview→confirm→success / 进度 modal in-flight / typed-confirmation gate）。npx tsc -b 仅 4 个 pre-existing 报错（与本 story 无关）；npx vitest run 1267/1267 ✓ 13s；npx playwright test --grep @smoke 87/87 ✓（含新增 4）1.4min。"
     },
     {
       "id": "US-054",

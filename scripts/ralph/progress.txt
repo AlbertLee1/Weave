@@ -1968,3 +1968,59 @@ Phases:
   - **不能直接 click 视口外 submit 按钮：Modal 没 max-h + 大表单 → `form.requestSubmit()` 是标准 workaround（US-052 复用 US-029）**：当 Create/Edit modal 内表单 + mapping editor 行多了，content 高度超过视口；Modal.tsx 是 fixed center + content-sized 无 overflow，submit 按钮挂在视口外。Playwright `submitBtn.click()` 会一直 retry "outside viewport"。改 `form.evaluate(f => (f as HTMLFormElement).requestSubmit())` 触发 React onSubmit 同代码路径，保留所有 actionability 检查（包括 React state 的 `canSubmit`），仅绕开视口限制。**不要**用 `click({force: true})` — 会真的在不可见按钮上点击，掩盖 prod-side 真正的 a11y bug。
   - **`DatasourceBinding.objectTypeRid` 在 admin handler URL 路径段 vs response body 不一致 — BDD seed 需手动一致（US-052）**：handler `CreateDatasourceBinding` 从 chi URLParam("objectTypeRid") 抠 RID 写入 `db.ObjectTypeRID`，但 response body 因 `json:"-"` 不返回这个字段。BDD stub state 里 seed binding 时**必须**把 `objectTypeRid` 也写进 fixture（用于 list scope 反向验证），否则 list scope 测试会通过假阳性。同模板适用任何"server fills X from URL path, X is `json:\"-\"`"的 entity（很多 hierarchy resource 都这样）。
   - **第 3 个 tab 加到既有 modal：tab union 扩展 + tab 切换分支扩展双改（US-052）**：`useState<'details'|'properties'>('details')` 改成 `useState<'details'|'properties'|'bindings'>('details')` + 3-way ternary `tab === 'properties' ? <P/> : tab === 'bindings' ? <B/> : <DefaultForm/>`。**不要**用 default-fall-through `<DefaultForm/>` 当 'bindings'，否则点 bindings tab 啥也不发生（aria-selected 是 true 但内容是 details）。第 3 个 tab 加 dedicated `data-testid="<entity>-edit-tab-<name>"` 与既有 tab 命名一致。模板适用任何"既有 modal 加新 tab" 的扩展。
+
+---
+
+## 2026-05-13 10:50 - US-053 新功能: Dataset Rollback 控制台（PC-A10）
+- 落地 `/admin/datasets/:dataset/rollback` 4 步向导 UI（pick / preview / confirm / success），
+  接 `cmd/server/dataset_rollback_handler.go` 既有的 POST /api/v2/datasets/{rid}/rollback?to=tx-...。
+- Step 1（pick）：radio 表展示 dataset_transactions 链（newest-first），每行 data-tx-id + data-tx-rolled-back
+  data attrs 让 BDD 锁契约；Continue 按钮在 targetTxId 非空前禁用。
+- Step 2（preview）：基于 picked target 在客户端过滤 `committedAt > target.committedAt` 的 tx 作为
+  "newer transactions"，聚合 edits 总数。这与 handler 内 `ListAfterCommittedAt(target.CommittedAt)`
+  的 server 行为对称；preview 是 honest 的 dry-run。
+- Step 3（confirm）：red destructive banner + 强制 user re-type dataset apiName 才解锁 Roll back 按钮。
+  `confirmTyped = confirmText.trim() === ontology` 是唯一的 gate（除了 mutation.isPending）。
+- Step 4（success）：渲染 server 返回的 rolledBackTxIds.length / restoredObjects / deletedObjects 三联计数
+  + newTransaction.txId（new chain head）。每个数字都拍 data-count attr 让 BDD 用 toHaveAttribute 锁。
+- Submit 阶段挂 `<RollbackProgressModal>`（来自 Modal.tsx，role="progressbar" + indeterminate stripe），
+  mutation.isPending 决定 mount/unmount。成功 push success toast；失败 push error toast + 把 message
+  挂到 confirm-step 的 alert。
+- 文件：
+  - `web/src/api/datasets.ts`（+ DatasetRollbackResponse + rollbackDataset）
+  - `web/src/components/admin/DatasetRollbackPage.tsx`（new — ~530 LOC）
+  - `web/src/App.tsx`（+ route /admin/datasets/:dataset/rollback，PermissionRoute permission='ontology.write'）
+  - `web/src/components/layout/Sidebar.tsx`（+ Admin section 'Dataset Rollback' 入口，icon='clock'）
+  - `web/tests/support/pageObjects/DatasetRollbackPage.ts`（new — 完整 PO，覆盖 4 step + 进度 modal）
+  - `web/tests/support/pageObjects/index.ts`（+ export）
+  - `web/tests/support/index.ts`（+ export）
+  - `web/tests/feature.admin.dataset-rollback.spec.ts`（new — 4 @smoke scenarios）
+- 质量门禁：
+  - `npx tsc -b`：仅 4 个 pre-existing 报错（securityPolicies、ObjectSetComposer、objectSetUrl×2），与本 story 零交集。
+  - `npx vitest run`：1267/1267 ✓ 13s。
+  - `npx playwright test tests/feature.admin.dataset-rollback.spec.ts`：4/4 ✓ 7s。
+  - `npx playwright test --grep @smoke`：87/87 ✓ 1.4 分钟（含新增 4，零回归）。
+- **Learnings for future iterations:**
+  - **wizard data-step root attr 是 BDD 锁步态的标准锚（US-053）**：`<root data-step="pick|preview|confirm|success">`
+    + 每个 step 容器再挂 `data-testid="<feature>-<step>-step"`，BDD 步骤断言用
+    `expect(root).toHaveAttribute('data-step', 'preview')` 比 visibility-only 断言更稳——visibility 会被
+    CSS / 动画弄成 race。任何多步 wizard（Import / Rollback / Composer / ApprovalsCreate）都按此双锚点。
+  - **TanStack `useMutation` + 进度 modal：`mutation.isPending` 是 modal mount/unmount 唯一开关（US-053 模板化）**：
+    把 progress modal 提到 page 顶层（非 step 内），通过 `{mutation.isPending && <RollbackProgressModal/>}` mount。
+    onSuccess 转 step='success'，progress modal 自动 unmount。**不要**用 `useState<boolean>('progress', false)`
+    + setProgress(false) 自行管理，会与 mutation pending 状态 desync 出现 modal 滞留。
+  - **destructive POST 的 typed-confirmation gate 必须 client-side 拦截（US-053）**：rollback / dataset delete /
+    cascade DROP 这类 destructive endpoint 在 server 侧通常不接 "confirmation token"——按惯例把"二次确认"做在 UI 上。
+    模板：(a) `const confirmTyped = text.trim() === expected`，(b) submit button `disabled={!confirmTyped || pending}`，
+    (c) BDD 用 `toBeDisabled()` 然后 `toBeEnabled()` 锁 gate transition。**不要**用模糊匹配（startsWith / includes）——
+    "northwind" / "northwinds" 都通过会让 muscle-memory 的 admin 误操作。
+  - **Playwright stub 模拟 in-flight latency 用 `await new Promise(r => setTimeout(r, ms))` 是惯用法（US-053）**：
+    要 BDD 验证 "progress modal 在请求中 visible"，stub handler 加 `options.rollbackDelayMs` 然后
+    `await new Promise(r => setTimeout(r, ms))` 再 fulfill。500ms 足够让 modal mount + assertion poll 命中，
+    短到 scenario 总时长仅 +0.5s。**不要**用 `route.continue()` 走真实 backend——会让 BDD 失去
+    deterministic latency control，且依赖 backend mutation。
+  - **client-side 预览影响 = 双向对称 server filter（US-053）**：preview step 计算 "newer transactions" 用
+    `committedAt > target.committedAt` 完全等价于 `pkg/oms.ListAfterCommittedAt` 的 SQL `WHERE committed_at > $1`。
+    把"server filter 翻译成 client filter"做成对称是 wizard "honest preview" 的契约——避免预览说"会改 5 行"实际改 3 行
+    的体验失真。任何 destructive endpoint 的 preview UI 都该照此对齐 server filter 语义。
+---

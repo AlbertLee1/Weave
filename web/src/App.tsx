@@ -26,6 +26,7 @@ import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { ValueTypeAdminPage } from './components/admin/ValueTypeAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
+import { DatasetRollbackPage } from './components/admin/DatasetRollbackPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { AuditReportPage } from './components/audit/AuditReportPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
@@ -265,6 +266,14 @@ export default function App() {
                   <AdminGuard>
                     <SchemaGraphPage />
                   </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/datasets/:dataset/rollback"
+                element={
+                  <PermissionRoute permission="ontology.write">
+                    <DatasetRollbackPage />
+                  </PermissionRoute>
                 }
               />
               <Route

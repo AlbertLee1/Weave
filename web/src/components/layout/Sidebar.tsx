@@ -237,6 +237,11 @@ export function Sidebar() {
           icon: 'bolt',
         },
         {
+          to: `/admin/datasets/${activeOntology}/rollback`,
+          label: 'Dataset Rollback',
+          icon: 'clock',
+        },
+        {
           to: `/admin/${activeOntology}/security`,
           label: 'Security Policies',
           icon: 'shield',

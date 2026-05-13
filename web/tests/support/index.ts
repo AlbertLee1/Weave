@@ -21,6 +21,7 @@ export {
   BindingsTab,
   BrowserPage,
   DashboardPage,
+  DatasetRollbackPage,
   ExplorerBranchPage,
   FunctionRepoPage,
   ImportWizardPage,
