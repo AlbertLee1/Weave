@@ -14,8 +14,24 @@ import { fileURLToPath } from 'url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..');
-const REPORT_PATH = join(REPO_ROOT, 'dogfood-output', 'verify-report.md');
+// DOGFOOD_BASE_URL lets the harness target either the Vite dev server
+// (:5173, source-of-truth for the latest fixes) or the Go server's
+// embedded dist (:9117, what the dogfood agent actually exercises).
+// Falls back to Playwright's configured baseURL when unset.
+const BASE_URL = process.env.DOGFOOD_BASE_URL ?? '';
+const REPORT_TAG = BASE_URL
+  ? new URL(BASE_URL).host.replace(/[^a-z0-9]+/gi, '-')
+  : 'default';
+const REPORT_PATH = join(
+  REPO_ROOT,
+  'dogfood-output',
+  `verify-report.${REPORT_TAG}.md`,
+);
 const ONTOLOGY = 'iotDemo';
+
+function abs(path: string): string {
+  return BASE_URL ? `${BASE_URL}${path}` : path;
+}
 
 interface IssueResult {
   id: string;
@@ -47,7 +63,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     page,
   }) => {
     const console = captureConsole(page);
-    await page.goto('/admin/audit');
+    await page.goto(abs('/admin/audit'));
     await page.waitForLoadState('networkidle');
 
     const noMatch = console.messages.filter((m) =>
@@ -61,7 +77,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
       .textContent()
       .catch(() => null);
 
-    const ok = noMatch.length === 0 && /\/audit$/.test(url) && !!heading;
+    const ok = noMatch.length === 0 && /\/audit$/.test(new URL(url).pathname) && !!heading;
     recordIssue({
       id: '#1',
       title: 'Audit Report at /admin/audit',
@@ -82,7 +98,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     page,
   }) => {
     const console = captureConsole(page);
-    await page.goto('/aip-logic');
+    await page.goto(abs('/aip-logic'));
     await page.waitForLoadState('networkidle');
 
     const noMatch = console.messages.filter((m) =>
@@ -93,7 +109,10 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
       .locator('[data-testid="logic-flows-page"]')
       .count();
 
-    const ok = noMatch.length === 0 && /\/logic-flows$/.test(url) && pageRoot > 0;
+    const ok =
+      noMatch.length === 0 &&
+      /\/logic-flows$/.test(new URL(url).pathname) &&
+      pageRoot > 0;
     recordIssue({
       id: '#2',
       title: 'AIP Logic at /aip-logic',
@@ -115,7 +134,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
   }) => {
     // On Dashboard (no active ontology), these sidebar items must not
     // appear as dead links pointing to /.
-    await page.goto('/');
+    await page.goto(abs('/'));
     await page.waitForLoadState('networkidle');
     const dashSidebar = page.getByTestId('sidebar');
     const dashboardQB = await dashSidebar
@@ -127,7 +146,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
 
     // Once we select an ontology (visit /explorer/iotDemo), the sidebar
     // gains both items pointing at ontology-scoped URLs.
-    await page.goto(`/explorer/${ONTOLOGY}`);
+    await page.goto(abs(`/explorer/${ONTOLOGY}`));
     await page.waitForLoadState('networkidle');
     const ontSidebar = page.getByTestId('sidebar');
     const qbLink = ontSidebar.locator('a', { hasText: 'Query Builder' });
@@ -187,7 +206,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     const notes: string[] = [];
     let allOk = true;
     for (const c of checks) {
-      await page.goto(c.url);
+      await page.goto(abs(c.url));
       await page.waitForLoadState('networkidle');
       const ownCount = await page
         .locator(`[data-testid="${c.ownTestid}"]`)
@@ -210,7 +229,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     });
 
     for (const c of checks) {
-      await page.goto(c.url);
+      await page.goto(abs(c.url));
       await page.waitForLoadState('networkidle');
       await expect(page.locator(`[data-testid="${c.ownTestid}"]`)).toHaveCount(1);
       await expect(page.locator('[data-testid="explorer-page"]')).toHaveCount(0);
@@ -247,7 +266,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     ];
 
     const warnings: Record<string, string[]> = {};
-    for (const url of urls) {
+    for (const u of urls) {
       const seen: string[] = [];
       const handler = (msg: ConsoleMessage) => {
         const text = msg.text();
@@ -257,12 +276,12 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
       };
       page.on('console', handler);
       try {
-        await page.goto(url);
+        await page.goto(abs(u));
         await page.waitForLoadState('networkidle');
       } finally {
         page.off('console', handler);
       }
-      if (seen.length > 0) warnings[url] = seen;
+      if (seen.length > 0) warnings[u] = seen;
     }
 
     const total = Object.values(warnings).reduce((a, b) => a + b.length, 0);
@@ -285,7 +304,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
   test('#6 API Metrics empty state surfaces curl snippet + Playground link', async ({
     page,
   }) => {
-    await page.goto('/developer/metrics');
+    await page.goto(abs('/developer/metrics'));
     await page.waitForLoadState('networkidle');
 
     const emptyState = page.locator('[data-testid="metrics-empty-applications"]');
@@ -332,6 +351,7 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     lines.push('# Weave Dogfood Verification Report');
     lines.push('');
     lines.push(`**测试日期:** ${date}  `);
+    lines.push(`**目标:** ${BASE_URL || 'default baseURL (config)'}  `);
     lines.push(`**范围:** report.md 中 6 个问题逐一复测  `);
     lines.push(`**测试方式:** Playwright headless 浏览器，复用 dogfood 方法论`);
     lines.push('');
