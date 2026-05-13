@@ -174,6 +174,11 @@ export function Sidebar() {
     icon: 'shield',
   });
   navItems.push({
+    to: '/notifications',
+    label: 'Notifications',
+    icon: 'clock',
+  });
+  navItems.push({
     to: '/mentions',
     label: 'Mentions',
     icon: 'chat',

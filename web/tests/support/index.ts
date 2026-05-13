@@ -28,6 +28,7 @@ export {
   LineagePage,
   LinkTypeAdminPage,
   LogicFlowsPage,
+  NotificationsPage,
   ObjectSetBuilderPage,
   ObjectSetDiffPage,
   ObjectTypeAdminPage,

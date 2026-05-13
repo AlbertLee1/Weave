@@ -14,6 +14,7 @@ export { InterfaceAdminPage } from './InterfaceAdminPage';
 export { InterfaceMethodsPage } from './InterfaceMethodsPage';
 export { LineagePage } from './LineagePage';
 export { LinkTypeAdminPage } from './LinkTypeAdminPage';
+export { NotificationsPage } from './NotificationsPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
 export { ObjectSetDiffPage } from './ObjectSetDiffPage';

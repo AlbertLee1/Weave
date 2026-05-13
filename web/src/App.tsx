@@ -45,6 +45,7 @@ import { QuiverPage } from './components/quiver/QuiverPage';
 import { QuiverViewPage } from './components/quiver/QuiverViewPage';
 import { PermissionRequestsPage } from './components/permissionrequests/PermissionRequestsPage';
 import { MentionsPage } from './components/notifications/MentionsPage';
+import { NotificationsPage } from './components/notifications/NotificationsPage';
 import { MarketplacePage } from './components/marketplace/MarketplacePage';
 import { FunctionDiffPage } from './components/functions/FunctionDiffPage';
 import { FunctionCodePage } from './components/functions/FunctionCodePage';
@@ -167,6 +168,7 @@ export default function App() {
               />
               <Route path="permission-requests" element={<PermissionRequestsPage />} />
               <Route path="mentions" element={<MentionsPage />} />
+              <Route path="notifications" element={<NotificationsPage />} />
               <Route path="marketplace" element={<MarketplacePage />} />
               <Route
                 path="functions/:ontology/:functionRid/diff"

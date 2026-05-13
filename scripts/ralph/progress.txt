@@ -165,6 +165,9 @@ Phases:
 - **toolbar mutation BDD 的 before/after capture-length 范式（US-048）**：当 BDD "When 点 button" 立刻同步触发 React Query refetch，capture array 上界必须在 click **之前**快照（`const beforeOff = captured.length; await action(); await expect.poll(() => captured.length).toBeGreaterThan(beforeOff)`），不能 click 之后才读 length — 同步 refetch 让新条目已入数组，`> beforeOff` 永远不成立。同步路径走严格 `>`，异步 onMutate 路径走 `>=`。
 - **dataset_transactions chain 是 time-travel UI 的真实 wire 源（US-048）**：cmd/server/dataset_transaction_handler.go GET `/api/v2/datasets/{ridOrApiName}/history` 返回 `{transactions: [...]}` 包 committed_at-DESC，rows 是 pkg/oms.DatasetTransaction 的 JSON 1:1 镜像；前端 `web/src/api/datasets.ts` + `useDatasetHistory.ts` 是该端点的 client+React Query wrapper。`?asOf=tx-...` 走 pkg/oss/objectset/handler.go:258 的 short-circuit 转 RFC3339 instant 后 fall through SnapshotObjectsAt。任何"按 dataset transaction 走时间旅行"的 UI 都走 datasets.ts/useDatasetHistory.ts，不要再新写端点 wrapper。
 - **store-backed component 在 react-refresh 体系下必须把 hooks 与 component 拆 module（US-048）**：当一个 `.tsx` 同时 `export function FooToolbar()` 和 `export function useFoo*()` 时 ESLint `react-refresh/only-export-components` 拒收。**修法**：把 hooks 提到同目录 `useFoo.ts`，component module 仅 export 组件 + 类型。**不要**用 eslint-disable — 该组件的 HMR 会退化为 full-reload。模板适用任何 component + 内部封装 hook 的对子（Provider+useProvider / Modal+useModalState / Toolbar+useToolbarState）。
+- **AC 已有小 surface + 新增完整页时只补 gap 不重写共享层（US-050）**：当 PRD AC 多条且其中前几条已在另一 surface 实现（TopBar bell + NotificationCenter slide panel），新页面**复用** hooks（`useNotifications` / `useMarkAllNotificationsRead`）让 React Query cache 在多 surface 间天然同步；新 testid 用复数前缀（`notifications-*` vs 既有 `notification-*`）避免冲突；只补缺位的"完整页+过滤+分页"AC。同模板适用任何 mini-surface + full-page 对子（commands palette + page / search dropdown + page / approvals modal + page）。
+- **客户端分页 state 防止 out-of-range 用 render-time clamp 而非 setState（US-050）**：`safePage = Math.max(0, Math.min(page, totalPages - 1))` 局部 derived，所有 UI 用 safePage；Prev/Next onClick 也走 `setPage(p => clamp)`。避免 setState-in-render（react-hooks 警告）和 setState-in-effect（同 lint 拒收）。模板适用任何"用户手动 nav state + 数据可能外部 shrink"的对子（pagination / focus-row index / selected-tab 当 tab list 动态变化）。
+- **`const x = data?.data ?? []` 在 useMemo deps 数组触发 react-hooks/exhaustive-deps（US-050）**：logical-OR fallback 每 render 创建新 `[]` 实例。修法：`useMemo(() => data?.data ?? [], [data])` 把 items 自身 wrap useMemo，稳定 reference。或改 deps 数组到 `[data]` 而非 `[items]`。模板适用任何 `useQuery → data?.field`-then-`useMemo` 的链。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -1828,3 +1831,39 @@ Phases:
   - **DAG 分层 BFS 布局比 force simulation 在 lineage 场景下更稳（US-049）**：lineage 是天然的 DAG（无环 + 有方向），按"到 root 的距离"分列（upstream → 左、downstream → 右、both → 双向延伸）的 deterministic 布局比 d3-force 的 stochastic simulation 更适合 (a) UI screenshot 比较稳定（同一数据每次 layout 一致），(b) BDD scenario 不依赖 simulation iteration 数量，(c) 跨 expand/collapse 互动不会让既存节点位置抖动。模板：所有"有向无环且方向语义清晰"的图（lineage / dataset transformation pipeline / 依赖图 / 影响分析）用 layered-BFS 替代 force；force 留给"双向连接 + 无明确层级"的图（社交网络 / interface 实现关系图）。
   - **expand/collapse "ownership tracking" 是合并图正确 collapse 的关键（US-049）**：当 expand button 既要新增节点也要保证"已被多 expand 共同贡献的节点不被某次 collapse 误删"，需要在 ExtraGraph 上额外维护 `byOwner: Record<rid, {nodes: rid[], edges: edgeKey[]}>` 记录每次 expand 实际**新增**的 nodes/edges（不是它返回的全集）。collapse 只删 owner 的私有贡献。新 nodes：在 set merge 时 only-push-if-not-in `prev.nodes ∪ data.nodes` 并 record 进 owner list。模板适用任何"用户可累加查询结果且要支持取消单次查询"的合并 UI（saved searches result merge / multi-expand tree / time-window stacked aggregation）。
   - **slide-in detail panel 在 graph 页面比 modal 更稳（US-049）**：graph 操作（pan/zoom/click 其他节点）时 modal 会遮挡视图，且 modal 强制阻塞背景交互。改用 320-360px 宽 right-aside slide-in（持续可见、不阻塞 graph 交互、随时切换选中节点同步更新）。同 ApprovalsPage 的 review modal 在 list 视图上的"行内 detail flyout" 模板互补 — modal 适合 mutation form，aside 适合 read-only context inspection。
+---
+
+## 2026-05-13 09:18 - US-050 新功能: Notifications & Mentions 中心（PC-A15）
+- 实现了完整页 `/notifications`，作为已存在 TopBar bell + `NotificationCenter` slide panel + `/mentions` 深度链接的第三块拼图。复用现有的 `useNotifications` / `useMarkNotificationRead` / `useMarkAllNotificationsRead` 三个 hooks 与 `api/notifications.ts` 端点（US-340 / US-343 早已就绪），不新增 API client / hook。
+- PRD AC 1-2（顶栏铃铛 + 未读计数 / 下拉面板 5-tab + Mark all read）由 `Topbar.tsx` + `NotificationCenter.tsx` 在 US-340 / US-343 已实现；本 story 只补 AC 3 '完整页 /notifications 含过滤与分页'。AC 4（接 /api/v2/notifications 系列）由 hook 复用自动满足。
+- 新增 testid 矩阵：`notifications-page` / `-loading` / `-error` / `-empty` / `-list` / `-filters` / `-tabs` / `-tab-{key}` / `-tab-count-{key}` / `-read-filter` / `-read-{all|unread}` / `-mark-all-btn` / `-pagination` / `-page-indicator` / `-prev-page-btn` / `-next-page-btn` / `-row-{id}`；行内 `data-notification-id` + `data-notification-type` + `data-unread` 三件套，与 US-022/026 list-row 模板对齐。
+- 客户端分页（PAGE_SIZE=20）+ 三段过滤（type 5-tab + read-status 2-radio + 隐式按用户）覆盖 PRD AC 3。`Mark <tab> read` 走 `useMarkAllNotificationsRead.mutate(tab.types ?? [])` — `'all'` tab 传 `[]`（不带 type query → 全 scope）；typed tab 传 `['mention']` 等 narrow scope。与 NotificationCenter 双面共享同一 bulk endpoint，符合既定模式。
+- Sidebar：在 `Mentions` 之前加 `Notifications` top-level entry（icon='clock'），全局非 ontology-scoped，与 `/mentions` 平级。App.tsx 注册 `<Route path="notifications" element={<NotificationsPage />} />`，ProtectedRoute + Shell 包裹，无 admin gate（用户自己的 inbox）。
+- BDD: `web/tests/feature.notifications.spec.ts` 落地 7 scenarios（3 @smoke + 4 regression）：
+  - renders-mixed-type-with-tab-counts @smoke（list 渲染 + tab unread badge accurate + row data-attrs 反映 wire shape）
+  - click-tab-narrows-to-type @smoke（mention tab 缩窄 + 其他 type rows toHaveCount(0)）
+  - unread-filter-narrows @smoke（read-only row 隐藏 + All 恢复全集 + data-read-filter 翻转）
+  - pagination-splits-23-rows（20+3 拆分 + Prev/Next disabled-at-edges + data-current-page/data-total-pages）
+  - mark-mention-read-posts-with-type-scope（POST /read-all?type=mention 1 次 + mention rows data-unread 翻 'false' + watch row 仍 'true' + 切回 mention tab 后 disable）
+  - list-fetch-500 → error wrapper + list/empty/loading 三 wrapper 0 件
+  - empty-state → empty wrapper + markAllButton disabled
+- Stub 三路 route：`/notifications/*/read`（single-read，precise）→ `/notifications/read-all*`（bulk-read）→ `/notifications*`（catch-all GET），按 US-023/040/042 LIFO friendly 注册顺序。
+- 验证：
+  - `npx playwright test tests/feature.notifications.spec.ts` → 7/7 pass / 9.2s
+  - `npx playwright test --grep @smoke` → 78/78 pass / 1.2m（含 US-021~049 既有 75 case 零回归 + 新增 3 个 @smoke）
+  - `npx tsc --noEmit` 干净
+  - `npx vitest run` → 159 files / 1267 tests / 12.6s 全绿
+  - `npx eslint` 新增 3 文件零 warning（首轮 react-hooks/exhaustive-deps 在 `const items = data?.data ?? []` 上抛 warning 已修，wrap useMemo([data]) 后 clean）
+- 文件改动：
+  - `web/src/components/notifications/NotificationsPage.tsx`（new）
+  - `web/src/App.tsx`（+ import + 1 line Route）
+  - `web/src/components/layout/Sidebar.tsx`（+ navItems push Notifications）
+  - `web/tests/feature.notifications.spec.ts`（new — 7 scenarios）
+  - `web/tests/support/pageObjects/NotificationsPage.ts`（new）
+  - `web/tests/support/pageObjects/index.ts`（+ NotificationsPage export）
+  - `web/tests/support/index.ts`（+ NotificationsPage export）
+- **Learnings for future iterations:**
+  - **AC 1-2 已实现 + AC 3 是 gap 时，新页面只补 gap 不重写 NotificationCenter（US-050）**：当 PRD AC 写 4 条但前两条已在另一个 surface（TopBar + slide panel）实现，新页面**不要**重新发明轮子（独立 fetch / 独立 mutate / 独立 testid 命名空间）。改为 (a) 复用既有 hooks（`useNotifications` / `useMarkAllNotificationsRead`）让 React Query cache 在两 surface 间天然同步（slide panel mark-read → invalidate → notifications 页同步刷新）；(b) 新页面只补 AC 3 缺位的"完整页 + 过滤 + 分页"；(c) 新 testid 命名空间用 `notifications-` 前缀避免与既有 `notification-`（slide panel + topbar）冲突 — 复数 vs 单数微妙区分让 BDD 选择器在双 surface 共存场景下不歧义。同模板适用任何"已有 mini-surface + 新增 full-page"的 BDD（commands palette + commands page / search dropdown + search results page / approvals modal + approvals page）。
+  - **page 内 setState during render 不需要的最佳替代：render-time clamp + 局部 derived state（US-050）**：当 pagination state 因外部数据变化可能落到 out-of-range（如 backend refetch 让 list 缩窄到现 page 之外），**不**用 setState-in-render（react-hooks 警告 + extra commit）也**不**用 useEffect-setState（同 lint 拒收）。改用 `safePage = Math.max(0, Math.min(page, totalPages - 1))` 局部 derived state，所有 UI 渲染走 safePage，Prev/Next 按钮的 onClick 也 `setPage(p => max/min)` clamp。这把 state 漂移变成 render-time clamping，副作用零。模板适用任何"用户手动 nav state + 数据可能外部 shrink"的对子（pagination / focus-row index / selected-tab when tabs list 动态变化）。
+  - **`const items = data?.data ?? []` 在 useMemo deps 数组里触发 react-hooks/exhaustive-deps 警告（US-050）**：logical-OR fallback 每次 render 创建新 `[]` 实例，让 dependent useMemo recompute；React 19 + eslint plugin 拒收。修法两个等价：(a) `useMemo(() => data?.data ?? [], [data])` — items 自身 wrap useMemo，stable empty-array reference；(b) 改 deps 数组到 `[data]` 而不是 `[items]`。模板适用任何"hook 返回 nullable wrapper → 拆出内部数组 → 后续 useMemo"的链路（useQuery → data?.items / data?.rows / data?.events 等）。
+  - **`/api/v2/notifications` 端点家族的 stub 三路注册顺序（US-050）**：单一 page.route catch-all 会吃掉所有 sub-pattern，但 single-read `/notifications/<id>/read` + bulk-read `/notifications/read-all` 两个 sub-pattern 必须各自 fulfil 200/204 + 副作用 mutate 内存 fixture。注册顺序：`'/notifications/*/read'` precise sub-pattern 先 → `'/notifications/read-all*'` 第二 → `'/notifications*'` catch-all GET 最后。catch-all handler 内 `if (pathOnly.endsWith('/read') || pathOnly.endsWith('/read-all')) route.continue()` 兜底防 race（精确 routes 注册前的瞬时请求）。同模板适用任何"list endpoint + per-id action + bulk action"三件套的 stub（approvals + per-id approve/reject + bulk-approve / saga + per-id retry + bulk-replay 等）。
