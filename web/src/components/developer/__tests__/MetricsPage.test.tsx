@@ -202,6 +202,35 @@ describe('MetricsPage', () => {
     });
   });
 
+  // Dogfood regression: in degraded-mode backends the applications
+  // endpoint can return non-JSON (SPA fallback). The fetch fails to
+  // parse and `appsError` is truthy. Previously the empty state was
+  // gated on `!appsError`, so the page rendered nothing useful. The
+  // fix keeps the EmptyApplications guidance visible regardless of
+  // the error, with the error banner shown above.
+  it('renders the empty state with curl snippet even when /applications fails', async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response('<!doctype html><html><body>SPA</body></html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+      ),
+    );
+    renderPage();
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('metrics-empty-applications'),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('metrics-applications-error')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('metrics-empty-playground-link'),
+    ).toHaveAttribute('href', '/developer/playground');
+  });
+
   // Dogfood report #6: previously the empty state was a one-liner pointing
   // to an unspecified "Developer Console". Make sure the new state gives
   // the user actionable next steps: a curl snippet and a link to the API

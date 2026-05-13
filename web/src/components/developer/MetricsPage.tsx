@@ -85,13 +85,21 @@ export function MetricsPage() {
 
       <div className="flex-1 px-6 py-4">
         {appsError && (
-          <p className="text-sm text-accent-error">
+          <p
+            data-testid="metrics-applications-error"
+            className="text-sm text-accent-error mb-4"
+          >
             Failed to load applications: {(appsError as Error).message}
           </p>
         )}
-        {!effectiveAppId && !loadingApps && !appsError && (
-          <EmptyApplications />
-        )}
+        {/*
+          When no application is selected — whether the list returned [] or
+          the request itself failed (degraded mode where the backend route
+          is not registered) — fall back to the EmptyApplications guidance
+          so the dogfood / first-time user still sees the curl snippet and
+          the Playground link instead of a blank page.
+        */}
+        {!effectiveAppId && !loadingApps && <EmptyApplications />}
         {effectiveAppId && loadingUsage && (
           <div className="flex items-center justify-center py-20">
             <LoadingSpinner size="lg" />
