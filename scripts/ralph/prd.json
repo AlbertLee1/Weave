@@ -872,8 +872,8 @@
         "Tests pass"
       ],
       "priority": 56,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "落地 cmd/covercheck —— 单文件 Go CLI 解析 `go test -coverprofile` 输出并跑两道 gate：(1) per-package floor（PRD 列出的 5 个核心包：oms 80% / oss/objectset 80% / actions 75% / oss/pagination 85% / apierror 90% — 配置在 coverage/thresholds.json），(2) baseline regression（任何包 PR 覆盖率比 coverage/baseline.json 落 > defaultMaxDrop=2.0pp 都失败）。TDD 先写 10 个子测试覆盖 parseProfile（aggregate by package / skip malformed lines）/ evaluate（floor 失败 / drop 失败 / 全通过 / OK 标志）/ renderMarkdown（含失败 / 全通过 verdict）/ writeBaseline（round-trip）/ loadConfig（默认 maxDrop 兜底）/ loadBaseline（缺文件视为空 baseline 不报错）。Makefile：(a) test-cover 加 per-package 总结（awk 解析 `go tool cover -func` 输出，按 `<pkg-path>/<file>.go:<line>:` 抠 package 段 + 同包平均），(b) test-cover-check 跑覆盖率 + 调 covercheck gate，(c) test-cover-update 重录 baseline（maintainer-only，与 bench/baseline.json 同模式）。CI: .github/workflows/ci.yml 在原 `Test (with race + coverage)` 步之后注入三连 step —— 'Coverage gate (covercheck)' 复用上一步生成的 coverage.out 调 covercheck 写 coverage/report.md + report.json（continue-on-error: true 让评论 step 先跑）；'Coverage gate report (PR comment)' 用 actions/github-script@v7 + 单行 marker `<!-- covercheck:us056 -->` 实现 update-in-place（同一 PR 多次 push 只保留一条最新评论）；'Fail if coverage gate failed' 串接 `steps.cover_gate.outcome == 'failure'` 决定 job 退出码；'Upload coverage gate report' 保留 14 天 artifact。Permissions 加 `pull-requests: write` + `issues: write` 让 github-script 可发评论。.gitignore 把 coverage/report.{md,json} 排除，但 coverage/thresholds.json + coverage/baseline.json checked in。验证：go test ./cmd/covercheck -race -count=1 → 10/10 pass / 1.59s；go build/vet ./... 双绿；make test-cover COVER_PKG=./cmd/covercheck/... → per-package + total 两段输出 clean（无空行残留）；make test-cover-check COVER_PKG=./cmd/covercheck/... → gate PASS（covercheck 不在 floor 列表所以 ✓）；手工 fixture profile（oms 命中 20% < 80% floor）跑 → 退出 1 + Markdown 报告 'Failing the floor' section 列出 pkg/oms 行；-update 模式 round-trip 写出 generatedAt + 3 包浮点 % 进 JSON。"
     }
   ]
 }

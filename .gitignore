@@ -18,6 +18,10 @@ web/test-results/
 coverage.out
 coverage.html
 coverage.txt
+# US-056: covercheck per-run artefacts (coverage/thresholds.json and
+# coverage/baseline.json ARE checked in).
+coverage/report.md
+coverage/report.json
 
 # Benchmark per-run artefacts (US-441) — bench/baseline.json IS checked in.
 bench/results.json

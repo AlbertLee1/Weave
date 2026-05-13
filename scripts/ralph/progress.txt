@@ -170,6 +170,9 @@ Phases:
 - **`const x = data?.data ?? []` 在 useMemo deps 数组触发 react-hooks/exhaustive-deps（US-050）**：logical-OR fallback 每 render 创建新 `[]` 实例。修法：`useMemo(() => data?.data ?? [], [data])` 把 items 自身 wrap useMemo，稳定 reference。或改 deps 数组到 `[data]` 而非 `[items]`。模板适用任何 `useQuery → data?.field`-then-`useMemo` 的链。
 - **多端点共 prefix 的 Playwright stub 改用单 catch-all + 内部 dispatch（US-054）**：3+ 端点共 prefix 时，多 `page.route` LIFO 链 + `route.continue()`/`route.fallback()` 极易踩坑（continue 送 network 绕过链；fallback 才走链）。最稳：注册**单个** `'**/api/v2/<prefix>**'` catch-all（双 `*` 跨段），内部按 `url.pathname` 字面值 + `request.method()` switch dispatch，零 LIFO 依赖。同 US-040 / US-042 / US-054 marketplace/saga/column-masks 模板的统一收敛。
 - **`installBuiltinPackage(slug, onConflict)` 三态 'fail'/'skip'/'overwrite' 是 marketplace install / update / merge-import 共享 endpoint（US-054）**：后端 `cmd/server/handlers_pkg_*.go` 同一 POST `/api/v2/pkg/builtin/{slug}/install` 同时支撑 fresh install + in-place update + skip-existing 三种语义，前端 `web/src/api/packages.ts:installBuiltinPackage(slug, onConflict?)` 第二参 optional。任何 "Update X" UI 都该用同一 endpoint + 不同 onConflict，**不**为 update 单独开端点。
+- **cmd/covercheck + coverage/{thresholds,baseline}.json 是 PR-time coverage gate 范式（US-056）**：解析 `go test -coverprofile=` block 行（`<pkg-path>/<file>.go:<lo>.<col>,<hi>.<col> <stmts> <count>` 正则）按 path.Dir 抠 package 段聚合（statement-weighted，比 `go tool cover -func` 的"函数等权重平均"准确），跑两道 gate：(1) Floor 在 thresholds.json 不退化；(2) Drop 在 baseline.json maxDrop 容忍度（默认 2.0pp）。Baseline 缺失视为"首跑"，drop check 跳过 / floor 仍 enforce。模板适用任何 PR-time 数值回归 gate（性能 / 包大小 / lighthouse 分数 / 类型覆盖率）。
+- **CI 评论 update-in-place 标准模板：marker + paginate + 二选一（US-056）**：`actions/github-script@v7` + 单行 HTML 注释 marker（`<!-- covercheck:us056 -->` 这类）+ `github.paginate(github.rest.issues.listComments, ...)` 拉全部 comments + `find(body.startsWith(marker))` 找 prior comment + 存在则 updateComment / 否则 createComment。同 PR 多次 push 只保留一条最新评论，零 noise / 零第三方 action 依赖。模板适用任何 PR-time 反馈评论（lint diff / bundle size / security scan）。
+- **"先评论后失败"CI 模板：continue-on-error + step.outcome 显式 fail（US-056）**：gate step 想让 PR 评论可见 AND job 整体红，直接 `run: <gate>` 会 propagate exit 1 跳过后续评论 step。解法：(a) gate step 加 `continue-on-error: true` + 给 step id（如 `cover_gate`），让评论 step 始终跑；(b) 评论 step 后接一个独立 step `if: ${{ steps.cover_gate.outcome == 'failure' }}` + `exit 1` 决定 job 整体状态。模板适用任何 "fail-after-feedback" gate（lint summary / test failure hint / coverage drop / security scan）。
 
 ## Open Questions
 (参考 tasks/prd-osv2-parity-and-coverage-iteration.md 第 9 节)
@@ -2083,3 +2086,29 @@ Phases:
   - **React Hook Form 数字输入 setValueAs blur 触发的微妙性（US-055）**：ParameterForm 对 integer/double 用 `setValueAs: (v) => parseInt/parseFloat`，但 RHF 内部只在 blur / register 触发的事件里 apply setValueAs。Playwright spec 里 `.fill('2')` 后**显式 .blur()** 再 click submit 是最稳的：避免 click 时 input 仍是 string '2'（zod 校验 `z.number()` 会报 'Must be a number'）。模板适用所有"number input + 立即 submit"的 Playwright BDD。
   - **Sidebar nav 加新条目要走 `if (activeOntology)` 分支（US-055）**：QueryTypes 是 ontology-scoped（URL 要 `:ontology` 段），所以 nav item 必须 push 到 `if (activeOntology)` 内的列表（与 Approvals / Automation Rules / Proposals 同位置），而不是顶层 navItems。这样 dashboard 等无 ontology 上下文的页面不会显示坏掉的"/queries/" 链接。同样模板适用任何新增 ontology-scoped 入口。
 ---
+
+## 2026-05-13 - US-056
+- 落地 PC-C13 测试覆盖率门禁 CI 全套：cmd/covercheck CLI + coverage/{thresholds,baseline}.json + Makefile test-cover/-check/-update 三 target + ci.yml 三 step（gate + PR 评论 + artifact upload）。Floor: oms 80% / oss/objectset 80% / actions 75% / oss/pagination 85% / apierror 90%；regression budget defaultMaxDrop=2.0pp。
+- Files changed:
+  - create: cmd/covercheck/main.go (~340 LOC; 单文件 CLI 解析 cover-profile / 跑 2 道 gate / 输出 markdown + JSON 双格式)
+  - create: cmd/covercheck/main_test.go (10 个 TDD 子测试: parseProfile×2 / evaluate×3 / renderMarkdown×2 / writeBaseline×1 / loadConfig×1 / loadBaseline×1)
+  - create: coverage/thresholds.json (PRD 5 包 floor + defaultMaxDrop=2.0 + _description)
+  - create: coverage/baseline.json (空占位 — 首 CI 跑后 maintainer 用 make test-cover-update 提交真实 baseline)
+  - edit: Makefile (.PHONY +test-cover-check +test-cover-update；COVER_PKG 变量；test-cover 加 awk-driven per-package 总结；test-cover-check 跑 covercheck gate；test-cover-update 重录 baseline)
+  - edit: .github/workflows/ci.yml (+permissions pull-requests:write / issues:write；+Coverage gate (covercheck) step；+Coverage gate report (PR comment) 用 actions/github-script@v7 marker 模板；+Fail if coverage gate failed；+Upload coverage gate report artifact 14d retention)
+  - edit: .gitignore (+coverage/report.md +coverage/report.json — 但 thresholds.json/baseline.json checked in)
+  - edit: scripts/ralph/prd.json (US-056 passes=true + notes)
+- 验证：
+  - go test ./cmd/covercheck -race -count=1 → 10/10 pass / 1.59s
+  - go build ./... → clean (full module)
+  - go vet ./... → clean
+  - make test-cover COVER_PKG=./cmd/covercheck/... → 输出两段（per-package + total），无空行残留
+  - make test-cover-check COVER_PKG=./cmd/covercheck/... → gate PASS（covercheck 不在 floor 列表所以 ✓ 全包）
+  - 手工 fixture profile (pkg/oms 命中 20% < 80% floor) → covercheck 退出码 1 + Markdown 'Failing the floor' section 列出 pkg/oms 行
+  - -update 模式 round-trip → JSON 写出 generatedAt + 3 包浮点 %
+- **Learnings for future iterations:**
+  - **cmd/covercheck 是 PR-time coverage gate 的标准范式（US-056）**：解析 `go test -coverprofile=` 输出文件（不调 `go tool cover -func` 子进程，正则 `^([^\s:]+):\d+\.\d+,\d+\.\d+\s+(\d+)\s+(\d+)$` 直接抠 block），按 path.Dir 抠 package 段做 statement-weighted 聚合（比 `go tool cover -func` 的"函数等权重平均"准确）。两道 gate 解耦：(1) Floor 在 thresholds.json，严格不退化；(2) Drop 在 baseline.json，maxDrop 容忍度可调（默认 2.0pp，与 PRD 一致）。Baseline 缺失视为"首跑"，drop 检查跳过、floor 仍 enforce —— 让新仓库 / 新分支 day-1 即可启用 gate。模板适用任何"PR-time 数值回归 gate"（性能 / 包大小 / 类型覆盖率 / lighthouse 分数）。
+  - **CI 评论模板：marker + listComments paginate + update-in-place（US-056）**：`actions/github-script@v7` 配合 `<!-- covercheck:us056 -->` 单行 HTML 注释 marker —— `github.paginate(github.rest.issues.listComments, ...)` 拉全部评论，find body.startsWith(marker) 的 prior comment，存在则 updateComment，否则 createComment。同一 PR 多次 push 只保留**一条**永远最新的 gate 评论，没有 noise（vs. peter-evans/create-or-update-comment 也行，但 marker + 原生 API 零三方 action 依赖）。模板适用任何 PR-time 反馈评论（lint diff / bundle size / security scan）。
+  - **`continue-on-error: true` + 后续 step 显式失败拦截是"先评论后失败"的关键（US-056）**：CI gate 想做到"gate 失败时 PR 上看到评论 AND job 红"——直接 `run: make test-cover-check` 会 propagate exit 1 让后续 step 跳过（评论 step 不跑）。解法：gate step 加 `continue-on-error: true` + 给它 id（如 cover_gate），让评论 step 始终跑；最后用一个独立 step `if: ${{ steps.cover_gate.outcome == 'failure' }}` + `exit 1` 决定 job 整体红/绿。模板适用任何"想 fail-after-feedback"的 CI gate（test failure summary + retry hint）。
+  - **覆盖率 gate 复用上一步 cover-profile 比重跑省一半时间（US-056）**：ci.yml 已有 `go test ./... -race -coverprofile=coverage.out`；不要在 gate step 再跑 `go test ./pkg/...` —— ./... 是 ./pkg/... 的超集，covercheck 只 enforce thresholds.json 列出的包，profile 里多余包仅做 reporting。模板适用任何"已有 cover-profile 的二次消费"（HTML 报告、Codecov 上传、CI artifact）—— **prof 是 idempotent 资产，consume 它不要重跑测试**。
+  - **per-package awk 总结的 pitfall：`total:` 行不带 `.go:` 路径段（US-056）**：用 `go tool cover -func=coverage.out | awk` 抠 package 段时，filter `$1 !~ /\.go:/ { next }` 而不是 `$1 !~ /:/ { next }` —— 前者只挑函数行（含 `<file>.go:<line>:`），后者会把 `total: (statements) 63.3%` 也喂进 split → 空 package key → 空行污染。`sub(/\/[^\/]+\.go.*$/, "", $1)` 一次性吃掉 trailing `<file>.go:...` 比 split+rejoin 更紧。awk avg 是函数等权重（与 statement-weighted 略不一致）—— 仅做粗略总结，精确值看 covercheck。

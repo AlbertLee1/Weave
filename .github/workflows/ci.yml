@@ -8,6 +8,11 @@ on:
 
 permissions:
   contents: read
+  # US-056: coverage gate needs `pull-requests: write` to post the per-PR
+  # report as a comment when the gate fails. `issues: write` covers the
+  # comment-creation API surface in older runners.
+  pull-requests: write
+  issues: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -51,6 +56,71 @@ jobs:
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
+
+      # US-056 / PC-C13: coverage gate. Reuses the cover-profile produced
+      # by the previous step (./... is a superset of ./pkg/..., the
+      # covercheck floor is scoped to the packages declared in
+      # coverage/thresholds.json — extras in coverage.out are reported
+      # but not enforced). Enforces per-package floor (oms 80% /
+      # oss/objectset 80% / actions 75% / pagination 85% / apierror 90%)
+      # and the baseline-regression budget (defaultMaxDrop=2.0pp) from
+      # coverage/baseline.json. The markdown summary lands at
+      # coverage/report.md; the next step posts it on the PR so
+      # reviewers see the regressing packages without opening the CI
+      # log. `continue-on-error: true` defers the job-fail decision to
+      # the "Fail if coverage gate failed" step further down — that way
+      # the PR comment is always posted before the workflow stops.
+      - name: Coverage gate (covercheck)
+        id: cover_gate
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p coverage
+          go run ./cmd/covercheck \
+            -profile coverage.out \
+            -thresholds coverage/thresholds.json \
+            -baseline coverage/baseline.json \
+            -md coverage/report.md \
+            -output coverage/report.json
+
+      - name: Coverage gate report (PR comment)
+        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('coverage/report.md') != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const body = fs.readFileSync(path.join(process.env.GITHUB_WORKSPACE, 'coverage/report.md'), 'utf8');
+            const marker = '<!-- covercheck:us056 -->';
+            const tagged = `${marker}\n${body}`;
+            const { owner, repo } = context.repo;
+            const issueNumber = context.payload.pull_request.number;
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: issueNumber, per_page: 100,
+            });
+            const prior = existing.find(c => c.body && c.body.startsWith(marker));
+            if (prior) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body: tagged });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body: tagged });
+            }
+
+      - name: Fail if coverage gate failed
+        if: ${{ steps.cover_gate.outcome == 'failure' }}
+        run: |
+          echo "::error::coverage gate failed; see PR comment / coverage/report.md"
+          exit 1
+
+      - name: Upload coverage gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage/report.md
+            coverage/report.json
+          if-no-files-found: warn
+          retention-days: 14
 
       # US-362, US-445: Pact-style consumer-driven contract tests covering
       # the four-language SDK fan-out (py / ts / go / java) plus the SPA

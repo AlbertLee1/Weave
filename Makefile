@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-cover-check test-cover-update test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list
 
 test: test-unit
 
@@ -59,14 +59,36 @@ test-integration-phase7:
 test-bdd: ## Run the godog Cucumber BDD suite (test/bdd, requires Docker for testcontainers)
 	go test -tags bdd -count=1 -v ./test/bdd/...
 
-test-cover:
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+# US-056 / PC-C13: cover-profile target is shared by the local `test-cover`
+# convenience target and the CI gate (`test-cover-check`). Scoping to
+# ./pkg/... keeps the run fast enough for PR feedback and matches the
+# packages covered by the floor thresholds in coverage/thresholds.json.
+COVER_PKG ?= ./pkg/...
+
+test-cover: ## Run tests with cover-profile and print per-package + total summary
+	go test -race -coverprofile=coverage.out -covermode=atomic $(COVER_PKG)
+	@echo "----- per-package coverage -----"
+	@go tool cover -func=coverage.out | awk '$$1 !~ /\.go:/ { next } { sub(/\/[^\/]+\.go.*$$/, "", $$1); pct=$$NF; gsub(/%/, "", pct); sum[$$1]+=pct; n[$$1]++ } END { for (p in sum) printf "%-60s %6.1f%%\n", p, sum[p]/n[p] }' | sort
 	@echo "----- coverage summary -----"
 	@go tool cover -func=coverage.out | grep -E '^total:'
 
 test-cover-html: test-cover
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "open coverage.html"
+
+test-cover-check: ## US-056: run cover-profile + enforce coverage/thresholds.json + coverage/baseline.json regression gate
+	go test -race -coverprofile=coverage.out -covermode=atomic $(COVER_PKG)
+	@go run ./cmd/covercheck \
+		-profile coverage.out \
+		-thresholds coverage/thresholds.json \
+		-baseline coverage/baseline.json \
+		-md coverage/report.md \
+		-output coverage/report.json
+
+test-cover-update: ## US-056: re-record coverage/baseline.json from the current run (commit alongside intentional coverage shifts)
+	go test -race -coverprofile=coverage.out -covermode=atomic $(COVER_PKG)
+	@go run ./cmd/covercheck -profile coverage.out -update coverage/baseline.json
+	@echo "baseline updated; review coverage/baseline.json before committing"
 
 vulncheck:
 	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
