@@ -766,6 +766,23 @@ export function getQueryType(
   );
 }
 
+// executeQueryType POSTs to the Foundry-style execute endpoint. The handler
+// nests user-supplied params under a `parameters` key (see
+// pkg/oms/admin_handlers.go::ExecuteQueryType). Returns the raw map the
+// handler emits — either a Foundry function result (`{ value: ... }`) or the
+// fallback metadata payload for QueryTypes that have no FunctionRID wired.
+export function executeQueryType(
+  ontologyApiName: string,
+  queryApiName: string,
+  parameters: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/queries/${queryApiName}/execute`,
+    { parameters },
+  );
+}
+
 // --- Branch endpoints ---
 
 export async function listBranches(

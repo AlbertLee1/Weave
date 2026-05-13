@@ -2058,3 +2058,28 @@ Phases:
   - **details 抽屉的"discriminated union content + 单一 React 渲染分支"范式（US-054）**：`type DetailsContent = { kind: 'installed', installed, builtin? } | { kind: 'builtin', builtin, installed? }` + drawer 内统一 `description / dependencies / references` 派生函数按 `content.kind` 分支取数据。比"两个独立 DrawerInstalled / DrawerBuiltin 组件"少一半代码，跨 kind 的 cross-link（"Built-in 版本 vX.X" / "已安装 vY.Y"）也天然好写。模板适用任何"一个 modal 服务多种 entity 类型 + 跨类型 cross-reference"的 UI。
   - **drawer 的 click-outside 关闭走 `onClick={(e) => { if (e.target === e.currentTarget) onClose() }}` (US-054)**：overlay div 自身的 onClick + `target === currentTarget` 校验只在点 overlay 本体（不在 panel 内部）时 fire。比 `e.stopPropagation()` 模板更简单——panel 内部点击不需要任何额外 handler；overlay 是唯一注册点。模板适用任何"slide-in drawer + click-outside-to-dismiss"的对偶（fixed overlay + panel）。
 ---
+
+## 2026-05-13 11:30 - US-055
+- 新增 QueryTypes 执行 Sandbox（PC-A14）：route `/queries/:ontology` → `QueryTypesSandboxPage`
+- 后端无改动 — 复用 `GET /api/v2/ontologies/{ont}/queryTypes` + `POST /api/v2/ontologies/{ont}/queries/{q}/execute`（已存在）
+- Files changed:
+  - create: web/src/components/queries/QueryTypesSandboxPage.tsx
+  - create: web/src/components/queries/__tests__/QueryTypesSandboxPage.test.tsx
+  - create: web/src/hooks/useQueryTypes.ts
+  - create: web/tests/support/pageObjects/QueryTypesSandboxPage.ts
+  - create: web/tests/feature.queries.sandbox.spec.ts
+  - edit: web/src/api/ontologies.ts (+executeQueryType)
+  - edit: web/src/api/types.ts (+QueryTypeParameter)
+  - edit: web/src/App.tsx (+import + Route)
+  - edit: web/src/components/layout/Sidebar.tsx (+QueryTypes nav 项)
+  - edit: web/tests/support/pageObjects/index.ts (+QueryTypesSandboxPage)
+  - edit: web/tests/support/index.ts (+QueryTypesSandboxPage)
+  - edit: scripts/ralph/prd.json (US-055 passes=true + notes)
+- 验证：npx vitest run 1275/1275 ✓；npx playwright test --grep @smoke 94/94 ✓；npx playwright test feature.queries.sandbox.spec.ts → 4/4 ✓；npx tsc -b 仅 4 个 pre-existing 报错（baseline 一致）；go build ./... 干净
+- **Learnings for future iterations:**
+  - **复用 ParameterForm 给 QueryType / 其他 schema-driven sandbox 的"两层 adapter"范式（US-055）**：ParameterForm 把入参当 `Record<string, ActionParameterV2>` 渲染，dispatch on `dataType.type`（string/integer/double/boolean/array 5 种）+ buildParameterZodSchema + buildParameterDefaults。任何新 sandbox 想复用都走两层 adapter：(a) `parseXxxParameters(raw: unknown): XxxParameter[]` —— 把 JSONB 列容错解析（数组直通 / JSON string parse / 包装对象 `{params:[...]}` 抽 inner array / 任何 malformed 落空数组）；(b) `xxxParamsToActionParams(params): Record<string, ActionParameterV2>` —— 把 flat type field 升维成 nested `dataType.type` shape。两个 adapter 各导出供 vitest 独立单测，零生产代码改动 ParameterForm。模板适用 Function 参数 / SavedQuery 参数 / Scheduled Job 参数 等任意 schema-driven 表单 sandbox。
+  - **Foundry-style `{ value: ... }` 包装是 query result 表格化的双层兜底（US-055）**：goja query executor emit `{ value: <payload> }` 是惯用包装；当 payload 是 array of objects（如 `[{id, name}, ...]`) 直接当行 — 但更常见的是 nested wrap object 含**唯一一个** array-valued key（`{ customers: [...], totalCount: 3 }`）—— deriveTableRows 优先抽该 array key 作 rows，failover 到 root key/value pair。columns 是行 keys 的 union dedupe（保留出现顺序）。模板适用任何"functions emit 包装结果 + 想在 UI 端 auto-tabular"的页面（SavedQuery 执行 / SQL Console / Pipeline run preview）。
+  - **`<form onSubmit={form.handleSubmit(handleExecute)}>` + `data-testid` 在 button 上时，Playwright `.click()` 已能 trigger 整个 RHF submit chain（US-055）**：不需要 `(form as HTMLFormElement).requestSubmit()` (US-051 ValueType admin 模板) — 普通 `<button type="submit" data-testid="...">` + .click() 走 native form submit 路径，RHF 的 handleSubmit + zodResolver 全链路 fire。仅当 button 被遮挡 / 不在视口（modal scroll）等场景才需要 requestSubmit 兜底。模板适用所有"普通页面 + 提交 button 始终可见"的表单。
+  - **React Hook Form 数字输入 setValueAs blur 触发的微妙性（US-055）**：ParameterForm 对 integer/double 用 `setValueAs: (v) => parseInt/parseFloat`，但 RHF 内部只在 blur / register 触发的事件里 apply setValueAs。Playwright spec 里 `.fill('2')` 后**显式 .blur()** 再 click submit 是最稳的：避免 click 时 input 仍是 string '2'（zod 校验 `z.number()` 会报 'Must be a number'）。模板适用所有"number input + 立即 submit"的 Playwright BDD。
+  - **Sidebar nav 加新条目要走 `if (activeOntology)` 分支（US-055）**：QueryTypes 是 ontology-scoped（URL 要 `:ontology` 段），所以 nav item 必须 push 到 `if (activeOntology)` 内的列表（与 Approvals / Automation Rules / Proposals 同位置），而不是顶层 navItems。这样 dashboard 等无 ontology 上下文的页面不会显示坏掉的"/queries/" 链接。同样模板适用任何新增 ontology-scoped 入口。
+---

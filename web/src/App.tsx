@@ -52,6 +52,7 @@ import { MarketplacePage } from './components/marketplace/MarketplacePage';
 import { FunctionDiffPage } from './components/functions/FunctionDiffPage';
 import { FunctionCodePage } from './components/functions/FunctionCodePage';
 import { FunctionRepoPage } from './components/functions/FunctionRepoPage';
+import { QueryTypesSandboxPage } from './components/queries/QueryTypesSandboxPage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { AutomationRulesPage } from './components/automation/AutomationRulesPage';
 import { ProposalsPage } from './components/proposals/ProposalsPage';
@@ -210,6 +211,7 @@ export default function App() {
                 }
               />
               <Route path="aggregation/:ontology/:objectType" element={<AggregationPage />} />
+              <Route path="queries/:ontology" element={<QueryTypesSandboxPage />} />
               <Route path="quiver/:ontology" element={<QuiverPage />} />
               <Route path="quiver/:ontology/:rid" element={<QuiverPage />} />
               <Route path="quiver/:ontology/:rid/view" element={<QuiverViewPage />} />

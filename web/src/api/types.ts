@@ -328,6 +328,17 @@ export interface DatasourceBinding {
   isPrimary: boolean;
 }
 
+// QueryTypeParameter mirrors the persisted JSON-encoded element of
+// pkg/oms.QueryType.Parameters (a flat array of definitions). The runtime
+// shape is loose because the storage column is `JSONB`; UIs that need to
+// render forms should coerce via parseQueryTypeParameters().
+export interface QueryTypeParameter {
+  id: string;
+  type: 'string' | 'integer' | 'double' | 'boolean' | 'array' | string;
+  required?: boolean;
+  description?: string;
+}
+
 export interface QueryType {
   rid: string;
   apiName: string;

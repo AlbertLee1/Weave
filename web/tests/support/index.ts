@@ -37,6 +37,7 @@ export {
   ObjectTypeAdminPage,
   PipelinesPage,
   ProposalsPage,
+  QueryTypesSandboxPage,
   QuiverPage,
   SagaJobsPage,
   SecurityPoliciesPage,

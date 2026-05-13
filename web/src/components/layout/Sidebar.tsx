@@ -153,6 +153,11 @@ export function Sidebar() {
       icon: 'bolt',
     });
     navItems.push({
+      to: `/queries/${activeOntology}`,
+      label: 'QueryTypes',
+      icon: 'search',
+    });
+    navItems.push({
       to: `/automation/${activeOntology}`,
       label: 'Automation Rules',
       icon: 'zap',

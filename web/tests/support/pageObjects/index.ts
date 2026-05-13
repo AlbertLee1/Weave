@@ -24,6 +24,7 @@ export { ObjectSetDiffPage } from './ObjectSetDiffPage';
 export { ObjectTypeAdminPage } from './ObjectTypeAdminPage';
 export { PipelinesPage } from './PipelinesPage';
 export { ProposalsPage } from './ProposalsPage';
+export { QueryTypesSandboxPage } from './QueryTypesSandboxPage';
 export { QuiverPage } from './QuiverPage';
 export { SagaJobsPage } from './SagaJobsPage';
 export { SecurityPoliciesPage } from './SecurityPoliciesPage';
