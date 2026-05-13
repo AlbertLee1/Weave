@@ -1,6 +1,7 @@
 import type { ApiError } from './types';
 import { authedFetch } from '../auth/interceptor';
 import { activeBranchFor, DEFAULT_BRANCH } from '../stores/branchStore';
+import { activeAsOfFor } from '../stores/timeTravelStore';
 
 export class ApiRequestError extends Error {
   public statusCode: number;
@@ -59,6 +60,30 @@ export function withActiveBranch(path: string): string {
   return `${pathPart}?${nextQuery}${nextHash}`;
 }
 
+// US-048: inject ?asOf=<value> for ontology-scoped paths whenever the
+// time-travel store has an entry for the target ontology. Value is
+// either an RFC3339 timestamp (US-223) or a `tx-...` reference (US-379)
+// — the OSS LoadObjects handler accepts both shapes (handler.go:258).
+// Mirrors withActiveBranch's "skip when explicit ?asOf= present" clause
+// so diagnostic call sites can override without mutating global state.
+export function withActiveAsOf(path: string): string {
+  const ontologyApiName = extractOntologyApiName(path);
+  if (!ontologyApiName) return path;
+  const asOf = activeAsOfFor(ontologyApiName);
+  if (asOf.length === 0) return path;
+
+  const [pathPart, queryAndHash = ''] = splitPathAndQuery(path);
+  const [queryPart, hashPart] = splitQueryAndHash(queryAndHash);
+
+  const params = new URLSearchParams(queryPart);
+  if (params.has('asOf')) return path;
+  params.set('asOf', asOf);
+
+  const nextQuery = params.toString();
+  const nextHash = hashPart.length > 0 ? `#${hashPart}` : '';
+  return `${pathPart}?${nextQuery}${nextHash}`;
+}
+
 function splitPathAndQuery(path: string): [string, string] {
   const qIdx = path.indexOf('?');
   if (qIdx < 0) {
@@ -92,7 +117,7 @@ export async function request<T>(
     options.body = JSON.stringify(body);
   }
 
-  const response = await authedFetch(withActiveBranch(path), options);
+  const response = await authedFetch(withActiveAsOf(withActiveBranch(path)), options);
 
   if (!response.ok) {
     let errorData: Partial<ApiError>;

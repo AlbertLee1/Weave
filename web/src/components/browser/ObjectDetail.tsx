@@ -26,6 +26,7 @@ import { CollabCursorOverlay } from '../common/CollabCursorOverlay';
 import type { PresenceClient } from '../../lib/collabPresence';
 import { AuthContext } from '../../auth/AuthContext';
 import { findModifyActionForProperty } from './findModifyAction';
+import { useTimeTravelActive } from './useTimeTravel';
 
 function baseTypeOf(dt: DataType): string {
   if (dt.type === 'array' && dt.itemType) return dt.itemType.type;
@@ -97,6 +98,13 @@ export function ObjectDetail({
 }: ObjectDetailProps) {
   const auth = useContext(AuthContext);
   const authUser = auth?.user ?? null;
+
+  // US-048: while the page is rendering a historical snapshot, every
+  // mutation affordance in this panel must go cold. The store-backed
+  // hook is the single source of truth — the parent BrowserPage reads
+  // the same flag to disable Live / Bulk actions.
+  const timeTravelActive = useTimeTravelActive(ontologyApiName);
+
   const { data: linkTypes } = useOutgoingLinkTypes(
     ontologyApiName,
     objectType.apiName,
@@ -268,10 +276,14 @@ export function ObjectDetail({
                         // InlineEditField whenever a matching modifyObject
                         // ActionType is registered. Markdown-formatted, array,
                         // and non-string scalars keep the read-only render.
+                        // Historical (time-travel) mode forces every field
+                        // back to read-only — the asOf snapshot has no live
+                        // write path so editing must be impossible.
                         const editable =
                           baseTypeOf(prop.dataType) === 'string' &&
                           !isArrayType(prop.dataType) &&
-                          !isMarkdown;
+                          !isMarkdown &&
+                          !timeTravelActive;
                         const onSave = editable
                           ? buildSaveHandler(name)
                           : null;

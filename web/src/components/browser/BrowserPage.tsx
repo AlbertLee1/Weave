@@ -21,6 +21,8 @@ import { ExportButton } from './ExportButton';
 import { BulkActionToolbar } from './BulkActionToolbar';
 import { SkeletonTable, SkeletonText } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
+import { TimeTravelToolbar } from './TimeTravelToolbar';
+import { useTimeTravelActive } from './useTimeTravel';
 import type { WhereClause, WireObject } from '../../api/types';
 import type { SavedSearchDefinition } from '../../api/savedSearches';
 
@@ -79,6 +81,13 @@ export function BrowserPage() {
   const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const createObjectSet = useCreateTemporaryObjectSet(ontology);
+
+  // US-048: when historical mode is active every request carries
+  // ?asOf=<tx-...> via the API-client interceptor. The page disables
+  // mutation affordances (Live toggle / Export / Bulk selection /
+  // inline edits) so the operator cannot accidentally write to the
+  // current branch while reviewing a historical snapshot.
+  const timeTravelActive = useTimeTravelActive(ontology);
 
   const realtimeEnabled = realtimeMode !== 'off';
 
@@ -521,7 +530,19 @@ export function BrowserPage() {
               hasActiveSearch,
             }}
           />
-          <label className="flex items-center gap-2 cursor-pointer select-none">
+          <label
+            className={[
+              'flex items-center gap-2 select-none',
+              timeTravelActive
+                ? 'cursor-not-allowed opacity-40'
+                : 'cursor-pointer',
+            ].join(' ')}
+            title={
+              timeTravelActive
+                ? 'Live updates are disabled while Time Travel is on.'
+                : undefined
+            }
+          >
             {realtimeEnabled && (
               <span
                 data-testid="realtime-indicator"
@@ -532,14 +553,31 @@ export function BrowserPage() {
             <input
               type="checkbox"
               aria-label="Live"
+              data-testid="live-toggle"
               checked={realtimeEnabled}
               onChange={handleRealtimeToggle}
+              disabled={timeTravelActive}
               className="sr-only peer"
             />
             <span className="relative w-8 h-4 rounded-full bg-border-secondary peer-checked:bg-green-500 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-4" />
           </label>
         </div>
       </div>
+
+      {/* US-048 Time Travel toolbar: dataset-transaction picker + toggle. */}
+      <TimeTravelToolbar ontologyApiName={ontology} />
+
+      {/* US-048: historical-mode hint banner. Renders only while a tx is
+          pinned so it does not push other chrome around in steady state. */}
+      {timeTravelActive && (
+        <div
+          data-testid="time-travel-hint-banner"
+          className="px-3 py-2 text-xs font-mono rounded border border-accent-amber/40 bg-accent-amber/5 text-accent-amber"
+        >
+          Viewing a historical snapshot — edit / live / bulk actions are
+          disabled. Toggle Time Travel off above to return to the live view.
+        </div>
+      )}
 
       {/* Search bar */}
       <SearchBar
@@ -654,13 +692,19 @@ export function BrowserPage() {
         </div>
       )}
 
-      {/* Bulk-action floating toolbar (rendered only when selection is non-empty) */}
-      <BulkActionToolbar
-        ontologyApiName={ontology}
-        objectType={objectType}
-        selectedRows={selectedRows}
-        onClear={handleClearSelection}
-      />
+      {/* Bulk-action floating toolbar (rendered only when selection is non-empty).
+          US-048: bulk delete is a mutation, so hide it entirely while the page
+          is rendering a historical snapshot. The selection state stays alive
+          so the operator can leave Time Travel and continue the bulk operation
+          where they left off. */}
+      {!timeTravelActive && (
+        <BulkActionToolbar
+          ontologyApiName={ontology}
+          objectType={objectType}
+          selectedRows={selectedRows}
+          onClear={handleClearSelection}
+        />
+      )}
 
       {/* Detail slide panel */}
       <ObjectDetail
