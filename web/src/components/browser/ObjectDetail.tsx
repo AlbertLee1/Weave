@@ -1,4 +1,5 @@
 import { useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import type { DataType, ObjectType, WireObject } from '../../api/types';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
@@ -179,9 +180,22 @@ export function ObjectDetail({
         >
         <div className="space-y-4" data-testid="object-detail-tabs">
           <div
-            className="flex justify-end -mt-2"
+            className="flex justify-end -mt-2 gap-2 items-center"
             data-testid="object-detail-actions"
           >
+            {/* US-047: entry point for the Interface Methods console. The
+                console is a focused page (`/methods/:ontology/:ot/:pk`) so
+                the polymorphic-dispatch param form + result panel have
+                room without crowding the detail slide-in. */}
+            <Link
+              to={`/methods/${ontologyApiName}/${objectType.apiName}/${encodeURIComponent(String(object.__primaryKey ?? ''))}`}
+              className="px-2 py-1 text-[11px] font-mono border border-border rounded-sm text-text-secondary hover:text-text-primary hover:border-text-secondary"
+              data-testid="object-detail-interface-methods-btn"
+              data-object-type-api-name={objectType.apiName}
+              data-primary-key={String(object.__primaryKey ?? '')}
+            >
+              Interface Methods
+            </Link>
             <WatchButton targetRid={object.__rid ?? null} />
           </div>
           <div data-testid="object-detail-reactions">

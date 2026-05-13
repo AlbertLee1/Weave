@@ -24,6 +24,7 @@ export {
   FunctionRepoPage,
   ImportWizardPage,
   InterfaceAdminPage,
+  InterfaceMethodsPage,
   LinkTypeAdminPage,
   LogicFlowsPage,
   ObjectSetBuilderPage,

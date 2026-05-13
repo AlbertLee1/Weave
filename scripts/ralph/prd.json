@@ -719,8 +719,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 47,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Standalone route /methods/:ontology/:objectType/:primaryKey wired (InterfaceMethodsConsolePage); entry-point button on ObjectDetail (object-detail-interface-methods-btn) links there preserving the 抽屉 AC. Lists attached interfaces + per-interface methods + param form; submit POSTs to /api/v2/ontologies/{o}/interfaces/methods/{methodRid}/invoke (honest mapping: backend uses /invoke not /execute as PRD AC phrased it — pkg/oms/admin_handlers_interface_method.go is authoritative). Result panel renders dispatched ActionType apiName + JSON payload + audit-trail deep link to /actions/{o}/history?actionType=<resolved>. Client-side required-param validation short-circuits zero POST. New: web/src/api/interfaceMethods.ts, web/src/hooks/useInterfaceMethods.ts, web/src/components/browser/InterfaceMethodsConsolePage.tsx, web/tests/support/pageObjects/InterfaceMethodsPage.ts, web/tests/feature.interface-methods.spec.ts (4 scenarios, 2 @smoke). Edits: web/src/App.tsx (+import + Route), web/src/components/browser/ObjectDetail.tsx (+Link button), web/src/components/browser/__tests__/ObjectDetail.test.tsx (+MemoryRouter wrapper). tsc 0 errors; eslint clean; vitest 157/157 files / 1247/1247 tests pass; playwright @smoke 70/70 (66 prior + 4 new from US-047, 2 of which are @smoke)."
     },
     {
       "id": "US-048",

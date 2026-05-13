@@ -8,6 +8,7 @@ import {
   act,
 } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { ObjectDetail } from '../ObjectDetail';
@@ -48,7 +49,11 @@ function makeWrapper() {
     },
   });
   return ({ children }: { children: React.ReactNode }) =>
-    createElement(QueryClientProvider, { client }, children);
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(QueryClientProvider, { client }, children),
+    );
 }
 
 const objectType: ObjectType = {

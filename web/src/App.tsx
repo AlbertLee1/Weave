@@ -9,6 +9,7 @@ import { Shell } from './components/layout/Shell';
 import { DashboardPage } from './components/dashboard/DashboardPage';
 import { ExplorerPage } from './components/explorer/ExplorerPage';
 import { BrowserPage } from './components/browser/BrowserPage';
+import { InterfaceMethodsConsolePage } from './components/browser/InterfaceMethodsConsolePage';
 import { ActionConsolePage } from './components/actions/ActionConsolePage';
 import { ActionHistoryPage } from './components/actions/ActionHistoryPage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
@@ -123,6 +124,10 @@ export default function App() {
               <Route path="explorer/:ontology/branches/:branch/reconcile" element={<BranchReconcilePage />} />
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
+              <Route
+                path="methods/:ontology/:objectType/:primaryKey"
+                element={<InterfaceMethodsConsolePage />}
+              />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="actions/:ontology/history" element={<ActionHistoryPage />} />
               <Route path="actions/history" element={<ActionHistoryPage />} />

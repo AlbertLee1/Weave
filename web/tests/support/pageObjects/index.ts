@@ -11,6 +11,7 @@ export { ExplorerBranchPage } from './ExplorerBranchPage';
 export { FunctionRepoPage } from './FunctionRepoPage';
 export { ImportWizardPage } from './ImportWizardPage';
 export { InterfaceAdminPage } from './InterfaceAdminPage';
+export { InterfaceMethodsPage } from './InterfaceMethodsPage';
 export { LinkTypeAdminPage } from './LinkTypeAdminPage';
 export { LogicFlowsPage } from './LogicFlowsPage';
 export { ObjectSetBuilderPage } from './ObjectSetBuilderPage';
