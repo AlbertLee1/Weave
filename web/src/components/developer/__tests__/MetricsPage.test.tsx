@@ -202,6 +202,31 @@ describe('MetricsPage', () => {
     });
   });
 
+  // Dogfood report #6: previously the empty state was a one-liner pointing
+  // to an unspecified "Developer Console". Make sure the new state gives
+  // the user actionable next steps: a curl snippet and a link to the API
+  // Playground.
+  it('empty state includes a curl snippet and Playground link', async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ applications: [] }), { status: 200 }),
+      ),
+    );
+    renderPage();
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('metrics-empty-applications'),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/POST .*\/api\/v2\/developer\/applications/),
+    ).toBeInTheDocument();
+    const link = screen.getByTestId('metrics-empty-playground-link');
+    expect(link).toHaveAttribute('href', '/developer/playground');
+  });
+
   it('surfaces an error when usage fails', async () => {
     vi.unstubAllGlobals();
     setupFetchStub({ usage: false });

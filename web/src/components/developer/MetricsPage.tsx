@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import type { RouteStat, UsageSummary } from '../../api/developer';
 import {
   useApplicationUsage,
@@ -70,7 +71,7 @@ export function MetricsPage() {
           >
             {loadingApps && <option value="">Loading…</option>}
             {!loadingApps && (!apps || apps.length === 0) && (
-              <option value="">No applications</option>
+              <option value="">No applications registered</option>
             )}
             {apps?.map((app) => (
               <option key={app.id} value={app.id}>
@@ -89,10 +90,7 @@ export function MetricsPage() {
           </p>
         )}
         {!effectiveAppId && !loadingApps && !appsError && (
-          <EmptyState
-            title="No applications yet"
-            body="Register an application in the Developer Console to start collecting usage metrics."
-          />
+          <EmptyApplications />
         )}
         {effectiveAppId && loadingUsage && (
           <div className="flex items-center justify-center py-20">
@@ -148,14 +146,61 @@ function WindowTabs({
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
+function EmptyApplications() {
+  const curlSnippet = `curl -X POST $WEAVE_HOST/api/v2/developer/applications \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer $WEAVE_TOKEN" \\
+  -d '{
+    "name": "My App",
+    "description": "What this app does",
+    "redirectUris": ["https://my-app.example.com/oauth/callback"],
+    "scopes": ["ontology.read"]
+  }'`;
   return (
     <div
-      className="rounded border px-6 py-10 text-center"
+      data-testid="metrics-empty-applications"
+      className="rounded border px-6 py-10 max-w-3xl mx-auto"
       style={{ borderColor: 'rgba(31,41,55,0.5)', background: 'rgba(13,17,23,0.4)' }}
     >
-      <p className="text-sm text-text-primary font-semibold">{title}</p>
-      <p className="text-xs text-text-secondary mt-2">{body}</p>
+      <p className="text-sm text-text-primary font-semibold text-center">
+        No applications yet
+      </p>
+      <p className="text-xs text-text-secondary mt-2 text-center">
+        Register an application to start collecting API usage metrics.
+        Once registered the client_id will appear in the dropdown above.
+      </p>
+      <pre
+        className="mt-5 px-4 py-3 rounded text-[11px] leading-relaxed font-mono overflow-x-auto"
+        style={{
+          background: 'rgba(0,0,0,0.45)',
+          border: '1px solid rgba(31,41,55,0.5)',
+          color: '#9CA3AF',
+        }}
+      >
+        <code>{curlSnippet}</code>
+      </pre>
+      <div className="flex items-center justify-center gap-4 mt-5 text-xs">
+        <Link
+          to="/developer/playground"
+          data-testid="metrics-empty-playground-link"
+          className="px-3 py-1.5 rounded transition-colors"
+          style={{
+            background: 'rgba(20,184,166,0.12)',
+            color: '#14B8A6',
+            border: '1px solid rgba(20,184,166,0.3)',
+          }}
+        >
+          Open API Playground
+        </Link>
+        <a
+          href="/swagger"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-text-secondary hover:text-text-primary underline-offset-4 hover:underline"
+        >
+          View API docs
+        </a>
+      </div>
     </div>
   );
 }
