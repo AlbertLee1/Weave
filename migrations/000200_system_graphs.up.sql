@@ -39,12 +39,18 @@ CREATE TABLE IF NOT EXISTS system_graph_versions (
 CREATE INDEX IF NOT EXISTS system_graph_versions_graph_idx
     ON system_graph_versions(graph_rid);
 
--- Auto-history trigger: on UPDATE to a row where versioned=true, snapshot the
--- NEW payload + version into system_graph_versions. Skip when versioned=false
--- so in-place layout/UI tweaks don't bloat history.
+-- Auto-history trigger: on UPDATE to a row where versioned=true AND the
+-- version column actually changed, snapshot the NEW payload into
+-- system_graph_versions. The version-changed gate matters because the repo
+-- exposes two update modes:
+--   * full save (UpdateGraph): bumps version, writes history
+--   * layout patch (UpdateLayout): rewrites payload.positions only, leaves
+--     version alone — this must NOT pollute history with intermediate UI
+--     states.
+-- versioned=false graphs (ephemeral scratch) skip history entirely.
 CREATE OR REPLACE FUNCTION system_graphs_write_history() RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.versioned THEN
+    IF NEW.versioned AND NEW.version IS DISTINCT FROM OLD.version THEN
         INSERT INTO system_graph_versions (graph_rid, version, payload, created_at)
         VALUES (NEW.rid, NEW.version, NEW.payload, NEW.updated_at)
         ON CONFLICT (graph_rid, version) DO UPDATE
