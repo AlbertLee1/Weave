@@ -1,3 +1,9 @@
+import {
+  aggregateAtTime,
+  type AggregationMethod,
+  type TimePoint,
+} from '../timeSeries/aggregateAtTime';
+
 export type FillColorConfig =
   | { by: 'static'; color: string }
   | {
@@ -11,6 +17,24 @@ export type FillColorConfig =
       property: string;
       scale: 'threshold';
       thresholds: Array<{ lt: number; color: string }>;
+    }
+  | {
+      by: 'timeSeries';
+      property: string;
+      scale: 'rainbow';
+      domain?: [number, number];
+      selectedTime: number;
+      windowMs: number;
+      agg: AggregationMethod;
+    }
+  | {
+      by: 'timeSeries';
+      property: string;
+      scale: 'threshold';
+      thresholds: Array<{ lt: number; color: string }>;
+      selectedTime: number;
+      windowMs: number;
+      agg: AggregationMethod;
     };
 
 const FALLBACK = '#9CA3AF';
@@ -23,7 +47,20 @@ export function computeFillColor(
 ): string {
   if (cfg.by === 'static') return cfg.color;
 
-  const raw = node[cfg.property];
+  let raw: unknown;
+  if (cfg.by === 'timeSeries') {
+    const series = node[cfg.property] as TimePoint[] | undefined;
+    if (!Array.isArray(series)) return FALLBACK;
+    const agg = aggregateAtTime(series, {
+      selectedTime: cfg.selectedTime,
+      windowMs: cfg.windowMs,
+      agg: cfg.agg,
+    });
+    if (agg === null) return FALLBACK;
+    raw = agg;
+  } else {
+    raw = node[cfg.property];
+  }
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return FALLBACK;
 
   if (cfg.scale === 'rainbow') {
