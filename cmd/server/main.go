@@ -76,6 +76,7 @@ import (
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
 	"github.com/liyang/weave/pkg/userprefs"
+	"github.com/liyang/weave/pkg/vertex/graphsvc"
 	"github.com/liyang/weave/pkg/watches"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -1017,6 +1018,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// returns 404 ColumnLineageNotConfigured when the store is nil).
 		lineageHandler.SetColumnLineageStore(deps.ColumnLineageStore)
 		lineageHandler.RegisterRoutes(api)
+
+		// VTX-009: Vertex SystemGraph CRUD + version history + save-as-
+		// template. Uses PG-backed repo + template store when a pool is
+		// available; otherwise falls back to in-memory stores so the routes
+		// stay discoverable for SDK / curl probes in degraded mode.
+		var graphRepo graphsvc.Repo = graphsvc.NewMemRepo()
+		var graphTemplates graphsvc.TemplateStore = graphsvc.NewMemTemplateStore()
+		if deps.PGPool != nil {
+			graphRepo = graphsvc.NewPGRepo(deps.PGPool)
+			graphTemplates = graphsvc.NewPGTemplateStore(deps.PGPool)
+		}
+		graphsvc.NewHandler(graphRepo, graphTemplates).RegisterRoutes(api)
 
 		// OntologyTransaction experimental edits endpoint (US-041).
 		// Gated behind ?preview=true — only "append edits" is exposed.

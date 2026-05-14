@@ -27,6 +27,9 @@ var ErrGraphNotFound = errors.New("graph not found")
 // pair that has no history row.
 var ErrVersionNotFound = errors.New("graph version not found")
 
+// ErrInvalidPositions is returned by UpdateLayout when positions is empty.
+var ErrInvalidPositions = errors.New("positions must not be empty")
+
 // Graph is the canonical Vertex graph row. Payload carries the serialized
 // workspace (layers, edges, savedSelections, timeSettings, positions) as
 // opaque JSONB — VTX-011 will layer schema validation on top.

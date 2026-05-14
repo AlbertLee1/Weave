@@ -139,6 +139,18 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	// the Saga / SagaStep DTOs stabilise.
 	{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/sagas"}:          true,
 	{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}"}: true,
+	// VTX-009: Vertex SystemGraph REST surface. The OpenAPI schemas for graph
+	// payloads (layers, edges, savedSelections, timeSettings, positions) land
+	// alongside the JSON Schema work in VTX-011; until then the chi routes are
+	// the canonical contract.
+	{Method: "POST", Path: "/api/vertex/v1/graphs"}:                              true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}"}:                         true,
+	{Method: "PUT", Path: "/api/vertex/v1/graphs/{rid}"}:                         true,
+	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}:                true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/duplicate"}:              true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:       true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:                 true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}:      true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the
