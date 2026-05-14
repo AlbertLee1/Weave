@@ -40,10 +40,14 @@ type PermChecker interface {
 // AuditedService wraps Service with audit + permission gating. The
 // original Service.Apply remains the lean apply-only flow used in
 // systems / migrations; AuditedService.Apply is the user-facing entry.
+//
+// runner is optionally attached via WithActionRunner to enable
+// ApplyWithFollowUps. nil means "no follow-up support".
 type AuditedService struct {
 	*Service
-	audit AuditLogger
-	perm  PermChecker
+	audit  AuditLogger
+	perm   PermChecker
+	runner ActionRunner
 }
 
 // NewServiceWithAudit composes the audited variant. Panics on any nil
