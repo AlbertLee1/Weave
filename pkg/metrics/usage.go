@@ -78,6 +78,19 @@ func NewUsageSampleStore(retention time.Duration, maxPerApp int) *UsageSampleSto
 	}
 }
 
+// SetNowFunc pins the wall-clock used for retention eviction and
+// Snapshot cutoff. Tests in other packages can drive the same anchor
+// the handler mocks, keeping window assertions deterministic regardless
+// of when the test runs.
+func (s *UsageSampleStore) SetNowFunc(now func() time.Time) {
+	if s == nil || now == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = now
+}
+
 // Record appends a sample for an app. Called from the usage middleware
 // after the handler returns.
 func (s *UsageSampleStore) Record(appID string, sample UsageSample) {

@@ -133,6 +133,12 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "GET", Path: "/api/openapi.yaml"}: true,
 	{Method: "GET", Path: "/swagger/"}:         true,
 	{Method: "GET", Path: "/swagger"}:          true,
+	// TODO(US-044): document Saga list/get endpoints in openapi.yaml. They
+	// power the SagaJobs UI (PC-A08) but the response schema is still
+	// evolving; ship the chi routes now and follow up with the YAML once
+	// the Saga / SagaStep DTOs stabilise.
+	{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/sagas"}:          true,
+	{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the

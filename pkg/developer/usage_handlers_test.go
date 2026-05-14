@@ -30,9 +30,15 @@ func newUsageHarness(t *testing.T, ownerID, clientID string) (*UsageHandler, *fa
 		t.Fatalf("create: %v", err)
 	}
 	store := metrics.NewUsageSampleStore(30*24*time.Hour, 100)
-	h := NewUsageHandler(repo, store)
 	// Pin the clock so tests assert deterministic window boundaries.
-	h.now = func() time.Time { return time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC) }
+	// Both the handler and the store must share the same anchor — the
+	// store's retention eviction and Snapshot cutoff use its own now(),
+	// so without SetNowFunc samples older than 30d relative to wall-clock
+	// would be dropped before the handler's window summariser sees them.
+	clock := func() time.Time { return time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC) }
+	store.SetNowFunc(clock)
+	h := NewUsageHandler(repo, store)
+	h.now = clock
 	return h, repo, app, store
 }
 
