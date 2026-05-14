@@ -43,8 +43,8 @@
         "Tests pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented in pkg/scenarios/{scenarios.go,pg_repo.go} + integration tests in pkg/scenarios/repo_test.go (6 tests). Repo interface: CreateCaseStudy/GetCaseStudy/CreateScenario/GetScenario/AppendEdit/ListEdits/Freeze/UpsertOverride/ListOverrides. RIDs minted ri.vertex.main.{case-study,scenario}.<uuid>. AppendEdit runs in a tx with SELECT ... FOR UPDATE to make Freeze races safe; ErrScenarioImmutable / ErrScenarioNotFound are typed sentinels (not raw SQL errors)."
     },
     {
       "id": "VTX-003",

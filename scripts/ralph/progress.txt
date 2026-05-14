@@ -8,6 +8,9 @@ Started: Thu May 14 23:48:45 CST 2026
 - 校验 column / index 存在：`information_schema.columns` / `pg_indexes`（`indexdef ILIKE '%(col_a, col_b)%'`）。
 - Module path: `github.com/liyang/weave`，迁移文件路径由 `testutil.MigrationsDir()` 自动向上搜索 8 层定位 `migrations/`。
 - Vertex 命名前缀：RID 形如 `ri.vertex.{realm}.{resourceType}.{uuid}`；与现有 `ri.ontology.*` 区分但共用 PG schema。
+- Repo 风格遵循 pkg/oms.Repository：小接口、ctx-first、sentinel error（`ErrXxxNotFound` / `ErrXxxImmutable`）让调用方可 `errors.Is`。PG 实现写 `var _ Repo = (*PGRepo)(nil)` 编译期断言接口满足。
+- 应用层并发写 + 状态翻转：`SELECT ... FOR UPDATE` + tx 阻塞并行 AppendEdit / Freeze，避免 immutable 翻转后还能追加 edit。pgx.BeginTx + defer Rollback 是标准模式。
+- pgx 的 JSONB 写法：`json.RawMessage` 或 `[]byte` 直传，pgx 会自动处理 jsonb 类型；空切片传 nil interface 防止某些版本 panic。`NULLIF($n, '')` 把空字符串映射为 NULL，匹配 schema 的 nullable text 列。
 
 ---
 
@@ -25,4 +28,20 @@ Started: Thu May 14 23:48:45 CST 2026
   - `scenario_edits.seq` 是 BIGSERIAL（全局递增），不是 per-scenario 重置 1..N。fold 算法按 seq ASC 排序即可保证插入顺序；这点在 VTX-002 / VTX-003 写测试时要注意：不能断言 seq 从 1 开始。
   - PG container 启动 ~1.2 秒 / case；4 个 case 总 ~6 秒。整 `go test ./...` 时（包含其它 ~50 个 integration test）会到分钟级，本地跑请用 `-run` 限缩范围。
   - `op` 的 CHECK 取值固定为 `createObject|modifyProperty|deleteObject|addLink|deleteLink` — Fold 算法需要识别这 5 种 op。
+---
+
+## 2026-05-15 - VTX-002
+- Implemented `pkg/scenarios` ScenarioRepo interface + PostgreSQL implementation on top of VTX-001 migrations. Repo surface: `CreateCaseStudy / GetCaseStudy / CreateScenario / GetScenario / AppendEdit / ListEdits / Freeze / UpsertOverride / ListOverrides`.
+- Files changed:
+  - `pkg/scenarios/scenarios.go` (new) — interface + 4 domain structs (`CaseStudy`, `Scenario`, `ScenarioEdit`, `ScenarioOverride`) + `ErrScenarioNotFound` / `ErrScenarioImmutable` sentinels.
+  - `pkg/scenarios/pg_repo.go` (new) — `PGRepo` with `var _ Repo = (*PGRepo)(nil)`. `AppendEdit` runs in a tx with `SELECT ... FOR UPDATE` to make Freeze races safe; `UpsertOverride` is `ON CONFLICT (...) DO UPDATE`.
+  - `pkg/scenarios/repo_test.go` (new, integration build tag) — 6 BDD tests covering case-study/scenario create, RID prefix, 5-edit insert order, Freeze → ErrScenarioImmutable, unknown scenario → ErrScenarioNotFound, override upsert idempotency.
+  - `scripts/ralph/prd.json` — VTX-002 → passes:true.
+- Quality checks: `go test -tags integration ./pkg/scenarios/... -run TestScenarioRepo` PASS (6/6, ~8.2s incl. 6 PG containers); `go vet ./pkg/scenarios/...` clean; `go build ./...` clean.
+- **Learnings for future iterations:**
+  - `seq` 是 BIGSERIAL 全局递增 — 测试要断言「严格递增」而非 1..5。这一点 VTX-001 笔记已警告，VTX-002 测试如实落地。
+  - `case_studies.ontology_rid` 有 FK 到 `ontologies(rid)`，集成测试必须先插一行 `ontologies` 桩数据；用 `ri.ontology.main.ontology.vtxtest` 这类清晰可识别 RID 而非 UUID，方便日志排查。
+  - `rid.New("vertex", "main", "case-study")` 直接调用即可，无需在 pkg/rid 加 `NewCaseStudyRID` 帮手；保持 pkg/rid 不依赖 Vertex 业务。
+  - 应用层 `Freeze + AppendEdit` 并发安全靠 PG row lock — DB 列 `immutable` 是真理来源，应用代码读到 false 再插入，整个流程在同一 tx 内（`SELECT ... FOR UPDATE` → 检查 → INSERT → COMMIT）。VTX-003 Fold 算法是纯函数所以不涉及锁。
+  - `ScenarioOverride.Value` 必须非空：`UpsertOverride` 早返回 `fmt.Errorf("override value must not be empty")`。VTX-005 / VTX-006 写 override UI 时记得前端先校验。
 ---
