@@ -61,6 +61,10 @@ type Handler struct {
 	// ActivityStoreNotConfigured. Wired via SetActivityStore from main.go
 	// after construction.
 	activityStore oms.ObjectActivityStore
+	// scenarioReader, when non-nil, enables Vertex scenario overlay via the
+	// X-Scenario-Id header on Read endpoints (VTX-004). Wired via
+	// SetScenarioReader.
+	scenarioReader ScenarioReader
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -155,6 +159,12 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	objectType := chi.URLParam(r, "objectType")
 	primaryKey := chi.URLParam(r, "primaryKey")
 
+	overlay, apiErr := h.loadScenarioOverlay(r.Context(), r, ontologyRID)
+	if apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
 	obj, err := h.svc.GetObject(r.Context(), GetObjectRequest{
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
@@ -174,6 +184,19 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if overlay != nil {
+		overlaid, deleted := overlay.applyToObject(obj)
+		if deleted {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectNotFound", map[string]string{
+				"objectType": objectType,
+				"primaryKey": primaryKey,
+				"reason":     "deleted in scenario",
+			}))
+			return
+		}
+		obj = overlaid
+	}
+
 	httputil.WriteJSON(w, http.StatusOK, obj)
 }
 
@@ -181,6 +204,12 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")
+
+	overlay, apiErr := h.loadScenarioOverlay(r.Context(), r, ontologyRID)
+	if apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
 
 	pageSize := 0
 	if ps := r.URL.Query().Get("pageSize"); ps != "" {
@@ -212,6 +241,10 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 			"reason": err.Error(),
 		}))
 		return
+	}
+
+	if overlay != nil {
+		page = overlay.applyToPage(page)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
@@ -521,6 +554,12 @@ func (h *Handler) ListLinkedObjects(w http.ResponseWriter, r *http.Request) {
 	primaryKey := chi.URLParam(r, "primaryKey")
 	linkType := chi.URLParam(r, "linkType")
 
+	overlay, apiErr := h.loadScenarioOverlay(r.Context(), r, ontologyRID)
+	if apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
 	pageSize := 0
 	if ps := r.URL.Query().Get("pageSize"); ps != "" {
 		var err error
@@ -554,6 +593,10 @@ func (h *Handler) ListLinkedObjects(w http.ResponseWriter, r *http.Request) {
 			"reason": err.Error(),
 		}))
 		return
+	}
+
+	if overlay != nil {
+		page = overlay.applyToPage(page)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
