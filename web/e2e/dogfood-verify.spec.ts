@@ -343,6 +343,128 @@ test.describe.serial('Dogfood verification: report.md 6 issues', () => {
     expect(linksToPlayground).toBe(true);
   });
 
+  // Round 2 — slug aliases the dogfood agent inferred from sidebar
+  // labels (e.g. /aip-threads, /explorer/iotDemo/query-builder). Each
+  // should redirect to its real canonical route without "No routes
+  // matched" warnings.
+  test('round2 #1-#4 slug aliases redirect to canonical routes', async ({ page }) => {
+    const aliases: Array<{ from: string; expectPath: RegExp; testid: string }> = [
+      { from: '/aip-threads', expectPath: /\/threads$/, testid: 'threads-page' },
+      { from: '/api-playground', expectPath: /\/developer\/playground$/, testid: 'playground-page' },
+      { from: '/api-metrics', expectPath: /\/developer\/metrics$/, testid: 'metrics-page' },
+      { from: '/schema-inference', expectPath: /\/schema\/infer$/, testid: 'schema-inference-page' },
+    ];
+    const notes: string[] = [];
+    let allOk = true;
+    for (const a of aliases) {
+      const console = captureConsole(page);
+      await page.goto(abs(a.from));
+      await page.waitForLoadState('networkidle');
+      const noMatch = console.messages.filter((m) => m.text.includes('No routes matched'));
+      const url = page.url();
+      const testidCount = await page.locator(`[data-testid="${a.testid}"]`).count();
+      console.detach();
+      const ok = noMatch.length === 0 && a.expectPath.test(new URL(url).pathname);
+      if (!ok) allOk = false;
+      notes.push(`${a.from} → ${url} (testid=${a.testid} count=${testidCount}, no-match=${noMatch.length})`);
+    }
+    recordIssue({
+      id: 'round2 #1-#4',
+      title: 'Slug aliases (/aip-threads, /api-playground, /api-metrics, /schema-inference)',
+      status: allOk ? 'pass' : 'fail',
+      notes,
+    });
+    expect(allOk).toBe(true);
+  });
+
+  test('round2 #5 explorer sub-route slugs redirect to canonical routes', async ({ page }) => {
+    const aliases: Array<{ from: string; expectPath: RegExp }> = [
+      { from: `/explorer/${ONTOLOGY}/query-builder`, expectPath: new RegExp(`/objectsets/${ONTOLOGY}$`) },
+      { from: `/explorer/${ONTOLOGY}/quiver-ts`, expectPath: new RegExp(`/quiver/${ONTOLOGY}$`) },
+      { from: `/explorer/${ONTOLOGY}/import-data`, expectPath: new RegExp(`/import/${ONTOLOGY}$`) },
+      { from: `/explorer/${ONTOLOGY}/approvals`, expectPath: new RegExp(`/approvals/${ONTOLOGY}$`) },
+      { from: `/explorer/${ONTOLOGY}/action-history`, expectPath: new RegExp(`/actions/${ONTOLOGY}/history$`) },
+      { from: `/explorer/${ONTOLOGY}/saga-jobs`, expectPath: new RegExp(`/actions/${ONTOLOGY}/jobs$`) },
+      { from: `/explorer/${ONTOLOGY}/querytypes`, expectPath: new RegExp(`/queries/${ONTOLOGY}$`) },
+      { from: `/explorer/${ONTOLOGY}/automation`, expectPath: new RegExp(`/automation/${ONTOLOGY}$`) },
+      { from: `/explorer/${ONTOLOGY}/proposals`, expectPath: new RegExp(`/proposals/${ONTOLOGY}$`) },
+    ];
+    const notes: string[] = [];
+    let allOk = true;
+    for (const a of aliases) {
+      const console = captureConsole(page);
+      await page.goto(abs(a.from));
+      await page.waitForLoadState('networkidle');
+      const noMatch = console.messages.filter((m) => m.text.includes('No routes matched'));
+      const url = page.url();
+      const explorerCount = await page.locator('[data-testid="explorer-page"]').count();
+      console.detach();
+      const ok = noMatch.length === 0 && a.expectPath.test(new URL(url).pathname) && explorerCount === 0;
+      if (!ok) allOk = false;
+      notes.push(`${a.from} → ${url} (explorer-page=${explorerCount}, no-match=${noMatch.length})`);
+    }
+    recordIssue({
+      id: 'round2 #5',
+      title: 'Explorer sub-route slugs no longer render Schema Graph',
+      status: allOk ? 'pass' : 'fail',
+      notes,
+    });
+    expect(allOk).toBe(true);
+  });
+
+  test('round2 #6 explorer admin sub-route slugs redirect to /admin/:ontology/*', async ({ page }) => {
+    const aliases: Array<{ from: string; expectPath: RegExp }> = [
+      { from: `/explorer/${ONTOLOGY}/admin/object-types`, expectPath: new RegExp(`/admin/${ONTOLOGY}/objectTypes$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/link-types`, expectPath: new RegExp(`/admin/${ONTOLOGY}/linkTypes$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/action-types`, expectPath: new RegExp(`/admin/${ONTOLOGY}/actionTypes$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/interfaces`, expectPath: new RegExp(`/admin/${ONTOLOGY}/interfaces$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/value-types`, expectPath: new RegExp(`/admin/${ONTOLOGY}/valueTypes$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/schema-graph`, expectPath: new RegExp(`/admin/${ONTOLOGY}/graph$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/history`, expectPath: new RegExp(`/admin/${ONTOLOGY}/history$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/saga-dlq`, expectPath: new RegExp(`/admin/${ONTOLOGY}/saga-dlq$`) },
+      { from: `/explorer/${ONTOLOGY}/admin/security`, expectPath: new RegExp(`/admin/${ONTOLOGY}/security$`) },
+    ];
+    const notes: string[] = [];
+    let allOk = true;
+    for (const a of aliases) {
+      const console = captureConsole(page);
+      await page.goto(abs(a.from));
+      await page.waitForLoadState('networkidle');
+      const noMatch = console.messages.filter((m) => m.text.includes('No routes matched'));
+      const url = page.url();
+      console.detach();
+      const ok = noMatch.length === 0 && a.expectPath.test(new URL(url).pathname);
+      if (!ok) allOk = false;
+      notes.push(`${a.from} → ${url} (no-match=${noMatch.length})`);
+    }
+    recordIssue({
+      id: 'round2 #6',
+      title: 'Explorer admin sub-route slugs redirect to /admin/:ontology/*',
+      status: allOk ? 'pass' : 'fail',
+      notes,
+    });
+    expect(allOk).toBe(true);
+  });
+
+  test('round2 unknown URLs render NotFound instead of blank', async ({ page }) => {
+    const console = captureConsole(page);
+    await page.goto(abs('/this-route-does-not-exist'));
+    await page.waitForLoadState('networkidle');
+    const notFoundCount = await page.locator('[data-testid="not-found-page"]').count();
+    const noMatch = console.messages.filter((m) => m.text.includes('No routes matched'));
+    console.detach();
+    recordIssue({
+      id: 'round2 404',
+      title: 'Unknown URLs render NotFoundPage',
+      status: notFoundCount > 0 ? 'pass' : 'fail',
+      notes: [
+        `not-found-page testid count: ${notFoundCount}`,
+        `No-routes-matched warnings: ${noMatch.length}`,
+      ],
+    });
+    expect(notFoundCount).toBeGreaterThan(0);
+  });
+
   test.afterAll(() => {
     const date = new Date().toISOString().slice(0, 10);
     const total = results.length;

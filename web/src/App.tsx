@@ -57,6 +57,7 @@ import { SettingsPage } from './components/settings/SettingsPage';
 import { AutomationRulesPage } from './components/automation/AutomationRulesPage';
 import { ProposalsPage } from './components/proposals/ProposalsPage';
 import { SecurityPoliciesPage } from './components/securityPolicies/SecurityPoliciesPage';
+import { NotFoundPage } from './components/common/NotFoundPage';
 import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
@@ -107,6 +108,19 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Dogfood round 2 #5/#6: legacy slug URLs that mirror sidebar labels
+// (e.g. /explorer/iotDemo/query-builder) get redirected to their real
+// canonical routes so direct URL typing / bookmarks don't dead-end on
+// the Schema Graph fallback or trigger "No routes matched" warnings.
+function OntologyAliasRedirect({
+  build,
+}: {
+  build: (ontology: string) => string;
+}) {
+  const { ontology } = useParams<{ ontology: string }>();
+  return <Navigate to={build(ontology ?? '')} replace />;
+}
+
 export default function App() {
   return (
     <GlobalErrorBoundary>
@@ -126,6 +140,78 @@ export default function App() {
               <Route path="explorer/:ontology" element={<ExplorerPage />} />
               <Route path="explorer/:ontology/branches/:branch/diff" element={<BranchDiffPage />} />
               <Route path="explorer/:ontology/branches/:branch/reconcile" element={<BranchReconcilePage />} />
+              <Route
+                path="explorer/:ontology/query-builder"
+                element={<OntologyAliasRedirect build={(o) => `/objectsets/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/quiver-ts"
+                element={<OntologyAliasRedirect build={(o) => `/quiver/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/import-data"
+                element={<OntologyAliasRedirect build={(o) => `/import/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/approvals"
+                element={<OntologyAliasRedirect build={(o) => `/approvals/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/action-history"
+                element={<OntologyAliasRedirect build={(o) => `/actions/${o}/history`} />}
+              />
+              <Route
+                path="explorer/:ontology/saga-jobs"
+                element={<OntologyAliasRedirect build={(o) => `/actions/${o}/jobs`} />}
+              />
+              <Route
+                path="explorer/:ontology/querytypes"
+                element={<OntologyAliasRedirect build={(o) => `/queries/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/automation"
+                element={<OntologyAliasRedirect build={(o) => `/automation/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/proposals"
+                element={<OntologyAliasRedirect build={(o) => `/proposals/${o}`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/object-types"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/objectTypes`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/link-types"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/linkTypes`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/action-types"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/actionTypes`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/interfaces"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/interfaces`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/value-types"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/valueTypes`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/schema-graph"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/graph`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/history"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/history`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/saga-dlq"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/saga-dlq`} />}
+              />
+              <Route
+                path="explorer/:ontology/admin/security"
+                element={<OntologyAliasRedirect build={(o) => `/admin/${o}/security`} />}
+              />
               <Route path="explorer/:ontology/:objectType" element={<ExplorerPage />} />
               <Route path="browser/:ontology/:objectType" element={<BrowserPage />} />
               <Route
@@ -144,6 +230,7 @@ export default function App() {
                 }
               />
               <Route path="threads" element={<ThreadsPage />} />
+              <Route path="aip-threads" element={<Navigate to="/threads" replace />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="aip-logic" element={<Navigate to="/logic-flows" replace />} />
               <Route path="pipelines" element={<PipelinesPage />} />
@@ -221,8 +308,11 @@ export default function App() {
               <Route path="objectsets/:ontology/diff" element={<ObjectSetDiffPage />} />
               <Route path="import/:ontology" element={<ImportWizardPage />} />
               <Route path="schema/infer" element={<SchemaInferencePage />} />
+              <Route path="schema-inference" element={<Navigate to="/schema/infer" replace />} />
               <Route path="developer/playground" element={<PlaygroundPage />} />
+              <Route path="api-playground" element={<Navigate to="/developer/playground" replace />} />
               <Route path="developer/metrics" element={<MetricsPage />} />
+              <Route path="api-metrics" element={<Navigate to="/developer/metrics" replace />} />
               <Route
                 path="admin/:ontology/objectTypes"
                 element={
@@ -320,6 +410,7 @@ export default function App() {
                 }
               />
               <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
+              <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
         </AuthProvider>
