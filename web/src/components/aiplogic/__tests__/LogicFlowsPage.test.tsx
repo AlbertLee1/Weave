@@ -147,6 +147,14 @@ describe('LogicFlowsPage (US-282)', () => {
     expect(screen.getByText(/no flow selected/i)).toBeInTheDocument();
   });
 
+  it('renders a "New flow" CTA inside the empty state (dogfood #6)', async () => {
+    vi.spyOn(logicApi, 'listLogicFlows').mockResolvedValue({ flows: [] });
+    renderPage();
+    const emptyBlock = await screen.findByTestId('logic-flow-list-empty');
+    const cta = within(emptyBlock).getByRole('button', { name: /new flow/i });
+    expect(cta).toBeInTheDocument();
+  });
+
   it('lists flows, auto-selects the first, and renders nodes on the canvas', async () => {
     vi.spyOn(logicApi, 'listLogicFlows').mockResolvedValue({
       flows: [flowA, flowB],

@@ -157,7 +157,7 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
       >
         <option value="">
           {transactions.length === 0
-            ? '— no transactions —'
+            ? '— no transactions — apply an action to create one'
             : 'Latest (live)'}
         </option>
         {transactions.map((tx) => (
@@ -167,6 +167,14 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
           </option>
         ))}
       </select>
+      {transactions.length === 0 && !isLoading && !error && (
+        <p
+          data-testid="time-travel-no-tx-hint"
+          className="text-[11px] font-mono text-text-secondary"
+        >
+          Apply any action to record a transaction.
+        </p>
+      )}
 
       {enabled && (
         <span

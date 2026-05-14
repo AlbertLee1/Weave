@@ -389,6 +389,16 @@ export function AutomationRulesPage() {
           <EmptyState
             title="No automation rules yet"
             description="Create a rule to automate scheduled jobs or react to data changes."
+            action={
+              <button
+                type="button"
+                data-testid="automation-rules-empty-cta"
+                onClick={beginCreate}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white shadow hover:bg-amber-500"
+              >
+                + New rule
+              </button>
+            }
           />
         </div>
       ) : (

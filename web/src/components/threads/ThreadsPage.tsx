@@ -311,11 +311,21 @@ function ThreadList({
             {describeError(error)}
           </div>
         ) : threads.length === 0 ? (
-          <div
-            data-testid="thread-list-empty"
-            className="px-3 py-10 text-center text-xs text-text-secondary"
-          >
-            No threads yet. Click <span className="font-mono">New</span> to start.
+          <div data-testid="thread-list-empty">
+            <EmptyState
+              title="No threads yet"
+              description="Conversations with configured LLM providers will appear here."
+              action={
+                <button
+                  type="button"
+                  data-testid="thread-empty-cta"
+                  onClick={onNew}
+                  className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white shadow hover:bg-amber-500"
+                >
+                  + Start a thread
+                </button>
+              }
+            />
           </div>
         ) : (
           <ul className="divide-y divide-border/40">

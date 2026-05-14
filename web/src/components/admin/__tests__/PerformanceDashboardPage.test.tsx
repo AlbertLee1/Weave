@@ -163,4 +163,21 @@ describe('PerformanceDashboardPage', () => {
       expect(list.textContent).toContain('weave_db_queries_total');
     });
   });
+
+  it('renders a friendly "perf-empty" placeholder after the first scrape lands without enough samples (dogfood #8)', async () => {
+    // A single successful scrape yields snapshot=truthy but history=[]
+    // because rate-derivation needs two consecutive samples. Surface a
+    // guidance card so the page never appears blank.
+    const fetchMock = mockFetchSequence([SCRAPE_T0]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<PerformanceDashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('perf-empty')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('perf-empty').textContent ?? '').toMatch(
+      /waiting|sample/i,
+    );
+  });
 });

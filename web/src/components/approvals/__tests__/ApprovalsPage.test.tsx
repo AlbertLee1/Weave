@@ -109,6 +109,15 @@ describe('ApprovalsPage (US-243)', () => {
     expect(await screen.findByText(/no approvals match/i)).toBeInTheDocument();
   });
 
+  it('empty state surfaces an actionable description (dogfood #6)', async () => {
+    vi.spyOn(approvalsApi, 'listApprovals').mockResolvedValue({ data: [] });
+
+    renderPage();
+
+    const emptyBlock = await screen.findByTestId('approvals-empty');
+    expect(emptyBlock.textContent ?? '').toMatch(/widen|widening|submit/i);
+  });
+
   it('switching status filter re-queries with the new status', async () => {
     const listSpy = vi.spyOn(approvalsApi, 'listApprovals').mockImplementation(
       async (_o, params) => ({

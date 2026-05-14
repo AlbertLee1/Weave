@@ -15,6 +15,7 @@ import {
   type DerivedRates,
   type MetricsSnapshot,
 } from '../../api/metrics';
+import { EmptyState } from '../common/EmptyState';
 
 const POLL_INTERVAL_MS = 5000;
 const HISTORY_LIMIT = 60;
@@ -232,6 +233,15 @@ export function PerformanceDashboardPage() {
       {!snapshot && !error && (
         <div data-testid="perf-loading" className="text-sm text-slate-500">
           Waiting for first scrape…
+        </div>
+      )}
+
+      {snapshot && history.length === 0 && !error && (
+        <div data-testid="perf-empty">
+          <EmptyState
+            title="Waiting for first sample…"
+            description={`Metrics will appear within ${POLL_INTERVAL_MS / 1000} s of the next poll.`}
+          />
         </div>
       )}
 

@@ -645,6 +645,16 @@ function FlowList({
             <EmptyState
               title="No flows yet"
               description="Create a new flow to start designing a workflow."
+              action={
+                <button
+                  type="button"
+                  data-testid="logic-flow-empty-cta"
+                  onClick={onNew}
+                  className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white shadow hover:bg-amber-500"
+                >
+                  + New flow
+                </button>
+              }
             />
           </div>
         ) : (

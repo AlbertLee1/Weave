@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import {
@@ -137,6 +137,15 @@ describe('QueryTypesSandboxPage', () => {
     await waitFor(() =>
       expect(screen.getByTestId('query-types-sandbox-empty')).toBeTruthy(),
     );
+  });
+
+  it('empty state surfaces a "New QueryType" CTA (dogfood #6)', async () => {
+    vi.spyOn(ontologiesApi, 'listQueryTypes').mockResolvedValue([]);
+    renderPage();
+
+    const empty = await screen.findByTestId('query-types-sandbox-empty');
+    const cta = within(empty).getByRole('button', { name: /new querytype/i });
+    expect(cta).toBeInTheDocument();
   });
 
   it('renders the parameter form from the selected QueryType schema and executes against the API', async () => {

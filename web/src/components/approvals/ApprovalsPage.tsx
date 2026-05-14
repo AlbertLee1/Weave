@@ -178,8 +178,8 @@ export function ApprovalsPage() {
             title="No approvals match"
             description={
               status === 'PENDING'
-                ? 'Nothing is waiting for review right now.'
-                : 'Try a different status filter.'
+                ? 'Nothing is waiting for review right now. Try widening filters or asking the team to submit a request.'
+                : 'Try widening filters or switching status — once a teammate submits an approval request it will appear here.'
             }
           />
         </div>

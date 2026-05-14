@@ -74,6 +74,14 @@ describe('PipelinesPage (US-297)', () => {
     expect(screen.getByText(/no pipeline selected/i)).toBeInTheDocument();
   });
 
+  it('renders a "New pipeline" CTA inside the empty state (dogfood #6)', async () => {
+    vi.spyOn(pipelinesApi, 'listPipelines').mockResolvedValue({ pipelines: [] });
+    renderPage();
+    const emptyBlock = await screen.findByTestId('pipeline-list-empty');
+    const cta = within(emptyBlock).getByRole('button', { name: /new pipeline/i });
+    expect(cta).toBeInTheDocument();
+  });
+
   it('lists pipelines, auto-selects the first, and renders DAG nodes', async () => {
     vi.spyOn(pipelinesApi, 'listPipelines').mockResolvedValue({
       pipelines: [pipelineAlpha, pipelineBeta],

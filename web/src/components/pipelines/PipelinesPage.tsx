@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { ApiRequestError } from '../../api/client';
 import type { Pipeline } from '../../api/pipelines';
 import { usePipeline, usePipelines } from '../../hooks/usePipelines';
@@ -405,6 +406,7 @@ function PipelineList({
   activeId,
   onSelect,
 }: PipelineListProps) {
+  const navigate = useNavigate();
   return (
     <aside
       data-testid="pipeline-list"
@@ -440,6 +442,16 @@ function PipelineList({
             <EmptyState
               title="No pipelines yet"
               description="Pipelines created via POST /api/v2/pipelines will appear here."
+              action={
+                <button
+                  type="button"
+                  data-testid="pipeline-empty-cta"
+                  onClick={() => navigate('/pipelines/new')}
+                  className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white shadow hover:bg-amber-500"
+                >
+                  + New pipeline
+                </button>
+              }
             />
           </div>
         ) : (

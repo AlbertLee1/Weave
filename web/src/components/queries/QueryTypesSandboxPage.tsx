@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { FormProvider, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -170,6 +170,7 @@ function formatCell(v: unknown): string {
 
 export function QueryTypesSandboxPage() {
   const { ontology } = useParams<{ ontology: string }>();
+  const navigate = useNavigate();
   const queryTypesQuery = useQueryTypes(ontology ?? '');
   const executeMutation = useExecuteQueryType(ontology ?? '');
 
@@ -319,6 +320,16 @@ export function QueryTypesSandboxPage() {
               <EmptyState
                 title="No QueryTypes defined"
                 description="Define a QueryType via the admin API to enable the sandbox."
+                action={
+                  <button
+                    type="button"
+                    data-testid="query-types-empty-cta"
+                    onClick={() => navigate(`/queries/${ontology}/new`)}
+                    className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white shadow hover:bg-amber-500"
+                  >
+                    + New QueryType
+                  </button>
+                }
               />
             </div>
           ) : (

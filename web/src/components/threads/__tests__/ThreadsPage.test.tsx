@@ -86,6 +86,14 @@ describe('ThreadsPage (US-280)', () => {
     expect(screen.getByText(/no thread selected/i)).toBeInTheDocument();
   });
 
+  it('renders a "Start a thread" CTA inside the empty state (dogfood #6)', async () => {
+    vi.spyOn(aipApi, 'listThreads').mockResolvedValue({ threads: [] });
+    renderPage();
+    const emptyBlock = await screen.findByTestId('thread-list-empty');
+    const cta = within(emptyBlock).getByRole('button', { name: /start a thread/i });
+    expect(cta).toBeInTheDocument();
+  });
+
   it('lists threads and auto-selects the first conversation', async () => {
     vi.spyOn(aipApi, 'listThreads').mockResolvedValue({
       threads: [threadA, threadB],
