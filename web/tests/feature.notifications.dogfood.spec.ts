@@ -2,22 +2,18 @@ import { expect, test } from '@playwright/test';
 import { Given, Then, When, describeFeature, signIn } from './support';
 
 /**
- * Dogfood Round 3 #1 + #3: the Notification drawer used to remain in the
- * DOM (translated off-screen) on every route, AND a second copy was
- * mounted by the Topbar even when the user was already standing on the
- * dedicated `/notifications` full page. Both surveys flagged it as a
- * duplicate / "looks open again" bug.
+ * Dogfood Round 3 #1 + #3 (revisit): the Topbar slide drawer was removed
+ * entirely. The bell is now a single Link → /notifications full page.
+ * Surveyors' "always open" / "duplicates the page" complaint had a
+ * common root cause — two notification surfaces (drawer + page) — and
+ * the fix is to keep exactly one.
  *
- * This spec navigates from `/` → `/notifications` and asserts:
- *
- *  - the Topbar's slide-panel is NOT present in the DOM on /notifications
- *    (component is conditionally rendered, not just CSS-hidden),
- *  - the "Notifications" h1 heading from the full page appears exactly
- *    once (proving the duplicate Topbar drawer is gone).
+ * This spec asserts the bell behaves as a link, and that the slide-panel
+ * drawer is absent from the DOM on both `/` and `/notifications`.
  */
 
-describeFeature('Notifications drawer does not duplicate on /notifications', () => {
-  test('Scenario: navigating to /notifications removes the Topbar slide-panel @smoke', async ({
+describeFeature('Topbar bell is the only notification entry point', () => {
+  test('Scenario: bell links to /notifications and no drawer mounts @smoke', async ({
     page,
     request,
   }) => {
@@ -30,23 +26,40 @@ describeFeature('Notifications drawer does not duplicate on /notifications', () 
       await expect(page.getByTestId('topbar')).toBeVisible();
     });
 
-    await When('they navigate to /notifications', async () => {
-      await page.goto('/notifications');
-    });
+    await Then(
+      'the Topbar notification bell is a link with href="/notifications"',
+      async () => {
+        const bell = page.getByTestId('notification-bell');
+        await expect(bell).toHaveAttribute('href', '/notifications');
+      },
+    );
 
     await Then(
-      'the Topbar notification slide-panel is not present in the DOM',
+      'no slide-panel drawer is mounted on the dashboard',
       async () => {
         await expect(page.getByTestId('slide-panel')).toHaveCount(0);
       },
     );
 
+    await When('they click the bell', async () => {
+      await page.getByTestId('notification-bell').click();
+      await page.waitForURL('**/notifications');
+    });
+
     await Then(
-      'the Notifications heading appears exactly once',
+      'the URL is /notifications and the page heading renders exactly once',
       async () => {
+        await expect(page).toHaveURL(/\/notifications$/);
         await expect(
           page.getByRole('heading', { name: 'Notifications', level: 1 }),
         ).toHaveCount(1);
+      },
+    );
+
+    await Then(
+      'still no slide-panel drawer on /notifications',
+      async () => {
+        await expect(page.getByTestId('slide-panel')).toHaveCount(0);
       },
     );
   });

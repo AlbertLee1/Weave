@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useParams } from 'react-router';
+import { Link, useLocation, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { NotificationCenter } from '../common/NotificationCenter';
 import { LanguageSwitcher } from '../common/LanguageSwitcher';
 import { BranchPicker } from './BranchPicker';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
 import { useOntologyStore } from '../../stores/ontologyStore';
-import { useUIStore } from '../../stores/uiStore';
 import { splitCamelCase } from '../../lib/breadcrumb';
 
 const THEME_OPTION_VALUES: ReadonlyArray<ThemePreference> = ['light', 'dark', 'system'];
@@ -21,13 +19,11 @@ function pathToBreadcrumbs(pathname: string): string[] {
 export function Topbar() {
   const location = useLocation();
   const breadcrumbs = pathToBreadcrumbs(location.pathname);
-  // Dogfood Round 3 #1 / #3: drawer state lives on a shared Zustand
-  // store so the `/notifications` full page can suppress the duplicate
-  // surface and tests can probe the flag without rendering the Topbar.
-  const notificationDrawerOpen = useUIStore((s) => s.notificationDrawerOpen);
-  const openDrawer = useUIStore((s) => s.openDrawer);
-  const closeDrawer = useUIStore((s) => s.closeDrawer);
-  const onNotificationsPage = location.pathname === '/notifications';
+  // Dogfood Round 3 #1 / #3: the bell is a single-source-of-truth entry
+  // into the dedicated `/notifications` full page. The old Topbar slide
+  // drawer was removed entirely — having two notification surfaces
+  // (drawer + page) violated single-source-of-truth and surveyors
+  // routinely flagged the drawer as "always open" / "duplicates the page".
   const { t } = useTranslation();
 
   const params = useParams();
@@ -180,10 +176,10 @@ export function Topbar() {
           )}
         </div>
         <LanguageSwitcher />
-        <button
-          type="button"
+        <Link
+          to="/notifications"
           aria-label="Notifications"
-          onClick={onNotificationsPage ? undefined : openDrawer}
+          data-testid="notification-bell"
           className="relative p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
         >
           <svg
@@ -207,7 +203,7 @@ export function Topbar() {
               {badgeLabel}
             </span>
           )}
-        </button>
+        </Link>
       </div>
 
       {/* Subtle gradient line below */}
@@ -218,13 +214,6 @@ export function Topbar() {
             'linear-gradient(90deg, transparent 0%, rgba(245,158,11,0.15) 30%, rgba(20,184,166,0.15) 70%, transparent 100%)',
         }}
       />
-
-      {!onNotificationsPage && (
-        <NotificationCenter
-          open={notificationDrawerOpen}
-          onClose={closeDrawer}
-        />
-      )}
     </header>
   );
 }
