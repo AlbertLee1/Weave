@@ -23,6 +23,33 @@ describe('SlidePanel', () => {
     expect(panel.className).toContain('translate-x-full');
   });
 
+  // Dogfood Round 3 #1: closed panels still rendered in the DOM (only
+  // translated off-screen) caused visual / e2e probes to mark the drawer
+  // as "open" across routes. The panel root must declare its hidden state
+  // semantically (aria-hidden) and refuse pointer events while closed so
+  // it can't intercept clicks on the underlying page.
+  it('marks the panel aria-hidden and disables pointer events when closed', () => {
+    render(
+      <SlidePanel open={false} onClose={() => {}} title="Panel">
+        <p>Content</p>
+      </SlidePanel>,
+    );
+    const panel = screen.getByTestId('slide-panel');
+    expect(panel.getAttribute('aria-hidden')).toBe('true');
+    expect(panel.className).toContain('pointer-events-none');
+  });
+
+  it('marks the panel aria-hidden=false and allows pointer events when open', () => {
+    render(
+      <SlidePanel open={true} onClose={() => {}} title="Panel">
+        <p>Content</p>
+      </SlidePanel>,
+    );
+    const panel = screen.getByTestId('slide-panel');
+    expect(panel.getAttribute('aria-hidden')).toBe('false');
+    expect(panel.className).not.toContain('pointer-events-none');
+  });
+
   it('calls onClose when close button is clicked', () => {
     const onClose = vi.fn();
     render(

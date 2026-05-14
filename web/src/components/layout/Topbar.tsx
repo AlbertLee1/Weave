@@ -7,6 +7,7 @@ import { BranchPicker } from './BranchPicker';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
 import { useOntologyStore } from '../../stores/ontologyStore';
+import { useUIStore } from '../../stores/uiStore';
 import { splitCamelCase } from '../../lib/breadcrumb';
 
 const THEME_OPTION_VALUES: ReadonlyArray<ThemePreference> = ['light', 'dark', 'system'];
@@ -20,7 +21,13 @@ function pathToBreadcrumbs(pathname: string): string[] {
 export function Topbar() {
   const location = useLocation();
   const breadcrumbs = pathToBreadcrumbs(location.pathname);
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Dogfood Round 3 #1 / #3: drawer state lives on a shared Zustand
+  // store so the `/notifications` full page can suppress the duplicate
+  // surface and tests can probe the flag without rendering the Topbar.
+  const notificationDrawerOpen = useUIStore((s) => s.notificationDrawerOpen);
+  const openDrawer = useUIStore((s) => s.openDrawer);
+  const closeDrawer = useUIStore((s) => s.closeDrawer);
+  const onNotificationsPage = location.pathname === '/notifications';
   const { t } = useTranslation();
 
   const params = useParams();
@@ -176,7 +183,7 @@ export function Topbar() {
         <button
           type="button"
           aria-label="Notifications"
-          onClick={() => setPanelOpen(true)}
+          onClick={onNotificationsPage ? undefined : openDrawer}
           className="relative p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
         >
           <svg
@@ -212,7 +219,12 @@ export function Topbar() {
         }}
       />
 
-      <NotificationCenter open={panelOpen} onClose={() => setPanelOpen(false)} />
+      {!onNotificationsPage && (
+        <NotificationCenter
+          open={notificationDrawerOpen}
+          onClose={closeDrawer}
+        />
+      )}
     </header>
   );
 }

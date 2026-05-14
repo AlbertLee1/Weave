@@ -35,8 +35,9 @@ export function SlidePanel({
       )}
       <div
         data-testid="slide-panel"
+        aria-hidden={open ? 'false' : 'true'}
         className={`fixed top-0 right-0 z-50 h-full bg-bg-elevated border-l border-border shadow-xl transition-transform duration-200 ${width} ${
-          open ? 'translate-x-0' : 'translate-x-full'
+          open ? 'translate-x-0' : 'translate-x-full pointer-events-none'
         }`}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">

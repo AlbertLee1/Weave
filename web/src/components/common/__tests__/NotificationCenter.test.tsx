@@ -216,14 +216,16 @@ describe('NotificationCenter', () => {
     expect(recordedReadIds).not.toContain('n2');
   });
 
-  it('disables "Mark all read" when nothing is unread', async () => {
+  // Dogfood Round 3 #4: when the active tab has no unread rows the
+  // "Mark all read" affordance should disappear entirely rather than
+  // render as a disabled button (which surveyors flagged as dead UI).
+  it('hides "Mark all read" when nothing is unread', async () => {
     setupFetchStub({ items: notifications.map((n) => ({ ...n, read: true })) });
     renderPanel(true);
     await waitFor(() => {
       expect(screen.getByText('Inventory low')).toBeInTheDocument();
     });
-    const btn = screen.getByRole('button', { name: /mark all read/i });
-    expect(btn).toBeDisabled();
+    expect(screen.queryByTestId('notification-mark-all')).toBeNull();
   });
 
   it('notification with a link renders as an anchor', async () => {
@@ -452,7 +454,8 @@ describe('NotificationCenter', () => {
       expect(recordedReadIds).toEqual(['m1']);
     });
 
-    it('Mark all read button is disabled when the active tab has no unread', async () => {
+    // Dogfood Round 3 #4: same hide-not-disable contract on typed tabs.
+    it('Mark all read button is hidden when the active tab has no unread', async () => {
       setupFetchStub({
         items: typedNotifications.map((n) => ({ ...n, read: true })),
       });
@@ -460,7 +463,7 @@ describe('NotificationCenter', () => {
       await waitFor(() => {
         expect(screen.getByText('You were mentioned')).toBeInTheDocument();
       });
-      expect(screen.getByTestId('notification-mark-all')).toBeDisabled();
+      expect(screen.queryByTestId('notification-mark-all')).toBeNull();
     });
 
     it('typed notifications render type-specific badges', async () => {

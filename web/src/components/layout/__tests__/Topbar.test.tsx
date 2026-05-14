@@ -149,6 +149,33 @@ describe('Topbar notifications', () => {
     await user.click(bell);
     expect(screen.getByTestId('slide-panel')).toHaveTextContent(/notifications/i);
   });
+
+  // Dogfood Round 3 #1: clicking the bell should flip the shared UI
+  // store, not a local hook. Verifying via the store lets the
+  // `/notifications` full page (and tests that probe the same state)
+  // read drawer state without re-rendering the Topbar component tree.
+  it('clicking the bell flips notificationDrawerOpen on the UI store', async () => {
+    const { useUIStore } = await import('../../../stores/uiStore');
+    useUIStore.getState().closeDrawer();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    stubNotifications([]);
+    renderTopbar();
+    expect(useUIStore.getState().notificationDrawerOpen).toBe(false);
+    await user.click(screen.getByRole('button', { name: /notifications/i }));
+    expect(useUIStore.getState().notificationDrawerOpen).toBe(true);
+  });
+
+  // Dogfood Round 3 #3: on `/notifications` the full page already
+  // renders the inbox surface, so the Topbar must NOT mount a second
+  // NotificationCenter slide panel (which surveyors flagged as a
+  // duplicate UI bug).
+  it('does not render the notification drawer on /notifications', async () => {
+    const { useUIStore } = await import('../../../stores/uiStore');
+    useUIStore.getState().closeDrawer();
+    stubNotifications([]);
+    renderTopbarAt('/notifications');
+    expect(screen.queryByTestId('slide-panel')).toBeNull();
+  });
 });
 
 function installMatchMedia(initialMatches: boolean) {

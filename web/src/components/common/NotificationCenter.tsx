@@ -126,8 +126,10 @@ export function NotificationCenter({ open, onClose }: NotificationCenterProps) {
     if (n.link) onClose();
   }
 
-  const markAllDisabled =
-    visibleUnread.length === 0 || markAll.isPending || markRead.isPending;
+  // Dogfood Round 3 #4: mark-all is conditionally rendered (see below)
+  // when no rows are unread, so the disabled flag now only guards
+  // against concurrent in-flight mutations — not the empty case.
+  const markAllDisabled = markAll.isPending || markRead.isPending;
 
   return (
     <SlidePanel open={open} onClose={onClose} title="Notifications">
@@ -178,15 +180,19 @@ export function NotificationCenter({ open, onClose }: NotificationCenterProps) {
               ? ''
               : 'All read'}
         </span>
-        <button
-          type="button"
-          onClick={handleMarkAll}
-          disabled={markAllDisabled}
-          data-testid="notification-mark-all"
-          className="text-xs text-accent-cyan hover:text-accent-teal disabled:text-text-muted disabled:cursor-not-allowed"
-        >
-          {tab.key === 'all' ? 'Mark all read' : `Mark ${tab.label.toLowerCase()} read`}
-        </button>
+        {visibleUnread.length > 0 && (
+          <button
+            type="button"
+            onClick={handleMarkAll}
+            disabled={markAllDisabled}
+            data-testid="notification-mark-all"
+            className="text-xs text-accent-cyan hover:text-accent-teal disabled:text-text-muted disabled:cursor-not-allowed"
+          >
+            {tab.key === 'all'
+              ? 'Mark all read'
+              : `Mark ${tab.label.toLowerCase()} read`}
+          </button>
+        )}
       </div>
 
       {isLoading && (
