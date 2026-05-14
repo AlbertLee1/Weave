@@ -208,7 +208,13 @@ export function AuditReportPage() {
             data-testid="audit-report-export-csv-btn"
             onClick={() => exportFormat('csv')}
             disabled={events.length === 0}
-            className="rounded-md border border-accent-cyan/50 px-3 py-1.5 text-sm font-medium text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-disabled={events.length === 0}
+            title={
+              events.length === 0
+                ? 'No rows to export — apply filters and run search first'
+                : undefined
+            }
+            className="rounded-md border border-accent-cyan/50 px-3 py-1.5 text-sm font-medium text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-60 disabled:text-text-secondary disabled:cursor-not-allowed"
           >
             Export CSV
           </button>
@@ -217,7 +223,13 @@ export function AuditReportPage() {
             data-testid="audit-report-export-json-btn"
             onClick={() => exportFormat('json')}
             disabled={events.length === 0}
-            className="rounded-md border border-accent-cyan/50 px-3 py-1.5 text-sm font-medium text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-disabled={events.length === 0}
+            title={
+              events.length === 0
+                ? 'No rows to export — apply filters and run search first'
+                : undefined
+            }
+            className="rounded-md border border-accent-cyan/50 px-3 py-1.5 text-sm font-medium text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-60 disabled:text-text-secondary disabled:cursor-not-allowed"
           >
             Export JSON
           </button>

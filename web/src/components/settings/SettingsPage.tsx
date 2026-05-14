@@ -182,7 +182,7 @@ export function SettingsPage() {
                 className={`px-3 py-1.5 rounded text-sm transition-colors ${
                   active
                     ? 'bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40'
-                    : 'border border-border text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+                    : 'border border-border text-text-primary opacity-80 hover:opacity-100 hover:bg-bg-tertiary'
                 }`}
               >
                 {t(`theme.${opt}`)}

@@ -33,6 +33,35 @@ function renderTopbar() {
   );
 }
 
+function renderTopbarAt(path: string) {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchInterval: false } },
+  });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <Topbar />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('Topbar breadcrumbs', () => {
+  beforeEach(() => {
+    stubNotifications([]);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('splits camelCase path segments into spaced words', () => {
+    renderTopbarAt('/admin/iotDemo/objectTypes');
+    expect(screen.getByText('Object Types')).toBeInTheDocument();
+    expect(screen.getByText('Iot Demo')).toBeInTheDocument();
+  });
+});
+
 describe('Topbar notifications', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

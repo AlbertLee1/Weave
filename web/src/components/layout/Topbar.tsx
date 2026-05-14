@@ -7,13 +7,14 @@ import { BranchPicker } from './BranchPicker';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
 import { useOntologyStore } from '../../stores/ontologyStore';
+import { splitCamelCase } from '../../lib/breadcrumb';
 
 const THEME_OPTION_VALUES: ReadonlyArray<ThemePreference> = ['light', 'dark', 'system'];
 
 function pathToBreadcrumbs(pathname: string): string[] {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 0) return ['Dashboard'];
-  return segments.map((s) => s.charAt(0).toUpperCase() + s.slice(1));
+  return segments.map((s) => splitCamelCase(s));
 }
 
 export function Topbar() {

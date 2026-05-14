@@ -142,6 +142,32 @@ describe('SettingsPage (US-350)', () => {
     expect(screen.getByTestId('settings-section-theme')).toBeInTheDocument();
   });
 
+  it('uses high-contrast text on unselected theme radios (no text-text-secondary)', async () => {
+    server.use(
+      getHandler({
+        userId: 'alice',
+        theme: 'light',
+        language: 'en',
+        notifications: {},
+        hotkeys: {},
+      }),
+    );
+    renderPage();
+    // Wait until the persisted theme=light has propagated so we know
+    // `dark` is genuinely an unselected radio (not the local default).
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('settings-theme-light').getAttribute('aria-checked'),
+      ).toBe('true');
+    });
+    const darkBtn = screen.getByTestId('settings-theme-dark');
+    expect(darkBtn.getAttribute('aria-checked')).toBe('false');
+    // text-text-secondary is illegible against the dark surface used in
+    // the BG_SECONDARY container — the page must use a higher-contrast
+    // foreground for inactive options.
+    expect(darkBtn.className).not.toMatch(/text-text-secondary/);
+  });
+
   it('lists every hotkey from the registry inside the hotkeys section', async () => {
     server.use(
       getHandler({
