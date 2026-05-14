@@ -20,6 +20,11 @@ const KNOWN_DEFINITION_TYPES = new Set([
   'methodInput',
 ]);
 
+// Node test fallback only; browser path uses btoa/atob below.
+declare const Buffer: {
+  from(input: string, encoding: string): { toString(encoding: string): string };
+};
+
 function toBase64Url(input: string): string {
   // Encode UTF-8 -> base64 -> base64url (no +, /, =).
   const utf8 = new TextEncoder().encode(input);

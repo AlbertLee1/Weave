@@ -375,7 +375,7 @@ export function deleteCellMask(rid: string): Promise<void> {
 export function effectiveMaskStrategy(
   mask: Pick<CellMask, 'maskRule' | 'maskStrategy'>,
 ): MaskStrategy | '' {
-  if (mask.maskStrategy && mask.maskStrategy !== '') return mask.maskStrategy;
+  if (mask.maskStrategy) return mask.maskStrategy;
   if (!mask.maskRule) return '';
   switch (mask.maskRule) {
     case 'hash':
