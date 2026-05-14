@@ -26,7 +26,10 @@ export function Topbar() {
   const params = useParams();
   const selectedOntology = useOntologyStore((s) => s.selectedOntology);
   const activeOntology =
-    (params.ontology as string | undefined) ?? selectedOntology ?? null;
+    (params.ontology as string | undefined) ??
+    (params.dataset as string | undefined) ??
+    selectedOntology ??
+    null;
 
   const { data } = useNotifications({ unreadOnly: true });
   const unreadCount = useMemo(

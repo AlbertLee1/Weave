@@ -100,7 +100,10 @@ export function Sidebar() {
   const params = useParams();
   const { user, can } = useAuth();
   const activeOntology =
-    (params.ontology as string | undefined) ?? selectedOntology ?? null;
+    (params.ontology as string | undefined) ??
+    (params.dataset as string | undefined) ??
+    selectedOntology ??
+    null;
 
   const showAdminSection =
     user !== null &&

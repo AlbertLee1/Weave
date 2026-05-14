@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from
 import { render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { AuthProvider } from '../../../auth/AuthContext';
 import { useOntologyStore } from '../../../stores/ontologyStore';
 import { Sidebar } from '../Sidebar';
@@ -191,6 +191,59 @@ describe('Sidebar admin section', () => {
       m.includes('two children with the same key'),
     );
     expect(duplicateKeyWarnings).toEqual([]);
+  });
+
+  // Dogfood Round 3 #2: /admin/datasets/:dataset/rollback uses :dataset
+  // (not :ontology), so the sidebar fell back to global mode and dropped
+  // Query Builder / Quiver TS / Object Types. The sidebar must accept
+  // :dataset as an alias for the active ontology.
+  it('treats :dataset route param as active ontology on dataset routes', async () => {
+    // Wipe the store so selectedOntology cannot mask the bug.
+    useOntologyStore.setState({
+      selectedOntology: null,
+      selectedObjectType: null,
+      sidebarCollapsed: false,
+      recentlyViewed: [],
+    });
+    server.use(
+      http.get('/api/v2/me', () =>
+        HttpResponse.json({
+          id: 'admin',
+          email: '',
+          name: '',
+          roles: ['admin'],
+          ontologyRoles: {},
+          permissions: ['ontology.write'],
+        }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/admin/datasets/iotDemo/rollback']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/admin/datasets/:dataset/rollback"
+              element={<Sidebar />}
+            />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Query Builder')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Query Builder').closest('a')).toHaveAttribute(
+      'href',
+      '/objectsets/iotDemo',
+    );
+    expect(screen.getByText('Quiver TS').closest('a')).toHaveAttribute(
+      'href',
+      '/quiver/iotDemo',
+    );
+    expect(screen.getByText('Object Types').closest('a')).toHaveAttribute(
+      'href',
+      '/admin/iotDemo/objectTypes',
+    );
   });
 
   it('admin links point to /admin/:ontology/{section}', async () => {
