@@ -65,6 +65,9 @@ type Handler struct {
 	// X-Scenario-Id header on Read endpoints (VTX-004). Wired via
 	// SetScenarioReader.
 	scenarioReader ScenarioReader
+	// vertexTSQuerier, when non-nil, powers the Vertex window-aggregation
+	// timeseries endpoint (VTX-030). Wired via SetVertexTimeSeriesQuerier.
+	vertexTSQuerier VertexTimeSeriesQuerier
 }
 
 // NewHandler creates a new OSS HTTP handler.
@@ -112,6 +115,13 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/metadata", h.GetMediaPropertyMetadata)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/media/{property}/content", h.GetMediaPropertyContent)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectType}/media/{property}/upload", h.UploadMediaProperty)
+
+	// Vertex window-aggregation endpoint (VTX-030). Sits *before* the
+	// Foundry sub-path routes so a future router that prefers
+	// shortest-match doesn't accidentally swallow /timeseries/{property};
+	// chi already matches longest-specific first, but ordering this
+	// register first makes the intent obvious for readers.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}", h.GetVertexTimeSeries)
 
 	// TimeSeriesProperty endpoints (Foundry OSv2). Read endpoints resolve
 	// a SeriesKey from the object/primaryKey/property path segments.

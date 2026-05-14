@@ -144,3 +144,18 @@ Started: Thu May 14 23:48:45 CST 2026
   - `ScenarioOverlayReader` 接口只暴露 `GetWindowedScalarOverride`，故意不引用 `pkg/scenarios` — 让 VertexService 测试可以纯用 stub overlay 跑，PG container 里不必塞 scenario 数据。VTX-030 REST handler 那层再做 `*scenarios.PGRepo` → `ScenarioOverlayReader` 的 adapter。
   - 测试断言 `len(res.Points)==N` 时记得 `From`/`To` 是半开区间 `[From, To)`：30min 区间 + 5min bucket = 6 桶 (00-05, 05-10, ..., 25-30) 而不是 7。
 ---
+
+## 2026-05-15 - VTX-030
+- REST handler 把 VTX-029 service 暴露成 `GET /api/v2/ontologies/{ont}/objects/{objType}/{pk}/timeseries/{prop}` （query 参数 from/to/agg/bucket/scenarioId）。复用 OSS Handler，注册在已有 Foundry `/timeseries/{prop}/firstPoint` 等子路径之前；chi 走最长匹配优先，bare `{prop}` GET 落到 Vertex handler。
+- Files changed:
+  - `pkg/oss/handlers_vertex_timeseries.go` (new) — `VertexTimeSeriesQuerier` interface（让 `*timeseries.VertexService` 满足）+ `Handler.SetVertexTimeSeriesQuerier` + `Handler.GetVertexTimeSeries`。`vertexObjectRID(ont, objType, pk)` 拼出 `ri.ontology.{ont}.{objType}.{pk}` — 写路径（VTX-031+）会按同样规则落到 `object_time_series`。Param parsing: `parseRFC3339Param` / `parseAggParam`（默认 AVG）/ `parseBucketParam`（Go duration like 5m）。
+  - `pkg/oss/handlers.go` (edit) — `Handler.vertexTSQuerier` 字段；route 注册在 timeseries Foundry 子路径之前的位置（注释解释意图）。
+  - `pkg/oss/handlers_vertex_timeseries_test.go` (new) — 5 个 unit test：基础桶序列 / scenarioId 转发 / 缺 from→400 / 坏 bucket→400 / 未配置 querier→500。`fakeVertexQuerier` 实现接口 + `panicService` 满足 oss.Service interface 但所有 svc 方法 panic（验证 Vertex 处理器不会去碰 svc）。
+  - `scripts/ralph/vertex/prd-B.json` — VTX-030 → passes:true.
+- Quality checks: `go test ./pkg/oss/... -run TestVertexTimeSeriesHandler -v` PASS (5/5, <1s); 全套 `go test ./pkg/oss/` PASS (79s, 0 回归); `go vet ./...` clean; `go build ./...` clean.
+- **Learnings for future iterations:**
+  - chi router 同时挂 `/timeseries/{prop}` (bare) 和 `/timeseries/{prop}/firstPoint`、`/streamPoints` 等子路径 — chi 自动走最长匹配，bare GET 永远落到 VTX-030 handler。但要小心：如果未来有人加 `POST /timeseries/{prop}` 也是 bare，要分 method 注册（chi 支持），不能用同一个 handler。
+  - `oss.Service` interface 包含 6 个方法，签名细节易记错（`CountObjects` 返回 `*CountObjectsResponse` 不是 `int64`，`ListLinkedObjects` 接 `LinkedObjectsRequest` 不是 `ListLinkedObjectsRequest`）。写 fake/stub 前先 `grep -n 'type Service interface' pkg/oss/service.go` 看真实签名，免得花 1 round 编译报错。
+  - VTX-030 handler 不做 `svc.GetObject` 存在性检查（不同于 Foundry `resolveTimeSeriesKey`）— 因为 VTX-028 hypertable 的 `object_rid` 是写时落库的字符串，对得上就有数据，对不上就空；不需要先去 OMS 校对。如果以后要严格 404，加一个 `existsCheck *oms.Repository` 字段开关。
+  - `time.ParseDuration("5m")` / `"30s"` / `"1h"` 都直接 OK，没必要自己 parse。Go duration 字符串直接做 bucket 参数最省事。
+---

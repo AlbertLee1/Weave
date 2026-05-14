@@ -201,8 +201,8 @@
         "Tests pass"
       ],
       "priority": 30,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented in pkg/oss/handlers_vertex_timeseries.go (handler + VertexTimeSeriesQuerier interface) + pkg/oss/handlers_vertex_timeseries_test.go (5 unit tests). New route GET /api/v2/ontologies/{ont}/objects/{objType}/{pk}/timeseries/{prop} with query params from/to (RFC3339), agg (AVG|MIN|MAX|SUM|LAST), bucket (Go duration), scenarioId. Registered before existing Foundry /timeseries/{property}/firstPoint sub-paths so chi router routes the bare {property} GET to the Vertex handler. ObjectRID is composed deterministically as `ri.ontology.{ont}.{objType}.{pk}` so writes (when added) round-trip without an OMS lookup."
     },
     {
       "id": "VTX-031",
