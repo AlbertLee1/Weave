@@ -50,7 +50,7 @@ export function MetricsPage() {
   );
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto">
+    <div data-testid="metrics-page" className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-y-auto">
       <header
         className="px-6 py-4 border-b flex flex-wrap items-center gap-4"
         style={{ borderColor: 'rgba(31,41,55,0.5)' }}

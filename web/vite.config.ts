@@ -8,14 +8,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
+      '^/api(/|$)': {
         target: 'http://localhost:9117',
         ws: true,
       },
-      '/health': 'http://localhost:9117',
-      '/metrics': 'http://localhost:9117',
-      '/swagger': 'http://localhost:9117',
-      '/mcp': 'http://localhost:9117',
+      '^/health(/|$)': 'http://localhost:9117',
+      '^/metrics(/|$)': 'http://localhost:9117',
+      '^/swagger(/|$)': 'http://localhost:9117',
+      '^/mcp(/|$)': 'http://localhost:9117',
     },
   },
   test: {

@@ -58,7 +58,7 @@ export function PlaygroundPage() {
   const effectiveSelected = selected ?? endpoints[0] ?? null;
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] bg-bg-primary">
+    <div data-testid="playground-page" className="flex h-[calc(100vh-3rem)] bg-bg-primary">
       <EndpointList
         groups={groups}
         filter={filter}
