@@ -2,8 +2,10 @@
 Started: Thu May 14 23:48:45 CST 2026
 
 ## Codebase Patterns
-- Migrations 序号已用到 000104；新增使用 000105+。一对 `*.up.sql` / `*.down.sql`，up 必须用 `IF NOT EXISTS` / `DO $$ ... IF NOT EXISTS ... END$$` 保证幂等，down 必须按 FK 依赖反向 DROP。
+- Migrations 序号已用到 000106；新增使用 000107+。一对 `*.up.sql` / `*.down.sql`，up 必须用 `IF NOT EXISTS` / `DO $$ ... IF NOT EXISTS ... END$$` 保证幂等，down 必须按 FK 依赖反向 DROP。
 - 集成测试用 `//go:build integration` + `testutil.StartPGContainer(t)`（pgvector/pgvector:pg16，每 case 独立容器，~1.2s 启动）。运行：`go test -tags integration ./... -run TestX -v`。需要 Docker。
+- TimescaleDB 专用集成测试用 `testutil.StartTimescaleDBContainer(t)`（timescale/timescaledb:latest-pg16，自带 timescaledb 扩展）。仅在确实需要 hypertable / continuous aggregate 时用，启动 ~1s；其余 PG 集成测试继续用 pgvector 镜像以避免额外 1.4GB 镜像下载。
+- 涉及 TimescaleDB 扩展的迁移用 `IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb')` DO-block 包裹 `create_hypertable` / 连续聚合，保证在 pgvector 镜像上也能跑通（普通表仍创建，hypertable / cagg 缺席而已）。
 - 测试命名遵循 PRD tddConvention：`Test{Feature}_Given_{State}_When_{Action}_Then_{Outcome}`。
 - 校验 column / index 存在：`information_schema.columns` / `pg_indexes`（`indexdef ILIKE '%(col_a, col_b)%'`）。
 - Module path: `github.com/liyang/weave`，迁移文件路径由 `testutil.MigrationsDir()` 自动向上搜索 8 层定位 `migrations/`。
@@ -109,4 +111,21 @@ Started: Thu May 14 23:48:45 CST 2026
   - 「base read after overlay read is unaffected」是 cheap 但 valuable 的子 case — overlay 路径不能 mutate svc 返回的 *WireObject，否则下次无 header 读会看到 leak。VTX-004 的 `viewToWireObject` 显式构造新对象，未触碰 template 的 Properties map，这条不变量被这个 case 锁定。
   - vertex e2e 子目录走 `test/e2e/vertex/` 而不是 `test/e2e/`，避免与现有 e2e_test.go 共享内存的 in-memory OMS repo 冲突；包名 `vertex_test`。后续 VTX-007+（write-overlay / time-selection）继续往这个目录扩。
   - `rid.New("vertex", "main", "case-study")` / `("vertex", "main", "scenario")` 同 VTX-002 集成测试用法一致；in-memory repo 不需要 FK 校验。
+---
+
+## 2026-05-15 - VTX-028
+- Stream B 启动：TimescaleDB hypertable + 5-min continuous aggregate (`object_time_series` + `cagg_5min`)。表 schema 与 BDD 一字不差：`object_rid TEXT, property TEXT, ts TIMESTAMPTZ, value DOUBLE PRECISION, quality SMALLINT, PK(object_rid, property, ts)`。
+- Files changed:
+  - `migrations/000106_vertex_object_time_series.up.sql` (new) — 基表无条件创建 + `DO $$ IF EXISTS pg_available_extensions ... THEN CREATE EXTENSION + create_hypertable + cagg_5min END$$`。这种条件式包裹让迁移在 pgvector 和 timescaledb 两种镜像上都跑通；前者只剩普通表，后者完整 hypertable + cagg。
+  - `migrations/000106_vertex_object_time_series.down.sql` (new) — 反向 DROP，先 cagg 后 hypertable，DO-block 同样条件式。
+  - `internal/testutil/timescale_container.go` (new) — `StartTimescaleDBContainer(t) *PGContainer`，复用 PGContainer 类型，仅镜像换 `timescale/timescaledb:latest-pg16`。wait timeout 60s（HA / 普通 image 都比 pgvector 启动慢一点）。
+  - `internal/database/vertex_object_time_series_migration_test.go` (new) — 5 个 integration test：表 + 列类型 / hypertable registered / cagg_5min exists / 100k COPY ≤ 5s / cagg AVG query ≤ 50ms。每个 case 单独 PGContainer。
+  - `scripts/ralph/vertex/prd-B.json` — VTX-028 → passes:true。
+- Quality checks: `go test -tags integration ./internal/database/... -run TestVertexObjectTimeSeriesMigration -v` PASS (5/5, 14s); `go test ./...` (unit + non-tag integration) PASS (no regressions); `go vet ./...` clean; `go build ./...` clean. M3 Max numbers: COPY 100k rows in 404ms（约 25 万行/秒，BDD 5s 上限 12× 余量）；cagg_5min AVG 333 buckets in 675µs（BDD 50ms 上限 74× 余量）。
+- **Learnings for future iterations:**
+  - 真正用 TimescaleDB 的 story（VTX-028 ~ 030 / 042）必须用 `StartTimescaleDBContainer`，否则 `create_hypertable` PERFORM 会被 DO-block 的 EXISTS 跳过 — 测试就静默退化成普通 PG，根本不验证 hypertable 路径。条件式迁移对兼容好但对测试不友好，写 timescale 路径的 test 务必断言 `timescaledb_information.hypertables` / `.continuous_aggregates` 有行。
+  - `timescale/timescaledb-ha:pg16` (~3GB) 网络拉超时风险高；改用 `timescale/timescaledb:latest-pg16`（~1.4GB）就够 — 后者预装 timescaledb + plpgsql，不带 pgvector / postgis（VTX-028 不需要）。两者 `shared_preload_libraries=timescaledb` 都已配好。
+  - 连续聚合用 `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) ... WITH NO DATA` — `NO DATA` 是关键，否则物化视图首次创建会扫全表（100k 行没事，prod 百亿行 OOM）。测试侧调 `CALL refresh_continuous_aggregate('cagg_5min', start, end)` 手动触发物化。
+  - pgx 写 hypertable 用 `conn.CopyFrom(pgx.Identifier{"object_time_series"}, cols, pgx.CopyFromRows(rows))` 是最快路径（M3 Max 25 万行/秒）；INSERT 一行一行慢 30× 以上。VTX-029 / VTX-030 写 service 层 ingest API 时直接学这模板，不要落入循环 INSERT 陷阱。
+  - 共享 worktree 风险：多 Stream agent 同时在 `/Users/liyang/Documents/Community/Weave` 操作时，另一个 agent 可能切走分支并增量提交（实测期间 Stream D 把 HEAD 跳到 `-d` 并打了 VTX-098~119 commit）。`git status` 应该常看，commit 前显式 `git checkout vertex/replication-v1-b` 校准；migration 序号也可能被对方占用（实测对方插了 `000106_scenarios_archive.*.sql`，但只在 `-d` branch，本 branch 的 `-b` 仍然 000106 自由）。
 ---
