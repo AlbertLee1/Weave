@@ -11,6 +11,7 @@ Started: Thu May 14 23:48:45 CST 2026
 - Repo 风格遵循 pkg/oms.Repository：小接口、ctx-first、sentinel error（`ErrXxxNotFound` / `ErrXxxImmutable`）让调用方可 `errors.Is`。PG 实现写 `var _ Repo = (*PGRepo)(nil)` 编译期断言接口满足。
 - 应用层并发写 + 状态翻转：`SELECT ... FOR UPDATE` + tx 阻塞并行 AppendEdit / Freeze，避免 immutable 翻转后还能追加 edit。pgx.BeginTx + defer Rollback 是标准模式。
 - pgx 的 JSONB 写法：`json.RawMessage` 或 `[]byte` 直传，pgx 会自动处理 jsonb 类型；空切片传 nil interface 防止某些版本 panic。`NULLIF($n, '')` 把空字符串映射为 NULL，匹配 schema 的 nullable text 列。
+- 纯函数（无 DB / 无 IO）测试：放同包 `*_test.go`（外部包名 `scenarios_test`），不需要 `//go:build integration`，`make test` 默认就跑；Benchmark 用 `go test -bench BenchmarkX -run='^$' -benchmem ./pkg/...`，跳过普通测试只跑 bench。
 
 ---
 
@@ -44,4 +45,19 @@ Started: Thu May 14 23:48:45 CST 2026
   - `rid.New("vertex", "main", "case-study")` 直接调用即可，无需在 pkg/rid 加 `NewCaseStudyRID` 帮手；保持 pkg/rid 不依赖 Vertex 业务。
   - 应用层 `Freeze + AppendEdit` 并发安全靠 PG row lock — DB 列 `immutable` 是真理来源，应用代码读到 false 再插入，整个流程在同一 tx 内（`SELECT ... FOR UPDATE` → 检查 → INSERT → COMMIT）。VTX-003 Fold 算法是纯函数所以不涉及锁。
   - `ScenarioOverride.Value` 必须非空：`UpsertOverride` 早返回 `fmt.Errorf("override value must not be empty")`。VTX-005 / VTX-006 写 override UI 时记得前端先校验。
+---
+
+## 2026-05-15 - VTX-003
+- Implemented `pkg/scenarios.FoldObject` + `FoldLinks` pure functions. Replays scenario_edits in seq order onto a base view (single object) or base adjacency (links) and returns the overlayed result.
+- Files changed:
+  - `pkg/scenarios/fold.go` (new) — `ObjectKey`, `ObjectView`, `LinkView` types; `FoldObject(target, base, edits) (*ObjectView, bool)` and `FoldLinks(base, edits) []LinkView`. Edits are sorted by Seq ASC internally (defensive against unsorted callers). `modifyProperty` between `deleteObject` and a re-creating `createObject` is dropped; re-create carries no old props.
+  - `pkg/scenarios/fold_test.go` (new) — 13 table-driven FoldObject cases + 11 FoldLinks cases (≥12 total), plus `BenchmarkFoldObject_1000Edits`. Uses package `scenarios_test`, no build tag.
+  - `scripts/ralph/prd.json` — VTX-003 → passes:true.
+- Quality checks: `go test ./pkg/scenarios/...` PASS (24/24 subtests + 6 integration repo tests via prior story); `go vet` clean; `go build ./...` clean; benchmark = 45.8 µs/op on M3 Max for 1000 edits (BDD bound 5 ms → 109× headroom).
+- **Learnings for future iterations:**
+  - `createObject` 把整个 properties JSON 存在 `new_value` 列里（`property` 留空）。Fold 用 `json.Unmarshal(e.NewValue, &map)` 还原为 `map[string]json.RawMessage`，property 值保持 `json.RawMessage` 形态——上游可以再 unmarshal 成具体类型，不必早强制 schema。
+  - 现实里 `ListEdits` 已按 seq 排序，但 Fold 仍然 defensive `sort.SliceStable` 一份 copy。代价小（1k 元素 sort 在 us 级），但能让 unit test 写「乱序输入」case 而不需要先排好，也保护并发场景下 caller 没排序的代码路径。
+  - 「modify 在 delete 之后」要丢弃；但 delete 后又来一次 createObject 必须重新走「初始化为 new_value 的 props」流程——不要让旧 base 的属性「漏」到 re-create 后的 view。测试 case `modify => delete => recreate => modify` 锁定这条不变量。
+  - `FoldLinks` 输出按 `(LinkType, SrcID, DstID)` 字典序排序保证 determinism——对 VTX-004 / VTX-005 在 HTTP 层做 diff 断言、对 VTX-006 e2e cassette 友好。Caller 不要假设输入序就是输出序。
+  - 1000 edits 折叠 ~46 µs — 离 BDD 5 ms 上限远得很。后续 VTX-004 在 HTTP 路径加 fold 不需要担心算法层；瓶颈会在 DB 取 base + ListEdits + JSON 编解码。
 ---

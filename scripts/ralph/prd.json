@@ -30,7 +30,9 @@
       "name": "ScenarioRepo 接口 + PostgreSQL 实现",
       "phase": 1,
       "active": true,
-      "depends_on": ["VTX-001"],
+      "depends_on": [
+        "VTX-001"
+      ],
       "dependencies": "VTX-001 migration；internal/testutil.StartPGContainer；pkg/rid（RID 生成）",
       "description": "作为后端开发者，我需要 pkg/scenarios.Repo 接口（仿 pkg/oms.Repository 风格）和 PG 实现，用于持久化 Case Study / Scenario / Edits / Overrides。",
       "bdd_acceptance": [
@@ -65,7 +67,7 @@
         "Tests pass"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -73,7 +75,10 @@
       "name": "Ontology Read API 增加 X-Scenario-Id Header 支持",
       "phase": 1,
       "active": true,
-      "depends_on": ["VTX-002", "VTX-003"],
+      "depends_on": [
+        "VTX-002",
+        "VTX-003"
+      ],
       "dependencies": "pkg/oss handlers；chi router middleware；pkg/oms",
       "description": "作为 SDK / 前端用户，我希望所有现存 GET /api/v2/ontologies/{ont}/objects/... 请求带 X-Scenario-Id header 后，返回带 overlay 的结果，且不破坏原有调用方。",
       "bdd_acceptance": [
@@ -95,7 +100,9 @@
       "name": "Aggregation API 支持 Scenario Overlay",
       "phase": 1,
       "active": true,
-      "depends_on": ["VTX-004"],
+      "depends_on": [
+        "VTX-004"
+      ],
       "dependencies": "pkg/oss/aggregation；pkg/index Bleve",
       "description": "作为分析用户，我希望聚合 API（GROUP BY / SUM / AVG / COUNT）在 scenario 上下文中返回 fold 后的结果。",
       "bdd_acceptance": [
@@ -115,7 +122,13 @@
       "name": "端到端 Scenario Read Overlay Smoke Test",
       "phase": 1,
       "active": true,
-      "depends_on": ["VTX-001", "VTX-002", "VTX-003", "VTX-004", "VTX-005"],
+      "depends_on": [
+        "VTX-001",
+        "VTX-002",
+        "VTX-003",
+        "VTX-004",
+        "VTX-005"
+      ],
       "dependencies": "test/e2e/ 既有 chi test router；testdata/northwind/",
       "description": "作为复刻验证者，我需要一个端到端冒烟测试，证明 VTX-001~005 真的串通。",
       "bdd_acceptance": [
@@ -155,7 +168,9 @@
       "name": "GraphRepo + SystemGraphService",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-007"],
+      "depends_on": [
+        "VTX-007"
+      ],
       "dependencies": "pkg/rid；database/sql",
       "description": "作为后端开发者，我需要 pkg/vertex/graphsvc 提供 CRUD + 版本化。",
       "bdd_acceptance": [
@@ -176,7 +191,9 @@
       "name": "REST API /api/vertex/v1/graphs/*",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-008"],
+      "depends_on": [
+        "VTX-008"
+      ],
       "dependencies": "chi router；pkg/httputil；cmd/server/main.go 路由注册",
       "description": "作为前端 / SDK 用户，我需要标准 REST 端点。",
       "bdd_acceptance": [
@@ -220,7 +237,9 @@
       "name": "SystemGraph Payload JSON Schema 校验",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-009"],
+      "depends_on": [
+        "VTX-009"
+      ],
       "dependencies": "github.com/xeipuuv/gojsonschema 或类似；pkg/oms 元数据查询",
       "description": "保存图时强校验 payload 结构，避免脏数据。",
       "bdd_acceptance": [
@@ -241,7 +260,9 @@
       "name": "Graph Template 资源",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-009"],
+      "depends_on": [
+        "VTX-009"
+      ],
       "dependencies": "VTX-009 REST 基础",
       "description": "调研报告 §2.4 — Save as Template 后参数化。",
       "bdd_acceptance": [
@@ -260,7 +281,9 @@
       "name": "共享链接 / 权限模型",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-009"],
+      "depends_on": [
+        "VTX-009"
+      ],
       "dependencies": "pkg/auth；pkg/rls；pkg/masking",
       "description": "调研报告 §7.6 — Graph 资源走 Project-level RBAC + Action policy + 共享链接（缺权限可见结构不可见值）。",
       "bdd_acceptance": [
@@ -279,7 +302,9 @@
       "name": "Workshop 嵌入 widget API",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-009"],
+      "depends_on": [
+        "VTX-009"
+      ],
       "dependencies": "pkg/apps 既有 widget 机制",
       "description": "调研报告 §6.5 — Workshop 嵌入 Vertex Graph。",
       "bdd_acceptance": [
@@ -316,7 +341,16 @@
       "name": "SystemGraph E2E 冒烟测试",
       "phase": 2,
       "active": false,
-      "depends_on": ["VTX-007", "VTX-008", "VTX-009", "VTX-011", "VTX-012", "VTX-013", "VTX-014", "VTX-015"],
+      "depends_on": [
+        "VTX-007",
+        "VTX-008",
+        "VTX-009",
+        "VTX-011",
+        "VTX-012",
+        "VTX-013",
+        "VTX-014",
+        "VTX-015"
+      ],
       "dependencies": "test/e2e/vertex/",
       "description": "闭环验证 Phase 2。",
       "bdd_acceptance": [
@@ -334,7 +368,9 @@
       "name": "前端依赖与画布最小框架",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-009"],
+      "depends_on": [
+        "VTX-009"
+      ],
       "dependencies": "npm: sigma, graphology, @react-sigma/core；React Router；Vite",
       "description": "作为前端开发者，我需要在 web/ 引入 Sigma.js + Graphology，并搭出 Vertex 工作区路由 /vertex/:graphRid。",
       "bdd_acceptance": [
@@ -355,7 +391,9 @@
       "name": "节点渲染（圆形节点 + 标题 + subtitle）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-017"],
+      "depends_on": [
+        "VTX-017"
+      ],
       "dependencies": "VTX-017 画布；TanStack Query 拉 payload",
       "description": "从后端拉图 payload，渲染节点 + 边。",
       "bdd_acceptance": [
@@ -376,7 +414,9 @@
       "name": "节点 DOM overlay（卡片式 Extended Labels）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-018"],
+      "depends_on": [
+        "VTX-018"
+      ],
       "dependencies": "React Portal；Sigma 相机变换 API",
       "description": "调研报告 §10.1 — 用 Canvas 绘节点底版 + DOM 绝对定位卡片显示扩展标签。",
       "bdd_acceptance": [
@@ -396,7 +436,9 @@
       "name": "选择交互（单击 / 框选）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-018"],
+      "depends_on": [
+        "VTX-018"
+      ],
       "dependencies": "Sigma 事件 API；Zustand selection state",
       "description": "选中节点 + 触发 sidebar；shift 框选；Ctrl/Cmd 多选。",
       "bdd_acceptance": [
@@ -416,7 +458,9 @@
       "name": "右侧 Selection Sidebar",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-020"],
+      "depends_on": [
+        "VTX-020"
+      ],
       "dependencies": "OSS get / search API",
       "description": "调研报告 §6.1 — 选中对象自动打开 sidebar 显示 Properties / Series / Linked Events / Derived Funcs。",
       "bdd_acceptance": [
@@ -437,7 +481,9 @@
       "name": "布局算法 — Hierarchical（dagre）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-018"],
+      "depends_on": [
+        "VTX-018"
+      ],
       "dependencies": "npm: dagre, graphology-layout-dagre",
       "description": "调研报告 §2.3 + §10.1。",
       "bdd_acceptance": [
@@ -457,7 +503,9 @@
       "name": "布局算法 — Force-directed + Circular",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-022"],
+      "depends_on": [
+        "VTX-022"
+      ],
       "dependencies": "npm: graphology-layout-forceatlas2, graphology-layout-circular",
       "description": "ForceAtlas2 + Circular + Auto 启发式（< 100 节点用 Force，否则 Hierarchical）。",
       "bdd_acceptance": [
@@ -477,7 +525,10 @@
       "name": "手动拖拽 + position 持久化",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-018", "VTX-009"],
+      "depends_on": [
+        "VTX-018",
+        "VTX-009"
+      ],
       "dependencies": "Sigma drag plugin；PATCH /graphs/{rid}/layout",
       "description": "调研报告 §2.3。",
       "bdd_acceptance": [
@@ -497,7 +548,10 @@
       "name": "Link Merging（同向同类型边合并）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-018", "VTX-010"],
+      "depends_on": [
+        "VTX-018",
+        "VTX-010"
+      ],
       "dependencies": "Graphology 自定义 reducer",
       "description": "调研报告 §2.5 + §10.1。",
       "bdd_acceptance": [
@@ -517,7 +571,9 @@
       "name": "节点 Context Menu（右键菜单）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-018"],
+      "depends_on": [
+        "VTX-018"
+      ],
       "dependencies": "Radix UI ContextMenu 或自研 popover",
       "description": "调研报告 §2.5 — 右键 → Search Around / Open in Quiver / Open in Object Explorer / Pin / Hide。",
       "bdd_acceptance": [
@@ -537,7 +593,9 @@
       "name": "节点 add 对话框（+ Add objects）",
       "phase": 3,
       "active": false,
-      "depends_on": ["VTX-026"],
+      "depends_on": [
+        "VTX-026"
+      ],
       "dependencies": "OSS search API",
       "description": "调研报告 §2.1 — 手工方式：从 + Add objects 搜索对话框检索对象类型/对象实例加入图。",
       "bdd_acceptance": [
@@ -576,7 +634,9 @@
       "name": "Time Series Service（查询接口）",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-028"],
+      "depends_on": [
+        "VTX-028"
+      ],
       "dependencies": "pkg/timeseries 新包",
       "description": "pkg/timeseries 提供窗口聚合 API。",
       "bdd_acceptance": [
@@ -596,7 +656,9 @@
       "name": "REST /objects/{rid}/timeseries/{prop}",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-029"],
+      "depends_on": [
+        "VTX-029"
+      ],
       "dependencies": "chi router；pkg/oss handlers 注册",
       "description": "调研报告 §7.4。",
       "bdd_acceptance": [
@@ -614,7 +676,10 @@
       "name": "TopBar Time Selection Bar UI",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-017", "VTX-030"],
+      "depends_on": [
+        "VTX-017",
+        "VTX-030"
+      ],
       "dependencies": "Zustand time selection store；debounce hook",
       "description": "调研报告 §5.3 + §6.1 — 顶部时间选择条 + selectedTime 游标。",
       "bdd_acceptance": [
@@ -635,7 +700,10 @@
       "name": "节点 Sparkline Extended Label（uPlot）",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-019", "VTX-031"],
+      "depends_on": [
+        "VTX-019",
+        "VTX-031"
+      ],
       "dependencies": "npm: uplot",
       "description": "调研报告 §5.3 + §10.6。",
       "bdd_acceptance": [
@@ -655,7 +723,9 @@
       "name": "Series Panel（底部时间线面板）",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-032"],
+      "depends_on": [
+        "VTX-032"
+      ],
       "dependencies": "uPlot 完整图；React Resizable Panel",
       "description": "调研报告 §5.3。",
       "bdd_acceptance": [
@@ -675,7 +745,9 @@
       "name": "Timeline（事件 + 时序统一视图）",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-033"],
+      "depends_on": [
+        "VTX-033"
+      ],
       "dependencies": "VTX-077 Event ObjectType 配置（可后置）",
       "description": "调研报告 §5.3 — Timeline：事件 bar + 时序 line + play 按钮自动滚动 + 速度控制 + 循环。",
       "bdd_acceptance": [
@@ -696,7 +768,9 @@
       "name": "Open in Quiver / Object Explorer 跳转",
       "phase": 4,
       "active": false,
-      "depends_on": ["VTX-026"],
+      "depends_on": [
+        "VTX-026"
+      ],
       "dependencies": "现有 /explorer 与 /quiver 路由",
       "description": "调研报告 §5.3。",
       "bdd_acceptance": [
@@ -715,7 +789,10 @@
       "name": "Scenario Pane（侧栏纵向表格 UI）",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-017", "VTX-002"],
+      "depends_on": [
+        "VTX-017",
+        "VTX-002"
+      ],
       "dependencies": "React Resizable Panel；TanStack Table",
       "description": "调研报告 §6.4 — 类 Excel 网格：行 = Actions/Models，列 = inputs（覆盖列）/ outputs（计算列）/ baseline-comparison。",
       "bdd_acceptance": [
@@ -736,7 +813,9 @@
       "name": "创建 Case Study / Scenario UI",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-036"],
+      "depends_on": [
+        "VTX-036"
+      ],
       "dependencies": "POST /case-studies + /scenarios endpoints",
       "description": "Case Study + Scenario 创建对话框 + immutable 状态约束。",
       "bdd_acceptance": [
@@ -756,7 +835,9 @@
       "name": "+ Add Action（Function-backed Action 选择）",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-037"],
+      "depends_on": [
+        "VTX-037"
+      ],
       "dependencies": "pkg/actions ActionType list API",
       "description": "调研报告 §4.1 step 2。",
       "bdd_acceptance": [
@@ -776,7 +857,9 @@
       "name": "+ Add input or output（参数勾选）",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-037"],
+      "depends_on": [
+        "VTX-037"
+      ],
       "dependencies": "Function metadata API",
       "description": "调研报告 §3.2。",
       "bdd_acceptance": [
@@ -796,7 +879,10 @@
       "name": "Override 单元格 — 标量",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-038", "VTX-039"],
+      "depends_on": [
+        "VTX-038",
+        "VTX-039"
+      ],
       "dependencies": "POST /scenarios/{rid}/overrides endpoint",
       "description": "调研报告 §4.3 + §6.4。",
       "bdd_acceptance": [
@@ -816,7 +902,9 @@
       "name": "Override 单元格 — 对象属性",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-040"],
+      "depends_on": [
+        "VTX-040"
+      ],
       "dependencies": "VTX-004 read overlay",
       "description": "override 仅在 fork 内生效，base ontology 不变。",
       "bdd_acceptance": [
@@ -835,7 +923,10 @@
       "name": "Override 单元格 — 时间序列窗口聚合值",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-040", "VTX-029"],
+      "depends_on": [
+        "VTX-040",
+        "VTX-029"
+      ],
       "dependencies": "smoothing 配置；selectedTime 窗口",
       "description": "调研报告 §5.4。",
       "bdd_acceptance": [
@@ -855,7 +946,9 @@
       "name": "Scenario Run — 同步路径（单 Function）",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-040"],
+      "depends_on": [
+        "VTX-040"
+      ],
       "dependencies": "pkg/vertex/runtime worker pool；pkg/functions / VTX-049 runtime",
       "description": "调研报告附录 A.5 + 附录 B。",
       "bdd_acceptance": [
@@ -876,7 +969,9 @@
       "name": "Scenario Run — 异步路径（jobId + SSE）",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-043"],
+      "depends_on": [
+        "VTX-043"
+      ],
       "dependencies": "Server-Sent Events；scenario_runs 状态表",
       "description": "调研报告 §4.4 + 附录 B。",
       "bdd_acceptance": [
@@ -897,7 +992,9 @@
       "name": "自动跑 Baseline 对照",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-043"],
+      "depends_on": [
+        "VTX-043"
+      ],
       "dependencies": "Scenario options storage",
       "description": "调研报告 §4.1 step 5.4 + Scenario options。",
       "bdd_acceptance": [
@@ -917,7 +1014,9 @@
       "name": "Scenario Diff API",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-043"],
+      "depends_on": [
+        "VTX-043"
+      ],
       "dependencies": "VTX-002 ScenarioRepo",
       "description": "调研报告附录 B — GET /scenarios/{id}/diff。",
       "bdd_acceptance": [
@@ -935,7 +1034,9 @@
       "name": "多 Scenario 横向并列对比",
       "phase": 5,
       "active": false,
-      "depends_on": ["VTX-045"],
+      "depends_on": [
+        "VTX-045"
+      ],
       "dependencies": "VTX-036 Pane 表",
       "description": "调研报告 §4.5。",
       "bdd_acceptance": [
@@ -994,7 +1095,10 @@
       "name": "Live Model Deployment Wrapper",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-048", "VTX-049"],
+      "depends_on": [
+        "VTX-048",
+        "VTX-049"
+      ],
       "dependencies": "model_deployments 表",
       "description": "调研报告 §3.6 — 自动生成 Model Function wrapper 包裹 Live Model Deployment。",
       "bdd_acceptance": [
@@ -1012,7 +1116,9 @@
       "name": "Function-backed Action 注册",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-048"],
+      "depends_on": [
+        "VTX-048"
+      ],
       "dependencies": "pkg/oms ActionType 表 + migration 加 function_rid 字段",
       "description": "调研报告 §3.6。",
       "bdd_acceptance": [
@@ -1031,7 +1137,9 @@
       "name": "Model Mesh（多模型链式编排）",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-051"],
+      "depends_on": [
+        "VTX-051"
+      ],
       "dependencies": "DAG 拓扑排序；worker pool",
       "description": "调研报告 §3.3 — 上游 output 写到属性 A，下游 input 读属性 A，自动拓扑排序。",
       "bdd_acceptance": [
@@ -1051,7 +1159,10 @@
       "name": "Scenario Pane — 链路传递高亮",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-052", "VTX-036"],
+      "depends_on": [
+        "VTX-052",
+        "VTX-036"
+      ],
       "dependencies": "Pane Table cell renderer",
       "description": "调研报告 §3.3 末段。",
       "bdd_acceptance": [
@@ -1070,7 +1181,9 @@
       "name": "模型版本管理 UI",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-051"],
+      "depends_on": [
+        "VTX-051"
+      ],
       "dependencies": "Model registry API + dropdown",
       "description": "调研报告 §3.4。",
       "bdd_acceptance": [
@@ -1089,7 +1202,9 @@
       "name": "External Model（API 调用）",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-049"],
+      "depends_on": [
+        "VTX-049"
+      ],
       "dependencies": "config.allowedExternalDomains 白名单",
       "description": "调研报告 §3.5 — 通过 Function 内 make API calls from functions 调外部 REST。",
       "bdd_acceptance": [
@@ -1107,7 +1222,9 @@
       "name": "LLM Model（Anthropic API）",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-049"],
+      "depends_on": [
+        "VTX-049"
+      ],
       "dependencies": "Anthropic SDK；LLM_API_KEY 环境变量",
       "description": "调研报告 §3.5 — 通过 Palantir-provided language models 在 Function 中调用。本复刻用 Anthropic Claude API。",
       "bdd_acceptance": [
@@ -1126,7 +1243,9 @@
       "name": "Scenario Execution Service — 轻量 Workflow",
       "phase": 6,
       "active": false,
-      "depends_on": ["VTX-052"],
+      "depends_on": [
+        "VTX-052"
+      ],
       "dependencies": "scenario_runs 表 (state checkpoint)；goroutine worker pool",
       "description": "调研报告 §10.3 — 每个 Scenario Run 是 Workflow。不引入 Temporal，用轻量自研 worker pool。",
       "bdd_acceptance": [
@@ -1146,7 +1265,9 @@
       "name": "Extended Label 配置 schema",
       "phase": 7,
       "active": false,
-      "depends_on": ["VTX-007"],
+      "depends_on": [
+        "VTX-007"
+      ],
       "dependencies": "VTX-011 JSON Schema 校验",
       "description": "调研报告 §2.2。",
       "bdd_acceptance": [
@@ -1164,7 +1285,10 @@
       "name": "Property Extended Label 渲染",
       "phase": 7,
       "active": false,
-      "depends_on": ["VTX-019", "VTX-058"],
+      "depends_on": [
+        "VTX-019",
+        "VTX-058"
+      ],
       "dependencies": "OSS get API",
       "description": "节点 DOM overlay 显示属性 key/value。",
       "bdd_acceptance": [
@@ -1183,7 +1307,11 @@
       "name": "TimeSeries Extended Label 渲染（窗口聚合 + smoothing）",
       "phase": 7,
       "active": false,
-      "depends_on": ["VTX-059", "VTX-029", "VTX-031"],
+      "depends_on": [
+        "VTX-059",
+        "VTX-029",
+        "VTX-031"
+      ],
       "dependencies": "selectedTime store；debounce",
       "description": "调研报告 §2.2 + §5.4。",
       "bdd_acceptance": [
@@ -1203,7 +1331,10 @@
       "name": "Measure / Derived Property Function Label",
       "phase": 7,
       "active": false,
-      "depends_on": ["VTX-059", "VTX-048"],
+      "depends_on": [
+        "VTX-059",
+        "VTX-048"
+      ],
       "dependencies": "Function invoke API",
       "description": "调研报告 §2.2 — totalAlerts = Σ relatedRoute.alertCount 的派生函数。",
       "bdd_acceptance": [
@@ -1223,7 +1354,10 @@
       "name": "baseline vs simulated 对比 Extended Label",
       "phase": 7,
       "active": false,
-      "depends_on": ["VTX-045", "VTX-060"],
+      "depends_on": [
+        "VTX-045",
+        "VTX-060"
+      ],
       "dependencies": "active scenario state",
       "description": "调研报告 §2.2 + §4.5。",
       "bdd_acceptance": [
@@ -1242,7 +1376,10 @@
       "name": "Badges（Linked Events 计数 + 自定义图标）",
       "phase": 7,
       "active": false,
-      "depends_on": ["VTX-058", "VTX-019"],
+      "depends_on": [
+        "VTX-058",
+        "VTX-019"
+      ],
       "dependencies": "OSS linkedObjects API",
       "description": "调研报告 §2.1 graph schema badges 字段。",
       "bdd_acceptance": [
@@ -1261,7 +1398,9 @@
       "name": "Layer Styling — fillColor 按属性着色",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-058"],
+      "depends_on": [
+        "VTX-058"
+      ],
       "dependencies": "d3-scale-chromatic 或 chroma-js",
       "description": "调研报告 §2.5。",
       "bdd_acceptance": [
@@ -1280,7 +1419,10 @@
       "name": "Layer Styling — fillColor 按时序值动态着色",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-064", "VTX-031"],
+      "depends_on": [
+        "VTX-064",
+        "VTX-031"
+      ],
       "dependencies": "selectedTime 重算",
       "description": "调研报告 §1.4 — Time Selection 移动时颜色随读数变化。",
       "bdd_acceptance": [
@@ -1298,7 +1440,9 @@
       "name": "Saved Selections（彩色边框分组）",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-020"],
+      "depends_on": [
+        "VTX-020"
+      ],
       "dependencies": "graph payload savedSelections 字段",
       "description": "调研报告 §2.1 + §6.1。",
       "bdd_acceptance": [
@@ -1318,7 +1462,9 @@
       "name": "Histogram 过滤面板（左侧）",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-018"],
+      "depends_on": [
+        "VTX-018"
+      ],
       "dependencies": "OSS aggregation histogram；visx",
       "description": "调研报告 §2.5 + §6.1。",
       "bdd_acceptance": [
@@ -1339,7 +1485,9 @@
       "name": "Time Filter（顶部 Shift+drag 选区间）",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-031"],
+      "depends_on": [
+        "VTX-031"
+      ],
       "dependencies": "对象 createdAt/lastSeenAt 属性",
       "description": "调研报告 §2.5。",
       "bdd_acceptance": [
@@ -1357,7 +1505,9 @@
       "name": "展开/折叠 — Search Around 右键扩张",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-026"],
+      "depends_on": [
+        "VTX-026"
+      ],
       "dependencies": "OSS linkedObjects API；VTX-015 Control Panel limits",
       "description": "调研报告 §2.5。",
       "bdd_acceptance": [
@@ -1377,7 +1527,10 @@
       "name": "自定义 Search Around Function",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-069", "VTX-048"],
+      "depends_on": [
+        "VTX-069",
+        "VTX-048"
+      ],
       "dependencies": "pkg/vertex/searcharound 桥接",
       "description": "调研报告 §2.1 + §7.4 /search-arounds/{fnRid}/execute。",
       "bdd_acceptance": [
@@ -1395,7 +1548,9 @@
       "name": "Layers 面板（左侧）",
       "phase": 8,
       "active": false,
-      "depends_on": ["VTX-019"],
+      "depends_on": [
+        "VTX-019"
+      ],
       "dependencies": "Tabs UI（Radix）",
       "description": "调研报告 §6.1。",
       "bdd_acceptance": [
@@ -1415,7 +1570,9 @@
       "name": "URL 参数 deep link 生图",
       "phase": 9,
       "active": false,
-      "depends_on": ["VTX-017"],
+      "depends_on": [
+        "VTX-017"
+      ],
       "dependencies": "React Router useSearchParams；OSS API",
       "description": "调研报告 §2.1 — objectRid / objectSetRid / searchAroundFnRid / selectObjectRid / startTime/endTime/selectedTime。",
       "bdd_acceptance": [
@@ -1435,7 +1592,10 @@
       "name": "Graph Template Instantiate UI",
       "phase": 9,
       "active": false,
-      "depends_on": ["VTX-012", "VTX-072"],
+      "depends_on": [
+        "VTX-012",
+        "VTX-072"
+      ],
       "dependencies": "React Hook Form",
       "description": "Templates 列表页 + Instantiate 对话框。",
       "bdd_acceptance": [
@@ -1454,7 +1614,9 @@
       "name": "从 Object Explorer 跳转 Vertex",
       "phase": 9,
       "active": false,
-      "depends_on": ["VTX-072"],
+      "depends_on": [
+        "VTX-072"
+      ],
       "dependencies": "web/src/pages/explorer/ 增加 Open in Vertex 按钮",
       "description": "调研报告 §6.5。",
       "bdd_acceptance": [
@@ -1472,7 +1634,10 @@
       "name": "Graph Template 参数化 Search Around",
       "phase": 9,
       "active": false,
-      "depends_on": ["VTX-073", "VTX-070"],
+      "depends_on": [
+        "VTX-073",
+        "VTX-070"
+      ],
       "dependencies": "VTX-012 template parameters",
       "description": "调研报告 §10.7 P3-19。",
       "bdd_acceptance": [
@@ -1489,7 +1654,9 @@
       "name": "Save as Template UI",
       "phase": 9,
       "active": false,
-      "depends_on": ["VTX-012"],
+      "depends_on": [
+        "VTX-012"
+      ],
       "dependencies": "TopBar 菜单",
       "description": "TopBar Save as Template 按钮。",
       "bdd_acceptance": [
@@ -1544,7 +1711,9 @@
       "name": "Compare 时间窗",
       "phase": 10,
       "active": false,
-      "depends_on": ["VTX-031"],
+      "depends_on": [
+        "VTX-031"
+      ],
       "dependencies": "time selection store 支持多窗口",
       "description": "调研报告 §5.4 + §6.1。",
       "bdd_acceptance": [
@@ -1564,7 +1733,9 @@
       "name": "Time Series Missing Data Warning",
       "phase": 10,
       "active": false,
-      "depends_on": ["VTX-029"],
+      "depends_on": [
+        "VTX-029"
+      ],
       "dependencies": "missingDataWarningHours from Control Panel",
       "description": "调研报告 §5.5。",
       "bdd_acceptance": [
@@ -1582,7 +1753,9 @@
       "name": "Events overview API",
       "phase": 10,
       "active": false,
-      "depends_on": ["VTX-077"],
+      "depends_on": [
+        "VTX-077"
+      ],
       "dependencies": "pkg/vertex/timeline 包",
       "description": "Events 查询 API。",
       "bdd_acceptance": [
@@ -1600,7 +1773,10 @@
       "name": "Timeline Event Bar 颜色 + 类别过滤",
       "phase": 10,
       "active": false,
-      "depends_on": ["VTX-034", "VTX-081"],
+      "depends_on": [
+        "VTX-034",
+        "VTX-081"
+      ],
       "dependencies": "color palette；checkbox UI",
       "description": "Timeline 多种 Event ObjectType 不同颜色 bar + 顶部类别过滤。",
       "bdd_acceptance": [
@@ -1619,7 +1795,9 @@
       "name": "Graph History 侧栏",
       "phase": 11,
       "active": false,
-      "depends_on": ["VTX-008"],
+      "depends_on": [
+        "VTX-008"
+      ],
       "dependencies": "GET /graphs/{rid}/history endpoint",
       "description": "History tab + 只读模式 + Restore/Duplicate from version。",
       "bdd_acceptance": [
@@ -1638,7 +1816,9 @@
       "name": "Duplicate Graph",
       "phase": 11,
       "active": false,
-      "depends_on": ["VTX-008"],
+      "depends_on": [
+        "VTX-008"
+      ],
       "dependencies": "POST /graphs/{rid}/duplicate endpoint",
       "description": "TopBar 菜单 → Duplicate。",
       "bdd_acceptance": [
@@ -1656,7 +1836,9 @@
       "name": "Get Quick Share Link",
       "phase": 11,
       "active": false,
-      "depends_on": ["VTX-013"],
+      "depends_on": [
+        "VTX-013"
+      ],
       "dependencies": "share_links 表",
       "description": "调研报告 §6.6。",
       "bdd_acceptance": [
@@ -1677,7 +1859,9 @@
       "name": "Versioned Graph Toggle",
       "phase": 11,
       "active": false,
-      "depends_on": ["VTX-008"],
+      "depends_on": [
+        "VTX-008"
+      ],
       "dependencies": "TopBar 设置面板",
       "description": "Versioned graph 开关：开启后自动写历史，关闭则原地更新。",
       "bdd_acceptance": [
@@ -1696,7 +1880,9 @@
       "name": "协作 — 乐观锁 + 版本冲突提示",
       "phase": 11,
       "active": false,
-      "depends_on": ["VTX-008"],
+      "depends_on": [
+        "VTX-008"
+      ],
       "dependencies": "If-Match header / version check in PUT handler",
       "description": "调研报告 §6.6 + §10.7 P3。",
       "bdd_acceptance": [
@@ -1715,7 +1901,9 @@
       "name": "Graph History 视图 — diff",
       "phase": 11,
       "active": false,
-      "depends_on": ["VTX-083"],
+      "depends_on": [
+        "VTX-083"
+      ],
       "dependencies": "VTX-119 GraphDiff API",
       "description": "History tab 选两个版本 Compare。",
       "bdd_acceptance": [
@@ -1733,7 +1921,10 @@
       "name": "Apply Scenario API",
       "phase": 12,
       "active": false,
-      "depends_on": ["VTX-002", "VTX-051"],
+      "depends_on": [
+        "VTX-002",
+        "VTX-051"
+      ],
       "dependencies": "pkg/actions / pkg/funnel；PG transaction",
       "description": "调研报告 §8.2。把 fork edits 事务性写回 main ontology。",
       "bdd_acceptance": [
@@ -1753,7 +1944,9 @@
       "name": "Apply Audit Trail",
       "phase": 12,
       "active": false,
-      "depends_on": ["VTX-089"],
+      "depends_on": [
+        "VTX-089"
+      ],
       "dependencies": "pkg/audit；audit_logs 表",
       "description": "调研报告 §4.2 — 在 Scenario context 下 Action 仍校验权限，且触发 audit log。",
       "bdd_acceptance": [
@@ -1771,7 +1964,9 @@
       "name": "Apply Scenario UI Button",
       "phase": 12,
       "active": false,
-      "depends_on": ["VTX-089"],
+      "depends_on": [
+        "VTX-089"
+      ],
       "dependencies": "Scenario Pane",
       "description": "Apply to Main 按钮 + confirm dialog + 冲突高亮。",
       "bdd_acceptance": [
@@ -1791,7 +1986,9 @@
       "name": "Apply 跳过 webhook 在 Scenario fork 内",
       "phase": 12,
       "active": false,
-      "depends_on": ["VTX-089"],
+      "depends_on": [
+        "VTX-089"
+      ],
       "dependencies": "pkg/actions side-effect gate",
       "description": "调研报告 §4.2 — 在 Scenario 内执行 Action 不触发副作用。Apply 后才允许触发。",
       "bdd_acceptance": [
@@ -1809,7 +2006,9 @@
       "name": "Apply 触发 follow-up Action",
       "phase": 12,
       "active": false,
-      "depends_on": ["VTX-089"],
+      "depends_on": [
+        "VTX-089"
+      ],
       "dependencies": "Apply request body 支持 followUpActions",
       "description": "调研报告 §8.2 — Workshop Apply Scenario 可级联触发 follow-up Action。",
       "bdd_acceptance": [
@@ -1827,7 +2026,9 @@
       "name": "Control Panel 设置页",
       "phase": 13,
       "active": false,
-      "depends_on": ["VTX-015"],
+      "depends_on": [
+        "VTX-015"
+      ],
       "dependencies": "/admin/vertex 路由",
       "description": "Admin 设置面板 UI。",
       "bdd_acceptance": [
@@ -1847,7 +2048,10 @@
       "name": "默认时窗在新图生效",
       "phase": 13,
       "active": false,
-      "depends_on": ["VTX-094", "VTX-031"],
+      "depends_on": [
+        "VTX-094",
+        "VTX-031"
+      ],
       "dependencies": "Control Panel config fetch on new graph",
       "description": "新图初始化时读取 defaultWindowDays。",
       "bdd_acceptance": [
@@ -1865,7 +2069,9 @@
       "name": "Active Icon Categories（节点图标库）",
       "phase": 13,
       "active": false,
-      "depends_on": ["VTX-094"],
+      "depends_on": [
+        "VTX-094"
+      ],
       "dependencies": "Layer Styling icon picker",
       "description": "调研报告 §7.6。",
       "bdd_acceptance": [
@@ -1883,7 +2089,10 @@
       "name": "Live Mode 与实时告警 Badge",
       "phase": 13,
       "active": false,
-      "depends_on": ["VTX-095", "VTX-029"],
+      "depends_on": [
+        "VTX-095",
+        "VTX-029"
+      ],
       "dependencies": "polling hook + alert threshold",
       "description": "调研报告 §10.7 P3-20。",
       "bdd_acceptance": [
@@ -1901,7 +2110,9 @@
       "name": "Scenario Read Overlay Benchmark",
       "phase": 14,
       "active": false,
-      "depends_on": ["VTX-004"],
+      "depends_on": [
+        "VTX-004"
+      ],
       "dependencies": "go test -bench；bench/vertex/",
       "description": "性能 Benchmark Suite — Scenario Read Overlay。",
       "bdd_acceptance": [
@@ -1919,7 +2130,9 @@
       "name": "System Graph 渲染 Benchmark",
       "phase": 14,
       "active": false,
-      "depends_on": ["VTX-018"],
+      "depends_on": [
+        "VTX-018"
+      ],
       "dependencies": "Playwright",
       "description": "性能 Benchmark — System Graph 渲染。",
       "bdd_acceptance": [
@@ -1938,7 +2151,9 @@
       "name": "Vertex 指标暴露（Prometheus）",
       "phase": 14,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "pkg/metrics；grafana/",
       "description": "可观测性 — Vertex 指标暴露。",
       "bdd_acceptance": [
@@ -1956,7 +2171,9 @@
       "name": "错误重试可视化（前端）",
       "phase": 14,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "SSE retry event",
       "description": "调研报告 §10.7 P2-16。",
       "bdd_acceptance": [
@@ -1974,7 +2191,9 @@
       "name": "失败 Scenario 调试视图",
       "phase": 14,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "scenario_runs 表 logs 字段",
       "description": "失败行 → Debug 侧栏。",
       "bdd_acceptance": [
@@ -1992,7 +2211,9 @@
       "name": "Vertex E2E 真实场景测试（航空运营）",
       "phase": 14,
       "active": false,
-      "depends_on": ["VTX-052"],
+      "depends_on": [
+        "VTX-052"
+      ],
       "dependencies": "testdata/aviation/ seed",
       "description": "调研报告 §1.5 用例 — 模拟某机场延误事件沿 Flight → Route → Aircraft → Airport 图传播。",
       "bdd_acceptance": [
@@ -2010,7 +2231,9 @@
       "name": "dnd-kit — Layers 侧栏拖拽到画布",
       "phase": 15,
       "active": false,
-      "depends_on": ["VTX-071"],
+      "depends_on": [
+        "VTX-071"
+      ],
       "dependencies": "npm: @dnd-kit/core",
       "description": "调研报告 §10.6。",
       "bdd_acceptance": [
@@ -2028,7 +2251,9 @@
       "name": "Vertex Graph Widget — Workshop 内嵌",
       "phase": 15,
       "active": false,
-      "depends_on": ["VTX-014"],
+      "depends_on": [
+        "VTX-014"
+      ],
       "dependencies": "Workshop module config",
       "description": "调研报告 §6.5。",
       "bdd_acceptance": [
@@ -2047,7 +2272,9 @@
       "name": "AIP Logic 调 Vertex Scenario（自动化测试）",
       "phase": 15,
       "active": false,
-      "depends_on": ["VTX-002"],
+      "depends_on": [
+        "VTX-002"
+      ],
       "dependencies": "pkg/aip 既有",
       "description": "调研报告 §8.3。",
       "bdd_acceptance": [
@@ -2065,7 +2292,9 @@
       "name": "Map App / Vertex 互操作",
       "phase": 15,
       "active": false,
-      "depends_on": ["VTX-072"],
+      "depends_on": [
+        "VTX-072"
+      ],
       "dependencies": "/map 页面（如无则 stub）",
       "description": "调研报告 §1.1 表 — Map 与 Vertex 互补。",
       "bdd_acceptance": [
@@ -2083,7 +2312,9 @@
       "name": "TypeScript SDK — VertexClient",
       "phase": 16,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "sdk/typescript 既有 OmsClient",
       "description": "TS SDK 扩展 vertex 模块 + AsyncIterable SSE。",
       "bdd_acceptance": [
@@ -2101,7 +2332,9 @@
       "name": "Python SDK — VertexClient",
       "phase": 16,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "sdk/python 既有",
       "description": "Python SDK vertex 模块 + generator。",
       "bdd_acceptance": [
@@ -2119,7 +2352,9 @@
       "name": "Go SDK — VertexClient",
       "phase": 16,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "sdk/go 既有",
       "description": "Go SDK channel-based SSE。",
       "bdd_acceptance": [
@@ -2136,7 +2371,11 @@
       "name": "Cookbook — Vertex 端到端教程",
       "phase": 16,
       "active": false,
-      "depends_on": ["VTX-108", "VTX-109", "VTX-110"],
+      "depends_on": [
+        "VTX-108",
+        "VTX-109",
+        "VTX-110"
+      ],
       "dependencies": "docs/cookbook/",
       "description": "8 步骤端到端教程。",
       "bdd_acceptance": [
@@ -2154,7 +2393,10 @@
       "name": "Vertex MCP Server 集成",
       "phase": 16,
       "active": false,
-      "depends_on": ["VTX-008", "VTX-043"],
+      "depends_on": [
+        "VTX-008",
+        "VTX-043"
+      ],
       "dependencies": "pkg/mcp 既有",
       "description": "Weave 已有 pkg/mcp，扩展暴露 Vertex 资源。",
       "bdd_acceptance": [
@@ -2171,7 +2413,10 @@
       "name": "AIP-style LLM Scenario Copilot",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-046", "VTX-056"],
+      "depends_on": [
+        "VTX-046",
+        "VTX-056"
+      ],
       "dependencies": "Anthropic API",
       "description": "调研报告 §10.7 P3-22 — LLM 推荐 override 取值范围 + 解读结果。",
       "bdd_acceptance": [
@@ -2190,7 +2435,9 @@
       "name": "Diagramming 模式 stub",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-017"],
+      "depends_on": [
+        "VTX-017"
+      ],
       "dependencies": "占位路由",
       "description": "调研报告附录 C — Vertex 还有 Diagramming 模式（beta）。MVP 不复刻，仅留 stub 路由。",
       "bdd_acceptance": [
@@ -2208,7 +2455,9 @@
       "name": "SSE 错误重连 + 断线恢复",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-044"],
+      "depends_on": [
+        "VTX-044"
+      ],
       "dependencies": "Last-Event-ID header；EventSource wrapper",
       "description": "SSE 断线恢复。",
       "bdd_acceptance": [
@@ -2226,7 +2475,9 @@
       "name": "Scenario 数据保留策略",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-002"],
+      "depends_on": [
+        "VTX-002"
+      ],
       "dependencies": "cron scheduler；scenarios_archive 表",
       "description": "90 天归档 + 透明解压。",
       "bdd_acceptance": [
@@ -2262,7 +2513,9 @@
       "name": "Cross-Ontology Graph 限制 stub",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-011"],
+      "depends_on": [
+        "VTX-011"
+      ],
       "dependencies": "Schema validator",
       "description": "MVP 限制：一个 graph 仅引用单 ontology。",
       "bdd_acceptance": [
@@ -2279,7 +2532,9 @@
       "name": "Snapshot Diff API（versioned graph 之间）",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-008"],
+      "depends_on": [
+        "VTX-008"
+      ],
       "dependencies": "system_graph_versions 表",
       "description": "Graph diff API。",
       "bdd_acceptance": [
@@ -2296,7 +2551,9 @@
       "name": "帮助 / Keyboard Shortcuts",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-017"],
+      "depends_on": [
+        "VTX-017"
+      ],
       "dependencies": "web/src/hotkeys 既有",
       "description": "? 键弹出帮助 + Cmd+S 保存 + Cmd+Enter 跑 Scenario。",
       "bdd_acceptance": [
@@ -2316,7 +2573,9 @@
       "name": "国际化（i18n）— 中文/英文",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-017"],
+      "depends_on": [
+        "VTX-017"
+      ],
       "dependencies": "web/src/i18n 既有",
       "description": "Vertex 词条 zh-CN + en-US 100% 覆盖。",
       "bdd_acceptance": [
@@ -2335,7 +2594,9 @@
       "name": "单元测试覆盖率门槛",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-103"],
+      "depends_on": [
+        "VTX-103"
+      ],
       "dependencies": "CI coverage 配置",
       "description": "后端 ≥ 80% / 前端 ≥ 75% / CI 硬卡。",
       "bdd_acceptance": [
@@ -2354,7 +2615,9 @@
       "name": "安全审计 — Scenario 越权检查",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-013"],
+      "depends_on": [
+        "VTX-013"
+      ],
       "dependencies": "pkg/masking；pkg/rls",
       "description": "负向测试 ≥ 8 例。",
       "bdd_acceptance": [
@@ -2373,7 +2636,10 @@
       "name": "Docker Compose 一键启动",
       "phase": 17,
       "active": false,
-      "depends_on": ["VTX-028", "VTX-049"],
+      "depends_on": [
+        "VTX-028",
+        "VTX-049"
+      ],
       "dependencies": "docker-compose.yml + Makefile",
       "description": "完整 dev 环境 docker 化。",
       "bdd_acceptance": [
