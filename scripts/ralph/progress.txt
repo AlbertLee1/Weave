@@ -78,3 +78,19 @@ Started: Thu May 14 23:48:45 CST 2026
   - 此层 **不做** ListObjects 的 createObject 合成：scenario 里新建但 base 没有的对象不在 list 里出现。VTX-005 在 aggregation 处理「scenario 新增 3 个 → COUNT+=3」时，要直接基于候选 key 集做。
   - Handler 通过 `SetScenarioReader` 接 scenario reader（模仿 `SetOmsRepo`/`SetAttachmentStore` 风格）。main.go 可以直接传 `scenarios.PGRepo`；接口只暴露 GetScenario + ListEdits 两个方法，不需要 adapter。
 ---
+
+## 2026-05-15 - VTX-005
+- Aggregation API 支持 X-Scenario-Id overlay。Header 不在 → 走原 Bleve 引擎；Header 在 → 走纯 Go overlay 路径（PoC）。
+- Files changed:
+  - `pkg/oss/scenario_aggregate.go` (new) — `AggregateWithOverlay(base, edits, req) (*aggregation.AggregationResponse, error)`. 内部 `applyOverlayToObjectSet` 把 edits 按 ObjectID 分桶；base 行 FoldObject；createObject 合成；deleteObject 过滤。`computeOverlayMetrics` 支持 count / sum / avg / min / max；`numericProperty` 收 float64/float32/intN/json.Number/string。Single-level exact groupBy；多层 / fixedWidth / range / topValues / sub-agg / having / cube / rollup / approximate* 在 PoC 中明确 unsupported，返 InvalidParameter。
+  - `pkg/oss/handlers_aggregate.go` (edit) — AggregateObjects 先 `loadScenarioOverlay`：overlay==nil 走原 engine；overlay!=nil 用 `svc.ListObjects(ontology, objectType)` 拉 base，调 `AggregateWithOverlay`。注意：overlay 路径 **不需要** aggEngine/indexMgr 配置（pure Go）；base 路径仍需。
+  - `pkg/oss/scenario_aggregate_test.go` (new) — 7 个测试覆盖 BDD #1（GROUP BY status SUM total → modify +500 = 1500）/ #2（delete 2 → COUNT 8）/ #3（create 3 → COUNT 13）+ mixed delete/modify/create SUM + AVG codepath + handler 集成（POST /aggregate + X-Scenario-Id）+ 未知 scenario → 404。
+  - `scripts/ralph/prd.json` — VTX-005 → passes:true.
+- Quality checks: `go test ./pkg/oss/... -run TestScenarioAggregate` PASS (7/7, <1s); 全套 `go test ./pkg/oss/` PASS (65s, 0 回归); `go vet ./...` clean; `go build ./...` clean.
+- **Learnings for future iterations:**
+  - `aggregation.AggregationRequest` 自带 `Query *bleve.SearchRequest` 字段。overlay 路径忽略它（pure Go），但生产化时要把 Bleve `Query` 翻译成 Go 端 predicate 才能完整对齐 Bleve 语义。Phase 1 PoC 没做 — 写在 Open Questions。
+  - PRD 描述里的「先做对象集 fold 再走既有 Bleve 索引」难以一比一对齐：要么 re-index 一份临时 Bleve（昂贵），要么 pure Go aggregate（功能受限）。选了 pure Go：BDD 三个 case 命中即可，复杂 groupBy 留给 base 路径。
+  - `Properties: map[string]any` 的数值不一定是 float64：原 base 是 JSON 反序列化后的 float64，但 createObject 合成的 NewValue 经过 `json.Unmarshal(..., &any)` 也是 float64；test 用 `float64(70)` 显式写出来避免 int → any 的隐式坑。
+  - 同一 fakeScenarioReader / fakeService 可在 VTX-004 / VTX-005 测试间复用。两个 test 文件用同一个 _test 包，共享辅助函数（newTestRouter / raw）。
+  - createObject 合成需要 `ObjectType` 参数：scenario_edits.object_type 必须等于 URL path 上的 objectType 才会被纳入聚合，否则跨 type 的 createObject 会污染当前 objectType 的 COUNT。
+---

@@ -93,14 +93,22 @@ func (h *Handler) rejectFilteredAggregationFields(ctx context.Context, objectTyp
 
 // AggregateObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate.
 func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
-	if h.aggEngine == nil || h.indexMgr == nil {
-		apierror.WriteJSON(w, apierror.NewInternal("AggregationNotConfigured", nil))
-		return
-	}
-
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")
 	ctx := index.WithOntologyScope(r.Context(), ontologyAPIName)
+
+	overlay, apiErr := h.loadScenarioOverlay(ctx, r, ontologyAPIName)
+	if apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
+	// The Bleve-backed engine is required for the base path; the overlay
+	// path runs in pure Go and does not need it.
+	if overlay == nil && (h.aggEngine == nil || h.indexMgr == nil) {
+		apierror.WriteJSON(w, apierror.NewInternal("AggregationNotConfigured", nil))
+		return
+	}
 
 	var req aggregation.AggregationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -113,6 +121,36 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 
 	if apiErr := h.rejectFilteredAggregationFields(ctx, objectType, &req); apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
+	if overlay != nil {
+		// Scenario overlay path: load base rows via the Service layer (one
+		// page hop here; pagination follow-up is acknowledged in PRD Open
+		// Questions), fold edits over them, run in-memory aggregation.
+		page, err := h.svc.ListObjects(ctx, ListObjectsRequest{
+			OntologyRID: ontologyAPIName,
+			ObjectType:  objectType,
+		})
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ScenarioBaseFetchFailed", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+		var base []*WireObject
+		if page != nil {
+			base = page.Data
+		}
+		result, err := AggregateWithOverlay(base, overlay.Edits, &req)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("ScenarioAggregationFailed", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
 		return
 	}
 
@@ -134,5 +172,5 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(result)
 }
