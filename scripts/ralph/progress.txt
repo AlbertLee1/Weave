@@ -94,3 +94,19 @@ Started: Thu May 14 23:48:45 CST 2026
   - 同一 fakeScenarioReader / fakeService 可在 VTX-004 / VTX-005 测试间复用。两个 test 文件用同一个 _test 包，共享辅助函数（newTestRouter / raw）。
   - createObject 合成需要 `ObjectType` 参数：scenario_edits.object_type 必须等于 URL path 上的 objectType 才会被纳入聚合，否则跨 type 的 createObject 会污染当前 objectType 的 COUNT。
 ---
+
+## 2026-05-15 - VTX-006
+- Phase 1 end-to-end smoke：把 VTX-001（migration）/ VTX-002（scenarios.Repo）/ VTX-003（FoldObject）/ VTX-004（X-Scenario-Id handler 接入）串成一个 HTTP-router 级别的测试。无 PG / 无 Bleve / 不需 -tags integration。
+- Files changed:
+  - `test/e2e/vertex/scenario_smoke_test.go` (new) — 在 test/e2e/vertex/ 起一个新包 `vertex_test`。内含 `memScenarioRepo`（in-memory 完整 scenarios.Repo 实现，BIGSERIAL 用 atomic int64 模拟）+ `memOSSService`（最小 oss.Service stub，仅 GetObject / ListObjects 真实实现，其它 panic）。Seed 一行 Customer/ALFKI(companyName=Alfreds Futterkiste, country=Germany)。
+  - 测试名严格按 BDD: `TestScenarioSmoke_Given_ModifyEdit_When_ReadWithOverlay_Then_ReflectsEdit`，3 个子 t.Run：(a) 无 header → base; (b) 带 X-Scenario-Id → overlay; (c) overlay 调用后再无 header → base 未污染。
+  - `scripts/ralph/prd.json` — VTX-006 → passes:true.
+- Quality checks: `go test ./test/e2e/vertex/...` PASS (3/3 sub-tests, <1s); Phase 1 sweep `go test ./pkg/scenarios/... ./pkg/oss/ ./test/e2e/vertex/` PASS; `go vet ./...` clean; `go build ./...` clean.
+- **Phase 1 STATUS: COMPLETE** — VTX-001 ~ VTX-006 全部 passes:true。
+- **Learnings for future iterations:**
+  - 在 e2e 测试里用 in-memory `scenarios.Repo` 比拉 PG container 快 ~1000×（毫秒 vs 秒）。对 PoC / smoke 测试，自己写一个 ~80 行的 in-memory repo 比通过 testutil.StartPGContainer 划算。生产代码路径仍由 VTX-002 的集成测试覆盖。
+  - 子 test 命名用 `t.Run("without header returns base", ...)` 等英语短句而非中文，避免 go test -run 正则上的麻烦（go 测试名空格会被替换为下划线）。
+  - 「base read after overlay read is unaffected」是 cheap 但 valuable 的子 case — overlay 路径不能 mutate svc 返回的 *WireObject，否则下次无 header 读会看到 leak。VTX-004 的 `viewToWireObject` 显式构造新对象，未触碰 template 的 Properties map，这条不变量被这个 case 锁定。
+  - vertex e2e 子目录走 `test/e2e/vertex/` 而不是 `test/e2e/`，避免与现有 e2e_test.go 共享内存的 in-memory OMS repo 冲突；包名 `vertex_test`。后续 VTX-007+（write-overlay / time-selection）继续往这个目录扩。
+  - `rid.New("vertex", "main", "case-study")` / `("vertex", "main", "scenario")` 同 VTX-002 集成测试用法一致；in-memory repo 不需要 FK 校验。
+---
