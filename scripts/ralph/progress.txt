@@ -129,3 +129,18 @@ Started: Thu May 14 23:48:45 CST 2026
   - pgx 写 hypertable 用 `conn.CopyFrom(pgx.Identifier{"object_time_series"}, cols, pgx.CopyFromRows(rows))` 是最快路径（M3 Max 25 万行/秒）；INSERT 一行一行慢 30× 以上。VTX-029 / VTX-030 写 service 层 ingest API 时直接学这模板，不要落入循环 INSERT 陷阱。
   - 共享 worktree 风险：多 Stream agent 同时在 `/Users/liyang/Documents/Community/Weave` 操作时，另一个 agent 可能切走分支并增量提交（实测期间 Stream D 把 HEAD 跳到 `-d` 并打了 VTX-098~119 commit）。`git status` 应该常看，commit 前显式 `git checkout vertex/replication-v1-b` 校准；migration 序号也可能被对方占用（实测对方插了 `000106_scenarios_archive.*.sql`，但只在 `-d` branch，本 branch 的 `-b` 仍然 000106 自由）。
 ---
+
+## 2026-05-15 - VTX-029
+- TimeSeries Service Query API：`pkg/timeseries.VertexService.Query(ctx, VertexQuery)` 在 VTX-028 hypertable 上做窗口聚合 + scenario override + missing data warning。与现有 `pkg/timeseries.Store`（Foundry OSv2 `timeseries_points` 上的 JSONB-value 接口）并存，schema 差异决定不能复用。
+- Files changed:
+  - `pkg/timeseries/vertex_service.go` (new) — `VertexService`、`VertexQuery`、`VertexQueryResult`、`Agg`（AVG/MIN/MAX/SUM/LAST）、`ScenarioOverlayReader` 接口 + `ErrScenarioNotFound` sentinel、`NewVertexService` + `WithScenarioOverlay` / `WithMissingDataWarningHours` 函数式 option。一条 SQL 走 `time_bucket($1::INTERVAL, ts)` 直查 hypertable；LAST agg 用 TimescaleDB 的 `last(value, ts)` hyperfunction。
+  - `pkg/timeseries/vertex_service_test.go` (new, integration build tag) — 5 个 BDD test：AVG 5-min 桶序列 / 5 agg 变体（AVG/MIN/MAX/SUM/LAST）和直接 PG 计算一致 / scenario override 整段替换 / 数据陈旧触发 missing_data warning / 数据新鲜不触发 warning。`stubOverlay` 通过 `ScenarioOverlayReader` 接口注入，没碰 `pkg/scenarios` 包。
+  - `scripts/ralph/vertex/prd-B.json` — VTX-029 → passes:true。
+- Quality checks: `go test -tags integration ./pkg/timeseries/... -run TestVertexTimeSeries -v` PASS (5/5, 9 sub-tests, 13s); `go vet ./...` clean; `go build ./...` clean。每个 case 启独立 TimescaleDB container ~2.5s。
+- **Learnings for future iterations:**
+  - VTX-028 hypertable 上做 `time_bucket(INTERVAL, ts)` 直接走 raw chunks — 不需要走 cagg_5min。cagg 是 VTX-030 REST handler / VTX-060 frontend extended label 上的优化路径（当 bucket=5m 时可以直查 `cagg_5min`，更省 CPU）。
+  - SQL 里 INTERVAL 不能直接 `$1` bind 一个 Go time.Duration——pgx 会拒。用 `'%d microseconds'` 字符串 + `$1::INTERVAL` 显式 cast。
+  - `pgx.ErrNoRows` 不会从 `MAX(ts)` 出来（聚合永远返回一行）；空表场景 `last` 会被 scan 成 `time.Time{}` (zero)，靠 `last.IsZero()` 跳过 warning 计算。如果以后 schema 改成 ts NOT NULL DEFAULT NOW()，要重新评估这点。
+  - `ScenarioOverlayReader` 接口只暴露 `GetWindowedScalarOverride`，故意不引用 `pkg/scenarios` — 让 VertexService 测试可以纯用 stub overlay 跑，PG container 里不必塞 scenario 数据。VTX-030 REST handler 那层再做 `*scenarios.PGRepo` → `ScenarioOverlayReader` 的 adapter。
+  - 测试断言 `len(res.Points)==N` 时记得 `From`/`To` 是半开区间 `[From, To)`：30min 区间 + 5min bucket = 6 桶 (00-05, 05-10, ..., 25-30) 而不是 7。
+---

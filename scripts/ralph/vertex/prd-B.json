@@ -181,8 +181,8 @@
         "Tests pass"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented in pkg/timeseries/vertex_service.go + pkg/timeseries/vertex_service_test.go (5 integration tests, 9 sub-tests total). New VertexService struct (separate from existing Foundry-OSv2 Store interface, since the VTX-028 hypertable schema differs from timeseries_points). API: VertexQuery{ObjectRID, Property, From, To, Agg, Bucket, ScenarioID} → VertexQueryResult{Points, Warning, LastObservedAt}. Agg supports AVG/MIN/MAX/SUM/LAST (LAST uses TimescaleDB's last(value, ts) hyperfunction). Window aggregation runs `time_bucket(INTERVAL, ts)` on the raw hypertable; cagg_5min is reserved for VTX-030 REST handler. ScenarioOverlayReader returns an optional *float64 override that replaces every bucket value (VTX-042 will refine to atTimestamp-scoped overrides). missing_data warning fires when MAX(ts) is older than missingDataWarningHours (default 24) before the request To."
     },
     {
       "id": "VTX-030",
