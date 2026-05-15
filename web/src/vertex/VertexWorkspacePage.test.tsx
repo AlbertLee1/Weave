@@ -1003,7 +1003,9 @@ describe('VertexWorkspacePage manual drag + pinned (VTX-024)', () => {
     expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
   });
 
-  it('Given_unpinnedNode_When_rightClick_Then_noContextMenuRendered', async () => {
+  it('Given_unpinnedNode_When_rightClick_Then_menuRendersWithPinInsteadOfUnpin', async () => {
+    // VTX-024 originally rendered NO menu for a non-pinned node. VTX-026 lands
+    // the multi-item menu; on an unpinned node the toggle item reads "Pin".
     mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: dragPayload });
     renderAt('/vertex/ri.g');
 
@@ -1018,9 +1020,10 @@ describe('VertexWorkspacePage manual drag + pinned (VTX-024)', () => {
       });
     });
 
-    // A is not in the pinned set on this payload, so VTX-024 surfaces no menu.
-    // (VTX-026 will add the multi-item menu for non-pinned nodes.)
-    expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
+    const menu = await screen.findByTestId('vertex-node-context-menu');
+    expect(menu.getAttribute('data-node')).toBe('ri.airport.A');
+    expect(screen.getByTestId('vertex-node-context-menu-pin')).toBeInTheDocument();
+    expect(screen.queryByTestId('vertex-node-context-menu-unpin')).not.toBeInTheDocument();
   });
 });
 
@@ -1128,5 +1131,271 @@ describe('VertexWorkspacePage link merging (VTX-025)', () => {
     for (const key of loadedGraph!.edges()) {
       expect(loadedGraph!.getEdgeAttribute(key, 'label')).toBeUndefined();
     }
+  });
+});
+
+describe('VertexWorkspacePage node context menu (VTX-026)', () => {
+  // Two-node payload with an ontology api name on the layer so the
+  // Open-in-Object-Explorer item builds a /explorer/{ontology} URL.
+  const ctxPayload = {
+    layers: [
+      {
+        id: 'layer-airports',
+        ontology: 'main',
+        objectType: 'Airport',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          { objectRid: 'ri.airport.A', properties: { name: 'A' } },
+          { objectRid: 'ri.airport.B', properties: { name: 'B' } },
+        ],
+      },
+    ],
+    edges: [
+      { id: 'e1', linkTypeRid: 'ri.lt.flight', source: 'ri.airport.A', target: 'ri.airport.B' },
+    ],
+    positions: {},
+  };
+
+  const ctxPayloadPinnedA = {
+    ...ctxPayload,
+    positions: {
+      'ri.airport.A': { x: 50, y: 60, pinned: true },
+    },
+  };
+
+  function mockFetchOk(body: unknown) {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    });
+  }
+
+  function mockPatchOk() {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify({ rid: 'ri.g' }),
+      json: async () => ({ rid: 'ri.g' }),
+    });
+  }
+
+  function fireSigmaEvent(name: string, payload: unknown) {
+    const handler = capturedHandlers[name];
+    if (!handler) throw new Error(`no handler registered for ${name}`);
+    handler(payload);
+  }
+
+  it('Given_userRightClicksNode_When_menuOpens_Then_atLeast5MenuItemsAreShown', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu', { clientX: 10, clientY: 20 }) },
+      });
+    });
+
+    await screen.findByTestId('vertex-node-context-menu');
+    expect(screen.getByTestId('vertex-node-context-menu-search-around')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-node-context-menu-open-explorer')).toBeInTheDocument();
+    // unpinned by default → toggle reads "Pin"
+    expect(screen.getByTestId('vertex-node-context-menu-pin')).toBeInTheDocument();
+    expect(screen.queryByTestId('vertex-node-context-menu-unpin')).not.toBeInTheDocument();
+    expect(screen.getByTestId('vertex-node-context-menu-hide')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-node-context-menu-copy-rid')).toBeInTheDocument();
+  });
+
+  it('Given_rightClickPinnedNode_When_menuOpens_Then_toggleItemReadsUnpin', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayloadPinnedA });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    await screen.findByTestId('vertex-node-context-menu');
+    expect(screen.getByTestId('vertex-node-context-menu-unpin')).toBeInTheDocument();
+    expect(screen.queryByTestId('vertex-node-context-menu-pin')).not.toBeInTheDocument();
+  });
+
+  it('Given_userClicksOpenInObjectExplorer_When_clicked_Then_windowOpenIsCalledWithExplorerUrl', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-node-context-menu-open-explorer'));
+    });
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    const [url, target] = openSpy.mock.calls[0];
+    expect(url).toBe('/explorer/main?objectRid=ri.airport.A');
+    expect(target).toBe('_blank');
+
+    // Menu closes after clicking the item.
+    expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
+
+    openSpy.mockRestore();
+  });
+
+  it('Given_userClicksHide_When_clicked_Then_nodeAndIncidentEdgeDisappearFromGraph', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+      expect(loadedGraph!.size).toBe(1);
+    });
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-node-context-menu-hide'));
+    });
+
+    await waitFor(() => {
+      expect(loadedGraph!.hasNode('ri.airport.A')).toBe(false);
+      // The single edge A→B is incident to the hidden node and is dropped.
+      expect(loadedGraph!.size).toBe(0);
+    });
+    // B remains.
+    expect(loadedGraph!.hasNode('ri.airport.B')).toBe(true);
+  });
+
+  it('Given_userClicksCopyRid_When_clicked_Then_clipboardWriteTextCalledWithRid', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const origClipboard = (
+      navigator as unknown as { clipboard?: { writeText: (s: string) => Promise<void> } }
+    ).clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-node-context-menu-copy-rid'));
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith('ri.airport.A');
+
+    // Restore.
+    Object.defineProperty(navigator, 'clipboard', {
+      value: origClipboard,
+      configurable: true,
+    });
+  });
+
+  it('Given_userClicksPinOnUnpinnedNode_When_clicked_Then_PATCHesLayoutWithPinnedTrue', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    mockPatchOk();
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-node-context-menu-pin'));
+    });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const patchCall = fetchMock.mock.calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).endsWith('/layout'),
+    );
+    expect(patchCall).toBeDefined();
+    expect(patchCall![0]).toBe('/api/vertex/v1/graphs/ri.g/layout');
+    expect((patchCall![1] as RequestInit).method).toBe('PATCH');
+    const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+    expect(body.positions['ri.airport.A'].pinned).toBe(true);
+
+    // Menu closes after pin.
+    expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
+  });
+
+  it('Given_userClicksSearchAround_When_clicked_Then_menuCloses', async () => {
+    // VTX-026 only requires the item exists. The dialog wiring lands in
+    // VTX-069. Verify the menu dismisses on click so callers can chain.
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: ctxPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-node-context-menu-search-around'));
+    });
+
+    expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
   });
 });

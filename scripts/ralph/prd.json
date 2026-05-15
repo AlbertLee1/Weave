@@ -377,8 +377,8 @@
         "Tests pass"
       ],
       "priority": 26,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only. VertexNodeContextMenu rewritten to render unconditionally on rightClickNode with five items per BDD: Search Around (no-op placeholder until VTX-069) / Open in Object Explorer (window.open(`/explorer/${ontology}?objectRid=<rid>`, '_blank', 'noopener') — ontology pulled from objectsByRid summary) / Pin↔Unpin (toggles based on pinnedNodeIds; Pin reads current x/y from sigma.getGraph() so the pin sticks the node where the user sees it) / Hide (UI-only filter — drives a new page-level hiddenNodeIds Set<string> consumed by GraphLoader to drop the node + every incident edge from the rendered MultiGraph) / Copy RID (await navigator.clipboard.writeText(rid) wrapped in try/catch so insecure-context / permission-denied fail silently like drag PATCH). Pin reuses handleDragEnd verbatim — same (id, x, y) → PATCH /layout pinned:true contract; saved one callback. Hide is pure setState — no PATCH. The old VTX-024 'no menu for unpinned' test was inverted to assert the new Pin-shows behaviour. 7 new Vitest cases (5-items / Pinned→Unpin / Open-in-Explorer window.open / Hide drops node+edge / Copy RID clipboard / Pin→PATCH pinned:true / Search Around dismisses). Bundle delta vs VTX-025: VertexWorkspacePage chunk 244.64 → 246.36 kB raw (+1.72 kB) / 65.27 → 65.76 kB gzip (+0.49 kB); main bundle unchanged. Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-027",

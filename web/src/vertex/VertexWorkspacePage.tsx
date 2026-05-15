@@ -106,9 +106,11 @@ const SIGMA_SETTINGS = {
 function GraphLoader({
   projection,
   mergeEnabled,
+  hiddenNodeIds,
 }: {
   projection: VertexPayloadGraph;
   mergeEnabled: boolean;
+  hiddenNodeIds: ReadonlySet<string>;
 }) {
   const loadGraph = useLoadGraph();
   useEffect(() => {
@@ -117,6 +119,10 @@ function GraphLoader({
     // what collapses them when merge=on.
     const g = new MultiGraph();
     for (const n of projection.nodes) {
+      // VTX-026: Hide-via-context-menu is a pure UI filter — the node
+      // stays in the payload (no data delete) but disappears from the
+      // canvas. Edges with a hidden endpoint are dropped below.
+      if (hiddenNodeIds.has(n.id)) continue;
       g.addNode(n.id, {
         label: n.label,
         x: n.x,
@@ -145,7 +151,7 @@ function GraphLoader({
       g.addEdgeWithKey(e.key, e.source, e.target, attrs);
     }
     loadGraph(g as unknown as Graph);
-  }, [loadGraph, projection, mergeEnabled]);
+  }, [loadGraph, projection, mergeEnabled, hiddenNodeIds]);
   return null;
 }
 
@@ -637,6 +643,21 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     [],
   );
 
+  // VTX-026: Hide is a pure UI filter — the node stays in the underlying
+  // payload (no data delete) but is dropped from the rendered graph (with
+  // its incident edges) by GraphLoader's hiddenNodeIds filter.
+  const [hiddenNodeIds, setHiddenNodeIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const handleHide = useCallback((nodeId: string) => {
+    setHiddenNodeIds((prev) => {
+      if (prev.has(nodeId)) return prev;
+      const next = new Set(prev);
+      next.add(nodeId);
+      return next;
+    });
+  }, []);
+
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
@@ -650,7 +671,11 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex-1" data-testid="vertex-canvas-host">
           <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
-            <GraphLoader projection={projection} mergeEnabled={mergeEnabled} />
+            <GraphLoader
+              projection={projection}
+              mergeEnabled={mergeEnabled}
+              hiddenNodeIds={hiddenNodeIds}
+            />
             <VertexNodeOverlay labelsByRid={labelsByRid} />
             <VertexSelectionLayer
               selection={selection}
@@ -660,7 +685,10 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
             <VertexDragLayer onDragEnd={handleDragEnd} />
             <VertexNodeContextMenu
               pinnedNodeIds={pinnedNodeIds}
+              objectsByRid={objectsByRid}
+              onPin={handleDragEnd}
               onUnpin={handleUnpin}
+              onHide={handleHide}
             />
             <LayoutApplier
               pending={pendingLayout}
