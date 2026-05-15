@@ -86,8 +86,8 @@
         "Tests pass"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Owner-based read ACL on GET /graphs/{rid}: ownerless graphs stay public (legacy compat), otherwise CreatedBy == user.ID OR admin role required (else 403 PERMISSION_DENIED GraphReadForbidden). New ShareLinkStore (Mem + PG-backed via migration 000203 graph_share_links) + 3 routes: POST /graphs/{rid}/share-links (owner-only, returns opaque base64url token), DELETE /share-links/{token} (owner-only revoke, idempotent → 204), GET /share-links/{token}/graph (404 unknown, 410 revoked, 200 masked). maskLayerPropertyValues walks payload.layers and replaces every scalar leaf under any `properties` subtree with \"***\" while preserving keys + non-property structure. New apierror.NewGone (410, errorCode NOT_FOUND) added for the revoked case."
     },
     {
       "id": "VTX-014",

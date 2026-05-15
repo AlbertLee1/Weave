@@ -152,6 +152,13 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:                 true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}:      true,
 	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}:         true,
+	// VTX-013: Vertex graph share-link surface — owner mints / revokes
+	// opaque tokens; recipients exchange them for masked graph payloads.
+	// OpenAPI entries follow once the wire-format ResponseBody schemas
+	// stabilise alongside the rest of the VTX-009 schemas.
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/share-links"}: true,
+	{Method: "DELETE", Path: "/api/vertex/v1/share-links/{token}"}:    true,
+	{Method: "GET", Path: "/api/vertex/v1/share-links/{token}/graph"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the

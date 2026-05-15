@@ -1045,6 +1045,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		} else {
 			graphHandler.SetPayloadValidator(validator)
 		}
+		// VTX-013: install share-link store. Falls back to an in-memory
+		// store in degraded boots so the routes stay discoverable; on a real
+		// pool we use the PG-backed store built on the graph_share_links
+		// table (migration 000203).
+		var shareLinks graphsvc.ShareLinkStore = graphsvc.NewMemShareLinkStore()
+		if deps.PGPool != nil {
+			shareLinks = graphsvc.NewPGShareLinkStore(deps.PGPool)
+		}
+		graphHandler.SetShareLinkStore(shareLinks)
 		graphHandler.RegisterRoutes(api)
 
 		// OntologyTransaction experimental edits endpoint (US-041).

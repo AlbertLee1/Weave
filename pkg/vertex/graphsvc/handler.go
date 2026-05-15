@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
 )
@@ -25,9 +26,10 @@ import (
 // existence checks (422). When unset, writes are forwarded unchanged — the
 // degraded-mode boot path keeps that on so the routes stay discoverable.
 type Handler struct {
-	repo      Repo
-	templates TemplateStore
-	validator *PayloadValidator
+	repo       Repo
+	templates  TemplateStore
+	validator  *PayloadValidator
+	shareLinks ShareLinkStore
 }
 
 // NewHandler wires a Handler over a Repo + TemplateStore. Either may be nil
@@ -45,6 +47,13 @@ func (h *Handler) SetPayloadValidator(v *PayloadValidator) {
 	h.validator = v
 }
 
+// SetShareLinkStore installs (or clears, when s == nil) the VTX-013 share-link
+// store. When unset, /share-links endpoints surface 500 ShareLinksUnavailable
+// so degraded-mode boots keep the route discoverable.
+func (h *Handler) SetShareLinkStore(s ShareLinkStore) {
+	h.shareLinks = s
+}
+
 // RegisterRoutes mounts all VTX-009 endpoints on r.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/vertex/v1/graphs", h.create)
@@ -56,6 +65,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/vertex/v1/graphs/{rid}/history", h.history)
 	r.Get("/api/vertex/v1/graphs/{rid}/versions/{version}", h.getVersion)
 	r.Post("/api/vertex/v1/templates/{rid}/instantiate", h.instantiate)
+	// VTX-013: share link surface.
+	r.Post("/api/vertex/v1/graphs/{rid}/share-links", h.createShareLink)
+	r.Delete("/api/vertex/v1/share-links/{token}", h.revokeShareLink)
+	r.Get("/api/vertex/v1/share-links/{token}/graph", h.getViaShareLink)
 }
 
 // createRequest is the body shape for POST /api/vertex/v1/graphs. Payload is
@@ -114,6 +127,11 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	g, err := h.repo.Get(r.Context(), ridStr)
 	if err != nil {
 		writeRepoError(w, err, ridStr)
+		return
+	}
+	if !canReadGraph(r, g) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("GraphReadForbidden",
+			map[string]string{"rid": ridStr}))
 		return
 	}
 	writeGraph(w, http.StatusOK, g)
@@ -339,6 +357,207 @@ func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeGraph(w, http.StatusOK, g)
+}
+
+// canReadGraph returns true if the caller is allowed to read g via the
+// authenticated principal alone (i.e. ignoring share links).
+//
+// VTX-013 simple owner-based ACL:
+//   - Ownerless graphs (CreatedBy == "") are public — preserves legacy
+//     pre-VTX-013 test fixtures and degraded-mode boots.
+//   - Otherwise the caller's user.ID must match CreatedBy, OR the caller
+//     must hold the "admin" role.
+//
+// This is intentionally minimal: project-level RBAC + marking-based RLS live
+// in pkg/auth / pkg/security and are not in scope for VTX-013, which focuses
+// on the share-link masking flow.
+func canReadGraph(r *http.Request, g *Graph) bool {
+	if g.CreatedBy == "" {
+		return true
+	}
+	u := auth.UserFromContext(r.Context())
+	if u == nil {
+		return false
+	}
+	if u.ID == g.CreatedBy {
+		return true
+	}
+	for _, role := range u.Roles {
+		if role == "admin" {
+			return true
+		}
+	}
+	return false
+}
+
+// createShareLink mints a new share link for a graph. Owner-only — non-owners
+// get 403. The opaque random token is returned in the 201 response body; the
+// caller surfaces it in a URL `/api/vertex/v1/share-links/{token}/graph`.
+func (h *Handler) createShareLink(w http.ResponseWriter, r *http.Request) {
+	if h.repo == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	if h.shareLinks == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ShareLinksUnavailable",
+			map[string]string{"reason": "share link store is not configured"}))
+		return
+	}
+	ridStr := chi.URLParam(r, "rid")
+	g, err := h.repo.Get(r.Context(), ridStr)
+	if err != nil {
+		writeRepoError(w, err, ridStr)
+		return
+	}
+	u := auth.UserFromContext(r.Context())
+	if !canManageShareLinks(u, g) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("ShareLinkManageForbidden",
+			map[string]string{"rid": ridStr}))
+		return
+	}
+	token, err := newShareToken()
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ShareLinkTokenFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	createdBy := g.CreatedBy
+	if u != nil && u.ID != "" {
+		createdBy = u.ID
+	}
+	link := &ShareLink{
+		Token:     token,
+		GraphRID:  g.RID,
+		CreatedBy: createdBy,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := h.shareLinks.Create(r.Context(), link); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("CreateShareLinkFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusCreated, map[string]any{
+		"token":     link.Token,
+		"graphRid":  link.GraphRID,
+		"createdBy": link.CreatedBy,
+		"createdAt": link.CreatedAt,
+	})
+}
+
+// revokeShareLink marks a share link revoked. Owner-only — only the user
+// who originally minted the link (or an admin) can revoke. Already-revoked
+// links return 204 idempotently so retries are safe.
+func (h *Handler) revokeShareLink(w http.ResponseWriter, r *http.Request) {
+	if h.shareLinks == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ShareLinksUnavailable",
+			map[string]string{"reason": "share link store is not configured"}))
+		return
+	}
+	token := chi.URLParam(r, "token")
+	link, err := h.shareLinks.Get(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, ErrShareLinkNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ShareLinkNotFound",
+				map[string]string{"token": token}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetShareLinkFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	u := auth.UserFromContext(r.Context())
+	if !canRevokeShareLink(u, link) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("ShareLinkRevokeForbidden",
+			map[string]string{"token": token}))
+		return
+	}
+	if err := h.shareLinks.Revoke(r.Context(), token); err != nil {
+		if errors.Is(err, ErrShareLinkNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ShareLinkNotFound",
+				map[string]string{"token": token}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("RevokeShareLinkFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// getViaShareLink fetches a graph by share-link token. Unknown token → 404;
+// revoked token → 410 Gone (distinct so the recipient sees the owner shut it
+// down, not that the link never existed); valid token → 200 with the graph
+// structure but layer property values masked to "***".
+func (h *Handler) getViaShareLink(w http.ResponseWriter, r *http.Request) {
+	if h.shareLinks == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ShareLinksUnavailable",
+			map[string]string{"reason": "share link store is not configured"}))
+		return
+	}
+	if h.repo == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	token := chi.URLParam(r, "token")
+	link, err := h.shareLinks.Get(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, ErrShareLinkNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ShareLinkNotFound",
+				map[string]string{"token": token}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetShareLinkFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	if link.Revoked {
+		apierror.WriteJSON(w, apierror.NewGone("ShareLinkRevoked",
+			map[string]string{"token": token, "reason": "share link has been revoked"}))
+		return
+	}
+	g, err := h.repo.Get(r.Context(), link.GraphRID)
+	if err != nil {
+		writeRepoError(w, err, link.GraphRID)
+		return
+	}
+	masked := cloneGraph(g)
+	masked.Payload = maskLayerPropertyValues(masked.Payload)
+	writeGraph(w, http.StatusOK, masked)
+}
+
+// canManageShareLinks decides whether u may mint a share link for g. Owner or
+// admin role. Nil user is rejected; ownerless graphs are NOT auto-public for
+// share-link management (otherwise anonymous callers could spam new tokens).
+func canManageShareLinks(u *auth.User, g *Graph) bool {
+	if u == nil {
+		return false
+	}
+	if g.CreatedBy != "" && u.ID == g.CreatedBy {
+		return true
+	}
+	for _, role := range u.Roles {
+		if role == "admin" {
+			return true
+		}
+	}
+	return false
+}
+
+// canRevokeShareLink decides whether u may revoke link. The link's CreatedBy
+// is the owner-at-mint-time; admins can override.
+func canRevokeShareLink(u *auth.User, link *ShareLink) bool {
+	if u == nil {
+		return false
+	}
+	if link.CreatedBy != "" && u.ID == link.CreatedBy {
+		return true
+	}
+	for _, role := range u.Roles {
+		if role == "admin" {
+			return true
+		}
+	}
+	return false
 }
 
 // writeGraph encodes a Graph in the wire shape callers expect. Payload is
