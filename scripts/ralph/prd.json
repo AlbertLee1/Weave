@@ -317,8 +317,8 @@
         "Tests pass"
       ],
       "priority": 44,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/scenarioRunAsync.ts。导出 shouldRunAsync({modelCount, forceAsync?})（modelCount≥2 OR forceAsync）+ 请求构造三件套 buildAsyncRunScenarioRequest（forceAsync=true 时 body 含 flag，否则 body={}）/ buildScenarioRunStreamUrl（GET SSE /api/vertex/v1/scenarios/{rid}/run/{jobId}/stream，jobId+rid 都走 encodeURIComponent）/ buildCancelScenarioRunRequest（POST /run/{jobId}/cancel）+ 响应解析 parseAcceptedScenarioRunResponse（202 jobId 非空校验）+ SSE 事件解析 parseScenarioRunSseEvent（progress/result/done/error/cancelled 五类，progress.pct clamp [0,100]，error.message blank 兜底 'Scenario run failed'，未知 type 抛错）+ job 状态机：ScenarioRunJobState {jobId, status: 'idle'|'pending'|'running'|'success'|'error'|'cancelled', startedAt, durationMs, error, progressByModel, resultsByModel} / createScenarioRunJobMap / createScenarioRunJobState / setScenarioRunJobState / getScenarioRunJobStatus（fallback 'idle'）/ isScenarioRunJobActive（pending|running）/ applyAcceptedScenarioRunJob（202 后初始化 pending，清 prior progress/result/error/duration）/ applyScenarioRunSseEvent（progress→running+记录 pct / result→running+记录 output / done→success+duration / error→error+'M2: predict failed' 模型前缀 / cancelled→cancelled / 未知 rid 同引用返回不重渲）+ UI 派生 getModelProgressPct / getOverallProgressPct（success 强制 100，无模型 0，否则平均 round）/ getScenarioRunJobStatusIcon（pending+running 都是 'spinner'，success '✓'，error '×'，cancelled '⊘'，idle '—'）/ getScenarioRunJobStatusTooltip（pending 'Queued…' / running 'Running… N%' 或 'Running…' / success 'Run completed in X s/ms' / error 模型前缀消息 / cancelled 'Cancelled' / idle null）+ immutableScenario 复用 helper（async run done 后也要 freeze）。82 tests pass，vitest 全量 214 files / 2136 tests 全绿；tsc 0 错误，eslint 0 warning。dev-browser skill 不可用，SSE 客户端 + EventSource onmessage / spinner+pct DOM / Cancel button + cancelled toast 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-045",
