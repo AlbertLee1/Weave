@@ -723,8 +723,8 @@
         "Tests pass"
       ],
       "priority": 63,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/badges/linkedEventsBadge.ts。导出 BADGE_TOOLTIP_MAX_EVENTS=5 / BADGE_DEFAULT_ICON='•' + re-export ERROR_PLACEHOLDER + LinkedEventsBadgeStatus 'present'|'empty'|'loading'|'error' + LinkedEventsBadgeSpec {kind:'linkedEvents',objectType,linkType,icon?,displayName?,tooltipEventLimit?} + buildLinkedEventsBadgeRequest（GET /api/v2/ontologies/{o}/objects/{srcOT}/{srcPK}/links/{linkType}?pageSize=<N> 对齐 web/src/api/objects.ts listLinkedObjects 路径；ontology/srcOT/srcPK/linkType 走 encodeURIComponent；srcPK 接受 string|number 自动 String 化；非空 + 正整数 pageSize 校验）+ buildLinkedEventsBadgeTooltipItems（events.slice(0, limit)，每条 {rid, label, eventStart?}；labelProperty 指定字段为 label 首选源，缺则 fallback __primaryKey；eventStart 必须 finite number）+ renderLinkedEventsBadge（error>loading>empty>present 四态：input.error 非空 → 'error' icon='!' count=null；input.loading=true 或 count===undefined → 'loading' count=null text='{label}: …'；count=0 → 'empty' text='{label}: 0'；count>0 → 'present' text='{label}: {count}'，tooltipItems 用 spec.tooltipEventLimit?? 默认 5 截断）+ isLinkedEventsBadge discriminator。非 linkedEvents kind / 空 objectType/linkType / 负 count / NaN/Infinity count 抛错；blank displayName fallback objectType；blank error 视为无错误防止接线层 '' 默认值误触；error 优先级覆盖陈旧 count（与 VTX-060/061 同语义）。51 tests pass，vertex 子集 49 files / 1187 tests 全绿；tsc 0 错误；eslint 0 warning。dev-browser skill 不可用，角标 DOM 渲染 + hover tooltip 浏览器验证留到 React 接线 story。"
     }
   ]
 }
