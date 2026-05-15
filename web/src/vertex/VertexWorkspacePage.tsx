@@ -1,5 +1,6 @@
 // VertexWorkspacePage — Vertex workspace shell (VTX-017) + payload
-// rendering (VTX-018) + node DOM overlay for extended labels (VTX-019).
+// rendering (VTX-018) + node DOM overlay for extended labels (VTX-019)
+// + selection interactions / right sidebar (VTX-020).
 //
 // /vertex/new mounts an empty Sigma canvas immediately; /vertex/{rid}
 // fetches `/api/vertex/v1/graphs/{rid}` and either renders the graph
@@ -13,7 +14,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import Graph from 'graphology';
-import { SigmaContainer, useLoadGraph } from '@react-sigma/core';
+import { SigmaContainer, useLoadGraph, useSigma } from '@react-sigma/core';
 import '@react-sigma/core/lib/style.css';
 
 import {
@@ -24,7 +25,20 @@ import {
   extractExtendedLabels,
   type ExtendedLabel,
 } from '../features/vertex/render/extendedLabels';
+import {
+  EMPTY_SELECTION,
+  type SelectionState,
+} from '../features/vertex/selections/selectionState';
+import { payloadToObjectSummaries } from '../features/vertex/selections/objectSummaries';
 import { VertexNodeOverlay } from './VertexNodeOverlay';
+import { VertexSelectionLayer } from './VertexSelectionLayer';
+import {
+  VertexSelectionSidebar,
+  type VertexObjectSummary,
+} from './VertexSelectionSidebar';
+
+const SELECTED_NODE_COLOR = '#3B82F6';
+const DEFAULT_NODE_COLOR = '#6B7280';
 
 interface GraphPayloadResponse {
   rid: string;
@@ -61,6 +75,7 @@ function GraphLoader({ projection }: { projection: VertexPayloadGraph }) {
         y: n.y,
         size: n.size,
         color: n.color,
+        highlighted: false,
       });
     }
     for (const e of projection.edges) {
@@ -77,6 +92,32 @@ function GraphLoader({ projection }: { projection: VertexPayloadGraph }) {
     }
     loadGraph(g);
   }, [loadGraph, projection]);
+  return null;
+}
+
+// SelectionHighlighter mutates loaded-graph node attributes when the
+// selection state changes so Sigma's next paint colours selected nodes
+// in the highlight color. Lives alongside GraphLoader inside
+// <SigmaContainer> so useSigma() resolves.
+function SelectionHighlighter({ selection }: { selection: SelectionState }) {
+  const sigma = useSigma();
+  useEffect(() => {
+    const graph = sigma.getGraph();
+    if (!graph || typeof graph.forEachNode !== 'function') return;
+    graph.forEachNode((id: string) => {
+      const shouldHighlight = selection.has(id);
+      const wasHighlighted = graph.getNodeAttribute(id, 'highlighted') === true;
+      if (wasHighlighted !== shouldHighlight) {
+        graph.setNodeAttribute(id, 'highlighted', shouldHighlight);
+        graph.setNodeAttribute(
+          id,
+          'color',
+          shouldHighlight ? SELECTED_NODE_COLOR : DEFAULT_NODE_COLOR,
+        );
+      }
+    });
+    if (typeof sigma.refresh === 'function') sigma.refresh();
+  }, [sigma, selection]);
   return null;
 }
 
@@ -215,32 +256,47 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     return map;
   }, [state, projection]);
 
+  const objectsByRid = useMemo<Map<string, VertexObjectSummary>>(() => {
+    if (state.kind !== 'ready') return new Map();
+    return payloadToObjectSummaries(state.graph.payload);
+  }, [state]);
+
+  const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
+
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
     <div className="flex h-full min-h-[400px] flex-col" data-testid="vertex-workspace">
       <TopBar graph={summary} />
-      <div className="relative flex-1" data-testid="vertex-canvas-host">
-        <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
-          <GraphLoader projection={projection} />
-          <VertexNodeOverlay labelsByRid={labelsByRid} />
-        </SigmaContainer>
-        {state.kind === 'loading' && (
-          <div
-            data-testid="vertex-canvas-loading"
-            className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400"
-          >
-            Loading graph…
-          </div>
-        )}
-        {state.kind === 'error' && (
-          <div
-            data-testid="vertex-canvas-error"
-            className="absolute inset-0 flex items-center justify-center text-xs text-red-400"
-          >
-            {state.message}
-          </div>
-        )}
+      <div className="flex flex-1 overflow-hidden">
+        <div className="relative flex-1" data-testid="vertex-canvas-host">
+          <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
+            <GraphLoader projection={projection} />
+            <VertexNodeOverlay labelsByRid={labelsByRid} />
+            <VertexSelectionLayer
+              selection={selection}
+              onSelectionChange={setSelection}
+            />
+            <SelectionHighlighter selection={selection} />
+          </SigmaContainer>
+          {state.kind === 'loading' && (
+            <div
+              data-testid="vertex-canvas-loading"
+              className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400"
+            >
+              Loading graph…
+            </div>
+          )}
+          {state.kind === 'error' && (
+            <div
+              data-testid="vertex-canvas-error"
+              className="absolute inset-0 flex items-center justify-center text-xs text-red-400"
+            >
+              {state.message}
+            </div>
+          )}
+        </div>
+        <VertexSelectionSidebar selection={selection} objectsByRid={objectsByRid} />
       </div>
     </div>
   );

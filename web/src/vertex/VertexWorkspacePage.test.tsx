@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import Graph from 'graphology';
 
@@ -25,15 +25,31 @@ const captureLoad = (g: Graph) => {
 // useSigma + useRegisterEvents. Stub both with deterministic shapes
 // (1:1 graphToViewport, 800×600 viewport) so the overlay paints cards
 // for each node loaded into the captured graph.
+// VTX-020: multiple children (overlay + selection layer + highlighter)
+// each call useRegisterEvents — merge each new handler set onto the
+// captured handler map so tests can fire clickNode without losing
+// afterRender.
 const emptyGraphStub = {
   hasNode: () => false,
   getNodeAttribute: () => undefined,
+  forEachNode: () => {},
+  setNodeAttribute: () => {},
+  nodes: () => [] as string[],
 };
+const sigmaContainer = document.createElement('div');
+Object.defineProperty(sigmaContainer, 'getBoundingClientRect', {
+  value: () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 }),
+  configurable: true,
+});
 const sigmaStub = {
   graphToViewport: (p: { x: number; y: number }) => ({ x: p.x, y: p.y }),
   getDimensions: () => ({ width: 800, height: 600 }),
   getGraph: () => loadedGraph ?? emptyGraphStub,
+  getContainer: () => sigmaContainer,
+  refresh: () => {},
 };
+
+let capturedHandlers: Record<string, ((p: unknown) => void) | undefined> = {};
 
 vi.mock('@react-sigma/core', () => ({
   SigmaContainer: ({ children, style }: { children?: React.ReactNode; style?: React.CSSProperties }) => (
@@ -44,8 +60,11 @@ vi.mock('@react-sigma/core', () => ({
   useLoadGraph: () => captureLoad,
   useSigma: () => sigmaStub,
   useRegisterEvents: () =>
-    (handlers: { afterRender?: () => void }) => {
-      if (handlers.afterRender) afterRenderHandler = handlers.afterRender;
+    (handlers: Record<string, ((p: unknown) => void) | undefined>) => {
+      Object.assign(capturedHandlers, handlers);
+      if (typeof handlers.afterRender === 'function') {
+        afterRenderHandler = handlers.afterRender as () => void;
+      }
     },
 }));
 
@@ -66,6 +85,7 @@ const realFetch = globalThis.fetch;
 beforeEach(() => {
   loadedGraph = null;
   afterRenderHandler = null;
+  capturedHandlers = {};
   globalThis.fetch = vi.fn() as unknown as typeof fetch;
 });
 
@@ -270,12 +290,9 @@ describe('VertexWorkspacePage extended-label overlay (VTX-019)', () => {
       expect(loadedGraph!.order).toBe(1);
     });
 
-    // Overlay root must mount, even before any labels paint.
     const root = await screen.findByTestId('vertex-node-overlay-root');
     expect(root).toBeInTheDocument();
 
-    // After the graph is loaded the card for the JFK node must render
-    // with one row per kind.
     const card = await screen.findByTestId(
       'vertex-node-overlay-card-ri.ontology.main.object.airport.JFK',
     );
@@ -286,3 +303,123 @@ describe('VertexWorkspacePage extended-label overlay (VTX-019)', () => {
     expect(screen.getByTestId('vertex-extended-label-measure').textContent).toContain('avgDelay');
   });
 });
+
+describe('VertexWorkspacePage selection interactions (VTX-020)', () => {
+  const payload = {
+    layers: [
+      {
+        id: 'layer-airports',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          {
+            objectRid: 'ri.airport.JFK',
+            properties: { name: 'JFK', city: 'New York', onTimePct: 92 },
+          },
+          {
+            objectRid: 'ri.airport.LHR',
+            properties: { name: 'LHR', city: 'London' },
+          },
+        ],
+      },
+    ],
+    edges: [],
+    positions: {},
+  };
+
+  function mockFetchOk(body: unknown) {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    });
+  }
+
+  function makeMouseEvent(opts: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}): MouseEvent {
+    return new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      shiftKey: opts.shiftKey ?? false,
+      ctrlKey: opts.ctrlKey ?? false,
+      metaKey: opts.metaKey ?? false,
+    });
+  }
+
+  it('Given_userSingleClicksNode_When_clickNodeFires_Then_sidebarOpensAndNodeHighlights', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    // Sidebar hidden before any selection.
+    expect(screen.queryByTestId('vertex-selection-sidebar')).not.toBeInTheDocument();
+
+    await act(async () => {
+      capturedHandlers.clickNode?.({ node: 'ri.airport.JFK', event: { original: makeMouseEvent() } } as unknown);
+    });
+
+    const sidebar = await screen.findByTestId('vertex-selection-sidebar');
+    expect(sidebar).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-selection-sidebar-header').textContent).toContain('JFK');
+    // Properties panel shows the property values for the single selected object.
+    expect(screen.getByText('city')).toBeInTheDocument();
+    expect(screen.getByText('New York')).toBeInTheDocument();
+
+    // Node is highlighted: SelectionHighlighter wrote the attribute.
+    expect(loadedGraph!.getNodeAttribute('ri.airport.JFK', 'highlighted')).toBe(true);
+    expect(loadedGraph!.getNodeAttribute('ri.airport.LHR', 'highlighted')).toBe(false);
+  });
+
+  it('Given_userCtrlClicksTwoNodes_When_clickNodeFiresTwice_Then_batchSidebarShows2Items', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      capturedHandlers.clickNode?.({ node: 'ri.airport.JFK', event: { original: makeMouseEvent() } } as unknown);
+    });
+    await act(async () => {
+      capturedHandlers.clickNode?.({
+        node: 'ri.airport.LHR',
+        event: { original: makeMouseEvent({ ctrlKey: true }) },
+      } as unknown);
+    });
+
+    const sidebar = await screen.findByTestId('vertex-selection-sidebar');
+    expect(sidebar).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-selection-sidebar-batch')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-selection-sidebar-count').textContent).toContain('2');
+    expect(loadedGraph!.getNodeAttribute('ri.airport.JFK', 'highlighted')).toBe(true);
+    expect(loadedGraph!.getNodeAttribute('ri.airport.LHR', 'highlighted')).toBe(true);
+  });
+
+  it('Given_selectionExists_When_userClicksStageWithoutShift_Then_selectionClearsAndSidebarHides', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      capturedHandlers.clickNode?.({ node: 'ri.airport.JFK', event: { original: makeMouseEvent() } } as unknown);
+    });
+    expect(await screen.findByTestId('vertex-selection-sidebar')).toBeInTheDocument();
+
+    await act(async () => {
+      capturedHandlers.clickStage?.({ event: { original: makeMouseEvent() } } as unknown);
+    });
+    expect(screen.queryByTestId('vertex-selection-sidebar')).not.toBeInTheDocument();
+    expect(loadedGraph!.getNodeAttribute('ri.airport.JFK', 'highlighted')).toBe(false);
+  });
+});
+

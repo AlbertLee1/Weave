@@ -57,18 +57,22 @@ exports[`VertexWorkspacePage (VTX-017) > snapshot: /vertex/new shell is stable 1
       </nav>
     </header>
     <div
-      class="relative flex-1"
-      data-testid="vertex-canvas-host"
+      class="flex flex-1 overflow-hidden"
     >
       <div
-        data-testid="vertex-canvas-mock"
-        style="height: 100%; width: 100%; background: var(--bg-primary, #0b0d12);"
+        class="relative flex-1"
+        data-testid="vertex-canvas-host"
       >
         <div
-          class="pointer-events-none absolute inset-0 overflow-hidden"
-          data-testid="vertex-node-overlay-root"
-          style="position: absolute; inset: 0px;"
-        />
+          data-testid="vertex-canvas-mock"
+          style="height: 100%; width: 100%; background: var(--bg-primary, #0b0d12);"
+        >
+          <div
+            class="pointer-events-none absolute inset-0 overflow-hidden"
+            data-testid="vertex-node-overlay-root"
+            style="position: absolute; inset: 0px;"
+          />
+        </div>
       </div>
     </div>
   </div>
