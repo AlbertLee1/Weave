@@ -11,6 +11,8 @@
 // that exercises both branches.
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../i18n';
 import { useShortcut } from '../hotkeys';
 
 export interface WidgetGraphState {
@@ -53,6 +55,7 @@ export function VertexGraphWidget({
   loader = defaultLoader,
   saver = defaultSaver,
 }: VertexGraphWidgetProps) {
+  const { t } = useTranslation();
   const [state, setState] = useState<WidgetGraphState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -110,7 +113,7 @@ export function VertexGraphWidget({
           disabled={!overrideGraphRid || saving || !state}
           className="rounded bg-blue-600 px-2 py-1 text-white disabled:opacity-50"
         >
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('vertex.widget.saving') : t('vertex.widget.save')}
         </button>
       </header>
       <main className="flex flex-1 items-center justify-center" data-testid="vertex-widget-canvas">
@@ -125,9 +128,13 @@ export function VertexGraphWidget({
             {state.selectedNodeRid ? ` · selected ${state.selectedNodeRid}` : ''}
           </span>
         )}
-        {!error && !state && <span data-testid="vertex-widget-loading">Loading…</span>}
+        {!error && !state && <span data-testid="vertex-widget-loading">{t('vertex.widget.loading')}</span>}
       </main>
-      {saved && <div data-testid="vertex-widget-saved" className="px-2 py-1 text-xs text-green-600">Saved</div>}
+      {saved && (
+        <div data-testid="vertex-widget-saved" className="px-2 py-1 text-xs text-green-600">
+          {t('vertex.widget.saved')}
+        </div>
+      )}
     </div>
   );
 }

@@ -10,6 +10,8 @@
 // the unit suite can validate the wire contract.
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../i18n';
 
 export interface OverrideSuggestion {
   parameter: string;
@@ -55,6 +57,7 @@ export function ScenarioCopilotButtons({
   suggester = defaultSuggester,
   explainer = defaultExplainer,
 }: ScenarioCopilotProps) {
+  const { t } = useTranslation();
   const [suggestions, setSuggestions] = useState<OverrideSuggestion[] | null>(null);
   const [explanation, setExplanation] = useState<ExplainResult | null>(null);
   const [loading, setLoading] = useState<'suggest' | 'explain' | null>(null);
@@ -94,7 +97,7 @@ export function ScenarioCopilotButtons({
           disabled={loading !== null}
           className="rounded bg-violet-600 px-3 py-1 text-xs text-white disabled:opacity-40"
         >
-          {loading === 'suggest' ? 'Thinking…' : 'Suggest Override'}
+          {loading === 'suggest' ? t('vertex.copilot.thinking') : t('vertex.copilot.suggest')}
         </button>
         <button
           type="button"
@@ -103,7 +106,7 @@ export function ScenarioCopilotButtons({
           disabled={!hasResult || loading !== null}
           className="rounded bg-violet-600 px-3 py-1 text-xs text-white disabled:opacity-40"
         >
-          {loading === 'explain' ? 'Reading…' : 'Explain Result'}
+          {loading === 'explain' ? t('vertex.copilot.reading') : t('vertex.copilot.explain')}
         </button>
       </div>
       {error && (

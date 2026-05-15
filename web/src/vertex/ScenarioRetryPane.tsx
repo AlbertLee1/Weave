@@ -4,6 +4,8 @@
 // ScenarioRetryPane.test.tsx with synthetic events.
 
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../i18n';
 
 export interface ScenarioRetryEvent {
   activityId: string;
@@ -38,13 +40,14 @@ function groupByActivity(events: ScenarioRetryEvent[]): PerActivity[] {
 }
 
 export function ScenarioRetryPane({ events }: ScenarioRetryPaneProps) {
+  const { t } = useTranslation();
   const grouped = useMemo(() => groupByActivity(events), [events]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   if (grouped.length === 0) {
     return (
       <div data-testid="scenario-retry-empty" className="text-sm text-zinc-500 italic">
-        No retries yet.
+        {t('vertex.retry.empty')}
       </div>
     );
   }
@@ -81,7 +84,7 @@ export function ScenarioRetryPane({ events }: ScenarioRetryPaneProps) {
                 data-testid={`scenario-retry-counter-${activityId}`}
                 className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
               >
-                retries: {retries.length}
+                {t('vertex.retry.counter', { count: retries.length })}
               </span>
             </button>
             {open && (
@@ -91,7 +94,7 @@ export function ScenarioRetryPane({ events }: ScenarioRetryPaneProps) {
               >
                 {retries.map((r) => (
                   <li key={r.attempt} className="mb-2 last:mb-0">
-                    <div className="font-medium">attempt #{r.attempt}</div>
+                    <div className="font-medium">{t('vertex.retry.attempt', { num: r.attempt })}</div>
                     <div className="text-zinc-600 dark:text-zinc-400">{r.error}</div>
                     {r.stack && (
                       <pre className="mt-1 overflow-x-auto whitespace-pre rounded bg-zinc-50 p-2 text-[11px] dark:bg-zinc-900">

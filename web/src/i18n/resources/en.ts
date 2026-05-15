@@ -173,6 +173,50 @@ const en = {
     addedSummary: '{{count}} added',
     removedSummary: '{{count}} removed',
   },
+  vertex: {
+    widget: {
+      save: 'Save',
+      saving: 'Saving…',
+      saved: 'Saved',
+      loading: 'Loading…',
+    },
+    diagramming: {
+      title: 'Diagramming · Coming soon',
+      description:
+        'Diagramming mode is still in beta upstream. Vertex v1 ships with Graph mode only; the route is reserved so future links from external systems do not 404. Track progress in PRD VTX-114.',
+      backToGraph: 'Back to Graph',
+    },
+    layers: {
+      title: 'Layers',
+      dropHere: 'Drop a layer here',
+      loadingPlaceholder: 'Loading {{objectType}}…',
+    },
+    map: {
+      openInVertex: 'Open in Vertex',
+    },
+    copilot: {
+      suggest: 'Suggest Override',
+      thinking: 'Thinking…',
+      explain: 'Explain Result',
+      reading: 'Reading…',
+    },
+    debug: {
+      ariaLabel: 'Scenario debug',
+      title: 'Debug — {{rid}}',
+      close: 'Close',
+      inputSnapshot: 'Input snapshot',
+      functionLogs: 'Function logs ({{count}})',
+      partialEdits: 'Partial edits ({{count}})',
+    },
+    scenarioPane: {
+      run: 'Run',
+    },
+    retry: {
+      empty: 'No retries yet.',
+      counter: 'retries: {{count}}',
+      attempt: 'attempt #{{num}}',
+    },
+  },
 } as const;
 
 export default en;

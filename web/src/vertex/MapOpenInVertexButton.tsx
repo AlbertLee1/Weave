@@ -8,7 +8,9 @@
 // needs a navigate fn (defaults to react-router) and the selected
 // object descriptor.
 
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
+import '../i18n';
 
 export interface SelectedMapObject {
   ontology: string;
@@ -28,6 +30,7 @@ export function buildVertexHref(s: SelectedMapObject): string {
 }
 
 export function MapOpenInVertexButton({ selected, onOpen }: MapOpenInVertexButtonProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
   function go() {
@@ -45,7 +48,7 @@ export function MapOpenInVertexButton({ selected, onOpen }: MapOpenInVertexButto
       disabled={!selected}
       className="rounded bg-blue-600 px-3 py-1 text-xs text-white disabled:opacity-40"
     >
-      Open in Vertex
+      {t('vertex.map.openInVertex')}
     </button>
   );
 }

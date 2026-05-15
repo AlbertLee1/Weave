@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import '../i18n';
 import { useShortcut } from '../hotkeys';
 
 export interface ScenarioPaneProps {
@@ -76,7 +77,7 @@ export function ScenarioPane({ onRun, disabled = false, children }: ScenarioPane
           disabled={disabled}
           className="rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-40"
         >
-          Run
+          {t('vertex.scenarioPane.run')}
         </button>
       </div>
       {children}

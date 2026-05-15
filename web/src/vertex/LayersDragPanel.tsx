@@ -10,6 +10,8 @@
 // purely additive change on this surface.
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../i18n';
 
 export interface LayerSpec {
   objectType: string;
@@ -29,6 +31,7 @@ export interface LayersDragPanelProps {
 const DRAG_MIME = 'application/x-weave-vertex-layer';
 
 export function LayersDragPanel({ layers, search, onObjectsLoaded }: LayersDragPanelProps) {
+  const { t } = useTranslation();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hover, setHover] = useState(false);
@@ -70,7 +73,7 @@ export function LayersDragPanel({ layers, search, onObjectsLoaded }: LayersDragP
   return (
     <div className="flex h-full gap-3">
       <aside data-testid="vertex-layers-panel" className="w-48 space-y-2 border-r p-2">
-        <div className="text-xs font-semibold uppercase text-zinc-500">Layers</div>
+        <div className="text-xs font-semibold uppercase text-zinc-500">{t('vertex.layers.title')}</div>
         {layers.map((layer) => (
           <div
             key={layer.objectType}
@@ -93,9 +96,13 @@ export function LayersDragPanel({ layers, search, onObjectsLoaded }: LayersDragP
           (hover ? 'border-blue-500 bg-blue-50/40' : 'border-zinc-300')
         }
       >
-        {pending && <span data-testid="vertex-canvas-loading">Loading {pending}…</span>}
+        {pending && (
+          <span data-testid="vertex-canvas-loading">
+            {t('vertex.layers.loadingPlaceholder', { objectType: pending })}
+          </span>
+        )}
         {!pending && error && <span data-testid="vertex-canvas-error" className="text-red-600">{error}</span>}
-        {!pending && !error && <span className="text-zinc-500">Drop a layer here</span>}
+        {!pending && !error && <span className="text-zinc-500">{t('vertex.layers.dropHere')}</span>}
       </div>
     </div>
   );

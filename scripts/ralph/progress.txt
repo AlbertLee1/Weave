@@ -10,6 +10,9 @@ Stream: C
 - Typecheck: `npx tsc --noEmit -p tsconfig.app.json` from `web/`. Pre-existing errors in `../sdk/typescript/src/vertex.ts` and `src/vertex/SdkVertexClient.test.ts` (from VTX-108) — unrelated to ongoing work.
 - Frontend deps: `web/node_modules` is NOT committed; first iteration must run `npm install` inside `web/`.
 - `useShortcut` defaults `enableOnFormTags:false` and `preventDefault:true`; gate via `options.enabled` rather than removing the hook.
+- i18n bootstrap: prod entry `main.tsx` does `import './i18n'` for the side-effect init; vitest `src/test/setup.ts` does NOT. Any component that calls `useTranslation()` must side-effect-import `'../i18n'` itself, otherwise `t(key)` returns the raw key in component tests that don't transitively reach the i18n module. Pattern: `import { useTranslation } from 'react-i18next'; import '../i18n';`.
+- i18next plural collision: passing `{ count: N }` to `t()` makes i18next route to `_one`/`_other` plural variants; if you only define a single non-suffixed key, lookup fails and the raw key leaks into the UI. Use a different variable name (e.g. `{ num }`) for non-plural counters.
+- Existing vertex lint baseline has 2 errors (`react-refresh/only-export-components` on MapOpenInVertexButton, `react-hooks/set-state-in-effect` on ScenarioDebugDrawer); both pre-date this stream. Verify no NEW lint errors before commit by stashing and rerunning `npx eslint src/vertex/`.
 
 ## [Fri May 15 09:55 CST 2026] - VTX-120
 - Implemented Keyboard Shortcuts: ? help (already existed), Cmd+S save graph, Cmd+Enter run Scenario.
@@ -26,4 +29,30 @@ Stream: C
   - `submitForm` and `runScenario` share `meta+enter, ctrl+enter`. Resolved by scoping `runScenario` to ScenarioPane focus — only one handler is enabled at a time. When future stories add new shared bindings, follow the same `enabled: focused` pattern.
   - `react-hotkeys-hook` v5 fires on key `code`, not `key`. Tests must set `code: 'KeyS'`/`code: 'Enter'`, not just `key`.
   - i18n drift check (`node web/scripts/extract-i18n.mjs`) is the canonical gate — runs without deps and exits non-zero on mismatch.
+---
+
+## [Fri May 15 10:15 CST 2026] - VTX-121
+- Implemented Vertex i18n: every user-visible string in the 8 Vertex widget components now flows through `useTranslation()` with full zh-CN + en-US coverage. Live `changeLocale('zh-CN')` re-renders the widget tree.
+- Files changed:
+  - web/src/i18n/resources/en.ts + zh-CN.ts — new `vertex.*` namespace (8 sub-groups, 25 keys each, mirror-shape parity).
+  - web/src/vertex/VertexGraphWidget.tsx — useTranslation; Save / Saving / Saved / Loading copy via `vertex.widget.*`.
+  - web/src/vertex/DiagrammingStubPage.tsx — useTranslation; title / description / Back to Graph via `vertex.diagramming.*`.
+  - web/src/vertex/LayersDragPanel.tsx — useTranslation; panel heading / drop placeholder / loading interp via `vertex.layers.*`.
+  - web/src/vertex/MapOpenInVertexButton.tsx — useTranslation; "Open in Vertex" via `vertex.map.openInVertex`.
+  - web/src/vertex/ScenarioCopilotButtons.tsx — useTranslation; Suggest / Thinking / Explain / Reading via `vertex.copilot.*`.
+  - web/src/vertex/ScenarioDebugDrawer.tsx — useTranslation; aria-label / title / Close / Input snapshot / Function logs / Partial edits via `vertex.debug.*`.
+  - web/src/vertex/ScenarioPane.tsx — useTranslation; Run button via `vertex.scenarioPane.run` (aria-label already on hotkeys.runScenario).
+  - web/src/vertex/ScenarioRetryPane.tsx — useTranslation; empty / counter / attempt copy via `vertex.retry.*`.
+  - web/src/vertex/vertexI18n.test.tsx — new 20-case suite: resource registration (3), per-component en/zh pairs (14), runtime locale flip (1). Plus parity check of vertex.* shape.
+  - Each Vertex component also `import '../i18n'` for side-effect init (see Codebase Patterns above).
+- Quality:
+  - vitest run: 1548 tests passing across 202 files (no regressions).
+  - i18n drift (`node web/scripts/extract-i18n.mjs`): clean — vertex keys present in both locales, no MISSING / UNTRANSLATED / EXTRA-IN-EN.
+  - typecheck: same 5 pre-existing VTX-108 errors (SDK + SdkVertexClient.test), no new errors.
+  - eslint: same 2 pre-existing vertex errors, no new errors.
+- **Learnings for future iterations:**
+  - Adding `import '../i18n'` in `src/test/setup.ts` works but slows the vitest setup ~1s and pushed `admin-removed.test.tsx` over its 5s timeout in parallel runs. Prefer per-component side-effect import instead.
+  - `t('foo.bar', { count: N })` triggers i18next plural routing; if `foo.bar_one` / `foo.bar_other` aren't defined, the raw key is returned. Use `{ num: N }` for non-plural counters like `attempt #N`.
+  - The extraction script (`web/scripts/extract-i18n.mjs`) reports a lot of UNUSED keys for entries used through `<Trans i18nKey="…">` or dynamic dispatch (e.g. all `nav.*`, `theme.*`, `language.*`). Unused entries are NOT failure conditions — only MISSING / UNTRANSLATED / EXTRA-IN-EN exit non-zero.
+  - Default test locale: jsdom navigator.language defaults to `en-US`, normalised to `en`. Tests asserting Chinese text must `await changeLocale('zh-CN')` and `afterEach` reset to `DEFAULT_LOCALE`.
 ---

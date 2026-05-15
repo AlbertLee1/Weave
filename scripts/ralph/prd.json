@@ -44,8 +44,8 @@
         "Tests pass"
       ],
       "priority": 121,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added vertex.* namespace to web/src/i18n/resources/{en,zh-CN}.ts covering 8 sub-groups (widget/diagramming/layers/map/copilot/debug/scenarioPane/retry) — 25 keys each, parity verified by extract-i18n.mjs. All Vertex widget components (VertexGraphWidget, DiagrammingStubPage, LayersDragPanel, MapOpenInVertexButton, ScenarioCopilotButtons, ScenarioDebugDrawer, ScenarioPane, ScenarioRetryPane) now route every user-visible string through useTranslation; each also imports '../i18n' as a side-effect so tests that render the component pick up the bundle without needing to import the i18n module themselves. New web/src/vertex/vertexI18n.test.tsx (20 cases) asserts both locales render correct copy and live-switching changeLocale('zh-CN') re-renders Vertex copy. Full vitest 1548 passing; typecheck + eslint baselines unchanged (only VTX-108 pre-existing errors remain). Browser verification deferred — dev-browser MCP not available; English/Chinese label switching exercised via vitest tree."
     },
     {
       "id": "VTX-122",

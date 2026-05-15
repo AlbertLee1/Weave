@@ -8,6 +8,8 @@
 // belongs to the Scenario History stream.
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../i18n';
 
 export interface ScenarioRunDebug {
   scenarioRunRid: string;
@@ -29,6 +31,7 @@ async function defaultFetcher(rid: string): Promise<ScenarioRunDebug> {
 }
 
 export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = defaultFetcher }: ScenarioDebugDrawerProps) {
+  const { t } = useTranslation();
   const [data, setData] = useState<ScenarioRunDebug | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,18 +63,18 @@ export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = default
     <aside
       data-testid="scenario-debug-drawer"
       role="dialog"
-      aria-label="Scenario debug"
+      aria-label={t('vertex.debug.ariaLabel')}
       className="fixed right-0 top-0 z-50 h-full w-[480px] overflow-y-auto border-l border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
     >
       <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Debug — {scenarioRunRid}</h2>
+        <h2 className="text-sm font-semibold">{t('vertex.debug.title', { rid: scenarioRunRid })}</h2>
         <button
           type="button"
           data-testid="scenario-debug-close"
           onClick={onClose}
           className="rounded px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
         >
-          Close
+          {t('vertex.debug.close')}
         </button>
       </header>
       {error && (
@@ -82,19 +85,23 @@ export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = default
       {data && (
         <div className="space-y-4 text-xs">
           <section data-testid="scenario-debug-input">
-            <h3 className="mb-1 font-semibold">Input snapshot</h3>
+            <h3 className="mb-1 font-semibold">{t('vertex.debug.inputSnapshot')}</h3>
             <pre className="overflow-x-auto rounded bg-zinc-50 p-2 dark:bg-zinc-800">
               {JSON.stringify(data.inputSnapshot, null, 2)}
             </pre>
           </section>
           <section data-testid="scenario-debug-logs">
-            <h3 className="mb-1 font-semibold">Function logs ({data.functionLogs.length})</h3>
+            <h3 className="mb-1 font-semibold">
+              {t('vertex.debug.functionLogs', { count: data.functionLogs.length })}
+            </h3>
             <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-zinc-50 p-2 dark:bg-zinc-800">
               {data.functionLogs.join('\n')}
             </pre>
           </section>
           <section data-testid="scenario-debug-edits">
-            <h3 className="mb-1 font-semibold">Partial edits ({data.partialEdits.length})</h3>
+            <h3 className="mb-1 font-semibold">
+              {t('vertex.debug.partialEdits', { count: data.partialEdits.length })}
+            </h3>
             <ol className="list-decimal pl-5">
               {data.partialEdits.map((e, i) => (
                 <li key={i} className="mb-1">
