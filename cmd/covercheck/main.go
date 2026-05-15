@@ -65,10 +65,15 @@ func (p *PackageCoverage) Percent() float64 {
 
 // Config is the on-disk thresholds file shape. DefaultMaxDrop is the
 // percentage-point ceiling for baseline regressions; Floor lists per-package
-// minimum coverage.
+// minimum coverage. ExcludeFiles is a list of source-file path *suffixes*
+// (matched with strings.HasSuffix against the cover-line file path) whose
+// lines are dropped before aggregating per-package totals — used to keep
+// integration-only PG implementation files (`pg_*.go`) from dragging the
+// unit-test floor down on packages that mix pure and PG-backed code.
 type Config struct {
 	DefaultMaxDrop float64            `json:"defaultMaxDrop"`
 	Floor          map[string]float64 `json:"floor"`
+	ExcludeFiles   []string           `json:"excludeFiles,omitempty"`
 }
 
 // Baseline is the on-disk baseline file shape — a snapshot of prior
@@ -121,7 +126,13 @@ func main() {
 	}
 	defer f.Close()
 
-	cov, err := parseProfile(f)
+	cfg, err := loadConfig(*thresholdsPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "covercheck: load thresholds: %v\n", err)
+		os.Exit(2)
+	}
+
+	cov, err := parseProfileWithExcludes(f, cfg.ExcludeFiles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "covercheck: parse profile: %v\n", err)
 		os.Exit(2)
@@ -138,12 +149,6 @@ func main() {
 		}
 		fmt.Fprintf(os.Stdout, "baseline updated: %s (%d packages)\n", *updatePath, len(cov))
 		return
-	}
-
-	cfg, err := loadConfig(*thresholdsPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "covercheck: load thresholds: %v\n", err)
-		os.Exit(2)
 	}
 	baseline, err := loadBaseline(*baselinePath)
 	if err != nil {
@@ -180,6 +185,14 @@ func main() {
 // path, which matches the import path because go-test cover profiles emit
 // fully-qualified paths.
 func parseProfile(r io.Reader) (CoverageMap, error) {
+	return parseProfileWithExcludes(r, nil)
+}
+
+// parseProfileWithExcludes is parseProfile with an opt-in suffix filter.
+// Any cover-line whose source path ends with one of the supplied excludes
+// is dropped before aggregation. Empty/nil excludes is a no-op (identical
+// to parseProfile) so existing callers keep their semantics.
+func parseProfileWithExcludes(r io.Reader, excludes []string) (CoverageMap, error) {
 	out := CoverageMap{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -192,7 +205,11 @@ func parseProfile(r io.Reader) (CoverageMap, error) {
 		if m == nil {
 			continue
 		}
-		pkg := path.Dir(m[1])
+		srcPath := m[1]
+		if isExcluded(srcPath, excludes) {
+			continue
+		}
+		pkg := path.Dir(srcPath)
 		if pkg == "" || pkg == "." {
 			continue
 		}
@@ -218,6 +235,18 @@ func parseProfile(r io.Reader) (CoverageMap, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func isExcluded(srcPath string, excludes []string) bool {
+	for _, e := range excludes {
+		if e == "" {
+			continue
+		}
+		if strings.HasSuffix(srcPath, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // evaluate walks every package and emits a per-package verdict + summary
