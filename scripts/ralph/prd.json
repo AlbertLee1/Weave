@@ -106,8 +106,8 @@
         "Tests pass"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend-only: GET /api/vertex/v1/graphs/{rid}/widget returns the same Graph shape with payload run through widgetCompactPayload (strips top-level `savedSelections` + `history`; everything else byte-for-byte). POST /api/vertex/v1/graphs/{rid}/widget/save accepts `{payload, overrideGraphRid?}`; empty/omitted override falls back to the source rid in the path. ACL enforced on the *target* graph (not source) — owner-or-admin via canReadGraph. Unknown target → 404 GraphNotFound. Both routes ride the contract allow-list until OpenAPI lands."
     },
     {
       "id": "VTX-015",

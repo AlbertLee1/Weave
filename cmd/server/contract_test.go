@@ -159,6 +159,12 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/share-links"}: true,
 	{Method: "DELETE", Path: "/api/vertex/v1/share-links/{token}"}:    true,
 	{Method: "GET", Path: "/api/vertex/v1/share-links/{token}/graph"}: true,
+	// VTX-014: Workshop-embedded vertex_graph widget surface. GET returns a
+	// compact payload (no savedSelections / history); POST persists with an
+	// optional overrideGraphRid target. Same OpenAPI cycle as the rest of
+	// the VTX-009 routes.
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/widget"}:       true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/widget/save"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the

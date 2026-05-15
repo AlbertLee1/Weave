@@ -69,6 +69,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/vertex/v1/graphs/{rid}/share-links", h.createShareLink)
 	r.Delete("/api/vertex/v1/share-links/{token}", h.revokeShareLink)
 	r.Get("/api/vertex/v1/share-links/{token}/graph", h.getViaShareLink)
+	// VTX-014: Workshop widget surface.
+	r.Get("/api/vertex/v1/graphs/{rid}/widget", h.getWidget)
+	r.Post("/api/vertex/v1/graphs/{rid}/widget/save", h.saveWidget)
 }
 
 // createRequest is the body shape for POST /api/vertex/v1/graphs. Payload is
@@ -523,6 +526,88 @@ func (h *Handler) getViaShareLink(w http.ResponseWriter, r *http.Request) {
 	masked := cloneGraph(g)
 	masked.Payload = maskLayerPropertyValues(masked.Payload)
 	writeGraph(w, http.StatusOK, masked)
+}
+
+// getWidget returns a compact representation of the graph for the Workshop
+// vertex_graph widget. Honours the same owner-or-admin ACL as GET /graphs/{rid}
+// (no separate "widget read" capability). Payload is run through
+// widgetCompactPayload to strip savedSelections / history / other widget-noise
+// keys — see widget.go for the canonical list.
+func (h *Handler) getWidget(w http.ResponseWriter, r *http.Request) {
+	if h.repo == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	ridStr := chi.URLParam(r, "rid")
+	g, err := h.repo.Get(r.Context(), ridStr)
+	if err != nil {
+		writeRepoError(w, err, ridStr)
+		return
+	}
+	if !canReadGraph(r, g) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("GraphReadForbidden",
+			map[string]string{"rid": ridStr}))
+		return
+	}
+	compact := cloneGraph(g)
+	compact.Payload = widgetCompactPayload(compact.Payload)
+	writeGraph(w, http.StatusOK, compact)
+}
+
+// saveWidgetRequest is the body shape for POST /widget/save. OverrideGraphRid
+// is optional — empty or omitted falls back to the source rid from the URL
+// path so a widget without an override URL parameter still saves in place.
+type saveWidgetRequest struct {
+	Payload          json.RawMessage `json:"payload"`
+	OverrideGraphRid string          `json:"overrideGraphRid,omitempty"`
+}
+
+// saveWidget persists the widget's current graph state. When the widget URL
+// passes an overrideGraphRid (forwarded in the request body), the save lands
+// on that resource instead of the source — Workshop's "Save into a different
+// graph" gesture. ACL is enforced on the *target* graph (not the source):
+// the source only matters for routing.
+func (h *Handler) saveWidget(w http.ResponseWriter, r *http.Request) {
+	if h.repo == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	sourceRid := chi.URLParam(r, "rid")
+	var req saveWidgetRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewBadRequest("InvalidJSON", map[string]string{"error": err.Error()}))
+		return
+	}
+	if len(req.Payload) == 0 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingPayload", nil))
+		return
+	}
+	targetRid := strings.TrimSpace(req.OverrideGraphRid)
+	if targetRid == "" {
+		targetRid = sourceRid
+	}
+	target, err := h.repo.Get(r.Context(), targetRid)
+	if err != nil {
+		writeRepoError(w, err, targetRid)
+		return
+	}
+	if !canReadGraph(r, target) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("GraphWriteForbidden",
+			map[string]string{"rid": targetRid}))
+		return
+	}
+	if h.validator != nil {
+		if err := h.validator.Validate(r.Context(), req.Payload); err != nil {
+			writePayloadValidationError(w, err)
+			return
+		}
+	}
+	g, err := h.repo.Update(r.Context(), targetRid, req.Payload)
+	if err != nil {
+		writeRepoError(w, err, targetRid)
+		return
+	}
+	writeGraph(w, http.StatusOK, g)
 }
 
 // canManageShareLinks decides whether u may mint a share link for g. Owner or

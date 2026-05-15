@@ -18,6 +18,8 @@ Stream: A
 - **Auth in handler tests**: chi-router-only tests can stash an auth.User into the request context via `req.WithContext(auth.WithUser(req.Context(), &auth.User{ID: ...}))`. No middleware required. The handler reads via `auth.UserFromContext(r.Context())` which returns nil for anonymous calls; ACL checks should fall through to "public" only when both the user is nil AND the resource opts in (e.g. empty CreatedBy) so legacy fixtures keep working.
 - **HTTP 410 Gone**: there was no constructor for 410 in `pkg/apierror`. Added `NewGone(name, params)` emitting errorCode NOT_FOUND with statusCode 410. Use it when distinguishing "never existed" (404) from "deliberately revoked" (410) — share links, tombstoned resources, etc.
 - **There is an orphan `pkg/vertex/sharelinks` package** with pure helpers (`EvaluateAccess`, `MaskGraphPayload`, `GenerateToken`) that pre-dates VTX-009's `layers[]` payload shape — it operates on `nodes[]` and uses `•••` as the mask token. Do NOT consume it for new VTX work; the BDD wants ASCII `***` masking on `layers[*].properties`. The graphsvc `maskLayerPropertyValues` helper is the canonical one.
+- **IDOR guard on "override target" endpoints**: when a Save / Copy / Move action accepts a `overrideXxxRid` (or similar) field, enforce ACL on the **target** rid, not the source path rid. Otherwise a caller with read on A can mutate B by routing through A. See `pkg/vertex/graphsvc/handler.go::saveWidget` for the canonical example.
+- **Compact / projected payload variants**: express as a pure `<base>CompactPayload(raw json.RawMessage)` projection + thin handler that runs the projection on the existing repo.Get path. Reuses ACL / error / shape logic; the projection function falls through to the original bytes on decode failure so opaque fixtures still flow.
 ---
 
 ## Fri May 15 ~10:02 CST 2026 - VTX-010
@@ -127,4 +129,36 @@ Stream: A
   - Pattern: Masking helpers should walk decoded JSON (map[string]any/[]any) once, mutate in place, then re-marshal. Decode failures fall through to the original payload — refusing wholly-opaque payloads would be a regression for graphs whose schema isn't yet enforced. The BDD's `***` is the literal value to use; do NOT consume the orphaned `pkg/vertex/sharelinks.MaskGraphPayload` (uses `•••` and the wrong payload shape).
   - Gotcha: When wiring a `ShareLinkStore` interface var in main.go, use `var x ShareLinkStore = NewMemShareLinkStore()` then overwrite with the PG impl — same pattern as graphRepo. A bare nil store causes the handler to surface ShareLinksUnavailable, which is the right behaviour but the routes are listed in the allow-list anyway so they need to respond (with 500) rather than 404.
   - Useful: There's a 410-Gone-shaped hole in `pkg/apierror`. Added `NewGone(name, params)` using errorCode NOT_FOUND (matches HTTP semantics: the resource is gone, the URL is still well-formed) and statusCode 410. Reuse for tombstoned objects / revoked tokens / closed sagas.
+---
+
+## Fri May 15 ~13:45 CST 2026 - VTX-014
+- Implemented Workshop-embedded vertex_graph widget API per BDD acceptance.
+- Backend
+  - pkg/vertex/graphsvc/widget.go: pure `widgetCompactPayload(payload)` helper. Walks the top-level JSON object once, deletes `widgetNoiseKeys` (`savedSelections`, `history`) and re-marshals. Empty / non-object / malformed-JSON payloads fall through unchanged so degraded fixtures still reach the widget.
+  - pkg/vertex/graphsvc/handler.go: two new routes under `/api/vertex/v1/graphs/{rid}/widget`:
+    - `GET …/widget` → reuses `canReadGraph` (owner-or-admin, ownerless graphs public) then returns the standard Graph wire shape with `payload` run through `widgetCompactPayload`. 403 stranger / 404 unknown.
+    - `POST …/widget/save` → body `{payload: RawMessage, overrideGraphRid?: string}`. Empty/whitespace override falls back to the source rid from the path. ACL is enforced on the **target** graph (not the source) to block IDOR — strangers can't drive their own source graph rid to overwrite a stranger's graph. Optional `*PayloadValidator` (VTX-011) is invoked before delegating to `repo.Update`. Reuses existing `MissingPayload` / `GraphWriteForbidden` / `GraphNotFound` error names.
+  - cmd/server/contract_test.go: added the 2 new chi routes to `undocumentedRouteAllowList` (matches the VTX-013 / VTX-012 pattern; OpenAPI schemas follow alongside the rest of the VTX-009 surface).
+  - pkg/vertex/graphsvc/widget_test.go: 4 unit tests Red→Green for `widgetCompactPayload` — strips noise / preserves everything else, no-op on empty / no-noise / malformed input.
+  - pkg/vertex/graphsvc/handler_widget_test.go: 8 BDD-style HTTP tests through the chi router:
+    - widget GET returns compact payload (no savedSelections, no history; layers/edges/positions preserved)
+    - stranger widget GET → 403; unknown rid → 404
+    - override save lands on target rid (response rid matches override, target version bumps to 2, source rid version stays 1, source layers untouched)
+    - no-override save bumps source rid version
+    - unknown override → 404
+    - stranger source → 403
+    - stranger target (IDOR guard) → 403
+- Quality
+  - `go test ./pkg/vertex/graphsvc/...` PASS — 53 tests (41 prior + 12 new), 0.65s
+  - `go test ./pkg/... -short` PASS in 33s aggregate (no failures, perf gates green this run)
+  - `go vet ./...` clean
+  - `go build ./...` clean (after dist placeholder)
+  - `npx tsc --noEmit` (web/) clean — no FE changes in this story, baseline preserved
+  - Pre-existing failures unrelated to this story: `cmd/server.TestContract_AllRoutesDocumented` (VTX-030 OpenAPI gap, timeseries route). Verified the new widget routes are correctly allow-listed; the only error remains the pre-existing one.
+- **Learnings for future iterations:**
+  - Pattern: For "compact / projected variant of an existing resource", express it as `<base>CompactPayload(raw json.RawMessage)` + a thin handler that runs the projection on the existing repo.Get path. Avoids duplicating ACL / error / shape logic. The projection function should be pure and fall through to the original bytes on decode failure — refusing opaque payloads is a regression for graphs whose schema isn't strictly enforced yet.
+  - Pattern: When a Save endpoint accepts an `overrideGraphRid` (or any target-divergence parameter), **enforce ACL on the target, not the source**. Otherwise an attacker with read on graph A can mutate graph B by routing the save through A. Belt-and-braces against IDOR — see `TestWidget_Given_StrangerOnOverrideTarget_When_Save_Then_403`.
+  - Pattern: When a save's "fallback target" is "the rid in the URL path", trim the override field with `strings.TrimSpace` and check `== ""` rather than `nil` — JSON omitting the field decodes to the zero value `""`, and the widget URL parameter can flow through as a whitespace-only string.
+  - Gotcha: Reused error names matter. `GraphWriteForbidden` is a fresh ErrorName (vs `GraphReadForbidden` for the read ACL). Keep the read/write distinction explicit so the SDK can surface different copy ("Read-only graph" vs "You don't own this graph") downstream.
+  - Useful: The VTX-009 graph endpoints define a single ACL helper (`canReadGraph`); for VTX-014 the natural choice was to re-use it (rather than introduce a separate `canWriteGraph`) since the project's RBAC is still owner-or-admin at this layer. When real project-level RBAC lands, splitting the two will be a one-line edit at the call sites.
 ---
