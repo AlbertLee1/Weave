@@ -172,3 +172,32 @@ Stream: B
   - `Window.open() not implemented` 是 vitest happy-dom 在跑 contextMenu 测试时打印的环境警告，不算 fail；本 story 没接触 openLinks，但跑 vertex 子集时仍可见。是 happy-dom 限制，已知。
   - dev-browser skill 不可用 — Modal 组件接线、name 输入校验提示 toast、immutable scenario tooltip 浏览器验证全部留到 React 组件接线 story（与 VTX-036 同步进行更经济）。
 ---
+
+## 2026-05-15 - VTX-038
+- 实现 + Add Action（Function-backed Action 选择）的纯逻辑层：对话框 reducer + 已发布/function-backed 判别 + 必填参数校验 + 50-actions-per-scenario 容量守卫 + dialog→Row 转换器。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/addAction.ts` — 导出：
+    - 常量 `MAX_ACTIONS_PER_SCENARIO=50` / `MAX_ACTIONS_MESSAGE='Max 50 actions per scenario'`
+    - 类型 `AddActionParameterSpec` / `AddActionActionType { rid, apiName, displayName, status, kind?, functionRid?, parameters? }` / `AddActionDialogState` / `AddActionValidation` / `BuildAddActionRowInput`
+    - reducer：`createAddActionDialogState` / `openAddActionDialog(scenarioRid)`（非空校验）/ `closeAddActionDialog` / `setAddActionLoading` / `setAddActionList`（保留仍存在的 selection + paramValues，否则清；顺手清 loading）/ `setAddActionSelected`（切换清 paramValues；无变化返回同引用）/ `setAddActionParam` / `setAddActionSubmitting`（true 清 error）/ `setAddActionError`（清 submitting）
+    - 派生：`isActionPublished`（ACTIVE/ENDORSED）/ `isFunctionBackedAction`（kind==='function_backed'）/ `filterPublishedActions` / `getSelectedAction`（unknown rid → null）/ `getRequiredParamNames` / `validateAddAction`（no_selection / unknown_selection / missing_required_param + param 名 / valid）
+    - 容量：`isScenarioAtActionCapacity` / `assertScenarioActionCapacity` 抛 `ScenarioActionCapacityError`（携带 limit=50 + name='ScenarioActionCapacityError'）
+    - 转换：`buildAddActionRow({state, rid})` → `ScenarioPaneActionRow`，rid 必填非空，无选中或选中不存在抛错
+  - `web/src/features/vertex/scenarioPane/addAction.test.ts` — 48 个 BDD 测试覆盖：工厂、open/close/loading、setAddActionList（保留/丢失 selection 两条路径）、setAddActionSelected（首选/切换清参/同值返回同引用/null）、setAddActionParam（新增/覆盖）、submitting/error（互斥语义、null 清）、isActionPublished（ACTIVE/ENDORSED/EXPERIMENTAL/DEPRECATED）、isFunctionBackedAction（true/undefined/standard）、filterPublishedActions（混合保留 ACTIVE+ENDORSED 含 function-backed）、getSelectedAction（null/unknown/正常）、getRequiredParamNames（缺 parameters / 混合 / 仅可选）、validateAddAction 全 4 路径（含 whitespace blank）、容量（49 false / 50 true / under 不抛 / 50 抛带 message+limit+name / >50 抛）、buildAddActionRow（正常返回 row / 无选中抛 / unknown 选中抛 / 空 rid 抛）。
+- 质量检查：
+  - vitest（addAction）：48/48 绿。
+  - vitest 子集（src/features/vertex）：34 files / 453 tests 全绿（+1 file / +48 tests）。
+  - tsc（web/）：exit 0，0 错误。
+  - eslint（addAction.ts + addAction.test.ts）：0 warning。
+- **Learnings for future iterations:**
+  - PRD 中 VTX-038 spec 提到 "已发布的 Function-backed Action + 普通 Action"，但 web/src/api/types.ts.ActionType 当前没有 kind 字段（VTX-051 才添加 function_rid 列）。本 story 解耦做法：定义本地 `AddActionActionType` 投影，含 `kind?: 'standard' | 'function_backed'` + `functionRid?: string` 两个可选字段，让上游 (React 接线层) 把 OMS 返回的 ActionType 拍平到这个投影。等 VTX-051 落地、web/src/api/types.ts.ActionType 添完 kind/functionRid 后，本模块仍可继续用投影（避免强绑 ActionParameterV2 的 DataType 复杂结构 —— 测试用例就不需要构造完整 DataType payload）。
+  - "已发布" = `status ∈ {ACTIVE, ENDORSED}`，与 pkg/oms ActionType.status 习惯对齐。EXPERIMENTAL / DEPRECATED / DRAFT 全部排除。React 接线层调用方式：`filterPublishedActions(omsActionsList).map(toAddActionType)`。
+  - `setAddActionList` 的"保留 selection 仅当它仍在新列表"：典型路径是用户先勾了一个 action、然后改了 ontology filter（导致候选列表变化）。如果旧 selection 还在 → 用户体验上"无感"；如果不在 → 必须清掉 selectedActionRid 否则 `getSelectedAction` 永远返回 null，validateAddAction 永远报 unknown_selection，整个 form 卡死。这是从 createDialogs.ts 没遇到的场景（那里 openDialog 永远全 reset，没有"列表换、保留部分状态"的需求）。
+  - `setAddActionSelected` 切换时清 paramValues 是必须的：不同 action 参数集不同，留旧 paramValues 会让"required check"出现 phantom 字段值（e.g. 选 A 填了 origin=JFK，切到 B 还有 origin=JFK，但 B 根本没 origin 参数）。这意味着 React form 在 selection 变化时只要重渲就够，不用手动清 input —— state 已经清了。
+  - `setAddActionSelected` 同值返回同引用（`if (state.selectedActionRid === rid) return state;`）的设计动机：避免 React 在用户重复点击同一个 radio 时触发不必要的 useMemo 重算 / Effect 触发。同 createDialogs 的"open 永远 reset"不同 —— 那里 open 本来就是低频且需要 reset 语义。
+  - `ScenarioActionCapacityError.limit` 字段：让 React toast 可以 i18n 化（`tr('actions.capacityHit', { limit: err.limit })`）而不是硬编码 50。同 ScenarioImmutableError 的 `scenarioRid` 一样，给上层定位 + 国际化留出口。
+  - `buildAddActionRow` 让调用方注入 rid 而不是内部生成：纯逻辑模块不引入 `crypto.randomUUID()` 因为 happy-dom / vitest 旧版本可能缺。让 React 接线层负责生成 rid（推荐 `crypto.randomUUID()` 或后端 POST 响应 rid），本模块只做翻译。
+  - capacity 守卫两种 API：`isScenarioAtActionCapacity` 给"按钮是否 disabled"用，`assertScenarioActionCapacity` 给"用户硬撞上限时抛"用。React 层期望流程：button 用 isAtCapacity 禁用；如果绕过 (e.g. 键盘 enter / 直接调 mutation) → fetch 前 assertScenarioActionCapacity 抛 error → catch 后 setError(MAX_ACTIONS_MESSAGE)。
+  - validateAddAction 的"required param 缺失"用第一个缺失的字段名做 reason（不是数组）—— UX 上一次只提示一条更清晰；React 层用 `param` 字段定位错误 input + 高亮。如果未来要求"一次性显示所有错误"，加新 reason 'multiple_missing_params' 而非改现有形状。
+  - dev-browser skill 不可用 — Modal + Action 列表渲染 + 50-cap toast 弹窗的浏览器验证留到 React 组件接线 story；本 story 仅交付纯逻辑层。
+---

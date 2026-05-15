@@ -182,8 +182,8 @@
         "Tests pass"
       ],
       "priority": 38,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/addAction.ts。导出 AddActionDialogState reducer（createAddActionDialogState/openAddActionDialog/closeAddActionDialog/setAddActionLoading/setAddActionList/setAddActionSelected/setAddActionParam/setAddActionSubmitting/setAddActionError）+ 派生 helper（isActionPublished/isFunctionBackedAction/filterPublishedActions/getSelectedAction/getRequiredParamNames/validateAddAction）+ 容量守卫（MAX_ACTIONS_PER_SCENARIO=50 + MAX_ACTIONS_MESSAGE='Max 50 actions per scenario' + isScenarioAtActionCapacity / assertScenarioActionCapacity 抛 ScenarioActionCapacityError）+ buildAddActionRow（dialog state → ScenarioPaneActionRow，rid 由调用方注入避免引入 crypto 随机源）。openAddActionDialog 强制非空 scenarioRid；setAddActionList 在 selection 仍存在于新列表时保留 selection + paramValues，否则清；setAddActionSelected 切换时清空 paramValues 防幽灵字段；ACTIVE / ENDORSED 视为已发布（与 pkg/oms ActionType.status 对齐）。AddActionActionType 是 web/src/api/types.ts ActionType 的最小投影 + kind/functionRid（VTX-051 注册路径预留），刻意不强绑 ActionParameterV2 让测试无须造完整 DataType。dev-browser skill 不可用，Modal + Action 列表 + capacity toast 浏览器验证留到 React 组件接线 story。"
     },
     {
       "id": "VTX-039",
