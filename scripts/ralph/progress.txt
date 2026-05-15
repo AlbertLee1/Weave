@@ -855,3 +855,32 @@ Stream: B
   - **`fmt.Errorf("%w: ...")` wrap sentinel**：让 caller `errors.Is(err, ErrUnknownLabelKind)` 在不依赖字符串匹配的前提下分派；同时 err.Error() 仍然带上下文（"layer #0 (Airport) extendedLabels[1].kind=\"histogram\" (allowed: property,timeSeries,measure)"）方便日志 + 错误体的 `reason` 字段。这与 VTX-118 `ValidateSingleOntology` 已经在用的形态一致；新 sentinel 沿同 pattern 不重新发明。
   - **dev-browser skill 不可用**：本 story 是纯后端 schema + handler 校验，无 UI 接线；BDD #1（"三类校验通过"） + #2（"unknown kind 422"）由 Go 单测锁死；React 侧 SystemGraph payload builder 在 VTX-059/060/061 接线时复用本 schema 字段名（`extendedLabels[].kind` 取值 `property/timeSeries/measure` 三选一）即可，无需重新协商 wire 形态。
 ---
+
+## 2026-05-15 - VTX-059
+- 实现 Property Extended Label 渲染的纯逻辑层：把 VTX-058 后端 `ExtendedLabel{kind:'property',property}` schema 翻译成节点 DOM overlay 上一条 `{labelName}: {valueText}` 文本，缺失值（undefined/null/空字符串/纯空白/NaN）退化为 `—` 并把 status 标 'missing' 供 React 接线层切样式。
+- 新增文件：
+  - `web/src/features/vertex/extendedLabels/propertyLabel.ts` — 导出：
+    - 常量 `MISSING_VALUE_PLACEHOLDER = '—'`（与 VTX-058 后端 schema 中 `kind === 'property'` 配套），React 接线层若要本地化覆盖通过 `options.missingPlaceholder` 注入。
+    - 类型 `PropertyLabelStatus = 'present' | 'missing'`、`PropertyExtendedLabelSpec { kind:'property', property, displayName? }`（displayName 非 wire 字段，React 接线层从 ObjectType.properties[name].displayName 取后注入，与 VTX-039 `buildInputOutputColumns` 的 `displayName ?? name` fallback 同形态）、`PropertyLabelObjectLike` 最小投影（同 VTX-041 `WireObjectLike` 设计避免单测必须造完整 wire 对象）、`PropertyLabelRenderResult { status, labelName, valueText, text }`、`RenderPropertyExtendedLabelOptions { formatValue?, missingPlaceholder? }`。
+    - 工具 `isPropertyExtendedLabel(label)`（kind discriminator）/ `resolvePropertyValue(obj, property)`（blank property name 抛 `/property/i`）/ `isPropertyValueMissing(v)`（undefined/null/空字符串/纯空白/NaN 真，0 / false / 'x' 假）/ `formatScalarPropertyValue(v)`（string/number/boolean as-is、object/array `JSON.stringify`、Date 退化 ISO、JSON.stringify 抛错回退 placeholder）。
+    - 主入口 `renderPropertyExtendedLabel(spec, obj, options?)`：spec.kind 非 'property' 或 spec.property blank → throw（assertion，正常路径 caller 先调 `isPropertyExtendedLabel`）；按 `formatValue ?? formatScalarPropertyValue` 计算 valueText，formatter 返空串视为 missing 走 placeholder；displayName 缺失/纯空白 fallback 到 property name。返回结构含 `text` 字段（`${labelName}: ${valueText}`）+ status 双输出，React 接线层一次解构既能渲染 text 又能按 status 切 className（present → 默认色，missing → 灰色斜体）。
+  - `web/src/features/vertex/extendedLabels/propertyLabel.test.ts` — 38 个 BDD 测试覆盖：
+    - `isPropertyExtendedLabel` 4 个（property / timeSeries / measure / unknown kind）
+    - `resolvePropertyValue` 5 个（present / missing / explicit null / meta prefix `__apiName` `__primaryKey` / blank property name 抛错）
+    - `isPropertyValueMissing` 8 个（undefined / null / 空字符串 / 纯空白 / 0 / false / 'x' / NaN）
+    - `formatScalarPropertyValue` 10 个（string / int / decimal / true / false / NaN → placeholder / object → JSON / array → JSON / null / undefined → placeholder）
+    - `renderPropertyExtendedLabel` 11 个（BDD #1 显示 `onTimePct: 92%` / BDD #2 显示 `onTimePct: —` / displayName 注入 / displayName 纯空白 fallback / 显式 null missing / 0 仍 present / false 仍 present / 自定义 formatter / 自定义 missingPlaceholder / blank property 抛错 / 非 property kind 抛错）
+- 质量检查：
+  - `npx vitest run src/features/vertex/extendedLabels/propertyLabel.test.ts`：38/38 绿。
+  - `npx vitest run`（全量）：219 files / 2360 tests 全绿，0 回归（含已知 flaky 的 `admin-removed.test.tsx`，单批跑稳定通过）。
+  - `npx tsc --noEmit`：0 错误（与本 stream 之前 pre-existing 两处仓库根错误同状态：`sdk/typescript/src/vertex.ts` / `src/vertex/SdkVertexClient.test.ts` 不在 web/ tsconfig include 中）。
+  - `npx eslint src/features/vertex/extendedLabels/`：0 warning。
+- **Learnings for future iterations:**
+  - **wire 形态字段直接复用 VTX-058 后端 schema**：`pkg/vertex/graphsvc/validate.go` 的 `ExtendedLabel.Kind` / `.Property` 字段名 = TS `PropertyExtendedLabelSpec.kind` / `.property`，**不要**前端再发明一套字段名再做映射。后端 schema 已落地的 `ExtendedLabelKindProperty='property'` 常量与前端 `kind === 'property'` 是同一字符串字面值；React 接线层从 SystemGraph payload 直接 `extendedLabels.filter(isPropertyExtendedLabel)` 即可分派 render。VTX-060 / VTX-061 接线时复用同模板：`isTimeSeriesExtendedLabel(label)` / `isMeasureExtendedLabel(label)` discriminator + 各自的 `render*ExtendedLabel`，让 React 节点 overlay 组件按 kind dispatch 而非按字段存在性嗅探。
+  - **status 双输出比 className 注入更通用**：本模块返回 `{status: 'present'|'missing', text}` 而非 `{className, text}`，让 React 接线层自由决定 missing 状态如何呈现（灰字 / 斜体 / dim alpha / 完全隐藏 / 替换为 spinner）。如果以后 missing 又拆出 'loading' / 'error' 等状态，扩展 enum 即可，不必动 className 约定（CSS 在 Tailwind 项目里常因为颜色 token 改动而漂移，但 status 枚举稳定）。
+  - **displayName 是 React 接线层职责而非 wire 字段**：后端 SystemGraph payload 只有 `property` 字段；displayName 在 `ObjectType.properties[name].displayName` 里（OMS 元数据）。前端接线层取出来注入，本模块接受可选 displayName，绕过 "renderer 反向调 OMS 元数据" 的反向依赖。这与 VTX-039 / VTX-041 已经在用的 fallback 链 `displayName ?? property` 同形态。
+  - **`isPropertyValueMissing` 含 "纯空白" 是有意的**：CSV 导入 / 早期 ETL 错误可能让 Airport.onTimePct = `'   '`（三个空格），UI 显示这种值毫无意义。trim()=='' → missing 让数据卫生问题在 UI 上自动暴露而非显示空文本（用户会误以为 `'   '` 是有效值）。如果未来 OSS 改在导入侧 trim 这种值，本判定不会增加假阳性 —— 纯空白真的进了 wire 也只在 UI 上退化为 placeholder。
+  - **formatValue 返空串 → missing**：自定义 formatter（如 `formatPercent(0) → ''` 在某些 i18n 库中）的输出如果为空串，本模块视为 missing 走 placeholder 而非"空字符串"展示。这避免了 React 节点 overlay 出现 `'onTimePct: '` 形态（标签裸露冒号后留空，视觉断裂）。formatter 想强制显示空串应当返一个非空字符（如 `' '` 一个空格或 placeholder 自身）—— 设计选择优先 "no broken UI" 而非 "transparent formatter"。
+  - **`renderPropertyExtendedLabel` 双重 throw（kind 错 / property 错）是 assertion**：正常 React 接线层先 `if (!isPropertyExtendedLabel(label)) continue;` 再调 render，永远走不到 throw。两处 throw 用于 dev-time 兜底（防御 SystemGraph payload 反序列化错位 / TypeScript 类型断言绕过）。生产 React 层应当 `try/catch` 包裹整个 label 列表渲染 + 单 label 失败回落 placeholder + Sentry 上报，避免一条坏 label 整片节点 overlay 黑屏。
+  - **dev-browser skill 不可用**：BDD #3 "Verify in browser" 留到 React 节点 DOM overlay 接线 story（SystemGraph 节点 div 内 `extendedLabels.map(label => <div data-status={result.status}>{result.text}</div>)`，CSS `[data-status="missing"] { color: #9ca3af; font-style: italic; }`）。本 story 单测覆盖 `text` 字面值 + `status` 状态切换，浏览器验证 dropdown 不在本 story 范围。
+---

@@ -632,8 +632,8 @@
         "Tests pass"
       ],
       "priority": 59,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑层（web/src/features/vertex/extendedLabels/propertyLabel.ts）：导出 MISSING_VALUE_PLACEHOLDER='—' / PropertyLabelStatus 枚举 / PropertyExtendedLabelSpec / PropertyLabelRenderResult / RenderPropertyExtendedLabelOptions / isPropertyExtendedLabel / resolvePropertyValue（blank property name 抛错）/ isPropertyValueMissing（undefined/null/空字符串/纯空白/NaN）/ formatScalarPropertyValue（string/number/boolean/object/array → JSON）/ renderPropertyExtendedLabel（spec+obj+options 返回 {status,labelName,valueText,text}）。displayName 缺失/纯空白 fallback 到 property name；formatValue 返空串视为 missing；missingPlaceholder 可覆盖。38 个 BDD 测试：isPropertyExtendedLabel 4 + resolvePropertyValue 5 + isPropertyValueMissing 8 + formatScalarPropertyValue 10 + render 11（含 BDD #1 显示 `onTimePct: 92%` + BDD #2 显示 `onTimePct: —`）。propertyLabel 38/38 绿；vitest 全量 219 files / 2360 tests 全绿；tsc / eslint 干净。"
     },
     {
       "id": "VTX-060",
