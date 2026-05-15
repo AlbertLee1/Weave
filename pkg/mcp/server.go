@@ -42,6 +42,11 @@ type Server struct {
 	// "not configured" error rather than empty data.
 	semanticSearcher SemanticSearcher
 
+	// vertexService backs the three Vertex MCP tools (VTX-112). Optional —
+	// when nil, vertex_list_graphs / vertex_run_scenario / vertex_apply_scenario
+	// return a "not configured" error rather than crashing.
+	vertexService VertexService
+
 	// objectSetCatalog backs the resources/list + resources/read methods
 	// introduced in US-286. Optional — when nil, ObjectSet resources are
 	// simply omitted from the catalogue.
