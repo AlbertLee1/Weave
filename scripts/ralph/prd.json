@@ -610,8 +610,8 @@
         "Tests pass"
       ],
       "priority": 58,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "扩展 pkg/vertex/graphsvc.Layer 加可选 ExtendedLabels []ExtendedLabel + ExtendedLabel{Kind,Property,TimeSeriesRid,MeasureRid}，新增 ValidExtendedLabelKinds 闭集（property/timeSeries/measure）+ ErrUnknownLabelKind sentinel + ValidateExtendedLabels(GraphPayload) error。Handler create + update 路由前置 validatePayloadSchema —— 空 payload 通过；json.Unmarshal 失败 → 400 InvalidPayloadShape；ErrUnknownLabelKind → 422 WEAVE_VALIDATION_SCHEMA / errorName=UnknownExtendedLabelKind。10 个新测试覆盖 validator（三类放行 / 缺字段放行 / 空数组放行 / unknown kind 抛 sentinel / blank kind 失败闭口 / 多 label 命中第一处 unknown / 闭集大小=3）+ handler 端到端（POST 三类 201 / POST unknown 422 / PUT unknown 422）。graphsvc 28/28 全绿；go test ./pkg/... ./internal/...（race+无 race）全绿；go vet 干净；gofmt 在本 story 范围内干净（diff.go/diff_test.go 是 pre-existing 未格式化，不属本 story）。"
     },
     {
       "id": "VTX-059",
