@@ -30,6 +30,19 @@ export interface VertexEdge {
   type: 'arrow' | 'line';
   /** When true, the renderer should overlay a reverse arrowhead. */
   bothArrows?: boolean;
+  /**
+   * LinkType RID preserved from the source payload so the VTX-025 merge
+   * reducer can group same-direction edges with the same link semantic.
+   */
+  linkTypeRid?: string;
+  /**
+   * VTX-025 merge metadata. Present only when this edge represents a
+   * collapsed group of N>1 input edges. `count` is the group size; `label`
+   * is "×N" (rendered on the edge by Sigma); `size` is the visual thickness.
+   */
+  count?: number;
+  label?: string;
+  size?: number;
 }
 
 export interface VertexPayloadGraph {
@@ -133,6 +146,9 @@ export function payloadToGraph(payload: unknown): VertexPayloadGraph {
       : `${source}__${target}__${i}`;
     const edge: VertexEdge = { key: id, source, target, type };
     if (style === 'both') edge.bothArrows = true;
+    if (typeof e.linkTypeRid === 'string' && e.linkTypeRid !== '') {
+      edge.linkTypeRid = e.linkTypeRid;
+    }
     edges.push(edge);
   }
 

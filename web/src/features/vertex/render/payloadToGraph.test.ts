@@ -128,6 +128,24 @@ describe('VTX-018 payloadToGraph', () => {
     expect(out.edges[0].bothArrows).toBe(true);
   });
 
+  it('Given_PayloadEdgesCarryLinkTypeRid_When_payloadToGraph_Then_preservesLinkTypeRidOnEachEdge', () => {
+    // VTX-025: the merge reducer groups same-direction edges by their
+    // (source, target, linkTypeRid) triple, so the projection layer has
+    // to keep linkTypeRid around — pickEdgeArrowStyle only needs the tag
+    // list, but downstream consumers need the RID too.
+    const layer = airportLayer(3);
+    const edges = [
+      edgeBetween(0, 1),
+      edgeBetween(0, 1),
+      edgeBetween(0, 2),
+    ];
+    const out = payloadToGraph({ layers: [layer], edges });
+    expect(out.edges).toHaveLength(3);
+    for (const e of out.edges) {
+      expect(e.linkTypeRid).toBe('ri.ontology.main.link-type.flight');
+    }
+  });
+
   it('Given_EdgeWithUnknownEndpoint_When_payloadToGraph_Then_dropsTheDanglingEdge', () => {
     const layer = airportLayer(1);
     const edges = [

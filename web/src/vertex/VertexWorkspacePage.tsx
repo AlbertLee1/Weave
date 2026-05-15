@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import Graph from 'graphology';
+import Graph, { MultiGraph } from 'graphology';
 import { SigmaContainer, useLoadGraph, useSigma } from '@react-sigma/core';
 import '@react-sigma/core/lib/style.css';
 
@@ -22,6 +22,7 @@ import {
   payloadToGraph,
   type VertexPayloadGraph,
 } from '../features/vertex/render/payloadToGraph';
+import { mergeEdgesByLinkType } from '../features/vertex/render/mergeEdges';
 import {
   extractExtendedLabels,
   type ExtendedLabel,
@@ -102,10 +103,19 @@ const SIGMA_SETTINGS = {
   renderEdgeLabels: false,
 };
 
-function GraphLoader({ projection }: { projection: VertexPayloadGraph }) {
+function GraphLoader({
+  projection,
+  mergeEnabled,
+}: {
+  projection: VertexPayloadGraph;
+  mergeEnabled: boolean;
+}) {
   const loadGraph = useLoadGraph();
   useEffect(() => {
-    const g = new Graph();
+    // MultiGraph (vs Graph) so two same-direction edges between A and B
+    // can both live on the canvas when merge=off; the merge reducer is
+    // what collapses them when merge=on.
+    const g = new MultiGraph();
     for (const n of projection.nodes) {
       g.addNode(n.id, {
         label: n.label,
@@ -116,20 +126,26 @@ function GraphLoader({ projection }: { projection: VertexPayloadGraph }) {
         highlighted: false,
       });
     }
-    for (const e of projection.edges) {
+    const edgesToRender = mergeEdgesByLinkType(projection.edges, {
+      merge: mergeEnabled,
+    });
+    for (const e of edgesToRender) {
       if (!g.hasNode(e.source) || !g.hasNode(e.target)) continue;
       // Use addEdgeWithKey so a stable id survives re-renders + drag
       // persistence in VTX-024. Graphology rejects duplicate keys, so
-      // dedupe by source/target/key triple.
+      // dedupe by key.
       if (g.hasEdge(e.key)) continue;
-      g.addEdgeWithKey(e.key, e.source, e.target, {
+      const attrs: Record<string, unknown> = {
         type: e.type,
         bothArrows: e.bothArrows === true,
-        size: 1,
-      });
+        size: typeof e.size === 'number' ? e.size : 1,
+      };
+      if (typeof e.label === 'string') attrs.label = e.label;
+      if (typeof e.count === 'number') attrs.count = e.count;
+      g.addEdgeWithKey(e.key, e.source, e.target, attrs);
     }
-    loadGraph(g);
-  }, [loadGraph, projection]);
+    loadGraph(g as unknown as Graph);
+  }, [loadGraph, projection, mergeEnabled]);
   return null;
 }
 
@@ -168,6 +184,8 @@ interface GraphSummary {
 interface TopBarProps {
   graph?: GraphSummary | null;
   onApplyLayout: (spec: LayoutSpec) => void;
+  mergeEnabled: boolean;
+  onToggleMerge: () => void;
 }
 
 const PASSIVE_TOPBAR_BUTTONS: Array<[string, string]> = [
@@ -177,7 +195,12 @@ const PASSIVE_TOPBAR_BUTTONS: Array<[string, string]> = [
   ['vertex-topbar-run', 'Run'],
 ];
 
-function TopBar({ graph, onApplyLayout }: TopBarProps) {
+function TopBar({
+  graph,
+  onApplyLayout,
+  mergeEnabled,
+  onToggleMerge,
+}: TopBarProps) {
   return (
     <header
       data-testid="vertex-topbar"
@@ -188,6 +211,20 @@ function TopBar({ graph, onApplyLayout }: TopBarProps) {
       </span>
       <nav className="flex items-center gap-2">
         <LayoutMenu onApply={onApplyLayout} />
+        <button
+          type="button"
+          data-testid="vertex-topbar-merge-toggle"
+          aria-pressed={mergeEnabled}
+          onClick={onToggleMerge}
+          className={
+            'rounded border px-2 py-1 ' +
+            (mergeEnabled
+              ? 'border-blue-500 bg-blue-600 text-white hover:bg-blue-500'
+              : 'border-zinc-700 bg-zinc-900 hover:bg-zinc-800')
+          }
+        >
+          Merge links
+        </button>
         {PASSIVE_TOPBAR_BUTTONS.map(([id, label]) => (
           <button
             key={id}
@@ -495,6 +532,14 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     setPendingLayout(null);
   }, []);
 
+  // VTX-025: link merging toggle. Default OFF so payloads that already
+  // expect N parallel edges (test fixtures, dashboards built against the
+  // pre-merge era) keep their previous look until the user opts in.
+  const [mergeEnabled, setMergeEnabled] = useState(false);
+  const handleToggleMerge = useCallback(() => {
+    setMergeEnabled((v) => !v);
+  }, []);
+
   // VTX-024: track which nodes the user has pinned + their coords.
   //
   // The set is split into a *seed* derived from payload.positions (any
@@ -596,11 +641,16 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
 
   return (
     <div className="flex h-full min-h-[400px] flex-col" data-testid="vertex-workspace">
-      <TopBar graph={summary} onApplyLayout={handleApplyLayout} />
+      <TopBar
+        graph={summary}
+        onApplyLayout={handleApplyLayout}
+        mergeEnabled={mergeEnabled}
+        onToggleMerge={handleToggleMerge}
+      />
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex-1" data-testid="vertex-canvas-host">
           <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
-            <GraphLoader projection={projection} />
+            <GraphLoader projection={projection} mergeEnabled={mergeEnabled} />
             <VertexNodeOverlay labelsByRid={labelsByRid} />
             <VertexSelectionLayer
               selection={selection}

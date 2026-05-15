@@ -332,8 +332,8 @@
         "Tests pass"
       ],
       "priority": 24,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend: PATCH /api/vertex/v1/graphs/{rid}/layout now gates writes through canReadGraph (owner-or-admin; ownerless legacy graphs stay anonymously patchable) and the request body MERGES into payload.positions key-by-key (jsonb '||' in PG / mergePositionsBytes in MemRepo) so a single-node drag doesn't clobber siblings. New handler_layout_test.go covers stranger→403 / owner→200 / admin→200 / legacy-anon→200 / subset PATCH preserves other keys / pinned bool round-trips. Frontend: pure dragPersistence helpers (pinnedPositionsFromPayload + formatLayoutPatchBody). Each layout helper (hierarchicalLayout / forceAtlas2Layout / circularLayout) now accepts pinnedPositions: Map<id,{x,y}> via a shared applyPinnedOverrides(out, knownIds, pinned) post-step that overwrites layout-computed coords for pinned ids; unknown ids are ignored so callers pass the full map without filtering. VertexDragLayer subscribes to Sigma's downNode/mousemovebody/mouseup, writes live x/y to graphology + sigma.refresh, then PATCHes /layout on release with pinned:true. VertexNodeContextMenu listens to rightClickNode only (clickNode/clickStage owned by VertexSelectionLayer — multi-subscriber pattern of the existing useRegisterEvents mock would otherwise overwrite handlers); dismisses via document-level mousedown. Page state uses a seed (useMemo over payload.positions) + user-diff ({set, cleared}) pair to dodge react-hooks/set-state-in-effect on the fetch→ready transition; merged pinnedPositions flows into LayoutApplier so the helpers see the override on every Apply. Bundle delta: VertexWorkspacePage chunk 239.05 → 243.35 kB raw (+4.30 kB) / 63.69 → 64.84 kB gzip (+1.15 kB). 1647/1647 Vitest pass, +13 vs VTX-023 (4 pinnedLayout + 5 dragPersistence + 4 page VTX-024). Pre-existing baseline TestContract_AllRoutesDocumented failure for VTX-030 timeseries OpenAPI gap is unrelated. Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-025",
@@ -355,8 +355,8 @@
         "Tests pass"
       ],
       "priority": 25,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only. Pure graphology-style edge reducer `mergeEdgesByLinkType(edges, {merge})` in web/src/features/vertex/render/mergeEdges.ts: groups by (source, target, linkTypeRid) triple — direction-aware (A→B never merges with B→A), edges without linkTypeRid stream through ungrouped, singletons (count=1) get no ×N label / no size bump so merge=on visually matches merge=off for already-unique edges. Multi-member groups collapse to one edge with `count: number`, `label: \"×N\"`, `size: 1 + log2(count) * 1.5` (log2 keeps thickness sane at high N). VertexEdge gained optional `linkTypeRid` (preserved by payloadToGraph), `count`, `label`, `size`. GraphLoader switched from `new Graph()` to `new MultiGraph()` so parallel edges can co-exist when merge=off; the reducer is what collapses them when merge=on. TopBar gains a Merge links toggle (`data-testid=\"vertex-topbar-merge-toggle\"`, aria-pressed reflects state) wired to page-level `mergeEnabled` state (default OFF — keeps existing dashboards / test fixtures unchanged until users opt in). 14 new Vitest tests (10 mergeEdges helper + 1 payloadToGraph linkTypeRid preservation + 3 page-level VTX-025: default→5 distinct edges / toggle on→1 edge with label ×5 + count=5 + size>1 / toggle off→back to 5). Snapshot updated for the new TopBar button. Bundle delta vs VTX-024: VertexWorkspacePage chunk 243.35 → 244.64 kB raw (+1.29 kB) / 64.84 → 65.27 kB gzip (+0.43 kB); main bundle unchanged. Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-026",

@@ -1024,3 +1024,109 @@ describe('VertexWorkspacePage manual drag + pinned (VTX-024)', () => {
   });
 });
 
+describe('VertexWorkspacePage link merging (VTX-025)', () => {
+  // Payload with 5 parallel edges A→B sharing the same LinkType RID — the
+  // exact "Given A→B 有 5 条同 LinkType 边" scenario the BDD asks for.
+  const fiveParallelPayload = {
+    layers: [
+      {
+        id: 'layer-airports',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          { objectRid: 'ri.airport.A', properties: { name: 'A' } },
+          { objectRid: 'ri.airport.B', properties: { name: 'B' } },
+        ],
+      },
+    ],
+    edges: Array.from({ length: 5 }, (_, i) => ({
+      id: `e${i}`,
+      linkTypeRid: 'ri.lt.flight',
+      source: 'ri.airport.A',
+      target: 'ri.airport.B',
+    })),
+    positions: {},
+  };
+
+  function mockFetchOk(body: unknown) {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    });
+  }
+
+  it('Given_mergeFalseByDefault_When_pageRenders_Then_fiveParallelEdgesShowOnGraphAsFiveDistinctEdges', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: fiveParallelPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+    // Default state: merge off — each of the 5 parallel edges renders
+    // as its own graphology edge.
+    expect(loadedGraph!.size).toBe(5);
+    // No edge carries a ×N label.
+    for (const key of loadedGraph!.edges()) {
+      expect(loadedGraph!.getEdgeAttribute(key, 'label')).toBeUndefined();
+    }
+  });
+
+  it('Given_mergeToggleEnabled_When_pageRendersAgain_Then_fiveEdgesCollapseToOneEdgeWithTimes5Label', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: fiveParallelPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    // Toggle merging on via the TopBar control.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-merge-toggle'));
+    });
+
+    await waitFor(() => {
+      // 5 → 1 merged edge.
+      expect(loadedGraph!.size).toBe(1);
+    });
+    const mergedKey = loadedGraph!.edges()[0];
+    expect(loadedGraph!.getEdgeAttribute(mergedKey, 'label')).toBe('×5');
+    expect(loadedGraph!.getEdgeAttribute(mergedKey, 'count')).toBe(5);
+    // Thicker than the default single-edge size of 1.
+    const mergedSize = loadedGraph!.getEdgeAttribute(mergedKey, 'size') as number;
+    expect(typeof mergedSize).toBe('number');
+    expect(mergedSize).toBeGreaterThan(1);
+  });
+
+  it('Given_mergeToggleEnabledThenToggledOff_When_pageRendersAgain_Then_returnsToFiveParallelEdges', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: fiveParallelPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    // ON → 1 edge
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-merge-toggle'));
+    });
+    await waitFor(() => {
+      expect(loadedGraph!.size).toBe(1);
+    });
+
+    // OFF again → back to 5 edges, no ×N labels.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-merge-toggle'));
+    });
+    await waitFor(() => {
+      expect(loadedGraph!.size).toBe(5);
+    });
+    for (const key of loadedGraph!.edges()) {
+      expect(loadedGraph!.getEdgeAttribute(key, 'label')).toBeUndefined();
+    }
+  });
+});

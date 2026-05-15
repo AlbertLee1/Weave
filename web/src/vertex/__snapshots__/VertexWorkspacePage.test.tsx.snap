@@ -33,6 +33,14 @@ exports[`VertexWorkspacePage (VTX-017) > snapshot: /vertex/new shell is stable 1
           </button>
         </div>
         <button
+          aria-pressed="false"
+          class="rounded border px-2 py-1 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+          data-testid="vertex-topbar-merge-toggle"
+          type="button"
+        >
+          Merge links
+        </button>
+        <button
           class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
           data-testid="vertex-topbar-save"
           type="button"
