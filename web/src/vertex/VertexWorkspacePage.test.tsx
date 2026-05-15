@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Graph from 'graphology';
@@ -429,6 +429,183 @@ describe('VertexWorkspacePage selection interactions (VTX-020)', () => {
     });
     expect(screen.queryByTestId('vertex-selection-sidebar')).not.toBeInTheDocument();
     expect(loadedGraph!.getNodeAttribute('ri.airport.JFK', 'highlighted')).toBe(false);
+  });
+});
+
+describe('VertexWorkspacePage hierarchical layout (VTX-022)', () => {
+  const chainPayload = {
+    layers: [
+      {
+        id: 'layer-chain',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          { objectRid: 'ri.airport.A', properties: { name: 'A' } },
+          { objectRid: 'ri.airport.B', properties: { name: 'B' } },
+          { objectRid: 'ri.airport.C', properties: { name: 'C' } },
+        ],
+      },
+    ],
+    edges: [
+      { id: 'e1', linkTypeRid: 'ri.lt.flight', source: 'ri.airport.A', target: 'ri.airport.B' },
+      { id: 'e2', linkTypeRid: 'ri.lt.flight', source: 'ri.airport.B', target: 'ri.airport.C' },
+    ],
+    positions: {},
+  };
+
+  function mockFetchOk(body: unknown) {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    });
+  }
+
+  it('Given_userClicksLayoutButton_When_popoverOpens_Then_hierarchicalControlsAreVisible', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: chainPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    expect(screen.queryByTestId('vertex-layout-popover')).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+
+    expect(screen.getByTestId('vertex-layout-popover')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-layout-hierarchical-reverse')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-layout-hierarchical-roots')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-layout-hierarchical-apply')).toBeInTheDocument();
+  });
+
+  it('Given_chainPayload_When_userAppliesHierarchical_Then_yIncreasesAlongTheChain', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: chainPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-hierarchical-apply'));
+    });
+
+    await waitFor(() => {
+      const ya = loadedGraph!.getNodeAttribute('ri.airport.A', 'y') as number;
+      const yb = loadedGraph!.getNodeAttribute('ri.airport.B', 'y') as number;
+      const yc = loadedGraph!.getNodeAttribute('ri.airport.C', 'y') as number;
+      expect(typeof ya).toBe('number');
+      expect(ya).toBeLessThan(yb);
+      expect(yb).toBeLessThan(yc);
+    });
+  });
+
+  it('Given_reverseChecked_When_userAppliesHierarchical_Then_yDecreasesAlongTheChain', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: chainPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-hierarchical-reverse'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-hierarchical-apply'));
+    });
+
+    await waitFor(() => {
+      const ya = loadedGraph!.getNodeAttribute('ri.airport.A', 'y') as number;
+      const yb = loadedGraph!.getNodeAttribute('ri.airport.B', 'y') as number;
+      const yc = loadedGraph!.getNodeAttribute('ri.airport.C', 'y') as number;
+      expect(typeof ya).toBe('number');
+      expect(ya).toBeGreaterThan(yb);
+      expect(yb).toBeGreaterThan(yc);
+    });
+  });
+
+  it('Given_userSpecifiesRootNode_When_userAppliesHierarchical_Then_rootIsPlacedInTopTier', async () => {
+    // Branch graph A→B, A→C. Default puts A at top; we force C as root.
+    const branchPayload = {
+      layers: [
+        {
+          id: 'layer-branch',
+          objectTypeRid: 'ri.ontology.main.object-type.airport',
+          objects: [
+            { objectRid: 'ri.airport.A', properties: { name: 'A' } },
+            { objectRid: 'ri.airport.B', properties: { name: 'B' } },
+            { objectRid: 'ri.airport.C', properties: { name: 'C' } },
+          ],
+        },
+      ],
+      edges: [
+        { id: 'e1', linkTypeRid: 'ri.lt', source: 'ri.airport.A', target: 'ri.airport.B' },
+        { id: 'e2', linkTypeRid: 'ri.lt', source: 'ri.airport.A', target: 'ri.airport.C' },
+      ],
+      positions: {},
+    };
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: branchPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('vertex-layout-hierarchical-roots'), {
+        target: { value: 'ri.airport.C' },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-hierarchical-apply'));
+    });
+
+    await waitFor(() => {
+      const ya = loadedGraph!.getNodeAttribute('ri.airport.A', 'y') as number;
+      const yc = loadedGraph!.getNodeAttribute('ri.airport.C', 'y') as number;
+      expect(typeof yc).toBe('number');
+      expect(yc).toBeLessThanOrEqual(ya);
+    });
+  });
+
+  it('Given_popoverOpen_When_userClicksApply_Then_popoverCloses', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: chainPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    expect(screen.getByTestId('vertex-layout-popover')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-hierarchical-apply'));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('vertex-layout-popover')).not.toBeInTheDocument();
+    });
   });
 });
 

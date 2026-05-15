@@ -1,6 +1,7 @@
 // VertexWorkspacePage — Vertex workspace shell (VTX-017) + payload
 // rendering (VTX-018) + node DOM overlay for extended labels (VTX-019)
-// + selection interactions / right sidebar (VTX-020).
+// + selection interactions / right sidebar (VTX-020) + hierarchical
+// layout (VTX-022).
 //
 // /vertex/new mounts an empty Sigma canvas immediately; /vertex/{rid}
 // fetches `/api/vertex/v1/graphs/{rid}` and either renders the graph
@@ -11,7 +12,7 @@
 // so the heavy logic stays pure + Vitest-friendly. Zoom/pan come for free
 // from Sigma's default camera controls — no custom event wiring needed.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import Graph from 'graphology';
 import { SigmaContainer, useLoadGraph, useSigma } from '@react-sigma/core';
@@ -30,12 +31,21 @@ import {
   type SelectionState,
 } from '../features/vertex/selections/selectionState';
 import { payloadToObjectSummaries } from '../features/vertex/selections/objectSummaries';
+import { hierarchicalLayout } from '../features/vertex/layouts/hierarchicalLayout';
 import { VertexNodeOverlay } from './VertexNodeOverlay';
 import { VertexSelectionLayer } from './VertexSelectionLayer';
 import {
   VertexSelectionSidebar,
   type VertexObjectSummary,
 } from './VertexSelectionSidebar';
+
+export interface HierarchicalLayoutSpec {
+  kind: 'hierarchical';
+  reverse: boolean;
+  rootNodes: string[];
+}
+
+export type LayoutSpec = HierarchicalLayoutSpec;
 
 const SELECTED_NODE_COLOR = '#3B82F6';
 const DEFAULT_NODE_COLOR = '#6B7280';
@@ -129,16 +139,17 @@ interface GraphSummary {
 
 interface TopBarProps {
   graph?: GraphSummary | null;
+  onApplyLayout: (spec: LayoutSpec) => void;
 }
 
-function TopBar({ graph }: TopBarProps) {
-  const buttons: Array<[string, string]> = [
-    ['vertex-topbar-save', 'Save'],
-    ['vertex-topbar-share', 'Share'],
-    ['vertex-topbar-layout', 'Layout'],
-    ['vertex-topbar-time-selection', 'Time'],
-    ['vertex-topbar-run', 'Run'],
-  ];
+const PASSIVE_TOPBAR_BUTTONS: Array<[string, string]> = [
+  ['vertex-topbar-save', 'Save'],
+  ['vertex-topbar-share', 'Share'],
+  ['vertex-topbar-time-selection', 'Time'],
+  ['vertex-topbar-run', 'Run'],
+];
+
+function TopBar({ graph, onApplyLayout }: TopBarProps) {
   return (
     <header
       data-testid="vertex-topbar"
@@ -148,7 +159,8 @@ function TopBar({ graph }: TopBarProps) {
         {graph?.name ?? graph?.rid ?? 'Untitled Graph'}
       </span>
       <nav className="flex items-center gap-2">
-        {buttons.map(([id, label]) => (
+        <LayoutMenu onApply={onApplyLayout} />
+        {PASSIVE_TOPBAR_BUTTONS.map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -161,6 +173,122 @@ function TopBar({ graph }: TopBarProps) {
       </nav>
     </header>
   );
+}
+
+function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
+  const [open, setOpen] = useState(false);
+  const [reverse, setReverse] = useState(false);
+  const [rootsText, setRootsText] = useState('');
+
+  const apply = () => {
+    const rootNodes = rootsText
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    onApply({ kind: 'hierarchical', reverse, rootNodes });
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative" data-testid="vertex-topbar-layout-wrap">
+      <button
+        type="button"
+        data-testid="vertex-topbar-layout"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
+      >
+        Layout
+      </button>
+      {open && (
+        <div
+          data-testid="vertex-layout-popover"
+          className="absolute right-0 top-full z-20 mt-1 w-64 rounded border border-zinc-700 bg-zinc-950 p-3 shadow-lg"
+          role="dialog"
+          aria-label="Layout options"
+        >
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">
+            Hierarchical
+          </div>
+          <label className="mb-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              data-testid="vertex-layout-hierarchical-reverse"
+              checked={reverse}
+              onChange={(e) => setReverse(e.target.checked)}
+            />
+            <span>Reverse direction</span>
+          </label>
+          <label className="mb-2 block">
+            <span className="mb-1 block text-zinc-400">Root nodes</span>
+            <input
+              type="text"
+              data-testid="vertex-layout-hierarchical-roots"
+              value={rootsText}
+              onChange={(e) => setRootsText(e.target.value)}
+              placeholder="objectRid, objectRid, …"
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100"
+            />
+          </label>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              data-testid="vertex-layout-hierarchical-apply"
+              onClick={apply}
+              className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// LayoutApplier mounts inside <SigmaContainer> so it can access the
+// graphology Graph via useSigma. When `pending` becomes non-null, it
+// computes positions via the pure hierarchicalLayout helper, writes them
+// onto the graph node attributes, refreshes Sigma, and clears `pending`
+// through the supplied callback.
+function LayoutApplier({
+  pending,
+  onComplete,
+}: {
+  pending: LayoutSpec | null;
+  onComplete: () => void;
+}) {
+  const sigma = useSigma();
+  useEffect(() => {
+    if (!pending) return;
+    const graph = sigma.getGraph() as unknown as Graph | undefined;
+    if (!graph || typeof graph.nodes !== 'function') {
+      onComplete();
+      return;
+    }
+    const nodes = graph.nodes().map((id) => ({ id }));
+    const edges: Array<{ source: string; target: string }> = [];
+    if (typeof graph.forEachEdge === 'function') {
+      graph.forEachEdge((_key: string, _attrs: unknown, source: string, target: string) => {
+        edges.push({ source, target });
+      });
+    }
+    const positions = hierarchicalLayout({
+      nodes,
+      edges,
+      reverse: pending.reverse,
+      rootNodes: pending.rootNodes,
+    });
+    for (const [id, p] of positions) {
+      if (graph.hasNode(id)) {
+        graph.setNodeAttribute(id, 'x', p.x);
+        graph.setNodeAttribute(id, 'y', p.y);
+      }
+    }
+    if (typeof sigma.refresh === 'function') sigma.refresh();
+    onComplete();
+  }, [sigma, pending, onComplete]);
+  return null;
 }
 
 function NotFound({ rid }: { rid: string }) {
@@ -262,12 +390,19 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
   }, [state]);
 
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
+  const [pendingLayout, setPendingLayout] = useState<LayoutSpec | null>(null);
+  const handleApplyLayout = useCallback((spec: LayoutSpec) => {
+    setPendingLayout(spec);
+  }, []);
+  const handleLayoutComplete = useCallback(() => {
+    setPendingLayout(null);
+  }, []);
 
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
     <div className="flex h-full min-h-[400px] flex-col" data-testid="vertex-workspace">
-      <TopBar graph={summary} />
+      <TopBar graph={summary} onApplyLayout={handleApplyLayout} />
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex-1" data-testid="vertex-canvas-host">
           <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
@@ -278,6 +413,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
               onSelectionChange={setSelection}
             />
             <SelectionHighlighter selection={selection} />
+            <LayoutApplier pending={pendingLayout} onComplete={handleLayoutComplete} />
           </SigmaContainer>
           {state.kind === 'loading' && (
             <div

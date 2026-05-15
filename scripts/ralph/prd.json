@@ -287,8 +287,8 @@
         "Tests pass"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Hierarchical layout via @dagrejs/dagre. Pure helper hierarchicalLayout({nodes,edges,reverse,rootNodes}) returns Map<id,{x,y}>; rankdir TB by default, BT when reverse; explicit rootNodes forced to top tier by stripping every edge whose target is a root before dagre.layout(). PRD's named npm 'graphology-layout-dagre' does not exist on the registry — installed @dagrejs/dagre@3.0.0 directly and wrote the adapter in-tree. TopBar Layout button now opens a popover (reverse checkbox + comma-separated root-rids input + Apply) that hands a HierarchicalLayoutSpec to the page-level state; a LayoutApplier Sigma child writes positions back via setNodeAttribute(x|y) + sigma.refresh()."
     },
     {
       "id": "VTX-023",

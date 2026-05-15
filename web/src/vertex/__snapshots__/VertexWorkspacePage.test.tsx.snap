@@ -19,6 +19,19 @@ exports[`VertexWorkspacePage (VTX-017) > snapshot: /vertex/new shell is stable 1
       <nav
         class="flex items-center gap-2"
       >
+        <div
+          class="relative"
+          data-testid="vertex-topbar-layout-wrap"
+        >
+          <button
+            aria-expanded="false"
+            class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
+            data-testid="vertex-topbar-layout"
+            type="button"
+          >
+            Layout
+          </button>
+        </div>
         <button
           class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
           data-testid="vertex-topbar-save"
@@ -32,13 +45,6 @@ exports[`VertexWorkspacePage (VTX-017) > snapshot: /vertex/new shell is stable 1
           type="button"
         >
           Share
-        </button>
-        <button
-          class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
-          data-testid="vertex-topbar-layout"
-          type="button"
-        >
-          Layout
         </button>
         <button
           class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
