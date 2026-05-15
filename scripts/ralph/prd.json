@@ -462,8 +462,8 @@
         "Tests pass"
       ],
       "priority": 51,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新 package pkg/vertex/functionactions/ (HTTP-thin)；migration 000108_vertex_function_actions.{up,down}.sql 落地 vertex_function_actions(rid, ontology_rid, action_type_rid, function_rid, output_mappings JSONB, created_by, created_at + UNIQUE(ontology_rid, action_type_rid))。types.go 暴露 FunctionActionBinding / OutputMapping / ScenarioEdit / ActionMode + scenario_edits op 常量 + NewFunctionActionRID()（vertex/main/function-action）。mapping.go 纯函数三件套：ResolveActionMode（function-backed 路由判定，nil/空 FunctionRID 都降级 Standard），MapFunctionOutputToScenarioEdits（output[field] + parameters[pkParam] → modifyProperty edits，missing/非 string/空 PK 走 *MappingError），FunnelEditsToScenarioEdits（OMS executor 的 funnel.Edit → scenario_edits 行：CREATE→createObject、MODIFY→每属性一行 modifyProperty、DELETE→deleteObject、LINK_CREATE/LINK_DELETE→addLink/deleteLink）。handler.go 暴露 POST /api/vertex/v1/ontologies/{ontologyApiName}/function-actions/register：slim 接口 BindingRepo + ActionTypeLookup + OntologyResolver，校验 ontology/actionType 存在 + actionType.OntologyRID 一致 + IsFunctionBacked + FunctionRID 与 request 一致 + OutputMapping 必填字段 + 重复绑定 → 409 Conflict。32 tests 全绿（mapping 21 + handler 11）。main.go wiring 留下个 story。"
     },
     {
       "id": "VTX-052",
