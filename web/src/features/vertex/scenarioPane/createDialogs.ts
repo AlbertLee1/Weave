@@ -45,6 +45,7 @@ export interface CreateScenarioInput {
 
 export interface ScenarioLike {
   rid: string;
+  name?: string;
   immutable?: boolean;
 }
 

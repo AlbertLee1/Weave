@@ -19,6 +19,7 @@ import {
   setActiveScenario,
   type ScenarioOutputsByRid,
 } from '../scenarioPane/multiScenarioCompare';
+import type { BaselineOutputs } from '../scenarioPane/baselineRun';
 import {
   ERROR_PLACEHOLDER,
   MISSING_VALUE_PLACEHOLDER,
@@ -39,7 +40,7 @@ const PROPERTY = 'totalAlerts';
 // asserting the lookup behaviour, otherwise we rely on the helper.
 const KEY = `${OBJ_TYPE}::${PK}::${PROPERTY}`;
 
-function buildOutputs(value: number | null) {
+function buildOutputs(value: number | null): BaselineOutputs {
   return value === null ? {} : { [KEY]: value };
 }
 

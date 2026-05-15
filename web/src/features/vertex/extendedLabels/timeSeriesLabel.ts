@@ -102,7 +102,7 @@ function requireNonBlank(value: string, field: string): string {
   return value;
 }
 
-export function isTimeSeriesExtendedLabel(label: { kind: string }): boolean {
+export function isTimeSeriesExtendedLabel(label: { kind: string; [key: string]: unknown }): boolean {
   return label.kind === 'timeSeries';
 }
 

@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRegisterEvents, useSigma } from '@react-sigma/core';
+import type { SigmaNodeEventPayload } from 'sigma/types';
 
 import type { VertexObjectSummary } from './VertexSelectionSidebar';
 
@@ -23,11 +24,6 @@ export interface VertexNodeContextMenuProps {
   onHide: (nodeId: string) => void;
   /** Optional callback for Search Around (real flow lands in VTX-069). */
   onSearchAround?: (nodeId: string) => void;
-}
-
-interface SigmaNodePayload {
-  node: string;
-  event: { original: MouseEvent };
 }
 
 interface MenuState {
@@ -47,6 +43,12 @@ async function copyToClipboard(text: string): Promise<void> {
     // The action is best-effort; silently dropping the failure mirrors how the
     // rest of the workspace handles opportunistic side effects (drag PATCH).
   }
+}
+
+function clientCoordsOf(e: MouseEvent | TouchEvent): { x: number; y: number } {
+  if ('clientX' in e) return { x: e.clientX, y: e.clientY };
+  const t = e.touches[0] ?? e.changedTouches[0];
+  return { x: t?.clientX ?? 0, y: t?.clientY ?? 0 };
 }
 
 function buildExplorerUrl(rid: string, ontologyApiName?: string): string {
@@ -70,15 +72,16 @@ export function VertexNodeContextMenu({
 
   useEffect(() => {
     registerEvents({
-      rightClickNode: (payload: SigmaNodePayload) => {
-        const e = payload.event.original;
-        if (typeof e.preventDefault === 'function') e.preventDefault();
+      rightClickNode: (payload: SigmaNodeEventPayload) => {
+        const orig = payload.event.original;
+        if (orig && typeof orig.preventDefault === 'function') orig.preventDefault();
         const container = sigma.getContainer();
         const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
+        const { x: clientX, y: clientY } = clientCoordsOf(orig);
         setMenu({
           nodeId: payload.node,
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
+          x: clientX - rect.left,
+          y: clientY - rect.top,
         });
       },
     });

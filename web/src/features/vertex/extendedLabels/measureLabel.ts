@@ -87,7 +87,7 @@ function requireNonBlank(value: string, field: string): string {
   return value;
 }
 
-export function isMeasureExtendedLabel(label: { kind: string }): boolean {
+export function isMeasureExtendedLabel(label: { kind: string; [key: string]: unknown }): boolean {
   return label.kind === 'measure';
 }
 

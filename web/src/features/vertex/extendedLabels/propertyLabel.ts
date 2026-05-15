@@ -51,7 +51,7 @@ export interface RenderPropertyExtendedLabelOptions {
   missingPlaceholder?: string;
 }
 
-export function isPropertyExtendedLabel(label: { kind: string }): boolean {
+export function isPropertyExtendedLabel(label: { kind: string; [key: string]: unknown }): boolean {
   return label.kind === 'property';
 }
 

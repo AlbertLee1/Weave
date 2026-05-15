@@ -13,21 +13,11 @@
 
 import { useEffect, useRef } from 'react';
 import { useRegisterEvents, useSigma } from '@react-sigma/core';
+import type { MouseCoords, SigmaNodeEventPayload } from 'sigma/types';
 
 export interface VertexDragLayerProps {
   /** Called once per completed drag with the final graph-space coords. */
   onDragEnd: (nodeId: string, x: number, y: number) => void;
-}
-
-interface SigmaNodeDownPayload {
-  node: string;
-  event: { original: MouseEvent };
-}
-
-interface SigmaMouseCoordsPayload {
-  x: number;
-  y: number;
-  original: MouseEvent;
 }
 
 interface DragState {
@@ -49,7 +39,7 @@ export function VertexDragLayer({ onDragEnd }: VertexDragLayerProps) {
 
   useEffect(() => {
     registerEvents({
-      downNode: (payload: SigmaNodeDownPayload) => {
+      downNode: (payload: SigmaNodeEventPayload) => {
         const id = payload.node;
         const graph = sigma.getGraph();
         if (!graph || !graph.hasNode(id)) return;
@@ -61,11 +51,10 @@ export function VertexDragLayer({ onDragEnd }: VertexDragLayerProps) {
           y: typeof y === 'number' ? y : 0,
         };
       },
-      mousemovebody: (payload: SigmaMouseCoordsPayload) => {
+      mousemovebody: (coords: MouseCoords) => {
         const drag = dragRef.current;
         if (!drag) return;
-        const vp = pointFromMouseEvent(sigma, payload.original);
-        const gp = sigma.viewportToGraph(vp);
+        const gp = sigma.viewportToGraph({ x: coords.x, y: coords.y });
         if (!Number.isFinite(gp.x) || !Number.isFinite(gp.y)) return;
         const graph = sigma.getGraph();
         if (!graph || !graph.hasNode(drag.nodeId)) return;
@@ -74,21 +63,22 @@ export function VertexDragLayer({ onDragEnd }: VertexDragLayerProps) {
         dragRef.current = { nodeId: drag.nodeId, x: gp.x, y: gp.y };
         if (typeof sigma.refresh === 'function') sigma.refresh();
         // Suppress camera panning while a node is under the cursor.
-        if (payload.original && typeof payload.original.preventDefault === 'function') {
-          payload.original.preventDefault();
+        if (typeof coords.preventSigmaDefault === 'function') {
+          coords.preventSigmaDefault();
+        }
+        const orig = coords.original;
+        if (orig && typeof orig.preventDefault === 'function') {
+          orig.preventDefault();
         }
       },
-      mouseup: (payload: SigmaMouseCoordsPayload) => {
+      mouseup: (coords: MouseCoords) => {
         const drag = dragRef.current;
         if (!drag) return;
         let { x, y } = drag;
-        if (payload && payload.original) {
-          const vp = pointFromMouseEvent(sigma, payload.original);
-          const gp = sigma.viewportToGraph(vp);
-          if (Number.isFinite(gp.x) && Number.isFinite(gp.y)) {
-            x = gp.x;
-            y = gp.y;
-          }
+        const gp = sigma.viewportToGraph({ x: coords.x, y: coords.y });
+        if (Number.isFinite(gp.x) && Number.isFinite(gp.y)) {
+          x = gp.x;
+          y = gp.y;
         }
         const id = drag.nodeId;
         dragRef.current = null;
@@ -98,14 +88,4 @@ export function VertexDragLayer({ onDragEnd }: VertexDragLayerProps) {
   }, [registerEvents, sigma]);
 
   return null;
-}
-
-function pointFromMouseEvent(
-  sigma: ReturnType<typeof useSigma>,
-  e: MouseEvent,
-): { x: number; y: number } {
-  const container = sigma.getContainer();
-  if (!container) return { x: e.clientX, y: e.clientY };
-  const rect = container.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }

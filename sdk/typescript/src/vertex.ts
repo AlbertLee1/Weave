@@ -51,8 +51,13 @@ export interface ApplyToMainInput {
 }
 
 export class VertexHttpError extends Error {
-  constructor(public status: number, public path: string, body: string) {
+  public status: number;
+  public path: string;
+
+  constructor(status: number, path: string, body: string) {
     super(`Vertex SDK: ${status} on ${path}: ${body}`);
+    this.status = status;
+    this.path = path;
   }
 }
 

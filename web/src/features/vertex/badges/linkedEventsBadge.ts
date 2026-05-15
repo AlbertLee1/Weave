@@ -150,7 +150,7 @@ function requirePositiveInt(value: number, field: string): number {
   return value;
 }
 
-export function isLinkedEventsBadge(badge: { kind: string }): boolean {
+export function isLinkedEventsBadge(badge: { kind: string; [key: string]: unknown }): boolean {
   return badge.kind === 'linkedEvents';
 }
 

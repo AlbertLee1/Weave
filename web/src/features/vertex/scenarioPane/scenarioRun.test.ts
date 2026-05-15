@@ -286,8 +286,7 @@ describe('VTX-043 Run button derived state', () => {
       actionCount: 1,
       overrideCount: 0,
     });
-    expect(result.enabled).toBe(false);
-    expect(result.reason).toBe('frozen');
+    expect(result).toEqual({ enabled: false, reason: 'frozen' });
   });
 
   it('given_error_status_after_failure_when_scenario_still_mutable_then_button_re_enabled', () => {

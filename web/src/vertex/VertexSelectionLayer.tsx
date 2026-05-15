@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSigma, useRegisterEvents } from '@react-sigma/core';
+import type { MouseCoords, SigmaEventPayload, SigmaNodeEventPayload } from 'sigma/types';
 
 import {
   selectionClear,
@@ -27,34 +28,27 @@ export interface VertexSelectionLayerProps {
   onSelectionChange: (next: SelectionState) => void;
 }
 
-interface SigmaPayload {
-  event: { original: MouseEvent };
-}
-
-interface SigmaNodePayload extends SigmaPayload {
-  node: string;
-}
-
-interface MouseCoordsLike {
-  x: number;
-  y: number;
-  original: MouseEvent;
-}
-
 interface DragState {
   start: ViewportPoint;
   current: ViewportPoint;
 }
 
-function isToggleClick(e: MouseEvent): boolean {
+function isToggleClick(e: MouseEvent | TouchEvent): boolean {
   return e.ctrlKey || e.metaKey;
 }
 
-function pointFromMouseEvent(sigma: ReturnType<typeof useSigma>, e: MouseEvent): ViewportPoint {
+function clientCoordsOf(e: MouseEvent | TouchEvent): { x: number; y: number } {
+  if ('clientX' in e) return { x: e.clientX, y: e.clientY };
+  const t = e.touches[0] ?? e.changedTouches[0];
+  return { x: t?.clientX ?? 0, y: t?.clientY ?? 0 };
+}
+
+function pointFromMouseEvent(sigma: ReturnType<typeof useSigma>, e: MouseEvent | TouchEvent): ViewportPoint {
+  const { x: clientX, y: clientY } = clientCoordsOf(e);
   const container = sigma.getContainer();
-  if (!container) return { x: e.clientX, y: e.clientY };
+  if (!container) return { x: clientX, y: clientY };
   const rect = container.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  return { x: clientX - rect.left, y: clientY - rect.top };
 }
 
 function viewportPositionsForNodes(sigma: ReturnType<typeof useSigma>): Map<string, ViewportPoint> {
@@ -90,7 +84,7 @@ export function VertexSelectionLayer({ selection, onSelectionChange }: VertexSel
 
   useEffect(() => {
     registerEvents({
-      clickNode: (payload: SigmaNodePayload) => {
+      clickNode: (payload: SigmaNodeEventPayload) => {
         const e = payload.event.original;
         const rid = payload.node;
         if (isToggleClick(e)) {
@@ -104,7 +98,7 @@ export function VertexSelectionLayer({ selection, onSelectionChange }: VertexSel
         }
         onSelectionChange(selectionSingle(selectionRef.current, rid));
       },
-      clickStage: (payload: SigmaPayload) => {
+      clickStage: (payload: SigmaEventPayload) => {
         const e = payload.event.original;
         // Shift+stage click is part of the box-select gesture path; let
         // mouseup finalise. A plain (no-modifier) click on empty stage
@@ -113,7 +107,7 @@ export function VertexSelectionLayer({ selection, onSelectionChange }: VertexSel
         if (selectionRef.current.size === 0) return;
         onSelectionChange(selectionClear());
       },
-      downStage: (payload: SigmaPayload) => {
+      downStage: (payload: SigmaEventPayload) => {
         const e = payload.event.original;
         if (!e.shiftKey) return;
         const p = pointFromMouseEvent(sigma, e);
@@ -121,16 +115,16 @@ export function VertexSelectionLayer({ selection, onSelectionChange }: VertexSel
         dragRef.current = next;
         setDrag(next);
       },
-      mousemovebody: (payload: MouseCoordsLike) => {
+      mousemovebody: (coords: MouseCoords) => {
         if (dragRef.current === null) return;
-        const p = pointFromMouseEvent(sigma, payload.original);
+        const p = pointFromMouseEvent(sigma, coords.original);
         const next: DragState = { start: dragRef.current.start, current: p };
         dragRef.current = next;
         setDrag(next);
       },
-      mouseup: (payload: MouseCoordsLike) => {
+      mouseup: (coords: MouseCoords) => {
         if (dragRef.current === null) return;
-        const p = pointFromMouseEvent(sigma, payload.original);
+        const p = pointFromMouseEvent(sigma, coords.original);
         const rect = rectFromCorners(dragRef.current.start, p);
         dragRef.current = null;
         setDrag(null);

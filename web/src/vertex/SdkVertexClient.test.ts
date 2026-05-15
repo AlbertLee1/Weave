@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { VertexClient, type RunEvent } from '../../../sdk/typescript/src/vertex';
 
 function mockJSONFetch(body: unknown, init: ResponseInit = {}) {
-  return vi.fn(async () =>
+  return vi.fn<typeof fetch>(async () =>
     new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -21,7 +21,7 @@ function mockSSEFetch(events: RunEvent[]) {
       ctl.close();
     },
   });
-  return vi.fn(async () =>
+  return vi.fn<typeof fetch>(async () =>
     new Response(stream, {
       status: 200,
       headers: { 'content-type': 'text/event-stream' },

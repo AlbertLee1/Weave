@@ -16,6 +16,7 @@ import {
   setCaseStudy,
   setPaneExpanded,
   togglePane,
+  type ScenarioPaneRow,
 } from './scenarioPane';
 
 const cs1 = { rid: 'ri.vertex.main.case-study.cs-1', name: 'Hub Capacity' };
@@ -40,8 +41,8 @@ describe('VTX-036 ScenarioPane state factory', () => {
 
   it('given_init_payload_when_create_then_copies_collections_to_prevent_external_mutation', () => {
     const seedScenarios = [scenarioA];
-    const seedRows = [
-      { kind: 'model', rid: 'r1', label: 'M1', modelRid: 'ri.fn.model.m1' } as const,
+    const seedRows: ScenarioPaneRow[] = [
+      { kind: 'model', rid: 'r1', label: 'M1', modelRid: 'ri.fn.model.m1' },
     ];
     const seedCols = [{ key: 'p1', label: 'capacity' }];
 
