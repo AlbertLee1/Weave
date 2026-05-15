@@ -9,6 +9,8 @@ Stream: B
 - compare windows 已在 VTX-079 (`web/src/features/vertex/timeSeries/compareWindows.ts`) 提供，新 story 直接复用，不要重复实现。
 - vitest 配置已支持 `vi.useFakeTimers()`，定时器/防抖类 helper 用假时钟测试。
 - 项目根目录 `tsconfig` 有 `erasableSyntaxOnly`，预先存在的两处错误 (`sdk/typescript/src/vertex.ts`、`src/vertex/SdkVertexClient.test.ts`) 与本 stream 无关。
+- uPlot 类型用 `import type uPlotCtor from 'uplot'`，options 写 `uPlotCtor.Options`（沿用 `MultiSeriesChart` / `TimeSeriesChart` 现有模式）。注意 `select` 配置如果只写 `{ show: false }` 会 TS2739（必须给 left/top/width/height），干脆省略 `select`，默认就是禁用。
+- `src/components/__tests__/admin-removed.test.tsx` 是已知 flaky：在完整 vitest 套件里偶尔超时（5s import App.tsx），单独跑稳定通过。本 stream 不要为它修代码。
 
 ---
 
@@ -26,4 +28,25 @@ Stream: B
   - `pollingIntervalSec` 默认值（10s）来自 `web/src/features/vertex/admin/controlPanel.ts` 的 `defaultControlPanelConfig`，未来 Live mode UI 接线时从该 store 读。
   - `selectedTime` 默认值约定为 `to`（窗口右沿），与 OSS `?asOf=...` 默认行为一致；不要默认成 `(from+to)/2` 否则会和 Live mode 语义冲突。
   - dev-browser skill 不可用 — 浏览器手工验证（slider 拖动、Live toggle 点击）需在 React 组件接线 story 时单独完成；本 story 仅交付逻辑层。
+---
+
+## 2026-05-15 - VTX-032
+- 实现节点 Sparkline Extended Label 的纯逻辑层（uPlot.Options 工厂 + selectedTime 高亮辅助 + 批量重绘调度器）。
+- 新增文件：
+  - `web/src/features/vertex/sparkline/sparkline.ts` — 导出：
+    - `SPARKLINE_DEFAULT_DIMS` (80×20)、`toAlignedData`（毫秒 → 秒、parallel xs/ys）
+    - `findNearestIndex` / `computeSelectedMark`（二分查找；tie 取较早），`selectedTimeRatio`（0..1 用于绝对定位高亮 overlay 而不依赖 uPlot 实例）
+    - `buildSparklineOptions({ series, selectedTime, dims?, stroke? })` — 单 y 系列、隐藏 legend/cursor/axes、`x.time=true`、stroke 默认 `#3B82F6`
+    - `createSparklineScheduler(raf?, cancelRaf?)` — 把 N 个 redraw 合并到单帧（schedule / flushSync / cancel / stop）；同 id 复用最新回调，达成 50 节点 1 RAF coalesce
+  - `web/src/features/vertex/sparkline/sparkline.test.ts` — 31 个测试覆盖：转换、二分边界（空 / exact / 之前 / 之后 / tie 取早 / 两侧距离）、ratio clamp、Options（默认/自定义/隐藏 legend 等/系列样式/x scale time/stroke 注入）、scheduler（合并、覆盖、cancel、flushSync 取消 raf、stop、空 flushSync）。
+- 质量检查：
+  - vitest（src/features/vertex 子集）：28 files / 237 tests 全绿。
+  - sparkline 单测 31/31 绿。
+  - tsc：本 story 新增文件 0 错误；仅余 2 处 pre-existing 错误（与本 stream 无关）。
+  - eslint：新增目录无 warning。
+- **Learnings for future iterations:**
+  - 浏览器层接线 sparkline 时：dynamic-import uPlot 后用 `buildSparklineOptions` 构造 opts、`toAlignedData(series)` 喂 data；selectedTime 重渲走 `SparklineScheduler.schedule(nodeId, () => chart.redraw(false))` 把 N 节点合并到 1 帧；高亮当前点可读 `computeSelectedMark`，或用 `selectedTimeRatio * width` 在 DOM overlay 上画一根 vertical line（不依赖 uPlot 实例，更省）。
+  - uPlot `select` 配置类型严格，省略即默认不显示；不要写 `{ show: false }` 占位（TS2739）。
+  - `≥ 30 fps` 验收无法在 vitest 里测；浏览器接线 story 用 Performance.now()+RAF 计数器验真。本 story 通过 scheduler API 保证理论可达 ≥ 30 fps（1 RAF / 50 节点）。
+  - findNearestIndex tie 行为约定取早 index — 配合 step-after style sparkline（值在区间右沿改变）语义最贴合。
 ---

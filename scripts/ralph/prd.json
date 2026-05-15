@@ -48,8 +48,8 @@
         "Tests pass"
       ],
       "priority": 32,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/sparkline/sparkline.ts。导出 uPlot.Options 工厂（默认 80×20，隐藏 legend/cursor/axes），加 selectedTime 高亮辅助（findNearestIndex / computeSelectedMark / selectedTimeRatio）+ SparklineScheduler 把 50+ 节点的 redraw 合并到单帧。≥30 fps 验收需 React 接线层 + 浏览器，dev-browser skill 不可用，浏览器测试留到接线 story。"
     },
     {
       "id": "VTX-033",
