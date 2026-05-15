@@ -104,6 +104,8 @@ React 19 + TypeScript + Vite + TailwindCSS. State: TanStack React Query (server)
 
 Pages: Dashboard (`/`), Explorer (`/explorer/:ontology`), Browser (`/browser/:ontology/:objectType`), Admin (`/admin`), Actions (`/actions/:ontology`), Aggregation (`/aggregation/:ontology/:objectType`).
 
+**Vite dep prebundling for lazy chunks**: any third-party ESM package that imports `react` and lives behind a `React.lazy` boundary must be pinned in `web/vite.config.ts` `optimizeDeps.include`. Otherwise Vite discovers it on first navigation, triggers a mid-flight re-optimize, and serves a chunk whose `react` reference differs from the one already mounted in the app shell — producing `Invalid hook call` / `useRef returning null` on the first visit while a refresh works fine. Pair with `resolve.dedupe: ['react', 'react-dom']` so nested `node_modules` can't ever resolve two React instances. Current pinned entries: `@react-sigma/core`, `sigma`, `graphology` (Vertex workspace).
+
 ## Development Process: TDD (MANDATORY)
 
 **This project follows strict Test-Driven Development. This is a hard constraint, not a suggestion.**

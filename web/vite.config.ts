@@ -5,6 +5,24 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // VTX-126 — keep React a singleton across the lazy-loaded Vertex chunk.
+  // @react-sigma/core ships a prebundled ESM that imports `react`; if Vite
+  // ever resolves React from two different module locations (e.g. a hoisted
+  // copy beside the package and the workspace copy at the root), each tree
+  // gets its own dispatcher and any hook inside the package crashes with
+  // `Invalid hook call` / `useRef returning null` on first /vertex/new load.
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
+  // VTX-126 — prebundle the heavy Vertex deps at dev-server boot so the
+  // first navigation to /vertex/new does not trigger a mid-flight
+  // optimizeDeps rebuild. The rebuild swaps in a new chunk that imports
+  // `react` after the app's React module has already been frozen into the
+  // running tree, producing a duplicate React reference and the same
+  // null-dispatcher crash. Listing them here keeps the singleton intact.
+  optimizeDeps: {
+    include: ['@react-sigma/core', 'sigma', 'graphology'],
+  },
   server: {
     port: 5173,
     proxy: {

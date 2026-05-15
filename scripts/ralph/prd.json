@@ -1,133 +1,34 @@
 {
   "project": "Weave-Vertex",
-  "branchName": "ralph/vertex-replication-v1",
-  "description": "Stream C: Vertex replication — 6 stories",
-  "tddConvention": "Red → Green → Refactor。每个 story 必须先写失败测试（Red commit，CI 红）→ 写最小实现（Green commit，测试绿）→ 可选重构 commit。后端 Go 测试命名 Test{Feature}_Given_{State}_When_{Action}_Then_{Outcome}；前端用 web/src/test/bdd.ts 的 given().when().then() 链式 helper。",
+  "branchName": "main",
+  "description": "Hermes dogfood follow-up: fix real-browser Vertex runtime crash found after CI passed.",
+  "tddConvention": "Red → Green → Refactor. First reproduce the browser/runtime failure with a regression guard where possible, then implement the smallest fix, then run the full quality gates. Do not rely only on Vitest/jsdom for this story; preserve evidence for real Vite/browser verification.",
   "userStories": [
     {
-      "id": "VTX-120",
-      "name": "帮助 / Keyboard Shortcuts",
-      "phase": 17,
-      "active": false,
+      "id": "VTX-126",
+      "name": "Fix Vertex /vertex/new real-browser React/Sigma runtime crash",
+      "phase": 18,
+      "active": true,
       "depends_on": [
-        "VTX-017"
+        "VTX-017",
+        "VTX-120",
+        "VTX-121"
       ],
-      "dependencies": "web/src/hotkeys 既有",
-      "description": "? 键弹出帮助 + Cmd+S 保存 + Cmd+Enter 跑 Scenario。",
+      "dependencies": "web/src/vertex/VertexWorkspacePage.tsx, web/vite.config.ts, @react-sigma/core, graphology, React/Vite dependency prebundle/runtime",
+      "description": "Hermes manual dogfood found that /vertex/new can crash in the real Vite dev server even though make web-build, make test, go vet ./..., and make web-test all pass. First browser load produced React 'Invalid hook call' and ErrorBoundary TypeError: Cannot read properties of null (reading 'useRef') from @react-sigma/core inside VertexWorkspaceForRid/VertexWorkspacePage. A later refresh rendered the basic Vertex UI, so the fix must address the real runtime/chunk/dependency issue rather than only satisfying tests.",
       "bdd_acceptance": [
-        "Given 用户按 ? 键 When 触发 Then 弹出 keyboard shortcuts 帮助面板",
-        "Given Cmd+S When 按下 Then 保存当前 graph",
-        "Given Cmd+Enter When Scenario Pane 焦点时 Then Run 当前 Scenario",
-        "Verify in browser using dev-browser skill",
-        "Typecheck passes",
-        "Tests pass"
+        "Given the app is served by the real Vite dev server at http://127.0.0.1:5173 and the backend is healthy on 127.0.0.1:9117 When a fresh browser context navigates directly to /vertex/new Then the Vertex workspace renders without ErrorBoundary fallback and without console errors containing 'Invalid hook call' or 'Cannot read properties of null (reading useRef)'.",
+        "Given Vertex imports @react-sigma/core When the Vite dependency graph is built/served Then @react-sigma/core and Vertex use the same React singleton; no duplicate React/runtime mismatch is present.",
+        "Given /vertex/new renders Then the user can see Untitled Graph, Layout, Merge links, Save, Share, Time, Run, and the Sigma canvas without a crash.",
+        "Given the regression was a real-browser runtime issue When adding tests or smoke checks Then include a guard that would fail on this class of React/Sigma runtime crash where feasible; if Claude Code browser tooling is unavailable, document the exact manual browser verification command/URL in progress.txt so Hermes can perform final verification.",
+        "make web-build passes",
+        "make test passes",
+        "go vet ./... passes",
+        "make web-test passes"
       ],
-      "priority": 120,
+      "priority": 126,
       "passes": true,
-      "notes": "Added saveGraph (meta+s, ctrl+s) and runScenario (meta+enter, ctrl+enter) to web/src/hotkeys/registry.ts. ? key help modal already wired in Shell.tsx via showHelp. Cmd+S wired in VertexGraphWidget; new ScenarioPane component (web/src/vertex/ScenarioPane.tsx) wires Cmd+Enter scoped to its focus. i18n keys added in both en + zh-CN. Browser verification deferred — dev-browser MCP not available; full vitest suite (1528 tests) + lint + i18n drift check all green."
-    },
-    {
-      "id": "VTX-121",
-      "name": "国际化（i18n）— 中文/英文",
-      "phase": 17,
-      "active": false,
-      "depends_on": [
-        "VTX-017"
-      ],
-      "dependencies": "web/src/i18n 既有",
-      "description": "Vertex 词条 zh-CN + en-US 100% 覆盖。",
-      "bdd_acceptance": [
-        "Given Vertex 全部 UI 字符串 When i18n key 抽取 Then zh-CN + en-US 各覆盖率 100%",
-        "Given 用户切换语言 When 触发 Then Vertex 所有文案切换",
-        "Verify in browser using dev-browser skill",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 121,
-      "passes": true,
-      "notes": "Added vertex.* namespace to web/src/i18n/resources/{en,zh-CN}.ts covering 8 sub-groups (widget/diagramming/layers/map/copilot/debug/scenarioPane/retry) — 25 keys each, parity verified by extract-i18n.mjs. All Vertex widget components (VertexGraphWidget, DiagrammingStubPage, LayersDragPanel, MapOpenInVertexButton, ScenarioCopilotButtons, ScenarioDebugDrawer, ScenarioPane, ScenarioRetryPane) now route every user-visible string through useTranslation; each also imports '../i18n' as a side-effect so tests that render the component pick up the bundle without needing to import the i18n module themselves. New web/src/vertex/vertexI18n.test.tsx (20 cases) asserts both locales render correct copy and live-switching changeLocale('zh-CN') re-renders Vertex copy. Full vitest 1548 passing; typecheck + eslint baselines unchanged (only VTX-108 pre-existing errors remain). Browser verification deferred — dev-browser MCP not available; English/Chinese label switching exercised via vitest tree."
-    },
-    {
-      "id": "VTX-122",
-      "name": "单元测试覆盖率门槛",
-      "phase": 17,
-      "active": false,
-      "depends_on": [
-        "VTX-103"
-      ],
-      "dependencies": "CI coverage 配置",
-      "description": "后端 ≥ 80% / 前端 ≥ 75% / CI 硬卡。",
-      "bdd_acceptance": [
-        "Given pkg/scenarios / pkg/vertex/graphsvc / pkg/timeseries When go test -cover Then 各包 coverage ≥ 80%",
-        "Given web/src Vertex 相关组件 When Vitest Then coverage ≥ 75%",
-        "CI 上 coverage 门槛硬卡",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 122,
-      "passes": true,
-      "notes": "Backend: extended cmd/covercheck with excludeFiles (path-suffix filter) so PG-only files (//go:build integration) don't drag the unit-test floor. coverage/thresholds.json adds pkg/scenarios / pkg/vertex/graphsvc / pkg/timeseries floors @ 80% with excludeFiles covering pg_repo.go / pg_templates.go / pg_store.go / archive_db.go / vertex_service_pg.go. Split DB-bound code into dedicated files: pkg/scenarios/archive_db.go (LoadArchivedPayload + ArchiveOne), pkg/timeseries/vertex_service_pg.go (Query method). Added pkg/timeseries/vertex_service_unit_test.go (8 cases on NewVertexService / options / aggSQL / pgInterval) and pkg/vertex/graphsvc/handler_errors_test.go (12 cases: nil-repo guards, malformed JSON, missing fields, repo sentinel mapping, ListVersions error). Final coverage: scenarios 91.1% / timeseries 80.3% / graphsvc 91.8% — all ≥80% floor. Frontend: web/vite.config.ts adds vitest per-glob threshold 'src/vertex/**/*.{ts,tsx}' @ 75% lines/branches/functions/statements (bumped testTimeout to 30s so coverage transform doesn't time out flaky import-heavy specs). Added 8 fetch-mocking cases (VertexGraphWidget.defaults.test.tsx + ScenarioCopilotButtons.defaults.test.tsx) covering the default loader / saver / suggester / explainer paths previously bypassed by injected stubs. Final per-file coverage all ≥75%: ScenarioCopilotButtons 100%, VertexGraphWidget 94.59%, lowest = scenarioRunStream 79.72%. CI: existing covercheck gate (.github/workflows/ci.yml) now enforces the new backend floors; Vitest threshold object enforces the frontend per-glob floor. 1556 vitest tests + 14 covercheck unit tests + new backend handler/option-setter suites all green."
-    },
-    {
-      "id": "VTX-123",
-      "name": "安全审计 — Scenario 越权检查",
-      "phase": 17,
-      "active": false,
-      "depends_on": [
-        "VTX-013"
-      ],
-      "dependencies": "pkg/masking；pkg/rls",
-      "description": "负向测试 ≥ 8 例。",
-      "bdd_acceptance": [
-        "Given user1 创建 scenario s1 (private) + user2 用 user1 的 token 拼接但本身无权 When 调 GET /scenarios/s1 Then 403",
-        "Given scenario 引用了对当前用户不可见的 Marking 对象 When GET diff Then 自动 mask 这些对象的属性值",
-        "负向测试 ≥ 8 例",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 123,
-      "passes": true,
-      "notes": "New pkg/scenarios/authz.go gates scenario reads/writes through AuthorizeRead / AuthorizeWrite — owner-only (scenario.CreatedBy == user.ID) plus admin bypass (auth.PermUserManage); foreign users, even editors/ontology-owners, get scenarios.ErrForbidden; nil user → ErrUnauthenticated; nil scenario → ErrScenarioNotFound so handlers can chain repo lookup → authz cleanly. MaskEditsForUser auto-masks scenario edit NewValue with RedactedValueLiteral (\"[redacted]\") when the caller's auth.Markings don't cover an object's marking set (AND semantics, mirrors auth.EvaluateMarkings); admin bypass; defensive copy of input slice. New pkg/scenarios/authz_test.go covers 26 sub-cases incl. 18 negative (foreign user × 4 roles × read/write, nil user, empty user ID, partial marking match, nil user masking, mutation guard) — well above the ≥8 negative-test floor. Coverage gate still PASS @ 87.1% on pkg/scenarios (floor 80%); no consumers touched (pkg/oss, pkg/aip, pkg/vertex all green)."
-    },
-    {
-      "id": "VTX-124",
-      "name": "Docker Compose 一键启动",
-      "phase": 17,
-      "active": false,
-      "depends_on": [
-        "VTX-028",
-        "VTX-049"
-      ],
-      "dependencies": "docker-compose.yml + Makefile",
-      "description": "完整 dev 环境 docker 化。",
-      "bdd_acceptance": [
-        "Given docker-compose.yml 增加 timescaledb + function-runtime 服务 When make docker-up Then 全栈起来：PG / TimescaleDB / NATS / function-runtime / Weave",
-        "Given make dev When 跑 Then 完整 dev 环境（含 Vertex 前端）",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 124,
-      "passes": true,
-      "notes": "Added timescaledb (timescale/timescaledb:latest-pg16, host port 5433→container 5432 to avoid colliding with primary postgres on 5432, image pinned to match internal/testutil.StartTimescaleDBContainer) + function-runtime (build from new Dockerfile.function-runtime, port 9000→9000, /health curl healthcheck) services to docker-compose.yml. New cmd/weave-function-runtime binary ships a permissive no-op stub for the Tier 3.2 dispatcher contract (POST /functions/{rid} → FunctionResponse{Edits: []}); 7 unit tests cover handlers + flag defaults. weave service now depends_on function-runtime (service_healthy) and exports WEAVE_FUNCTIONS_BASE_URL=http://function-runtime:9000/functions so `docker compose up` boots a working dispatcher path out of the box (Functions.Enabled stays opt-in via WEAVE_FUNCTIONS_ENABLED=true). scripts/dev.sh banner now lists PG / NATS / TimescaleDB / Function Runtime + Vertex UI surface. Test surface: 4 new docker-compose / dev.sh assertions in cmd/server/docker_test.go (TestDockerCompose_VTX124_TimescaleDBService, _FunctionRuntimeService, _WeaveStackDependencies, TestDevScript_VTX124_MentionsFullStack) — all green; pre-existing TestContract_AllRoutesDocumented failure (missing openapi entry for /api/v2/.../timeseries/{property} from VTX-028 line) is unrelated to VTX-124 and was already failing on the prior commit. docker compose config validates clean (9 services: function-runtime / nats / postgres / weave / prometheus / grafana / mailhog / timescaledb / victoriametrics). `go vet ./...` and `go build ./...` clean. Browser verification deferred — VTX-124 is infra/config only, no UI surface to verify."
-    },
-    {
-      "id": "VTX-125",
-      "name": "发布 Checklist + RELEASE.md",
-      "phase": 17,
-      "active": false,
-      "depends_on": [],
-      "dependencies": "全部 124 个 story 完成；docs/",
-      "description": "Release checklist + CHANGELOG + tag。",
-      "bdd_acceptance": [
-        "Given docs/RELEASE-vertex-v1.md When 列出 125 个 story checkbox Then 全部完成",
-        "Given CHANGELOG 更新 + tag v1.0.0-vertex When 发布 Then GitHub release 含 changelog",
-        "含已知 issue 清单（调研报告附录 C 风险与未解项映射）",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "priority": 125,
-      "passes": true,
-      "notes": "Shipped docs/RELEASE-vertex-v1.md (canonical release checklist) + CHANGELOG.md (Keep a Changelog format, v1.0.0-vertex section) + cmd/server/release_test.go (5 cases gating doc shape). Release doc lists all 125 VTX stories as `- [x]` / `- [ ]` checkboxes (regex-asserted by TestRelease_VTX125_ListsAllStoryCheckboxes), with 92 done across Stream A (VTX-001~015) / Stream B (VTX-028~042, VTX-064~119) / Stream C (VTX-120~125). The 33 deferred stories (Phase 3 advanced graph VTX-016~027, Phase 6 scenario run/diff VTX-043~047, Phase 7 functions/models VTX-048~057, Phase 8 extended labels VTX-058~063) are enumerated in §3.3 Known Issues with v1.1 candidacy. §3.1 maps every R1~R9 risk from docs/PRD-Weave-OSv2-深度复刻-V2.md §7.1 to its Vertex mitigation; §3.2 covers the 6 Foundry baseline traps from §7.2; §3.4 calls out the pre-existing TestContract_AllRoutesDocumented RED, pkg/xlsxstream -race timeout, pkg/timeseries integration first-run failure, and the no-op function-runtime stub. CHANGELOG.md highlights every shipped phase, lists added/changed/security entries, references the release doc for the full known-issues table, and documents migration notes for the new TimescaleDB + scenario / graph tables. go test ./cmd/server -run 'TestRelease' green (5/5); go vet ./cmd/server/... clean; existing TestDocker* + TestDevScript still green. Tag publish + GitHub release commands documented in RELEASE doc §4; manual `git tag v1.0.0-vertex` left for the human release manager (not auto-tagged by this story per Ralph guidance on shared-state actions)."
+      "notes": "Hermes evidence captured before this Ralph run: full CI passed at Sat May 16 00:02:52 CST 2026 (246 web test files, 2718 tests), services healthy, but browser console on http://127.0.0.1:5173/vertex/new showed: Invalid hook call; TypeError: Cannot read properties of null (reading 'useRef'); stack included @react-sigma_core.js, VertexWorkspaceForRid, VertexWorkspacePage.tsx, RouteErrorBoundary. After refresh the page rendered, so check first-load / optimized dependency behavior. Hermes must re-run real browser verification after Ralph completes."
     }
   ]
 }
