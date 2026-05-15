@@ -271,8 +271,8 @@
         "Tests pass"
       ],
       "priority": 42,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/timeSeriesOverride.ts。把 VTX-040/VTX-041 的 override 概念扩展到 (scenarioRid, objectType, primaryKey, property, atTimestamp, windowMs) 六段身份 —— 时窗 override 与 selectedTime 游标自然耦合。导出 TimeSeriesWindowOverride 类型 + 6 段 cell key buildTimeSeriesWindowOverrideKey（agg 故意不进 key：override 表达\"用户对该窗聚合代表值的认定\"，与 view-side agg 解耦，切换 agg view 仍读同一 override）+ OverrideMap CRUD（不 mutate；同 set/remove pattern 与 VTX-040/041 一致）+ isCellHighlighted + findTimeSeriesWindowOverride(map, WindowQuery)（不必调用方自组装 key）+ applyTimeSeriesWindowOverride(map, WindowQuery)（read overlay 返回 scalar 或 null；移动游标走不同 key 自动不命中）+ assertTimeSeriesWindowCellEditable（immutable scenario 抛 ScenarioFrozenError 复用 VTX-040 类）+ buildCreateTimeSeriesWindowOverrideRequest（POST /api/vertex/v1/scenarios/{rid}/time-series-overrides body={objectType, primaryKey, property, atTimestamp, windowMs, agg, smoothingMs?, value}；rid 走 encodeURIComponent；非空 string 三字段 + 正数 windowMs/smoothingMs + 有限 atTimestamp/value 校验）+ buildDeleteTimeSeriesWindowOverrideRequest（DELETE /api/vertex/v1/time-series-overrides/{id}，id encode）+ smoothSeriesByBucket(series, bucketMs)（5-min smoothing：按 bucketMs floor 分桶，每桶取 avg；≤0 返回副本，空返回 []，结果按桶升序）+ computeTimeSeriesWindowAggregate(series, params, override)（统一聚合入口：override 优先返回 override.value；否则 smoothingMs>0 先桶化再 aggregateAtTime；都没有就直接 aggregateAtTime）+ resolveTimeSeriesWindowCellEdit（五态决策与 VTX-040 同构，valueType 锁定 'number'，invalid reason 只能 'not_a_number'，invalid 不静默丢 existing）。复用 VTX-040 parseScalarInput/ScenarioFrozenError + VTX-065 aggregateAtTime/TimePoint/AggregationMethod 不重复实现。56 tests pass，vitest 全量 212 files / 2002 tests 全绿，tsc 0 错误，eslint 0 warning。dev-browser skill 不可用，黄色边框 + selectedTime 游标移动 overlay 失效 + immutable cell tooltip 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-043",
