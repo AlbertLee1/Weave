@@ -83,6 +83,13 @@ func NewConflict(name string, params map[string]string) *APIError {
 	return newAPIError("CONFLICT", name, params, http.StatusConflict)
 }
 
+// NewGone creates a NOT_FOUND-shaped 410 Gone API error. Used by surfaces
+// that distinguish "never existed" (404) from "existed but was deliberately
+// revoked" (410) — e.g. VTX-013 share links after the owner deletes them.
+func NewGone(name string, params map[string]string) *APIError {
+	return newAPIError("NOT_FOUND", name, params, http.StatusGone)
+}
+
 // NewInternal creates an INTERNAL error (HTTP 500).
 func NewInternal(name string, params map[string]string) *APIError {
 	return newAPIError("INTERNAL", name, params, http.StatusInternalServerError)

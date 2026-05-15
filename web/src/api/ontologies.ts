@@ -119,12 +119,17 @@ export interface CreateLinkTypeRequest {
   foreignKeyConfig?: unknown;
   joinTableConfig?: unknown;
   required?: boolean;
+  // VTX-010: Vertex graph rendering tags. Omit or pass [] when no tags.
+  typeClasses?: string[];
 }
 
 export interface UpdateLinkTypeRequest {
   displayName: string;
   description?: string;
   required?: boolean;
+  // VTX-010: tri-state — undefined leaves tags untouched, [] clears them,
+  // a non-empty array replaces them. Mirrors the backend tri-state pointer.
+  typeClasses?: string[];
 }
 
 export async function listLinkTypes(

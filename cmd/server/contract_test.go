@@ -151,6 +151,26 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:       true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:                 true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}:      true,
+	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}:         true,
+	// VTX-013: Vertex graph share-link surface — owner mints / revokes
+	// opaque tokens; recipients exchange them for masked graph payloads.
+	// OpenAPI entries follow once the wire-format ResponseBody schemas
+	// stabilise alongside the rest of the VTX-009 schemas.
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/share-links"}: true,
+	{Method: "DELETE", Path: "/api/vertex/v1/share-links/{token}"}:    true,
+	{Method: "GET", Path: "/api/vertex/v1/share-links/{token}/graph"}: true,
+	// VTX-014: Workshop-embedded vertex_graph widget surface. GET returns a
+	// compact payload (no savedSelections / history); POST persists with an
+	// optional overrideGraphRid target. Same OpenAPI cycle as the rest of
+	// the VTX-009 routes.
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/widget"}:       true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/widget/save"}: true,
+	// VTX-015: Vertex Control Panel — admin-tunable runtime knobs (default
+	// window, polling interval, search-around limits, missing-data warning
+	// threshold). OpenAPI entries follow alongside the rest of the VTX-009
+	// schemas; same allow-list mode as the other VTX-* admin endpoints.
+	{Method: "GET", Path: "/api/vertex/v1/admin/control-panel"}: true,
+	{Method: "PUT", Path: "/api/vertex/v1/admin/control-panel"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the

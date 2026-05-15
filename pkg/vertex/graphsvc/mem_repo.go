@@ -100,12 +100,16 @@ func (r *MemRepo) UpdateLayout(ctx context.Context, ridStr string, positions jso
 	if !ok {
 		return ErrGraphNotFound
 	}
-	// Merge positions into payload, leaving version untouched.
+	// VTX-024 — merge per-node positions into payload.positions. A drag
+	// fires PATCH with just the dragged node's coords; the request must
+	// NOT clobber sibling positions, so we read the existing map and
+	// overwrite key-by-key. Falls back to a wholesale replacement when
+	// the existing payload is opaque / not an object (degraded fixtures).
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(g.Payload, &obj); err != nil {
 		obj = map[string]json.RawMessage{}
 	}
-	obj["positions"] = append(json.RawMessage(nil), positions...)
+	obj["positions"] = mergePositionsBytes(obj["positions"], positions)
 	merged, err := json.Marshal(obj)
 	if err != nil {
 		return err
@@ -113,6 +117,31 @@ func (r *MemRepo) UpdateLayout(ctx context.Context, ridStr string, positions jso
 	g.Payload = merged
 	g.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// mergePositionsBytes returns a JSON object whose keys are the union of
+// existing and patch; values from patch override matching keys in existing.
+// Either argument may be empty/non-object; falls through to the patch alone.
+func mergePositionsBytes(existing, patch json.RawMessage) json.RawMessage {
+	var existingMap map[string]json.RawMessage
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &existingMap)
+	}
+	var patchMap map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &patchMap); err != nil {
+		return append(json.RawMessage(nil), patch...)
+	}
+	if existingMap == nil {
+		existingMap = map[string]json.RawMessage{}
+	}
+	for k, v := range patchMap {
+		existingMap[k] = append(json.RawMessage(nil), v...)
+	}
+	out, err := json.Marshal(existingMap)
+	if err != nil {
+		return append(json.RawMessage(nil), patch...)
+	}
+	return out
 }
 
 func (r *MemRepo) Duplicate(ctx context.Context, sourceRID string) (*Graph, error) {

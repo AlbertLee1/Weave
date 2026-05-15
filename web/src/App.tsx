@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GlobalErrorBoundary } from './components/common/ErrorBoundary';
@@ -58,6 +59,13 @@ import { AutomationRulesPage } from './components/automation/AutomationRulesPage
 import { ProposalsPage } from './components/proposals/ProposalsPage';
 import { SecurityPoliciesPage } from './components/securityPolicies/SecurityPoliciesPage';
 import { NotFoundPage } from './components/common/NotFoundPage';
+// Lazy-load the Vertex workspace so the heavy Sigma + Graphology bundle
+// is split off the initial app chunk and only paid for by users who hit
+// /vertex/*. (Also keeps test-only App imports from triggering Sigma's
+// WebGL2RenderingContext side-effect under jsdom.)
+const VertexWorkspacePage = lazy(() =>
+  import('./vertex/VertexWorkspacePage').then((m) => ({ default: m.VertexWorkspacePage })),
+);
 import { useNavigate, useParams } from 'react-router';
 
 const queryClient = new QueryClient({
@@ -410,6 +418,14 @@ export default function App() {
                 }
               />
               <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
+              <Route
+                path="vertex/:rid"
+                element={
+                  <Suspense fallback={<div className="p-6 text-sm text-zinc-400">Loading Vertex…</div>}>
+                    <VertexWorkspacePage />
+                  </Suspense>
+                }
+              />
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>

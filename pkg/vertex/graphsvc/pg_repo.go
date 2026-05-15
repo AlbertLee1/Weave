@@ -119,16 +119,24 @@ func (r *PGRepo) Update(ctx context.Context, ridStr string, payload json.RawMess
 	return g, nil
 }
 
-// UpdateLayout rewrites payload.positions in-place without bumping version.
-// Uses jsonb_set so other payload fields (layers, edges, ...) are preserved.
-// The trigger doesn't fire because version is unchanged.
+// UpdateLayout merges per-node positions into payload.positions without
+// bumping version. Uses JSONB's `||` operator on the positions sub-object so
+// keys NOT mentioned in the patch are preserved — drag of one node must not
+// clobber sibling positions (VTX-024 BDD acceptance). When payload.positions
+// is absent we seed it to {} via coalesce before the merge so the first
+// PATCH after Create works. The trigger doesn't fire because version is
+// unchanged.
 func (r *PGRepo) UpdateLayout(ctx context.Context, ridStr string, positions json.RawMessage) error {
 	if len(positions) == 0 {
 		return fmt.Errorf("positions must not be empty")
 	}
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE system_graphs
-		 SET payload = jsonb_set(payload, '{positions}', $1::jsonb, true),
+		 SET payload = jsonb_set(
+		     payload,
+		     '{positions}',
+		     COALESCE(payload->'positions', '{}'::jsonb) || $1::jsonb,
+		     true),
 		     updated_at = NOW()
 		 WHERE rid = $2`,
 		[]byte(positions), ridStr,
