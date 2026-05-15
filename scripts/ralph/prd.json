@@ -441,8 +441,8 @@
         "Tests pass"
       ],
       "priority": 50,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新增 pkg/vertex/modelfunctions/（wrapper.go + handler.go + 16 测试）：Deployment/SchemaParam/SchemaReturn 类型 + BuildWrapperFunction（HTTP-runtime + DefaultFunctionVersion + 复用 funcregistry.ValidateParameterTypes 把 aggregation/notification 等非法 I/O 类型挡在注册时）+ Handler exposing POST /api/vertex/v1/ontologies/{ontologyApiName}/model-functions/register（slim DeploymentRepo/FunctionCreator/OntologyResolver 接口）。Deployment 先持久化、Function create 失败映 ErrDuplicate→409 / 其它→500。migrations/000107_vertex_model_deployments：model_deployments 表（rid PK + ontology_rid FK CASCADE + endpoint_url CHECK length>0 + inputs/output JSONB + function_rid + 索引）。BDD #1 happy path / unknown ontology 404 / missing field 400 / malformed JSON 400 / unsupported type 400 / duplicate 409 / DeploymentRepo 失败 500 全套测试绿；wrapper 单测验证 signature 通 oms.ValidateFunctionSignature + fn.Validate()。cmd/server/main.go wiring 延后（VTX-046/-048/-049 同模式）。BDD #2（Function-backed Action 引用）由 VTX-051 承接，本 story 只确保 wrapper Function 走 Repository.CreateFunction 持久化后即可被既有 Function API 寻址。"
     },
     {
       "id": "VTX-051",
