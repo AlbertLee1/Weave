@@ -1,16 +1,14 @@
-// VertexWorkspacePage (VTX-017) — minimum-viable Vertex workspace shell.
+// VertexWorkspacePage — Vertex workspace shell (VTX-017) + payload
+// rendering (VTX-018).
 //
-// Mounts a Sigma.js / Graphology canvas inside a SigmaContainer and a
-// fixed TopBar with the 5 core actions (save/share/layout/timeSelection
-// /run). The page handles two URL shapes:
-//   • /vertex/new  → fresh workspace, no fetch, empty canvas.
-//   • /vertex/:rid → load the graph by RID. On 404 render a "Graph not
-//     found" empty state with a back-to-Dashboard link so deep links to
-//     deleted/unknown graphs don't dead-end.
+// /vertex/new mounts an empty Sigma canvas immediately; /vertex/{rid}
+// fetches `/api/vertex/v1/graphs/{rid}` and either renders the graph
+// (TopBar + canvas with the loaded nodes/edges) or surfaces "Graph not
+// found" + a Dashboard back-link when the backend returns 404.
 //
-// Interaction surface (selection, layouts, sidebars, etc.) lands in the
-// follow-up stories VTX-018+; this story is intentionally just the
-// scaffold.
+// Node/edge projection is delegated to features/vertex/render/payloadToGraph
+// so the heavy logic stays pure + Vitest-friendly. Zoom/pan come for free
+// from Sigma's default camera controls — no custom event wiring needed.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
@@ -18,10 +16,16 @@ import Graph from 'graphology';
 import { SigmaContainer, useLoadGraph } from '@react-sigma/core';
 import '@react-sigma/core/lib/style.css';
 
-interface GraphSummary {
+import {
+  payloadToGraph,
+  type VertexPayloadGraph,
+} from '../features/vertex/render/payloadToGraph';
+
+interface GraphPayloadResponse {
   rid: string;
   name?: string;
   version?: number;
+  payload?: unknown;
 }
 
 const CANVAS_STYLE: React.CSSProperties = {
@@ -34,14 +38,47 @@ const SIGMA_SETTINGS = {
   allowInvalidContainer: true,
   defaultNodeType: 'circle' as const,
   defaultEdgeType: 'arrow' as const,
+  // Subtitle below the node center; Sigma 3 renders labels on every node
+  // when renderLabels is true (the default).
+  labelSize: 11,
+  labelDensity: 1,
+  renderEdgeLabels: false,
 };
 
-function EmptyGraphLoader() {
+function GraphLoader({ projection }: { projection: VertexPayloadGraph }) {
   const loadGraph = useLoadGraph();
   useEffect(() => {
-    loadGraph(new Graph());
-  }, [loadGraph]);
+    const g = new Graph();
+    for (const n of projection.nodes) {
+      g.addNode(n.id, {
+        label: n.label,
+        x: n.x,
+        y: n.y,
+        size: n.size,
+        color: n.color,
+      });
+    }
+    for (const e of projection.edges) {
+      if (!g.hasNode(e.source) || !g.hasNode(e.target)) continue;
+      // Use addEdgeWithKey so a stable id survives re-renders + drag
+      // persistence in VTX-024. Graphology rejects duplicate keys, so
+      // dedupe by source/target/key triple.
+      if (g.hasEdge(e.key)) continue;
+      g.addEdgeWithKey(e.key, e.source, e.target, {
+        type: e.type,
+        bothArrows: e.bothArrows === true,
+        size: 1,
+      });
+    }
+    loadGraph(g);
+  }, [loadGraph, projection]);
   return null;
+}
+
+interface GraphSummary {
+  rid: string;
+  name?: string;
+  version?: number;
 }
 
 interface TopBarProps {
@@ -105,15 +142,15 @@ function NotFound({ rid }: { rid: string }) {
 type LoadState =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'ready'; graph: GraphSummary }
+  | { kind: 'ready'; graph: GraphPayloadResponse }
   | { kind: 'not-found' }
   | { kind: 'error'; message: string };
 
-async function fetchGraphSummary(rid: string): Promise<GraphSummary | 'not-found'> {
+async function fetchGraph(rid: string): Promise<GraphPayloadResponse | 'not-found'> {
   const res = await fetch(`/api/vertex/v1/graphs/${encodeURIComponent(rid)}`);
   if (res.status === 404) return 'not-found';
   if (!res.ok) throw new Error(`graph load failed: ${res.status}`);
-  const body = (await res.json()) as GraphSummary;
+  const body = (await res.json()) as GraphPayloadResponse;
   return body;
 }
 
@@ -135,7 +172,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
   useEffect(() => {
     if (isNew) return;
     let cancelled = false;
-    fetchGraphSummary(rid)
+    fetchGraph(rid)
       .then((res) => {
         if (cancelled) return;
         if (res === 'not-found') setState({ kind: 'not-found' });
@@ -150,20 +187,27 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     };
   }, [isNew, rid]);
 
-  const graph = useMemo<GraphSummary | null>(() => {
-    if (state.kind === 'ready') return state.graph;
+  const summary = useMemo<GraphSummary | null>(() => {
+    if (state.kind === 'ready') {
+      return { rid: state.graph.rid, name: state.graph.name, version: state.graph.version };
+    }
     if (isNew) return null;
     return { rid };
   }, [state, isNew, rid]);
+
+  const projection = useMemo<VertexPayloadGraph>(() => {
+    if (state.kind === 'ready') return payloadToGraph(state.graph.payload);
+    return { nodes: [], edges: [] };
+  }, [state]);
 
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
     <div className="flex h-full min-h-[400px] flex-col" data-testid="vertex-workspace">
-      <TopBar graph={graph} />
+      <TopBar graph={summary} />
       <div className="relative flex-1" data-testid="vertex-canvas-host">
         <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
-          <EmptyGraphLoader />
+          <GraphLoader projection={projection} />
         </SigmaContainer>
         {state.kind === 'loading' && (
           <div
