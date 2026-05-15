@@ -9296,6 +9296,97 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}:
+    get:
+      operationId: getVertexTimeSeries
+      summary: Query a bucketed Vertex time series
+      description: |
+        Returns bucketed aggregate points for an object's time series property.
+        Query parameters `from`, `to`, and `bucket` are required. `agg` defaults
+        to AVG. `scenarioId` optionally applies a Vertex scenario overlay.
+      tags: [TimeSeriesProperty]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: primaryKey
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: property
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: agg
+          required: false
+          schema:
+            type: string
+            enum: [AVG, MIN, MAX, SUM, LAST]
+            default: AVG
+        - in: query
+          name: bucket
+          required: true
+          description: Go-style duration such as 5m, 1h, or 24h.
+          schema:
+            type: string
+        - in: query
+          name: scenarioId
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Bucketed aggregate time series result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [points]
+                properties:
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      required: [ts, value]
+                      properties:
+                        ts:
+                          type: string
+                          format: date-time
+                        value:
+                          type: number
+                          format: double
+                  warning:
+                    type: string
+                  lastObservedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}/firstPoint:
     get:
       operationId: getTimeSeriesFirstPoint
