@@ -31,6 +31,20 @@ describe('hotkey registry', () => {
     expect(groups.has('search')).toBe(true);
   });
 
+  it('VTX-120: saveGraph is bound to meta+s and ctrl+s', () => {
+    const def = getHotkey('saveGraph');
+    expect(def.keys).toContain('meta+s');
+    expect(def.keys).toContain('ctrl+s');
+    expect(def.group).toBe('editing');
+  });
+
+  it('VTX-120: runScenario is bound to meta+enter and ctrl+enter', () => {
+    const def = getHotkey('runScenario');
+    expect(def.keys).toContain('meta+enter');
+    expect(def.keys).toContain('ctrl+enter');
+    expect(def.group).toBe('editing');
+  });
+
   it('getHotkey throws on unknown id', () => {
     expect(() =>
       // @ts-expect-error — exercising the runtime guard with an invalid id

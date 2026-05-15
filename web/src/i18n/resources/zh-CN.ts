@@ -141,6 +141,8 @@ const zhCN = {
     goApprovals: '前往审批',
     submitForm: '提交当前表单',
     cancelEdit: '取消 / 关闭对话框',
+    saveGraph: '保存当前 Graph',
+    runScenario: '运行当前 Scenario',
   },
   settings: {
     title: '设置',

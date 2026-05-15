@@ -137,6 +137,8 @@ const en = {
     goApprovals: 'Go to Approvals',
     submitForm: 'Submit the current form',
     cancelEdit: 'Cancel / close the open dialog',
+    saveGraph: 'Save the current graph',
+    runScenario: 'Run the focused Scenario',
   },
   settings: {
     title: 'Settings',

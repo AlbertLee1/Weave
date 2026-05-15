@@ -10,7 +10,8 @@
 // is the standalone widget component + its save hook, plus a unit suite
 // that exercises both branches.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useShortcut } from '../hotkeys';
 
 export interface WidgetGraphState {
   selectedNodeRid?: string;
@@ -73,8 +74,8 @@ export function VertexGraphWidget({
     };
   }, [graphRid, selectedNodeRid, loader]);
 
-  async function handleSave() {
-    if (!overrideGraphRid || !state) return;
+  const handleSave = useCallback(async () => {
+    if (!overrideGraphRid || !state || saving) return;
     setSaving(true);
     setSaved(false);
     try {
@@ -86,7 +87,14 @@ export function VertexGraphWidget({
     } finally {
       setSaving(false);
     }
-  }
+  }, [overrideGraphRid, state, saving, saver, onSave]);
+
+  // VTX-120: Cmd+S saves the current graph. Disabled when no override RID
+  // is configured (Save button is also disabled then) or while a save is
+  // in flight, mirroring the click-path guard above.
+  useShortcut('saveGraph', () => void handleSave(), {
+    enabled: !!overrideGraphRid && !!state && !saving,
+  });
 
   return (
     <div data-testid="vertex-graph-widget" className="flex h-full flex-col">
