@@ -1,0 +1,930 @@
+{
+  "project": "Weave-Vertex",
+  "branchName": "vertex/replication-v1-b",
+  "description": "Weave Vertex TimeSeries + Scenario — parallel stream B",
+  "tddConvention": "Red → Green → Refactor。每个 story 必须先写失败测试（Red commit，CI 红）→ 写最小实现（Green commit，测试绿）→ 可选重构 commit。后端 Go 测试命名 Test{Feature}_Given_{State}_When_{Action}_Then_{Outcome}；前端用 web/src/test/bdd.ts 的 given().when().then() 链式 helper。",
+  "userStories": [
+    {
+      "id": "VTX-001",
+      "name": "scenario / scenario_edits 表 Migration",
+      "phase": 1,
+      "active": true,
+      "depends_on": [],
+      "dependencies": "PostgreSQL 16；golang-migrate；migrations/ 目录已有 000001~000015",
+      "description": "作为后端开发者，我需要一张 delta 表存 Scenario 的对象/链接 edits，以便后续 read API 在 base ontology 上 fold overlay。",
+      "bdd_acceptance": [
+        "Given 干净 PostgreSQL 16 数据库 When 应用 migration 000XXX_vertex_scenarios.up.sql Then 出现 4 张表：case_studies(rid, name, ontology_rid, created_by, created_at)、scenarios(rid, case_study_rid, name, parent_ontology_commit, status, immutable, created_by, created_at)、scenario_edits(scenario_rid, seq BIGSERIAL, op, object_type, object_id, property, new_value JSONB, link_type, src_id, dst_id, created_at)、scenario_overrides(scenario_rid, model_rid, parameter, object_id, value JSONB, applied_at)",
+        "Given scenario_edits 表已建 Then 含 (scenario_rid, object_id) 复合索引",
+        "Given 一个 scenario 已有 5 条 edits When 跑 down.sql 再 up.sql Then 表被清空、结构正确，无残留外键违约",
+        "Given scenario.immutable=true When 应用层尝试 INSERT 新 edit Then 拒绝并返回明确错误（不是 SQL constraint 报错）",
+        "golang-migrate 跑双向 OK；go test ./internal/database/... 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented in migrations/000105_vertex_scenarios.{up,down}.sql + internal/database/vertex_scenarios_migration_test.go. 4 tables (case_studies, scenarios, scenario_edits, scenario_overrides) + composite index scenario_edits(scenario_rid, object_id). Application-layer immutable enforcement deferred to VTX-002 ScenarioRepo (per acceptance text)."
+    },
+    {
+      "id": "VTX-002",
+      "name": "ScenarioRepo 接口 + PostgreSQL 实现",
+      "phase": 1,
+      "active": true,
+      "depends_on": [
+        "VTX-001"
+      ],
+      "dependencies": "VTX-001 migration；internal/testutil.StartPGContainer；pkg/rid（RID 生成）",
+      "description": "作为后端开发者，我需要 pkg/scenarios.Repo 接口（仿 pkg/oms.Repository 风格）和 PG 实现，用于持久化 Case Study / Scenario / Edits / Overrides。",
+      "bdd_acceptance": [
+        "Given 一个空 ScenarioRepo When CreateCaseStudy(ctx, \"JFK Ops\", ontologyRid) Then 返回 rid=ri.vertex.main.case-study.<uuid>，DB 内对应行存在",
+        "Given Case Study 已存在 When CreateScenario(caseStudyRid, \"Snowstorm\", parentCommit) Then 返回 scenarioRid，status=draft, immutable=false",
+        "Given Scenario 处于 draft When AppendEdit(scenarioRid, ScenarioEdit{Op:\"modifyProperty\",...}) 5 次 Then 5 行按 seq 1..5 顺序入库",
+        "Given Scenario 含 edits When Freeze(scenarioRid) Then immutable=true，后续 AppendEdit 返回 ErrScenarioImmutable",
+        "集成测试用 internal/testutil.StartPGContainer(t)（项目既有约定）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented in pkg/scenarios/{scenarios.go,pg_repo.go} + integration tests in pkg/scenarios/repo_test.go (6 tests). Repo interface: CreateCaseStudy/GetCaseStudy/CreateScenario/GetScenario/AppendEdit/ListEdits/Freeze/UpsertOverride/ListOverrides. RIDs minted ri.vertex.main.{case-study,scenario}.<uuid>. AppendEdit runs in a tx with SELECT ... FOR UPDATE to make Freeze races safe; ErrScenarioImmutable / ErrScenarioNotFound are typed sentinels (not raw SQL errors)."
+    },
+    {
+      "id": "VTX-003",
+      "name": "Scenario Edit Fold 算法（纯函数）",
+      "phase": 1,
+      "active": true,
+      "depends_on": [],
+      "dependencies": "无外部依赖（纯函数），可与 VTX-002 并行",
+      "description": "作为后端开发者，我需要 pkg/scenarios.Fold 把 base object 状态 + scenario edits 按 seq 顺序折叠成最终 view，返回单对象 / 单链接的 overlayed 视图。",
+      "bdd_acceptance": [
+        "Given base object {id:\"JFK\", capacity:100} 和 edits [{op:\"modifyProperty\", property:\"capacity\", new_value:120},{op:\"modifyProperty\", property:\"capacity\", new_value:150}] When Fold(base, edits) Then 返回 {id:\"JFK\", capacity:150}（后者覆盖前者）",
+        "Given base object 和 edits [{op:\"deleteObject\", object_id:\"JFK\"}] When Fold Then 返回 (nil, true) 表已删除",
+        "Given 无 base + edits [{op:\"createObject\", object_type:\"Order\", properties:{...}}] When Fold Then 返回新建对象",
+        "Given edits 含 link_add / link_delete When Fold links Then 邻接表正确合并",
+        "表驱动测试 ≥ 12 用例，含 cycle、re-create、modify-after-delete 边界",
+        "Benchmark：1000 edits fold ≤ 5 ms（go test -bench）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "VTX-004",
+      "name": "Ontology Read API 增加 X-Scenario-Id Header 支持",
+      "phase": 1,
+      "active": true,
+      "depends_on": [
+        "VTX-002",
+        "VTX-003"
+      ],
+      "dependencies": "pkg/oss handlers；chi router middleware；pkg/oms",
+      "description": "作为 SDK / 前端用户，我希望所有现存 GET /api/v2/ontologies/{ont}/objects/... 请求带 X-Scenario-Id header 后，返回带 overlay 的结果，且不破坏原有调用方。",
+      "bdd_acceptance": [
+        "Given baseline 对象 JFK.capacity=100 When 不带 header 调用 GET /objects/Airport/JFK Then 返回 capacity=100",
+        "Given 同一对象 + scenario 含 edit capacity=150 When 带 X-Scenario-Id: ri.vertex...scenario.s1 Then 返回 capacity=150",
+        "Given scenario 不存在 When 带未知 ID Then 返回 404 ScenarioNotFound（不 fall back 到 base）",
+        "Given scenario parent_ontology_commit 不匹配当前 ontology When 请求 Then 返回 409 ScenarioOntologyMismatch",
+        "单次 fold 计算延迟 p99 ≤ 20 ms（100 edits）",
+        "含 search / list / linkedObjects 三类端点的 overlay 验证",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "VTX-005",
+      "name": "Aggregation API 支持 Scenario Overlay",
+      "phase": 1,
+      "active": true,
+      "depends_on": [
+        "VTX-004"
+      ],
+      "dependencies": "pkg/oss/aggregation；pkg/index Bleve",
+      "description": "作为分析用户，我希望聚合 API（GROUP BY / SUM / AVG / COUNT）在 scenario 上下文中返回 fold 后的结果。",
+      "bdd_acceptance": [
+        "Given 10 个 Order 对象总价 1000 + scenario 修改 1 个对象价格 +500 When POST /objects/Order/aggregate?scenarioId=s1 GROUP BY status SUM total Then 返回 1500（不是 1000）",
+        "Given scenario 删除 2 个对象 When COUNT(*) Then 返回 8",
+        "Given scenario 新建 3 个对象 When COUNT(*) Then 返回 13",
+        "实现策略：先做对象集 fold 再走既有 Bleve 索引；性能折损在 Open Question 中记录",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "VTX-006",
+      "name": "端到端 Scenario Read Overlay Smoke Test",
+      "phase": 1,
+      "active": true,
+      "depends_on": [
+        "VTX-001",
+        "VTX-002",
+        "VTX-003",
+        "VTX-004",
+        "VTX-005"
+      ],
+      "dependencies": "test/e2e/ 既有 chi test router；testdata/northwind/",
+      "description": "作为复刻验证者，我需要一个端到端冒烟测试，证明 VTX-001~005 真的串通。",
+      "bdd_acceptance": [
+        "Given northwind 数据集已 seed When 创建 case study + scenario + 一条 modifyProperty edit Then curl GET /objects/Customer/ALFKI?scenarioId=s1 返回修改后的值",
+        "Given 同一 scenario When curl GET /objects/Customer/ALFKI（无 header） Then 返回 base 值（互不污染）",
+        "测试位于 test/e2e/vertex/scenario_smoke_test.go，命名 TestScenarioSmoke_Given_ModifyEdit_When_ReadWithOverlay_Then_ReflectsEdit",
+        "在 make test 中可跑（不需 -tags integration，用 in-memory repo）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "VTX-028",
+      "name": "TimescaleDB hypertable 时序存储",
+      "phase": 4,
+      "active": false,
+      "depends_on": [],
+      "dependencies": "docker-compose.yml 替换 PG 镜像为 timescale/timescaledb-ha:pg16；golang-migrate",
+      "description": "作为后端开发者，我需要一张 hypertable 存对象的时序点位。",
+      "bdd_acceptance": [
+        "Given TimescaleDB 扩展 When migration Then 创建 object_time_series(object_rid TEXT, property TEXT, ts TIMESTAMPTZ, value DOUBLE PRECISION, quality SMALLINT, PRIMARY KEY (object_rid, property, ts)) + SELECT create_hypertable('object_time_series', 'ts')",
+        "Given 100k 时序点 insert When 跑 benchmark Then insert ≤ 5 s",
+        "Given continuous aggregate cagg_5min When SELECT AVG by 5 min Then ≤ 50 ms（100k 点）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "Implemented in migrations/000106_vertex_object_time_series.{up,down}.sql + internal/testutil/timescale_container.go (new StartTimescaleDBContainer helper using timescale/timescaledb:latest-pg16) + internal/database/vertex_object_time_series_migration_test.go (5 integration tests). Migration is conditional on pg_available_extensions so it stays applicable to the pgvector dev image (table-only) while the timescaledb image gets the hypertable + cagg_5min (AVG/MIN/MAX/SUM/COUNT). Benchmark on M3 Max: COPY 100k rows in 404ms (BDD bound 5s); cagg_5min AVG read across 333 buckets in 675µs (BDD bound 50ms)."
+    },
+    {
+      "id": "VTX-029",
+      "name": "Time Series Service（查询接口）",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-028"
+      ],
+      "dependencies": "pkg/timeseries 新包",
+      "description": "pkg/timeseries 提供窗口聚合 API。",
+      "bdd_acceptance": [
+        "Given service When Query(objectRid, property, from, to, agg=AVG, bucket=5min) Then 返回 []{ts, value} 时间桶序列",
+        "Given 含 LAST/MAX/MIN/SUM agg When 各跑一次 Then 结果与 PG SQL 直接计算一致",
+        "Given scenario_id 传入 + scenario 含 override (windowedScalar) When Query Then 用 override scalar 替代该窗口",
+        "Given 查询区间内无数据且超过 missingDataWarningHours When Query Then 响应含 {warning: missing_data, lastObservedAt: ...}",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "Implemented in pkg/timeseries/vertex_service.go + pkg/timeseries/vertex_service_test.go (5 integration tests, 9 sub-tests total). New VertexService struct (separate from existing Foundry-OSv2 Store interface, since the VTX-028 hypertable schema differs from timeseries_points). API: VertexQuery{ObjectRID, Property, From, To, Agg, Bucket, ScenarioID} → VertexQueryResult{Points, Warning, LastObservedAt}. Agg supports AVG/MIN/MAX/SUM/LAST (LAST uses TimescaleDB's last(value, ts) hyperfunction). Window aggregation runs `time_bucket(INTERVAL, ts)` on the raw hypertable; cagg_5min is reserved for VTX-030 REST handler. ScenarioOverlayReader returns an optional *float64 override that replaces every bucket value (VTX-042 will refine to atTimestamp-scoped overrides). missing_data warning fires when MAX(ts) is older than missingDataWarningHours (default 24) before the request To."
+    },
+    {
+      "id": "VTX-030",
+      "name": "REST /objects/{rid}/timeseries/{prop}",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-029"
+      ],
+      "dependencies": "chi router；pkg/oss handlers 注册",
+      "description": "调研报告 §7.4。",
+      "bdd_acceptance": [
+        "When GET /api/v2/.../objects/Airport/JFK/timeseries/passengerThroughput?from=...&to=...&agg=AVG&bucket=5m Then 返回桶序列 JSON",
+        "When 带 ?scenarioId=s1 Then 应用 override",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": "Implemented in pkg/oss/handlers_vertex_timeseries.go (handler + VertexTimeSeriesQuerier interface) + pkg/oss/handlers_vertex_timeseries_test.go (5 unit tests). New route GET /api/v2/ontologies/{ont}/objects/{objType}/{pk}/timeseries/{prop} with query params from/to (RFC3339), agg (AVG|MIN|MAX|SUM|LAST), bucket (Go duration), scenarioId. Registered before existing Foundry /timeseries/{property}/firstPoint sub-paths so chi router routes the bare {property} GET to the Vertex handler. ObjectRID is composed deterministically as `ri.ontology.{ont}.{objType}.{pk}` so writes (when added) round-trip without an OMS lookup."
+    },
+    {
+      "id": "VTX-031",
+      "name": "TopBar Time Selection Bar UI",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-017",
+        "VTX-030"
+      ],
+      "dependencies": "Zustand time selection store；debounce hook",
+      "description": "调研报告 §5.3 + §6.1 — 顶部时间选择条 + selectedTime 游标。",
+      "bdd_acceptance": [
+        "Given Vertex 工作区 When 渲染 Then TopBar 含 time range slider（from/to）+ selectedTime 游标",
+        "Given 用户拖动 selectedTime When 拖拽中 Then debounce 100ms 后所有节点 sparkline + extended label 重算",
+        "Given 用户点 Live mode toggle When 开启 Then 按 pollingIntervalSec 周期性刷新",
+        "Given Compare button When 点击 Then 弹出二级窗口选择第二个时间窗",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-032",
+      "name": "节点 Sparkline Extended Label（uPlot）",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-019",
+        "VTX-031"
+      ],
+      "dependencies": "npm: uplot",
+      "description": "调研报告 §5.3 + §10.6。",
+      "bdd_acceptance": [
+        "Given 节点 + timeseries extended label 配置 When render Then 节点 DOM overlay 含 uPlot mini sparkline（宽 80px 高 20px）",
+        "Given 50 个节点同时渲染 sparkline When 测帧率 Then ≥ 30 fps",
+        "Given selectedTime 移动 When 重渲 Then sparkline 高亮当前时间点",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-033",
+      "name": "Series Panel（底部时间线面板）",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-032"
+      ],
+      "dependencies": "uPlot 完整图；React Resizable Panel",
+      "description": "调研报告 §5.3。",
+      "bdd_acceptance": [
+        "Given sidebar Series tab 含 Open in series view 按钮 When 点击 Then 底部 Series Panel 展开，显示该 series 完整时间线",
+        "Given 多个 series 已 open When 显示 Then stacked subplot，可拖拽时间游标同步顶部 selectedTime",
+        "Given 用户点 X 关闭某 series When 触发 Then Series Panel 移除该 subplot",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-034",
+      "name": "Timeline（事件 + 时序统一视图）",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-033"
+      ],
+      "dependencies": "VTX-077 Event ObjectType 配置（可后置）",
+      "description": "调研报告 §5.3 — Timeline：事件 bar + 时序 line + play 按钮自动滚动 + 速度控制 + 循环。",
+      "bdd_acceptance": [
+        "Given Timeline 子模式 toggle When 开启 Then Series Panel 上方多出一层 Event bar 区",
+        "Given ObjectType 有 eventStart/eventEnd 属性配置 When 加载 Then 这些对象画成时间条 bar",
+        "Given Play 按钮 When 点击 Then selectedTime 按 speed=1x 自动前进；speed 可调 0.5x/1x/2x/5x",
+        "Given Loop toggle When 开启 + 到达 to Then 自动回到 from 循环",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-035",
+      "name": "Open in Quiver / Object Explorer 跳转",
+      "phase": 4,
+      "active": false,
+      "depends_on": [
+        "VTX-026"
+      ],
+      "dependencies": "现有 /explorer 与 /quiver 路由",
+      "description": "调研报告 §5.3。",
+      "bdd_acceptance": [
+        "Given 节点右键含 Open in Quiver When 点击 + 节点有 timeseries property Then 新 tab 打开 /quiver/{objectRid}/{property}",
+        "Given Open in Object Explorer When 点击 Then 新 tab 打开 /explorer/{ontology}?objectRid=...",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-036",
+      "name": "Scenario Pane（侧栏纵向表格 UI）",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-017",
+        "VTX-002"
+      ],
+      "dependencies": "React Resizable Panel；TanStack Table",
+      "description": "调研报告 §6.4 — 类 Excel 网格：行 = Actions/Models，列 = inputs（覆盖列）/ outputs（计算列）/ baseline-comparison。",
+      "bdd_acceptance": [
+        "Given Vertex 工作区底部 / 侧栏 When 用户点 Scenarios 按钮 Then 折叠/展开 Scenario Pane",
+        "Given 空 Case Study When Pane 加载 Then 显示 + Add Case Study 按钮",
+        "Given 已有 Case Study + 2 Scenarios When 显示 Then Pane 顶部按钮：+ Add Scenario / + Add Action / + Add input or output / Run",
+        "Given Pane 表格表头 When 渲染 Then 列：Baseline | Scenario A | Scenario B；行：Models / Actions",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-037",
+      "name": "创建 Case Study / Scenario UI",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-036"
+      ],
+      "dependencies": "POST /case-studies + /scenarios endpoints",
+      "description": "Case Study + Scenario 创建对话框 + immutable 状态约束。",
+      "bdd_acceptance": [
+        "Given 点 + Add Case Study When 弹出对话框 + 输入 name Then 调用 POST /api/vertex/v1/case-studies + 出现在 Pane",
+        "Given Case Study 已选 + + Add Scenario When 输入 name Then 调用 POST /api/vertex/v1/case-studies/{rid}/scenarios + 出现新列",
+        "Given Scenario 已运行（immutable=true） When 用户尝试编辑 Then 提示 Scenario is immutable. Duplicate to modify.",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-038",
+      "name": "+ Add Action（Function-backed Action 选择）",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-037"
+      ],
+      "dependencies": "pkg/actions ActionType list API",
+      "description": "调研报告 §4.1 step 2。",
+      "bdd_acceptance": [
+        "Given 点 + Add Action When 弹出对话框 Then 列出当前 ontology 所有已发布的 Function-backed Action + 普通 Action",
+        "Given 选中 Action + 关联对象 + 字段值 When 点 Submit Then 该 Action 加到当前 Scenario 行",
+        "Given 单 Scenario 已有 50 Actions When 用户再加 Then 提示 Max 50 actions per scenario",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-039",
+      "name": "+ Add input or output（参数勾选）",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-037"
+      ],
+      "dependencies": "Function metadata API",
+      "description": "调研报告 §3.2。",
+      "bdd_acceptance": [
+        "Given 点 + Add input or output + 选定 Action/Model When 显示参数列表 Then 列出 parameters + 候选源（time series / object property / measure）",
+        "Given 用户勾选 3 个参数 + Add all parameters When Apply Then 在 Pane 表中加 3 列",
+        "Given Function-backed Action When 加 input Then 自动关联到对象属性 / 时序点",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-040",
+      "name": "Override 单元格 — 标量",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-038",
+        "VTX-039"
+      ],
+      "dependencies": "POST /scenarios/{rid}/overrides endpoint",
+      "description": "调研报告 §4.3 + §6.4。",
+      "bdd_acceptance": [
+        "Given Pane 表 input 单元格 When 用户 click → 输入新值 → blur Then 调用 POST /scenarios/{rid}/overrides + 单元格高亮（黄色边框）",
+        "Given override 已存在 When 用户清空单元格 Then 调用 DELETE /overrides/{id} + 高亮消失",
+        "Given scenario.immutable=true When 用户输入 Then 单元格禁用 + tooltip scenario is frozen",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-041",
+      "name": "Override 单元格 — 对象属性",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-040"
+      ],
+      "dependencies": "VTX-004 read overlay",
+      "description": "override 仅在 fork 内生效，base ontology 不变。",
+      "bdd_acceptance": [
+        "Given input 是某对象的 capacity 属性 When 用户输入 Then override 仅在 fork 内生效，base ontology 不变",
+        "Given override applied + 用户查询 GET /objects/Airport/JFK?scenarioId=s1 Then capacity 显示新值",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-042",
+      "name": "Override 单元格 — 时间序列窗口聚合值",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-040",
+        "VTX-029"
+      ],
+      "dependencies": "smoothing 配置；selectedTime 窗口",
+      "description": "调研报告 §5.4。",
+      "bdd_acceptance": [
+        "Given input 是某 time series property + Time Selection 当前窗口 When 用户输入新 scalar value Then 该值作为整个窗口聚合后的代表值 override（不修改每个点）",
+        "Given smoothing 配置为 5 min When Run Then 模型 input 用 5 min smooth 后的 scalar",
+        "Given 用户多次修改 selectedTime When 移动游标 Then override 仅对配置时窗生效（应保存 atTimestamp）",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-043",
+      "name": "Scenario Run — 同步路径（单 Function）",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-040"
+      ],
+      "dependencies": "pkg/vertex/runtime worker pool；pkg/functions / VTX-049 runtime",
+      "description": "调研报告附录 A.5 + 附录 B。",
+      "bdd_acceptance": [
+        "Given Scenario 含 1 个 Function-backed Action + 1 个 Override When 用户点 Run Then 后端 fork ontology + 跑 function + edits 写入 scenario_edits",
+        "Given Run 完成 When UI 收到 200 OK Then Scenario 列状态变绿 ✓ + 显示执行耗时 + scenario.immutable=true",
+        "Given function 抛错 When Run Then 列状态变红 × + 错误消息显示在 tooltip",
+        "端到端 ≤ 5 s（简单 sklearn 模型）",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-044",
+      "name": "Scenario Run — 异步路径（jobId + SSE）",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-043"
+      ],
+      "dependencies": "Server-Sent Events；scenario_runs 状态表",
+      "description": "调研报告 §4.4 + 附录 B。",
+      "bdd_acceptance": [
+        "Given Scenario 含 ≥ 2 models OR forceAsync=true When POST /scenarios/{rid}/run Then 立即返回 202 + {jobId}",
+        "Given jobId When GET /scenarios/{rid}/run/{jobId}/stream (SSE) Then 推送 events: progress{model,pct} / result{model,output} / done{durationMs} / error{model,message}",
+        "Given UI 收到 progress When 渲染 Then 行显示 spinner + 百分比",
+        "Given Job 中途取消 (POST cancel endpoint) When 取消 Then SSE 推 cancelled 事件 + cleanup",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-045",
+      "name": "自动跑 Baseline 对照",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-043"
+      ],
+      "dependencies": "Scenario options storage",
+      "description": "调研报告 §4.1 step 5.4 + Scenario options。",
+      "bdd_acceptance": [
+        "Given Scenario options Run baseline 开启 When Run Scenario Then 后台并行跑一份无 override/无 action 的副本",
+        "Given baseline 完成 When 渲染 Then Pane Baseline 列显示 unmodified outputs",
+        "Given Extended Label 在 System Graph 上 When 显示 Then 同时显示 simulated 1500 / baseline 1000（带颜色差异）",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-046",
+      "name": "Scenario Diff API",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-043"
+      ],
+      "dependencies": "VTX-002 ScenarioRepo",
+      "description": "调研报告附录 B — GET /scenarios/{id}/diff。",
+      "bdd_acceptance": [
+        "When GET /api/vertex/v1/scenarios/{rid}/diff Then 返回 {editedObjects:[...], createdObjects:[...], deletedObjects:[...], deltas:[...]}",
+        "Given 一个 modifyProperty edit When diff Then editedObjects 含该 obj + {property, oldValue, newValue}",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-047",
+      "name": "多 Scenario 横向并列对比",
+      "phase": 5,
+      "active": false,
+      "depends_on": [
+        "VTX-045"
+      ],
+      "dependencies": "VTX-036 Pane 表",
+      "description": "调研报告 §4.5。",
+      "bdd_acceptance": [
+        "Given Case Study 含 Baseline + 3 Scenarios When Pane 显示 Then 4 列并列：Baseline / S1 / S2 / S3",
+        "Given System Graph 上节点 When Extended Label 渲染 Then 标签显示所有 Scenarios + Baseline 多列读数",
+        "Given 用户点 Scenario 列头 When 触发 Then 该 Scenario 设为主视图（节点着色按该 Scenario 数据）",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-048",
+      "name": "Function Registry + Model Function 接口",
+      "phase": 6,
+      "active": false,
+      "depends_on": [],
+      "dependencies": "pkg/funcrepo / pkg/functions 既有",
+      "description": "Weave 已有 pkg/funcrepo / pkg/functions，本 story 验证并扩展。",
+      "bdd_acceptance": [
+        "Given Python Function（@function def predict(...)）注册 When GET /api/functions/{rid} Then 返回元数据 + I/O 签名",
+        "Given Function 仅允许 primitive scalars / Optional / Collection When 注册含 Aggregation / Notification 类型 Then 注册被拒绝 + 明确错误",
+        "Given 多版本 Function（semver） When 选 range=^1.0.0 Then 默认拉 latest 1.x 版本",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-049",
+      "name": "Function Runtime — 内置 Python 沙箱",
+      "phase": 6,
+      "active": false,
+      "depends_on": [],
+      "dependencies": "runtime/python/（FastAPI + sklearn + pydantic）",
+      "description": "调研报告 §10.3 — Python + FastAPI + Triton 或 pure FastAPI。",
+      "bdd_acceptance": [
+        "Given 配置 FUNCTION_RUNTIME_URL=http://localhost:9118 When Weave 调用 function Then HTTP POST 转发到 runtime 服务",
+        "Given runtime 用 pydantic 严格校验 input/output When input 类型不匹配 Then 返回 422 + 字段级错误",
+        "Given runtime sandbox 隔离 When function 试图读 /etc/passwd Then 禁止",
+        "runtime 仓库放 runtime/python/（FastAPI + sklearn + 示例 model）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-050",
+      "name": "Live Model Deployment Wrapper",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-048",
+        "VTX-049"
+      ],
+      "dependencies": "model_deployments 表",
+      "description": "调研报告 §3.6 — 自动生成 Model Function wrapper 包裹 Live Model Deployment。",
+      "bdd_acceptance": [
+        "Given Live Model（HTTP endpoint + I/O schema 在 model_deployments 表） When POST /api/vertex/v1/model-functions/register Then 自动生成 wrapper function",
+        "Given wrapper function 已注册 When Vertex 选 Function-backed Action 引用此 wrapper Then 可被 Scenario 调用",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-051",
+      "name": "Function-backed Action 注册",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-048"
+      ],
+      "dependencies": "pkg/oms ActionType 表 + migration 加 function_rid 字段",
+      "description": "调研报告 §3.6。",
+      "bdd_acceptance": [
+        "Given OMS 的 ActionType 表新增 function_rid TEXT 字段 + migration When ActionType 标 kind=function_backed + 关联 function rid Then 该 Action 可被 Vertex 调用",
+        "Given Function-backed Action 在 Vertex Scenario 执行 When 跑完 Then function 的 output 自动按 parameter 配置映射成对象属性 edit 写入 fork",
+        "Given 标准 Action（非 function-backed） When Vertex Scenario 执行 Then 走 Weave 既有 ActionExecutor，但写入目标改为 scenario_edits 而非 main",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-052",
+      "name": "Model Mesh（多模型链式编排）",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-051"
+      ],
+      "dependencies": "DAG 拓扑排序；worker pool",
+      "description": "调研报告 §3.3 — 上游 output 写到属性 A，下游 input 读属性 A，自动拓扑排序。",
+      "bdd_acceptance": [
+        "Given Scenario 含 model M1 (output → property A) 和 model M2 (input from property A) When Run Then 后端按拓扑序：先跑 M1 → 写 fork → 再跑 M2",
+        "Given 同层无依赖的 M2 + M3 When Run Then 并发执行",
+        "Given 循环依赖 M1→M2→M1 When Run Then 返回 400 CycleDetected",
+        "Benchmark：3 model 链路 ≤ 3 s",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-053",
+      "name": "Scenario Pane — 链路传递高亮",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-052",
+        "VTX-036"
+      ],
+      "dependencies": "Pane Table cell renderer",
+      "description": "调研报告 §3.3 末段。",
+      "bdd_acceptance": [
+        "Given Scenario Pane 表 + M1 已跑 + M2 input 从 M1 output When 渲染 Then M2 的 input 单元格背景色变蓝（impacted by chained model）",
+        "Given hover When 悬停 Then tooltip 显示 Value from M1.output (not Ontology current state)",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-054",
+      "name": "模型版本管理 UI",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-051"
+      ],
+      "dependencies": "Model registry API + dropdown",
+      "description": "调研报告 §3.4。",
+      "bdd_acceptance": [
+        "Given Vertex Scenario Add new model 对话框 When 选定 Live Model Then 显示两个下拉：model version + configuration version",
+        "Given 切换 version When Save Then scenario 的 model row 记录 {modelRid, modelVersion, configVersion}",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-055",
+      "name": "External Model（API 调用）",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-049"
+      ],
+      "dependencies": "config.allowedExternalDomains 白名单",
+      "description": "调研报告 §3.5 — 通过 Function 内 make API calls from functions 调外部 REST。",
+      "bdd_acceptance": [
+        "Given Function 用 httpClient.post(\"https://external-api/predict\") When runtime 执行 Then outbound HTTP 通过白名单（config.allowedExternalDomains）放行",
+        "Given 域名不在白名单 When 调用 Then runtime 抛 ForbiddenExternalCall",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-056",
+      "name": "LLM Model（Anthropic API）",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-049"
+      ],
+      "dependencies": "Anthropic SDK；LLM_API_KEY 环境变量",
+      "description": "调研报告 §3.5 — 通过 Palantir-provided language models 在 Function 中调用。本复刻用 Anthropic Claude API。",
+      "bdd_acceptance": [
+        "Given TS function import { invokeLLM } from '@weave/sdk' When 调用 invokeLLM({model:claude-haiku-4-5, prompt:...}) Then runtime 转发到 Anthropic API",
+        "Given API key 缺失 When 调用 Then 返回 ConfigError",
+        "Given LLM 返回非结构化文本 When function 做 JSON.parse Then 错误传播为 ModelOutputError",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-057",
+      "name": "Scenario Execution Service — 轻量 Workflow",
+      "phase": 6,
+      "active": false,
+      "depends_on": [
+        "VTX-052"
+      ],
+      "dependencies": "scenario_runs 表 (state checkpoint)；goroutine worker pool",
+      "description": "调研报告 §10.3 — 每个 Scenario Run 是 Workflow。不引入 Temporal，用轻量自研 worker pool。",
+      "bdd_acceptance": [
+        "Given Scenario 含 3 models + 2 actions When POST run Then 后端创建 workflow（goroutine 池），按 DAG 提交 activities",
+        "Given Activity 失败 + retry policy=3 When 第 1 次失败 Then 自动重试 2 次，全失败后整 workflow 标 failed",
+        "Given Workflow 持续 > 30 s When 客户端 POST cancel Then 当前 Activity 收到 ctx.Done，cleanup",
+        "Given Worker 进程崩溃 When 重启 Then workflow 从 last-checkpoint 恢复（state 存 scenario_runs 表）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-058",
+      "name": "Extended Label 配置 schema",
+      "phase": 7,
+      "active": false,
+      "depends_on": [
+        "VTX-007"
+      ],
+      "dependencies": "VTX-011 JSON Schema 校验",
+      "description": "调研报告 §2.2。",
+      "bdd_acceptance": [
+        "Given SystemGraph payload 的 layer.extendedLabels[] When 包含 property/timeSeries/measure 三类 Then 校验通过",
+        "Given kind 未知 When 保存 Then 422",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-059",
+      "name": "Property Extended Label 渲染",
+      "phase": 7,
+      "active": false,
+      "depends_on": [
+        "VTX-019",
+        "VTX-058"
+      ],
+      "dependencies": "OSS get API",
+      "description": "节点 DOM overlay 显示属性 key/value。",
+      "bdd_acceptance": [
+        "Given label {kind:property,property:onTimePct} When 节点 DOM overlay 渲染 Then 显示 onTimePct: 92%",
+        "Given 属性值缺失 When 渲染 Then 显示 onTimePct: —",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-060",
+      "name": "TimeSeries Extended Label 渲染（窗口聚合 + smoothing）",
+      "phase": 7,
+      "active": false,
+      "depends_on": [
+        "VTX-059",
+        "VTX-029",
+        "VTX-031"
+      ],
+      "dependencies": "selectedTime store；debounce",
+      "description": "调研报告 §2.2 + §5.4。",
+      "bdd_acceptance": [
+        "Given label timeSeries kind + 当前窗口 When 渲染 Then 调 /timeseries/throughput?from=...&to=...&agg=AVG + 显示 scalar",
+        "Given smoothing=5min 配置 When 计算 Then 用 5 min bucket 滑窗",
+        "Given selectedTime 移动 When debounce 100ms 后 Then 全部 timeSeries label 重算",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-061",
+      "name": "Measure / Derived Property Function Label",
+      "phase": 7,
+      "active": false,
+      "depends_on": [
+        "VTX-059",
+        "VTX-048"
+      ],
+      "dependencies": "Function invoke API",
+      "description": "调研报告 §2.2 — totalAlerts = Σ relatedRoute.alertCount 的派生函数。",
+      "bdd_acceptance": [
+        "Given label {kind:measure,measureRid:ri.functions.measure.total-alerts} When 渲染 Then 调 /api/functions/{rid}/invoke 传入对象 RID + 拿 scalar",
+        "Given measure function 涉及多跳 link When 调用 Then function 用 SDK link traversal API",
+        "Given measure 计算失败 When 渲染 Then 显示红色 ! + tooltip 错误",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-062",
+      "name": "baseline vs simulated 对比 Extended Label",
+      "phase": 7,
+      "active": false,
+      "depends_on": [
+        "VTX-045",
+        "VTX-060"
+      ],
+      "dependencies": "active scenario state",
+      "description": "调研报告 §2.2 + §4.5。",
+      "bdd_acceptance": [
+        "Given Scenario 已 Run + Baseline 已 Run When Extended Label 渲染 Then 自动显示 1500 (baseline 1000)，差值 +50% 上色（绿/红）",
+        "Given 用户切换 active scenario 列 When 触发 Then label 切换对比基线",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "VTX-063",
+      "name": "Badges（Linked Events 计数 + 自定义图标）",
+      "phase": 7,
+      "active": false,
+      "depends_on": [
+        "VTX-058",
+        "VTX-019"
+      ],
+      "dependencies": "OSS linkedObjects API",
+      "description": "调研报告 §2.1 graph schema badges 字段。",
+      "bdd_acceptance": [
+        "Given badge {kind:linkedEvents,objectType:FlightDelay} When 渲染 Then 节点角标显示 FlightDelay 数量 + 图标",
+        "Given linkedEvents 计数 > 0 When 用户 hover Then tooltip 列前 5 个 event",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
