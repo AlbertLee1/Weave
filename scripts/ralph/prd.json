@@ -506,8 +506,8 @@
         "Tests pass"
       ],
       "priority": 53,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/chainHighlight.ts。导出 ChainEdge 类型（upstreamRowRid/upstreamModelRid/upstreamModelLabel/upstreamProperty/downstreamRowRid/downstreamParamName）+ ChainHighlightMap=Record<cellKey,ChainEdge>（cellKey=`${rowRid}::${paramName}` 与 VTX-039 buildInputOutputColumnKey 同形态）+ CRUD 风格 reducer（createChainHighlightMap/addChainEdge/removeChainEdge/clearChainHighlights，全部 immutable，unknown key removeChainEdge 返回同引用，clearChainHighlights 无参数总返新空对象避免 ESLint unused-vars）+ 派生 helper（isCellChainImpacted/getCellChainEdge/buildChainTooltip/getCellChainTooltip/getCellChainClassNames）+ 常量（CHAIN_HIGHLIGHT_BG_CLASS='bg-blue-100' 避开 VTX-040 黄色/VTX-045 红绿 + CHAIN_TOOLTIP_PREFIX='Value from '/CHAIN_TOOLTIP_SUFFIX=' (not Ontology current state)' 防 spec 文案漂移）+ 工厂 buildChainEdgesFromModelSpecs（按 property name 匹配 producer→consumer，self-loop 丢弃与 VTX-052 TopologicalLayers 拒自环一致；多 producer 同 consumer input 时按 specs 顺序取第一个保稳定；空白 sourceProperty 跳过；blank rowRid/modelLabel 抛错）。dev-browser skill 不可用，Pane Table cell renderer 接入 + hover tooltip DOM 验证留到 React 组件接线 story。"
     },
     {
       "id": "VTX-054",

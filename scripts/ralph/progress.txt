@@ -673,3 +673,37 @@ Stream: B
   - **未来 wiring 时要考虑的 invoke 语义**：上游 model 写到 fork 的 property A，下游 model 读 property A —— 这意味着 ModelExecutor 在 Run 中写完 scenario_edits 后必须立即 flush 到 OSS 读路径上让下一层读到（要么 commit 后 read-through，要么 in-memory overlay）。这是本 story 范围之外的 Scenario 执行层职责；mesh 模块只保证 *layer 顺序*（M1 完成才开始 M2），不保证 *数据可见性*（那是 OSS Scenario reader 的责任）。
   - **dev-browser skill 不可用**：纯后端 story，无 UI 改动。BDD #1（拓扑序）/ #2（同层并发）/ #3（cycle 400）/ #4（benchmark）全部由 dag/runner/handler 测试覆盖，3-chain benchmark 实测 0.15s 远低于 3s 阈值。
 ---
+
+## 2026-05-15 - VTX-053
+- 实现 Scenario Pane 链路传递高亮的纯逻辑层：把 VTX-052 modelmesh 派生的 producer→consumer edge 投影到 Pane input/output cell，让 React 接线层只看 `${rowRid}::${paramName}` cell key 就能拿 className + tooltip。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/chainHighlight.ts` — 导出：
+    - 类型 `ChainEdge { upstreamRowRid, upstreamModelRid, upstreamModelLabel, upstreamProperty, downstreamRowRid, downstreamParamName }`、`ChainHighlightMap = Record<cellKey, ChainEdge>`、`ModelChainSpec { rowRid, modelRid, modelLabel, outputProperties[], inputBindings:[{paramName, sourceProperty?}] }`
+    - 常量 `CHAIN_HIGHLIGHT_BG_CLASS = 'bg-blue-100'`（避开 VTX-040 黄色 border / VTX-045 red-green delta，蓝色专属 chain 渠道）+ `CHAIN_TOOLTIP_PREFIX = 'Value from '` / `CHAIN_TOOLTIP_SUFFIX = ' (not Ontology current state)'`（spec 字面值锁死防漂移）
+    - cell key 工厂 `buildChainCellKey(rowRid, paramName)` —— 与 VTX-039 `buildInputOutputColumnKey` 同形态，复用同一个反查 source binding 的索引
+    - reducer 风格 `createChainHighlightMap(edges?)` / `addChainEdge(map, edge)` / `removeChainEdge(map, rowRid, paramName)` / `clearChainHighlights()`（全部 immutable，unknown key removeChainEdge 返回同引用；clear 不读 prior map，每次返新空对象触发 React memo 失效）
+    - 派生 helper `isCellChainImpacted` / `getCellChainEdge` / `buildChainTooltip(edge)` / `getCellChainTooltip(map, rowRid, paramName)` / `getCellChainClassNames(map, rowRid, paramName)`
+    - 工厂 `buildChainEdgesFromModelSpecs(specs)` —— 按 property name 匹配 producer→consumer：第一遍建 property→producer 索引（specs 顺序的第一个胜出，与 modelmesh sorted-edges 一致），第二遍扫 consumer inputBindings 命中即生成 edge；self-loop（同 row 既 produce 又 consume）丢弃与 VTX-052 `TopologicalLayers` 拒自环一致；空白 `sourceProperty` 跳过（标量 override / time series / measure 等非 chain 源不参与）；blank `rowRid` / `modelLabel` 抛错。
+  - `web/src/features/vertex/scenarioPane/chainHighlight.test.ts` — 33 个 BDD 测试覆盖：
+    - cell key 3 个（compose / blank row / blank param 抛错）
+    - 工厂 3 个（empty / edges 索引 / duplicate downstream cell last-wins）
+    - addChainEdge / removeChainEdge / clear 6 个（immutable / replace / unknown 同引用 / clear 返新空对象 / clear 无入参亦可）
+    - isCellChainImpacted 3 个 + getCellChainEdge 2 个
+    - tooltip 4 个（BDD 字面值 / unrelated null / buildChainTooltip 用常量 / 常量字面值锁死）
+    - className 3 个（蓝色 / 空 / 常量含 'blue'）
+    - buildChainEdgesFromModelSpecs 8 个（1-edge / 3-chain 2-edge / 无 overlap / self-loop / 缺 sourceProperty 跳 / 多 producer first-wins / blank rowRid 抛 / blank modelLabel 抛）
+    - 1 个 end-to-end happy path（specs → edges → map → impacted=true + 蓝色 + BDD 字面 tooltip；同 row 另一参数 impacted=false + className=`''` + tooltip=null）
+- 质量检查：
+  - `npx vitest run src/features/vertex/scenarioPane/chainHighlight.test.ts`：33/33 绿。
+  - `npx vitest run src/features/vertex/`：43 files / 942 tests 全绿。
+  - `npx vitest run`（全量）：217 files / 2273 tests 全绿，0 回归（含已知 flaky 的 `admin-removed.test.tsx`，单批跑稳定通过）。
+  - `npx tsc --noEmit`：0 错误（与本 stream 之前的 pre-existing 两处错误同状态：仓库根 `sdk/typescript/src/vertex.ts` / `src/vertex/SdkVertexClient.test.ts` 不在 web/ tsconfig include 中，单独跑 web/ tsc 全绿）。
+  - `npx eslint chainHighlight.ts chainHighlight.test.ts`：0 warning（修正过一次 unused-vars：`clearChainHighlights(_map)` 因 ESLint flat config 不识别 `_param` 约定改为无参数版本，测试同步改 `clearChainHighlights()`，与 VTX-037 createDialogs.ts 同一坑）。
+- **Learnings for future iterations:**
+  - **chain edge 在前端不重新发明 DAG**：本模块没有再做一遍 Kahn / cycle 检测，因为 VTX-052 modelmesh 已经在后端做了拓扑规划。前端只接收 backend mesh plan + Scenario row 配置后派生 cell 级 edge。如果 backend mesh 返回的 plan 已含 producer-consumer pairs，React 接线层直接 `edges.map(p => ({...}))` 喂进 `createChainHighlightMap`，绕开 `buildChainEdgesFromModelSpecs`。本工厂存在的意义是「前端在 mesh API 落地前先用 Pane row 配置自检索 chain」—— 接线 backend mesh API 时可能整个 helper 退化为过渡 fallback。
+  - **cellKey 形态强制与 VTX-039 一致**：`${rowRid}::${paramName}` 让 Pane cell renderer 一个 key 串两个语义（source binding + chain edge）。如果未来要支持 input/output 之外的列（e.g. baseline-compare 列），cellKey 第三段需要扩展，本模块的 `buildChainCellKey` 也要同步加签名 —— 但 chain 是 row × param 的属性，不依赖 column kind，目前两段足够。
+  - **first-producer-wins 而非抛 ambiguity 错**：BDD #1 没有说 ambiguous producer 怎么办。后端 modelmesh `BuildDependencyGraph` 在多个 model 写同一 property 时让 cycle/edge 都建出来，由 TopologicalLayers 决定（多个 model 都写 property P 不是 cycle，但 evaluation order 不确定）。前端高亮选择「按 specs 顺序取第一个」让单测可重现 + UI 不闪烁；React 接线层若要警告冲突，应在 specs 构造前做 dedup（这不是 chainHighlight 的职责）。
+  - **self-loop 必须显式丢弃**：模型 M1 同时声明 outputProperties=[p] + inputBindings=[{sourceProperty:'p'}] 的奇异 case 会让 cell `${m1Row}::p` 自指。本模块 `if (producer.rowRid === spec.rowRid) continue` 显式 skip，与 VTX-052 `Given_SelfLoop_When_Sort_Then_ErrCycleDetected` 的拒绝姿态一致 —— Pane 高亮上自环 cell 意味着「用我自己的输出当输入」，那是 dataflow 错误而不是 chain 影响。
+  - **clearChainHighlights 无参数**：ESLint flat config 的 unused-vars 是项目级硬约束（VTX-037 progress 已记录），不能用 `_state` 类型的 leading-underscore 约定。语义上「清空 map」也不需要读 prior state，所以索性 `clearChainHighlights(): ChainHighlightMap { return {}; }` —— 接线层直接 `setMap(clearChainHighlights())` 即可触发 React 重渲。
+  - **dev-browser skill 不可用**：BDD #1（背景色变蓝）/ #2（hover tooltip）的 DOM 验证留到 React Scenario Pane Table cell renderer 接线 story —— 本 story 只保证 `getCellChainClassNames` + `getCellChainTooltip` 返字面值正确，React 层把 className 注入 `<td>` + tooltip 注入 `title=` 或 Headless UI Tooltip 即落地。
+---
