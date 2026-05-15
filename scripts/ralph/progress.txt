@@ -147,3 +147,28 @@ Stream: B
   - immutable scenario 的视觉差异（灰色列头 / 锁图标）由 React 层根据 `scenario.immutable` 自行装饰，本模块的 `getColumnHeaders` 只回 name 字面值；VTX-037 的"Scenario is immutable. Duplicate to modify."提示走同样路径。
   - dev-browser skill 不可用 — TanStack Table 接线 + + Add Case Study 对话框浏览器验证留到 React 组件接线 story。
 ---
+
+## 2026-05-15 - VTX-037
+- 实现 Create Case Study / Create Scenario 对话框的纯逻辑层：双对话框 reducer + 名称校验 + POST 请求构造器 + immutable Scenario 编辑守卫。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/createDialogs.ts` — 导出：
+    - 类型 `CreateCaseStudyDialogState { open, name, submitting, error }` / `CreateScenarioDialogState { open, caseStudyRid, name, submitting, error }` / `ApiRequest { method, path, body }` / `DialogNameValidation` / `ScenarioLike`
+    - 工厂 + reducer：`createCaseStudyDialogState` / `openCreateCaseStudyDialog`（无参；总是返回 blank open）/ `closeCreateCaseStudyDialog`（无参）/ `setCreateCaseStudyName` / `setCreateCaseStudySubmitting`（true 顺手清 error）/ `setCreateCaseStudyError`（顺手关 submitting）。Scenario 版同理，`openCreateScenarioDialog(caseStudyRid)` 强制 rid 非空。
+    - `validateDialogName(name)` — trim 后 1..128，blank → `{valid:false, reason:'required'}`，超长 → `{valid:false, reason:'too_long'}`。`DIALOG_NAME_MAX_LENGTH=128` 导出常量。
+    - `buildCreateCaseStudyRequest({ name, ontologyRid })` → `POST /api/vertex/v1/case-studies` body `{ name, ontologyRid }`。`buildCreateScenarioRequest({ caseStudyRid, name, parentOntologyCommit })` → `POST /api/vertex/v1/case-studies/${encodeURIComponent(rid)}/scenarios` body `{ name, parentOntologyCommit }`。两者都 trim name 并 require 全字段非空，否则抛 `Error: <field> is required`。
+    - `IMMUTABLE_SCENARIO_MESSAGE = 'Scenario is immutable. Duplicate to modify.'` + `isScenarioImmutable(scenario)` + `assertScenarioMutable(scenario)`（throw `ScenarioImmutableError` 子类，error.scenarioRid 暴露便于 React 层定位行）。
+  - `web/src/features/vertex/scenarioPane/createDialogs.test.ts` — 38 个 BDD 测试覆盖：CaseStudy dialog（factory / open / close / setName / setSubmitting clears error / setSubmitting false preserves error / setError clears submitting / setError null clears）、Scenario dialog（factory / open with rid / empty rid throws / 重新 open 清空残留 / close / setName 保留 caseStudyRid / setSubmitting / setError）、validateDialogName（blank / whitespace / normal / trimmed / too long / exact max）、buildCreateCaseStudyRequest（base / trim name / blank name throws / blank ontologyRid throws）、buildCreateScenarioRequest（base / 特殊字符 encodeURIComponent / trim name / blank rid/name/parentOntologyCommit throws）、immutable guard（false / undefined / true / mutable-no-throw / immutable-throws-ScenarioImmutableError 携带 scenarioRid + IMMUTABLE_SCENARIO_MESSAGE 字面值核对）。
+- 质量检查：
+  - vitest（createDialogs）：38/38 绿。
+  - vitest 子集（src/features/vertex）：33 files / 405 tests 全绿（+1 file / +38 tests）。
+  - tsc（web/）：exit 0，全绿（pre-existing 错误均已被其他 commit 清掉，仓库目前 0 错误）。
+  - eslint（createDialogs.ts + createDialogs.test.ts）：0 warning。
+- **Learnings for future iterations:**
+  - 对话框 reducer 选择"open/close 不读 prior state"的设计：之前我考虑过传入 prior state 让 reducer 决定，但 ESLint flat config 不识别 `_state` 这种 leading-underscore 约定（项目 `eslint.config.js` 没配 `argsIgnorePattern`），unused-vars 会硬性报错；同时打开对话框语义上确实不依赖 prior state（永远 reset），所以索性去掉参数。Scenario 版的 `caseStudyRid` 因为是必需信息保留入参。这与 sibling `scenarioPane.ts` 的 `togglePane(state)` 风格略不同 —— 那些 reducer 真的读 prior state（toggle / set 都依赖当前值），不是参数约定的差异。
+  - BDD spec 给的 endpoint `POST /api/vertex/v1/case-studies/{rid}/scenarios` 与 `sdk/typescript/src/vertex.ts` 现有的 `POST /api/vertex/v1/scenarios`（caseStudyRid 在 body）有歧义。VTX-037 选了 spec 的嵌套路径形式，理由：spec 是 source of truth，且嵌套路径更 RESTful，React 路由层也可以用 `/case-studies/:rid/scenarios/new` deeplink 反向定位。后端实现 story（dependencies 字段标的 `POST /case-studies + /scenarios endpoints`）需要按这个路径起 chi route。SDK 是否同步改路径留给 SDK story 决定。
+  - `requireNonBlank(value, fieldName)` helper 在本模块多次复用（5 处），但又不值得跨模块提取 —— 跟 `openLinks.ts` 的 `requireNonEmpty` 接近但语义不同（前者 trim 后非空，后者 length>0 即可），名称冲突的代价比微小重复高。等第三个模块出现再考虑共享。
+  - `ScenarioImmutableError` 自定义 Error 子类把 `scenarioRid` 挂在 error object 上，让 React 错误边界 / toast 可以同时显示文字 + 跳到对应行 —— 单字符串 message 不够。`error.name = 'ScenarioImmutableError'` 给跨 frame / 跨 worker 序列化时的类型判别留个 fallback（instanceof 在 worker 边界会失效）。
+  - `ApiRequest.body` 故意写成 `Record<string, string>` 而非 `unknown` —— 让调用方 `fetch(req.path, { body: JSON.stringify(req.body) })` 时不需要 narrow；同时保证 builder 输出不出现 `null`/`undefined`/嵌套对象（因为 requireNonBlank 已经把空都过滤了）。如果未来要加 `tags` / `metadata` 等可选字段，再放宽为 `Record<string, string | string[]>` 或抽 generic。
+  - `Window.open() not implemented` 是 vitest happy-dom 在跑 contextMenu 测试时打印的环境警告，不算 fail；本 story 没接触 openLinks，但跑 vertex 子集时仍可见。是 happy-dom 限制，已知。
+  - dev-browser skill 不可用 — Modal 组件接线、name 输入校验提示 toast、immutable scenario tooltip 浏览器验证全部留到 React 组件接线 story（与 VTX-036 同步进行更经济）。
+---

@@ -160,8 +160,8 @@
         "Tests pass"
       ],
       "priority": 37,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/createDialogs.ts。导出 CreateCaseStudyDialogState / CreateScenarioDialogState reducer（open/close/setName/setSubmitting/setError；open* 不读 prior state 永远返回 blank；setSubmitting(true) 顺手清 error；setError 顺手关 submitting）+ validateDialogName（trim 后 1..128，blank 给 'required'，超长给 'too_long'）+ buildCreateCaseStudyRequest（POST /api/vertex/v1/case-studies body=name+ontologyRid）+ buildCreateScenarioRequest（POST /api/vertex/v1/case-studies/{rid}/scenarios，rid 走 encodeURIComponent；body=name+parentOntologyCommit）+ IMMUTABLE_SCENARIO_MESSAGE 常量 + isScenarioImmutable / assertScenarioMutable（后者抛 ScenarioImmutableError，message 即 IMMUTABLE_SCENARIO_MESSAGE，error.scenarioRid 暴露便于 React 层定位行）。openCreateScenarioDialog 强制非空 rid。所有 builder 强制非空字段并 trim name；body 类型 Record<string,string> 让 fetch body 转 JSON 时无 nullable surprise。dev-browser skill 不可用，对话框 React 接线 + new-tab 行为浏览器验证留到组件 story。"
     },
     {
       "id": "VTX-038",
