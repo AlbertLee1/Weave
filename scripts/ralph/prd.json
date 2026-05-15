@@ -656,8 +656,8 @@
         "Tests pass"
       ],
       "priority": 60,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/extendedLabels/timeSeriesLabel.ts。导出 TIMESERIES_LABEL_DEBOUNCE_MS=100 + ERROR_PLACEHOLDER='!' + TimeSeriesLabelStatus union 'present'|'missing'|'error' + TimeSeriesExtendedLabelSpec（kind/timeSeriesRid/displayName? 与 VTX-058 wire schema 对齐）+ isTimeSeriesExtendedLabel + buildTimeSeriesLabelRequest（OSS time-series scalar endpoint URL builder，对齐 pkg/oss/handlers_vertex_timeseries.go /api/v2/ontologies/{o}/objects/{ot}/{pk}/timeseries/{name}?from=&to=&agg=&bucket=；agg 大写映射 AVG/SUM/MAX/MIN/LAST/COUNT 与 pkg/timeseries Agg* 常量一致；smoothingMs > 0 → bucket=<ms>ms 走 Go time.ParseDuration 解析；ontology/objectType/primaryKey/timeSeriesRid 全部 encodeURIComponent；from/to 必须 finite + to ≥ from；非 timeSeries kind / 空 rid 抛错）+ computeTimeSeriesLabelScalar（reuse VTX-042 smoothSeriesByBucket + VTX-065 aggregateAtTime；smoothingMs > 0 才桶化避免 raw 副本浪费）+ renderTimeSeriesExtendedLabel（scalar → {status, labelName, valueText, text, errorMessage?}：error 选项优先级 > missing > present；NaN/Infinity 视为 missing；displayName fallback 到 timeSeriesRid；formatValue 返空字符串视为 missing；missingPlaceholder 默认 '—' / errorPlaceholder 默认 '!'）+ createTimeSeriesLabelDebouncer（默认 100ms 防抖，形态同 VTX-031 makeDebouncedNotifier 但默认 delay 锁定 TIMESERIES_LABEL_DEBOUNCE_MS，让接线层一处定义全局生效；cancel() 清 timer + pending）。47 tests pass，vertex 子集 46 files / 1076 tests 全绿；tsc / eslint 干净。dev-browser skill 不可用，节点 DOM overlay 渲染 + selectedTime 拖动 debounce 重算 + error tooltip 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-061",
@@ -679,8 +679,8 @@
         "Tests pass"
       ],
       "priority": 61,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/extendedLabels/measureLabel.ts。导出 MEASURE_LABEL_DEFAULT_INPUT_PARAM='object' + MeasureLabelStatus 'present'|'missing'|'error' + MeasureExtendedLabelSpec（kind/measureRid 对齐 VTX-058 wire schema；displayName 渲染时增强）+ isMeasureExtendedLabel + buildMeasureLabelRequest（POST /api/v2/ontologies/{o}/functions/{rid}/execute，对齐 pkg/oms/handlers_function.go ExecuteFunction；body { parameters: { object: <objectRid> } }，inputParamName 可覆盖；ontology/measureRid 走 encodeURIComponent，objectRid 是 JSON body 值不编码；多跳 link 对前端 opaque —— payload 只含 object RID，function 自己用 SDK link traversal）+ renderMeasureExtendedLabel（scalar → {status, labelName, valueText, text, errorMessage?}：error 选项优先级 > missing > present；NaN/±Infinity 视为 missing；displayName fallback 到 measureRid；formatValue 返空字符串视为 missing；missingPlaceholder 默认 '—' / errorPlaceholder 默认 '!'；空字符串 error 视为无错误回退到 scalar 渲染）。32 tests pass，extendedLabels 三模块共 117 tests 全绿，vertex 子集 47 files / 1108 tests 全绿；tsc / eslint 干净。dev-browser skill 不可用，节点 DOM overlay 渲染 + 错误 tooltip 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-062",

@@ -884,3 +884,57 @@ Stream: B
   - **`renderPropertyExtendedLabel` 双重 throw（kind 错 / property 错）是 assertion**：正常 React 接线层先 `if (!isPropertyExtendedLabel(label)) continue;` 再调 render，永远走不到 throw。两处 throw 用于 dev-time 兜底（防御 SystemGraph payload 反序列化错位 / TypeScript 类型断言绕过）。生产 React 层应当 `try/catch` 包裹整个 label 列表渲染 + 单 label 失败回落 placeholder + Sentry 上报，避免一条坏 label 整片节点 overlay 黑屏。
   - **dev-browser skill 不可用**：BDD #3 "Verify in browser" 留到 React 节点 DOM overlay 接线 story（SystemGraph 节点 div 内 `extendedLabels.map(label => <div data-status={result.status}>{result.text}</div>)`，CSS `[data-status="missing"] { color: #9ca3af; font-style: italic; }`）。本 story 单测覆盖 `text` 字面值 + `status` 状态切换，浏览器验证 dropdown 不在本 story 范围。
 ---
+
+## 2026-05-15 - VTX-060
+- 实现 TimeSeries Extended Label 渲染的纯逻辑层（URL builder + 客户端聚合 + render + selectedTime 防抖）。
+- 新增文件：
+  - `web/src/features/vertex/extendedLabels/timeSeriesLabel.ts` — 导出：
+    - 常量 `TIMESERIES_LABEL_DEBOUNCE_MS=100` / `ERROR_PLACEHOLDER='!'`；re-export `MISSING_VALUE_PLACEHOLDER`
+    - 类型 `TimeSeriesLabelStatus`（'present'|'missing'|'error'）/ `TimeSeriesExtendedLabelSpec`（kind/timeSeriesRid/displayName? — 与 VTX-058 wire schema 对齐）/ `TimeSeriesLabelRequestContext`（ontology/objectType/primaryKey）/ `TimeSeriesLabelWindow`（from/to/agg/smoothingMs?）/ `TimeSeriesLabelRequest`（method/path）/ `ComputeTimeSeriesLabelScalarParams` / `TimeSeriesLabelRenderResult`（含可选 errorMessage）/ `RenderTimeSeriesExtendedLabelOptions`（formatValue/missingPlaceholder/errorPlaceholder/error）
+    - `isTimeSeriesExtendedLabel(label)` — kind 判定
+    - `buildTimeSeriesLabelRequest(spec, ctx, window)` — `/api/v2/ontologies/{o}/objects/{ot}/{pk}/timeseries/{name}?from=<ms>&to=<ms>&agg=AVG[&bucket=<ms>ms]`；agg 大写映射 `AGG_TO_BACKEND`（avg→AVG/sum→SUM/max→MAX/min→MIN/last→LAST/count→COUNT）；smoothingMs>0 → bucket=<ms>ms（Go time.ParseDuration 接受 "300000ms"）；四段路径全部 encodeURIComponent；from/to 必须 finite 且 to≥from；非 timeSeries kind / 空字段抛错
+    - `computeTimeSeriesLabelScalar(series, params)` — 客户端 series → scalar；smoothingMs>0 才桶化（reuse VTX-042 `smoothSeriesByBucket`）再调 VTX-065 `aggregateAtTime`，否则直接对 raw 副本聚合
+    - `renderTimeSeriesExtendedLabel(spec, scalar, options?)` — error > missing > present 三态决策：options.error 非空 → status='error' valueText='!' errorMessage 透传；scalar null/NaN/Infinity → status='missing' valueText='—'；formatValue 返空字符串视为 missing 避免 'throughput: ' 视觉断裂；displayName 留空/纯空白 fallback 到 timeSeriesRid；missingPlaceholder/errorPlaceholder 可覆盖
+    - `createTimeSeriesLabelDebouncer(callback, delayMs?)` — 形态同 VTX-031 `makeDebouncedNotifier` 但默认 delay 锁定 `TIMESERIES_LABEL_DEBOUNCE_MS`；连续 notify 用最后一次 selectedTime；cancel() 清 timer + pending
+  - `web/src/features/vertex/extendedLabels/timeSeriesLabel.test.ts` — 47 个 BDD 测试覆盖：isTimeSeriesExtendedLabel（4）/ buildTimeSeriesLabelRequest BDD #1（14：路径/agg 大写映射两枚/smoothingMs→bucket=<ms>ms 三态/特殊字符 encode/from-to 毫秒数字/必填校验四枚/window 退化/非 kind）/ computeTimeSeriesLabelScalar BDD #2（8：窗内 avg/空 series/越窗/smoothing=5min bucket avg/smoothing=0 raw sum 区分/undefined raw sum/max/count）/ renderTimeSeriesExtendedLabel（16：present/null/NaN/Infinity/zero/negative/displayName/blank displayName/formatValue/formatter 返空 → missing/missing placeholder 覆盖/error 三态/errorPlaceholder 覆盖/非 kind/空 rid）/ createTimeSeriesLabelDebouncer BDD #3（5：常量值 100ms/未到时间不触发/到时间用最新值/cancel/自定义 delay）。
+- 质量检查：
+  - vitest（timeSeriesLabel）：47/47 绿。
+  - vitest 子集（src/features/vertex）：46 files / 1076 tests 全绿。
+  - tsc（web/）：0 错误。
+  - eslint（extendedLabels/）：0 warning。
+- **Learnings for future iterations:**
+  - **OSS 时间序列端点 URL 形态**：`/api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}/timeseries/{seriesName}?from=&to=&agg=&bucket=&scenarioId=`（pkg/oss/handlers_vertex_timeseries.go）。前端写时序请求一律走这个模板，不要按 BDD 字面 `/timeseries/throughput?...`（spec 缩写省了节点上下文）；scenarioId 是可选的 fork overlay 触发参数（VTX-041 already adds it），React 接线层根据 active scenario state 注入。
+  - **agg 大小写映射**：前端纯逻辑层用 `AggregationMethod = 'avg'|'sum'|'max'|'min'|'last'|'count'`（VTX-065 已定）；URL query 必须大写（pkg/timeseries 用 `AggAvg='AVG'` 等 const）。任何时序 URL builder 都要做 lower→upper 映射，否则 backend `parseAggParam` 报 400。本模块 `AGG_TO_BACKEND` 是规范权威；将来加 ratio/percentile 等 agg 在两端同步加。
+  - **bucket 用毫秒数字 + 'ms' 后缀**：Go `time.ParseDuration` 接受 "300000ms"/"5m"/"30s" 等单位。前端不假设 "5min → '5m'" 这种人类可读单位（容易引入小数 round 误差，且 i18n 难做），直接 `${ms}ms` 让 backend 算精确毫秒。
+  - **smoothing/aggregateAtTime 复用 VTX-042/065**：节点 sparkline / Pane 单元格 / Extended Label 三处用同一份 `smoothSeriesByBucket` + `aggregateAtTime`。新增 Extended Label kind（measure、ratio）也走这套，不要在 extendedLabels/ 里自起 smoothing 算法。
+  - **error 状态优先级 > missing > present**：fetch 失败时即使 cache 里还有 stale scalar 也强制 status='error'，valueText='!'，避免显示陈旧数据让用户误以为成功。React 接线层 `data-status="error"` 用红色加粗 + `title={errorMessage}` 提供 tooltip；这与 VTX-061 measure label 的失败态共用渲染层（VTX-061 的红色 `!` + tooltip 错误 BDD 已锁定）。
+  - **debouncer 默认 delay 用模块常量**：`TIMESERIES_LABEL_DEBOUNCE_MS=100` 暴露 export，让 React 接线层 / 单测 / 文档共享同一个数字；不要在调用方写 `createTimeSeriesLabelDebouncer(cb, 100)` 把魔数复制开。如果未来用户体验调优要改 80ms / 120ms 只动一处。`makeDebouncedNotifier`（VTX-031）形态完全一致 —— 本模块刻意不重导出 makeDebouncedNotifier 而是另起 createTimeSeriesLabelDebouncer，原因是默认 delay 不同（前者无默认，后者锁 100）；如果未来 timeSelection 也要锁默认 delay，可以重构 makeDebouncedNotifier 接受可选默认参数再 alias。
+  - **wire schema 不带 agg/smoothingMs**：pkg/vertex/graphsvc.ExtendedLabel 只有 `kind/property/timeSeriesRid/measureRid`。agg / smoothingMs 是渲染期参数（来自 TimeSelection store + TimeSeries property metadata）。本模块的 TimeSeriesLabelWindow 把这俩与 from/to 一起带，让接线层一次性传齐；不要试图扩 wire schema 把这些塞 backend（per-user / per-view 偏好不该入持久化）。
+  - **renderTimeSeriesExtendedLabel 不接受非 number scalar**：与 propertyLabel 不同（property 可能是 string/boolean/object），time series scalar 一律 number 或 null —— Number.isFinite 是唯一 present 判定。如果未来要支持 categorical time series（如 status flag 'up'/'down'），新开一个 categoricalTimeSeriesLabel 模块或扩 renderTimeSeriesExtendedLabel 接受 union scalar，不要把 string scalar 偷塞进 number 路径（破坏 NaN/Infinity 检测）。
+  - **dev-browser skill 不可用**：BDD #1 "调 /timeseries/throughput?..." 的实际 fetch 行为 + BDD #2 "用 5 min bucket 滑窗" 的 sparkline 视觉验证 + BDD #3 selectedTime 拖动 100ms 后所有 timeSeries label 重算的浏览器验证留到 React 接线 story。本 story 单测覆盖 URL 字面值 + smoothing 数值 + debounce 时序（vi.useFakeTimers + vi.advanceTimersByTime），React 节点 overlay DOM 接线 + 真实 fetch / EventSource 集成 dropdown 不在本 story 范围。
+---
+
+## 2026-05-15 - VTX-061
+- 实现 Measure / Derived Property Function Label 渲染的纯逻辑层（function execute URL/body builder + 三态 render）。
+- 新增文件：
+  - `web/src/features/vertex/extendedLabels/measureLabel.ts` — 导出：
+    - 常量 `MEASURE_LABEL_DEFAULT_INPUT_PARAM='object'`；re-export `MISSING_VALUE_PLACEHOLDER` / `ERROR_PLACEHOLDER`
+    - 类型 `MeasureLabelStatus`（'present'|'missing'|'error'）/ `MeasureExtendedLabelSpec`（kind/measureRid/displayName? — 与 VTX-058 wire schema 对齐）/ `MeasureLabelRequestContext`（ontology/objectRid）/ `BuildMeasureLabelRequestOptions`（inputParamName?）/ `MeasureLabelRequest`（method/path/body）/ `MeasureLabelRenderResult`（含可选 errorMessage）/ `RenderMeasureExtendedLabelOptions`（formatValue/missingPlaceholder/errorPlaceholder/error）
+    - `isMeasureExtendedLabel(label)` — kind 判定
+    - `buildMeasureLabelRequest(spec, ctx, options?)` — POST `/api/v2/ontologies/{o}/functions/{rid}/execute`（对齐 `pkg/oms/handlers_function.go` ExecuteFunction 实际 wire path）；body `{ parameters: { [inputParamName]: objectRid } }`；inputParamName 默认 `object`，可覆盖；ontology/measureRid 走 `encodeURIComponent`；**objectRid 放 JSON body 不 URL encode**（路径段 vs body 值的契约不同）；非 measure kind / 空 measureRid / 空 ontology / 空 objectRid / 空白 inputParamName 抛错
+    - `renderMeasureExtendedLabel(spec, scalar, options?)` — error > missing > present 三态决策：options.error 非空 → status='error' valueText='!' errorMessage 透传；scalar null/NaN/±Infinity → status='missing' valueText='—'；formatValue 返空字符串视为 missing；displayName 留空/纯空白 fallback 到 measureRid；missingPlaceholder/errorPlaceholder 可覆盖；**空字符串 error 视为无错误回退到 scalar**（避免接线层用 '' 默认值误触 error 态）
+  - `web/src/features/vertex/extendedLabels/measureLabel.test.ts` — 32 个 BDD 测试覆盖：isMeasureExtendedLabel（4）/ buildMeasureLabelRequest BDD #1+#2（11：execute 路径/body 含 object RID/默认参数名常量/inputParamName 覆盖/多跳 link opaque 校验/特殊字符 URL encode + body 不 encode/必填校验四枚/非 kind）/ renderMeasureExtendedLabel BDD #3（17：present/null/NaN/Infinity/zero/negative/displayName/blank displayName/formatValue/formatter 返空 → missing/missing placeholder 覆盖/error 三态（验 errorMessage + ERROR_PLACEHOLDER 常量值）/error 覆盖 present scalar/errorPlaceholder 覆盖/**空字符串 error 视为无错误**/非 kind/空 rid）。
+- 质量检查：
+  - vitest（measureLabel）：32/32 绿。
+  - vitest（extendedLabels/ 三模块共）：117/117 绿。
+  - vitest 子集（src/features/vertex）：47 files / 1108 tests 全绿。
+  - tsc（web/）：0 错误。
+  - eslint（measureLabel + test）：0 warning。
+- **Learnings for future iterations:**
+  - **PRD 字面 `/api/functions/{rid}/invoke` 是 spec 缩写**：实际 wire path 是 OMS 现有 ExecuteFunction 端点 `/api/v2/ontologies/{ontology}/functions/{functionRid}/execute`（pkg/oms/handlers_function.go:402），body 形态 `{ parameters: { ... } }`。前端 measure label 直接复用这套契约，不需要新开 backend 端点。任何 PRD 提到 "调 /api/foo/{x}/bar" 都先 grep pkg/oms/handlers_*.go 找现有 wire path，不要按字面 hardcode。
+  - **objectRid 是 body 值，不 URL encode**：路径段（ontology/measureRid）走 `encodeURIComponent`，JSON body 的 RID 原样传 —— 编码 body 值会把 `#`、`/` 变成 `%23`、`%2F`，function 端解码后实际是原始 RID，但中间任何日志 / 审计行会看到 percent-encoded 串视觉污染。这条规则对其他 RID-as-input function（Action、scenario apply）通用。
+  - **measure function 多跳 link traversal 对前端 opaque**：前端 payload 只携带 object RID，function 内部用 Python runtime SDK 的 link traversal API（VTX-049 已落地 weave_runtime；具体 SDK 接口在后续 story）。本模块测试用 "Object.keys(body.parameters) 只含 object 名 + JSON.stringify(body) 不含 link/traversal/hop 字眼" 来 BDD lock 这条契约。未来 measure function 演进（如带 link policy 参数）时，**用 options.extraParameters** 而不是改 spec 字段，避免污染 wire schema。
+  - **inputParamName 是前端约定，不在 wire schema**：VTX-058 ExtendedLabel 只锁 `kind/measureRid` —— function signature 后端可见但前端拿不到。默认 `object` 是约定（与 Python runtime register_function input_model 的常用字段名一致）；接线层若已知某个 measure 用别的参数名（如 `airport`、`route`）从 measure binding metadata 取后传 inputParamName。后续若要批量解决"参数名不一致"问题，可在 OMS 给 measure type 加 `inputParameter` 字段（per-measure metadata），但目前用前端 override 足够。
+  - **三态渲染共用 ERROR_PLACEHOLDER + MISSING_VALUE_PLACEHOLDER**：VTX-059 property（'present'|'missing'）+ VTX-060 timeSeries（加 'error'）+ VTX-061 measure（加 'error'）共用同一组 placeholder 常量，让 React 节点 overlay 渲染 `data-status="${status}"` + 一套 CSS 就够。新加 Extended Label kind（如 ratio、formula）也走这套字段名（status/labelName/valueText/text/errorMessage?），别为单一 kind 起新字段。**空字符串 error 视为无错误** 是接线友好性 —— React `useQuery` 错误对象 `.message ?? ''` 不会误触 error 态。
+  - **dev-browser skill 不可用**：BDD #1 "实际 fetch /api/functions/{rid}/invoke 拿 scalar" 的网络层验证 + BDD #2 "function 用 SDK link traversal 跨多跳" 的端到端验证 + BDD #3 "红色 !" + tooltip 错误的视觉验证 留到 React 接线 story（measure label 的 fetch 实现 + uPlot label 节点 overlay 接线 + Function metadata 解析）。本 story 仅交付纯逻辑：URL 字面路径 / body 形态 / scalar 三态渲染（vi 不需要 useFakeTimers 因 measure label 不像 timeSeries 那样有 debounce —— scalar 由 React Query 拉，selectedTime 不直接驱动 measure 重算）。
+---
