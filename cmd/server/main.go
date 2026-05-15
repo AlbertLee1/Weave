@@ -76,6 +76,7 @@ import (
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
 	"github.com/liyang/weave/pkg/userprefs"
+	"github.com/liyang/weave/pkg/vertex/controlpanel"
 	"github.com/liyang/weave/pkg/vertex/graphsvc"
 	"github.com/liyang/weave/pkg/watches"
 	"github.com/nats-io/nats.go"
@@ -1055,6 +1056,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		}
 		graphHandler.SetShareLinkStore(shareLinks)
 		graphHandler.RegisterRoutes(api)
+
+		// VTX-015: Vertex Control Panel — admin-tunable runtime knobs
+		// (default window, polling interval, search-around limits, missing-
+		// data warning threshold). PG-backed store when a pool is available;
+		// otherwise an in-memory store so the routes stay discoverable in
+		// degraded-mode boots. Get-on-empty returns DefaultConfig either way.
+		var controlPanelStore controlpanel.Store = controlpanel.NewMemStore()
+		if deps.PGPool != nil {
+			controlPanelStore = controlpanel.NewPGStore(deps.PGPool)
+		}
+		controlpanel.NewHandler(controlPanelStore).RegisterRoutes(api)
 
 		// OntologyTransaction experimental edits endpoint (US-041).
 		// Gated behind ?preview=true — only "append edits" is exposed.

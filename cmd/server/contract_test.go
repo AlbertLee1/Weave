@@ -165,6 +165,12 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	// the VTX-009 routes.
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/widget"}:       true,
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/widget/save"}: true,
+	// VTX-015: Vertex Control Panel — admin-tunable runtime knobs (default
+	// window, polling interval, search-around limits, missing-data warning
+	// threshold). OpenAPI entries follow alongside the rest of the VTX-009
+	// schemas; same allow-list mode as the other VTX-* admin endpoints.
+	{Method: "GET", Path: "/api/vertex/v1/admin/control-panel"}: true,
+	{Method: "PUT", Path: "/api/vertex/v1/admin/control-panel"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the

@@ -20,6 +20,9 @@ Stream: A
 - **There is an orphan `pkg/vertex/sharelinks` package** with pure helpers (`EvaluateAccess`, `MaskGraphPayload`, `GenerateToken`) that pre-dates VTX-009's `layers[]` payload shape — it operates on `nodes[]` and uses `•••` as the mask token. Do NOT consume it for new VTX work; the BDD wants ASCII `***` masking on `layers[*].properties`. The graphsvc `maskLayerPropertyValues` helper is the canonical one.
 - **IDOR guard on "override target" endpoints**: when a Save / Copy / Move action accepts a `overrideXxxRid` (or similar) field, enforce ACL on the **target** rid, not the source path rid. Otherwise a caller with read on A can mutate B by routing through A. See `pkg/vertex/graphsvc/handler.go::saveWidget` for the canonical example.
 - **Compact / projected payload variants**: express as a pure `<base>CompactPayload(raw json.RawMessage)` projection + thin handler that runs the projection on the existing repo.Get path. Reuses ACL / error / shape logic; the projection function falls through to the original bytes on decode failure so opaque fixtures still flow.
+- **Admin-only PUT endpoints**: inline the role check in the handler with `isAdmin(auth.UserFromContext(r.Context()))` returning 403 PERMISSION_DENIED. Nil user (anonymous) is never admin — collapse "missing user" into "not authorized" so the surface keeps mirroring the rest of the vertex namespace (which tolerates anonymous reads for legacy fixtures, but never anonymous writes).
+- **Singleton config tables**: `id INTEGER PRIMARY KEY CHECK (id = 1)` + `INSERT ... ON CONFLICT (id) DO UPDATE` is the project idiom for one-row admin-knob tables. Read returns `pgx.ErrNoRows` on a fresh installation; the store maps that to DefaultConfig so the bootstrap state and the post-PUT state share the same Get-shape.
+- **Partial-update PUT bodies**: declare the request struct with `*<T>` pointer fields so `nil` means "field omitted" and `&zero` means "explicitly set to zero". The handler merges the request onto a freshly-read current Config, then writes the merged value back through Set — no separate "patch" code path.
 ---
 
 ## Fri May 15 ~10:02 CST 2026 - VTX-010
@@ -161,4 +164,33 @@ Stream: A
   - Pattern: When a save's "fallback target" is "the rid in the URL path", trim the override field with `strings.TrimSpace` and check `== ""` rather than `nil` — JSON omitting the field decodes to the zero value `""`, and the widget URL parameter can flow through as a whitespace-only string.
   - Gotcha: Reused error names matter. `GraphWriteForbidden` is a fresh ErrorName (vs `GraphReadForbidden` for the read ACL). Keep the read/write distinction explicit so the SDK can surface different copy ("Read-only graph" vs "You don't own this graph") downstream.
   - Useful: The VTX-009 graph endpoints define a single ACL helper (`canReadGraph`); for VTX-014 the natural choice was to re-use it (rather than introduce a separate `canWriteGraph`) since the project's RBAC is still owner-or-admin at this layer. When real project-level RBAC lands, splitting the two will be a one-line edit at the call sites.
+---
+
+## Fri May 15 ~11:50 CST 2026 - VTX-015
+- Implemented Vertex Control Panel admin-tunable runtime configuration per BDD acceptance.
+- Backend
+  - pkg/vertex/controlpanel/config.go: new package with `Config` struct (DefaultWindowDays / PollingIntervalSec / SearchAroundMaxNodes / SearchAroundMaxDepth / MissingDataWarningHours), `DefaultConfig()` returning the BDD-spec defaults verbatim, `Validate()` enforcing strictly-positive integers, `Store` interface, `MemStore` for tests / degraded-mode, and `ErrInvalidConfig` sentinel mapped to 400 INVALID_ARGUMENT in the handler.
+  - pkg/vertex/controlpanel/pg_store.go: `PGStore` over the new `vertex_control_panel` single-row table (id PK with `CHECK (id = 1)`). Read returns `pgx.ErrNoRows` on a fresh installation; we trap that and return `DefaultConfig()` so the bootstrap state and the post-PUT state share the same Get shape. Write is `INSERT ... ON CONFLICT (id) DO UPDATE SET ..., updated_at = NOW()`.
+  - pkg/vertex/controlpanel/handler.go: chi-mountable `Handler`. `GET /api/vertex/v1/admin/control-panel` is open to any caller (every Vertex client needs the knobs); `PUT` requires the `admin` role — anonymous or non-admin → 403 `ControlPanelUpdateForbidden`. Request body is a sparse map (`*int` pointer fields) merged onto current state, so callers can submit a single knob without restating the rest. Store-level Validate failures map to 400 `InvalidControlPanelConfig`; bad JSON → 400 `InvalidJSON`; nil store → 500 `ControlPanelStoreNotConfigured`.
+  - migrations/000204_vertex_control_panel.{up,down}.sql: singleton table with column defaults that mirror `DefaultConfig()` so the wire defaults and the DB-bootstrap defaults can't drift.
+  - cmd/server/main.go: wires `controlpanel.NewPGStore(deps.PGPool)` when a pool is available, otherwise an in-memory store so the routes stay discoverable in degraded-mode boots. Two-line addition right after `graphHandler.RegisterRoutes(api)` block.
+  - cmd/server/contract_test.go: added the 2 new routes (`GET`+`PUT /api/vertex/v1/admin/control-panel`) to `undocumentedRouteAllowList` — same allow-list mode as the other VTX-* admin endpoints until OpenAPI lands.
+- Tests
+  - pkg/vertex/controlpanel/config_test.go: 4 Red→Green tests covering DefaultConfig values, empty-store Get returns defaults, Set-then-Get round-trip, Validate rejects zero/negative.
+  - pkg/vertex/controlpanel/handler_test.go: 7 HTTP integration tests through the full chi router covering BDD acceptances 1–3 (defaults on first GET, admin PUT + non-admin GET sees update, non-admin PUT 403), plus anonymous PUT 403, malformed-JSON 400, negative-value 400, and full PUT round-trip.
+- Quality
+  - `go test ./pkg/vertex/controlpanel/...` PASS — 11 tests, 0.3s
+  - `go test ./pkg/... -short` PASS (background run, exit 0; controlpanel + all sibling packages green)
+  - `go vet ./...` clean
+  - `go build ./...` clean
+  - `npx tsc --noEmit` (web/) clean — no FE changes in this story, baseline preserved
+  - Pre-existing failures unrelated to this story: `cmd/server.TestContract_AllRoutesDocumented` (still the VTX-030 OpenAPI gap for `/timeseries/{property}`). Verified the new control-panel routes are correctly allow-listed.
+- **Learnings for future iterations:**
+  - Pattern: For an admin-only configuration surface, the smallest viable shape is `Config` struct + `Store` interface + `Handler{store Store}` + a singleton PG table. Don't bring in a generic "settings" abstraction — the Vertex defaults are spec'd verbatim in the BDD, so they belong in pure Go (`DefaultConfig()`), and conflating them with other namespaces would force you to validate strangers' shapes.
+  - Pattern: Singleton config tables use `id INTEGER PRIMARY KEY CHECK (id = 1)` + `INSERT ... ON CONFLICT (id) DO UPDATE`. Read maps `pgx.ErrNoRows` to `DefaultConfig()` so the bootstrap state and the post-PUT state share the same Get shape — no separate "first run" code path. Default-column values on the table mirror the Go defaults so direct SQL inserts don't drift from the wire contract.
+  - Pattern: Partial PUT bodies use pointer fields (`*int`) so `nil` means "field omitted" and `&0` means "explicitly set to zero". The handler reads current state, overlays the non-nil fields, then Set's the merged value — no separate patch path.
+  - Pattern: For admin-only writes against the rest of the vertex namespace (which tolerates anonymous reads for legacy fixtures), collapse "anonymous" and "non-admin" into the same 403 — the helper `isAdmin(*auth.User)` returning `false` for nil keeps the call sites readable.
+  - Gotcha: `apierror.WriteJSON` doesn't need an explicit status arg — the constructor encodes the status into the APIError. Don't double-write the HTTP status before calling.
+  - Gotcha: `cmd/server/contract_test.go::undocumentedRouteAllowList` must be updated for every new `/api/vertex/...` chi route, or `TestContract_AllRoutesDocumented` falls — the error message lists ONLY the undocumented routes that lack an allow-list entry, so a missing entry shows up there (not the pre-existing VTX-030 line).
+  - Useful: The existing `controlpanel.Store` interface + MemStore split lets cmd/server wire `var x Store = NewMemStore()` then conditionally overwrite with `NewPGStore(deps.PGPool)` when a pool is available — same pattern as `graphRepo` and `shareLinks`. Keeps degraded-mode boots usable without polluting the package surface with a "degraded" flag.
 ---
