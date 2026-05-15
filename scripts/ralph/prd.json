@@ -701,8 +701,8 @@
         "Tests pass"
       ],
       "priority": 62,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/extendedLabels/baselineCompareLabel.ts。导出 BaselineCompareLabelStatus 'present'|'baseline-only'|'missing'|'missing-baseline'|'missing-simulated'|'error' + BaselineCompareLabelSpec { labelName, displayName? }（与 wire 解耦：React 接线层从 propertyLabel/timeSeriesLabel/measureLabel 任一 spec 派生 labelName 注入，避免新加 kind 都改这里）+ BaselineCompareLabelInput { activeState, baselineOutputs, scenarioOutputsByRid, context: {objectType, primaryKey, property} } + selectBaselineCompareValues（用 VTX-045 buildObjectBaselineOutputKey 拣 baseline 值；activeScenarioRid=null → simulated=null；activeRid 指向不存在 / 缺 key 的 scenario outputs → simulated=null；非数字标量原样穿透）+ renderBaselineCompareExtendedLabel 状态机：error 优先（'!' + tooltip，与 VTX-060/061 一致）→ active=null+baseline finite='baseline-only'（仅显 'totalAlerts: 1000' 不挂重复 baseline 段、无 delta）→ active=null+baseline 缺='missing' → 两侧都缺='missing' → baseline 缺='missing-baseline'（'totalAlerts: 1500 (baseline —)'）→ simulated 缺='missing-simulated'（'totalAlerts: — (baseline 1000)'）→ 两侧 finite='present'（复用 VTX-045 computeBaselineCompare + formatBaselineCompareLabel 全套，得到 simulated/baseline/delta 三段 + colorHint，组装成 'totalAlerts: 1500 (baseline 1000, +50.0%)'）。errorPlaceholder/missingPlaceholder/decimals/hideDelta 全可覆盖；NaN/string/Infinity 都视为非有限走 missing。BDD #2 是纯派生：activeState 改了，selectBaselineCompareValues 重算 simulated；React 层只需在 activeState 变化时 re-render 同一节点 overlay。28 tests pass，extendedLabels 共 145 tests 全绿，vertex 子集 48 files / 1136 tests 全绿；tsc 0 错误，eslint 0 warning。dev-browser skill 不可用，节点 DOM overlay 颜色差异 + 列头点击 active 切换浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-063",
