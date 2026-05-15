@@ -37,6 +37,7 @@ from .external_http import (
     configure_allowed_domains,
 )
 from .functions import FunctionRegistry, UnknownFunctionError, registry as default_registry
+from .llm import clear_llm_config, configure_llm
 from .sandbox import SandboxViolation, install_filesystem_sandbox
 
 
@@ -93,11 +94,32 @@ def _resolve_allowed_external_domains(
     return [piece.strip() for piece in raw.split(",") if piece.strip()]
 
 
+def _resolve_llm_api_key(explicit: Optional[str]) -> Optional[str]:
+    """Pick the active LLM API key source for ``create_app``.
+
+    Precedence: explicit kwarg > ``WEAVE_LLM_API_KEY`` env var >
+    ``ANTHROPIC_API_KEY`` env var > ``None``. Two env vars are honoured
+    so operators who already export ``ANTHROPIC_API_KEY`` for other
+    tooling don't have to duplicate the value under a Weave-specific
+    name; the Weave-specific name wins when both are set so a
+    deployment-level override is unambiguous.
+    """
+
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    for env in ("WEAVE_LLM_API_KEY", "ANTHROPIC_API_KEY"):
+        raw = os.environ.get(env, "")
+        if raw and raw.strip():
+            return raw.strip()
+    return None
+
+
 def create_app(
     *,
     registry: Optional[FunctionRegistry] = None,
     install_sandbox: bool = True,
     allowed_external_domains: Optional[Iterable[str]] = None,
+    llm_api_key: Optional[str] = None,
 ) -> FastAPI:
     """Construct a FastAPI app bound to ``registry``.
 
@@ -111,12 +133,23 @@ def create_app(
     allowlist. ``None`` (default) falls back to
     ``WEAVE_ALLOWED_EXTERNAL_DOMAINS``; an empty iterable explicitly
     denies every external host.
+
+    ``llm_api_key`` configures the VTX-056 LLM SDK. ``None`` (default)
+    falls back to ``WEAVE_LLM_API_KEY`` / ``ANTHROPIC_API_KEY`` env
+    vars; nothing configured means ``invoke_llm`` raises ``ConfigError``
+    until the operator sets the key. Stored on app state for diagnostic
+    introspection.
     """
 
     reg = registry if registry is not None else default_registry
     if install_sandbox:
         install_filesystem_sandbox()
     configure_allowed_domains(_resolve_allowed_external_domains(allowed_external_domains))
+    resolved_llm_key = _resolve_llm_api_key(llm_api_key)
+    if resolved_llm_key:
+        configure_llm(api_key=resolved_llm_key)
+    else:
+        clear_llm_config()
 
     app = FastAPI(title="Weave Vertex Function Runtime", version="0.1.0")
     app.state.registry = reg

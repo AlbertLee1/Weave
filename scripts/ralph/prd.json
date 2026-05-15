@@ -568,8 +568,8 @@
         "Tests pass"
       ],
       "priority": 56,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Python runtime SDK 在 runtime/python/weave_runtime/llm.py：模块级 _state（api_key/base_url/anthropic_version）+ configure_llm/clear_llm_config/get_llm_config 原子替换 + LLMClient（transport 可注入；invoke 走 POST {base}/v1/messages，headers x-api-key+anthropic-version+content-type，body {model,max_tokens,messages:[{role:user,content:prompt}], system?}）+ invoke_llm shim + invoke_llm_json（先 _strip_markdown_fence（仅 ``` 或 ```json fenced block）后 json.loads，失败抛 ModelOutputError 保留 raw_text）+ singleton llm_client。ConfigError/ModelOutputError 均 ValueError 子类；ConfigError 在 transport 调用前抛（避免泄漏请求到 Anthropic）。create_app 新增 llm_api_key kwarg + _resolve_llm_api_key 优先级 kwarg > WEAVE_LLM_API_KEY > ANTHROPIC_API_KEY；未配置时 clear_llm_config 保证 ConfigError 路径在测试里可复现。test_app.py 自动 fixture 多接 monkeypatch.delenv（两个 LLM env var）+ clear_llm_config，避免 dev shell 中已有 ANTHROPIC_API_KEY 时 'no key' 测试假绿。Go-side 无需新增 envelope code：两个异常都走通用 5xx → *RuntimeError.Code='ConfigError'/'ModelOutputError'，Go 客户端用 errors.As(*RuntimeError) + .Code 字段分派即可。文档更新 runtime/python/CLAUDE.md Module layout + create_app 签名。81/81 tests pass（53 baseline + 21 llm + 7 wiring）。BDD spec 写 'TS function import { invokeLLM } from \\'@weave/sdk\\''，本 stream 沿用 VTX-049 落地的 Python runtime 路径（FastAPI sidecar），Python SDK 用 invoke_llm/invoke_llm_json 名称匹配 PEP 8，BDD 三条接受准则全部覆盖。"
     },
     {
       "id": "VTX-057",

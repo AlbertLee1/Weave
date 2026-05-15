@@ -19,6 +19,12 @@ from weave_runtime.external_http import (
     get_allowed_domains,
 )
 from weave_runtime.functions import FunctionRegistry
+from weave_runtime.llm import (
+    ConfigError,
+    ModelOutputError,
+    clear_llm_config,
+    get_llm_config,
+)
 from weave_runtime.sandbox import (
     SandboxViolation,
     install_filesystem_sandbox,
@@ -37,12 +43,20 @@ class DelayOutput(BaseModel):
 
 
 @pytest.fixture(autouse=True)
-def _sandbox_teardown():
+def _sandbox_teardown(monkeypatch):
+    # Scrub env vars that ``create_app`` reads — a stray
+    # ANTHROPIC_API_KEY in the developer's shell would otherwise make
+    # the "no key configured" branch silently fall back to the real
+    # value and route a request to Anthropic.
+    monkeypatch.delenv("WEAVE_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     yield
     uninstall_filesystem_sandbox()
     # VTX-055: the app may configure the external-HTTP allowlist at
     # construction; reset between tests so module state doesn't leak.
     configure_allowed_domains([])
+    # VTX-056: same pattern for the LLM API key.
+    clear_llm_config()
 
 
 def _make_client(reg: FunctionRegistry, install_sandbox: bool = False) -> TestClient:
@@ -261,3 +275,96 @@ def test_invoke_output_validation_failure_returns_422():
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert any("score" in entry.get("loc", []) for entry in detail)
+
+
+def test_create_app_configures_llm_api_key_from_kwarg():
+    """VTX-056 BDD #1 — operators inject the Anthropic API key at app
+    construction; the module-level LLM config reflects it so any
+    ``invoke_llm`` call from inside a function picks it up without
+    rebinding the singleton."""
+
+    reg = FunctionRegistry()
+    create_app(registry=reg, install_sandbox=False, llm_api_key="sk-test-kw")
+    assert get_llm_config()["api_key"] == "sk-test-kw"
+
+
+def test_create_app_falls_back_to_weave_llm_api_key_env(monkeypatch):
+    monkeypatch.setenv("WEAVE_LLM_API_KEY", "sk-env-weave")
+    reg = FunctionRegistry()
+    create_app(registry=reg, install_sandbox=False)
+    assert get_llm_config()["api_key"] == "sk-env-weave"
+
+
+def test_create_app_falls_back_to_anthropic_api_key_env(monkeypatch):
+    """``ANTHROPIC_API_KEY`` is honoured as a second-tier fallback so
+    operators who already export it for other tooling don't have to
+    duplicate the value."""
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-anthropic")
+    reg = FunctionRegistry()
+    create_app(registry=reg, install_sandbox=False)
+    assert get_llm_config()["api_key"] == "sk-env-anthropic"
+
+
+def test_create_app_kwarg_takes_precedence_over_env(monkeypatch):
+    monkeypatch.setenv("WEAVE_LLM_API_KEY", "sk-env")
+    reg = FunctionRegistry()
+    create_app(registry=reg, install_sandbox=False, llm_api_key="sk-explicit")
+    assert get_llm_config()["api_key"] == "sk-explicit"
+
+
+def test_create_app_without_llm_key_clears_module_state():
+    """Constructing a second app without a key must NOT inherit the key
+    from a prior ``create_app`` call — the clear keeps the failure mode
+    of ConfigError honest in tests that don't opt into it."""
+
+    reg = FunctionRegistry()
+    create_app(registry=reg, install_sandbox=False, llm_api_key="sk-first")
+    assert get_llm_config()["api_key"] == "sk-first"
+    create_app(registry=reg, install_sandbox=False)
+    assert get_llm_config()["api_key"] is None
+
+
+def test_invoke_function_raising_config_error_returns_500_with_typed_code():
+    """VTX-056 BDD #2 — a function calling ``invoke_llm`` without a
+    configured key surfaces ``ConfigError`` to the registry handler,
+    which falls into the generic 500 envelope so the Go side sees
+    ``code="ConfigError"`` and can branch on it via
+    ``parseRuntimeError`` → ``*RuntimeError.Code``."""
+
+    reg = FunctionRegistry()
+
+    @reg.register("needs_llm", input_model=DelayInput, output_model=DelayOutput)
+    def needs_llm(inputs):  # noqa: ARG001
+        raise ConfigError("LLM API key not configured")
+
+    client = _make_client(reg)
+    resp = client.post(
+        "/invoke", json={"function": "needs_llm", "inputs": {"distance_km": 1.0}}
+    )
+    assert resp.status_code == 500, resp.text
+    body = resp.json()
+    assert body["code"] == "ConfigError"
+    assert "api key" in body["detail"].lower()
+
+
+def test_invoke_function_raising_model_output_error_returns_500_with_typed_code():
+    """VTX-056 BDD #3 — a function whose JSON parse of the model reply
+    fails surfaces ``ModelOutputError`` to the registry handler, which
+    again falls into the generic 500 envelope so callers branch on
+    ``code="ModelOutputError"``."""
+
+    reg = FunctionRegistry()
+
+    @reg.register("bad_output", input_model=DelayInput, output_model=DelayOutput)
+    def bad_output(inputs):  # noqa: ARG001
+        raise ModelOutputError("could not parse", raw_text="not json")
+
+    client = _make_client(reg)
+    resp = client.post(
+        "/invoke", json={"function": "bad_output", "inputs": {"distance_km": 1.0}}
+    )
+    assert resp.status_code == 500, resp.text
+    body = resp.json()
+    assert body["code"] == "ModelOutputError"
+    assert "could not parse" in body["detail"]

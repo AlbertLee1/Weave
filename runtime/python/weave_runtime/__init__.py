@@ -29,6 +29,17 @@ from .functions import (
     register_function,
     registry,
 )
+from .llm import (
+    ConfigError,
+    LLMClient,
+    ModelOutputError,
+    clear_llm_config,
+    configure_llm,
+    get_llm_config,
+    invoke_llm,
+    invoke_llm_json,
+    llm_client,
+)
 from .sandbox import (
     SandboxViolation,
     install_filesystem_sandbox,
@@ -52,6 +63,15 @@ __all__ = [
     "get_allowed_domains",
     "http_client",
     "is_domain_allowed",
+    "ConfigError",
+    "LLMClient",
+    "ModelOutputError",
+    "clear_llm_config",
+    "configure_llm",
+    "get_llm_config",
+    "invoke_llm",
+    "invoke_llm_json",
+    "llm_client",
     "app",
     "create_app",
 ]

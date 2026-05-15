@@ -13,10 +13,14 @@ contract.
   output_model)` decorator, module-level `registry` singleton,
   `UnknownFunctionError`.
 - `weave_runtime/app.py` — `create_app(*, registry=None,
-  install_sandbox=True, allowed_external_domains=None)` FastAPI factory
-  + module-level `app` for uvicorn. Maps registry exceptions to wire
-  envelopes. `allowed_external_domains=None` (default) falls back to
-  the `WEAVE_ALLOWED_EXTERNAL_DOMAINS` env var (comma-separated).
+  install_sandbox=True, allowed_external_domains=None,
+  llm_api_key=None)` FastAPI factory + module-level `app` for uvicorn.
+  Maps registry exceptions to wire envelopes.
+  `allowed_external_domains=None` (default) falls back to the
+  `WEAVE_ALLOWED_EXTERNAL_DOMAINS` env var (comma-separated).
+  `llm_api_key=None` (default) falls back to `WEAVE_LLM_API_KEY`,
+  then `ANTHROPIC_API_KEY`; if none resolved the LLM config is cleared
+  so `invoke_llm` raises `ConfigError` until the operator sets a key.
 - `weave_runtime/sandbox.py` — process-wide monkey-patch on
   `builtins.open` / `os.open`. Default denylist covers `/etc`,
   `/root`, `/proc`, `/sys`, `/var/log`, `/var/run`, `/Users`, `/home`,
@@ -27,6 +31,16 @@ contract.
   `.post(url, json=...)`; calls to hosts outside the allowlist raise
   `ForbiddenExternalCall` before the transport runs. Subdomain matching
   is NOT automatic — every host must be listed exactly.
+- `weave_runtime/llm.py` (VTX-056) — `llm_client` SDK singleton +
+  `configure_llm(api_key=...)` + `ConfigError` / `ModelOutputError`
+  exceptions. Functions call `invoke_llm(model="claude-haiku-4-5",
+  prompt="...")` for free-text replies or `invoke_llm_json(...)` for
+  structured output (strips leading ```json ... ``` fences; JSON parse
+  failures raise `ModelOutputError` with `raw_text` preserved). Missing
+  API key raises `ConfigError` BEFORE the transport runs. Both errors
+  fall into the generic 5xx envelope so the Go side sees
+  `code="ConfigError"` / `code="ModelOutputError"` and can branch via
+  `*RuntimeError.Code` — no dedicated wire code is added.
 - `weave_runtime/example_functions.py` — reference `predict_delay`
   function backed by a trivially-trained `LinearRegression`.
 
