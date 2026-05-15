@@ -151,6 +151,7 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:       true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:                 true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}:      true,
+	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}:         true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the

@@ -14,6 +14,7 @@ Stream: A
 - **OMS reference checks** belong on a tiny purpose-built interface (e.g. `ReferenceLookup{ GetObjectType, GetLinkType }`) that `*oms.PGRepository` satisfies structurally. Don't import `oms.Repository` (huge surface) into a downstream package — the focused interface keeps tests cheap.
 - Pre-existing baseline failures unrelated to your story: `cmd/server.TestContract_AllRoutesDocumented` (missing OpenAPI entry for `/timeseries/{property}` from VTX-030) + perf gates `pkg/cellsec.TestUS376_PerfGate_*` and `pkg/security.TestRLSEvaluator_PerformanceGate`. Don't try to fix these in your iteration — verify with `git stash` if in doubt.
 - `prd.json` and `progress.txt` at repo root are symlinks to `scripts/ralph/{prd.json,progress.txt}` — Edit through the symlink fails ("Refusing to write through symlink"); always edit the real path.
+- **New vertex routes**: every chi route under `/api/vertex/...` must be either in `api/openapi.yaml` or in `cmd/server/contract_test.go::undocumentedRouteAllowList`, otherwise `TestContract_AllRoutesDocumented` fails. VTX-009 routes ride the allow-list until the OpenAPI schemas land.
 ---
 
 ## Fri May 15 ~10:02 CST 2026 - VTX-010
@@ -69,4 +70,31 @@ Stream: A
   - Gotcha: Passing a nil `*PGRepository` directly to a `ReferenceLookup` interface var produces a typed-nil interface (non-nil) → `if v.refs == nil` won't fire. In main.go, gate with `if deps.OmsRepo != nil { graphRefs = deps.OmsRepo }` so only an untyped nil reaches the validator.
   - Gotcha: santhosh-tekuri "required" failures are reported via `KeywordLocation` ending in `/required` and message starting with `missing properties: 'foo'`. Parse the first single-quoted name to surface "<name> field required" — the BDD wants that exact phrasing.
   - Useful: `apierror.NewValidationSchema` is the standard 422 with WEAVE_VALIDATION_SCHEMA used by the ActionType parameter validator; reuse it for any "row exists in OMS but doesn't resolve to a real entity" check.
+---
+
+## Fri May 15 ~11:05 CST 2026 - VTX-012
+- Implemented Graph Template instantiate flow per BDD acceptance.
+- Backend
+  - pkg/vertex/graphsvc/instantiate.go: pure `Instantiate(payload, parameterizedFields, params)` that decodes the template payload, walks each `layers[0].filter.objectRid`-style path, and replaces the leaf with the matching parameter (leaf-segment binding: param key `objectRid` substitutes every path whose leaf is `objectRid`). Adds typed `InvalidTemplateFieldError{Field, Reason}` so handlers can surface 400 with the offending path. When the payload root carries `searchAroundFnRid` AND params include an `objectRids` JSON array, the function injects a deduped `searchAroundCalls: [{functionRid, objectRid, params:{}}]` plan into the output — same shape as `web/src/features/vertex/templates/parameterizedSearchAround.ts`. Path parser accepts dot-separated keys with optional `[N]` array indices; rejects empty bracket `[]`, out-of-range indices, missing keys, and non-object parents.
+  - pkg/vertex/graphsvc/handler.go: added `POST /api/vertex/v1/templates/{rid}/instantiate` route + `instantiate` handler. Body shape `{ "parameters": { ... raw JSON values ... } }`. Errors → 404 TemplateNotFound for unknown RID; 400 InvalidTemplateField (with `field` + `reason` params) for malformed paths or out-of-range indices; 500 InstantiateFailed for unexpected decode failures. Response shape: `{ sourceTemplateRid, sourceGraphRid, name, payload }` — payload emitted as raw JSON.
+  - pkg/vertex/graphsvc/instantiate_test.go: 7 unit tests Red→Green covering leaf substitution, missing-leaf-preserves-placeholder, numeric-value substitution, malformed path, out-of-range index, search-around plan generation, and no-plan-without-fnRid.
+  - pkg/vertex/graphsvc/handler_instantiate_test.go: 4 HTTP integration tests through the full chi router: save-then-instantiate round-trip with parameter substitution, unknown template RID → 404, search-around plan returned via /instantiate, malformed path → 400.
+  - cmd/server/contract_test.go: added `POST /api/vertex/v1/templates/{rid}/instantiate` to `undocumentedRouteAllowList` (OpenAPI schemas for graphs/templates still pending — same allow-list mode as the other VTX-009 routes).
+- Quality
+  - `go test ./pkg/vertex/graphsvc/...` PASS — 28 tests (existing 17 + 11 new), 0.6s
+  - `go test ./pkg/oms/... ./pkg/vertex/...` PASS
+  - `go test ./pkg/... -short` PASS (background run, exit 0)
+  - `go vet ./...` clean
+  - `go build ./...` clean (after dist placeholder)
+  - `npx vitest run` — 1527/1527 tests pass (one flake in `admin-removed.test.tsx` on first run due to vitest worker contention; clean on retry; unrelated to this story — verified via `git stash`)
+  - `npx tsc --noEmit` clean
+  - Pre-existing failures unrelated to this story: `cmd/server.TestContract_AllRoutesDocumented` (VTX-030 OpenAPI gap), perf gates in `pkg/cellsec` and `pkg/security`.
+- **Learnings for future iterations:**
+  - Pattern: When you need a pure JSON-path mutator, sort segments via `regexp.MustCompile("^([^\\[\\]]+)(\\[(\\d+)\\])?$")` and bracket-indexing only at *terminal* spot of each dotted segment. Keeps the parser shallow (no full pointer grammar) while supporting the `layers[0].filter.objectRid` form the Vertex UI already serializes.
+  - Pattern: For mutate-in-place over decoded JSON, walk `map[string]any` + `[]any` and refuse to auto-create missing containers — a template snapshot whose path doesn't resolve is almost certainly an author bug that should surface as 400, not be silently extended.
+  - Pattern: Parameter binding by *leaf segment* (last `.`-segment of the path) gives a clean UX (`{"objectRid":"…"}`) at the cost of forbidding two parameterized fields that share a leaf name. The whole-path form is reserved for a future enhancement; until then the leaf form matches the BDD verbatim.
+  - Pattern: When mirroring a TS planner on the backend (here: `web/.../parameterizedSearchAround.ts`), keep the call descriptor shape byte-identical (`functionRid` / `objectRid` / `params`) so the FE consumes the response without a translation layer.
+  - Gotcha: chi `r.Post("/.../templates/{rid}/instantiate", …)` lives on the same handler struct as `/graphs/{rid}/…`. Don't try to spin up a separate templates handler — the existing handler already has the `templates TemplateStore` dependency and shares the same `chi.URLParam(r, "rid")` parameter name without collision (each route gets its own `{rid}` scope).
+  - Gotcha: `httputil.ReadJSON` on an empty body returns `io.EOF`, which surfaces as 400 InvalidJSON. The instantiate handler guards with `if r.ContentLength != 0` so callers can omit the body entirely (degenerate "no params" instantiate) — useful when the only point of instantiate is the searchAroundCalls plan.
+  - Useful: Adding any new chi route under `/api/vertex/...` requires either an `api/openapi.yaml` entry OR an entry in `cmd/server/contract_test.go::undocumentedRouteAllowList`; otherwise `TestContract_AllRoutesDocumented` will fail (or, more confusingly, won't list YOUR route in the error since it's only listed when it lacks both).
 ---

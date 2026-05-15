@@ -65,8 +65,8 @@
         "Tests pass"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend-only: pure Instantiate(payload, parameterizedFields, params) + POST /api/vertex/v1/templates/{rid}/instantiate handler. Path syntax `layers[0].filter.objectRid`; param binding by leaf segment. searchAroundFnRid + objectRids params → searchAroundCalls plan injected into payload (matches web/.../parameterizedSearchAround.ts shape). Bad path → 400 InvalidTemplateField; unknown template RID → 404 TemplateNotFound."
     },
     {
       "id": "VTX-013",

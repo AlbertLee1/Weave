@@ -55,6 +55,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/vertex/v1/graphs/{rid}/save-as-template", h.saveAsTemplate)
 	r.Get("/api/vertex/v1/graphs/{rid}/history", h.history)
 	r.Get("/api/vertex/v1/graphs/{rid}/versions/{version}", h.getVersion)
+	r.Post("/api/vertex/v1/templates/{rid}/instantiate", h.instantiate)
 }
 
 // createRequest is the body shape for POST /api/vertex/v1/graphs. Payload is
@@ -235,6 +236,60 @@ func (h *Handler) saveAsTemplate(w http.ResponseWriter, r *http.Request) {
 		"sourceGraphRid":      tmpl.SourceGraphRID,
 		"name":                tmpl.Name,
 		"parameterizedFields": tmpl.ParameterizedFields,
+	})
+}
+
+// instantiateRequest is the body shape for POST
+// /api/vertex/v1/templates/{rid}/instantiate. Parameters are captured as raw
+// JSON so values keep their type (strings, arrays, objects all flow through
+// to the Instantiate helper unchanged).
+type instantiateRequest struct {
+	Parameters map[string]json.RawMessage `json:"parameters,omitempty"`
+}
+
+func (h *Handler) instantiate(w http.ResponseWriter, r *http.Request) {
+	if h.templates == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	ridStr := chi.URLParam(r, "rid")
+	tmpl, err := h.templates.Get(r.Context(), ridStr)
+	if err != nil {
+		if errors.Is(err, ErrTemplateNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("TemplateNotFound", map[string]string{"rid": ridStr}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetTemplateFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+	var req instantiateRequest
+	if r.ContentLength != 0 {
+		if err := httputil.ReadJSON(r, &req); err != nil {
+			apierror.WriteJSON(w, apierror.NewBadRequest("InvalidJSON", map[string]string{"error": err.Error()}))
+			return
+		}
+	}
+	if req.Parameters == nil {
+		req.Parameters = map[string]json.RawMessage{}
+	}
+	instantiated, err := Instantiate(tmpl.Payload, tmpl.ParameterizedFields, req.Parameters)
+	if err != nil {
+		var iferr *InvalidTemplateFieldError
+		if errors.As(err, &iferr) {
+			apierror.WriteJSON(w, apierror.NewBadRequest("InvalidTemplateField", map[string]string{
+				"field":  iferr.Field,
+				"reason": iferr.Reason,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("InstantiateFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"sourceTemplateRid": tmpl.RID,
+		"sourceGraphRid":    tmpl.SourceGraphRID,
+		"name":              tmpl.Name,
+		"payload":           json.RawMessage(instantiated),
 	})
 }
 
