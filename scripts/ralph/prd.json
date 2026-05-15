@@ -152,8 +152,8 @@
         "Tests pass"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "test/e2e/vertex/graph_lifecycle_test.go drives the full Phase-2 chain (POST create → PUT save v=2 → PUT bump v=3 → POST duplicate (fresh rid + v=1 reset) → GET history) through the full chi router over MemRepo + MemTemplateStore + MemShareLinkStore — same shape as cmd/server.main degraded-mode boot, no PG required. ≤ 1s wall-clock budget enforced; observed ~240µs. Used a schema-clean validGraphPayload helper so a later default-on validator wire-up doesn't break the smoke. No production sources changed; the test is the only new asset."
     },
     {
       "id": "VTX-017",

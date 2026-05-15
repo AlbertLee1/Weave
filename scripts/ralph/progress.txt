@@ -23,6 +23,7 @@ Stream: A
 - **Admin-only PUT endpoints**: inline the role check in the handler with `isAdmin(auth.UserFromContext(r.Context()))` returning 403 PERMISSION_DENIED. Nil user (anonymous) is never admin — collapse "missing user" into "not authorized" so the surface keeps mirroring the rest of the vertex namespace (which tolerates anonymous reads for legacy fixtures, but never anonymous writes).
 - **Singleton config tables**: `id INTEGER PRIMARY KEY CHECK (id = 1)` + `INSERT ... ON CONFLICT (id) DO UPDATE` is the project idiom for one-row admin-knob tables. Read returns `pgx.ErrNoRows` on a fresh installation; the store maps that to DefaultConfig so the bootstrap state and the post-PUT state share the same Get-shape.
 - **Partial-update PUT bodies**: declare the request struct with `*<T>` pointer fields so `nil` means "field omitted" and `&zero` means "explicitly set to zero". The handler merges the request onto a freshly-read current Config, then writes the merged value back through Set — no separate "patch" code path.
+- **Phase-aligned E2E smokes** belong in `test/e2e/vertex/` as a single BDD-shaped function under `package vertex_test`. Wire the in-memory `Repo` / `TemplateStore` / `ShareLinkStore` + `chi.Router` + `Handler.RegisterRoutes` — same shape as cmd/server.main in degraded-mode boots; no PG, no Bleve, no NATS unless the lifecycle actually touches them. Assert at every step in one function so the wall-clock budget (`time.Since(start) ≤ budget`) covers the full chain — subtests would split the timer.
 ---
 
 ## Fri May 15 ~10:02 CST 2026 - VTX-010
@@ -193,4 +194,23 @@ Stream: A
   - Gotcha: `apierror.WriteJSON` doesn't need an explicit status arg — the constructor encodes the status into the APIError. Don't double-write the HTTP status before calling.
   - Gotcha: `cmd/server/contract_test.go::undocumentedRouteAllowList` must be updated for every new `/api/vertex/...` chi route, or `TestContract_AllRoutesDocumented` falls — the error message lists ONLY the undocumented routes that lack an allow-list entry, so a missing entry shows up there (not the pre-existing VTX-030 line).
   - Useful: The existing `controlpanel.Store` interface + MemStore split lets cmd/server wire `var x Store = NewMemStore()` then conditionally overwrite with `NewPGStore(deps.PGPool)` when a pool is available — same pattern as `graphRepo` and `shareLinks`. Keeps degraded-mode boots usable without polluting the package surface with a "degraded" flag.
+---
+
+## Fri May 15 ~14:30 CST 2026 - VTX-016
+- Implemented the Phase-2 SystemGraph lifecycle E2E smoke per BDD acceptance.
+- Files
+  - test/e2e/vertex/graph_lifecycle_test.go: single BDD-shaped test `TestSystemGraphLifecycle_Given_FreshStack_When_CreateSaveBumpDuplicateHistory_Then_AllStepsOKUnderOneSecond` wiring MemRepo + MemTemplateStore + MemShareLinkStore behind a chi.Router, then driving POST create → PUT save (v=2) → PUT bump (v=3) → POST duplicate (fresh rid + v=1 reset) → GET history (source=3 versions, duplicate=1 version). Asserts every step's HTTP status, the version progression, the dup vs. source rid divergence, and a wall-clock budget of ≤ 1s. Helpers (`httpDo`, `decodeMap`, `validGraphPayload`) live in-file so the test reads top-to-bottom.
+- No production code changed — VTX-009 ~ VTX-015 land all the surface this story exercises.
+- Quality
+  - `go test ./test/e2e/vertex/... -run TestSystemGraphLifecycle -v` PASS in 0.57s (lifecycle observed ~240µs against the 1s budget).
+  - `go vet ./test/e2e/... ./pkg/vertex/...` clean.
+  - `go build ./...` clean (with `cmd/server/web/dist/placeholder.txt` already present).
+  - `go test ./... -short -count=1` — every package passes EXCEPT the pre-existing baseline failure `cmd/server.TestContract_AllRoutesDocumented` (VTX-030 OpenAPI gap on `/timeseries/{property}` — already in Codebase Patterns). No new contract entries needed since this story added no new chi routes.
+- **Learnings for future iterations:**
+  - Pattern: Phase-aligned E2E smokes belong under `test/e2e/vertex/` in `package vertex_test` and should wire only the in-memory Repo/Store implementations plus a chi.Router via `Handler.RegisterRoutes` — the same wiring used by cmd/server.main in degraded-mode boots. No need for testcontainers / Bleve / NATS unless the lifecycle being smoked actually touches those subsystems.
+  - Pattern: When you need a "Red" step for a smoke test of *already-implemented* functionality, the natural Red is the absence of the test file (which means the BDD acceptance line "E2E test at path X" is unmet). Add the test, watch it go green on first run. Don't fabricate a synthetic failure mode by, e.g., temporarily removing handler routes — that breaks unrelated tests.
+  - Pattern: A single end-to-end test function that asserts at every step (rather than splitting into N small tests) keeps the failure surface localised AND lets a single `time.Since(start)` cover the *full* chain — exactly what the ≤ 1s budget calls for. Subtests would split the timer.
+  - Pattern: Use a schema-clean payload helper (`validGraphPayload`) even when the validator isn't wired in the test. If a later refactor switches `NewHandler` to default the validator to a non-nil compiled instance, this smoke survives without an edit.
+  - Gotcha: `cmd/server.TestContract_AllRoutesDocumented` is pre-existing failing on the timeseries route from VTX-030; my story added no new chi routes so no allow-list edit was needed. Future stories that add `/api/vertex/...` routes still must update `undocumentedRouteAllowList` or `api/openapi.yaml` — that's already in Codebase Patterns.
+  - Useful: `Handler.NewMemShareLinkStore()` is the right stand-in for the share-link surface in lifecycle smokes — `SetShareLinkStore` accepts the interface so the smoke never has to know about PG vs. mem.
 ---
