@@ -1,7 +1,7 @@
 // VertexWorkspacePage — Vertex workspace shell (VTX-017) + payload
 // rendering (VTX-018) + node DOM overlay for extended labels (VTX-019)
 // + selection interactions / right sidebar (VTX-020) + hierarchical
-// layout (VTX-022).
+// layout (VTX-022) + force / circular / auto layouts (VTX-023).
 //
 // /vertex/new mounts an empty Sigma canvas immediately; /vertex/{rid}
 // fetches `/api/vertex/v1/graphs/{rid}` and either renders the graph
@@ -32,6 +32,9 @@ import {
 } from '../features/vertex/selections/selectionState';
 import { payloadToObjectSummaries } from '../features/vertex/selections/objectSummaries';
 import { hierarchicalLayout } from '../features/vertex/layouts/hierarchicalLayout';
+import { forceAtlas2Layout } from '../features/vertex/layouts/forceAtlas2Layout';
+import { circularLayout } from '../features/vertex/layouts/circularLayout';
+import { pickAutoLayoutKind } from '../features/vertex/layouts/autoLayout';
 import { VertexNodeOverlay } from './VertexNodeOverlay';
 import { VertexSelectionLayer } from './VertexSelectionLayer';
 import {
@@ -45,7 +48,25 @@ export interface HierarchicalLayoutSpec {
   rootNodes: string[];
 }
 
-export type LayoutSpec = HierarchicalLayoutSpec;
+export interface ForceLayoutSpec {
+  kind: 'force';
+}
+
+export interface CircularLayoutSpec {
+  kind: 'circular';
+}
+
+export interface AutoLayoutSpec {
+  kind: 'auto';
+}
+
+export type LayoutSpec =
+  | HierarchicalLayoutSpec
+  | ForceLayoutSpec
+  | CircularLayoutSpec
+  | AutoLayoutSpec;
+
+export type LayoutKind = LayoutSpec['kind'];
 
 const SELECTED_NODE_COLOR = '#3B82F6';
 const DEFAULT_NODE_COLOR = '#6B7280';
@@ -175,17 +196,33 @@ function TopBar({ graph, onApplyLayout }: TopBarProps) {
   );
 }
 
+const LAYOUT_KINDS: Array<{ id: LayoutKind; label: string }> = [
+  { id: 'hierarchical', label: 'Hierarchical' },
+  { id: 'force', label: 'Force-directed' },
+  { id: 'circular', label: 'Circular' },
+  { id: 'auto', label: 'Auto' },
+];
+
 function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
   const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<LayoutKind>('hierarchical');
   const [reverse, setReverse] = useState(false);
   const [rootsText, setRootsText] = useState('');
 
   const apply = () => {
-    const rootNodes = rootsText
-      .split(/[,\n]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    onApply({ kind: 'hierarchical', reverse, rootNodes });
+    if (kind === 'hierarchical') {
+      const rootNodes = rootsText
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      onApply({ kind: 'hierarchical', reverse, rootNodes });
+    } else if (kind === 'force') {
+      onApply({ kind: 'force' });
+    } else if (kind === 'circular') {
+      onApply({ kind: 'circular' });
+    } else {
+      onApply({ kind: 'auto' });
+    }
     setOpen(false);
   };
 
@@ -208,32 +245,55 @@ function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
           aria-label="Layout options"
         >
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">
-            Hierarchical
+            Algorithm
           </div>
-          <label className="mb-2 flex items-center gap-2">
-            <input
-              type="checkbox"
-              data-testid="vertex-layout-hierarchical-reverse"
-              checked={reverse}
-              onChange={(e) => setReverse(e.target.checked)}
-            />
-            <span>Reverse direction</span>
-          </label>
-          <label className="mb-2 block">
-            <span className="mb-1 block text-zinc-400">Root nodes</span>
-            <input
-              type="text"
-              data-testid="vertex-layout-hierarchical-roots"
-              value={rootsText}
-              onChange={(e) => setRootsText(e.target.value)}
-              placeholder="objectRid, objectRid, …"
-              className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100"
-            />
-          </label>
+          <div className="mb-2 flex flex-col gap-1" role="radiogroup">
+            {LAYOUT_KINDS.map((opt) => (
+              <label key={opt.id} className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="vertex-layout-kind"
+                  value={opt.id}
+                  data-testid={`vertex-layout-kind-${opt.id}`}
+                  checked={kind === opt.id}
+                  onChange={() => setKind(opt.id)}
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
+          {kind === 'hierarchical' && (
+            <div data-testid="vertex-layout-hierarchical-controls">
+              <label className="mb-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  data-testid="vertex-layout-hierarchical-reverse"
+                  checked={reverse}
+                  onChange={(e) => setReverse(e.target.checked)}
+                />
+                <span>Reverse direction</span>
+              </label>
+              <label className="mb-2 block">
+                <span className="mb-1 block text-zinc-400">Root nodes</span>
+                <input
+                  type="text"
+                  data-testid="vertex-layout-hierarchical-roots"
+                  value={rootsText}
+                  onChange={(e) => setRootsText(e.target.value)}
+                  placeholder="objectRid, objectRid, …"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100"
+                />
+              </label>
+            </div>
+          )}
           <div className="flex justify-end">
             <button
               type="button"
-              data-testid="vertex-layout-hierarchical-apply"
+              data-testid={
+                kind === 'hierarchical'
+                  ? 'vertex-layout-hierarchical-apply'
+                  : `vertex-layout-${kind}-apply`
+              }
               onClick={apply}
               className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500"
             >
@@ -251,6 +311,31 @@ function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
 // computes positions via the pure hierarchicalLayout helper, writes them
 // onto the graph node attributes, refreshes Sigma, and clears `pending`
 // through the supplied callback.
+function computeLayoutPositions(
+  spec: LayoutSpec,
+  nodes: Array<{ id: string }>,
+  edges: Array<{ source: string; target: string }>,
+): Map<string, { x: number; y: number }> {
+  // Auto resolves to one of the concrete kinds based on the node count
+  // heuristic, then falls through. < 100 → force, otherwise hierarchical.
+  let kind: LayoutKind = spec.kind;
+  if (kind === 'auto') {
+    kind = pickAutoLayoutKind(nodes.length);
+  }
+  if (kind === 'hierarchical') {
+    return hierarchicalLayout({
+      nodes,
+      edges,
+      reverse: spec.kind === 'hierarchical' ? spec.reverse : false,
+      rootNodes: spec.kind === 'hierarchical' ? spec.rootNodes : [],
+    });
+  }
+  if (kind === 'force') {
+    return forceAtlas2Layout({ nodes, edges });
+  }
+  return circularLayout({ nodes });
+}
+
 function LayoutApplier({
   pending,
   onComplete,
@@ -273,12 +358,7 @@ function LayoutApplier({
         edges.push({ source, target });
       });
     }
-    const positions = hierarchicalLayout({
-      nodes,
-      edges,
-      reverse: pending.reverse,
-      rootNodes: pending.rootNodes,
-    });
+    const positions = computeLayoutPositions(pending, nodes, edges);
     for (const [id, p] of positions) {
       if (graph.hasNode(id)) {
         graph.setNodeAttribute(id, 'x', p.x);

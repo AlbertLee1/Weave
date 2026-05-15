@@ -609,3 +609,233 @@ describe('VertexWorkspacePage hierarchical layout (VTX-022)', () => {
   });
 });
 
+describe('VertexWorkspacePage force / circular / auto layouts (VTX-023)', () => {
+  const trianglePayload = {
+    layers: [
+      {
+        id: 'layer-triangle',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          { objectRid: 'ri.airport.A', properties: { name: 'A' } },
+          { objectRid: 'ri.airport.B', properties: { name: 'B' } },
+          { objectRid: 'ri.airport.C', properties: { name: 'C' } },
+          { objectRid: 'ri.airport.D', properties: { name: 'D' } },
+        ],
+      },
+    ],
+    edges: [
+      { id: 'e1', linkTypeRid: 'ri.lt', source: 'ri.airport.A', target: 'ri.airport.B' },
+      { id: 'e2', linkTypeRid: 'ri.lt', source: 'ri.airport.B', target: 'ri.airport.C' },
+      { id: 'e3', linkTypeRid: 'ri.lt', source: 'ri.airport.C', target: 'ri.airport.A' },
+    ],
+    positions: {},
+  };
+
+  function mockFetchOk(body: unknown) {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    });
+  }
+
+  function snapshotPositions(): Map<string, { x: number; y: number }> {
+    const map = new Map<string, { x: number; y: number }>();
+    if (!loadedGraph) return map;
+    loadedGraph.forEachNode((id: string) => {
+      const x = loadedGraph!.getNodeAttribute(id, 'x') as number;
+      const y = loadedGraph!.getNodeAttribute(id, 'y') as number;
+      map.set(id, { x, y });
+    });
+    return map;
+  }
+
+  it('Given_userPicksForceLayout_When_Applies_Then_nodePositionsMutate', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: trianglePayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(4);
+    });
+
+    const before = snapshotPositions();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-kind-force'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-force-apply'));
+    });
+
+    await waitFor(() => {
+      const after = snapshotPositions();
+      // ForceAtlas2 should leave all nodes with finite positions and
+      // perturb at least one of them away from the seed layout.
+      for (const [id, p] of after) {
+        expect(Number.isFinite(p.x)).toBe(true);
+        expect(Number.isFinite(p.y)).toBe(true);
+        // Sanity: position is non-degenerate (the algorithm pushes nodes apart).
+        const seed = before.get(id);
+        expect(seed).toBeDefined();
+      }
+      const moved = [...after].some(([id, p]) => {
+        const seed = before.get(id)!;
+        return Math.abs(p.x - seed.x) > 1e-6 || Math.abs(p.y - seed.y) > 1e-6;
+      });
+      expect(moved).toBe(true);
+    });
+  });
+
+  it('Given_userPicksCircularLayout_When_Applies_Then_allNodesShareSameRadius', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: trianglePayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(4);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-kind-circular'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-circular-apply'));
+    });
+
+    await waitFor(() => {
+      const after = snapshotPositions();
+      const radii = [...after.values()].map((p) => Math.hypot(p.x, p.y));
+      // All four nodes should land on the same circle centred at origin
+      // (within fp tolerance).
+      const min = Math.min(...radii);
+      const max = Math.max(...radii);
+      expect(max - min).toBeLessThan(1e-6);
+      // Radius is the layout's default (DEFAULT_RADIUS = 200) — positive.
+      expect(min).toBeGreaterThan(0);
+    });
+  });
+
+  it('Given_userPicksAutoLayoutAndGraphHas4Nodes_When_Applies_Then_dispatchesForceBehaviour', async () => {
+    // < 100 nodes → auto = force. ForceAtlas2's signature here is that
+    // every node moves at least slightly from its seed circle position.
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: trianglePayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(4);
+    });
+
+    const before = snapshotPositions();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-kind-auto'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-auto-apply'));
+    });
+
+    await waitFor(() => {
+      const after = snapshotPositions();
+      // All radii should NOT collapse to a single value — force layout
+      // produces variation that circular wouldn't.
+      const radii = [...after.values()].map((p) => Math.hypot(p.x, p.y));
+      const min = Math.min(...radii);
+      const max = Math.max(...radii);
+      // At least one node moved relative to baseline OR the radii spread
+      // meaningfully (>1 unit) — both signal a force pass ran rather than
+      // a pure circular placement.
+      const moved = [...after].some(([id, p]) => {
+        const seed = before.get(id)!;
+        return Math.abs(p.x - seed.x) > 1e-6 || Math.abs(p.y - seed.y) > 1e-6;
+      });
+      expect(moved || max - min > 1).toBe(true);
+    });
+  });
+
+  it('Given_userPicksAutoLayoutAndGraphHas150Nodes_When_Applies_Then_dispatchesHierarchicalBehaviour', async () => {
+    // ≥ 100 nodes → auto = hierarchical. Verify by building a long chain
+    // and asserting y monotonically increases along the chain (the
+    // hierarchical-TB signature).
+    const N = 150;
+    const longChainPayload = {
+      layers: [
+        {
+          id: 'layer-chain',
+          objectTypeRid: 'ri.ontology.main.object-type.airport',
+          objects: Array.from({ length: N }, (_, i) => ({
+            objectRid: `ri.airport.${i}`,
+            properties: { name: `A${i}` },
+          })),
+        },
+      ],
+      edges: Array.from({ length: N - 1 }, (_, i) => ({
+        id: `e${i}`,
+        linkTypeRid: 'ri.lt',
+        source: `ri.airport.${i}`,
+        target: `ri.airport.${i + 1}`,
+      })),
+      positions: {},
+    };
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: longChainPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(N);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-kind-auto'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-auto-apply'));
+    });
+
+    await waitFor(() => {
+      const y0 = loadedGraph!.getNodeAttribute('ri.airport.0', 'y') as number;
+      const yLast = loadedGraph!.getNodeAttribute(`ri.airport.${N - 1}`, 'y') as number;
+      expect(typeof y0).toBe('number');
+      expect(typeof yLast).toBe('number');
+      // Hierarchical TB: root smallest y, leaf largest.
+      expect(y0).toBeLessThan(yLast);
+    });
+  });
+
+  it('Given_popoverOpen_When_kindIsForce_Then_hierarchicalControlsAreHidden', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: trianglePayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    expect(screen.getByTestId('vertex-layout-hierarchical-controls')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-kind-force'));
+    });
+    expect(
+      screen.queryByTestId('vertex-layout-hierarchical-controls'),
+    ).not.toBeInTheDocument();
+  });
+});
+

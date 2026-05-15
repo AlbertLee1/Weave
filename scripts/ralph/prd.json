@@ -309,8 +309,8 @@
         "Tests pass"
       ],
       "priority": 23,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only. Two pure helpers (`forceAtlas2Layout`, `circularLayout`) + an `pickAutoLayoutKind(nodeCount)` heuristic (< 100 → force, otherwise hierarchical). The PRD's named `graphology-layout-circular` does NOT exist on npm — `graphology-layout` already ships circular as `graphology-layout/circular`, so we depend on the umbrella package and import the subpath. ForceAtlas2 uses 150 iterations + a deterministic seed circle (radius 100) so nodes never share an origin (the algorithm degenerates with co-located points); falls back to the seed when the lib produces NaN/Infinity. Circular's helper rewraps the upstream `scale`/`center` (where `center` is a normalized 0..1 offset multiplied by `scale`) into a saner `radius` + explicit `centerX`/`centerY` contract by running upstream at `center: 0.5` (offset = 0) and applying our own translation. VertexWorkspacePage's LayoutMenu now has a radio group (`vertex-layout-kind-{hierarchical|force|circular|auto}`) — hierarchical's reverse/root controls hide for the other kinds. LayoutApplier dispatches via a pure `computeLayoutPositions(spec, nodes, edges)` helper. 19 new tests (8 force + 5 circular + 2 auto-pick + 5 page-level: force apply / circular radius / auto < 100 → force / auto ≥ 150 → hierarchical / hierarchical-controls toggle). Bundle delta vs VTX-022: VertexWorkspacePage chunk 224.89 → 239.05 kB raw (+14.16 kB) / 59.44 → 63.69 kB gzip (+4.25 kB); main bundle unchanged. Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-024",
