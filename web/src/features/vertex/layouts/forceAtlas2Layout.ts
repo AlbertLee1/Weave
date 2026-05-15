@@ -8,7 +8,12 @@
 import Graph from 'graphology';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 
-import type { LayoutEdgeInput, LayoutNodeInput, LayoutPoint } from './hierarchicalLayout';
+import {
+  applyPinnedOverrides,
+  type LayoutEdgeInput,
+  type LayoutNodeInput,
+  type LayoutPoint,
+} from './hierarchicalLayout';
 
 export interface ForceAtlas2LayoutOptions {
   nodes: LayoutNodeInput[];
@@ -19,6 +24,12 @@ export interface ForceAtlas2LayoutOptions {
   gravity?: number;
   /** Override scalingRatio (default 10). */
   scalingRatio?: number;
+  /**
+   * VTX-024: nodes whose coordinates are user-fixed. The algorithm still
+   * runs on the full graph, but pinned ids are overwritten in the returned
+   * map with the supplied coords so they stay put across re-layouts.
+   */
+  pinnedPositions?: Map<string, LayoutPoint>;
 }
 
 const DEFAULT_ITERATIONS = 150;
@@ -90,5 +101,6 @@ export function forceAtlas2Layout(
       out.set(id, { x: Math.cos(angle) * 100, y: Math.sin(angle) * 100 });
     }
   }
+  applyPinnedOverrides(out, ids, opts.pinnedPositions);
   return out;
 }

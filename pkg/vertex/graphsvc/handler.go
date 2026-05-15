@@ -192,6 +192,19 @@ func (h *Handler) patchLayout(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingPositions", nil))
 		return
 	}
+	// VTX-024: drag-driven layout mutates the graph — gate it through the
+	// same owner-or-admin ACL we apply to GET. Ownerless graphs fall through
+	// (canReadGraph returns true) so degraded-mode fixtures still work.
+	g, err := h.repo.Get(r.Context(), ridStr)
+	if err != nil {
+		writeRepoError(w, err, ridStr)
+		return
+	}
+	if !canReadGraph(r, g) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("GraphWriteForbidden",
+			map[string]string{"rid": ridStr}))
+		return
+	}
 	if err := h.repo.UpdateLayout(r.Context(), ridStr, req.Positions); err != nil {
 		writeRepoError(w, err, ridStr)
 		return

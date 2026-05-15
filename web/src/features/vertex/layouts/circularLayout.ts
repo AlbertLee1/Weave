@@ -11,7 +11,12 @@
 import Graph from 'graphology';
 import circular from 'graphology-layout/circular';
 
-import type { LayoutEdgeInput, LayoutNodeInput, LayoutPoint } from './hierarchicalLayout';
+import {
+  applyPinnedOverrides,
+  type LayoutEdgeInput,
+  type LayoutNodeInput,
+  type LayoutPoint,
+} from './hierarchicalLayout';
 
 export interface CircularLayoutOptions {
   nodes: LayoutNodeInput[];
@@ -33,6 +38,12 @@ export interface CircularLayoutOptions {
   center?: number;
   /** Deprecated alias for `radius`; preserved for symmetry with the upstream API. */
   scale?: number;
+  /**
+   * VTX-024: nodes whose coordinates are user-fixed. The layout still runs
+   * on the full graph, but pinned ids are overwritten in the returned map
+   * with the supplied coords so they stay put across re-layouts.
+   */
+  pinnedPositions?: Map<string, LayoutPoint>;
 }
 
 const DEFAULT_RADIUS = 200;
@@ -80,5 +91,6 @@ export function circularLayout(
       out.set(id, { x: p.x + cx, y: p.y + cy });
     }
   }
+  applyPinnedOverrides(out, ids, opts.pinnedPositions);
   return out;
 }

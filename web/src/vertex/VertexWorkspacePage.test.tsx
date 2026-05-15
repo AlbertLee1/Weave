@@ -44,6 +44,9 @@ Object.defineProperty(sigmaContainer, 'getBoundingClientRect', {
 });
 const sigmaStub = {
   graphToViewport: (p: { x: number; y: number }) => ({ x: p.x, y: p.y }),
+  // VTX-024: drag conversion uses viewportToGraph. Mirror the identity
+  // graphToViewport stub so test math is predictable.
+  viewportToGraph: (p: { x: number; y: number }) => ({ x: p.x, y: p.y }),
   getDimensions: () => ({ width: 800, height: 600 }),
   getGraph: () => loadedGraph ?? emptyGraphStub,
   getContainer: () => sigmaContainer,
@@ -836,6 +839,188 @@ describe('VertexWorkspacePage force / circular / auto layouts (VTX-023)', () => 
     expect(
       screen.queryByTestId('vertex-layout-hierarchical-controls'),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('VertexWorkspacePage manual drag + pinned (VTX-024)', () => {
+  const dragPayload = {
+    layers: [
+      {
+        id: 'layer-airports',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          { objectRid: 'ri.airport.A', properties: { name: 'A' } },
+          { objectRid: 'ri.airport.B', properties: { name: 'B' } },
+          { objectRid: 'ri.airport.C', properties: { name: 'C' } },
+        ],
+      },
+    ],
+    edges: [
+      { id: 'e1', linkTypeRid: 'ri.lt', source: 'ri.airport.A', target: 'ri.airport.B' },
+      { id: 'e2', linkTypeRid: 'ri.lt', source: 'ri.airport.B', target: 'ri.airport.C' },
+    ],
+    positions: {},
+  };
+
+  const dragPayloadPinnedA = {
+    ...dragPayload,
+    positions: {
+      'ri.airport.A': { x: 42, y: -17, pinned: true },
+    },
+  };
+
+  function mockFetchOk(body: unknown) {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    });
+  }
+
+  function mockPatchOk() {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify({ rid: 'ri.g' }),
+      json: async () => ({ rid: 'ri.g' }),
+    });
+  }
+
+  function fireSigmaEvent(name: string, payload: unknown) {
+    const handler = capturedHandlers[name];
+    if (!handler) throw new Error(`no handler registered for ${name}`);
+    handler(payload);
+  }
+
+  it('Given_userDragsNodeA_When_mouseup_Then_PATCHesLayoutWithPinnedTrueAndUpdatesCoords', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: dragPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    mockPatchOk();
+
+    // Simulate downNode → mousemovebody → mouseup. The captured handlers
+    // run inside React render flow, so wrap each fire in act().
+    await act(async () => {
+      fireSigmaEvent('downNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('mousedown') },
+      });
+    });
+    await act(async () => {
+      const mv = new MouseEvent('mousemove', { clientX: 250, clientY: 150 });
+      fireSigmaEvent('mousemovebody', { x: 250, y: 150, original: mv });
+    });
+    await act(async () => {
+      const up = new MouseEvent('mouseup', { clientX: 250, clientY: 150 });
+      fireSigmaEvent('mouseup', { x: 250, y: 150, original: up });
+    });
+
+    // Expect a PATCH /api/vertex/v1/graphs/{rid}/layout call with the new
+    // coords + pinned:true.
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const patchCall = fetchMock.mock.calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).endsWith('/layout'),
+    );
+    expect(patchCall).toBeDefined();
+    expect(patchCall![0]).toBe('/api/vertex/v1/graphs/ri.g/layout');
+    const init = patchCall![1] as RequestInit;
+    expect(init.method).toBe('PATCH');
+    const body = JSON.parse(init.body as string);
+    expect(body.positions['ri.airport.A']).toEqual({ x: 250, y: 150, pinned: true });
+  });
+
+  it('Given_pinnedNodeA_When_userAppliesLayout_Then_nodeAStaysAtPinnedCoords', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: dragPayloadPinnedA });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    // Apply the default hierarchical layout.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-layout'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-layout-hierarchical-apply'));
+    });
+
+    await waitFor(() => {
+      const xA = loadedGraph!.getNodeAttribute('ri.airport.A', 'x') as number;
+      const yA = loadedGraph!.getNodeAttribute('ri.airport.A', 'y') as number;
+      expect(xA).toBe(42);
+      expect(yA).toBe(-17);
+    });
+    // B and C should still be present (and finite — moved by the layout).
+    expect(Number.isFinite(loadedGraph!.getNodeAttribute('ri.airport.B', 'x') as number)).toBe(true);
+    expect(Number.isFinite(loadedGraph!.getNodeAttribute('ri.airport.C', 'x') as number)).toBe(true);
+  });
+
+  it('Given_pinnedNodeA_When_rightClickAndUnpin_Then_PATCHesPinnedFalseAndRemovesFromPinSet', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: dragPayloadPinnedA });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(3);
+    });
+
+    // Right-click on the pinned node.
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu', { clientX: 120, clientY: 90 }) },
+      });
+    });
+
+    const menu = await screen.findByTestId('vertex-node-context-menu');
+    expect(menu.getAttribute('data-node')).toBe('ri.airport.A');
+    const unpinButton = screen.getByTestId('vertex-node-context-menu-unpin');
+
+    mockPatchOk();
+    await act(async () => {
+      fireEvent.click(unpinButton);
+    });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const patchCall = fetchMock.mock.calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).endsWith('/layout'),
+    );
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+    expect(body.positions['ri.airport.A'].pinned).toBe(false);
+
+    // Menu closes after unpin.
+    expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
+  });
+
+  it('Given_unpinnedNode_When_rightClick_Then_noContextMenuRendered', async () => {
+    mockFetchOk({ rid: 'ri.g', name: 'g', version: 1, payload: dragPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+    });
+
+    await act(async () => {
+      fireSigmaEvent('rightClickNode', {
+        node: 'ri.airport.A',
+        event: { original: new MouseEvent('contextmenu') },
+      });
+    });
+
+    // A is not in the pinned set on this payload, so VTX-024 surfaces no menu.
+    // (VTX-026 will add the multi-item menu for non-pinned nodes.)
+    expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
   });
 });
 

@@ -12,7 +12,7 @@
 // so the heavy logic stays pure + Vitest-friendly. Zoom/pan come for free
 // from Sigma's default camera controls — no custom event wiring needed.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import Graph from 'graphology';
 import { SigmaContainer, useLoadGraph, useSigma } from '@react-sigma/core';
@@ -35,8 +35,15 @@ import { hierarchicalLayout } from '../features/vertex/layouts/hierarchicalLayou
 import { forceAtlas2Layout } from '../features/vertex/layouts/forceAtlas2Layout';
 import { circularLayout } from '../features/vertex/layouts/circularLayout';
 import { pickAutoLayoutKind } from '../features/vertex/layouts/autoLayout';
+import {
+  formatLayoutPatchBody,
+  pinnedPositionsFromPayload,
+  type LayoutPoint as PinnedLayoutPoint,
+} from '../features/vertex/drag/dragPersistence';
 import { VertexNodeOverlay } from './VertexNodeOverlay';
 import { VertexSelectionLayer } from './VertexSelectionLayer';
+import { VertexDragLayer } from './VertexDragLayer';
+import { VertexNodeContextMenu } from './VertexNodeContextMenu';
 import {
   VertexSelectionSidebar,
   type VertexObjectSummary,
@@ -315,6 +322,7 @@ function computeLayoutPositions(
   spec: LayoutSpec,
   nodes: Array<{ id: string }>,
   edges: Array<{ source: string; target: string }>,
+  pinnedPositions?: Map<string, PinnedLayoutPoint>,
 ): Map<string, { x: number; y: number }> {
   // Auto resolves to one of the concrete kinds based on the node count
   // heuristic, then falls through. < 100 → force, otherwise hierarchical.
@@ -328,22 +336,31 @@ function computeLayoutPositions(
       edges,
       reverse: spec.kind === 'hierarchical' ? spec.reverse : false,
       rootNodes: spec.kind === 'hierarchical' ? spec.rootNodes : [],
+      pinnedPositions,
     });
   }
   if (kind === 'force') {
-    return forceAtlas2Layout({ nodes, edges });
+    return forceAtlas2Layout({ nodes, edges, pinnedPositions });
   }
-  return circularLayout({ nodes });
+  return circularLayout({ nodes, pinnedPositions });
 }
 
 function LayoutApplier({
   pending,
+  pinnedPositions,
   onComplete,
 }: {
   pending: LayoutSpec | null;
+  pinnedPositions: Map<string, PinnedLayoutPoint>;
   onComplete: () => void;
 }) {
   const sigma = useSigma();
+  // Keep latest pinned set readable from the effect without re-running on
+  // every drag commit — the effect only runs when `pending` flips on.
+  const pinnedRef = useRef(pinnedPositions);
+  useEffect(() => {
+    pinnedRef.current = pinnedPositions;
+  }, [pinnedPositions]);
   useEffect(() => {
     if (!pending) return;
     const graph = sigma.getGraph() as unknown as Graph | undefined;
@@ -358,7 +375,7 @@ function LayoutApplier({
         edges.push({ source, target });
       });
     }
-    const positions = computeLayoutPositions(pending, nodes, edges);
+    const positions = computeLayoutPositions(pending, nodes, edges, pinnedRef.current);
     for (const [id, p] of positions) {
       if (graph.hasNode(id)) {
         graph.setNodeAttribute(id, 'x', p.x);
@@ -478,6 +495,103 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     setPendingLayout(null);
   }, []);
 
+  // VTX-024: track which nodes the user has pinned + their coords.
+  //
+  // The set is split into a *seed* derived from payload.positions (any
+  // entry with pinned===true) and a *user diff* the drag + unpin paths
+  // mutate. Keeping the two layers separate avoids the
+  // react-hooks/set-state-in-effect anti-pattern that an effect→setState
+  // seed would create whenever fetch resolves.
+  const seedPinnedPositions = useMemo<Map<string, PinnedLayoutPoint>>(() => {
+    if (state.kind !== 'ready') return new Map();
+    return pinnedPositionsFromPayload(state.graph.payload);
+  }, [state]);
+
+  const [pinnedDiff, setPinnedDiff] = useState<{
+    /** Coords the user set via drag — overrides seed entries with matching ids. */
+    set: Map<string, PinnedLayoutPoint>;
+    /** Ids the user removed via Unpin — drop matching seed entries. */
+    cleared: Set<string>;
+  }>(() => ({ set: new Map(), cleared: new Set() }));
+
+  const pinnedPositions = useMemo<Map<string, PinnedLayoutPoint>>(() => {
+    const out = new Map(seedPinnedPositions);
+    for (const id of pinnedDiff.cleared) out.delete(id);
+    for (const [id, p] of pinnedDiff.set) out.set(id, p);
+    return out;
+  }, [seedPinnedPositions, pinnedDiff]);
+
+  const pinnedNodeIds = useMemo(
+    () => new Set(pinnedPositions.keys()),
+    [pinnedPositions],
+  );
+
+  // Keep the latest rid in a ref so the long-lived drag/unpin callbacks
+  // don't churn on every render — the page-level state changes plenty.
+  const ridRef = useRef(rid);
+  useEffect(() => {
+    ridRef.current = rid;
+  }, [rid]);
+
+  // Keep the latest merged pinnedPositions readable from the long-lived
+  // handlers without re-creating them on every drag (which would also
+  // re-subscribe Sigma event listeners). Synced via a tiny effect — same
+  // pattern as selectionRef in VertexSelectionLayer.
+  const pinnedPositionsRef = useRef(pinnedPositions);
+  useEffect(() => {
+    pinnedPositionsRef.current = pinnedPositions;
+  }, [pinnedPositions]);
+
+  const handleDragEnd = useCallback(
+    (nodeId: string, x: number, y: number) => {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      setPinnedDiff((prev) => {
+        const set = new Map(prev.set);
+        set.set(nodeId, { x, y });
+        const cleared = new Set(prev.cleared);
+        cleared.delete(nodeId);
+        return { set, cleared };
+      });
+      if (ridRef.current === 'new' || !ridRef.current) {
+        // /vertex/new isn't persisted yet — keep the local pinned state but
+        // don't PATCH a non-existent resource.
+        return;
+      }
+      void fetch(`/api/vertex/v1/graphs/${encodeURIComponent(ridRef.current)}/layout`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formatLayoutPatchBody(nodeId, x, y, true)),
+      }).catch(() => {
+        // Drag persistence is opportunistic — leave the in-memory pinned
+        // state in place even if the network hiccups; the next successful
+        // PATCH will reconcile.
+      });
+    },
+    [],
+  );
+
+  const handleUnpin = useCallback(
+    (nodeId: string) => {
+      const current = pinnedPositionsRef.current.get(nodeId);
+      setPinnedDiff((prev) => {
+        const set = new Map(prev.set);
+        set.delete(nodeId);
+        const cleared = new Set(prev.cleared);
+        cleared.add(nodeId);
+        return { set, cleared };
+      });
+      if (ridRef.current === 'new' || !ridRef.current) return;
+      const x = current?.x ?? 0;
+      const y = current?.y ?? 0;
+      void fetch(`/api/vertex/v1/graphs/${encodeURIComponent(ridRef.current)}/layout`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formatLayoutPatchBody(nodeId, x, y, false)),
+      }).catch(() => {});
+    },
+    [],
+  );
+
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
@@ -493,7 +607,16 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
               onSelectionChange={setSelection}
             />
             <SelectionHighlighter selection={selection} />
-            <LayoutApplier pending={pendingLayout} onComplete={handleLayoutComplete} />
+            <VertexDragLayer onDragEnd={handleDragEnd} />
+            <VertexNodeContextMenu
+              pinnedNodeIds={pinnedNodeIds}
+              onUnpin={handleUnpin}
+            />
+            <LayoutApplier
+              pending={pendingLayout}
+              pinnedPositions={pinnedPositions}
+              onComplete={handleLayoutComplete}
+            />
           </SigmaContainer>
           {state.kind === 'loading' && (
             <div

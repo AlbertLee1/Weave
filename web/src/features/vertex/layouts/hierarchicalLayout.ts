@@ -44,6 +44,12 @@ export interface HierarchicalLayoutOptions {
   rankSep?: number;
   nodeWidth?: number;
   nodeHeight?: number;
+  /**
+   * VTX-024: nodes whose coordinates are user-fixed. The layout still runs
+   * on the full graph, but pinned ids are overwritten in the returned map
+   * with the supplied coords so they stay put across re-layouts.
+   */
+  pinnedPositions?: Map<string, LayoutPoint>;
 }
 
 const DEFAULT_NODE_WIDTH = 40;
@@ -102,5 +108,24 @@ export function hierarchicalLayout(
       out.set(id, { x: node.x, y: node.y });
     }
   }
+  applyPinnedOverrides(out, ids, opts.pinnedPositions);
   return out;
+}
+
+/**
+ * Overwrite layout-computed positions for any id present in pinned. Unknown
+ * ids (pinned but not in the node set) are skipped so callers can pass the
+ * full pinned map without filtering. Shared across all layout helpers.
+ */
+export function applyPinnedOverrides(
+  out: Map<string, LayoutPoint>,
+  knownIds: Iterable<string>,
+  pinned?: Map<string, LayoutPoint>,
+): void {
+  if (!pinned || pinned.size === 0) return;
+  const present = new Set(knownIds);
+  for (const [id, p] of pinned) {
+    if (!present.has(id)) continue;
+    out.set(id, { x: p.x, y: p.y });
+  }
 }
