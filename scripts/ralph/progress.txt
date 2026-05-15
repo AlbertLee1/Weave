@@ -1,161 +1,43 @@
-# Ralph Progress Log
-Started: Thu May 14 23:48:45 CST 2026
+# Ralph Progress Log - Stream A
+Started: Fri May 15 09:45:33 CST 2026
+Stream: A
 
 ## Codebase Patterns
-- Migrations 序号已用到 000106；新增使用 000107+。一对 `*.up.sql` / `*.down.sql`，up 必须用 `IF NOT EXISTS` / `DO $$ ... IF NOT EXISTS ... END$$` 保证幂等，down 必须按 FK 依赖反向 DROP。
-- 集成测试用 `//go:build integration` + `testutil.StartPGContainer(t)`（pgvector/pgvector:pg16，每 case 独立容器，~1.2s 启动）。运行：`go test -tags integration ./... -run TestX -v`。需要 Docker。
-- TimescaleDB 专用集成测试用 `testutil.StartTimescaleDBContainer(t)`（timescale/timescaledb:latest-pg16，自带 timescaledb 扩展）。仅在确实需要 hypertable / continuous aggregate 时用，启动 ~1s；其余 PG 集成测试继续用 pgvector 镜像以避免额外 1.4GB 镜像下载。
-- 涉及 TimescaleDB 扩展的迁移用 `IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb')` DO-block 包裹 `create_hypertable` / 连续聚合，保证在 pgvector 镜像上也能跑通（普通表仍创建，hypertable / cagg 缺席而已）。
-- 测试命名遵循 PRD tddConvention：`Test{Feature}_Given_{State}_When_{Action}_Then_{Outcome}`。
-- 校验 column / index 存在：`information_schema.columns` / `pg_indexes`（`indexdef ILIKE '%(col_a, col_b)%'`）。
-- Module path: `github.com/liyang/weave`，迁移文件路径由 `testutil.MigrationsDir()` 自动向上搜索 8 层定位 `migrations/`。
-- Vertex 命名前缀：RID 形如 `ri.vertex.{realm}.{resourceType}.{uuid}`；与现有 `ri.ontology.*` 区分但共用 PG schema。
-- Repo 风格遵循 pkg/oms.Repository：小接口、ctx-first、sentinel error（`ErrXxxNotFound` / `ErrXxxImmutable`）让调用方可 `errors.Is`。PG 实现写 `var _ Repo = (*PGRepo)(nil)` 编译期断言接口满足。
-- 应用层并发写 + 状态翻转：`SELECT ... FOR UPDATE` + tx 阻塞并行 AppendEdit / Freeze，避免 immutable 翻转后还能追加 edit。pgx.BeginTx + defer Rollback 是标准模式。
-- pgx 的 JSONB 写法：`json.RawMessage` 或 `[]byte` 直传，pgx 会自动处理 jsonb 类型；空切片传 nil interface 防止某些版本 panic。`NULLIF($n, '')` 把空字符串映射为 NULL，匹配 schema 的 nullable text 列。
-- 纯函数（无 DB / 无 IO）测试：放同包 `*_test.go`（外部包名 `scenarios_test`），不需要 `//go:build integration`，`make test` 默认就跑；Benchmark 用 `go test -bench BenchmarkX -run='^$' -benchmem ./pkg/...`，跳过普通测试只跑 bench。
-
+- LinkType admin handlers use **tri-state pointer** for partial PUT fields (nil = preserve, &value = set). Mirror this for any new optional field; bare value collapses "omit" and "clear" into one (see UpdateLinkTypeRequest.PropagateMarkings & TypeClasses).
+- LinkType wire format uses `omitempty` so the JSON shape stays backwards compatible — emit new fields from ToWireJSON only when non-zero.
+- PostgreSQL TEXT[] columns: pgx v5 scans into `[]string` directly. SELECT with `COALESCE(col, '{}'::text[])` keeps nil rows safe; INSERT pass `[]string{}` (not nil) to avoid pgx encoding gotchas.
+- Frontend Vertex pure helpers live under `web/src/features/vertex/<feature>/` with `<helper>.ts` + `<helper>.test.ts` siblings (Vitest, no React).
+- Frontend admin UI for OMS resources lives in `web/src/components/admin/*.tsx`; co-located `__tests__/*.test.tsx` use a `installFetch(state)` stub pattern to mock the v2 REST endpoints.
+- `cmd/server/embed.go` requires `cmd/server/web/dist/*` to exist before `go build ./...` works — keep a placeholder file when running Go tests without first building the frontend.
+- Migration numbering: VTX stream uses 000200+. Add a `down.sql` even if it just drops the column.
 ---
 
-## 2026-05-14 - VTX-001
-- Implemented scenario / scenario_edits migration (Phase 1 PoC) with 4 tables: case_studies, scenarios, scenario_edits, scenario_overrides.
-- Files changed:
-  - `migrations/000105_vertex_scenarios.up.sql` (new) — 4 tables + composite index `scenario_edits(scenario_rid, object_id)` + status CHECK + name length CHECK
-  - `migrations/000105_vertex_scenarios.down.sql` (new) — reverse drop order (children before parents)
-  - `internal/database/vertex_scenarios_migration_test.go` (new) — 4 integration tests covering: table existence, composite index, down→up reseed cleanliness, column inventory
-  - `scripts/ralph/prd.json` — VTX-001 → passes:true
-- Quality checks: `go test -tags integration ./internal/database/... -run TestVertexScenarioMigration` PASS (4/4); `go vet ./internal/database/...` clean; `go build ./...` clean.
+## Fri May 15 ~10:02 CST 2026 - VTX-010
+- Implemented Vertex Link Type Classes per BDD acceptance.
+- Backend
+  - pkg/oms/models.go: added `LinkType.TypeClasses []string` with `omitempty`, plus constants `VertexLinkTypeClassPrimaryDirection/Undirectional/Bidirectional`, helpers `KnownVertexLinkTypeClasses()` and `IsKnownVertexLinkTypeClass()`. Extended `ToWireJSON` to emit the slice when non-empty.
+  - pkg/oms/admin_handlers.go: added `TypeClasses []string` to `CreateLinkTypeRequest`, `*[]string` (tri-state) to `UpdateLinkTypeRequest`; introduced `validateLinkTypeClasses` (returns 400 InvalidParameter:typeClasses) + `normaliseLinkTypeClasses` (dedup); wired both into POST + PUT handlers.
+  - pkg/oms/pg_repository.go + pkg/oms/link_edges.go: extended every SELECT / INSERT / UPDATE on link_types to read/write `type_classes` column (TEXT[]).
+  - migrations/000202_link_type_type_classes.up.sql / down.sql: ADD COLUMN IF NOT EXISTS type_classes TEXT[] NOT NULL DEFAULT '{}'.
+  - pkg/oms/admin_handlers_type_classes_test.go: 8 new tests (Red → Green) covering create/persist, unknown-tag rejection 400, omit-on-wire when empty, tri-state PUT (preserve/clear/replace), ToWireJSON shape.
+- Frontend
+  - web/src/api/types.ts: added optional `typeClasses?: string[]` to `LinkType`.
+  - web/src/api/ontologies.ts: added `typeClasses` to Create/UpdateLinkTypeRequest.
+  - web/src/features/vertex/links/edgeArrowStyle.ts + .test.ts: pure helper `pickEdgeArrowStyle(tags)` returning 'primary'|'none'|'both'. Exports `VERTEX_LINK_TYPE_CLASSES` constant for admin UI. 7 Vitest tests cover each tag + unknown-tag + bidirectional-wins-over-primary fallback.
+  - web/src/components/admin/LinkTypeAdminPage.tsx: added a `TypeClassCheckboxes` sub-component used by both Create and Edit modals; Create sends the array on submit (or omits when empty), Edit uses a `typeClassesDirty` flag so omitted fields stay untouched (tri-state mirror).
+  - web/src/components/admin/__tests__/LinkTypeAdminPage.test.tsx: +2 tests for Create with checkbox → POST body, Edit preserves prior tag → toggle → PUT body.
+- Quality
+  - `go test ./pkg/oms/... ./pkg/oss/... ./pkg/vertex/...` PASS (1 line cached, rest fresh)
+  - `go vet ./...` clean
+  - `go build ./...` clean (after temporary `cmd/server/web/dist` placeholder)
+  - `npx vitest run` — 1527/1527 tests pass
+  - `npx tsc --noEmit` — clean
+  - `npx eslint <touched files>` — clean
 - **Learnings for future iterations:**
-  - 迁移序号现已到 000105（PRD 描述中的 "000001~000015" 已过时；总计 208 个 .sql 文件 = 104 对）。后续 VTX 系列继续往后顺延。
-  - `scenarios.immutable` 由应用层强制（VTX-002 ScenarioRepo `Freeze()` 后 `AppendEdit` 返回 `ErrScenarioImmutable`），DB 层只是 BOOLEAN 列，没有 trigger / RLS。这是为了让错误更明确（不是 SQL constraint）。
-  - `scenario_edits.seq` 是 BIGSERIAL（全局递增），不是 per-scenario 重置 1..N。fold 算法按 seq ASC 排序即可保证插入顺序；这点在 VTX-002 / VTX-003 写测试时要注意：不能断言 seq 从 1 开始。
-  - PG container 启动 ~1.2 秒 / case；4 个 case 总 ~6 秒。整 `go test ./...` 时（包含其它 ~50 个 integration test）会到分钟级，本地跑请用 `-run` 限缩范围。
-  - `op` 的 CHECK 取值固定为 `createObject|modifyProperty|deleteObject|addLink|deleteLink` — Fold 算法需要识别这 5 种 op。
----
-
-## 2026-05-15 - VTX-002
-- Implemented `pkg/scenarios` ScenarioRepo interface + PostgreSQL implementation on top of VTX-001 migrations. Repo surface: `CreateCaseStudy / GetCaseStudy / CreateScenario / GetScenario / AppendEdit / ListEdits / Freeze / UpsertOverride / ListOverrides`.
-- Files changed:
-  - `pkg/scenarios/scenarios.go` (new) — interface + 4 domain structs (`CaseStudy`, `Scenario`, `ScenarioEdit`, `ScenarioOverride`) + `ErrScenarioNotFound` / `ErrScenarioImmutable` sentinels.
-  - `pkg/scenarios/pg_repo.go` (new) — `PGRepo` with `var _ Repo = (*PGRepo)(nil)`. `AppendEdit` runs in a tx with `SELECT ... FOR UPDATE` to make Freeze races safe; `UpsertOverride` is `ON CONFLICT (...) DO UPDATE`.
-  - `pkg/scenarios/repo_test.go` (new, integration build tag) — 6 BDD tests covering case-study/scenario create, RID prefix, 5-edit insert order, Freeze → ErrScenarioImmutable, unknown scenario → ErrScenarioNotFound, override upsert idempotency.
-  - `scripts/ralph/prd.json` — VTX-002 → passes:true.
-- Quality checks: `go test -tags integration ./pkg/scenarios/... -run TestScenarioRepo` PASS (6/6, ~8.2s incl. 6 PG containers); `go vet ./pkg/scenarios/...` clean; `go build ./...` clean.
-- **Learnings for future iterations:**
-  - `seq` 是 BIGSERIAL 全局递增 — 测试要断言「严格递增」而非 1..5。这一点 VTX-001 笔记已警告，VTX-002 测试如实落地。
-  - `case_studies.ontology_rid` 有 FK 到 `ontologies(rid)`，集成测试必须先插一行 `ontologies` 桩数据；用 `ri.ontology.main.ontology.vtxtest` 这类清晰可识别 RID 而非 UUID，方便日志排查。
-  - `rid.New("vertex", "main", "case-study")` 直接调用即可，无需在 pkg/rid 加 `NewCaseStudyRID` 帮手；保持 pkg/rid 不依赖 Vertex 业务。
-  - 应用层 `Freeze + AppendEdit` 并发安全靠 PG row lock — DB 列 `immutable` 是真理来源，应用代码读到 false 再插入，整个流程在同一 tx 内（`SELECT ... FOR UPDATE` → 检查 → INSERT → COMMIT）。VTX-003 Fold 算法是纯函数所以不涉及锁。
-  - `ScenarioOverride.Value` 必须非空：`UpsertOverride` 早返回 `fmt.Errorf("override value must not be empty")`。VTX-005 / VTX-006 写 override UI 时记得前端先校验。
----
-
-## 2026-05-15 - VTX-003
-- Implemented `pkg/scenarios.FoldObject` + `FoldLinks` pure functions. Replays scenario_edits in seq order onto a base view (single object) or base adjacency (links) and returns the overlayed result.
-- Files changed:
-  - `pkg/scenarios/fold.go` (new) — `ObjectKey`, `ObjectView`, `LinkView` types; `FoldObject(target, base, edits) (*ObjectView, bool)` and `FoldLinks(base, edits) []LinkView`. Edits are sorted by Seq ASC internally (defensive against unsorted callers). `modifyProperty` between `deleteObject` and a re-creating `createObject` is dropped; re-create carries no old props.
-  - `pkg/scenarios/fold_test.go` (new) — 13 table-driven FoldObject cases + 11 FoldLinks cases (≥12 total), plus `BenchmarkFoldObject_1000Edits`. Uses package `scenarios_test`, no build tag.
-  - `scripts/ralph/prd.json` — VTX-003 → passes:true.
-- Quality checks: `go test ./pkg/scenarios/...` PASS (24/24 subtests + 6 integration repo tests via prior story); `go vet` clean; `go build ./...` clean; benchmark = 45.8 µs/op on M3 Max for 1000 edits (BDD bound 5 ms → 109× headroom).
-- **Learnings for future iterations:**
-  - `createObject` 把整个 properties JSON 存在 `new_value` 列里（`property` 留空）。Fold 用 `json.Unmarshal(e.NewValue, &map)` 还原为 `map[string]json.RawMessage`，property 值保持 `json.RawMessage` 形态——上游可以再 unmarshal 成具体类型，不必早强制 schema。
-  - 现实里 `ListEdits` 已按 seq 排序，但 Fold 仍然 defensive `sort.SliceStable` 一份 copy。代价小（1k 元素 sort 在 us 级），但能让 unit test 写「乱序输入」case 而不需要先排好，也保护并发场景下 caller 没排序的代码路径。
-  - 「modify 在 delete 之后」要丢弃；但 delete 后又来一次 createObject 必须重新走「初始化为 new_value 的 props」流程——不要让旧 base 的属性「漏」到 re-create 后的 view。测试 case `modify => delete => recreate => modify` 锁定这条不变量。
-  - `FoldLinks` 输出按 `(LinkType, SrcID, DstID)` 字典序排序保证 determinism——对 VTX-004 / VTX-005 在 HTTP 层做 diff 断言、对 VTX-006 e2e cassette 友好。Caller 不要假设输入序就是输出序。
-  - 1000 edits 折叠 ~46 µs — 离 BDD 5 ms 上限远得很。后续 VTX-004 在 HTTP 路径加 fold 不需要担心算法层；瓶颈会在 DB 取 base + ListEdits + JSON 编解码。
----
-
-## 2026-05-15 - VTX-004
-- Added X-Scenario-Id header support to Ontology Read API (GetObject / ListObjects / ListLinkedObjects). Header-less requests stay byte-identical to base; header-present requests fold scenario edits over the response.
-- Files changed:
-  - `pkg/oss/scenario_overlay.go` (new) — `ScenarioReader` interface (pkg/scenarios.Repo satisfies it); `Handler.SetScenarioReader` + `Handler.scenarioReader` field; `loadScenarioOverlay` returns nil/404/409/500 apierror; `ScenarioOverlay.applyToObject` (uses FoldObject, signals deleted) and `applyToPage` (filters deletes from list).
-  - `pkg/oss/handlers.go` (edit) — Handler struct gets `scenarioReader ScenarioReader`; GetObject/ListObjects/ListLinkedObjects call loadScenarioOverlay before svc fetch, then apply overlay before WriteJSON. A deleteObject edit on the requested key turns into 404 ObjectNotFound (reason="deleted in scenario").
-  - `pkg/oss/scenario_overlay_test.go` (new) — 6 test functions / 7 subtests covering BDD #1–#4 + list-row overlay + linked-objects overlay + 100-edit perf bound. Uses fake Service (panic on unused methods) and fake ScenarioReader.
-  - `scripts/ralph/prd.json` — VTX-004 → passes:true.
-- Quality checks: `go test ./pkg/oss/... -run TestScenarioOverlay` PASS (7/7 subtests, <1s); full `go test ./pkg/oss/` PASS (65s, no regression); `go vet ./...` clean; `go build ./...` clean.
-- **Learnings for future iterations:**
-  - WireObject.Properties 是 `map[string]any`，FoldObject 期望 `map[string]json.RawMessage`。便宜的 adapter：`json.Marshal` 每个 value 转过去、`json.Unmarshal` 进 `any` 转回来。数值类型有损（int → float64），但 Foundry V2 wire 本来就是 JSON，调用方已经拿 float64。
-  - PrimaryKey 是 `any`，要用 `fmt.Sprintf("%v", ...)` 强转匹配 `scenario_edits.object_id` text 列。string/int PK OK；复合主键日后要单独处理。
-  - 验证 header 在 svc.GetObject DB 调用 **之前**，让 bad X-Scenario-Id 快速返 404/409 不烧 DB 查询。
-  - `ObjectPage` 用 shallow copy `cp := *page; cp.Data = newData` 改 Data 切片，不动 svc 可能返回的池化原 page。
-  - 此层 **不做** ListObjects 的 createObject 合成：scenario 里新建但 base 没有的对象不在 list 里出现。VTX-005 在 aggregation 处理「scenario 新增 3 个 → COUNT+=3」时，要直接基于候选 key 集做。
-  - Handler 通过 `SetScenarioReader` 接 scenario reader（模仿 `SetOmsRepo`/`SetAttachmentStore` 风格）。main.go 可以直接传 `scenarios.PGRepo`；接口只暴露 GetScenario + ListEdits 两个方法，不需要 adapter。
----
-
-## 2026-05-15 - VTX-005
-- Aggregation API 支持 X-Scenario-Id overlay。Header 不在 → 走原 Bleve 引擎；Header 在 → 走纯 Go overlay 路径（PoC）。
-- Files changed:
-  - `pkg/oss/scenario_aggregate.go` (new) — `AggregateWithOverlay(base, edits, req) (*aggregation.AggregationResponse, error)`. 内部 `applyOverlayToObjectSet` 把 edits 按 ObjectID 分桶；base 行 FoldObject；createObject 合成；deleteObject 过滤。`computeOverlayMetrics` 支持 count / sum / avg / min / max；`numericProperty` 收 float64/float32/intN/json.Number/string。Single-level exact groupBy；多层 / fixedWidth / range / topValues / sub-agg / having / cube / rollup / approximate* 在 PoC 中明确 unsupported，返 InvalidParameter。
-  - `pkg/oss/handlers_aggregate.go` (edit) — AggregateObjects 先 `loadScenarioOverlay`：overlay==nil 走原 engine；overlay!=nil 用 `svc.ListObjects(ontology, objectType)` 拉 base，调 `AggregateWithOverlay`。注意：overlay 路径 **不需要** aggEngine/indexMgr 配置（pure Go）；base 路径仍需。
-  - `pkg/oss/scenario_aggregate_test.go` (new) — 7 个测试覆盖 BDD #1（GROUP BY status SUM total → modify +500 = 1500）/ #2（delete 2 → COUNT 8）/ #3（create 3 → COUNT 13）+ mixed delete/modify/create SUM + AVG codepath + handler 集成（POST /aggregate + X-Scenario-Id）+ 未知 scenario → 404。
-  - `scripts/ralph/prd.json` — VTX-005 → passes:true.
-- Quality checks: `go test ./pkg/oss/... -run TestScenarioAggregate` PASS (7/7, <1s); 全套 `go test ./pkg/oss/` PASS (65s, 0 回归); `go vet ./...` clean; `go build ./...` clean.
-- **Learnings for future iterations:**
-  - `aggregation.AggregationRequest` 自带 `Query *bleve.SearchRequest` 字段。overlay 路径忽略它（pure Go），但生产化时要把 Bleve `Query` 翻译成 Go 端 predicate 才能完整对齐 Bleve 语义。Phase 1 PoC 没做 — 写在 Open Questions。
-  - PRD 描述里的「先做对象集 fold 再走既有 Bleve 索引」难以一比一对齐：要么 re-index 一份临时 Bleve（昂贵），要么 pure Go aggregate（功能受限）。选了 pure Go：BDD 三个 case 命中即可，复杂 groupBy 留给 base 路径。
-  - `Properties: map[string]any` 的数值不一定是 float64：原 base 是 JSON 反序列化后的 float64，但 createObject 合成的 NewValue 经过 `json.Unmarshal(..., &any)` 也是 float64；test 用 `float64(70)` 显式写出来避免 int → any 的隐式坑。
-  - 同一 fakeScenarioReader / fakeService 可在 VTX-004 / VTX-005 测试间复用。两个 test 文件用同一个 _test 包，共享辅助函数（newTestRouter / raw）。
-  - createObject 合成需要 `ObjectType` 参数：scenario_edits.object_type 必须等于 URL path 上的 objectType 才会被纳入聚合，否则跨 type 的 createObject 会污染当前 objectType 的 COUNT。
----
-
-## 2026-05-15 - VTX-006
-- Phase 1 end-to-end smoke：把 VTX-001（migration）/ VTX-002（scenarios.Repo）/ VTX-003（FoldObject）/ VTX-004（X-Scenario-Id handler 接入）串成一个 HTTP-router 级别的测试。无 PG / 无 Bleve / 不需 -tags integration。
-- Files changed:
-  - `test/e2e/vertex/scenario_smoke_test.go` (new) — 在 test/e2e/vertex/ 起一个新包 `vertex_test`。内含 `memScenarioRepo`（in-memory 完整 scenarios.Repo 实现，BIGSERIAL 用 atomic int64 模拟）+ `memOSSService`（最小 oss.Service stub，仅 GetObject / ListObjects 真实实现，其它 panic）。Seed 一行 Customer/ALFKI(companyName=Alfreds Futterkiste, country=Germany)。
-  - 测试名严格按 BDD: `TestScenarioSmoke_Given_ModifyEdit_When_ReadWithOverlay_Then_ReflectsEdit`，3 个子 t.Run：(a) 无 header → base; (b) 带 X-Scenario-Id → overlay; (c) overlay 调用后再无 header → base 未污染。
-  - `scripts/ralph/prd.json` — VTX-006 → passes:true.
-- Quality checks: `go test ./test/e2e/vertex/...` PASS (3/3 sub-tests, <1s); Phase 1 sweep `go test ./pkg/scenarios/... ./pkg/oss/ ./test/e2e/vertex/` PASS; `go vet ./...` clean; `go build ./...` clean.
-- **Phase 1 STATUS: COMPLETE** — VTX-001 ~ VTX-006 全部 passes:true。
-- **Learnings for future iterations:**
-  - 在 e2e 测试里用 in-memory `scenarios.Repo` 比拉 PG container 快 ~1000×（毫秒 vs 秒）。对 PoC / smoke 测试，自己写一个 ~80 行的 in-memory repo 比通过 testutil.StartPGContainer 划算。生产代码路径仍由 VTX-002 的集成测试覆盖。
-  - 子 test 命名用 `t.Run("without header returns base", ...)` 等英语短句而非中文，避免 go test -run 正则上的麻烦（go 测试名空格会被替换为下划线）。
-  - 「base read after overlay read is unaffected」是 cheap 但 valuable 的子 case — overlay 路径不能 mutate svc 返回的 *WireObject，否则下次无 header 读会看到 leak。VTX-004 的 `viewToWireObject` 显式构造新对象，未触碰 template 的 Properties map，这条不变量被这个 case 锁定。
-  - vertex e2e 子目录走 `test/e2e/vertex/` 而不是 `test/e2e/`，避免与现有 e2e_test.go 共享内存的 in-memory OMS repo 冲突；包名 `vertex_test`。后续 VTX-007+（write-overlay / time-selection）继续往这个目录扩。
-  - `rid.New("vertex", "main", "case-study")` / `("vertex", "main", "scenario")` 同 VTX-002 集成测试用法一致；in-memory repo 不需要 FK 校验。
----
-
-## 2026-05-15 - VTX-028
-- Stream B 启动：TimescaleDB hypertable + 5-min continuous aggregate (`object_time_series` + `cagg_5min`)。表 schema 与 BDD 一字不差：`object_rid TEXT, property TEXT, ts TIMESTAMPTZ, value DOUBLE PRECISION, quality SMALLINT, PK(object_rid, property, ts)`。
-- Files changed:
-  - `migrations/000106_vertex_object_time_series.up.sql` (new) — 基表无条件创建 + `DO $$ IF EXISTS pg_available_extensions ... THEN CREATE EXTENSION + create_hypertable + cagg_5min END$$`。这种条件式包裹让迁移在 pgvector 和 timescaledb 两种镜像上都跑通；前者只剩普通表，后者完整 hypertable + cagg。
-  - `migrations/000106_vertex_object_time_series.down.sql` (new) — 反向 DROP，先 cagg 后 hypertable，DO-block 同样条件式。
-  - `internal/testutil/timescale_container.go` (new) — `StartTimescaleDBContainer(t) *PGContainer`，复用 PGContainer 类型，仅镜像换 `timescale/timescaledb:latest-pg16`。wait timeout 60s（HA / 普通 image 都比 pgvector 启动慢一点）。
-  - `internal/database/vertex_object_time_series_migration_test.go` (new) — 5 个 integration test：表 + 列类型 / hypertable registered / cagg_5min exists / 100k COPY ≤ 5s / cagg AVG query ≤ 50ms。每个 case 单独 PGContainer。
-  - `scripts/ralph/vertex/prd-B.json` — VTX-028 → passes:true。
-- Quality checks: `go test -tags integration ./internal/database/... -run TestVertexObjectTimeSeriesMigration -v` PASS (5/5, 14s); `go test ./...` (unit + non-tag integration) PASS (no regressions); `go vet ./...` clean; `go build ./...` clean. M3 Max numbers: COPY 100k rows in 404ms（约 25 万行/秒，BDD 5s 上限 12× 余量）；cagg_5min AVG 333 buckets in 675µs（BDD 50ms 上限 74× 余量）。
-- **Learnings for future iterations:**
-  - 真正用 TimescaleDB 的 story（VTX-028 ~ 030 / 042）必须用 `StartTimescaleDBContainer`，否则 `create_hypertable` PERFORM 会被 DO-block 的 EXISTS 跳过 — 测试就静默退化成普通 PG，根本不验证 hypertable 路径。条件式迁移对兼容好但对测试不友好，写 timescale 路径的 test 务必断言 `timescaledb_information.hypertables` / `.continuous_aggregates` 有行。
-  - `timescale/timescaledb-ha:pg16` (~3GB) 网络拉超时风险高；改用 `timescale/timescaledb:latest-pg16`（~1.4GB）就够 — 后者预装 timescaledb + plpgsql，不带 pgvector / postgis（VTX-028 不需要）。两者 `shared_preload_libraries=timescaledb` 都已配好。
-  - 连续聚合用 `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) ... WITH NO DATA` — `NO DATA` 是关键，否则物化视图首次创建会扫全表（100k 行没事，prod 百亿行 OOM）。测试侧调 `CALL refresh_continuous_aggregate('cagg_5min', start, end)` 手动触发物化。
-  - pgx 写 hypertable 用 `conn.CopyFrom(pgx.Identifier{"object_time_series"}, cols, pgx.CopyFromRows(rows))` 是最快路径（M3 Max 25 万行/秒）；INSERT 一行一行慢 30× 以上。VTX-029 / VTX-030 写 service 层 ingest API 时直接学这模板，不要落入循环 INSERT 陷阱。
-  - 共享 worktree 风险：多 Stream agent 同时在 `/Users/liyang/Documents/Community/Weave` 操作时，另一个 agent 可能切走分支并增量提交（实测期间 Stream D 把 HEAD 跳到 `-d` 并打了 VTX-098~119 commit）。`git status` 应该常看，commit 前显式 `git checkout vertex/replication-v1-b` 校准；migration 序号也可能被对方占用（实测对方插了 `000106_scenarios_archive.*.sql`，但只在 `-d` branch，本 branch 的 `-b` 仍然 000106 自由）。
----
-
-## 2026-05-15 - VTX-029
-- TimeSeries Service Query API：`pkg/timeseries.VertexService.Query(ctx, VertexQuery)` 在 VTX-028 hypertable 上做窗口聚合 + scenario override + missing data warning。与现有 `pkg/timeseries.Store`（Foundry OSv2 `timeseries_points` 上的 JSONB-value 接口）并存，schema 差异决定不能复用。
-- Files changed:
-  - `pkg/timeseries/vertex_service.go` (new) — `VertexService`、`VertexQuery`、`VertexQueryResult`、`Agg`（AVG/MIN/MAX/SUM/LAST）、`ScenarioOverlayReader` 接口 + `ErrScenarioNotFound` sentinel、`NewVertexService` + `WithScenarioOverlay` / `WithMissingDataWarningHours` 函数式 option。一条 SQL 走 `time_bucket($1::INTERVAL, ts)` 直查 hypertable；LAST agg 用 TimescaleDB 的 `last(value, ts)` hyperfunction。
-  - `pkg/timeseries/vertex_service_test.go` (new, integration build tag) — 5 个 BDD test：AVG 5-min 桶序列 / 5 agg 变体（AVG/MIN/MAX/SUM/LAST）和直接 PG 计算一致 / scenario override 整段替换 / 数据陈旧触发 missing_data warning / 数据新鲜不触发 warning。`stubOverlay` 通过 `ScenarioOverlayReader` 接口注入，没碰 `pkg/scenarios` 包。
-  - `scripts/ralph/vertex/prd-B.json` — VTX-029 → passes:true。
-- Quality checks: `go test -tags integration ./pkg/timeseries/... -run TestVertexTimeSeries -v` PASS (5/5, 9 sub-tests, 13s); `go vet ./...` clean; `go build ./...` clean。每个 case 启独立 TimescaleDB container ~2.5s。
-- **Learnings for future iterations:**
-  - VTX-028 hypertable 上做 `time_bucket(INTERVAL, ts)` 直接走 raw chunks — 不需要走 cagg_5min。cagg 是 VTX-030 REST handler / VTX-060 frontend extended label 上的优化路径（当 bucket=5m 时可以直查 `cagg_5min`，更省 CPU）。
-  - SQL 里 INTERVAL 不能直接 `$1` bind 一个 Go time.Duration——pgx 会拒。用 `'%d microseconds'` 字符串 + `$1::INTERVAL` 显式 cast。
-  - `pgx.ErrNoRows` 不会从 `MAX(ts)` 出来（聚合永远返回一行）；空表场景 `last` 会被 scan 成 `time.Time{}` (zero)，靠 `last.IsZero()` 跳过 warning 计算。如果以后 schema 改成 ts NOT NULL DEFAULT NOW()，要重新评估这点。
-  - `ScenarioOverlayReader` 接口只暴露 `GetWindowedScalarOverride`，故意不引用 `pkg/scenarios` — 让 VertexService 测试可以纯用 stub overlay 跑，PG container 里不必塞 scenario 数据。VTX-030 REST handler 那层再做 `*scenarios.PGRepo` → `ScenarioOverlayReader` 的 adapter。
-  - 测试断言 `len(res.Points)==N` 时记得 `From`/`To` 是半开区间 `[From, To)`：30min 区间 + 5min bucket = 6 桶 (00-05, 05-10, ..., 25-30) 而不是 7。
----
-
-## 2026-05-15 - VTX-030
-- REST handler 把 VTX-029 service 暴露成 `GET /api/v2/ontologies/{ont}/objects/{objType}/{pk}/timeseries/{prop}` （query 参数 from/to/agg/bucket/scenarioId）。复用 OSS Handler，注册在已有 Foundry `/timeseries/{prop}/firstPoint` 等子路径之前；chi 走最长匹配优先，bare `{prop}` GET 落到 Vertex handler。
-- Files changed:
-  - `pkg/oss/handlers_vertex_timeseries.go` (new) — `VertexTimeSeriesQuerier` interface（让 `*timeseries.VertexService` 满足）+ `Handler.SetVertexTimeSeriesQuerier` + `Handler.GetVertexTimeSeries`。`vertexObjectRID(ont, objType, pk)` 拼出 `ri.ontology.{ont}.{objType}.{pk}` — 写路径（VTX-031+）会按同样规则落到 `object_time_series`。Param parsing: `parseRFC3339Param` / `parseAggParam`（默认 AVG）/ `parseBucketParam`（Go duration like 5m）。
-  - `pkg/oss/handlers.go` (edit) — `Handler.vertexTSQuerier` 字段；route 注册在 timeseries Foundry 子路径之前的位置（注释解释意图）。
-  - `pkg/oss/handlers_vertex_timeseries_test.go` (new) — 5 个 unit test：基础桶序列 / scenarioId 转发 / 缺 from→400 / 坏 bucket→400 / 未配置 querier→500。`fakeVertexQuerier` 实现接口 + `panicService` 满足 oss.Service interface 但所有 svc 方法 panic（验证 Vertex 处理器不会去碰 svc）。
-  - `scripts/ralph/vertex/prd-B.json` — VTX-030 → passes:true.
-- Quality checks: `go test ./pkg/oss/... -run TestVertexTimeSeriesHandler -v` PASS (5/5, <1s); 全套 `go test ./pkg/oss/` PASS (79s, 0 回归); `go vet ./...` clean; `go build ./...` clean.
-- **Learnings for future iterations:**
-  - chi router 同时挂 `/timeseries/{prop}` (bare) 和 `/timeseries/{prop}/firstPoint`、`/streamPoints` 等子路径 — chi 自动走最长匹配，bare GET 永远落到 VTX-030 handler。但要小心：如果未来有人加 `POST /timeseries/{prop}` 也是 bare，要分 method 注册（chi 支持），不能用同一个 handler。
-  - `oss.Service` interface 包含 6 个方法，签名细节易记错（`CountObjects` 返回 `*CountObjectsResponse` 不是 `int64`，`ListLinkedObjects` 接 `LinkedObjectsRequest` 不是 `ListLinkedObjectsRequest`）。写 fake/stub 前先 `grep -n 'type Service interface' pkg/oss/service.go` 看真实签名，免得花 1 round 编译报错。
-  - VTX-030 handler 不做 `svc.GetObject` 存在性检查（不同于 Foundry `resolveTimeSeriesKey`）— 因为 VTX-028 hypertable 的 `object_rid` 是写时落库的字符串，对得上就有数据，对不上就空；不需要先去 OMS 校对。如果以后要严格 404，加一个 `existsCheck *oms.Repository` 字段开关。
-  - `time.ParseDuration("5m")` / `"30s"` / `"1h"` 都直接 OK，没必要自己 parse。Go duration 字符串直接做 bucket 参数最省事。
+  - Pattern: when adding an optional field to a LinkType-style resource, replicate ALL three repo touchpoints (`pg_repository.go` Create+Get+ListOutgoing+ListIncoming+ListLinkTypes+UpdateLinkType, plus `link_edges.go::GetLinkTypeByAPIName`). Easy to miss the last one.
+  - Pattern: for PG arrays use `COALESCE(col, '{}'::text[])` in SELECTs and pass `[]string{}` (never nil) on INSERT — pgx v5 scan into `[]string` works directly.
+  - Pattern: tri-state pointer on `Update<Resource>Request` is the project-wide idiom for "preserve / clear / replace" partial updates. New fields should follow it, not bare value.
+  - Gotcha: `go build ./...` fails out of the box because `cmd/server/embed.go` references `web/dist`. CI presumably runs `make web-build` first; locally drop a placeholder file under `cmd/server/web/dist/` (gitignored) before running Go-only checks.
+  - Gotcha: `make` is not available here directly — use `go build ./...` after the dist placeholder, and `npx vitest run` for frontend.
+  - Useful: BDD test naming `Test{Feature}_Given_{State}_When_{Action}_Then_{Outcome}` matches the PRD convention; existing `admin_handlers_propagate_markings_test.go` is the closest template.
 ---

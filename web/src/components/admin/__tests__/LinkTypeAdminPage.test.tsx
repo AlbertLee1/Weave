@@ -473,6 +473,67 @@ describe('LinkTypeAdminPage', () => {
     });
   });
 
+  it('VTX-010 create form sends typeClasses when Vertex tag is checked', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'Routes To');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Cardinality$/i }),
+      'MANY_TO_MANY',
+    );
+    await user.click(
+      screen.getByRole('checkbox', { name: /vertex:link_bidirectional/i }),
+    );
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    expect(state.createCalls[0].body).toMatchObject({
+      typeClasses: ['vertex:link_bidirectional'],
+    });
+  });
+
+  it('VTX-010 edit form preserves existing typeClasses and toggles tags', async () => {
+    const user = userEvent.setup();
+    state.linkTypes[0] = {
+      ...state.linkTypes[0],
+      typeClasses: ['vertex:link_primary_direction'],
+    } as (typeof state.linkTypes)[number];
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    // Rows sorted asc: index 1 = Employee → Department (rid l1)
+    await user.click(editButtons[1]);
+
+    const primaryBox = (await screen.findByRole('checkbox', {
+      name: /vertex:link_primary_direction/i,
+    })) as HTMLInputElement;
+    expect(primaryBox.checked).toBe(true);
+    // Untick primary, tick bidirectional.
+    await user.click(primaryBox);
+    await user.click(
+      screen.getByRole('checkbox', { name: /vertex:link_bidirectional/i }),
+    );
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    expect(state.updateCalls[0]).toMatchObject({
+      rid: 'ri.ontology.main.link-type.l1',
+      body: expect.objectContaining({
+        typeClasses: ['vertex:link_bidirectional'],
+      }),
+    });
+  });
+
   it('confirms delete and calls the DELETE endpoint', async () => {
     const user = userEvent.setup();
     renderPage();

@@ -64,6 +64,10 @@ export interface LinkType {
   linkedObjectTypeApiName: string;
   cardinality: 'ONE_TO_ONE' | 'ONE_TO_MANY' | 'MANY_TO_MANY';
   required: boolean;
+  // VTX-010: Vertex graph rendering tags. See
+  // web/src/features/vertex/links/edgeArrowStyle.ts for the recognised
+  // values. Omitted on the wire when empty.
+  typeClasses?: string[];
 }
 
 // ActionParameterV2 — Foundry OSv2 parameter definition with nested dataType.

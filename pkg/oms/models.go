@@ -317,8 +317,45 @@ type LinkType struct {
 	// `_markings` so child objects inherit the parent's classifications.
 	// Default false preserves pre-US-261 behaviour where link creation never
 	// touches markings.
-	PropagateMarkings bool      `json:"propagateMarkings,omitempty"`
-	CreatedAt         time.Time `json:"-"`
+	PropagateMarkings bool `json:"propagateMarkings,omitempty"`
+	// TypeClasses (VTX-010) tags the LinkType with Vertex-graph behavioural
+	// labels that drive edge arrow rendering. Recognised values are
+	// "vertex:link_primary_direction", "vertex:link_undirectional" and
+	// "vertex:link_bidirectional"; unknown labels are rejected by admin
+	// handlers. Empty slice keeps the wire shape backwards compatible.
+	TypeClasses []string  `json:"typeClasses,omitempty"`
+	CreatedAt   time.Time `json:"-"`
+}
+
+// VertexLinkTypeClassPrimaryDirection / VertexLinkTypeClassUndirectional /
+// VertexLinkTypeClassBidirectional (VTX-010) are the recognised tags for
+// LinkType.TypeClasses. They mirror the labels described in the Vertex
+// integration brief §2.1 and are validated by admin handlers on POST/PUT.
+const (
+	VertexLinkTypeClassPrimaryDirection = "vertex:link_primary_direction"
+	VertexLinkTypeClassUndirectional    = "vertex:link_undirectional"
+	VertexLinkTypeClassBidirectional    = "vertex:link_bidirectional"
+)
+
+// KnownVertexLinkTypeClasses returns the recognised LinkType.TypeClasses tags.
+func KnownVertexLinkTypeClasses() []string {
+	return []string{
+		VertexLinkTypeClassPrimaryDirection,
+		VertexLinkTypeClassUndirectional,
+		VertexLinkTypeClassBidirectional,
+	}
+}
+
+// IsKnownVertexLinkTypeClass reports whether tag is one of the recognised
+// LinkType.TypeClasses values.
+func IsKnownVertexLinkTypeClass(tag string) bool {
+	switch tag {
+	case VertexLinkTypeClassPrimaryDirection,
+		VertexLinkTypeClassUndirectional,
+		VertexLinkTypeClassBidirectional:
+		return true
+	}
+	return false
 }
 
 // ToWireJSON returns the V2 wire format JSON for LinkType.
@@ -340,6 +377,9 @@ func (lt *LinkType) ToWireJSON() ([]byte, error) {
 	}
 	if lt.PropagateMarkings {
 		wire["propagateMarkings"] = true
+	}
+	if len(lt.TypeClasses) > 0 {
+		wire["typeClasses"] = lt.TypeClasses
 	}
 	return json.Marshal(wire)
 }
