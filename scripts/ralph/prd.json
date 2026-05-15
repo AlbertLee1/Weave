@@ -107,8 +107,8 @@
         "Tests pass"
       ],
       "priority": 124,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added timescaledb (timescale/timescaledb:latest-pg16, host port 5433→container 5432 to avoid colliding with primary postgres on 5432, image pinned to match internal/testutil.StartTimescaleDBContainer) + function-runtime (build from new Dockerfile.function-runtime, port 9000→9000, /health curl healthcheck) services to docker-compose.yml. New cmd/weave-function-runtime binary ships a permissive no-op stub for the Tier 3.2 dispatcher contract (POST /functions/{rid} → FunctionResponse{Edits: []}); 7 unit tests cover handlers + flag defaults. weave service now depends_on function-runtime (service_healthy) and exports WEAVE_FUNCTIONS_BASE_URL=http://function-runtime:9000/functions so `docker compose up` boots a working dispatcher path out of the box (Functions.Enabled stays opt-in via WEAVE_FUNCTIONS_ENABLED=true). scripts/dev.sh banner now lists PG / NATS / TimescaleDB / Function Runtime + Vertex UI surface. Test surface: 4 new docker-compose / dev.sh assertions in cmd/server/docker_test.go (TestDockerCompose_VTX124_TimescaleDBService, _FunctionRuntimeService, _WeaveStackDependencies, TestDevScript_VTX124_MentionsFullStack) — all green; pre-existing TestContract_AllRoutesDocumented failure (missing openapi entry for /api/v2/.../timeseries/{property} from VTX-028 line) is unrelated to VTX-124 and was already failing on the prior commit. docker compose config validates clean (9 services: function-runtime / nats / postgres / weave / prometheus / grafana / mailhog / timescaledb / victoriametrics). `go vet ./...` and `go build ./...` clean. Browser verification deferred — VTX-124 is infra/config only, no UI surface to verify."
     },
     {
       "id": "VTX-125",

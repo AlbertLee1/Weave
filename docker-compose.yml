@@ -35,6 +35,50 @@ services:
       timeout: 3s
       retries: 5
 
+  # TimescaleDB (Postgres 16 + the timescaledb extension preloaded) backs the
+  # VTX-028+ Vertex object time series surface (pkg/timeseries, migration
+  # 000106). The host port is mapped to 5433 so it can run alongside the
+  # primary `postgres` service on 5432 without collision — point
+  # WEAVE_TS_BACKEND=postgres + a TimescaleDB DSN at this service to use it.
+  # The image must match internal/testutil.StartTimescaleDBContainer so local
+  # dev and `go test -tags integration` see the same hypertable schema.
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: weave
+      POSTGRES_PASSWORD: weave
+      POSTGRES_DB: weave_timeseries
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescaledata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weave"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # function-runtime is the in-stack HTTP target for the Tier 3.2
+  # function-backed action dispatcher (US-215 / pkg/actions/http_dispatcher).
+  # The cmd/weave-function-runtime binary ships a permissive no-op stub by
+  # default — every POST /functions/{rid} returns `{"edits": []}` — which
+  # keeps local dev and CI smoke tests working without operators having to
+  # author real function code. Production deployments should swap this
+  # container for a real runtime (goja sandbox, V8 isolate, language worker)
+  # that speaks the same FunctionRequest / FunctionResponse contract.
+  function-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.function-runtime
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   # VictoriaMetrics single-node deployment for the optional pkg/timeseries
   # backend (US-400). Disabled by default — the weave service only routes
   # /api/v2/.../timeseries/{property}/points to VictoriaMetrics when
@@ -68,10 +112,18 @@ services:
       NATS_URL: "nats://nats:4222"
       WEAVE_DATA_DIR: "/app/data"
       AUTH_MODE: "dev"
+      # VTX-124: route function-backed actions to the in-stack runtime so
+      # `docker compose up` boots a working Tier 3.2 dispatcher path. The
+      # dispatcher itself is opt-in via WEAVE_FUNCTIONS_ENABLED=true — left
+      # off by default so dev environments without function code don't pay
+      # the per-call HTTP cost.
+      WEAVE_FUNCTIONS_BASE_URL: "http://function-runtime:9000/functions"
     depends_on:
       postgres:
         condition: service_healthy
       nats:
+        condition: service_healthy
+      function-runtime:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9117/health"]
@@ -189,3 +241,4 @@ volumes:
   grafanadata:
   vmdata:
   pactbrokerdata:
+  timescaledata:
