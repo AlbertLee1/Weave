@@ -86,8 +86,8 @@
         "Tests pass"
       ],
       "priority": 123,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New pkg/scenarios/authz.go gates scenario reads/writes through AuthorizeRead / AuthorizeWrite — owner-only (scenario.CreatedBy == user.ID) plus admin bypass (auth.PermUserManage); foreign users, even editors/ontology-owners, get scenarios.ErrForbidden; nil user → ErrUnauthenticated; nil scenario → ErrScenarioNotFound so handlers can chain repo lookup → authz cleanly. MaskEditsForUser auto-masks scenario edit NewValue with RedactedValueLiteral (\"[redacted]\") when the caller's auth.Markings don't cover an object's marking set (AND semantics, mirrors auth.EvaluateMarkings); admin bypass; defensive copy of input slice. New pkg/scenarios/authz_test.go covers 26 sub-cases incl. 18 negative (foreign user × 4 roles × read/write, nil user, empty user ID, partial marking match, nil user masking, mutation guard) — well above the ≥8 negative-test floor. Coverage gate still PASS @ 87.1% on pkg/scenarios (floor 80%); no consumers touched (pkg/oss, pkg/aip, pkg/vertex all green)."
     },
     {
       "id": "VTX-124",
