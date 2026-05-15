@@ -296,7 +296,11 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
             </div>
           )}
         </div>
-        <VertexSelectionSidebar selection={selection} objectsByRid={objectsByRid} />
+        <VertexSelectionSidebar
+          selection={selection}
+          objectsByRid={objectsByRid}
+          extendedLabelsByRid={labelsByRid}
+        />
       </div>
     </div>
   );

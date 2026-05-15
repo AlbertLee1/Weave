@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Graph from 'graphology';
 
 // jsdom can't WebGL, so the SigmaContainer render is replaced with a
@@ -71,12 +72,20 @@ vi.mock('@react-sigma/core', () => ({
 import { VertexWorkspacePage } from './VertexWorkspacePage';
 
 function renderAt(path: string) {
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, refetchInterval: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
+  });
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/vertex/:rid" element={<VertexWorkspacePage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/vertex/:rid" element={<VertexWorkspacePage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

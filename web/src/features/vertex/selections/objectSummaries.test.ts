@@ -54,4 +54,65 @@ describe('VTX-020 payloadToObjectSummaries', () => {
     expect(payloadToObjectSummaries({ layers: 'not array' }).size).toBe(0);
     expect(payloadToObjectSummaries({ layers: [{ objects: [{}] }] }).size).toBe(0);
   });
+
+  // VTX-021: surface the api-name metadata + primary key so the right
+  // sidebar can call OSS get / activity / timeseries.
+  it('Given_layerCarriesOntologyAndObjectType_When_project_Then_summaryCarriesApiNamesAndPrimaryKey', () => {
+    const payload = {
+      layers: [
+        {
+          ontology: 'flights',
+          objectType: 'Airport',
+          objects: [
+            {
+              objectRid: 'ri.ontology.main.object.airport.JFK',
+              properties: { name: 'JFK' },
+            },
+          ],
+        },
+      ],
+    };
+    const summary = payloadToObjectSummaries(payload).get(
+      'ri.ontology.main.object.airport.JFK',
+    );
+    expect(summary?.ontologyApiName).toBe('flights');
+    expect(summary?.objectType).toBe('Airport');
+    expect(summary?.primaryKey).toBe('JFK');
+  });
+
+  it('Given_objectExplicitPrimaryKeyProperty_When_project_Then_summaryUsesIt', () => {
+    const payload = {
+      layers: [
+        {
+          ontology: 'flights',
+          objectType: 'Airport',
+          objects: [
+            {
+              objectRid: 'ri.ontology.main.object.airport.row-42',
+              properties: { name: 'A', primaryKey: 'KSFO' },
+            },
+          ],
+        },
+      ],
+    };
+    const summary = payloadToObjectSummaries(payload).get(
+      'ri.ontology.main.object.airport.row-42',
+    );
+    expect(summary?.primaryKey).toBe('KSFO');
+  });
+
+  it('Given_layerWithoutOntologyApiName_When_project_Then_apiNamesAreUndefined', () => {
+    const payload = {
+      layers: [
+        {
+          objects: [{ objectRid: 'ri.airport.JFK', properties: { name: 'JFK' } }],
+        },
+      ],
+    };
+    const summary = payloadToObjectSummaries(payload).get('ri.airport.JFK');
+    expect(summary?.ontologyApiName).toBeUndefined();
+    expect(summary?.objectType).toBeUndefined();
+    // Primary key still derived from the rid's last `.`-segment.
+    expect(summary?.primaryKey).toBe('JFK');
+  });
 });

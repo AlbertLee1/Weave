@@ -175,8 +175,8 @@
         "Tests pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Lazy-loaded VertexWorkspacePage (web/src/vertex/VertexWorkspacePage.tsx) wired to /vertex/:rid via React.lazy + Suspense in App.tsx so the heavy Sigma/Graphology bundle is split off the initial chunk (main bundle gzip delta = +0.22 kB; new VertexWorkspacePage chunk = 164 kB raw / 39.81 kB gzip — well under the +500 KB budget). /vertex/new mounts an empty Graph in <SigmaContainer>; /vertex/{unknownRid} fetches /api/vertex/v1/graphs/{rid}, maps 404 → Graph not found + back-to-Dashboard <Link to=\"/\">. Tests at web/src/vertex/VertexWorkspacePage.test.tsx (4 cases incl. snapshot) mock @react-sigma/core to dodge jsdom WebGL. Manual browser verification still needed (no dev-browser skill in this environment)."
     },
     {
       "id": "VTX-018",
@@ -198,8 +198,8 @@
         "Tests pass"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Pure payloadToGraph(payload) projection in web/src/features/vertex/render/payloadToGraph.ts: dedupes objects by objectRid across layers, reads payload.positions[rid] when set (otherwise a deterministic radius-scaled circle so first paint has something to draw before VTX-022 layouts), maps typeClasses through pickEdgeArrowStyle → Sigma edge type ('arrow' for primary, 'line' for undirectional, 'arrow'+bothArrows:true for bidirectional), and drops edges whose source/target aren't in the node set. VertexWorkspacePage now feeds the projection into Sigma via a GraphLoader (useLoadGraph) so each render builds a fresh graphology Graph + bulk-adds nodes/edges in one effect. Zoom (scroll) and pan (drag-empty) come from Sigma's default camera controls — no custom handlers. Bundle delta vs VTX-017: main +0.22 kB raw / +0.05 kB gzip; VertexWorkspacePage chunk +2.03 kB raw / +0.81 kB gzip — well under the 500 KB BDD budget. 11 Vitest tests added (10 projection + perf gate of <500 ms on 5000 nodes vs the 2 s BDD spec, plus 2 page-level renderer tests asserting graphology Graph order/size/labels/edge types). Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-019",
@@ -220,8 +220,8 @@
         "Tests pass"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only: extractExtendedLabels(payload, objectRid) in web/src/features/vertex/render/extendedLabels.ts (pure JS, dedupes via first-layer-wins like payloadToGraph, returns {key, kind, label, value?} with property values stringified + missing → '—', timeSeries/measure values land in VTX-059+). VertexNodeOverlay in web/src/vertex/VertexNodeOverlay.tsx mounts inside <SigmaContainer> next to GraphLoader: useSigma() + useRegisterEvents() → re-render trigger on afterRender; reads each node's x/y via graph.getNodeAttribute, projects to viewport via sigma.graphToViewport, virtualization clips nodes outside sigma.getDimensions(). Each card is absolute-positioned with translate(-50%, calc(-100% - 14px)) so it floats above the node. Per-kind rows: property shows label + value, timeSeries shows sparkline placeholder ▁▂▃▄▅, measure shows ellipsis (real renderers in VTX-059+). Page wires labelsByRid via useMemo over projection.nodes. 13 new tests (8 helper + 5 overlay) + 1 integration test on the page. Bundle delta vs VTX-018: VertexWorkspacePage chunk +4.06 kB raw / +1.14 kB gzip; main bundle unchanged. Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-020",
@@ -242,8 +242,8 @@
         "Tests pass"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only. Pure selection state (web/src/features/vertex/selections/selectionState.ts: ReadonlySet<string> + selectionSingle/Toggle/Replace/Add/Clear) + pure box-select math (boxSelect.ts: rectFromCorners + nodesInRect inclusive-edge containment). VertexSelectionLayer.tsx mounts inside <SigmaContainer>, subscribes via useRegisterEvents to clickNode (single-click → selectionSingle; ctrl/meta or shift+clickNode → selectionToggle), clickStage (no modifier → selectionClear), downStage/mousemovebody/mouseup (shift held → render dashed-blue overlay rect → selectionReplace on release via nodesInRect over sigma.graphToViewport). VertexSelectionSidebar.tsx: hidden when selection is empty; single shows label + property list; ≥2 shows count + label list. SelectionHighlighter Sigma child mutates `highlighted` + `color` node attributes on each selection change so the next paint draws selected nodes in #3B82F6 — no graph rebuild. payloadToObjectSummaries(payload) projects payload.layers[*].objects[*] into Map<rid, {rid,label,properties}> for the sidebar (first-layer-wins dedupe matching payloadToGraph/extractExtendedLabels). 30 new Vitest tests (9 selectionState + 4 boxSelect + 4 objectSummaries + 6 SelectionLayer + 4 Sidebar + 3 page-level VTX-020 integration). Page test mock now merges handlers across useRegisterEvents calls (overlay + selection layer + highlighter share one captured map) so clickNode/clickStage can be fired without losing afterRender. Bundle delta vs VTX-019: VertexWorkspacePage chunk +5.54 kB raw / +1.45 kB gzip — well under the 500 KB BDD budget. Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-021",
@@ -265,8 +265,8 @@
         "Tests pass"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only. Right sidebar gains a 4-tab single-object panel (Properties / Series / Linked Events / Derived Funcs) while batch mode (VTX-020) is unchanged. VertexObjectSummary picks up optional ontologyApiName / objectType / primaryKey, sourced by payloadToObjectSummaries from layer.ontology + layer.objectType + an explicit properties.primaryKey (falls back to the last `.`-segment of objectRid). PropertiesTab calls OSS get via useGetObject (path `/api/v2/ontologies/<ont>/objects/<type>/<pk>`) and merges fresh values over the snapshot bag (strips `__rid`/`__primaryKey`/`__apiName` wire keys); falls back gracefully to the snapshot when api-names are absent. SeriesTab filters extendedLabels for kind `timeSeries`, derives the property key from the label's stable key, and renders a per-series MiniSparkline (SVG path scaled to 120×24) via useTimeSeriesPoints — empty state shows the ▁▂▃▄▅ placeholder until ≥2 numeric points arrive. LinkedEventsTab uses useObjectActivity with pageSize=50 (matches BDD '最近 50 个事件'), flattens all loaded pages, and caps at 50; explicit unavailable/loading/error/empty rows. DerivedFuncsTab lists `measure` extendedLabels as placeholder cards (real evaluation lands in VTX-064). VertexWorkspacePage feeds `labelsByRid` into the sidebar prop `extendedLabelsByRid`. Tests: 11 new (4 VTX-020 baseline migrated to QueryClientProvider + 7 VTX-021 BDD: 4-tabs visible / OSS get fetched + listed / fallback when no api-names / 2 sparklines on series tab / activity API w/ pageSize=50 / measure cards on derived funcs / tab switch preserves state). objectSummaries.test.ts +3 cases for the new metadata fields. Page test wrapper now mounts QueryClientProvider so the single-selected sidebar can resolve useQuery. Bundle delta vs VTX-020: VertexWorkspacePage chunk 175.71 → 181.32 kB raw (+5.61 kB) / 43.21 → 44.62 kB gzip (+1.41 kB); main bundle 3,652.77 → 3,653.06 kB raw (+0.29 kB) / 1,075.76 → 1,075.74 kB gzip (-0.02 kB). Manual browser verification still needed (no dev-browser skill wired)."
     },
     {
       "id": "VTX-022",
