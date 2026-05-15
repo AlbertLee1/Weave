@@ -10,6 +10,10 @@ Stream: A
 - Frontend admin UI for OMS resources lives in `web/src/components/admin/*.tsx`; co-located `__tests__/*.test.tsx` use a `installFetch(state)` stub pattern to mock the v2 REST endpoints.
 - `cmd/server/embed.go` requires `cmd/server/web/dist/*` to exist before `go build ./...` works — keep a placeholder file when running Go tests without first building the frontend.
 - Migration numbering: VTX stream uses 000200+. Add a `down.sql` even if it just drops the column.
+- **JSON Schema validation**: use `github.com/santhosh-tekuri/jsonschema/v5` (already in go.mod). Embed the schema with `//go:embed`, register via `compiler.AddResource(memURL, strings.NewReader(...))`, set `compiler.Draft = jsonschema.Draft7`, then `Compile(memURL)`. Pattern is established in `pkg/actions/parameter_schema.go`.
+- **OMS reference checks** belong on a tiny purpose-built interface (e.g. `ReferenceLookup{ GetObjectType, GetLinkType }`) that `*oms.PGRepository` satisfies structurally. Don't import `oms.Repository` (huge surface) into a downstream package — the focused interface keeps tests cheap.
+- Pre-existing baseline failures unrelated to your story: `cmd/server.TestContract_AllRoutesDocumented` (missing OpenAPI entry for `/timeseries/{property}` from VTX-030) + perf gates `pkg/cellsec.TestUS376_PerfGate_*` and `pkg/security.TestRLSEvaluator_PerformanceGate`. Don't try to fix these in your iteration — verify with `git stash` if in doubt.
+- `prd.json` and `progress.txt` at repo root are symlinks to `scripts/ralph/{prd.json,progress.txt}` — Edit through the symlink fails ("Refusing to write through symlink"); always edit the real path.
 ---
 
 ## Fri May 15 ~10:02 CST 2026 - VTX-010
@@ -40,4 +44,29 @@ Stream: A
   - Gotcha: `go build ./...` fails out of the box because `cmd/server/embed.go` references `web/dist`. CI presumably runs `make web-build` first; locally drop a placeholder file under `cmd/server/web/dist/` (gitignored) before running Go-only checks.
   - Gotcha: `make` is not available here directly — use `go build ./...` after the dist placeholder, and `npx vitest run` for frontend.
   - Useful: BDD test naming `Test{Feature}_Given_{State}_When_{Action}_Then_{Outcome}` matches the PRD convention; existing `admin_handlers_propagate_markings_test.go` is the closest template.
+---
+
+## Fri May 15 ~10:25 CST 2026 - VTX-011
+- Implemented SystemGraph payload JSON Schema validation per BDD acceptance.
+- Backend
+  - pkg/vertex/graphsvc/schema/graph.schema.json: Draft-07 schema for SystemGraph payload. Required `layers` (array). Defines `layer` (objectTypeRid, objectType, ontologyRid, filter), `edge` (linkTypeRid, source, target), `position` (x:number, y:number, pinned:bool both required + numeric). `additionalProperties:true` on payload + sub-objects so non-validated fields (savedSelections, timeSettings, etc.) pass through unchanged.
+  - pkg/vertex/graphsvc/payloadvalidator.go: `PayloadValidator` compiles embedded schema once via `//go:embed` + santhosh-tekuri/jsonschema v5. `Validate(ctx, payload)` runs schema (400) then optional reference checks (422). New `ReferenceLookup` interface (GetObjectType, GetLinkType) — *oms.PGRepository satisfies it structurally. Typed `PayloadValidationError{Code, Field, Reason, Status}` carries codes `schema | unknownObjectType | unknownLinkType`.
+  - pkg/vertex/graphsvc/handler.go: added `validator *PayloadValidator` field + `SetPayloadValidator` setter (keeps NewHandler signature stable so existing tests don't change). `create` + `update` invoke `validator.Validate` before delegating to repo. New `writePayloadValidationError` maps PayloadCode* → 400 INVALID_ARGUMENT (schema) or 422 WEAVE_VALIDATION_SCHEMA (reference) using existing apierror constructors.
+  - pkg/vertex/graphsvc/payloadvalidator_test.go: 7 unit tests Red→Green: missing-layers→400, unknown objectTypeRid→422 with "objectType not found" + offending RID in reason, unknown linkTypeRid→422, non-numeric position coord→400, valid payload→nil, nil refs short-circuits 422 path, empty payload no-op.
+  - pkg/vertex/graphsvc/handler_validate_test.go: 6 HTTP integration tests covering POST + PUT through the chi router with the validator installed; verifies wire status codes + error message contains BDD-required strings.
+  - cmd/server/main.go: wires `graphsvc.NewPayloadValidator(deps.OmsRepo)` after constructing `graphHandler`. Passes typed-nil safely (assigns deps.OmsRepo to the interface var only when non-nil) so degraded-mode boots get schema-only validation.
+- Quality
+  - `go test ./pkg/vertex/graphsvc/...` PASS (13 tests, 0.78s)
+  - `go test ./pkg/vertex/... ./pkg/oms/...` PASS
+  - `go vet ./...` clean
+  - `go build ./...` clean (after dist placeholder)
+  - Pre-existing failures unrelated to this story: `cmd/server.TestContract_AllRoutesDocumented` (VTX-030 OpenAPI gap), `pkg/cellsec.TestUS376_PerfGate_*`, `pkg/security.TestRLSEvaluator_PerformanceGate` — all confirmed failing on baseline via `git stash`.
+- **Learnings for future iterations:**
+  - Pattern: Use `//go:embed schema/foo.schema.json` + santhosh-tekuri compiler with a `mem://` URL; cache the compiled `*jsonschema.Schema` on the validator struct (one-time cost). Match the existing pattern in `pkg/actions/parameter_schema.go`.
+  - Pattern: When a downstream package needs OMS lookups, declare a tiny local interface (`{ GetObjectType, GetLinkType }`) and pass `deps.OmsRepo` — *oms.PGRepository satisfies it structurally. Avoids dragging the huge oms.Repository surface (50+ methods) into vertex packages.
+  - Pattern: Optional handler dependencies (validators, observers) belong on a `Set<Dep>` setter rather than constructor args — keeps existing test wiring intact and makes the legacy "no validator" mode trivially observable.
+  - Gotcha: `prd.json` / `progress.txt` at repo root are symlinks → `scripts/ralph/`. The `Edit` tool refuses to write through symlinks. Resolve with `readlink prd.json progress.txt` and edit the real path.
+  - Gotcha: Passing a nil `*PGRepository` directly to a `ReferenceLookup` interface var produces a typed-nil interface (non-nil) → `if v.refs == nil` won't fire. In main.go, gate with `if deps.OmsRepo != nil { graphRefs = deps.OmsRepo }` so only an untyped nil reaches the validator.
+  - Gotcha: santhosh-tekuri "required" failures are reported via `KeywordLocation` ending in `/required` and message starting with `missing properties: 'foo'`. Parse the first single-quoted name to surface "<name> field required" — the BDD wants that exact phrasing.
+  - Useful: `apierror.NewValidationSchema` is the standard 422 with WEAVE_VALIDATION_SCHEMA used by the ActionType parameter validator; reuse it for any "row exists in OMS but doesn't resolve to a real entity" check.
 ---

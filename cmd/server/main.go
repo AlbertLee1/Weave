@@ -1029,7 +1029,23 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			graphRepo = graphsvc.NewPGRepo(deps.PGPool)
 			graphTemplates = graphsvc.NewPGTemplateStore(deps.PGPool)
 		}
-		graphsvc.NewHandler(graphRepo, graphTemplates).RegisterRoutes(api)
+		graphHandler := graphsvc.NewHandler(graphRepo, graphTemplates)
+		// VTX-011: install the SystemGraph payload validator. Schema (400)
+		// runs unconditionally; OMS reference checks (422) only when an OMS
+		// repo is present so degraded-mode boots stay green. Pass nil
+		// explicitly (rather than a nil-valued interface) so the validator
+		// short-circuits the reference path cleanly.
+		var graphRefs graphsvc.ReferenceLookup
+		if deps.OmsRepo != nil {
+			graphRefs = deps.OmsRepo
+		}
+		if validator, err := graphsvc.NewPayloadValidator(graphRefs); err != nil {
+			slog.Error("vertex graph payload validator: compile failed; writes will skip schema validation",
+				"error", err)
+		} else {
+			graphHandler.SetPayloadValidator(validator)
+		}
+		graphHandler.RegisterRoutes(api)
 
 		// OntologyTransaction experimental edits endpoint (US-041).
 		// Gated behind ?preview=true — only "append edits" is exposed.

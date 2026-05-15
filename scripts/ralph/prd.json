@@ -44,8 +44,8 @@
         "Tests pass"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PayloadValidator wraps embedded graph.schema.json (Draft-07) + OMS reference checks. Schema failures → 400 InvalidGraphPayload; unknown objectType/linkType RIDs → 422 WEAVE_VALIDATION_SCHEMA. Wired on POST + PUT /api/vertex/v1/graphs."
     },
     {
       "id": "VTX-012",

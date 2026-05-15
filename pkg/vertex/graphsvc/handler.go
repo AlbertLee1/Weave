@@ -19,9 +19,15 @@ import (
 // graphsvc.Repo (graphs + version history) and a TemplateStore (save-as-
 // template). Both dependencies are interfaces so PG implementations and
 // in-memory test fakes plug into the same handler unchanged.
+//
+// The optional PayloadValidator (set via SetPayloadValidator, VTX-011) gates
+// POST + PUT writes against the embedded JSON Schema (400) and OMS reference
+// existence checks (422). When unset, writes are forwarded unchanged — the
+// degraded-mode boot path keeps that on so the routes stay discoverable.
 type Handler struct {
 	repo      Repo
 	templates TemplateStore
+	validator *PayloadValidator
 }
 
 // NewHandler wires a Handler over a Repo + TemplateStore. Either may be nil
@@ -29,6 +35,14 @@ type Handler struct {
 // panicking.
 func NewHandler(repo Repo, templates TemplateStore) *Handler {
 	return &Handler{repo: repo, templates: templates}
+}
+
+// SetPayloadValidator installs (or clears, when v == nil) the structural +
+// reference validator the create / update handlers run before delegating to
+// the repo. cmd/server wires this from *oms.PGRepository when an OMS pool is
+// available.
+func (h *Handler) SetPayloadValidator(v *PayloadValidator) {
+	h.validator = v
 }
 
 // RegisterRoutes mounts all VTX-009 endpoints on r.
@@ -71,6 +85,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Name) == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingName", nil))
 		return
+	}
+	if h.validator != nil {
+		if err := h.validator.Validate(r.Context(), req.Payload); err != nil {
+			writePayloadValidationError(w, err)
+			return
+		}
 	}
 	versioned := true
 	if req.Versioned != nil {
@@ -116,6 +136,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if len(req.Payload) == 0 {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingPayload", nil))
 		return
+	}
+	if h.validator != nil {
+		if err := h.validator.Validate(r.Context(), req.Payload); err != nil {
+			writePayloadValidationError(w, err)
+			return
+		}
 	}
 	g, err := h.repo.Update(r.Context(), ridStr, req.Payload)
 	if err != nil {
@@ -279,6 +305,43 @@ func writeGraph(w http.ResponseWriter, status int, g *Graph) {
 		"createdAt":   g.CreatedAt,
 		"updatedAt":   g.UpdatedAt,
 	})
+}
+
+// writePayloadValidationError translates the typed VTX-011 PayloadValidator
+// error into the right APIError shape. Schema (400) failures use INVALID_ARGUMENT
+// so existing clients keep their 400 handling; reference (422) failures use
+// WEAVE_VALIDATION_SCHEMA so they slot into the same 422 surface as the
+// ActionType parameter validator. Anything else (network, repo) falls through
+// to 500.
+func writePayloadValidationError(w http.ResponseWriter, err error) {
+	var pve *PayloadValidationError
+	if !errors.As(err, &pve) {
+		apierror.WriteJSON(w, apierror.NewInternal("PayloadValidatorError", map[string]string{"error": err.Error()}))
+		return
+	}
+	params := map[string]string{"reason": pve.Reason}
+	if pve.Field != "" {
+		params["field"] = pve.Field
+	}
+	switch pve.Code {
+	case PayloadCodeUnknownObjectType, PayloadCodeUnknownLinkType:
+		apierror.WriteJSON(w, apierror.NewValidationSchema(payloadErrorName(pve.Code), params))
+	default:
+		apierror.WriteJSON(w, apierror.NewInvalidParameter(payloadErrorName(pve.Code), params))
+	}
+}
+
+// payloadErrorName maps PayloadCode* discriminators to wire ErrorName values.
+// Stable strings so SDK consumers can switch on them without parsing reasons.
+func payloadErrorName(code string) string {
+	switch code {
+	case PayloadCodeUnknownObjectType:
+		return "UnknownObjectType"
+	case PayloadCodeUnknownLinkType:
+		return "UnknownLinkType"
+	default:
+		return "InvalidGraphPayload"
+	}
 }
 
 // writeRepoError maps repo sentinel errors to the right HTTP status + APIError
