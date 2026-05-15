@@ -1,5 +1,5 @@
 // VertexWorkspacePage — Vertex workspace shell (VTX-017) + payload
-// rendering (VTX-018).
+// rendering (VTX-018) + node DOM overlay for extended labels (VTX-019).
 //
 // /vertex/new mounts an empty Sigma canvas immediately; /vertex/{rid}
 // fetches `/api/vertex/v1/graphs/{rid}` and either renders the graph
@@ -20,6 +20,11 @@ import {
   payloadToGraph,
   type VertexPayloadGraph,
 } from '../features/vertex/render/payloadToGraph';
+import {
+  extractExtendedLabels,
+  type ExtendedLabel,
+} from '../features/vertex/render/extendedLabels';
+import { VertexNodeOverlay } from './VertexNodeOverlay';
 
 interface GraphPayloadResponse {
   rid: string;
@@ -200,6 +205,16 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     return { nodes: [], edges: [] };
   }, [state]);
 
+  const labelsByRid = useMemo<Map<string, ExtendedLabel[]>>(() => {
+    if (state.kind !== 'ready') return new Map();
+    const map = new Map<string, ExtendedLabel[]>();
+    for (const n of projection.nodes) {
+      const labels = extractExtendedLabels(state.graph.payload, n.id);
+      if (labels.length > 0) map.set(n.id, labels);
+    }
+    return map;
+  }, [state, projection]);
+
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
@@ -208,6 +223,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
       <div className="relative flex-1" data-testid="vertex-canvas-host">
         <SigmaContainer style={CANVAS_STYLE} settings={SIGMA_SETTINGS}>
           <GraphLoader projection={projection} />
+          <VertexNodeOverlay labelsByRid={labelsByRid} />
         </SigmaContainer>
         {state.kind === 'loading' && (
           <div

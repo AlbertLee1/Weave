@@ -8,8 +8,31 @@ import Graph from 'graphology';
 // captured into the module-scoped `loadedGraph` ref so VTX-018 assertions
 // can introspect the loaded node/edge sets without booting Sigma.
 let loadedGraph: Graph | null = null;
+let afterRenderHandler: (() => void) | null = null;
 const captureLoad = (g: Graph) => {
   loadedGraph = g;
+  // Sigma fires afterRender on every render frame in production —
+  // GraphLoader's useLoadGraph would normally trigger one synchronous
+  // paint cycle. In jsdom there is no paint, so emulate it: as soon as
+  // a graph is loaded, fire the captured afterRender handler so the
+  // VertexNodeOverlay re-renders against the now-populated graph.
+  if (afterRenderHandler) {
+    queueMicrotask(afterRenderHandler);
+  }
+};
+
+// VTX-019: the VertexNodeOverlay child of SigmaContainer also calls
+// useSigma + useRegisterEvents. Stub both with deterministic shapes
+// (1:1 graphToViewport, 800×600 viewport) so the overlay paints cards
+// for each node loaded into the captured graph.
+const emptyGraphStub = {
+  hasNode: () => false,
+  getNodeAttribute: () => undefined,
+};
+const sigmaStub = {
+  graphToViewport: (p: { x: number; y: number }) => ({ x: p.x, y: p.y }),
+  getDimensions: () => ({ width: 800, height: 600 }),
+  getGraph: () => loadedGraph ?? emptyGraphStub,
 };
 
 vi.mock('@react-sigma/core', () => ({
@@ -19,6 +42,11 @@ vi.mock('@react-sigma/core', () => ({
     </div>
   ),
   useLoadGraph: () => captureLoad,
+  useSigma: () => sigmaStub,
+  useRegisterEvents: () =>
+    (handlers: { afterRender?: () => void }) => {
+      if (handlers.afterRender) afterRenderHandler = handlers.afterRender;
+    },
 }));
 
 import { VertexWorkspacePage } from './VertexWorkspacePage';
@@ -37,6 +65,7 @@ const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   loadedGraph = null;
+  afterRenderHandler = null;
   globalThis.fetch = vi.fn() as unknown as typeof fetch;
 });
 
@@ -187,5 +216,73 @@ describe('VertexWorkspacePage rendering (VTX-018)', () => {
     // mapped the default (no typeClasses) to Sigma's built-in 'arrow' type.
     const firstEdge = loadedGraph!.edges()[0];
     expect(loadedGraph!.getEdgeAttribute(firstEdge, 'type')).toBe('arrow');
+  });
+});
+
+describe('VertexWorkspacePage extended-label overlay (VTX-019)', () => {
+  const payloadWithLabels = {
+    layers: [
+      {
+        id: 'layer-airports',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objectType: 'Airport',
+        extendedLabels: [
+          { kind: 'property', property: 'onTimePct', label: 'On-time %' },
+          { kind: 'timeSeries', property: 'temperatureSeries', label: 'Temp °C' },
+          { kind: 'measure', functionRid: 'ri.functions.main.fn.avgDelay' },
+        ],
+        objects: [
+          {
+            objectRid: 'ri.ontology.main.object.airport.JFK',
+            properties: { name: 'JFK', onTimePct: 92 },
+          },
+        ],
+      },
+    ],
+    edges: [],
+    positions: {},
+  };
+
+  it('Given_payloadWith3ExtendedLabels_When_pageRenders_Then_overlayCardShows3LabelRows', async () => {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () =>
+        JSON.stringify({
+          rid: 'ri.vertex.main.graph.labels',
+          name: 'Labels',
+          version: 1,
+          payload: payloadWithLabels,
+        }),
+      json: async () => ({
+        rid: 'ri.vertex.main.graph.labels',
+        name: 'Labels',
+        version: 1,
+        payload: payloadWithLabels,
+      }),
+    });
+
+    renderAt('/vertex/ri.vertex.main.graph.labels');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(1);
+    });
+
+    // Overlay root must mount, even before any labels paint.
+    const root = await screen.findByTestId('vertex-node-overlay-root');
+    expect(root).toBeInTheDocument();
+
+    // After the graph is loaded the card for the JFK node must render
+    // with one row per kind.
+    const card = await screen.findByTestId(
+      'vertex-node-overlay-card-ri.ontology.main.object.airport.JFK',
+    );
+    expect(card.querySelectorAll('[data-testid^="vertex-extended-label-"]')).toHaveLength(3);
+    expect(screen.getByTestId('vertex-extended-label-property').textContent).toContain('On-time %');
+    expect(screen.getByTestId('vertex-extended-label-property').textContent).toContain('92');
+    expect(screen.getByTestId('vertex-extended-label-timeSeries').textContent).toContain('Temp °C');
+    expect(screen.getByTestId('vertex-extended-label-measure').textContent).toContain('avgDelay');
   });
 });
