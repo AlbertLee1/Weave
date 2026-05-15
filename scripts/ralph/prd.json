@@ -294,8 +294,8 @@
         "Tests pass"
       ],
       "priority": 43,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/scenarioRun.ts。导出 ScenarioRunState reducer（createScenarioRunMap/createScenarioRunState/setScenarioRunState/applyScenarioRunStart/applyScenarioRunSuccess/applyScenarioRunError/getScenarioRunStatus/isScenarioRunning）+ POST /api/vertex/v1/scenarios/{rid}/run 请求构造 buildRunScenarioRequest（rid encodeURIComponent，blank 抛）+ preflight 校验 hasRunnablePayload / validateScenarioRunRequest / assertScenarioRunnable（抛 ScenarioRunNotEditableError，reason 'frozen'|'empty_payload'，message 'Scenario cannot be run: ...'）+ Run 按钮决策 resolveRunButtonState（优先级 running > frozen > empty_payload > enabled）+ status icon getScenarioRunStatusIcon（idle='—'/running='spinner'/success='✓'/error='×'）+ tooltip getScenarioRunStatusTooltip（success → 'Run completed in N s/ms'，<1000ms 显示 ms 一位小数，error → 错误消息，running → 'Running…'，idle → null）+ 响应解析 parseScenarioRunSuccessResponse（durationMs Number.isFinite + non-negative 校验；scenario.immutable 缺失视为 true）+ parseScenarioRunErrorResponse（message blank 时兜底 'Scenario run failed'）+ immutableScenario(s) 把 scenario.immutable 翻为 true。Run 失败不冻结 scenario 让用户改完 override 重试；Run 成功调用方需手动 immutableScenario(success.scenario) 翻 immutable 并塞回 scenarios store。52 tests pass，vertex 子集 39 files / 723 tests 全绿，vitest 全量 213 files / 2054 tests 仅触发 admin-removed.test.tsx 已知 flaky（独立运行 3 tests pass）。tsc 0 错误，eslint 0 warning。dev-browser skill 不可用，spinner + green ✓ + red × + duration tooltip 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-044",
