@@ -76,3 +76,74 @@ Stream: B
   - computeSubplotLayouts 把 `Math.max(0, totalHeight - totalGap)` 用于挤压场景：测试里 `totalHeight=10, gap=50, n=2` 不会产生负 height（防止 DOM 报错或 uPlot 异常）。
   - `to <= from` 的退化窗口（live mode 刚开始或时间窗未初始化）在换算 helper 里直接降级返回 from/0，避免除零；React 层不需要再做防御。
 ---
+
+## 2026-05-15 - VTX-034
+- 实现 Timeline（事件 + 时序统一视图）的纯逻辑层：子模式状态 reducer + selectedTime 自动推进 + event bar first-fit 布局。
+- 新增文件：
+  - `web/src/features/vertex/timeline/timeline.ts` — 导出：
+    - `TIMELINE_SPEEDS` = [0.5, 1, 2, 5]，`TimelineSpeed` 类型
+    - `TimelineState { enabled, playing, speed, loop }` + reducer 全套：`createTimelineState` / `setTimelineEnabled` / `toggleTimelineEnabled` / `setTimelinePlaying` / `toggleTimelinePlaying` / `setTimelineSpeed`（非法 throw）/ `setTimelineLoop` / `toggleTimelineLoop`；invariants：disable 时 playing 强制 false，禁用状态下 play 操作 no-op
+    - `advanceSelectedTime({ current, from, to, speed, loop, realDtMs, baseAdvancePerSecond? })` — 纯函数；delta = realDtMs * speed * base / 1000；loop=true 时 mod wrap = from + (next-from) % span；loop=false 越界 clamp 至 to；退化窗口 (to≤from) 返回 from + reachedEnd
+    - `createPlaybackController({ getState, onAdvance, tickIntervalMs?, baseAdvancePerSecond? })` — setInterval 副作用工厂；每 tick 调 getState() → advance → onAdvance(r)；start 幂等；stop 清 interval；isRunning() 反映状态。controller 不持有 speed/loop/selectedTime —— 真理留在 Zustand store；loop=false reachedEnd 后不自动 stop，让调用方决定（onAdvance 看 reachedEnd 自行 dispatch pause）
+    - `layoutEventBars(events, { from, to }, pixelWidth, opts?)` — first-fit 多行布局：按 start 排序后贪心查行；越界事件剔除；横跨边界 clamp 到窗口内；瞬时事件（无 end）按 `minBarWidthPx` 兜底；`maxRows` 截断；pixelWidth≤0 / to≤from 返回 []
+  - `web/src/features/vertex/timeline/timeline.test.ts` — 45 个 BDD 测试覆盖：状态工厂（init / invariants / 非法 speed）、reducer 全部分支、advance（speed 三档 / loop wrap / 多 span wrap / 退化窗口 / dt=0 / 默认 baseAdvancePerSecond）、controller（未 start no-op / start 后 tick / stop / 幂等 start / loop reach end / 拉取最新 state 反映 speed 改变）、layout（空 / 1 个 / 不重叠 / 重叠多行 / 边界贴边同行 / 瞬时事件 minBarWidth / 越窗剔除 / 左右溢出 clamp / pixelWidth=0 / 退化窗口 / maxRows 截断 / color 透传）。
+- 质量检查：
+  - vitest（timeline）：45/45 绿。
+  - vitest 子集（src/features/vertex）：30 files / 317 tests 全绿。
+  - vitest 全量：失败的 14 个测试全部是已知 flaky（admin-removed / Accessibility / ObjectTypeAdminPage / route-aliases / ExportButton / ObjectDiffPanel / CommandPalette / SlidePanel / SettingsPage — 都是 React 渲染测试，5s 超时；单独跑全部稳定通过；和 progress.txt Codebase Patterns #6 记载的同根 issue）。
+  - tsc（web/）：本 story 新增文件 0 错误；仓库残留 pre-existing 2 处（与本 stream 无关，详见 Codebase Patterns）。
+  - eslint（timeline）：0 warning。
+- **Learnings for future iterations:**
+  - VTX-082 `eventBars.ts` 已经提供 RawEvent → AnnotatedEvent + filter（颜色 + 分类过滤），VTX-034 复用其类型不要重新发明 RawEvent；layoutEventBars 直接吃 AnnotatedEvent，让上游 React 层先 `annotateEventsWithColor` → `filterEventsByCategory` → `layoutEventBars` 三段管线。
+  - React 接线层用法：Play 按钮点击 → `toggleTimelinePlaying` → 触发 `pc.start()`；onAdvance 收到 `{ selectedTime, reachedEnd, looped }`：dispatch `setSelectedTime(r.selectedTime)`，如果 `r.reachedEnd && !state.loop` 顺手 dispatch `setTimelinePlaying(false)` 让 UI 自动暂停（与 VTX-031 `setSelectedTime` clamp 行为天然兼容）。
+  - speed 用 union literal `0.5 | 1 | 2 | 5` 而不是 enum/numeric range，配合 erasableSyntaxOnly + verbatimModuleSyntax；`assertSpeed` 在运行时校验防止任意数字穿透（Zustand 持久化反序列化场景）。
+  - controller "不持有自有状态" 的设计：调用方持有真理（Zustand store），controller 每 tick 拉 getState() —— 用户改 speed/loop 不需要通知 controller，下一个 tick 自然生效。代价是要传 getState 闭包。这与 VTX-031 `createLivePoller`（持有 intervalSec 内部副本）不同，因为 poller 只关心 tick 节奏，advance 没有"调用方写 selectedTime"的反向数据流。
+  - loop=false reachedEnd 不自动 stop —— 一开始我考虑在 controller 内 stop，但这样 onAdvance 之外又多了一个副作用入口；改让调用方在 onAdvance 看 reachedEnd 主动 stop，更符合"controller 是哑泵"的设计。
+  - layout first-fit：每行只记 `rowEnds[i]`（最后一个 bar 的 end），新事件 `start >= rowEnds[i]` 即可放入该行；测试 `BackToBackEvents`（mid 同时是 e1 end 和 e2 start）用 `<=` 判定让它们共行。
+  - layoutEventBars 把 `end ?? start` 回填进返回结果的 `end` 字段，让 React 层无需再做 nullish 处理；同时保留 raw `start` 供 hover tooltip 显示原始时间戳。
+  - 全套 vitest 偶发 timeout 的范围比想象中大：除了已知的 admin-removed.test.tsx，至少还有 Accessibility / ObjectTypeAdminPage / SettingsPage / ObjectDiffPanel 等 10+ 个 React 渲染测试在完整套件并发下会 5s 超时，但单独跑稳。这是套件级 flaky 而非个别测试 bug，本 stream 不为它修代码（同 VTX-031 学习项）。
+---
+
+## 2026-05-15 - VTX-035
+- 实现 Open in Quiver / Object Explorer 跳转的纯逻辑层：URL builder + 新 tab 副作用 helper。
+- 新增文件：
+  - `web/src/features/vertex/contextMenu/openLinks.ts` — 导出：
+    - `buildOpenInQuiverUrl({ ontology, objectRid, property?, objectType?, primaryKey? })` → `/quiver/{ontology}?objectRid=...&property=...&objectType=...&primaryKey=...`；ontology 用 `encodeURIComponent` 嵌入路径段，其他参数走 `URLSearchParams` 自动编码；空 ontology/objectRid 抛错；可选字段缺省时不写入 query。
+    - `buildOpenInExplorerUrl({ ontology, objectRid, objectType? })` → `/explorer/{ontology}?objectRid=...`，带 objectType 时变 `/explorer/{ontology}/{objectType}?objectRid=...`（沿用 App.tsx `/explorer/:ontology/:objectType` 现有嵌套路由）。
+    - `openInNewTab(url, win?)` — 默认从 `globalThis.window` 取，缺省或 `win.open` 不是函数时安全 noop；空 url 抛错；调用形式 `win.open(url, '_blank', 'noopener,noreferrer')`，符合 react-router 外跳 + 防 reverse-tabnabbing 最佳实践。
+  - `web/src/features/vertex/contextMenu/openLinks.test.ts` — 16 个 BDD 测试覆盖：buildOpenInQuiverUrl（base + 无 property + objectType/primaryKey 透传 + 特殊字符编码 + ontology 路径段编码 + 空校验）、buildOpenInExplorerUrl（base + objectType 嵌套 + 路径段编码 + 空校验）、openInNewTab（fake window.open / undefined window noop / 空 url 抛错 / win 无 open 方法 noop）。
+- 质量检查：
+  - vitest（contextMenu）：16/16 绿。
+  - vitest 子集（src/features/vertex）：31 files / 333 tests 全绿（+1 file / +16 tests）。
+  - tsc（web/）：0 错误，pre-existing 错误均已被其他 commit 修复。
+  - eslint（contextMenu）：0 warning。
+- **Learnings for future iterations:**
+  - BDD spec 给的 URL 路径形式（`/quiver/{objectRid}/{property}`）与现有 React Router 路由（`/quiver/:ontology/:rid`，rid 是 dashboard rid）冲突，不能直译。采用 query param 形式 `/quiver/{ontology}?objectRid=...&property=...&objectType=...&primaryKey=...`，让 QuiverPage 接 `useSearchParams` 在 mount 时 prefill 一个 SeriesSpec，等价语义但保留现有路由不变。这种 spec-vs-codebase 冲突优先选 query param 而不是加新路由 — 改 routing 是更大 blast radius，应由专门 routing story 决定。
+  - encodeURIComponent 对路径段、URLSearchParams 对 query：两者编码规则不同（` ` 在路径里编 `%20`、在 query 里编 `+`）。测试断言时如果跨路径/query 比较，分别用对应 API 解码，不要直接字符串比较。
+  - `openInNewTab` 写成"win 可注入 + win 缺省/无 open 方法时 noop"而非 throw，原因是 SSR / Node 测试环境 / 内嵌 iframe 沙箱里 window.open 可能不存在，导致整个右键菜单 click handler 抛错；UI 层的"开新 tab 失败"应该是无声降级（最差用户体验是没跳转），不是 React error boundary 炸开。
+  - `noopener,noreferrer` 是 window.open 第三参 features 字符串而非选项对象 — 之前在 deeplink/buildVertexUrl 模块里也没设这两个，单纯用 `<a target="_blank">` 隐式继承；这里因为是 imperative `window.open`，必须显式加，否则新 tab 可通过 `window.opener` 反向操作源 tab（reverse tabnabbing）。
+  - dev-browser skill 不可用 — 右键菜单 React 接线 + 实际 new-tab 行为验证留到组件接线 story；本 story 仅交付纯逻辑 + 副作用 helper。
+---
+
+## 2026-05-15 - VTX-036
+- 实现 Scenario Pane（侧栏纵向表格 UI）的纯逻辑层：reducer + 工具栏/表头/分组派生 helper。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/scenarioPane.ts` — 导出：
+    - 类型 `CaseStudyRef` / `ScenarioRef` / `ScenarioPaneActionRow` / `ScenarioPaneModelRow` / `ScenarioPaneInputOutputColumn` / `ScenarioPaneState`
+    - reducer：`createScenarioPaneState(init?)`（深拷贝 init 集合防外部 mutation）/ `togglePane` / `setPaneExpanded` / `setCaseStudy`（rid 变更/置空 → 重置 scenarios/rows/inputOutputColumns；同 rid 仅刷新对象不动依赖状态）/ `addScenario`（无 caseStudy 抛错，按 rid 幂等，按插入序追加列）/ `removeScenario` / `addActionRow` / `addModelRow`（按 rid 幂等，不重复插入）/ `removeRow` / `addInputOutputColumn`（按 key 幂等）/ `removeInputOutputColumn`
+    - 派生：`getToolbarButtons`（空 pane=['addCaseStudy']，有 caseStudy=['addScenario','addAction','addInputOrOutput','run']）/ `getColumnHeaders`（['Baseline', ...scenarios.name]，无 caseStudy 返回 []）/ `getRowGroups`（按 kind 拆 models/actions 两个数组，分别保留插入序）/ `isEmpty`
+  - `web/src/features/vertex/scenarioPane/scenarioPane.test.ts` — 34 个 BDD 测试覆盖：工厂（默认值 / init 深拷贝防 mutation）、toggle/setPaneExpanded、setCaseStudy（首次/切换/置空/同 rid 保留依赖状态）、addScenario（无 caseStudy 抛错 / 顺序追加 / 幂等）/ removeScenario（顺序 / unknown 返回原 state）、rows（addModelRow / addActionRow / 幂等 / mixed remove / unknown 返回原 state）、inputOutputColumns（add/remove/幂等/unknown）、getToolbarButtons（空/有 caseStudy/有 2 scenarios 仍然全 toolbar）、getColumnHeaders（无 cs/仅 baseline/baseline + N/immutable scenario label 不变）、getRowGroups（空/mixed 保留插入序）、isEmpty。
+- 质量检查：
+  - vitest（scenarioPane）：34/34 绿。
+  - vitest 子集（src/features/vertex）：32 files / 367 tests 全绿（+1 file / +34 tests）。
+  - tsc（web/）：0 错误。
+  - eslint（scenarioPane）：0 warning。
+- **Learnings for future iterations:**
+  - React 接线层用法：Scenarios 按钮点击 → `togglePane`；空 caseStudy 渲染只 `+ Add Case Study` 大按钮（`getToolbarButtons` 返回 `['addCaseStudy']`）；TanStack Table headerGroup 直接取 `getColumnHeaders(state)` 当 `<th>`（多语言 i18n 时把 Baseline 字面值挪到 React 层映射，本模块保持英文常量稳定）；行渲染按 `getRowGroups(state)` 分成 Models / Actions 两个 section（垂直表的"行 = 单个 Model/Action"），每行下面 Input/Output 列各自再开一行（这是调研报告 §6.4 的 "类 Excel 纵向网格"）。
+  - 单 scenario "+ Add input or output" 加列时调 `addInputOutputColumn({ key: paramId, label })`，key 用 `${actionRid}::${paramName}` 这种 composite 避免不同 action/model 同名参数冲撞（在测试里仅用 'capacity'/'demand' 简化，React 层负责构造 composite key）。
+  - setCaseStudy 同 rid no-op-on-dependent-state 的设计：避免用户重命名 Case Study 时把已加载的 Scenarios/Rows 清空。但传入的对象引用是新的（caseStudy 字段更新），React 层用 `useMemo` 依赖 `state.caseStudy.rid` 而不是 `state.caseStudy` 引用，否则会触发不必要重渲。
+  - "Run" 按钮的精细禁用规则（需要 ≥1 scenario，且任何 scenario.immutable=false 等）不在 `getToolbarButtons` 里判断 — 该 helper 只回答"是否暴露按钮"，"按钮是否可点"留给 React 层组合 `state.scenarios.length` / `scenarios.some(s => !s.immutable)`。避免 helper 膨胀为业务规则枢纽。
+  - Row 类型用 discriminated union（`kind: 'model'|'action'`）而不是两个独立数组，`state.rows` 单列存储是为了未来插入顺序（"先加 M1，再加 A1，再加 M2" 用户可能希望按时间顺序看到混排），`getRowGroups` 才在派生时分组。如果 spec 之后要求"Models 永远在 Actions 上面"，改 `getRowGroups` 不动 state 即可。
+  - immutable scenario 的视觉差异（灰色列头 / 锁图标）由 React 层根据 `scenario.immutable` 自行装饰，本模块的 `getColumnHeaders` 只回 name 字面值；VTX-037 的"Scenario is immutable. Duplicate to modify."提示走同样路径。
+  - dev-browser skill 不可用 — TanStack Table 接线 + + Add Case Study 对话框浏览器验证留到 React 组件接线 story。
+---

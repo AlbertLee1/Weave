@@ -93,8 +93,8 @@
         "Tests pass"
       ],
       "priority": 34,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/timeline/timeline.ts。导出 TimelineState reducer（createTimelineState/setTimelineEnabled/toggleTimelineEnabled/setTimelinePlaying/toggleTimelinePlaying/setTimelineSpeed/setTimelineLoop/toggleTimelineLoop + TIMELINE_SPEEDS=[0.5,1,2,5]）+ 纯函数 advanceSelectedTime（speed*baseAdvancePerSecond 推进；loop=true mod wrap 至 from+remainder；退化窗口 clamp 至 from 并 reachedEnd）+ 副作用工厂 createPlaybackController（setInterval 每 tickIntervalMs 拉 getState→advance→onAdvance；start 幂等；不自动 stop 让 UI 控制）+ layoutEventBars（first-fit 贪心多行，clamp 越界 bar，minBarWidthPx 兜底瞬时事件，maxRows 截断；退化窗口/零宽度返回 []）。复用 VTX-082 eventBars.ts 的 AnnotatedEvent。dev-browser skill 不可用，Play 按钮 / event bar DOM 浏览器验证留到 React 接线层。"
     },
     {
       "id": "VTX-035",
@@ -114,8 +114,8 @@
         "Tests pass"
       ],
       "priority": 35,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/contextMenu/openLinks.ts。导出 buildOpenInQuiverUrl（/quiver/{ontology}?objectRid=...&property=...&objectType=...&primaryKey=...）+ buildOpenInExplorerUrl（/explorer/{ontology}[/{objectType}]?objectRid=...）+ openInNewTab（thin window.open wrapper，'_blank' + noopener,noreferrer，undefined window 或缺 open 方法时安全 noop）。ontology / objectRid 空串抛错；ontology / property / objectType 通过 encodeURIComponent 或 URLSearchParams 自动转义。BDD spec 写的 /quiver/{objectRid}/{property} 与我们现有 /quiver/:ontology/:rid 路由结构冲突，采用 query param 形式同时承载 objectRid + property + 可选 objectType/primaryKey，让 React 接线层（QuiverPage / ExplorerPage 接 useSearchParams）按需 prefill。dev-browser skill 不可用，右键菜单 + new-tab DOM 验证留到 React 接线层。"
     },
     {
       "id": "VTX-036",
@@ -138,8 +138,8 @@
         "Tests pass"
       ],
       "priority": 36,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/scenarioPane.ts。导出 ScenarioPaneState reducer（createScenarioPaneState/togglePane/setPaneExpanded/setCaseStudy/addScenario/removeScenario/addActionRow/addModelRow/removeRow/addInputOutputColumn/removeInputOutputColumn）+ 派生 helper（getToolbarButtons / getColumnHeaders / getRowGroups / isEmpty）。setCaseStudy 切换 rid 时重置 scenarios/rows/inputOutputColumns（前一个 Case Study 拥有的数据），同 rid 仅更新 caseStudy 字段保留依赖状态。addScenario 无 caseStudy 抛错；所有 add* 按 rid/key 幂等；所有 remove* 找不到目标返回原 state。getToolbarButtons 空 pane=['addCaseStudy']，有 caseStudy=['addScenario','addAction','addInputOrOutput','run']（Run 是否可点由 React 层按 ≥1 scenario 等更严规则禁用）。getColumnHeaders=['Baseline',...scenarios.name]（input/output 列在垂直表里是行，由 getRowGroups 处理）。dev-browser skill 不可用，TanStack Table 接线 + 对话框浏览器验证留到 React 组件接线 story。"
     },
     {
       "id": "VTX-037",
