@@ -312,3 +312,92 @@ func TestGraphsHandler_Given_MissingFields_When_POST_Then_400(t *testing.T) {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
+
+// VTX-058: layer.extendedLabels[] discriminator wiring on POST + PUT.
+
+// TestGraphsHandler_Given_AllKnownLabelKinds_When_POST_Then_201
+func TestGraphsHandler_Given_AllKnownLabelKinds_When_POST_Then_201(t *testing.T) {
+	r, _, _ := newTestHandler(t)
+	body := map[string]any{
+		"ontologyRid": "ri.ontology.main.ontology.vtx",
+		"name":        "Labels Map",
+		"payload": map[string]any{
+			"layers": []any{
+				map[string]any{
+					"objectType":  "Airport",
+					"ontologyRid": "ri.ontology.main.ontology.vtx",
+					"extendedLabels": []any{
+						map[string]any{"kind": "property", "property": "onTimePct"},
+						map[string]any{"kind": "timeSeries", "property": "throughput"},
+						map[string]any{"kind": "measure", "measureRid": "ri.functions.measure.total-alerts"},
+					},
+				},
+			},
+			"edges": []any{},
+		},
+	}
+	w := doRequest(t, r, http.MethodPost, "/api/vertex/v1/graphs", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestGraphsHandler_Given_UnknownLabelKind_When_POST_Then_422
+func TestGraphsHandler_Given_UnknownLabelKind_When_POST_Then_422(t *testing.T) {
+	r, _, _ := newTestHandler(t)
+	body := map[string]any{
+		"ontologyRid": "ri.ontology.main.ontology.vtx",
+		"name":        "Bad Map",
+		"payload": map[string]any{
+			"layers": []any{
+				map[string]any{
+					"objectType":     "Airport",
+					"extendedLabels": []any{map[string]any{"kind": "histogram"}},
+				},
+			},
+			"edges": []any{},
+		},
+	}
+	w := doRequest(t, r, http.MethodPost, "/api/vertex/v1/graphs", body)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if code, _ := resp["errorCode"].(string); code != "WEAVE_VALIDATION_SCHEMA" {
+		t.Errorf("errorCode = %q, want WEAVE_VALIDATION_SCHEMA; body: %s", code, w.Body.String())
+	}
+}
+
+// TestGraphsHandler_Given_Graph_When_PUTUnknownLabelKind_Then_422
+func TestGraphsHandler_Given_Graph_When_PUTUnknownLabelKind_Then_422(t *testing.T) {
+	r, _, _ := newTestHandler(t)
+	createResp := doRequest(t, r, http.MethodPost, "/api/vertex/v1/graphs", map[string]any{
+		"ontologyRid": "ri.ontology.main.ontology.vtx",
+		"name":        "Map",
+		"payload":     map[string]any{"layers": []any{}, "edges": []any{}},
+	})
+	var created map[string]any
+	_ = json.Unmarshal(createResp.Body.Bytes(), &created)
+	rid := created["rid"].(string)
+
+	w := doRequest(t, r, http.MethodPut, "/api/vertex/v1/graphs/"+rid, map[string]any{
+		"payload": map[string]any{
+			"layers": []any{
+				map[string]any{
+					"objectType":     "Airport",
+					"extendedLabels": []any{map[string]any{"kind": "badge"}},
+				},
+			},
+			"edges": []any{},
+		},
+	})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("PUT status = %d, want 422; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if code, _ := resp["errorCode"].(string); code != "WEAVE_VALIDATION_SCHEMA" {
+		t.Errorf("errorCode = %q, want WEAVE_VALIDATION_SCHEMA", code)
+	}
+}

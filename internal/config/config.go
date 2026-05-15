@@ -82,6 +82,23 @@ type FunctionsConfig struct {
 	Timeout time.Duration
 }
 
+// FunctionRuntimeConfig points the Vertex pkg/vertex/funcruntime client at
+// the Python sandbox runtime (VTX-049). The runtime lives in
+// runtime/python/ — a FastAPI + pydantic + sklearn process that owns
+// function execution and the sandbox boundary. Separate from FunctionsConfig
+// because the wire contract is different (sandboxed Vertex functions vs.
+// the older Tier-3.2 function-backed action dispatcher) and we want
+// operators to be able to point them at different processes.
+//
+// When URL is empty the client is not constructed and Vertex scenario runs
+// fall back to in-process execution paths (or fail loudly when the caller
+// requires Python). Timeout defaults to 30s; matches funcruntime.DefaultTimeout
+// so config-loaded clients behave identically to those constructed with nil.
+type FunctionRuntimeConfig struct {
+	URL     string
+	Timeout time.Duration
+}
+
 // IngestRateLimitConfig controls the per-ontology token-bucket rate limiter
 // on the stream ingest endpoint (US-063). Defaults: 1000 rps, burst 1000.
 type IngestRateLimitConfig struct {
@@ -225,6 +242,7 @@ type Config struct {
 	Metrics          MetricsConfig
 	Tracing          TracingConfig
 	Functions        FunctionsConfig
+	FunctionRuntime  FunctionRuntimeConfig
 	IngestRateLimit  IngestRateLimitConfig
 	OIDC             OIDCConfig
 	SAML             SAMLConfig
@@ -300,6 +318,10 @@ func Load() (*Config, error) {
 		Functions: FunctionsConfig{
 			Enabled: false,
 			BaseURL: "",
+			Timeout: 30 * time.Second,
+		},
+		FunctionRuntime: FunctionRuntimeConfig{
+			URL:     "",
 			Timeout: 30 * time.Second,
 		},
 		IngestRateLimit: IngestRateLimitConfig{
@@ -482,6 +504,22 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("invalid WEAVE_FUNCTIONS_TIMEOUT %q: %w", v, err)
 		}
 		cfg.Functions.Timeout = d
+	}
+
+	// Vertex Python function runtime (VTX-049). PRD spells the URL
+	// knob as FUNCTION_RUNTIME_URL (no WEAVE_ prefix) so it matches
+	// the BDD spec verbatim; the timeout knob picks up the WEAVE_
+	// prefix because it's a per-deploy ergonomic concern rather than
+	// part of the public wire contract.
+	if v := os.Getenv("FUNCTION_RUNTIME_URL"); v != "" {
+		cfg.FunctionRuntime.URL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("WEAVE_FUNCTION_RUNTIME_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid WEAVE_FUNCTION_RUNTIME_TIMEOUT %q: %w", v, err)
+		}
+		cfg.FunctionRuntime.Timeout = d
 	}
 
 	if v := os.Getenv("WEAVE_INGEST_RATE_PER_SEC"); v != "" {

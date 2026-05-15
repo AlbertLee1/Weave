@@ -1135,3 +1135,54 @@ func TestLoadConfig_ParquetRetention_RejectsNonNumeric(t *testing.T) {
 		t.Fatal("expected error for non-numeric retention")
 	}
 }
+
+// VTX-049: FUNCTION_RUNTIME_URL points the pkg/vertex/funcruntime client
+// at the Python sandbox runtime. PRD spells the env var with no WEAVE_
+// prefix so the BDD spec matches the deploy manifests verbatim.
+func TestLoadConfig_FunctionRuntime_Defaults(t *testing.T) {
+	os.Unsetenv("FUNCTION_RUNTIME_URL")
+	os.Unsetenv("WEAVE_FUNCTION_RUNTIME_TIMEOUT")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FunctionRuntime.URL != "" {
+		t.Errorf("default URL = %q, want empty (degraded mode opt-in)", cfg.FunctionRuntime.URL)
+	}
+	if cfg.FunctionRuntime.Timeout != 30*time.Second {
+		t.Errorf("default Timeout = %v, want 30s", cfg.FunctionRuntime.Timeout)
+	}
+}
+
+func TestLoadConfig_FunctionRuntime_FromEnv(t *testing.T) {
+	t.Setenv("FUNCTION_RUNTIME_URL", "http://localhost:9118")
+	t.Setenv("WEAVE_FUNCTION_RUNTIME_TIMEOUT", "5s")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FunctionRuntime.URL != "http://localhost:9118" {
+		t.Errorf("URL = %q, want http://localhost:9118", cfg.FunctionRuntime.URL)
+	}
+	if cfg.FunctionRuntime.Timeout != 5*time.Second {
+		t.Errorf("Timeout = %v, want 5s", cfg.FunctionRuntime.Timeout)
+	}
+}
+
+func TestLoadConfig_FunctionRuntime_TrimsWhitespace(t *testing.T) {
+	t.Setenv("FUNCTION_RUNTIME_URL", "  http://localhost:9118  ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FunctionRuntime.URL != "http://localhost:9118" {
+		t.Errorf("URL = %q, want trimmed", cfg.FunctionRuntime.URL)
+	}
+}
+
+func TestLoadConfig_FunctionRuntime_RejectsBadTimeout(t *testing.T) {
+	t.Setenv("WEAVE_FUNCTION_RUNTIME_TIMEOUT", "not-a-duration")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid timeout")
+	}
+}

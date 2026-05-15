@@ -75,14 +75,63 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 }
 
 // createRequest is the body shape for POST /api/vertex/v1/graphs. Payload is
-// captured as json.RawMessage so we forward exactly what the client sent —
-// schema validation belongs to VTX-011.
+// captured as json.RawMessage so we forward exactly what the client sent.
+// Schema validation runs against a typed view of the payload (see
+// validatePayloadSchema); fully opaque fields (positions, styles, edges,
+// savedSelections, …) remain untouched.
 type createRequest struct {
 	OntologyRID string          `json:"ontologyRid"`
 	Name        string          `json:"name"`
 	Versioned   *bool           `json:"versioned,omitempty"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	CreatedBy   string          `json:"createdBy,omitempty"`
+}
+
+// validatePayloadSchema parses raw into a typed GraphPayload view and runs
+// the schema-level validators that map to HTTP status codes via writeSchemaError.
+// VTX-058 enforces layer.extendedLabels[].kind ∈ ValidExtendedLabelKinds; an
+// empty raw payload is accepted (payload is optional on create) and parse
+// failures surface as 400 InvalidPayloadShape rather than a 500.
+func validatePayloadSchema(raw json.RawMessage) (parseErr, schemaErr error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var p GraphPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return err, nil
+	}
+	if err := ValidateExtendedLabels(p); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// writeSchemaError translates validator errors to APIError envelopes. Keep
+// schema-validation sentinels here so the create/update/etc. handlers stay
+// thin pass-throughs.
+func writeSchemaError(w http.ResponseWriter, parseErr, schemaErr error) bool {
+	if parseErr != nil {
+		apierror.WriteJSON(w, apierror.NewBadRequest("InvalidPayloadShape", map[string]string{
+			"error": parseErr.Error(),
+		}))
+		return true
+	}
+	if schemaErr == nil {
+		return false
+	}
+	switch {
+	case errors.Is(schemaErr, ErrUnknownLabelKind):
+		apierror.WriteJSON(w, apierror.NewValidationSchema("UnknownExtendedLabelKind", map[string]string{
+			"field":        "payload.layers[].extendedLabels[].kind",
+			"reason":       schemaErr.Error(),
+			"allowedKinds": strings.Join(ValidExtendedLabelKinds, ","),
+		}))
+	default:
+		apierror.WriteJSON(w, apierror.NewValidationSchema("PayloadValidationFailed", map[string]string{
+			"reason": schemaErr.Error(),
+		}))
+	}
+	return true
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +150,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.Name) == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingName", nil))
+		return
+	}
+	if parseErr, schemaErr := validatePayloadSchema(req.Payload); writeSchemaError(w, parseErr, schemaErr) {
 		return
 	}
 	if h.validator != nil {
@@ -157,6 +209,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Payload) == 0 {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingPayload", nil))
+		return
+	}
+	if parseErr, schemaErr := validatePayloadSchema(req.Payload); writeSchemaError(w, parseErr, schemaErr) {
 		return
 	}
 	if h.validator != nil {
