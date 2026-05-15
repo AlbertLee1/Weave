@@ -141,6 +141,8 @@ const zhCN = {
     goApprovals: '前往审批',
     submitForm: '提交当前表单',
     cancelEdit: '取消 / 关闭对话框',
+    saveGraph: '保存当前 Graph',
+    runScenario: '运行当前 Scenario',
   },
   settings: {
     title: '设置',
@@ -174,6 +176,50 @@ const zhCN = {
     useServer: '使用服务端',
     addedSummary: '新增 {{count}} 条',
     removedSummary: '删除 {{count}} 条',
+  },
+  vertex: {
+    widget: {
+      save: '保存',
+      saving: '正在保存…',
+      saved: '已保存',
+      loading: '加载中…',
+    },
+    diagramming: {
+      title: '图表绘制 · 即将上线',
+      description:
+        '图表绘制（Diagramming）模式仍在上游 beta 阶段。Vertex v1 仅发布 Graph 模式；该路由已保留，未来从外部系统过来的链接不会 404。详见 PRD VTX-114。',
+      backToGraph: '返回 Graph',
+    },
+    layers: {
+      title: '图层',
+      dropHere: '拖动图层到此',
+      loadingPlaceholder: '正在加载 {{objectType}}…',
+    },
+    map: {
+      openInVertex: '在 Vertex 中打开',
+    },
+    copilot: {
+      suggest: '推荐覆盖',
+      thinking: '思考中…',
+      explain: '解释结果',
+      reading: '阅读中…',
+    },
+    debug: {
+      ariaLabel: 'Scenario 调试',
+      title: '调试 — {{rid}}',
+      close: '关闭',
+      inputSnapshot: '输入快照',
+      functionLogs: '函数日志 ({{count}})',
+      partialEdits: '部分编辑 ({{count}})',
+    },
+    scenarioPane: {
+      run: '运行',
+    },
+    retry: {
+      empty: '暂无重试。',
+      counter: '重试次数: {{count}}',
+      attempt: '第 {{num}} 次尝试',
+    },
   },
 } as const;
 

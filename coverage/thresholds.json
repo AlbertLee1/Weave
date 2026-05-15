@@ -1,11 +1,22 @@
 {
-  "_description": "US-056 / PC-C13 — coverage floor thresholds for core packages. defaultMaxDrop is the max-allowed percentage-point regression vs. coverage/baseline.json. To refresh the baseline after an intentional coverage shift, run `make test-cover-update`.",
+  "_description": "US-056 / PC-C13 — coverage floor thresholds for core packages. defaultMaxDrop is the max-allowed percentage-point regression vs. coverage/baseline.json. To refresh the baseline after an intentional coverage shift, run `make test-cover-update`. VTX-122 added the Vertex-stream floors (pkg/scenarios, pkg/vertex/graphsvc, pkg/timeseries @ 80%) plus excludeFiles: PG implementations live behind `//go:build integration` and are exercised by the testcontainers-backed integration job, so we drop them from the unit-test floor measurement.",
   "defaultMaxDrop": 2.0,
   "floor": {
     "github.com/liyang/weave/pkg/oms": 80.0,
     "github.com/liyang/weave/pkg/oss/objectset": 80.0,
     "github.com/liyang/weave/pkg/actions": 75.0,
     "github.com/liyang/weave/pkg/oss/pagination": 85.0,
-    "github.com/liyang/weave/pkg/apierror": 90.0
-  }
+    "github.com/liyang/weave/pkg/apierror": 90.0,
+    "github.com/liyang/weave/pkg/scenarios": 80.0,
+    "github.com/liyang/weave/pkg/vertex/graphsvc": 80.0,
+    "github.com/liyang/weave/pkg/timeseries": 80.0
+  },
+  "excludeFiles": [
+    "pkg/scenarios/pg_repo.go",
+    "pkg/scenarios/archive_db.go",
+    "pkg/vertex/graphsvc/pg_repo.go",
+    "pkg/vertex/graphsvc/pg_templates.go",
+    "pkg/timeseries/pg_store.go",
+    "pkg/timeseries/vertex_service_pg.go"
+  ]
 }

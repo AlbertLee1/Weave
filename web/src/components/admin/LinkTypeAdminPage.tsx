@@ -16,6 +16,7 @@ import {
   useUpdateLinkType,
 } from '../../hooks/useLinkTypes';
 import { toApiName } from '../../utils/naming';
+import { VERTEX_LINK_TYPE_CLASSES } from '../../features/vertex/links/edgeArrowStyle';
 import { Modal } from '../common/Modal';
 import { Badge } from '../common/Badge';
 import { LoadingSpinner } from '../common/LoadingSpinner';
@@ -332,6 +333,7 @@ interface CreateFormState {
   required: boolean;
   foreignKeyConfig: string;
   apiNameDirty: boolean;
+  typeClasses: string[];
 }
 
 function CreateLinkTypeModal({
@@ -356,6 +358,7 @@ function CreateLinkTypeModal({
     required: false,
     foreignKeyConfig: '',
     apiNameDirty: false,
+    typeClasses: [],
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -411,6 +414,8 @@ function CreateLinkTypeModal({
         needsForeignKey && parsedForeignKey !== undefined
           ? parsedForeignKey
           : undefined,
+      typeClasses:
+        form.typeClasses.length > 0 ? [...form.typeClasses] : undefined,
     };
     try {
       await create.mutateAsync(body);
@@ -563,6 +568,11 @@ function CreateLinkTypeModal({
           />
           <span>Required link (non-nullable)</span>
         </label>
+        <TypeClassCheckboxes
+          testIdPrefix="link-type-create"
+          selected={form.typeClasses}
+          onChange={(next) => setForm((f) => ({ ...f, typeClasses: next }))}
+        />
         {submitError && (
           <p
             role="alert"
@@ -599,6 +609,8 @@ interface EditFormState {
   displayName: string;
   description: string;
   required: boolean;
+  typeClasses: string[];
+  typeClassesDirty: boolean;
 }
 
 function EditLinkTypeModal({
@@ -615,6 +627,8 @@ function EditLinkTypeModal({
     displayName: linkType.displayName,
     description: linkType.description ?? '',
     required: linkType.required,
+    typeClasses: linkType.typeClasses ?? [],
+    typeClassesDirty: false,
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -625,6 +639,9 @@ function EditLinkTypeModal({
       displayName: form.displayName.trim(),
       description: form.description.trim() || undefined,
       required: form.required,
+      // Only send typeClasses when the user actually toggled a box. Mirrors
+      // the backend tri-state: omit = preserve.
+      typeClasses: form.typeClassesDirty ? [...form.typeClasses] : undefined,
     };
     try {
       await update.mutateAsync({ rid: linkType.rid, body });
@@ -708,6 +725,17 @@ function EditLinkTypeModal({
           />
           <span>Required link (non-nullable)</span>
         </label>
+        <TypeClassCheckboxes
+          testIdPrefix="link-type-edit"
+          selected={form.typeClasses}
+          onChange={(next) =>
+            setForm((f) => ({
+              ...f,
+              typeClasses: next,
+              typeClassesDirty: true,
+            }))
+          }
+        />
         {submitError && (
           <p
             role="alert"
@@ -890,6 +918,42 @@ function Field({
         </span>
       )}
     </label>
+  );
+}
+
+function TypeClassCheckboxes({
+  testIdPrefix,
+  selected,
+  onChange,
+}: {
+  testIdPrefix: string;
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  function toggle(tag: string, on: boolean) {
+    if (on) {
+      if (!selected.includes(tag)) onChange([...selected, tag]);
+    } else {
+      onChange(selected.filter((t) => t !== tag));
+    }
+  }
+  return (
+    <fieldset className="flex flex-col gap-1 text-xs text-text-secondary">
+      <legend className="uppercase tracking-widest pb-1">
+        Vertex Type Classes
+      </legend>
+      {VERTEX_LINK_TYPE_CLASSES.map((tag) => (
+        <label key={tag} className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            data-testid={`${testIdPrefix}-type-class-${tag}`}
+            checked={selected.includes(tag)}
+            onChange={(e) => toggle(tag, e.target.checked)}
+          />
+          <span className="font-mono">{tag}</span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 

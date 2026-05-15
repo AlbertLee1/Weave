@@ -49,12 +49,14 @@ class Client:
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
+        from .vertex import VertexAPI
 
         self.ontologies = OntologiesAPI(self)
         self.objects = ObjectsAPI(self)
         self.actions = ActionsAPI(self)
         self.objectsets = ObjectSetsAPI(self)
         self.functions = FunctionsAPI(self)
+        self.vertex = VertexAPI(self)
 
     @property
     def token(self) -> str:
@@ -89,12 +91,20 @@ class Client:
         *,
         json_body: Any = None,
         anonymous: bool = False,
+        extra_headers: Optional[dict] = None,
     ) -> Any:
         url = self.base_url + path
+        headers = self._headers(anonymous=anonymous)
+        if extra_headers:
+            # Caller-supplied headers win — used by VertexAPI for X-Scenario-Id
+            # and by the objects.get(scenario_id=...) overlay path. Auth and
+            # Accept defaults from _headers() stay intact for any key the
+            # caller does not set.
+            headers = {**headers, **extra_headers}
         resp = self._transport.request(
             method,
             url,
-            headers=self._headers(anonymous=anonymous),
+            headers=headers,
             json_body=json_body,
         )
         return self._handle(resp)

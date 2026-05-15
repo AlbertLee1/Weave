@@ -1,0 +1,11 @@
+{
+  "name": "@weave/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Weave TypeScript SDK (Vertex client included).",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run"
+  }
+}

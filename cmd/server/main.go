@@ -76,6 +76,8 @@ import (
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/transactions"
 	"github.com/liyang/weave/pkg/userprefs"
+	"github.com/liyang/weave/pkg/vertex/controlpanel"
+	"github.com/liyang/weave/pkg/vertex/graphsvc"
 	"github.com/liyang/weave/pkg/watches"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -1017,6 +1019,54 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// returns 404 ColumnLineageNotConfigured when the store is nil).
 		lineageHandler.SetColumnLineageStore(deps.ColumnLineageStore)
 		lineageHandler.RegisterRoutes(api)
+
+		// VTX-009: Vertex SystemGraph CRUD + version history + save-as-
+		// template. Uses PG-backed repo + template store when a pool is
+		// available; otherwise falls back to in-memory stores so the routes
+		// stay discoverable for SDK / curl probes in degraded mode.
+		var graphRepo graphsvc.Repo = graphsvc.NewMemRepo()
+		var graphTemplates graphsvc.TemplateStore = graphsvc.NewMemTemplateStore()
+		if deps.PGPool != nil {
+			graphRepo = graphsvc.NewPGRepo(deps.PGPool)
+			graphTemplates = graphsvc.NewPGTemplateStore(deps.PGPool)
+		}
+		graphHandler := graphsvc.NewHandler(graphRepo, graphTemplates)
+		// VTX-011: install the SystemGraph payload validator. Schema (400)
+		// runs unconditionally; OMS reference checks (422) only when an OMS
+		// repo is present so degraded-mode boots stay green. Pass nil
+		// explicitly (rather than a nil-valued interface) so the validator
+		// short-circuits the reference path cleanly.
+		var graphRefs graphsvc.ReferenceLookup
+		if deps.OmsRepo != nil {
+			graphRefs = deps.OmsRepo
+		}
+		if validator, err := graphsvc.NewPayloadValidator(graphRefs); err != nil {
+			slog.Error("vertex graph payload validator: compile failed; writes will skip schema validation",
+				"error", err)
+		} else {
+			graphHandler.SetPayloadValidator(validator)
+		}
+		// VTX-013: install share-link store. Falls back to an in-memory
+		// store in degraded boots so the routes stay discoverable; on a real
+		// pool we use the PG-backed store built on the graph_share_links
+		// table (migration 000203).
+		var shareLinks graphsvc.ShareLinkStore = graphsvc.NewMemShareLinkStore()
+		if deps.PGPool != nil {
+			shareLinks = graphsvc.NewPGShareLinkStore(deps.PGPool)
+		}
+		graphHandler.SetShareLinkStore(shareLinks)
+		graphHandler.RegisterRoutes(api)
+
+		// VTX-015: Vertex Control Panel — admin-tunable runtime knobs
+		// (default window, polling interval, search-around limits, missing-
+		// data warning threshold). PG-backed store when a pool is available;
+		// otherwise an in-memory store so the routes stay discoverable in
+		// degraded-mode boots. Get-on-empty returns DefaultConfig either way.
+		var controlPanelStore controlpanel.Store = controlpanel.NewMemStore()
+		if deps.PGPool != nil {
+			controlPanelStore = controlpanel.NewPGStore(deps.PGPool)
+		}
+		controlpanel.NewHandler(controlPanelStore).RegisterRoutes(api)
 
 		// OntologyTransaction experimental edits endpoint (US-041).
 		// Gated behind ?preview=true — only "append edits" is exposed.

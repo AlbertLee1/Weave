@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://weave.local/vertex/graph.schema.json",
+  "title": "Vertex SystemGraph payload",
+  "description": "Structural validation for Vertex SystemGraph payloads written via POST/PUT /api/vertex/v1/graphs. Reference checks (objectTypeRid / linkTypeRid resolve to real OMS rows) layer on top via PayloadValidator.ValidateReferences and yield 422 instead of 400.",
+  "type": "object",
+  "required": ["layers"],
+  "additionalProperties": true,
+  "properties": {
+    "layers": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/layer" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/edge" }
+    },
+    "positions": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/position" }
+    },
+    "savedSelections": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "timeSettings": { "type": "object" }
+  },
+  "definitions": {
+    "layer": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "objectTypeRid": { "type": "string" },
+        "objectType": { "type": "string" },
+        "ontologyRid": { "type": "string" },
+        "filter": { "type": "object" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "linkTypeRid": { "type": "string" },
+        "source": { "type": "string" },
+        "target": { "type": "string" }
+      }
+    },
+    "position": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": true,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "pinned": { "type": "boolean" }
+      }
+    }
+  }
+}

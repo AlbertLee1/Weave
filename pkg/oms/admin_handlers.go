@@ -184,6 +184,11 @@ type UpdateLinkTypeRequest struct {
 	// it. Bare bool would silently disable any LinkType that did not echo
 	// the field on a partial update.
 	PropagateMarkings *bool `json:"propagateMarkings,omitempty"`
+	// TypeClasses (VTX-010) is a tri-state pointer to a slice: nil = leave
+	// existing tags untouched, &[] = clear, non-empty = replace. Bare slice
+	// would collapse "omit" and "clear" into one, silently wiping the tags
+	// on every partial update.
+	TypeClasses *[]string `json:"typeClasses,omitempty"`
 }
 
 // CreatePropertyRequest is the request body for creating a property.
@@ -220,6 +225,10 @@ type CreateLinkTypeRequest struct {
 	// `_markings` set into the target's. Default false preserves the
 	// pre-US-261 behaviour where link creation never touches markings.
 	PropagateMarkings bool `json:"propagateMarkings,omitempty"`
+	// TypeClasses (VTX-010) tags the LinkType with Vertex-graph rendering
+	// labels (see oms.KnownVertexLinkTypeClasses). Unknown tags are rejected
+	// with 400 InvalidParameter:typeClasses.
+	TypeClasses []string `json:"typeClasses,omitempty"`
 }
 
 // CreateActionTypeRequest is the request body for creating an action type.
@@ -852,6 +861,11 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if apiErr := validateLinkTypeClasses(req.TypeClasses); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
 	lt := &LinkType{
 		RID:               rid.NewLinkTypeRID(),
 		OntologyRID:       ontologyRID,
@@ -866,6 +880,7 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 		IsRequired:        req.IsRequired,
 		InverseLinkRID:    req.InverseLinkRID,
 		PropagateMarkings: req.PropagateMarkings,
+		TypeClasses:       normaliseLinkTypeClasses(req.TypeClasses),
 	}
 
 	if apiErr := h.validateInverseLinkPair(r.Context(), lt); apiErr != nil {
@@ -899,6 +914,40 @@ func (h *OMSHandler) CreateLinkType(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusCreated, lt)
+}
+
+// validateLinkTypeClasses (VTX-010) rejects unknown tags in
+// LinkType.TypeClasses. Empty / nil slice is fine. Returns nil on success or
+// a populated *apierror.APIError the caller can write verbatim.
+func validateLinkTypeClasses(classes []string) *apierror.APIError {
+	for _, c := range classes {
+		if !IsKnownVertexLinkTypeClass(c) {
+			return apierror.NewInvalidParameter("InvalidParameter:typeClasses", map[string]string{
+				"parameter": "typeClasses",
+				"reason":    "unknown type class: " + c,
+			})
+		}
+	}
+	return nil
+}
+
+// normaliseLinkTypeClasses returns a deduplicated, deterministically-ordered
+// copy of classes. Empty / nil input returns nil to keep the wire shape
+// compact (omitempty).
+func normaliseLinkTypeClasses(classes []string) []string {
+	if len(classes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(classes))
+	out := make([]string, 0, len(classes))
+	for _, c := range classes {
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
 }
 
 // validateInverseLinkPair enforces the endpoint-symmetry contract for
@@ -1322,6 +1371,13 @@ func (h *OMSHandler) UpdateLinkType(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PropagateMarkings != nil {
 		updated.PropagateMarkings = *req.PropagateMarkings
+	}
+	if req.TypeClasses != nil {
+		if apiErr := validateLinkTypeClasses(*req.TypeClasses); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+		updated.TypeClasses = normaliseLinkTypeClasses(*req.TypeClasses)
 	}
 
 	if apiErr := h.validateInverseLinkPair(r.Context(), &updated); apiErr != nil {

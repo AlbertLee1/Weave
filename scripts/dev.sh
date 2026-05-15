@@ -30,7 +30,7 @@ log() {
 }
 
 # ── 1. Docker services ──────────────────────────────────────────────
-log "Starting Docker services (PostgreSQL + NATS)..."
+log "Starting Docker services (PostgreSQL + NATS + TimescaleDB + Function Runtime)..."
 docker compose up -d --wait 2>&1 | sed "s/^/  ${DIM}/"
 echo -e "${RESET}"
 log "${GREEN}Docker services ready${RESET}"
@@ -79,10 +79,13 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║${RESET}  Weave Dev Environment Ready                 ${CYAN}║${RESET}"
 echo -e "${CYAN}╠══════════════════════════════════════════════╣${RESET}"
 echo -e "${CYAN}║${RESET}                                              ${CYAN}║${RESET}"
-echo -e "${CYAN}║${RESET}  WebUI:   ${GREEN}http://localhost:5173${RESET}              ${CYAN}║${RESET}"
-echo -e "${CYAN}║${RESET}  API:     ${GREEN}http://localhost:9117${RESET}              ${CYAN}║${RESET}"
-echo -e "${CYAN}║${RESET}  PG:      ${DIM}localhost:5432${RESET}                     ${CYAN}║${RESET}"
-echo -e "${CYAN}║${RESET}  NATS:    ${DIM}localhost:4222${RESET}                     ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  WebUI:        ${GREEN}http://localhost:5173${RESET}         ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  API:          ${GREEN}http://localhost:9117${RESET}         ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  Vertex UI:    ${GREEN}http://localhost:5173/vertex${RESET}  ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  PG:           ${DIM}localhost:5432${RESET}                ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  NATS:         ${DIM}localhost:4222${RESET}                ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  TimescaleDB:  ${DIM}localhost:5433${RESET}                ${CYAN}║${RESET}"
+echo -e "${CYAN}║${RESET}  Function Rt:  ${DIM}localhost:9000${RESET}                ${CYAN}║${RESET}"
 echo -e "${CYAN}║${RESET}                                              ${CYAN}║${RESET}"
 echo -e "${CYAN}║${RESET}  Press ${YELLOW}Ctrl+C${RESET} to stop all services         ${CYAN}║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════╝${RESET}"

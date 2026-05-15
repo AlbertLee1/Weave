@@ -30,7 +30,9 @@ export type HotkeyId =
   | 'goApprovals'
   | 'submitForm'
   | 'cancelEdit'
-  | 'focusSearch';
+  | 'focusSearch'
+  | 'saveGraph'
+  | 'runScenario';
 
 export interface HotkeyDef {
   readonly id: HotkeyId;
@@ -99,6 +101,23 @@ export const HOTKEYS: readonly HotkeyDef[] = [
     id: 'cancelEdit',
     keys: 'escape',
     i18nKey: 'hotkeys.cancelEdit',
+    group: 'editing',
+  },
+  // VTX-120: Vertex graph save. Bound globally; useShortcut callers gate
+  // by `enabled` so the binding is a no-op when no graph is mounted.
+  {
+    id: 'saveGraph',
+    keys: 'meta+s, ctrl+s',
+    i18nKey: 'hotkeys.saveGraph',
+    group: 'editing',
+  },
+  // VTX-120: Run the focused Scenario. Shares Cmd+Enter with submitForm —
+  // ScenarioPane gates this binding to its own focus scope so the form
+  // shortcut still wins everywhere else.
+  {
+    id: 'runScenario',
+    keys: 'meta+enter, ctrl+enter',
+    i18nKey: 'hotkeys.runScenario',
     group: 'editing',
   },
 ];

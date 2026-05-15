@@ -1,0 +1,39 @@
+// Diagramming-mode stub page (VTX-114). The full Diagramming surface is
+// out of scope for v1 — this is the placeholder Vertex routes to when a
+// user follows a link to /vertex/{rid}/diagramming. PRD acceptance:
+// shows a "Coming soon" message + a back-to-Graph link.
+
+import { useTranslation } from 'react-i18next';
+import { useNavigate, useParams } from 'react-router';
+import '../i18n';
+
+export function DiagrammingStubPage() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { rid } = useParams();
+
+  function back() {
+    if (rid) navigate(`/vertex/${rid}`);
+    else navigate('/vertex');
+  }
+
+  return (
+    <main
+      data-testid="vertex-diagramming-stub"
+      className="mx-auto flex max-w-2xl flex-col items-start gap-4 p-6"
+    >
+      <h1 className="text-xl font-semibold">{t('vertex.diagramming.title')}</h1>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        {t('vertex.diagramming.description')}
+      </p>
+      <button
+        type="button"
+        data-testid="vertex-diagramming-back"
+        onClick={back}
+        className="rounded bg-blue-600 px-3 py-1 text-sm text-white"
+      >
+        {t('vertex.diagramming.backToGraph')}
+      </button>
+    </main>
+  );
+}

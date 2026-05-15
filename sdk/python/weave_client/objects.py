@@ -73,13 +73,21 @@ class ObjectsAPI:
         ontology: str,
         object_type: str,
         primary_key: str,
+        *,
+        scenario_id: Optional[str] = None,
     ) -> WireObject:
-        """Fetch a single object by its primary key."""
+        """Fetch a single object by its primary key.
+
+        When ``scenario_id`` is set the request carries an ``X-Scenario-Id``
+        header so the server folds the named Scenario's edits on top of the
+        base view (VTX-004 / VTX-109).
+        """
         path = (
             f"/api/v2/ontologies/{quote_path(ontology)}/objects/"
             f"{quote_path(object_type)}/{quote_path(primary_key)}"
         )
-        body = self._client._request("GET", path)
+        extra_headers = {"X-Scenario-Id": scenario_id} if scenario_id else None
+        body = self._client._request("GET", path, extra_headers=extra_headers)
         return body or {}
 
     def search(

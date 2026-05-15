@@ -62,9 +62,29 @@ func (us006StubOmsRepo) GetObjectTypeByAPIName(_ context.Context, _, _ string) (
 	return nil, oms.ErrNotFound
 }
 
+func (us006StubOmsRepo) ListOntologies(context.Context) ([]oms.Ontology, error) {
+	return []oms.Ontology{}, nil
+}
+
+func (us006StubOmsRepo) GetOntology(_ context.Context, rid string) (*oms.Ontology, error) {
+	return &oms.Ontology{RID: rid, APIName: rid, DisplayName: rid}, nil
+}
+
+func (us006StubOmsRepo) ListObjectTypes(context.Context, string) ([]oms.ObjectType, error) {
+	return []oms.ObjectType{}, nil
+}
+
+func (us006StubOmsRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
+	return []oms.ActionType{}, nil
+}
+
 // us006StubOSSService embeds oss.Service as nil interface — sufficient for
 // route registration tests.
 type us006StubOSSService struct{ oss.Service }
+
+func (us006StubOSSService) ListObjects(context.Context, oss.ListObjectsRequest) (*oss.ObjectPage, error) {
+	return &oss.ObjectPage{Data: []*oss.WireObject{}}, nil
+}
 
 // TestUS006_AdminRoutesRemoved verifies that all /api/admin/* routes are gone.
 // A representative sample covering every resource group is tested.

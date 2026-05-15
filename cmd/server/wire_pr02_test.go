@@ -29,6 +29,10 @@ type pr02StubOMSRepo struct {
 	oms.Repository
 }
 
+func (pr02StubOMSRepo) ListActionTypes(context.Context, string) ([]oms.ActionType, error) {
+	return nil, nil
+}
+
 // TestPR02_NewActionPathsRegistered locks that the Foundry-aligned action
 // routes exist on the router once ActionExecutor is wired.
 func TestPR02_NewActionPathsRegistered(t *testing.T) {

@@ -173,7 +173,7 @@ var buildInfo = prometheus.NewGaugeVec(
 // allCollectors returns every collector this package defines, in a stable
 // order, so Register() can iterate them.
 func allCollectors() []prometheus.Collector {
-	return []prometheus.Collector{
+	base := []prometheus.Collector{
 		httpRequestsTotal,
 		httpRequestDuration,
 		natsPublishTotal,
@@ -197,6 +197,7 @@ func allCollectors() []prometheus.Collector {
 		costPGRows,
 		buildInfo,
 	}
+	return append(base, vertexCollectors()...)
 }
 
 // NewRegistry returns a fresh prometheus.Registry suitable for tests. Tests

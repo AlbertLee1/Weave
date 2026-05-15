@@ -92,10 +92,25 @@ type ObjectType struct {
 	// audit_events row with action = "data.access" for every successful
 	// read. Defaults to false so existing ObjectTypes do not pay the audit
 	// write cost until an admin opts in.
-	AuditDataAccess bool       `json:"auditDataAccess,omitempty"`
-	Properties      []Property `json:"properties,omitempty"`
-	CreatedAt      time.Time  `json:"-"`
-	UpdatedAt      time.Time  `json:"-"`
+	AuditDataAccess bool `json:"auditDataAccess,omitempty"`
+	// IsEvent (VTX-077) marks an ObjectType whose rows represent events on a
+	// timeline (e.g. FlightDelay, Maintenance, Weather). When true, the
+	// Vertex Timeline renders each object as a horizontal time bar spanning
+	// EventStartProp → EventEndProp. Defaults to false; non-event types are
+	// invisible to the Timeline.
+	IsEvent bool `json:"isEvent,omitempty"`
+	// EventStartProp names the property holding the event's start timestamp.
+	// Only consulted when IsEvent=true. An empty value while IsEvent=true is
+	// treated as "no Timeline placement possible" and the renderer skips
+	// these objects.
+	EventStartProp string `json:"eventStartProp,omitempty"`
+	// EventEndProp names the property holding the event's end timestamp.
+	// Empty means the event is point-in-time (a single tick on the
+	// Timeline, not a bar).
+	EventEndProp string     `json:"eventEndProp,omitempty"`
+	Properties   []Property `json:"properties,omitempty"`
+	CreatedAt    time.Time  `json:"-"`
+	UpdatedAt    time.Time  `json:"-"`
 }
 
 // EffectivePrimaryKeys returns the canonical key-property list, falling back
@@ -302,8 +317,45 @@ type LinkType struct {
 	// `_markings` so child objects inherit the parent's classifications.
 	// Default false preserves pre-US-261 behaviour where link creation never
 	// touches markings.
-	PropagateMarkings bool      `json:"propagateMarkings,omitempty"`
-	CreatedAt         time.Time `json:"-"`
+	PropagateMarkings bool `json:"propagateMarkings,omitempty"`
+	// TypeClasses (VTX-010) tags the LinkType with Vertex-graph behavioural
+	// labels that drive edge arrow rendering. Recognised values are
+	// "vertex:link_primary_direction", "vertex:link_undirectional" and
+	// "vertex:link_bidirectional"; unknown labels are rejected by admin
+	// handlers. Empty slice keeps the wire shape backwards compatible.
+	TypeClasses []string  `json:"typeClasses,omitempty"`
+	CreatedAt   time.Time `json:"-"`
+}
+
+// VertexLinkTypeClassPrimaryDirection / VertexLinkTypeClassUndirectional /
+// VertexLinkTypeClassBidirectional (VTX-010) are the recognised tags for
+// LinkType.TypeClasses. They mirror the labels described in the Vertex
+// integration brief §2.1 and are validated by admin handlers on POST/PUT.
+const (
+	VertexLinkTypeClassPrimaryDirection = "vertex:link_primary_direction"
+	VertexLinkTypeClassUndirectional    = "vertex:link_undirectional"
+	VertexLinkTypeClassBidirectional    = "vertex:link_bidirectional"
+)
+
+// KnownVertexLinkTypeClasses returns the recognised LinkType.TypeClasses tags.
+func KnownVertexLinkTypeClasses() []string {
+	return []string{
+		VertexLinkTypeClassPrimaryDirection,
+		VertexLinkTypeClassUndirectional,
+		VertexLinkTypeClassBidirectional,
+	}
+}
+
+// IsKnownVertexLinkTypeClass reports whether tag is one of the recognised
+// LinkType.TypeClasses values.
+func IsKnownVertexLinkTypeClass(tag string) bool {
+	switch tag {
+	case VertexLinkTypeClassPrimaryDirection,
+		VertexLinkTypeClassUndirectional,
+		VertexLinkTypeClassBidirectional:
+		return true
+	}
+	return false
 }
 
 // ToWireJSON returns the V2 wire format JSON for LinkType.
@@ -325,6 +377,9 @@ func (lt *LinkType) ToWireJSON() ([]byte, error) {
 	}
 	if lt.PropagateMarkings {
 		wire["propagateMarkings"] = true
+	}
+	if len(lt.TypeClasses) > 0 {
+		wire["typeClasses"] = lt.TypeClasses
 	}
 	return json.Marshal(wire)
 }

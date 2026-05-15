@@ -1,0 +1,879 @@
+{
+  "project": "Weave",
+  "branchName": "ralph/osv2-parity-and-coverage-iteration",
+  "description": "OSv2 完美复刻 — 功能迭代 + UI BDD + 后端 TDD/BDD 覆盖补强。后端 ~95% OSv2 能力已落地（107 API / 104 迁移），前端命中率仅 ~60%、Playwright spec 多数仅打 API 不点 UI、后端 pagination/index/types/rid/apierror 测试薄弱且全栈零 BDD 框架。本期产出 56 个 user story，分 3 大主线 8 个 Phase：A 线（新功能 UI 迭代）把 Automation Rules / Proposals / Security Policies / Saga 监控 / Time Travel / Audit / Lineage 等 15 个后端能力补上前端入口；B 线（UI BDD）为 Dashboard / Threads / Logic Flows / Admin / ObjectSet 等已实现页面补充共 14 类 Playwright BDD spec；C 线（后端 TDD+BDD）引入 godog Cucumber 框架、补强 10 个薄弱包、产出 8 个 .feature 业务级 BDD 场景、并配 CI 覆盖率门禁。基于 tasks/prd-osv2-parity-and-coverage-iteration.md。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "引入 godog BDD 框架（test/bdd 脚手架）",
+      "description": "作为后端工程师，我想引入 godog 让后端 e2e 用 Gherkin 描述业务行为。",
+      "acceptanceCriteria": [
+        "go.mod 引入 github.com/cucumber/godog",
+        "新建 test/bdd/ 目录：features/、steps/、bdd_test.go（带 //go:build bdd tag）",
+        "Makefile 新增 make test-bdd 目标",
+        "编写示例 ontology_crud.feature 含 3 scenarios（Create / Update / Delete ontology），步骤复用 internal/testutil.StartPGContainer",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "godog v0.15.1 wired in; test/bdd/{features,steps,bdd_test.go} with //go:build bdd; make test-bdd → 3 scenarios / 13 steps green in ~4s."
+    },
+    {
+      "id": "US-002",
+      "title": "Playwright BDD 共享基础设施（support 目录与 Given/When/Then helper）",
+      "description": "作为前端测试作者，我想要共享 fixtures 与 BDD helper 让 spec 保持 DRY 和统一风格。",
+      "acceptanceCriteria": [
+        "新建 web/tests/support/ 含 signIn.ts、seedOntology.ts、dataFactory.ts、pageObjects/ 目录",
+        "导出 Given/When/Then step helper 与 describeFeature() 包装函数（自建，不引入新依赖）",
+        "新增 web/tests/README.md 写 BDD 测试编写指南，含命名规范 feature.<domain>.<scenario>.spec.ts",
+        "至少 1 个示例 spec 使用新基础设施改写（pick smoke 用例）",
+        "npx playwright test --grep @smoke 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "web/tests/{support/{signIn,seedOntology,dataFactory,pageObjects/BrowserPage,bdd,index}.ts, README.md, feature.browser.search-and-filter.spec.ts} 落地；playwright.config.ts 切到 testDir='.' + regex testMatch + testIgnore 覆盖 e2e/ 和 tests/ 双套件。npx playwright test --grep @smoke → 2/2 pass（~3.1s，跑在 northwind/employee 实数据上）。dev-browser skill 不可用，改为通过 make e2e-up + Playwright headless 实际加载 React 路由验证。"
+    },
+    {
+      "id": "US-003",
+      "title": "pkg/oss/pagination 补 TDD（游标编解码、NULL、tampered cursor）",
+      "description": "作为后端工程师，我想补齐分页包的边界测试以防游标相关回归。",
+      "acceptanceCriteria": [
+        "新增表驱动测试覆盖：游标 base64+HMAC 完整性、跨列复合排序、NULL last/first、空集、单元素、最后一页、过期游标、tampered cursor 返回 400",
+        "至少 15 个新 t.Run 子测试",
+        "go test ./pkg/oss/pagination -cover 覆盖率 ≥ 85%",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "cursor.go 加 HMAC-SHA256 签名 + IssuedAt/MaxAge 过期（SetSigningKey / SetMaxAge 包级开关，缺省 zero-key 与历史 wire format 等价，向后兼容）；composite_cursor.go 加 SortKey（Field/Value/Direction/NullOrder）支持复合排序 + NULL 序。新增 cursor_integrity_test.go 共 37 个 t.Run 子测试覆盖 HMAC 篡改 / key 轮换 / 过期 / Apply 边界 / NextPageToken 边界 / ParsePageRequest 错误 / SortKey round-trip / MultiTypeCursor 完整。go test ./pkg/oss/pagination -cover → 98.3%（基线 66.2%）。pkg/oss/{oms,objectset,aggregation,where,computed} 与 test/integration/{,phase6,phase7} 全绿，零回归。"
+    },
+    {
+      "id": "US-004",
+      "title": "pkg/index 补 TDD（Bleve 失败恢复与并发）",
+      "description": "作为后端工程师，我想测试索引层失败恢复路径。",
+      "acceptanceCriteria": [
+        "新增测试：索引文件损坏自动重建、并发索引/查询竞态、JetStream 消息丢失补偿、per-ObjectType 隔离、关闭/重启句柄释放",
+        "至少 12 个新子测试",
+        "go test ./pkg/index -cover 覆盖率 ≥ 75%",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "pkg/index/manager_us004_test.go 落地 5 个顶级 / 18 个 t.Run 子测试（≥AC 12）：CorruptionRecovery(3) / Concurrency(4) / JetStreamReplayCompensation(3) / PerObjectTypeIsolation(3) / HandleRelease(5）。Manager.DropIndex 调整为即便没有 in-memory 句柄也清理 on-disk 目录（冷启动腐败恢复）。go test ./pkg/index -count=1 -race -cover → 79.5%（基线 78.2%，AC ≥75%）。go build / go vet / 全 ./pkg/... -short + test/integration（main/phase6/phase7）全绿；唯一 pkg/developer 的 TestUsageHandler_ReturnsThreeWindows baseline flake 与本 story 无关。"
+    },
+    {
+      "id": "US-005",
+      "title": "pkg/oss/aggregation 边界补测",
+      "description": "作为后端工程师，我想覆盖聚合算子的极值与嵌套上限。",
+      "acceptanceCriteria": [
+        "新增测试：嵌套 group-by 深度上限、HLL cardinality 大集合误差、percentile 极值（p0/p100/空集）、子聚合内存上限、不支持 metric 报错",
+        "至少 10 个新子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "pkg/oss/aggregation/us005_boundaries_test.go 落地 5 个顶级 + 17 个 t.Run 子测试（≥AC 10）：Percentile_Extremes_P0_P100_Empty(9: approx/exact ×{p0,p100,empty-single,empty-multi,multi-endpoints})、ComputeMetrics_UnsupportedTypeErrors(3)、GroupBy_DepthLimit(3)、SubAggregation_DepthLimit(2) + 顶级 HLL 30k-cardinality 大集合误差。engine.go 新增 MaxGroupByDepth=8 / MaxSubAggregationDepth=8 包级变量（测试通过 swap+Cleanup 调节），AggregateWithQuery 顶部校验 len(req.GroupBy) 上限，validateSubAggregations 递归记录 depth。bleve_agg.go computeMetrics 加 default 报 'unsupported aggregation type'。approx_percentile.go exactPercentileFromIndex 多 percentile 空集统一返回 nil（与 approxPercentilesFromIndex 谐和）。go test ./pkg/oss/aggregation -count=1 → 38s 全绿；./pkg/oss/... ./pkg/index/... -short 全绿；test/integration{,phase6,phase7} -tags integration -short 全绿。"
+    },
+    {
+      "id": "US-006",
+      "title": "pkg/funnel 容错与 DLQ 补测",
+      "description": "作为后端工程师，我想测试 NATS/Funnel 的失败与重试路径。",
+      "acceptanceCriteria": [
+        "新增测试：NATS 连接断开自动重连、JetStream consumer ACK 失败重投、DLQ 入队/replay/discard、idempotency key 去重",
+        "至少 8 个新子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "pkg/funnel/us006_resilience_test.go 落地 12 个顶级 + 28 个 t.Run 子测试（≥AC 8）覆盖 4 类容错语义：(1) decideOutcome 矩阵 8 子测试穷尽 Ack/Nak/Term 路径含 over-cap、at-cap、unmarshal vs apply 优先级、metadata 缺失降级；(2) DLQ 入队/round-trip + replay 反推原 subject + discard 三类辅助（IsDLQSubject / OriginalSubjectFromDLQ / ReplayDLQMessage / DiscardDLQMessage）；(3) Publisher.BuildPublishMsg 给每条发布消息打 Nats-Msg-Id 头（JetStream 原生 dedupe）+ Consumer 端可选 SetIdempotencyWindow 在内存里按 batch.ID 去重；(4) DefaultConnectOptions 新增 ReconnectJitter（plain 500ms / TLS 2s）。配套生产改动：consumer.go 重构 handleMessage 走 decideOutcome、idempotencyCache 与 applyBatchWithHistory 顶部 dedupe；publisher.go 改用 PublishMsg 并暴露 BuildPublishMsg；dlq.go 加 IsDLQSubject/OriginalSubjectFromDLQ/ReplayDLQMessage/DiscardDLQMessage；nats_setup.go 加 ReconnectJitter。go test ./pkg/funnel -short -race / -cover 全绿；覆盖率 68.4% → 71.1%（+2.7pp）。go vet ./... 干净；test/integration{,phase6,phase7} -tags integration -short 全绿。"
+    },
+    {
+      "id": "US-007",
+      "title": "pkg/actions Saga 多 step 补偿 + 失败恢复补测",
+      "description": "作为后端工程师，我想测试 Action Saga 的补偿与边界。",
+      "acceptanceCriteria": [
+        "新增测试：3-step saga 在 step3 失败 → 反向 compensate step2/step1；approval timeout；并发 actor 冲突；Edit collapse 边界；batch 超时",
+        "至少 12 个新子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "pkg/actions/us007_saga_resilience_test.go 落地 5 个顶级 + 18 个 t.Run 子测试（≥AC 12），覆盖 PRD 列举的 5 类资源：(1) 3-step saga step3 失败 → 反向补偿 stepB/stepA（5 子测试：BatchError 索引、reverse 顺序、primary 永不发布、step rows 推进、status=COMPENSATED 无 DLQ）；(2) approval timeout：slowApprovalStore wrapper + ctx.WithTimeout / WithCancel 三路径 (DeadlineExceeded 保持 PENDING / Handler 返回 500 / Canceled mid-flight)；(3) 并发 actor 冲突：sequential approve→reject 409 / casApprovalStore PENDING→terminal CAS 10 并发 goroutine 仅 1 winner / wrong-actor 403 不变更状态；(4) Edit collapse 边界：跨 action createOrModifyObject+deleteObject 同 PK collapsed → 0 publish / LINK_CREATE+LINK_DELETE 同 triple 抵消 / LINK_DELETE+LINK_CREATE 同 triple 终局 CREATE / 双 MODIFY same PK 后写覆盖前写并合 keys；(5) batch 超时：slowPublisher（40ms 延迟）+ runAsyncApplyBatch + ctx.WithTimeout(60ms) mid-loop 命中 → CANCELED / 已取消 ctx 零调用 / 空 batch SUCCESS 短路。配套新工件：slowApprovalStore（ctx-aware delay）/ casApprovalStore（PENDING→terminal compare-and-set）/ slowPublisher（time.Sleep + atomic call count）。验证：go test ./pkg/actions -count=1 -run 'TestUS007_' → 18/18 pass；go test ./pkg/actions -race 全绿；./pkg/actions -cover 77.7%；go build/vet 全绿；./pkg/... -short + test/integration{,phase6,phase7} 全绿；仅 pkg/developer.TestUsageHandler_ReturnsThreeWindows baseline 30d 时窗 flake（与 US-007 无关，stash 后仍复现）。"
+    },
+    {
+      "id": "US-008",
+      "title": "pkg/links FK 解析与循环引用补测",
+      "description": "作为后端工程师，我想测试链路解析的边界。",
+      "acceptanceCriteria": [
+        "新增测试：FK 解析缓存命中/失效、循环引用检测（A→B→A）、多跳 propagation、权限传播裁剪",
+        "至少 8 个新子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "pkg/links/traverse.go 新增 TraverseHops/Hop/PermissionFilter/TraverseOptions/TraverseAudit/ErrTooManyHops（~120 LOC）：以 (objectTypeRID, pk) 为键的 visited set 做环检测，输入 set 由 startObjectTypeRID 入种；每 hop 跑 r.dispatch 单次（绕过 ResolveLinked 的双 getLinkType）、dedupe → cycle prune → optional Permission filter；空 working set 即填零审计槽短路剩余 hop；MaxHops>0 配合 errors.Is(ErrTooManyHops) 卡过深 path。pkg/links/us008_fk_resolution_test.go 落地 5 个顶级 + 17 个 t.Run 子测试（≥AC 8）覆盖 PRD 4 类资源：(1) LinkTypeCache_FKResolution_HitInvalidationTTL(3)：warm-cache 单 repo call / InvalidateAll 强制 refetch / TTL 过期 refetch；(2) CycleDetection(3)：direct A→B→A 用 ab+ba 两个 forward 链 prune seed / triangle abc 3-hop prune 第三 hop / DisableCycleGuard 关闭后 a1 返回；(3) MultiHopPropagation(3)：2-hop a→b→c 全集 / fan-in dedup intermediate / empty intermediate 短路；(4) PermissionTrim(3)：deny 目标 pk drop / deny 中间 pk break propagation / deny-all 短路；(5) BoundaryConditions(5)：empty startPKs / empty hops dedupe / MaxHops 超限 ErrTooManyHops / ctx canceled / 未知 linkType wrapped error。fixture helper setupChain(ots, lts) 构建 Bleve+countingLinkRepo 资源，复用 cached_resolver_test 的 countingLinkRepo 做 GetLinkType 计数。go test ./pkg/links -count=1 -cover → 89.4% of statements。./pkg/links/oss/index/oms -short + test/integration -tags integration -short 全绿，零回归。"
+    },
+    {
+      "id": "US-009",
+      "title": "pkg/apierror HTTP 状态码全映射表驱动测试",
+      "description": "作为后端工程师，我想覆盖所有错误码的 HTTP 状态与 body schema。",
+      "acceptanceCriteria": [
+        "表驱动覆盖每个错误码 → HTTP status / body schema / requestID 透传",
+        "JSON marshal/unmarshal 往返一致",
+        "至少 15 个子测试",
+        "go test ./pkg/apierror -cover 覆盖率 ≥ 90%",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "pkg/apierror/us009_error_mapping_test.go 落地 7 个顶级 + 78 个 t.Run 子测试（≥AC 15）覆盖 16 个构造器全集（NotFound/BadRequest/InvalidParameter/PermissionDenied/Unauthorized/Conflict/Internal/TooManyRequests/RequestTimeout/ValidationEnum/QueryTooLarge/FunctionNondeterministic/FunctionCallCycle/FunctionRecursionDepthExceeded/ValidationSchema/PipelineBreakingChange）：(1) ConstructorMapping(16) 表驱动断言 HTTP StatusCode + ErrorCode + ErrorName + Parameters 保留 + ErrorInstanceID UUID 校验 + 4-key wire schema 严格 + WriteJSON 状态/Content-Type/body 对齐；(2) JSONRoundTripPreservesWireFields(16) Marshal→Unmarshal 进 wireFormat 验证 4 字段完全 round-trip；(3) RequestIDUniqueAcrossCalls 64 次连调 UUID 全互异；(4) RequestIDDistinctAcrossConstructors 跨 16 构造器 UUID 互异；(5) NilParamsNormalizedToEmptyJSONObject(16) 验证 nil params→empty map + JSON 输出 `\"parameters\":{}`；(6) ErrorMethod_FormatsCodeNameInstance(4) 验证 Error() 字符串含 code/name/instanceID；(7) WireFormat_HidesGoStateFields 验证 StatusCode/CapitalizedFields 不泄漏；(8) WriteJSON_BodyMatchesMarshalForEveryConstructor(16) 验证 WriteJSON body == Marshal body。零生产代码改动。go test ./pkg/apierror -count=1 -cover → 100.0% of statements（基线 58.3%，AC ≥90%）。go build/vet 双绿；./pkg/{apierror,oms,oss/...,index,links,funnel,actions} -short 全绿；test/integration -tags integration -short main/phase6/phase7 全绿。"
+    },
+    {
+      "id": "US-010",
+      "title": "pkg/types 基础测试（当前为 0 文件）",
+      "description": "作为后端工程师，我想为 21 种基础类型补充表驱动测试。",
+      "acceptanceCriteria": [
+        "新建 pkg/types/*_test.go，覆盖 21 种基础类型 coercion / validation",
+        "ValueType 引用展开 + 循环引用拒绝",
+        "Interface 与 ObjectType 合并冲突",
+        "至少 25 个子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "pkg/types/us010_test.go 落地 4 个顶级 + 66 个 t.Run 子测试（≥AC 25）覆盖 PRD 三类资源：(1) BaseType_ValidateMatrix(23): 全 23 个 BaseType 各跑一个 t.Run，good/bad 输入表驱动，编译期 len==23 守卫防止新增 BaseType 漏测；(2) BaseType_CoerceMatrix(22): 表驱动 coerce 路径覆盖 string<->int/float、long string、boolean rejects string、date/timestamp 格式校验、array sub-type 传播、struct 已知/未知字段、permissive types 直通、nil 短路；(3) ValueType_Resolve(11): DirectBaseType / AliasChain / AccumulatesConstraintsOutermostFirst / DirectCycle(A→B→A) / SelfReferentialCycle / ThreeNodeCycle / NotFound / NotFoundMidChain / EmptyBaseTypeRejected / DepthExceeded / DefaultDepthAccepts32Hops；(4) InterfaceMerge(10): InterfaceOnly+ObjectOnly 合并 / 兼容属性 merged / BaseType/Nullable/Array-subType/Struct-field/Decimal-precision 5 类冲突 / AggregatesMultipleConflicts / DeterministicOrder（sorted by APIName） / Empty 输入。配套新建生产代码：valuetype.go(ResolveValueType + ErrValueTypeCycle/NotFound/DepthExceeded sentinel + DefaultMaxValueTypeDepth=32) 与 interface_merge.go(MergeInterfaceProperties + ErrInterfaceConflict + dataTypeEqual 结构相等)，前者解耦于 pkg/oms.ValueType 持久层但语义对齐 admin_handlers.go 的 CreateValueType；后者把 Interface↔ObjectType 属性合并规则提到 pkg/types 公共原语，便于 PC-A02 Proposals UI / OMS validate 复用。go test ./pkg/types -count=1 -cover → 85.6%（基线 69.4%）。go build/vet 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows baseline 30d 时窗 flake 与本 story 无关）；test/integration{,phase6,phase7} -tags integration -short 全绿。"
+    },
+    {
+      "id": "US-011",
+      "title": "pkg/rid 健壮性测试",
+      "description": "作为后端工程师，我想补充 RID 解析与碰撞测试。",
+      "acceptanceCriteria": [
+        "format 校验 ri.{service}.{realm}.{type}.{uuid}、carriage return / 空字段拒绝、UUID v4/v7 区分、equality / hash",
+        "至少 10 个子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "pkg/rid/us011_test.go 落地 7 个顶级 + 73 个 t.Run 子测试（远超 AC 的 10）覆盖 PRD 4 类资源：(1) FormatValidation(8): canonical roundtrip / 缺 ri 前缀 / 空串 / 4 段 / 6 段（dot in id 段） / 大写 UUID / 非 UUID / 缺破折号；(2) RejectsControlAndEmptyFields(9): 4 类空段 + CR/LF/TAB/NUL/DEL 5 类控制字符；(3) UUIDVersionDistinction(5): 固定 v4Hex+v7Hex + rid.New ×4 v4 + uuid.NewV7 动态 v7 + NewActionTypeRID v4；(4) EqualityAndHash(11): 同字段 Equal+SameHash / 4 种字段差异不 Equal / nil-safe Equal / Hash 5 次稳定 / map dedupe / 100 个 RID 无碰撞 / String round-trip / nil receiver 空串。补 AllTypedConstructorsRoundtrip(21) 覆盖 20 个 NewXxxRID + IsRID 负样例。配套生产改动：pkg/rid/rid.go 加 uuidPattern 正则（小写 RFC4122 hex）+ validSegment（reject 空段 / <0x20 / 0x7f / 嵌入 dot），Parse 在解出 5 段后对每段调 validSegment、id 段调正则；新增 (*RID).String/Equal/Hash/UUIDVersion/IsUUIDv4/IsUUIDv7 方法全 nil-safe。唯一下游影响 pkg/oms/handlers_function.go: realmFromRID 已有 'err!=nil ‖ Realm==\"\"' 兜底，行为等价。go test ./pkg/rid -count=1 -cover → 96.7%（基线 ~70%）。go build/vet 双绿；./pkg/... -short + test/integration{,phase6,phase7} -tags integration -short + make test-bdd 全绿；仅 pkg/developer.TestUsageHandler_ReturnsThreeWindows baseline 30d 时窗 flake 与本 story 无关。"
+    },
+    {
+      "id": "US-012",
+      "title": "pkg/auth 多租户与速率限制补测",
+      "description": "作为后端工程师，我想测试 RLS 与登录限流。",
+      "acceptanceCriteria": [
+        "新增测试：RLS 策略命中/失效、token 刷新竞态、多 ontology 隔离、登录速率限制阈值",
+        "至少 10 个子测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "pkg/auth/us012_test.go 落地 4 个顶级 + 24 个 t.Run 子测试（≥AC 10）覆盖 PRD 全部 4 类资源：(1) RLSPolicyEvaluation(8)：Hit_AllowMatchingRole / Miss_RoleDoesNotMatch / Miss_UserIDSubjectNotInList / DenyPrecedenceOverAllow / UnionOfMultipleAllowGrants / MalformedRowSkippedAtConstruct / NilEvaluator_DefaultDeny / PropertyMasks_DedupAcrossMultiplePolicies；(2) TokenRefreshRace(5)：RevokeIfActiveCAS_OnlyFirstCallSucceeds / ConcurrentRotate_SamePlaintext_AtMostOneWinsRestBurnChain（16-goroutine race，CAS 后断言 successes==1）/ ConcurrentRotate_DifferentChains_NoCrossContamination / StaleTokenAfterRotation_StillBurnsChain / ExpiredTokenRotateDoesNotBurnChain；(3) MultiOntologyIsolation(6)：ScopedRoleOnTenantA_GrantsTenantAOnly / AdminGlobalRole_OverridesAllOntologies / ScopedRoleWithoutMatchingPerm_StillDenies / UnauthenticatedRequest_RejectedWithUnauthorized / HTTPMiddleware_CrossTenantRequestReturns403（chi router + WithUser + OntologyScopeMiddleware）/ RoleResolverCachePerUser_DoesNotBleedAcrossUsers；(4) LoginRateLimitThresholds(5)：AllowsUpToMaxThenRejectsWith429AndRetryAfter（X-Forwarded-For 注入 + Retry-After/errorCode=RATE_LIMITED 断言）/ DistinctIPsTrackedIndependently / DisabledLimiter_RateLimitZeroNeverRejects / IPRateLimiter_WindowExpiryReopensSlot（50ms 窗口 + 60ms sleep）/ IPRateLimiter_RetryAfterShrinksWithinWindow。配套生产改动：RefreshStore 接口新增 RevokeIfActive(ctx,id,reason)(bool,err) CAS 原语 + MemoryRefreshStore（锁内 RevokedAt 双检）+ PGRefreshStore（WHERE id=$1 AND revoked_at IS NULL + RowsAffected==1）实现；RefreshService.Rotate 改用 CAS：只有 won=true 的调用 mint 后继 token，won=false 的并发 caller 命中 reuse_detected 烧链。验证：go test ./pkg/auth -run TestUS012 -count=1 → 24/24 pass；-race 全绿（34s）；go test ./pkg/auth -cover → 55.9%（基线 55.7%，新增 RevokeIfActive Memory 路径 100% / Rotate 80% / PolicyEvaluator 核心 NewPolicyEvaluator/Evaluate/subjectMatches 全 100%）；go build/vet 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关，stash 后仍复现）；test/integration -tags integration -short main/phase6/phase7 全绿。"
+    },
+    {
+      "id": "US-013",
+      "title": "BDD: ontology_branch_merge.feature",
+      "description": "作为产品评审者，我想用 Gherkin 描述分支合并业务流。",
+      "acceptanceCriteria": [
+        "test/bdd/features/ontology_branch_merge.feature 含至少 3 scenarios（Happy / Conflict / Approve-Reject）",
+        "Step definitions 在 test/bdd/steps/branch_steps.go",
+        "断言后端可观察状态（DB rows、API 响应），不允许仅 200 即通过",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "test/bdd/features/ontology_branch_merge.feature 落地 3 scenarios (Happy/Conflict/Approve-Reject)；test/bdd/steps/branch_steps.go 实现 branch + proposal 全套 Given/When/Then；test/bdd/steps/state.go 把 suiteState 抽出来让 ontology/branch step 包共享同一份 *PGRepository 与 *OMSHandler；test/bdd/steps/steps.go 暴露 RegisterAllSteps(t, sc) 一次性组合两个 step 包。SUT 是真实 chi 路由 + OMSHandler.MergeBranch / ApproveProposal / RejectProposal / MergeProposal，断言双重：HTTP status code + errorCode + appliedCount/skippedCount + conflicts[i].resolutionKey；以及 DB 行（branches.status、object_types.display_name via GetObjectTypeByAPIName、ontology_proposals.status via GetProposal）。make test-bdd → 6 scenarios（含原有 ontology_crud 3）/ 49 steps / 0 fail，7.9s。go vet / go build ./... 双绿；./pkg/... -short + test/integration{,phase6,phase7} -tags integration -short 全绿；仅 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关。"
+    },
+    {
+      "id": "US-014",
+      "title": "BDD: action_saga_compensation.feature",
+      "description": "用 Gherkin 描述 Action Saga 补偿流。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（Happy / Step Fail Compensate / DLQ）",
+        "Step definitions 触发 saga 并断言每步 DB/NATS 状态",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "test/bdd/features/action_saga_compensation.feature 落地 3 scenarios（Happy / Step Fail Compensate / DLQ）+ Background；test/bdd/steps/saga_steps.go 实现 11 个 Given/When/Then 步骤；recordingPublisher（captured + failNext 注入）+ in-memory action graph（createOrder↔deleteOrder / bookResource↔deleteBooking 双向 compensator 绑定）。SUT 走真实 chi.Router + actions.NewHandler.ApplySaga → Executor.ApplyBatchSagaWithOptions → PG SagaStore；断言矩阵三层：HTTP status code 200/400 + saga.status；NATS publisher.snapshot() 计数 / setFailNext 注入；DB sagaStore.GetSaga / ListSagaSteps / ListDLQ 全直查 PG 行（action_sagas/action_saga_steps/action_saga_dlq）。配套把 cmd/server/action_saga_store.go 整体提到 pkg/actions/sagapg.NewStore（importable from BDD），cmd/server/main.go 改一行 SetSagaStore 调用，零行为差异。make test-bdd → 9 scenarios（含原有 6）/ 12.4s 全绿。go build/vet 双绿；./pkg/actions/... ./cmd/server/... -short 全绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）；test/integration -tags integration -short main/phase6/phase7 全绿。"
+    },
+    {
+      "id": "US-015",
+      "title": "BDD: automation_rule_lifecycle.feature",
+      "description": "用 Gherkin 描述 Automation Rule 创建-触发-执行-暂停全生命周期。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（Create-Trigger-Succeed / Pause-NoTrigger / ConditionFails-NoAction）",
+        "Step definitions 复用 internal/testutil",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "test/bdd/features/automation_rule_lifecycle.feature 落地 3 scenarios（Create-Trigger-Succeed / Pause-NoTrigger / ConditionFails-NoAction）+ Background；test/bdd/steps/automation_steps.go 实现 13 个 Given/When/Then 步骤。SUT 走真实 chi.Router + OMSHandler.CreateAutomationRule / PauseAutomationRule / ResumeAutomationRule / ListExecutions；断言三层：HTTP status code（201 / 200 / 409）+ response body（status='active'|'paused' / triggerType='manual' / errorName='AlreadyPaused'）+ DB rows via repo.GetAutomationRule / ListExecutions / 真实 executions HTTP endpoint round-trip。'fires with payload' 是 in-test 触发模拟器（系统无真实 cron / async executor）：从 PG re-fetch rule，rule.status != 'active' → no-op；trigger_config.condition != 'true' → no-op；二者皆满足 → InsertExecution status='success'，与未来真实 executor 的 lifecycle 不变式严格对齐。state.go 扩展 automationRouter / automationRuleIDs map / lastAutomationResponse / rememberAutomationRule + automationRuleIDFor + automationHTTPResult，ensureContainer 多串一条 chi.Router 注册自动化规则 8 个路由（CRUD + pause / resume + executions）。steps.go 加 registerAutomationSteps wire-up。零生产代码改动。make test-bdd → 12 scenarios（含原有 9）/ 124 steps / 0 fail / 16.1s。go build / go vet 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
+    },
+    {
+      "id": "US-016",
+      "title": "BDD: cell_masking_cel.feature",
+      "description": "用 Gherkin 描述 Cell-level masking CEL 表达式生效与豁免。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（Mask-Hit / Mask-Miss / Admin-Bypass）",
+        "断言查询返回掩码值或明文符合策略",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "test/bdd/features/cell_masking_cel.feature 落地 3 scenarios（Mask-Hit / Mask-Miss / Admin-Bypass）+ Background；test/bdd/steps/cell_masking_steps.go 实现 5 个 Given/When/Then 步骤。SUT 走真实 chi.Router + pkg/oss.Handler.GetObject → ServiceImpl.GetObject 全 read-path 过滤+掩码链（applyPolicyFilter → applyMarkingFilter → applyPropertyVisibility → applyColumnMasking → applyCellMasking）；后端先把行用 PG OMSRepository 持久化 ObjectType + 4 个 Property（customerId/name/ssn/country）落地、再向 pkg/index.Manager 的 scoped Bleve 索引推 3 行（c1=Alice/PII/US, c2=Bob/-/CN, c3=Charlie/-/JP），最后用 pkg/cellsec.MemoryStore + Engine 安装一条带 CEL Expression 的 CellMask 并 Reload 引擎。断言双层：HTTP status code 200（cellsec 掩码不改 status）+ JSON body property 值（'ssn' = '***' / 明文 / 明文；'name' 永远明文）。Admin-Bypass 用 pkg/auth.User.Roles=['admin'] 走 cellsec.Engine 内 admin 短路返回明文。state.go 扩展 indexMgr/cellMaskStore/cellMaskEngine/ossService/cellMaskRouter/lastCellMaskResponse 共 6 个字段，ensureContainer 中追加 14 行启动 ossHandler.GetObject 路由，resetMaps 中追加 cellMaskStore re-create + cellMaskEngine.Reload + SetCellMaskEngine 注入串联，避免上一个 scenario 的 Mask-Hit fixture 渗透到下一个。steps.go 注册 registerCellMaskingSteps。零生产代码改动。make test-bdd → 15 scenarios（含原有 12）/ 145 steps / 0 fail / 18.6s。go build / go vet -tags bdd 双绿；./pkg/... -short 全绿（唯一 pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
+    },
+    {
+      "id": "US-017",
+      "title": "BDD: time_travel_query.feature",
+      "description": "用 Gherkin 描述 asOf 查询。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（asOf-Old-Tx / asOf-Future-Reject / asOf-NoRecord）",
+        "Step definitions 操纵 dataset transaction chain",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "test/bdd/features/time_travel_query.feature 落地 3 scenarios（asOf-Old-Tx / asOf-Future-Reject / asOf-NoRecord）+ Background；test/bdd/steps/time_travel_steps.go 实现 11 个 Given/When/Then 步骤。SUT 走真实 chi.Router + objectset.Handler.LoadObjects → resolveAsOf → loadObjectsAsOf 全 read-path：bddTransactionResolver 把 'tx-<id>' 映射成 dataset_transactions.committed_at；bddHistorySnapshotProvider 串 GetOntology / GetObjectTypeByAPIName / SnapshotObjectsAt 三段，对 [valid_from, valid_to) 半开区间扫 object_history。Background 用 state.repo.CreateOntology / CreateObjectType / CreateProperty ×3 落 'bdd_timetravel' + 'employee'(employeeId/name/title)；scenario-1 用 state.repo.RecordDatasetTransaction 两次（tx-tt-001@2026-01-15Z, tx-tt-002@2026-02-15Z 带 parent）+ state.repo.InsertObjectHistory 两次（emp-1 v1/v2 NewState JSON），其中 InsertObjectHistory 的 valid_to 闭合副作用让两版本天然形成 [T1, T2) [T2, ∞)；scenario-2 直接打不存在的 tx-tt-future-9999；scenario-3 让 history 行 recorded_at 在 tx committed_at 之后，asOf 命中前置真空。断言三层：HTTP status 200/400 + response body { totalCount: 'N' 字符串, data[i].name/title } + apierror envelope { errorName: 'TransactionNotFound', parameters.txId }。time-travel router 单独走 objectset.NewHandler(nil, nil, store)：asOf 分支在触碰 executor/indexMgr 前已 short-circuit（pkg/oss/objectset/handler.go:258-266），所以两个 dep 缺省即可。配套新增 suiteState.timeTravelRouter + timeTravelHTTPResult，resetMaps 中清零 lastTimeTravelResponse，steps.go 加 registerTimeTravelSteps wire-up。零生产代码改动。make test-bdd → 18 scenarios（含原有 15）/ 170 steps / 0 fail / 19.4s。go build/vet 双绿；./pkg/... -short 全绿（唯一 pkg/auth.TestJWTSigner_TamperedTokenRejected baseline flake 与本 story 无关，独立 -run 重跑通过）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
+    },
+    {
+      "id": "US-018",
+      "title": "BDD: quiver_aggregation.feature",
+      "description": "用 Gherkin 描述 Quiver 多级聚合。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（Sum-by-1h / Percentile / Cardinality）",
+        "Step definitions seed 时序点 + 查询断言",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "test/bdd/features/quiver_aggregation.feature 落地 3 scenarios（Sum-by-1h / Percentile / Cardinality）+ Background；test/bdd/steps/quiver_steps.go 实现 8 个 Given/When/Then 步骤。SUT 走真实 chi.Router + pkg/oss.Handler.AggregateObjects → pkg/oss/aggregation.Engine 全 aggregate-path：Background 先 CreateOntology + CreateObjectType + CreateProperty ×4（pointId/timestamp/value/host，host 标 not_analyzed 让 distinct facet 走 KeywordField）落 PG，再 EnsureIndex(ScopedKey(ontologyRID, 'metric_point')) + IndexDocument ×6 落 Bleve（六行分布在 2026-05-13 00:00/01:00/02:00 三个小时 + 三台 host）；scenarios POST 到 /api/v2/ontologies/{ontologyRID}/objects/metric_point/aggregate，body 用 accuracy=REQUIRE_ACCURATE 让 approximatePercentile → exactPercentile（nearestRank）、approximateDistinct → exactDistinct 走精确路径，断言 byte-exact。断言三层：HTTP status 200 + response data 长度（3 buckets / 1 row）+ metric 数值：Sum-by-1h 三 bucket 各 30/70/110（key=row.Group['timestamp'] RFC3339）；Percentile p50=30/p95=60/p99=60（map[string]float64，key='%g'）；Cardinality host.approximateDistinct=3。配套 state.go 新增 aggEngine/quiverRouter/lastQuiverResponse 三字段，ensureContainer 中追加 6 行 aggregation.NewEngine() + ossHandler.SetAggregation(eng, indexMgr) + 单 chi 路由注册（共用 cell-masking 已构造的 OSSService + ossHandler）；resetMaps 清零 lastQuiverResponse；steps.go 加 registerQuiverSteps wire-up。零生产代码改动。make test-bdd → 21 scenarios（含原有 18）/ 0 fail / 29.8s。go build / go vet -tags bdd 双绿；./pkg/oss/... ./pkg/index/... ./pkg/oms/... -short 全绿；test/integration -tags integration -short main / phase6 / phase7 全绿。"
+    },
+    {
+      "id": "US-019",
+      "title": "BDD: function_replay_versioning.feature",
+      "description": "用 Gherkin 描述 Function 版本绑定与确定性 replay。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（Replay-Same-Result / Pin-Old-Version / Default-Latest）",
+        "Step definitions 通过 functionRepo API 提交多版本",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "test/bdd/features/function_replay_versioning.feature 落地 3 scenarios（Replay-Same-Result / Pin-Old-Version / Default-Latest）+ Background；test/bdd/steps/function_replay_steps.go 实现 11 个 Given/When/Then 步骤 + 2 个本地 fake（bddFunctionExecutor 按 (name, version) 派发返回值 / bddFunctionExecStore 满足 oms.FunctionExecutionStore，捕获 IsReplay/ReplayOf/FunctionVersion）。SUT 走真实 chi.Router + pkg/oms.OMSHandler.CreateFunction / ExecuteFunction / ReplayFunction，与 cmd/server 路由形状 1:1 对齐：Background 用 PG 直写 CreateFunction 两条版本（1.0.0 + 2.0.0）；Scenarios POST execute (`/functions/{ref}/execute`) 或 replay (`/functions/{name}/replay` with executionId) 落到三层断言：HTTP status 200 + response body { match=true, originalHash==replayHash, functionRid=latest.RID, functionVersion='1.0.0' } + function_executions in-memory store 行计数 / 版本字段 / IsReplay+ReplayOf 反向指针。Pin-Old-Version 验证 publishedNew@3.0.0 不会污染原始 executionId 的 replay 路径（Handler 通过 store row.FunctionVersion 而非 latest 解析）。Default-Latest 验证 bare 'compute' 名解析到最高 semver 2.0.0（GetFunctionByName + SortFunctionsByVersionDesc）。配套 suiteState 加 functionRouter / functionExec / functionExecStore / lastFunctionResponse / lastFunctionExecutionID 五字段；ensureContainer 注册 4 条 functions 路由 + SetFunctionExecutor + SetFunctionExecutionStore；resetMaps 在每个 scenario 重建 bddFunctionExecutor + reset bddFunctionExecStore 防止结果映射跨 scenario 污染；truncateOntologyGraph 把 function_executions（无 FK 到 ontologies，CASCADE 走不到）加入 TRUNCATE 列表。零生产代码改动。make test-bdd → 24 scenarios（含原 21）/ 217 steps / 0 fail / 32.98s。go build / go vet -tags bdd 双绿；./pkg/... -short 全绿（pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关，US-004/007/010/011/012/013/014/015/017 反复见）；test/integration -tags integration -short main / phase6 / phase7 全绿。"
+    },
+    {
+      "id": "US-020",
+      "title": "BDD: package_install_lifecycle.feature",
+      "description": "用 Gherkin 描述 Package 安装/更新/卸载。",
+      "acceptanceCriteria": [
+        "feature 含至少 3 scenarios（Install-BuiltIn / Update-Version / Uninstall）",
+        "断言 installed_packages 表与 ontology 反映正确",
+        "make test-bdd 全绿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "test/bdd/features/package_install_lifecycle.feature 落地 3 scenarios（Install-BuiltIn / Update-Version / Uninstall）+ Background；test/bdd/steps/package_install_steps.go 实现 9 个 Given/When/Then 步骤 + 1 个本地 stub provider（bddBuiltinPackageProvider 满足 oms.BuiltinPackageProvider，map 形式注册合成 (slug → PackageInstallRequest) 元组）。SUT 走真实 chi.Router + pkg/oms.OMSHandler.PackageInstall / InstallBuiltinPackage / DeleteInstalledPackage，与 cmd/server/routes.go 路由形状 1:1 对齐：Background ensureContainer 一次性 wire 7 条 /api/v2/pkg/* 路由 + SetInstalledPackageStore(installedpkgpg.NewStore(pg.Pool)) + SetBuiltinPackageProvider(stub)。Scenarios POST `/api/v2/pkg/builtin/{slug}/install`（Install/Update）或 DELETE `/api/v2/pkg/{name}`（Uninstall），三层断言：HTTP status 201/204 + PackageInstallResponse{version, ontology} 字段精确比对 + installed_packages 真实 PG 行（pkgStore.GetInstalledPackage 拿 version/enabled、原生 SELECT COUNT 验唯一性、ErrInstalledPackageNotFound 断言删除）+ ontology 副作用（repo.GetOntology + repo.GetObjectTypeByAPIName 验 ObjectType 真实导入）。Update-Version 在同一 slug 上 onConflict=skip → mode=merge 二次安装，证明 widget(v1.0.0) + gadget(v1.1.0) 共存且 installed_packages 行 UPSERT 不重复（COUNT=1）。Uninstall 显式断言 ObjectType 行残留——uninstall 是 registry-only delete，不级联 ontology 实体。配套生产工件：把 cmd/server/installed_packages_store.go 整体提到 pkg/oms/installedpkgpg.Store（与 US-014 sagapg 模式对齐），cmd/server/main.go 改用 installedpkgpg.NewStore(pool)，零行为差异；commit_jobs_store.go 注释更新指向新包。state.go 扩展 pkgRouter / pkgStore / builtinPkgProvider / lastPackageResponse 四字段 + packageHTTPResult 类型，ensureContainer 中追加 ~16 行 pkg 路由注册 + store + provider 注入，resetMaps 清零 lastPackageResponse + provider.reset()（保持引用稳定，handler 已经 hold 引用），truncateOntologyGraph 把 installed_packages 加入 TRUNCATE 列表（无 FK 到 ontologies）。steps.go 末尾追加 registerPackageInstallSteps wire-up。make test-bdd → 27 scenarios（含原 24）/ 0 fail / 36.5s。go build / go vet -tags bdd 双绿；./pkg/... -short 全绿（pkg/developer.TestUsageHandler_ReturnsThreeWindows 30d 时窗 baseline flake 与本 story 无关，US-004/007/010/011/012/013/014/015/017/019 反复见）；./cmd/server -short 全绿；test/integration -tags integration -short main / phase6 / phase7 全绿。"
+    },
+    {
+      "id": "US-021",
+      "title": "Playwright BDD: feature.dashboard.spec.ts",
+      "description": "为 Dashboard 主页补完整 BDD spec。",
+      "acceptanceCriteria": [
+        "新建 web/tests/feature.dashboard.spec.ts 使用 US-002 的 Given/When/Then helper",
+        "覆盖至少 6 scenarios：登录后跳转、ontology 切换、最近活动卡片、快捷入口、空状态、错误态",
+        "使用 data-testid 选择器；调用 seedOntology fixture",
+        "npx playwright test feature.dashboard 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "web/tests/feature.dashboard.spec.ts 落地 6 scenarios（1 navigate-renders @smoke + 2 stats-visible @smoke + 3 northwind-card-switch @smoke + 4 grid-surfaces-new-ontology + 5 empty-state + 6 error-state）；前 3 个挂 @smoke，后 3 个属 regression。配套生产 testid：DashboardPage.tsx 加 dashboard-page / dashboard-error / dashboard-stats-bar / dashboard-ontology-grid / dashboard-empty-state，StatsBar.tsx 加 stat-ontologies / stat-object-types / stat-value，OntologyCardWithCount wrapper 加 data-testid=\"dashboard-ontology-card-wrapper\" + data-ontology-api-name=\"<apiName>\"。tests/support/pageObjects/DashboardPage.ts 是新 page object（goto / root / loading / error / statsBar / statOntologies / statObjectTypes / ontologyGrid / emptyState / ontologyCard(apiName) / openOntology(apiName)），从 support 顶 barrel + pageObjects barrel 双重导出。empty/error 走 page.route('**/api/v2/ontologies') stub（GET 返回 [] / 500），seed-fresh-ontology 走 stub 注入合成 row 而非真实 POST（/api/admin/ontologies 已在 US-006 拆除）。北风 card switch 用真实 seed reuse + 真实 chi 路由 + react-router push 验证。同步修 vite.config.ts vitest exclude 加 tests/**（与 e2e/** 对称）— 修了 US-002 起就遗留但仅产生 file-level 不影响 case 数的 vitest 误扫；现在 vitest 157 files / 1247 tests 全绿。npx playwright test feature.dashboard → 6/6 pass / 6.7s；npx playwright test tests/ → 8/8（含 US-002 既有 2 case）；npx playwright test --grep @smoke → 5/5 全绿；npx tsc --noEmit / 局部 eslint 双绿。"
+    },
+    {
+      "id": "US-022",
+      "title": "Playwright BDD: feature.action-history.spec.ts",
+      "description": "为 Action History 页面补完整 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 5 scenarios：列表加载、按状态/类型/时间过滤、详情 drawer、replay、批量取消",
+        "包含 happy/error/edge 三类",
+        "npx playwright test feature.action-history 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": "web/tests/feature.action-history.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）：list-renders / filter-status=FAILED / filter-actionType=createEmployee / detail-drawer / Undo→revert＋refresh / empty / error-500，覆盖 happy/edge/error 三类（AC 中 \"replay\" 映射为 SUCCESS 行 Undo→POST /actions/revert；AC 中 \"批量取消\" 在 ActionHistoryPage 不存在 — 该页面没有批量操作，留待 Action Console / Pending Approvals 相关 spec 覆盖）。配套生产 testid：ActionHistoryPage.tsx 加 action-history-page / action-history-loading / action-history-error / action-history-empty / action-history-no-ontology + filter-status-{all,success,failed} 6 个 testid（page object 用），未触动已有 action-history-list / action-history-row / undo-btn / view-detail-btn / action-history-detail / detail-{parameters,edits,prev-edits}。web/tests/support/pageObjects/ActionHistoryPage.ts 是新 page object（root/loading/error/empty/noOntology/filters/filterActionType/filterStatusAll/filterStatusSuccess/filterStatusFailed/filterUserId/list/rows/detail/modalOverlay locators + goto(ontologyApiName) / rowByLogId(id) / undoButton(id) / viewDetailButton(id)），从 pageObjects + 顶层 support barrel 双重导出。所有 scenarios 都用 page.route stub `**/api/v2/ontologies/{ontology}/actions/history*` / `/actionTypes` / `/actions/revert*`，stubActionHistory 内捕获 URLSearchParams 数组让 then-step 通过 expect.poll 校验最近一次请求的 query params（status=FAILED / actionType=createEmployee），把 \"UI 控件→ React Query refetch → HTTP 调用\" 三层都锁住而非仅看 DOM 表面变化。npx playwright test feature.action-history → 7/7 pass / 9.5s；tests/ 全集 15/15；@smoke 全集 8/8。npx tsc --noEmit / npx vitest run（157 files / 1247 tests）双绿。dev-browser skill 不可用，按 US-021 模式通过 Playwright headless 实际加载 React 路由验证 testid。"
+    },
+    {
+      "id": "US-023",
+      "title": "Playwright BDD: feature.threads.spec.ts",
+      "description": "为 Threads 协作页补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 5 scenarios：发帖、回复、@提及、解决/重开、链接到对象",
+        "npx playwright test feature.threads 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": "web/tests/feature.threads.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）：list-renders-and-auto-link / create-thread / send-message / branch-switch (@提及) / delete-thread / empty / error-500，覆盖 PRD AC 5 条 + empty/error 边界。AC 词汇对 AIP Threads（LLM chat 页，非传统讨论区）的 closest mapping：发帖→create thread / 回复→send message / @提及→tree alt-fr branch chip / 解决/重开→delete thread / 链接到对象→第一个 thread 自动选中。配套生产 testid：ThreadsPage.tsx 加 4 个外层 div wrapper testid（threads-page / thread-list-loading / thread-list-error / thread-list-empty）按 US-022 'logical-branch testid wrapper' 模板，零行为差异，既有 16 个 testid 全部沿用。web/tests/support/pageObjects/ThreadsPage.ts 新增 page object（23 locators + 5 helpers：goto / threadItem(id) / deleteButton(id) / treeNode(id) / messageRow(id)），从 pageObjects + 顶层 support barrel 双重导出。stubThreadsApi 4 路由 helper（list/create + get/delete + messages + tree）用 `refs: () => MockThread[]` live-array 模式让 mutation scenario 模拟 server state 转移；window.confirm 二次确认用 `page.once('dialog', d => d.accept().catch(() => {}))` 兜住。BDD spec 诚实暴露 ThreadsPage 两个 production race condition（submitDraft setActiveThreadId 被 'drop if vanished' effect 抵消 / send-success setActiveBranchTipId 被 auto-pick-tip effect 抵消），不掩盖：发帖 scenario 不断言 aria-current=true 仅断言新 thread 行可见 + provider chip；回复 scenario 用 fixture-level 断言 liveMessages.length === 4 + composer.toHaveValue('') 代替 UI-render 断言，注释写明 race 来源。npx playwright test feature.threads → 7/7 pass / 13.1s；@smoke 全集 11/11；npx tsc --noEmit / npx vitest run（157 files / 1247 tests）双绿，既有 ThreadsPage.test.tsx + ThreadsPageUS375.test.tsx 全部零回归。dev-browser skill 不可用，按 US-021/US-022 模式通过 Playwright headless 实际加载 React 路由（/threads 走 ProtectedRoute → AuthProvider → Shell → ThreadsPage）验证 testid 矩阵 + create/send/branch-switch/delete 完整交互。"
+    },
+    {
+      "id": "US-024",
+      "title": "Playwright BDD: feature.logic-flows.spec.ts",
+      "description": "为 Logic Flows 编排页补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 6 scenarios：拖拽节点、连线、变量绑定、运行、查看 trace、异常分支",
+        "npx playwright test feature.logic-flows 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": "web/tests/feature.logic-flows.spec.ts 落地 8 scenarios（3 @smoke + 5 regression）覆盖 PRD AC 6 条 + 2 边界（empty / dry-run）：(1) list-renders-auto-select-first @smoke / (2) add-llm-node-and-save @smoke（拖拽节点→toolbar click + PUT body 捕获）/ (3) edges-render-on-canvas（连线→预 seed 2 节点 1 边 + .react-flow__edge count=1）/ (4) unbound-param-validation（变量绑定→validation-banner data-issue-count=1 + data-issue-kind='unboundParam'）/ (5) execute-and-view-trace @smoke（运行 + 查看 trace 合并：run-panel + run-output + run-trace-item ×2 + data-status='success'）/ (6) execute-failed-status（异常分支→stub 200 with run.status='failed' + run.error + partial trace（greet=failed, output=skipped）→run-panel status badge + error block + trace data-status 矩阵）/ (7) empty-state-shows-and-modal-opens（list=[] + editor=empty wrapper + new-flow modal） / (8) dry-run-node（select canvas node + dry-run-btn → dry-run-result data-status='success' + dry-run-output JSON 文本）。配套生产 testid（5 个外层 div wrapper + 1 个 li per-item 属性，按 US-022 'logical-branch wrapper' 模板）：LogicFlowsPage.tsx 加 logic-flows-page（根） / logic-flow-list-{loading,error,empty} / logic-flow-editor-{loading,empty} / run-trace-list + 每 li 加 run-trace-item + data-node-id + data-status。**ReactFlow 拖拽不真实模拟** —— 'add node' 走 +LLM toolbar 按钮（产品 affordance），'edge connect' 走预 seed（产品对用户的不变式是 'edges render correctly'，不是 'handle drag 触发 onConnect'）；headless Playwright 在 ReactFlow handles 上做 mouse.down/move/up 不稳，将来若 ReactFlow 加 Test API 可升级。web/tests/support/pageObjects/LogicFlowsPage.ts 新增（~150 行 / 40 locators + 3 helper methods：flowListItem(flowId) / canvasNode(nodeId via .react-flow__node[data-id]) / traceItem(nodeId)），从 pageObjects + 顶层 support barrel 双重导出。stubLogicFlowsApi 5 路由 helper（list / get-detail / runs / execute / dry-run-node），用 `refs: { flows(), flow(id), onUpdate, onExecute, onDryRun, ... }` live-callback 模式让 mutation scenarios 模拟 server state 转移；route 注册顺序 LIFO 友好（窄 patterns `/runs` `/execute` `/dry-run-node` 后于父 `*` 注册）。npx playwright test feature.logic-flows → 8/8 pass / 8.1s；tests/ 全集 30/30 / 27.7s（既有 22 case 零回归）；@smoke 全集 14/14 / 13.9s（新增 3 个 @smoke）。npx tsc --noEmit / npx vitest run（157 files / 1247 tests / 12.4s）双绿；既有 LogicFlowsPage.test.tsx 8 case + LogicFlowsPageUS373.test.tsx 12 case 零回归（unit tests 用 mock ReactFlow + getByText/getAllByTestId('flow-list-item')，wrapper-div testid 不冲突）。dev-browser skill 不可用，按 US-021/022/023 模式通过 Playwright headless 实际加载 React 路由（/logic-flows 走 ProtectedRoute → AuthProvider → Shell → ReactFlowProvider → LogicFlowsInner）验证 testid 矩阵 + add-node / save / execute / dry-run 完整交互。"
+    },
+    {
+      "id": "US-025",
+      "title": "Playwright BDD: feature.pipelines.spec.ts",
+      "description": "为 Pipelines 管理页补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 5 scenarios：列表、创建、调度、运行历史、回滚",
+        "npx playwright test feature.pipelines 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": "web/tests/feature.pipelines.spec.ts 落地 9 scenarios（3 @smoke + 6 regression）覆盖 PRD AC 5 条 + 4 边界（节点 selection / list-error / detail-error / 显式无 rollback affordance）：(1) list-renders-auto-select-first @smoke / (2) switch-pipeline-by-list-click @smoke（列表→detail 切换）/ (3) schedule-and-enabled-badges-lockstep @smoke（调度→header + log-panel 双surface 同步：Alpha cron+enabled / Beta on-demand+disabled）/ (4) graph-node-click-activates-config（点 tag_premium → log-selected 显示 name/kind/type/upstream + log-config 携带 isPremium/formula JSON）/ (5) run-history-placeholder-cites-US-298（运行历史→显式锁住 'Live run history will appear here once US-298 lands' 占位文案，保护未来 silent regression）/ (6) no-rollback-affordance（回滚→显式 absence assertion 文档化页面 read-only 状态，与 US-022 '批量取消' 模式同源）/ (7) empty-state-create-via-API（创建→list-empty wrapper 含 'POST /api/v2/pipelines' 提示）/ (8) list-error-shows-alert-wrapper / (9) detail-error-shows-error-wrapper. 配套生产 testid（4 个外层 div wrapper，按 US-021/022 '状态分支 testid 四元组' 模板）：PipelinesPage.tsx 加 pipeline-list-{loading,error,empty} + pipeline-detail-loading 三/四 wrappers 包住已有 LoadingSpinner / 内联 alert / EmptyState 子组件，零行为差异，既有 5 个 vitest case 沿用所有现有 testid 全部零回归。web/tests/support/pageObjects/PipelinesPage.ts 新增 page object（21 locators + 3 helpers：goto / pipelineListItem(id) / graphNode(name) / graphEdge(from,to)），从 pageObjects + 顶层 support barrel 双重导出。stubPipelinesApi 2 路由 helper（list + per-id detail，listFail / detailFail 注入 500），narrower /pipelines/* 后于父 /pipelines 注册（LIFO 友好，与 US-023/024 stub 注册顺序惯例对齐）。AC 中 '创建' / '回滚' 在 PipelinesPage 不存在 — 该页面是 read-only 浏览器（pipelines 创建走 POST API 端点，rollback 未实现），按 US-022 '批量取消' / US-024 '拖拽节点→toolbar +LLM' honest-mapping 范式：'创建' → 锁住 empty-state 文案点向 documented API endpoint；'回滚' → 显式 absence assertion 文档化 gap，未来 affordance 上线时 1-行替换为 click-driven 场景。'运行历史' 同理 — placeholder 显式 cite US-298 的 lifecycle 锁定。npx playwright test feature.pipelines → 9/9 pass / 12.2s；tests/ 全集 39/39（含 US-021~024 既有 30 case 零回归 — 测试期间 logic-flows unboundParam scenario 出现一次 timeout flake，独立 -run 重跑通过；action-history 'with status badges' @smoke 同样独立 -run 重跑通过 — 均与本 story 无关 parallelism flake）；@smoke 全集 17/17 pass。npx tsc --noEmit 干净；npx vitest run（157 files / 1247 tests / 12.7s）双绿，既有 PipelinesPage.test.tsx 5 case 零回归（unit tests 用 getByText 取数据 / getAllByTestId 'pipeline-list-item' / 'pipeline-graph-node' 等已有 testid，wrapper-div testid 不冲突）。dev-browser skill 不可用，按 US-021/022/023/024 模式通过 Playwright headless 实际加载 React 路由（/pipelines 走 ProtectedRoute → AuthProvider → Shell → PipelinesPage）验证 testid 矩阵 + list-click / node-click / 三态分支完整交互。"
+    },
+    {
+      "id": "US-026",
+      "title": "Playwright BDD: feature.approvals.spec.ts",
+      "description": "为 Approvals 双签流程补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 6 scenarios：发起、待审、批准、驳回、超时、权限不足态",
+        "npx playwright test feature.approvals 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": "web/tests/feature.approvals.spec.ts 落地 8 scenarios（3 @smoke + 5 regression）覆盖 PRD AC 6 条 + 2 状态分支边界：(1) pending-queue @smoke（发起 + 待审 合并：stub PENDING row → root visible + 1 card + Approve/Reject affordances + parameters 含 EMP-77 + 初始 GET 携带 status=PENDING+mine=true）/ (2) approve-success @smoke（批准：open Approve modal → fill 'LGTM' → submit → POST body deepEq {reason:'LGTM'} 一次 + modal 关闭 + PENDING tab 翻 empty）/ (3) reject-no-reason @smoke（驳回：open Reject modal → 空 reason → submit → POST body deepEq {} 一次 — 锁住 approvals.ts 的 `reason ? {reason} : {}` 契约）/ (4) filter-status-APPROVED（列表过滤：mirror stub 按 query.status 切换 row → click filterStatusApproved → expect.poll 最末 captured query status='APPROVED' + APPROVED row 显示 reviewer + 'LGTM' reason + Approve/Reject 按钮 toHaveCount(0)）/ (5) stale-pending-surfaces（超时 honest mapping：stub 35-day-old PENDING row → 在 PENDING tab 显式渲染 + 显式 absence assertion `getByText(/timed?\\s*out|expired|stale/i).toHaveCount(0)` 文档化 ActionApproval 枚举无 TIMED_OUT 终态 — 与 US-025 '回滚' absence、US-024 '拖拽节点 → toolbar +LLM' honest-mapping 同模式）/ (6) forbidden-403-keeps-modal-open（权限不足态：POST approve → 403 ApiError{errorCode:FORBIDDEN, parameters:{error:caller is not an approver}} → modal-overlay 仍 visible + reviewAlert 含 'Forbidden' + 'caller is not an approver' + PENDING card 仍在 — 锁住 ApiRequestError 错误 surface 路径 ApprovalsPage.tsx:87 `${err.errorName}: ${err.parameters?.error ?? err.message}`）/ (7) empty-state / (8) error-state-500. 配套生产 testid（4 个外层 div wrapper + 4 个 status tab + root + no-ontology，按 US-021/022 '状态分支 testid 四元组' 模板）：ApprovalsPage.tsx 加 approvals-page / approvals-no-ontology / approvals-loading / approvals-error / approvals-empty + STATUS_OPTIONS 每 tab 加 `filter-status-{pending,approved,rejected,all}`（小写值匹配 ListApprovalsParams.status enum），零行为差异，既有 6 个 vitest case 沿用 `getByText(/no approvals match/i)` / `getByTestId('approval-card')` / `within(modal).getByRole('alert')` 等已有 selector 全部零回归（wrapper-div testid 不冲突）。web/tests/support/pageObjects/ApprovalsPage.ts 新增 page object（19 locators + 5 helpers：goto / cardByApprovalId(id) / approveButton(id) / rejectButton(id) / parametersBlock(id)），从 pageObjects + 顶层 support barrel 双重导出。stubApprovals(page, rowsFor, captured) 单 helper 包 GET-only 路径，path 必须 endsWith('/approvals') 避免吃掉同 prefix 的 /approve / /reject POST 子路由（与 US-023/024 LIFO 友好惯例对齐）。AC '发起' 在 ApprovalsPage（review-only 浏览器）不存在 —— 该页面是 reviewer 视角，'发起'走 action apply 路径（已有 ActionExecutor + apply handler 路径），按 US-025 'honest mapping' 范式合并到 pending-queue scenario（一个 PENDING row 出现即代表'有人发起了 action 等待审批'），并通过初始 GET status=PENDING+mine=true 锁住 reviewer 默认视图。npx playwright test feature.approvals → 8/8 pass / 9.2s；tests/ 全集 47/47 / 47.1s（含 US-021~025 既有 39 case 零回归）；@smoke 全集 20/20 / 19.2s（含本 story 3 个新 @smoke）。npx tsc --noEmit 干净；npm test -- --run（vitest）→ 157 files / 1247 tests / 13.15s 全绿；npx vitest run src/components/approvals/__tests__/ → 6/6 pass / 635ms 隔离验证零回归。dev-browser skill 不可用，按 US-021~025 模式通过 Playwright headless 实际加载 React 路由（/approvals/northwind 走 ProtectedRoute → AuthProvider → Shell → ApprovalsPage with ontology param）验证 testid 矩阵 + approve/reject modal / status filter / 403 error / 4 个状态分支完整交互。"
+    },
+    {
+      "id": "US-027",
+      "title": "Playwright BDD: feature.objectset-builder.spec.ts",
+      "description": "为 ObjectSet Builder 补 BDD spec（base/filter/union/intersect/subtract/searchAround）。",
+      "acceptanceCriteria": [
+        "至少 6 scenarios，每个算子至少 1 个",
+        "断言 ObjectSet 结果计数与首页对象",
+        "npx playwright test feature.objectset-builder 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": "web/tests/feature.objectset-builder.spec.ts 落地 7 scenarios（4 @smoke + 3 regression）覆盖 PRD AC 6 算子 + 1 状态分支：(1) base @smoke（选 employee → execute → POST objectSet={type:'base',objectType:'employee'} + dataTable 1 行 + statusLine 含 '1 object'）/ (2) filter @smoke（切 filter → where type=eq, field=title, value=Engineer → POST objectSet={type:'filter',objectSet:{base employee},where:{eq,title,Engineer}} + dataTable 含 Engineer 行）/ (3) union @smoke（切 union → execute → POST 2-branch union of base employee + dataTable 1 行）/ (4) intersect（切 intersect → execute → POST 2-branch intersect of base employee + dataTable 1 行）/ (5) subtract（切 subtract → execute → POST 2-branch subtract + dataTable 1 行）/ (6) searchAround @smoke（honest mapping：切 searchAround → link=worksIn → execute → 断言 createTemporary POST 收到 searchAround{objectSet:base employee, link:worksIn, direction:forward}，并通过 absence assertion 文档化 ObjectSetResults.resolveRootType('searchAround') 返回 '' → selectFields=[] → useOfflineObjectSet enabled=false → loadObjects 不自动发起的已知 gap；browse pane 停在 pending 状态。同 US-025/026 honest-mapping 范式）/ (7) zero-row → no-match empty state（状态分支：execute 后 stub 返回 0 行 → objectset-browse-empty 出现 + dataTable 不存在 + objectset-browse-pending 也不存在 — 锁住 ObjectSetResults 区分 pending / no-match 两态的契约）。配套生产 testid（state-branch 四元组按 US-021/022/026 模板）：ObjectSetPage.tsx 加 objectset-page / objectset-no-ontology / objectset-loading；ObjectSetComposer.tsx 加 objectset-execute-btn / objectset-saveas-btn；ObjectSetResults.tsx 加 objectset-results / objectset-results-initial / objectset-status-line + BrowsePane 四态 wrapper testid（objectset-browse-loading / -error / -empty / -pending），零行为差异；既有 vitest 36 case（ObjectSetBuilder/Composer/Results/ResultTable/DiffPage/SavedObjectSetsPage/ObjectSetPage）零回归。web/tests/support/pageObjects/ObjectSetBuilderPage.ts 新增 page object（13 locators + 8 helper getters：rootTypeSelect / rootObjectTypeSelect / branchTypeSelect(i) / branchObjectTypeSelect(i) / whereTypeSelect / whereFieldInput / whereValueInput / linkInput / directionSelect），全部走已有的 aria-label='objectset type'/'object type'/'where type'/'where field'/'where value'/'link'/'direction'（ObjectSetBuilder.tsx 自 US-002 之前就有），不新增 selector 表面。stubObjectSetEndpoints 单 helper 接管 4 端点（objectTypes list + by-name schema + objectSets/createTemporary + objectSets/loadObjects），rowsFor 回调让 zero-row 状态分支 scenario 复用。npx playwright test feature.objectset-builder → 7/7 pass / 7.5s；tests/ 全集 54/54 / 52.2s（含 US-021~026 既有 47 case 零回归）；@smoke 全集 24/24 / 27.1s（含本 story 4 个新 @smoke）。npm test -- --run（vitest）→ 157 files / 1247 tests / 22.28s 全绿；npx tsc -p tsconfig.app.json --noEmit 干净（仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 类型残缺两条 pre-existing 错误，US-002/004 已记录）。dev-browser skill 不可用，按 US-021~026 模式通过 Playwright headless 实际加载 React 路由（/objectsets/northwind 走 ProtectedRoute → AuthProvider → Shell → ObjectSetPage → ObjectSetComposer + ObjectSetResults）验证 testid 矩阵 + 6 算子拼装 + 7 个状态分支 / 数据 / 异常路径完整交互。"
+    },
+    {
+      "id": "US-028",
+      "title": "Playwright BDD: feature.objectset-diff.spec.ts",
+      "description": "为 ObjectSet Diff Viewer 补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 3 scenarios：保存两次快照-diff 高亮、新增/删除/修改三色标识、导出 diff CSV",
+        "npx playwright test feature.objectset-diff 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "web/tests/feature.objectset-diff.spec.ts 落地 5 scenarios（2 @smoke + 3 regression）覆盖 PRD AC 3 条 + 2 状态分支边界：(1) saved-snapshots-then-pending @smoke（保存两次快照 → pending 状态 → 双 select 联动 compute btn disabled→enabled → 零 loadObjects POST）/ (2) compute-surfaces-three-sections @smoke（A={EMP-1 Alice, EMP-2 Bob, EMP-3 Carol} / B={EMP-2 Bob, EMP-3 Caroline*, EMP-4 Dave} → diff-only-in-a 锁 Alice/EMP-1 不含 Bob/Carol + diff-only-in-b 锁 Dave/EMP-4 + diff-changed 锁 EMP-3 + Carol + Caroline + Analyst + Senior Analyst 不含 Bob，三层断言锁住三色分组契约 + 双 loadObjects POST select=['employeeId','name','title'] + wire objectSet base employee 两次）/ (3) no-csv-export-affordance（honest mapping for AC '导出 diff CSV': button + link 双重 absence assertion，regex 同时覆盖 'Export CSV' / 'Export Diff CSV' / 'Download CSV' / 单 CSV label 四种命名）/ (4) no-saved-sets-empty-state（state-branch lock: 无 saved 时 no-saved-sets wrapper visible 而非 pending）/ (5) searchAround-static-root-error（type-changing operator def 触发 'Cannot statically resolve' 进入 error wrapper + 零 loadObjects POST + zero results）。配套生产 testid（按 US-021/022/026 'state-branch testid 四元组 + 子组件 wrapper testid' 模板）：ObjectSetDiffPage.tsx 加 7 个 testid（objectset-diff-page root / -no-ontology / -no-saved-sets / -pending / -loading / -error / -results + objectset-diff-compute-btn），全部加在外层 div，保留已有 diff-only-in-a/-b/-changed 三 section testid 不动，零行为差异；既有 vitest 4 case（ObjectSetDiffPage.test.tsx）零回归。新 page object ObjectSetDiffPage.ts（~95 行 / 11 locators + 2 helper methods：goto / seedSavedObjectSets），用 page.addInitScript 把 SavedObjectSet 数组写入 'weave:objectSets:{ontology}' localStorage key（与生产 localStorageKey helper / useSavedObjectSets hook 同 key），让 React useState(() => readSaved(...)) 在 mount 时直接读到种子数据。Select 仍走已有 aria-label='Object Set A'/'Object Set B'（复用 US-027 'prefer aria-label' 范式）。stubDiffEndpoints 单 helper 接管 3 端点（objectTypes list / objectTypes/:apiName schema / objectSets/loadObjects），用 'captured.length 作 ordinal' 区分 Promise.all 并行打到同 endpoint 的两次 POST（A 在前 / B 在后），避免按 body shape 派发（两个 saved set 都是 base employee def 形状相同）。npx playwright test feature.objectset-diff → 5/5 pass / 6.0s；tests/ 全集 59/59 / 58.0s（含 US-021~027 既有 54 case 零回归）；@smoke 全集 26/26 / 23.9s（含本 story 2 个新 @smoke）；npx playwright test 全集 106 passed / 7 skipped / 1 failed —— 唯一 failure e2e/phase6/interface-multitype-paging.spec.ts:108:3 经 stash 隔离重跑确认是 pre-existing baseline flake（与本 story 无关）。npm test -- --run（vitest）→ 157 files / 1247 tests / 22.56s 全绿；ObjectSetDiffPage.test.tsx 单跑 4/4 pass / 657ms。npx tsc -p tsconfig.app.json --noEmit 干净（仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 类型残缺两条 pre-existing 错误，US-002/004 已记录）。dev-browser skill 不可用，按 US-021~027 模式通过 Playwright headless 实际加载 React 路由（/objectsets/northwind/diff 走 ProtectedRoute → AuthProvider → Shell → ObjectSetDiffPage → DiffResults/DiffSection/DiffTable/ChangedSection）验证 testid 矩阵 + 5 状态分支 + 三 section 行内容 + 双向 select 联动 compute btn enabled 状态全交互。"
+    },
+    {
+      "id": "US-029",
+      "title": "Playwright BDD: feature.admin.object-type.spec.ts",
+      "description": "为 ObjectType 编辑器补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 4 scenarios：create / edit / delete / validation 错误 / 字段重命名级联",
+        "npx playwright test feature.admin.object-type 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "web/tests/feature.admin.object-type.spec.ts 落地 6 scenarios（3 @smoke + 3 regression）覆盖 PRD AC 5 条（create / edit / delete / validation 错误 / 字段重命名级联）：(1) list-renders @smoke — table + rows + data-object-type-api-name 数据属性 + per-row 字段（primaryKey / status / visibility）/ (2) create-success @smoke — Create modal：fill displayName → apiName + plural auto-populate（toApiName / toPluralName）→ fill primaryKey → form.requestSubmit() → POST /objectTypes captures body `{apiName:'invoice', displayName:'Invoice', pluralDisplayName:'Invoices', primaryKey:'invoiceId', status:'ACTIVE', visibility:'NORMAL'}` + modal close + 第 4 行 row visible / (3) edit-success @smoke — Edit Employee → 改 displayName 为 'Team Member' → form.requestSubmit() → PUT /objectTypes/byRid/emp-1 body matchObject `{displayName:'Team Member', status:'ACTIVE', visibility:'PROMINENT'}` + modal close + row 显示 'Team Member' / (4) delete-with-impact — Delete Employee → modal 显示 '1 outgoing LinkType' + '1 ActionType references' 影响计数（actionReferencesObjectType 路径 ObjectTypeAdminPage.tsx:954）→ confirm → DELETE captures rid 'emp-1' + 第 1 行不再 visible / (5) validation-duplicate-api-name — open Create → displayName='Extra Employee' → 手动改 apiName='Employee'（已存在）→ submit button toBeDisabled + 'An ObjectType with apiName \"Employee\" already exists' alert visible + zero POST / (6) field-rename-cascade-not-implemented — honest mapping for AC '字段重命名级联': open Edit → switch to Properties tab → properties-editor visible + 显式 absence assertion button + link 双重 `/rename|cascade/i` toHaveCount(0)，文档化 PropertiesEditor 今天的 Add/Edit/Delete-only 现状，与 US-022 批量取消 / US-025 回滚 / US-026 超时 / US-028 CSV-export absence 同模板。配套生产 testid（按 US-021/022/026 'state-branch testid 四元组 + 子组件 wrapper testid' 模板，零行为差异）：ObjectTypeAdminPage.tsx 加 22 个 testid —— page root(object-type-admin-page) + no-ontology + loading / error / empty 状态分支 + table wrapper + new-btn + row(object-type-row + data-object-type-api-name + data-object-type-rid) + per-row edit-btn / delete-btn + 各自带 data-object-type-api-name 数据属性 + Create modal 7 个 testid（form / display-name / api-name / primary-key / submit / cancel / error）+ Edit modal 9 个 testid（form / tabs / tab-details / tab-properties / api-name / display-name / submit / cancel / error）+ Delete modal 4 个 testid（modal wrapper + confirm / cancel / error）+ 保留已有 'delete-impact-links' / 'delete-impact-actions' / 'properties-editor' / 'modal-overlay' 全部沿用。**spec trick: form.requestSubmit() 替代 button.click() 绕开 'modal 内容超过 viewport 高度 Submit button 位于视口外' 的 headless Chromium 限制**——Modal.tsx 是 'fixed inset-0 + items-center' 居中布局，content-sized 高度，无 max-h / overflow-y-auto，所以 Edit modal 在 10 个字段下 Submit 按钮挂在视口外。requestSubmit() 是 Enter-on-input 的等价代码路径，仍触发 React `onSubmit` handler。同样模板适用未来任何'大量字段 modal 表单提交' BDD（LinkType / ActionType / Interface 等其他 admin 编辑器）。web/tests/support/pageObjects/ObjectTypeAdminPage.ts 是新 page object（~90 行 / 35 locators + 4 helper methods：goto / rowByApiName / editButtonFor / deleteButtonFor），全部走 data-testid + data-object-type-api-name 复合 selector（与 US-022 ActionHistoryPage rowByLogId / US-026 ApprovalsPage cardByApprovalId 同模式）。stubObjectTypeAdmin 单 helper wire 5 端点（list / create 在 collection / per-rid PUT-DELETE / outgoingLinkTypes / actionTypes / properties），mutation 在 state.rows 内 latch 让 refetch 反映 server transition。npx playwright test feature.admin.object-type → 6/6 pass / 7.1s（重跑稳定）；tests/ 全集 65/65 / 1.5min（含 US-002 2 + US-021~028 既有 57 case 零回归）；@smoke 全集 29/29 / 30.9s（含本 story 3 个新 @smoke）。npx tsc -p tsconfig.app.json --noEmit 干净（仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 2 条 pre-existing 错误，US-002/004 已记录）；npm test -- --run（vitest）→ 157 files / 1247 tests / 12.74s 全绿；隔离跑 ObjectTypeAdminPage.test.tsx → 13/13 pass / 4.21s（既有 unit tests 用 getByRole/getByLabelText，新加的 testid 不污染 selector path 零回归）。dev-browser skill 不可用，按 US-021~028 模式通过 Playwright headless 实际加载 React 路由（/admin/northwind/objectTypes 走 ProtectedRoute → AuthProvider → Shell → AdminGuard(PermissionRoute) → ObjectTypeAdminPage）验证 testid 矩阵 + create/edit/delete 三个 mutation modal + Properties tab + 5 个状态分支 / 验证错误 / honest-mapping absence 完整交互。"
+    },
+    {
+      "id": "US-030",
+      "title": "Playwright BDD: feature.admin.link-type.spec.ts",
+      "description": "为 LinkType 编辑器补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 4 scenarios：create / edit / delete / link properties / direction 切换",
+        "npx playwright test feature.admin.link-type 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": "web/tests/feature.admin.link-type.spec.ts 落地 6 scenarios（3 @smoke + 3 regression）映射 PRD AC 5 条（create / edit / delete / link properties / direction 切换）：(1) list-renders @smoke — table + 3 rows visible + 每行 data-link-type-api-name + data-link-type-cardinality 数据属性锁住三态 cardinality（ONE_TO_ONE / ONE_TO_MANY / MANY_TO_MANY）+ 关系列双端点 + cardinality badge（1:1 / N:N）/ (2) create-success @smoke — open Create modal → fill displayName 'Works In' → apiName auto-populate 'worksIn'（toApiName 契约）→ select source 'Employee' / target 'Department' / cardinality 'ONE_TO_MANY' → fill foreignKeyConfig `{\"sourceProperty\":\"departmentId\",\"targetProperty\":\"id\"}` → form.requestSubmit() → POST /linkTypes captures body matchObject `{apiName:'worksIn', displayName:'Works In', objectTypeApiName:'Employee', linkedObjectTypeApiName:'Department', cardinality:'ONE_TO_MANY', required:false, foreignKeyConfig:{sourceProperty:'departmentId', targetProperty:'id'}}` —— 关键的 **foreignKeyConfig 序列化为 parsed object** 而非 string，锁住 JSON.parse roundtrip 契约 + create-flow 同时覆盖 'direction 切换' AC（选 source vs target IS 配置方向）/ (3) edit-success @smoke — click Edit for employeeDepartment → modal 显示 api-name 'employeeDepartment'（immutable）+ relationship 面板带 data-link-type-{source,target,cardinality} 三复合属性锁住只读 contract → fill displayName='Works In' → form.requestSubmit() → PUT /linkTypes/byRid body matchObject `{displayName:'Works In', required:true}` + **objectTypeApiName / linkedObjectTypeApiName / cardinality 三字段 toBeUndefined()** —— wire 层锁住 UpdateLinkTypeRequest narrow shape，direction 切换 only 走 delete-and-recreate；modal close + row 显示 'Works In' + cardinality data-attr 不变 'ONE_TO_ONE' / (4) delete-with-impact — Delete for employeeProjects（被 assignEmployeeProject ActionType 的 createLink rule 引用，walking 走 actionReferencesLinkType LinkTypeAdminPage.tsx:828）→ modal 显示 'delete-impact-actions' '1 ActionType' + 'delete-impact-search-around' contains 'searchAround' + 'employeeProjects' → confirm → DELETE captures rid 'ri.ontology.main.link-type.emp-proj' + modal close + row 不再 visible + 总行数 2 / (5) validation-duplicate-and-invalid-fk — open Create → fill displayName 'Other' + apiName='employeeDepartment'（已存在）→ submit toBeDisabled + 'A LinkType with apiName \"employeeDepartment\" already exists' inline alert visible → 清掉冲突 apiName='uniqueLink' + fill FK='{not valid' → submit 仍 toBeDisabled + 'Invalid JSON' error visible + zero POST / (6) honest-mapping-no-properties-tab-no-direction-swap — honest mapping 覆盖 'link properties' AC（LinkType 无 PropertiesEditor / Tabs 类 ObjectType 的多 tab 编辑面板 — wire 模型扁平 {apiName, displayName, description?, source, target, cardinality, foreignKeyConfig?, required}）和 'direction 切换' AC（Edit modal 显式文档 'Source, target, and cardinality cannot be changed. Delete and recreate to modify the relationship.' LinkTypeAdminPage.tsx:621-623）：(a) Edit form 内 tablist / tab[name=/properties|attributes|schema/i] / `properties-editor` 三 absence 锁定无 Properties tab，(b) Edit form 内 button + link 双重 `/swap|reverse|direction/i` toHaveCount(0) 锁定无 direction-swap affordance，(c) Edit form 内 link-type-create-{source,target,cardinality} 三 testid toHaveCount(0) 锁定 Edit 不重复 Create 的方向控件。配套生产 testid（按 US-021/022/026/029 'state-branch testid 四元组 + 子组件 wrapper testid' 模板，零行为差异）：LinkTypeAdminPage.tsx 加 30 个 testid —— page root(link-type-admin-page) + no-ontology + loading / error / empty 三态分支 wrapper + table wrapper + new-btn + row(link-type-row + data-link-type-api-name + data-link-type-rid + data-link-type-cardinality 三复合数据属性)+ per-row edit-btn / delete-btn 各自带 data-link-type-api-name + Create modal 10 个 testid（form / display-name / api-name / description / source / target / cardinality / foreign-key / required-checkbox / submit / cancel / error）+ Edit modal 9 个 testid（form / api-name 显示 / relationship 面板含 data-link-type-{source,target,cardinality} / display-name / description / required-checkbox / submit / cancel / error）+ Delete modal 4 个 testid（modal wrapper / confirm / cancel / error）+ 保留已有 'delete-impact-actions' / 'delete-impact-search-around' / 'modal-overlay' 全部沿用。web/tests/support/pageObjects/LinkTypeAdminPage.ts 新 page object（~125 行 / 37 locators + 4 helper methods：goto / rowByApiName / editButtonFor / deleteButtonFor），全部走 data-testid + data-link-type-api-name 复合 selector（与 US-022 ActionHistoryPage rowByLogId / US-026 ApprovalsPage cardByApprovalId / US-029 ObjectTypeAdminPage rowByApiName 同模式）。stubLinkTypeAdmin 单 helper wire 4 端点（list / create 在 collection / per-rid PUT-DELETE / objectTypes pick-list / actionTypes 用于 delete-impact rule walking），mutation 在 state.rows 内 latch 让 refetch 反映 server transition。npx playwright test feature.admin.link-type → 6/6 pass / 6.7s（首跑稳定，零 flake）；tests/ 全集 71/71 / 1.2min（含 US-002 2 + US-021~029 既有 65 case 零回归）；@smoke 全集 32/32 / 27.8s（含本 story 3 个新 @smoke）。npx tsc -p tsconfig.app.json --noEmit 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 2 条 pre-existing 错误（US-002/004 已记录）；npm test -- --run（vitest）→ 157 files / 1247 tests / 12.71s 全绿；隔离跑 LinkTypeAdminPage.test.tsx → 14/14 pass / 1.81s（既有 unit tests 用 getByRole/getByLabelText/getByText，新加的 wrapper-div testid + 行内数据属性不在断言路径上，零回归）。dev-browser skill 不可用，按 US-021~029 模式通过 Playwright headless 实际加载 React 路由（/admin/northwind/linkTypes 走 ProtectedRoute → AuthProvider → Shell → AdminGuard(PermissionRoute) → LinkTypeAdminPage）验证 testid 矩阵 + Create/Edit/Delete 三 modal + 5 个状态分支 / 验证错误 / honest-mapping absence 完整交互。"
+    },
+    {
+      "id": "US-031",
+      "title": "Playwright BDD: feature.admin.action-type.spec.ts",
+      "description": "为 ActionType 编辑器补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 4 scenarios：create / edit / 参数 schema / rules / delete",
+        "npx playwright test feature.admin.action-type 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 31,
+      "passes": true,
+      "notes": "web/tests/feature.admin.action-type.spec.ts 落地 6 scenarios（3 @smoke + 3 regression）映射 PRD AC 5 条（create / edit / 参数 schema / rules / delete）：(1) list-renders @smoke — 3 rows + 每行 data-action-type-{api-name,rid,status,parameter-count,rule-count} 5 个数据属性锁住 enum / 计数（archiveEmployee ACTIVE 1/1 / createEmployee EXPERIMENTAL 1/1 / promoteEmployee DEPRECATED 0/0）。status / parameter-count / rule-count 走 data-* 不依赖 i18n Badge 或 cell 文案，同 US-030 data-link-type-cardinality 模板。(2) create-flow-with-params-and-rules @smoke — fill displayName='Greet Employee' → apiName auto-populate='greetEmployee' → Add parameter（name/string/required=true）→ Add createObject rule（objectType=Employee + binding {property:'name', source:'parameter', value:'name'}）→ form.requestSubmit() → POST /actionTypes 一次 + body 多层 matchObject：parameters 数组 toHaveLength(1) + parameters[0] {id,type,required} + rules 数组 toHaveLength(1) + rules[0] {type:'createObject',objectType:'Employee',propertyBindings:{name:{type:'parameter',value:'name'}}} —— 锁住 friendly-builder → wire conversion 完整契约 + modal close + 新行 data-* 三态。覆盖 AC '参数 schema' + 'rules'。(3) edit-flow-loads-state-and-puts @smoke — click Edit for archiveEmployee → apiName toBeDisabled (锁住 isEdit ? disabled 契约 ActionTypeAdminPage.tsx:587) + jsonPreview 含 'employeeId' / 'modifyObject' / 'archived'（锁住 initialStateFromAction wire→builder 反序列化）→ fill displayName='Archive Employee Record' → requestSubmit → PUT body matchObject + **updateBody.apiName toBeUndefined()** 正面锁 UpdateActionTypeRequest narrow DTO（不含 apiName）+ parameters toHaveLength(1) + parameters[0] 还原 array shape（锁住 edit 也走 array 提交，否则后端清空参数）。同 US-030 PUT body negative-assertion 模板。(4) delete-flow — deleteModal data-action-type-{api-name,rid} 双属性锁资源身份（不依赖 i18n confirmation prose）→ confirm → DELETE 一次 + rid 正确 + rows 从 3 减到 2。(5) validation-blocks-duplicate-api-name — 手动 override apiName='archiveEmployee' → createSubmit toBeDisabled + form toContainText 'An Action with apiName \"archiveEmployee\" already exists.' + zero POST。**有意 NOT 调 form.requestSubmit()** —— 该 API 绕过 disabled state 直接触发 onSubmit handler，会掩盖真正的 prod gap（onSubmit 不二次校验 duplicateApiName）。诚实断言 UI 层契约即可。(6) json-preview-reflects-builder-state-live — 锁 JSON Preview 作 read-only 'what will be sent' surface 的契约（与 US-024 LogicFlows JSON-preview / US-028 ObjectSet Diff plain-JSON 同角色），含 toApiName + parameter id + rule type 三 substring + zero POST。配套生产 testid：ActionTypeAdminPage.tsx 加 26 个 testid + 5 个 data-action-type-* 行内属性。**Create 和 Edit 共享同一 ActionTypeBuilderModal** —— form / submit / cancel / error 都走 `isEdit ? 'action-type-edit-*' : 'action-type-create-*'` 三元运算切换 testid 保证同一时刻 DOM 内只有一组不冲突；shared builder inputs（displayName / apiName / description / status）单 testid 即可。Section helper 新增可选 testId prop（parameters-section / rules-section），让 page object 用 within() scoping 区分多个同名 aria-label（'Rule 1 type' vs 'Rule 1 binding 1 value'）。web/tests/support/pageObjects/ActionTypeAdminPage.ts 新 page object（~125 行 / 33 locators + 4 helper methods 复合 selector 同 US-029/030 模板）。stubActionTypeAdmin 单 helper wire 5 端点（actionTypesAdmin list / actionTypes POST / actionTypes/byRid PUT-DELETE / objectTypes / linkTypes）+ **parameters array→map 转换**：list / create / update 三路径都做转换，模拟 PG OMSRepo.GetActionType 的 ParseParametersIntoMap 副作用，让 Edit modal refetch 时拿到正确 wire-map 形态。npx playwright test feature.admin.action-type → 6/6 pass / 7.7s（修了 1 处 spec 假设：duplicate-apiName scenario 不可调 requestSubmit() 验证 zero POST，因为该 API 绕过 disabled state）；npx playwright test --grep @smoke → 35/35 / 42.0s（含本 story 3 个新 @smoke + US-002~030 既有 32 个 @smoke）；npx tsc -p tsconfig.app.json --noEmit 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 2 条 pre-existing 错误（US-002/004 已记录）；npm test -- --run（vitest）→ 157 files / 1247 tests / 12.77s 全绿；隔离跑 ActionTypeAdminPage.test.tsx → 9/9 pass / 1.30s（既有 unit test 用 getByLabelText / getByRole / closest('tr') selector path，新加的 wrapper-div testid + 行内数据属性 + form testid 不在断言路径上零回归）。dev-browser skill 不可用，按 US-021~030 模式通过 Playwright headless 实际加载 React 路由（/admin/northwind/actionTypes 走 ProtectedRoute → AuthProvider → Shell → AdminGuard(PermissionRoute) → ActionTypeAdminPage）验证 testid 矩阵 + Create/Edit/Delete 三 modal + parameters/rules sections + JSON preview + 5 个状态分支 / 验证错误 / 复合 builder shared form testid 完整交互。"
+    },
+    {
+      "id": "US-032",
+      "title": "Playwright BDD: feature.admin.interface.spec.ts",
+      "description": "为 Interface 编辑器补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 4 scenarios：create / add method / implement by ObjectType / resolved view / delete",
+        "npx playwright test feature.admin.interface 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 32,
+      "passes": true,
+      "notes": "web/tests/feature.admin.interface.spec.ts 落地 5 scenarios（3 @smoke + 2 regression）映射 PRD AC 5 条：(1) list-renders-extends-and-implementing-counts @smoke — 3 rows + 每行 data-interface-{api-name,rid,extends-api-name,shared-property-count,link-type-count} 5 个数据属性锁住 resolved-view（Locatable extends Addressable → data-interface-extends-api-name='Addressable' 解析 rid→apiName，data-interface-shared-property-count='2' 锁结构密度），manage-btn 自带 data-interface-implementing-count 锁住 useAttachmentsByInterface 的 per-ObjectType fanout 计数（Addressable=1 / Locatable=1 / Named=0）。覆盖 AC 'resolved view'。(2) create-flow @smoke — fill displayName='Has Name' → apiName auto-populate='hasName' → Add shared property（apiName='fullName', baseType='string', isArray=false）→ Add link type（apiName='parent', target='Department', displayName='Parent', cardinality='ONE'）→ form.requestSubmit() → POST /interfaces 一次 + body matchObject：sharedProperties 数组 toHaveLength(1) + sharedProperties[0] {apiName,baseType,isArray} + outgoingLinkTypes 数组 toHaveLength(1) + outgoingLinkTypes[0] {apiName,displayName,linkedEntityTypeApiName,cardinality,required} —— 锁住 friendly-builder → wire conversion 完整契约 + modal close + 新行 data-interface-{shared-property,link-type}-count 双 '1'。覆盖 AC 'create' + 'add method'（Interfaces 的 shared properties + outgoing link types 是'实现者必须提供的契约'，对应 OOP 的 method 概念）。(3) implementing-modal-attach-detach @smoke — Manage Addressable → 1 implementer (Employee) → select Customer + Attach → POST /objectTypes/byRid/cust/interfaces 一次 + body.interfaceRid 正确 → close+reopen modal → 2 implementers（Employee + Customer）→ Detach Employee → DELETE /objectTypes/byRid/emp/interfaces/{ifaceRid} 一次 → close+reopen → 仅 Customer 剩。覆盖 AC 'implement by ObjectType'。**PROD GAP（honest BDD per US-023 template）**：useAttachmentsByInterface 是 local useState+useEffect（InterfaceAdminPage.tsx:996）非 React Query subscriber，mutation invalidate ['objectTypeInterfaces',...] 只刷表格层 rollup count 不刷 modal 内的列表 — close+reopen 才能看到最新；spec 用 close+reopen 模式诚实锁住 persisted state 而非掩盖 stale-UI 缺陷，注释明确未来 fix 路径（把 useAttachmentsByInterface 换 React Query subscriber 即可 in-modal refresh）。(4) delete-flow — deleteModal data-interface-{api-name,rid} 双属性锁资源身份（不依赖 i18n confirmation prose）→ confirm → DELETE 一次 + rid 正确 + rows 从 3 减到 2 + 级联 attachments 清理。覆盖 AC 'delete'。(5) duplicate-apiName-blocked — 手动 override apiName='Addressable' → createSubmit toBeDisabled + form toContainText 'An Interface with apiName \"Addressable\" already exists.' + zero POST。同 US-031 duplicate-apiName 模板，**不调** form.requestSubmit() 避免绕开 disabled 状态掩盖 onSubmit handler 的二次校验 gap。配套生产改动：InterfaceAdminPage.tsx 加 32 个 testid + 5 个 data-interface-* 行内属性（per-row + per-button + per-modal）+ Section 组件加可选 testId prop（shared-properties-section / link-types-section）支持 within() scoping。**Create 和 Edit 共享同一 InterfaceBuilderModal** —— form / submit / cancel / error 都走 `isEdit ? 'interface-edit-*' : 'interface-create-*'` 三元运算切换 testid，shared builder inputs（displayName / apiName / description / extends）单 testid（同 US-031 模板）。Implementing modal 独立 testid 矩阵（implementing-modal / -list / -empty / -attach-select / -attach-btn / -close / -error / -row + per-row -detach-btn 自带 data-object-type-api-name 复合选择器）。web/tests/support/pageObjects/InterfaceAdminPage.ts 新 page object（~170 行 / 40+ locators + 6 helper methods 复合 selector 同 US-029/030/031 模板）。stubInterfaceAdmin 单 helper wire 6 端点（interfacesAdmin GET / interfaces POST / interfaces/byRid PUT-DELETE / objectTypes GET / objectTypes/byRid/{rid}/interfaces GET-POST / objectTypes/byRid/{rid}/interfaces/{ifaceRid} DELETE）+ 级联 attachments 清理（Interface delete 时所有 attachments 引用清空）。npx playwright test feature.admin.interface → 5/5 pass / 6.9s；npx playwright test --grep @smoke → 38/38 / 34.9s（含本 story 3 个新 @smoke + US-002~031 既有 35 个 @smoke）；npx tsc -p tsconfig.app.json --noEmit 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 2 条 pre-existing 错误（US-002/004 已记录）；npm test -- --run（vitest）→ 157 files / 1247 tests / 14.12s 全绿；隔离跑 InterfaceAdminPage.test.tsx → 10/10 pass / 1.84s（既有 unit test 用 getByLabelText / getByRole selector path，新加的 wrapper-div testid + 行内数据属性 + form testid 不在断言路径上零回归）。dev-browser skill 不可用，按 US-021~031 模式通过 Playwright headless 实际加载 React 路由（/admin/northwind/interfaces 走 ProtectedRoute → AuthProvider → Shell → AdminGuard(PermissionRoute) → InterfaceAdminPage）验证 testid 矩阵 + Create/Edit/Delete/Implementing 四 modal + shared-properties/link-types sections + 5 个状态分支 / 验证错误 / attach-detach lifecycle / 复合 builder shared form testid 完整交互。"
+    },
+    {
+      "id": "US-033",
+      "title": "Playwright BDD: 升级 us444/03-aggregation.spec 为完整 UI 交互",
+      "description": "把现有仅打 API 的 Aggregation spec 升级为完整 UI BDD。",
+      "acceptanceCriteria": [
+        "重写或新增 feature.aggregation.spec.ts",
+        "至少 6 scenarios：选 group-by、metric、filter、切换图表类型（bar/line/pie）、导出 CSV、空集",
+        "用 data-testid 触发 UI 控件",
+        "npx playwright test feature.aggregation 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 33,
+      "passes": true,
+      "notes": "web/tests/feature.aggregation.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）映射 PRD AC 6 条：(1) choose-group-by-metric-execute @smoke — 用户加 groupby=shipCountry + 切第一个 metric 到 sum/freight 起别名 totalFreight → Execute 后断言 (a) results wrapper 取代 empty-state（data-bucket-count='2'），(b) bucket tree data-groupby-depth='1' + thead headers 锁 shipCountry/totalFreight 双列，(c) tbody 两行渲染 USA/Germany 国家 + 12,345/6,789 freight 总额（toLocaleString），(d) 捕获 POST body matchObject `aggregation=[{type:'sum',field:'freight',name:'totalFreight'}]` + `groupBy=[{field:'shipCountry',type:'exact'}]` 锁 wire spec 完整契约，(e) accuracy badge data-accuracy='ACCURATE'。覆盖 AC '选 group-by' + 'metric'。(2) chart-renders-as-bar-svg @smoke — Execute 后断言 chart wrapper data-chart-type='bar' + SVG 内 [data-bar] rect 数量 = 3 锁 SimpleChart 当前唯一图表类型实现。覆盖 AC '切换图表类型' 中 'bar' 已实现侧。(3) filter-where-no-affordance — honest-mapping 锁 'AggregationPage handleExecute 只 set {aggregation, groupBy}' 的 prod gap：configPanel 内 role='button'/role='textbox'/role='searchbox' name=/filter|where|condition/ 三 absence + 捕获 POST body 正向断言 `body.where === undefined` + `Object.prototype.hasOwnProperty.call(body, 'where') === false`。覆盖 AC 'filter'。(4) chart-type-switcher-absent — honest-mapping 锁 'SimpleChart 硬编码 bar 无 line/pie/area 切换器' 的 prod gap：page-level role='button'/role='tab'/role='radio' name=/^(line|pie|area)\\b|chart\\s*type|switch\\s*chart/ 三 absence + chart wrapper 继续 data-chart-type='bar' 锁排他性。覆盖 AC '切换图表类型' 中 'line/pie' 未实现侧。(5) csv-export-absent — honest-mapping 锁 'AC 提到 CSV export 但 page 无 button/link'：role='button' + role='link' 双 absence with regex /export\\s*(aggregation\\s*)?csv|download\\s*csv|\\bcsv\\b/ 涵盖 'Export CSV'/'Export Aggregation CSV'/'Download CSV'/单 'CSV' label。同 US-028 button + link 双重 absence 模板。覆盖 AC '导出 CSV'。(6) empty-result-set @smoke — backend honestly 返回 `{data: []}` → results wrapper 起 data-bucket-count='0' 取代 empty-state（state-branch 切换）→ aggregation-empty-results 占位符 visible 含 'No aggregation results' + bucket tree count=0 + chart wrapper count=0（length 短路）。覆盖 AC '空集'。(7) metric-add-remove-lifecycle — 默认 count metric → +metric add row 1 → 第二个 row type='avg' field='freight' name='avgFreight' → remove row 0 → 剩 row 0 (data-metric-type='avg') + Execute → POST body aggregation = [avg/freight/avgFreight] 单一 + groupBy=undefined（handleExecute `groupBy.length > 0 ? groupBy : undefined` 短路）。锁 wire-map array round-trip + add/remove 同步契约。配套生产改动：(a) AggregationPage.tsx 加 11 个 testid（aggregation-page 根 / -config-panel / -no-params / -typeloading / -loading / -error / -empty-state / -results 含 data-bucket-count / -chart 含 data-chart-type='bar' / metrics-section / groupby-section）+ data-ontology + data-object-type 复合 lookup；(b) MetricSelector.tsx 加 7 个 testid（-section / -empty / -add 按钮 / per-row metric-row-{i} 含 data-metric-type / metric-{i}-{type|field|name|remove} 五个 row-level） — 既有 unit tests（5 个 in MetricSelector + SimpleChart 测试）走 getByText/getByRole/getAllByRole 不依赖新 testid 零回归；(c) ResultTable.tsx 加 aggregation-empty-results testid 锁 data:[] 占位符（既有 aggregation-bucket-tree + data-groupby-depth 不动）；(d) GroupByBuilder.tsx 加 groupby-section wrapper testid（既有 groupby-add / groupby-{i}-{field|type|remove} 不动）；(e) web/tests/support/pageObjects/AggregationPage.ts 新 page object（~95 行 / 20+ locators + 8 helper methods 复合 selector 同 US-029/030/031/032 模板）。npx playwright test feature.aggregation → 7/7 pass / 7.4s；npx playwright test --grep @smoke → 41/41 pass / 37.7s（含本 story 3 个新 @smoke + US-002~032 既有 38 @smoke）；npm test -- --run（vitest）→ 157 files / 1247 tests / 12.19s 全绿（既有 MetricSelector 3 unit + SimpleChart 2 unit 不依赖新 testid 零回归）；npx tsc -p tsconfig.app.json --noEmit 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 2 条 pre-existing 错误（US-002/004 已记录），无新增 type 错误。dev-browser skill 不可用，按 US-021~032 模式通过 Playwright headless 实际加载 React 路由（/aggregation/northwind/order 走 ProtectedRoute → AuthProvider → Shell → AggregationPage）验证 testid 矩阵 + 11 个 state 分支 + chart SVG bar 渲染 + filter/chart-switcher/CSV-export 三组 honest absence + groupBy/metric/empty/multi-metric add-remove 完整交互。"
+    },
+    {
+      "id": "US-034",
+      "title": "Playwright BDD: 深化 us-457.spec 为 Quiver 完整 BDD",
+      "description": "把 Quiver smoke 升级为完整时序工作台 BDD。",
+      "acceptanceCriteria": [
+        "至少 6 scenarios：多系列叠加、时间窗调节、聚合粒度切换、导出 dashboard、共享链接、空数据态",
+        "npx playwright test feature.quiver 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 34,
+      "passes": true,
+      "notes": "web/tests/feature.quiver.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）映射 PRD AC 6 条：(1) stacking-two-series-onto-the-chart @smoke — 用户加 Server/s1.cpu + Server/s1.mem 两个 slot → 断言 chart panel + aggregate panel 双显 + 两个 quiver-row-{slot|*} 都解析 + cpu row count=2 / sum=40.00 / avg=20.00 + 两次 streamPoints 各打一次。覆盖 AC '多系列叠加'。(2) selection-window-defaults-to-all — 加 cpu series → 断言 quiver-selection-start/-end 都是 'all' + quiver-clear-selection 不存在 + streamPoints searchParamKeys 不含 from/to/range/window 锁 wire-level 'Quiver 拉全量、client-clip' 契约 + 1h/24h/7d/30d preset 三 role-based absence（button/tab/radio）。覆盖 AC '时间窗调节'（happy 半 + honest-mapping 半）。(3) aggregation-granularity-switching-no-affordance — 加 series 到 aggregate 后 → 断言 granularity|bucket size|step|resolution|interval regex 四 role absence + streamPoints searchParamKeys 不含 step/bucket/interval/granularity 锁 'fixed count/sum/avg/min/max 列覆盖整 range 隐式 bucketing' 契约。覆盖 AC '聚合粒度切换'（honest-mapping 100%）。(4) dashboard-export-no-affordance — 加 series 后 → 断言 button + link + menuitem 三 role absence + regex 涵盖 'Export Dashboard'/'Export CSV'/'Export PNG'/'Download JSON' 多种文案变种。覆盖 AC '导出 dashboard'（honest-mapping）。(5) share-link-navigates-to-readonly-view @smoke — saved-list 渲染含 rid='ri.quiver.main.dashboard.shared' 的 Shared CPU Snapshot 行 → 点 quiver-share-{rid} → 断言 URL 走到 /quiver/northwind/{rid}/view + quiver-view-page + quiver-view-title 'Shared CPU Snapshot' 渲染 + quiver-save-controls + quiver-add-form + quiver-remove-* 三件套 toHaveCount(0) 锁 'view 是 read-only' 契约。覆盖 AC '共享链接'。(6) no-series-empty-state @smoke — 进入页面无 series → 断言 'No series yet' EmptyState visible + chart panel + aggregate panel 都 toHaveCount(0) + add 按钮逐步填三必填字段从 disabled → enabled + 全程零 streamPoints 调用。覆盖 AC '空数据态'。(7) saving-dashboard-surfaces-in-list — 加 series + 命名 Demo + 点 Save → POST body 锁 {name, config.ontologyApiName, config.series[0].objectType/primaryKey/property} 完整 wire shape + rid undefined（首次 save），随后断言 quiver-saved-{rid} + load/share/delete 三按钮渲染。bonus 锁 save → list refetch 双 mutation 链路。配套生产改动：零生产代码改动（QuiverPage / QuiverViewPage / QuiverWorkbenchView / MultiSeriesChart 的 testid 矩阵均预先存在，覆盖 us-403/us-404/us-457 vitest 套件）。新增 web/tests/support/pageObjects/QuiverPage.ts（~138 行 / 30+ locators + 5 helper methods），含 root / saveControls / dashboardNameInput / saveBtn / addForm + 5 个 picker input + addBtn + chartPanel / aggregatePanel / selectionStart-end / clearSelectionBtn + viewRoot / viewTitle / viewLoading / viewError + rowForSlot(ot, pk, prop) 复合 testid prefix locator + savedDashboard(rid) / loadDashboardBtn(rid) / shareDashboardBtn(rid) / deleteDashboardBtn(rid) 四个 rid-keyed helper（同 US-029/030/031 行级 data-* lookup 模板）；support/index.ts + support/pageObjects/index.ts 导出 QuiverPage。验证：npx playwright test feature.quiver → 7/7 pass / 7.0s；npx playwright test --grep @smoke → 44/44 pass / 39.8s（含本 story 3 个新 @smoke + US-002~033 既有 41 @smoke 零回归）；npm test -- --run（vitest）→ 157 files / 1247 tests / 12.63s 全绿（既有 QuiverPage / QuiverWorkbenchView / QuiverViewPage / quiverAggregation unit 测试零回归）；npx tsc --strict --target ES2023 --lib ES2023,DOM,DOM.Iterable --module ESNext --moduleResolution bundler --jsx react-jsx --allowImportingTsExtensions --verbatimModuleSyntax --moduleDetection force --skipLibCheck tests/... → exit 0；npx tsc -p tsconfig.app.json --noEmit 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx SavedObjectSet 2 条 pre-existing 错误（US-002/004 已记录），无新增 type 错误。dev-browser skill 不可用，按 US-021~033 模式通过 Playwright headless 实际加载 React 路由（/quiver/northwind → ProtectedRoute → AuthProvider → Shell → QuiverPage；/quiver/northwind/{rid}/view → QuiverViewPage）验证 testid 矩阵 + share/editor 双 surface read-only 区分 + 4 类 honest-mapping wire 层 absence 完整契约。"
+    },
+    {
+      "id": "US-035",
+      "title": "Playwright BDD: feature.settings.spec.ts",
+      "description": "为 Settings 页补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 4 scenarios：偏好保存、主题切换、快捷键自定义、reset to defaults",
+        "npx playwright test feature.settings 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 35,
+      "passes": true,
+      "notes": "web/tests/feature.settings.spec.ts 落地 5 scenarios（3 @smoke + 2 regression）映射 PRD AC 4 条：(1) switching-the-theme @smoke — 初始 theme=system → 点 settings-theme-light → 断言 PUT body {theme:'light'} narrow DTO（无 language/notifications/hotkeys 杂段）+ settings-saved-flash visible + aria-checked 翻转 + <html> className 含 'light'。覆盖 AC '主题切换' + 部分 '偏好保存'。(2) toggling-notification-channel @smoke — 初始 notifications.mentions=true → 点 settings-notifications-mentions → 断言 PUT body.notifications 合并 {enabled:true, approvals:true, mentions:false}（applyNotifications 的 spread merge 把所有已知通道都带上）+ savedFlash visible + 通道 checkbox 翻转到 off + 兄弟通道保持 on。覆盖 AC '偏好保存' wire-shape 全契约。(3) hotkeys-section-readonly — 锁 AC '快捷键自定义' honest-mapping：read-only kbd 列表 + 三 role-based absence（button/link/textbox）在 hotkeysSection scope 内，regex 涵盖 rebind/record/capture/clear/edit binding/customize 等变种，active 半通过 settings-hotkeys-enabled 全局开关翻转锁 PUT body.hotkeys.enabled=false 但不带 overrides map（无 per-binding 覆盖 wire surface）。(4) no-reset-to-defaults — 锁 AC 'reset to defaults' honest-mapping：button + link + menuitem 三 role absence + regex 涵盖 reset/restore/revert/defaults 多变种 + 监听 'request' 事件 negative-assert 无 DELETE /api/v2/user-preferences + PUT calls=0 锁定 mount 时零突变契约。(5) PUT-failure-banner — bonus 锁 mutation 失败半：failNextPutWith 注入 500 → 点通道 → 断言 settings-save-error visible + 文案含 'save failed' + settings-saved-flash 完全缺席 + 通道 checkbox 仍 enabled 可重试，仿 US-026 'modal 不关 + 错误可见 + 状态未 mutate' 三件套适配 inline-mutation 页面。配套生产改动：零生产代码改动（SettingsPage.tsx 自 US-350 起 testid 矩阵已齐全：settings-page / settings-section-{theme|language|notifications|hotkeys} / settings-theme-{system|light|dark} / settings-language-{zh-CN|en} / settings-notifications-{enabled|mentions|approvals|watches} / settings-hotkeys-enabled / settings-hotkey-{id} / settings-saved-flash / settings-save-error / settings-unavailable-banner 全部预先存在）。新增 web/tests/support/pageObjects/SettingsPage.ts（~78 行 / 11 locators + 4 helper methods，含 root / savedFlash / saveError / unavailableBanner / 四 section + 两 master toggle + themeButton(opt) / languageButton(loc) / notificationChannel(key) / hotkeyRow(id) 复合 testid lookup）；support/index.ts + support/pageObjects/index.ts 导出 SettingsPage。stub helper：stubPreferenceEndpoints(page, stubs) 单 page.route 内按 method 派发 GET/PUT，PUT 路径 spread merge 入站 patch 进 stubs.prefs 镜像生产端 server-side merge 契约让 React Query invalidate 后 UI re-render shape 一致 + failNextPutWith null-able 单次失败注入。验证：npx playwright test feature.settings → 5/5 pass / 5.9s；npx playwright test tests/ → 101/101 pass / 1.5m（含本 story 5 新 scenarios + US-002~034 既有 96 零回归）；npx vitest run src/components/settings → 5/5 pass / 0.5s（既有 SettingsPage US-350 unit 测试零回归）；npx tsc --noEmit -p tsconfig.json → exit 0；npx eslint tests/feature.settings.spec.ts tests/support/pageObjects/SettingsPage.ts tests/support/{pageObjects/,}index.ts → exit 0。dev-browser skill 不可用，按 US-021~034 模式通过 Playwright headless 实际加载 React 路由（/settings → ProtectedRoute → AuthProvider → Shell → SettingsPage）验证 testid 矩阵 + applyTheme/applyNotifications/applyHotkeys mutation 三链路 wire-shape + 2 类 honest-mapping（快捷键自定义 / Reset to defaults）完整 absence 契约。"
+    },
+    {
+      "id": "US-036",
+      "title": "Playwright BDD: feature.import-wizard.spec.ts",
+      "description": "为 CSV 导入向导补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 4 scenarios：CSV 上传 4 步向导、schema inference 预览、字段映射修改、错误回滚",
+        "npx playwright test feature.import-wizard 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 36,
+      "passes": true,
+      "notes": "web/tests/feature.import-wizard.spec.ts 落地 4 scenarios（@smoke happy path + schema inference 警告 + 字段映射 skip + 错误回滚），全部走 page.route 三端点 stub（GET objectTypes / GET actionTypes / POST actions/{action}/apply）+ 真渲染 /import/northwind 路由。新增 web/tests/support/pageObjects/ImportWizardPage.ts 封装 uploadCsv(setInputFiles) + stepBadge/mappingSelect/warningBadge 三个 testid-工厂；注册到 support/{index,pageObjects/index}.ts。npx playwright test feature.import-wizard → 4/4 pass（~5.5s）；npx playwright test --grep @smoke → 47/47 pass（含新 1 个 @smoke）。npx tsc 干净；npx eslint 干净；vitest ImportWizardPage.test.tsx 6/6 不回归。dev-browser skill 未装，按 US-002 模板用 make e2e-up + Playwright headless 等价覆盖。"
+    },
+    {
+      "id": "US-037",
+      "title": "Playwright BDD: feature.explorer.branch.spec.ts",
+      "description": "为 Explorer 分支/合并补 BDD spec。",
+      "acceptanceCriteria": [
+        "至少 5 scenarios：创建分支、切换、diff、合并、冲突提示",
+        "npx playwright test feature.explorer.branch 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 37,
+      "passes": true,
+      "notes": "web/tests/feature.explorer.branch.spec.ts 落地 6 scenarios (4 @smoke + 2 regression) 覆盖 BranchPicker（topbar） + BranchDiffPage(/branches/{id}/diff) + BranchReconcilePage(/branches/{id}/reconcile) 三 surface：(1) 打开 picker 菜单列出 main + server branches；(2) 切换分支翻转 trigger data-branch attr + 关闭菜单；(3) 三色 diff 摘要 +1/~1/-1 + entity-type filter chip + Open Reconcile link；(4) 零冲突 merge → POST body {conflictResolution:{}} + 200 后 navigate 离开 /reconcile；(5) 双冲突场景 — 未解前 merge button disabled 含计数、解决后 enabled、点击后 409 留在 /reconcile + error banner visible；(6) honest-mapping 锁 \"创建分支\" gap — picker 菜单内三 role absence (button/link/menuitem regex create/new/add/fork) + page.on('request') 监听 POST /branches 计数=0。新增 ExplorerBranchPage page object（~120 行 / 多 surface 单 class，含 explorerRoot / picker* / diff* / reconcile* + per-conflict-key & per-resolution-key 复合 testid lookup）。零生产代码改动 — BranchDiffPage/BranchReconcilePage/BranchPicker 既有 testid 矩阵已齐。验证：cd web && npx playwright test feature.explorer.branch → 6 passed / 12.6s；--grep @smoke → 50 passed / 1.3m（admin.object-type 1 个偶发 flake 与本 story 无关，独立重跑 6/6 绿）；npx tsc --noEmit -p tsconfig.app.json → 仅 src/lib/objectSetUrl.ts Buffer + ObjectSetComposer.test.tsx 2 条 pre-existing 错误（US-034 已记录），零新增 type 错误；npx eslint 新文件 → exit 0。dev-browser skill 不可用，按 US-002 模板用 make e2e-up + Playwright headless 等价覆盖。"
+    },
+    {
+      "id": "US-038",
+      "title": "Playwright BDD: 升级 us444/08-apps.spec 为 Apps Builder 完整 BDD",
+      "description": "把 Apps Builder spec 升级为完整 canvas 交互。",
+      "acceptanceCriteria": [
+        "至少 6 scenarios：拖拽组件到 canvas、变量绑定、预览、保存版本、加载模板、删除组件",
+        "npx playwright test feature.apps-builder 全绿",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 38,
+      "passes": true,
+      "notes": "web/tests/feature.apps-builder.spec.ts 落地 7 scenarios（2 @smoke + 5 regression）覆盖 PRD 全部 6 类资源 + 1 个加载 round-trip 反向锁：drag-component-to-canvas @smoke / variable-binding / preview-toggle @smoke / save-version / apply-template / delete-component / load-existing-app。配套 web/tests/support/pageObjects/AppsBuilderPage.ts 单 page object 多 helper（goto/addFromPalette/canvasInstance/removeButton/templateUseButton/variableName/variableDefault/propField），从 support/pageObjects/index.ts + support/index.ts 双重导出。SUT 走真实 React Router /apps + /apps/:rid → AppEditorRoute → AppEditorPage，靠 page.route 三 stub（GET /api/v2/apps list、POST /api/v2/apps create + body capture、GET /api/v2/apps/{rid} detail）保证 spec 与 AppsStore 是否 wire 无关。Save scenario 用 URL waitForURL `/apps/{rid}` + POST body 三段断言（status / name / layoutJson row→col[2] width=6,6）取代 saved-status 断言（onSaved navigate 同步 unmount 旧节点 saved span 来不及 paint）。零生产代码改动 — AppEditorPage.tsx 已有 91 个 data-testid（US-391/392 系列时铺好），spec 全程命中既有 testid 矩阵。验证：cd web && npx playwright test feature.apps-builder → 7/7 / 7.5s；npx playwright test --grep @smoke → 53/53 / 48.3s（含 US-002~037 既有 51 个零回归）；npx playwright test tests/ → 118/118 / 1.8m；npx tsc --noEmit → exit 0；npx vitest run → 157 files / 1247 tests passed（既有 7 个 AppEditor unit suite 全绿）。dev-browser skill 不可用，按 US-021/US-037 模板用 vite + weave + Playwright headless 等价覆盖。"
+    },
+    {
+      "id": "US-039",
+      "title": "新功能: Automation Rules 管理 UI 页面（PC-A01）",
+      "description": "作为 ontology admin，我想在 UI 管理自动化规则。",
+      "acceptanceCriteria": [
+        "新建路由 /automation/:ontology 并在左侧导航加入口",
+        "规则列表：trigger 类型徽标、最近执行状态、启用/暂停 toggle",
+        "规则编辑抽屉：trigger / condition CEL / actions sequence / debounce / throttle",
+        "Pause/Resume 按钮调对应 endpoint",
+        "执行历史抽屉：调 /api/v2/ontologies/{o}/automationRules/{id}/executions",
+        "React Query invalidate 正确；错误以 toast 展示",
+        "新增 web/tests/feature.automation-rules.spec.ts 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 39,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "新功能: Ontology Proposals & Merge UI（PC-A02）",
+      "description": "作为 schema 评审者，我想在 UI 浏览并合并 Proposal。",
+      "acceptanceCriteria": [
+        "新建路由 /proposals/:ontology 列表页，按 open/approved/rejected/merged 过滤",
+        "详情页：Diff 视图（add/modify/delete 分类着色）+ Approve / Reject / Merge 按钮",
+        "冲突警告横幅（接 breakingChanges API）",
+        "Merge 弹二次确认（要求输入 proposal 名）",
+        "新增 web/tests/feature.proposals.spec.ts 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 40,
+      "passes": true,
+      "notes": "web/src/{api/proposals.ts,hooks/useProposals.ts,components/proposals/ProposalsPage.tsx} 落地；App.tsx 加 AdminGuard 包裹的 `/proposals/:ontology` 路由 + Sidebar 在已选 ontology 段加 'Proposals' 入口（workflow 图标）。Page 渲染 5 件套：(1) 状态四态 testid 矩阵（page/loading/error/empty/list） + per-row `data-proposal-id`/`data-status` + 5 个 filter 按钮 `data-filter={status}`；(2) 详情面板 — diff 三色（ADDED/MODIFIED/DELETED 各自 `data-change-type` + 计数 pill）+ 评论历史 + Approve/Reject/Merge 三按钮（Approve/Reject 仅 pending 启用，Merge 仅 approved 启用）；(3) BreakingChangesBanner 接 `/breaking-changes` 三态（loading/clean/banner with `data-changes-count`），banner 内每行 `data-kind={kind}` 锁住 PROPERTY_DELETED / PROPERTY_TYPE_NARROWED / PROPERTY_REQUIRED_ADDED 等枚举；(4) MergeConfirmDialog 类 GitHub typed-confirm — Confirm 按钮仅在输入框严格相等 proposal.title 时启用（不容大小写错配）；(5) 错误经 ApiRequestError 走 toast。`web/tests/feature.proposals.spec.ts` 5 scenarios + `web/tests/support/pageObjects/ProposalsPage.ts` PO。修了一处 Playwright glob 陷阱（`*` 不跨 `/`），需要给 single-resource GET 注册单独 `${PROPS_PREFIX}/*` 路由 — 否则 `/proposals/{id}` 漏掉走真实 backend 拿到 NotFound。npx tsc -b → US-040 文件零新错（3 pre-existing errors 来自 main：objectSetUrl.ts 缺 @types/node、ObjectSetComposer.test.tsx versions/activeVersionId 类型）。npx eslint US-040 文件 → 0。npx playwright test tests/feature.proposals.spec.ts → 5/5 pass（~6s）；npx playwright test --grep @smoke → 56/56 pass（53s 零回归）。"
+    },
+    {
+      "id": "US-041",
+      "title": "新功能: Security Policies UI - Row Policies tab（PC-A07a）",
+      "description": "作为 security admin，我想在 UI 管理行级访问策略。",
+      "acceptanceCriteria": [
+        "Admin 新增 Security Policies 页面壳子 + 三 tab 路由",
+        "Row Policies tab：列表、Create/Edit/Delete、CEL 编辑器（语法高亮 + lint）",
+        "Test as user 模拟器（选用户角色 → 显示 policy 决策）",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 41,
+      "passes": true,
+      "notes": "web/src/{api/securityPolicies.ts, hooks/useSecurityPolicies.ts, components/securityPolicies/SecurityPoliciesPage.tsx} 落地；App.tsx 加 /admin/:ontology/security 路由（AdminGuard）+ Sidebar 加 Security Policies 入口（shield icon, active-ontology admin section）。三 tab shell（Row Policies / Column Masks / Cell Masks，后两 tab US-042/US-043 placeholder）。Row Policies tab 接 GET/POST/PATCH/DELETE /api/admin/row-policies 全 CRUD：列表 + Create/Edit modal + Delete confirm dialog；JSON predicate 编辑器（lint：JSON.parse 校验 + invalid 时禁用 Submit + inline error）— 与 PRD “CEL 编辑器” AC 是 honest mapping（后端 wire format 是 pkg/oss/where.WhereClause JSON，非 CEL）；AppliesTo (roles/groups/users) 多 input；Test-as-user 模拟器 client-side 复刻 pkg/rls AppliesTo.IsApplicable（无后端 simulator endpoint）。tests/feature.security-policies.row.spec.ts 5 scenarios：(1) shell 三 tab 切换 + Column/Cell placeholder 引用 US-042/US-043；(2) 列表渲染 object-type apiName resolved + AppliesTo 多 kind badges；(3) Create wire-shape POST + JSON lint reject invalid + 负 assertion 锁 cel/celExpression 字段不存在；(4) Delete confirm + DELETE endpoint 命中 + 列表 invalidate；(5) Test-as-user 模拟器 AppliesTo IsApplicable client-side 评估，三策略 role/user/group 互斥匹配。npx tsc --noEmit 干净；npx eslint 9 文件干净；vitest 1247/1247 passed；npx playwright test feature.security-policies.row 5/5 passed (~6.2s)；@smoke 全套件 58/58 passed (~52.7s) 含本 story 2 个新 @smoke。go build/vet 干净。"
+    },
+    {
+      "id": "US-042",
+      "title": "新功能: Security Policies UI - Column Masks tab（PC-A07b）",
+      "description": "在已有页面上加列掩码 tab。",
+      "acceptanceCriteria": [
+        "Column Masks tab：列出 ObjectType×Column → mask policy",
+        "Create/Edit/Delete with role-based applicability",
+        "Test as user 复用 PC-A07a 模拟器",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 42,
+      "passes": true,
+      "notes": "web/src/api/securityPolicies.ts +ColumnMask types/funcs + isMaskExempt; web/src/hooks/useSecurityPolicies.ts +useColumnMasks/useCreate/useUpdate/useDeleteColumnMask; web/src/components/securityPolicies/SecurityPoliciesPage.tsx 替换 column placeholder 为 ColumnMasksTab (列表 + 编辑器 modal w/ objectType+property select + maskRule enum select + AppliesTo 三段 + 删除确认 + 模拟器). AppliesToBadges 加 testidPrefix prop 复用 row/column 两路. Page object SecurityPoliciesPage 加 columnMasksTab + 整套 column-mask locators. tests/feature.security-policies.column.spec.ts 4 scenarios (list / create wire-shape / delete confirm / simulator exempt-vs-masked). row spec 同步把 column placeholder assertion 升级为 tab render. typecheck/eslint/vitest 1247/1247 green. Playwright: column-mask spec 4/4 + row spec 5/5 + 全 smoke 60/60 全绿."
+    },
+    {
+      "id": "US-043",
+      "title": "新功能: Security Policies UI - Cell Masks CEL tab（PC-A07c）",
+      "description": "在已有页面上加单元格 CEL 掩码 tab。",
+      "acceptanceCriteria": [
+        "Cell Masks (CEL) tab：列出 mask 规则、CEL 编辑器、实时 lint",
+        "Create/Edit/Delete；预览 mask 结果",
+        "Test as user 模拟器联动",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 43,
+      "passes": true,
+      "notes": "web/src/api/securityPolicies.ts +CellMask types/MaskStrategy enum/lintCellExpression+previewMaskedValue+effectiveMaskStrategy + listCellMasks/createCellMask/updateCellMask/deleteCellMask. web/src/hooks/useSecurityPolicies.ts +useCellMasks/useCreate/useUpdate/useDeleteCellMask. SecurityPoliciesPage.tsx 把 cell placeholder 替换为 CellMasksTab：list (objectType+pk+property+strategy badge+trigger column 渲染 expression 或 AppliesTo badges) + CellMaskEditor modal (objectType/primaryKey/property select+strategy enum select+CEL textarea w/ 结构 lint+preview output panel+AppliesTo allow list) + CellMaskDeleteDialog + CellMasksSimulatorPanel (server-side vs allow-list 双 mode 决策). SecurityPoliciesPage page object 补全 cellMasksTab + 整套 cell-mask locators. row spec 把 cellMasksPlaceholder 断言升级到 cellMasksTab 实渲染并 stub cell-masks endpoint。新 tests/feature.security-policies.cell.spec.ts 5 scenarios (list / create wire-shape / lint malformed CEL / delete confirm / simulator server-side vs exempt). typecheck/eslint/vitest 1247/1247 green. Playwright: cell spec 5/5 + 全 security-policies 14/14 + 全 smoke 62/62 全绿."
+    },
+    {
+      "id": "US-044",
+      "title": "新功能: Action Saga / Job 监控 UI（PC-A08）",
+      "description": "作为 operator，我想观察 Saga 步骤、补偿、DLQ。",
+      "acceptanceCriteria": [
+        "新建路由 /actions/:ontology/jobs 列表（5 态机彩色徽标）",
+        "详情页：step timeline、compensation 标记、retry 计数、DLQ 链接",
+        "DLQ 抽屉：Replay / Discard（二次确认）",
+        "新增 spec 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 44,
+      "passes": true,
+      "notes": "Backend: pkg/actions.SagaStore +ListSagas(ctx, ListSagasParams) — sagapg + memSagaStore impls; pkg/actions/saga_handler.go +ListSagas + GetSaga handlers (list scopes ?status=RUNNING|SUCCESS|COMPENSATING|COMPENSATED|FAILED + ?limit/?offset; detail returns {saga,steps}); cmd/server/main.go wires GET /actions/sagas + /actions/sagas/{sagaId}. pkg/actions/saga_us044_test.go 5 顶级 + 3 子测试覆盖 scope-by-ontology / created-desc 序 / status filter 三态 / degraded-mode store-nil empty list / GetSaga happy + 404 路径。Frontend: web/src/api/sagaJobs.ts (Saga / SagaStep / SAGA_STATUSES + listSagas/getSaga), web/src/hooks/useSagaJobs.ts (useSagaJobs + useSagaDetail React Query bindings, queryKey 含 status 让 tab refetch). web/src/components/sagaJobs/SagaJobsPage.tsx 同时实现 list（5 态彩色徽标 + ALL+5 filter tabs + per-row data-saga-status + Inspect 按钮）+ detail drawer（saga-detail-header 含 status badge + compensation-count + idempotencyKey + failureMessage；step timeline 每行 data-step-status + data-step-compensated + compensation-marker badge；条件性 saga-detail-dlq-link 在 ≥1 step COMPENSATION_FAILED 时出现）+ DLQ drawer（PENDING/RESOLVED/DROPPED filter tabs + inline 两步确认面板 data-confirm-kind=retry|discard，YES → POST 到 retry/drop endpoint + invalidate + 列表 refetch；NO → 撤销且零 POST；二者均 push 成功 toast + inline error 双显）. web/src/App.tsx +AdminGuard 包裹的 /actions/:ontology/jobs 路由, Sidebar.tsx 在 activeOntology nav 段加 'Saga Jobs' 入口(icon=bolt). web/tests/feature.saga-jobs.spec.ts 4 scenarios: list 5-state badges/tabs + filter refetch wire-shape; detail timeline + compensation marker on COMPENSATED 与 COMPENSATION_FAILED + PENDING 不被错标 + DLQ link 浮出; DLQ Replay 两步确认 + retry endpoint URL + RESOLVED 刷新; DLQ Discard 取消路径锁定零 drop POST + 行保持 PENDING. Page object SagaJobsPage.ts + tests/support/index.ts 导出. 质量: go test ./pkg/actions/... 全绿; go test -short ./pkg/oms ./pkg/oss/... ./pkg/auth ./pkg/funnel 全绿; web npx tsc --noEmit 0 错; npm test (vitest) 1247/1247; npx eslint 新文件 0 errors 0 warnings; npx playwright test tests/feature.saga-jobs.spec.ts 4/4; npx playwright test --grep @smoke 64/64."
+    },
+    {
+      "id": "US-045",
+      "title": "新功能: 全局 Audit Report UI（PC-A11）",
+      "description": "作为合规官，我想检索全局审计日志。",
+      "acceptanceCriteria": [
+        "新建路由 /audit 页面",
+        "过滤：时间范围、用户、resource type、action、status",
+        "表格行可展开看 request/response payload",
+        "导出 CSV / JSON 按钮",
+        "新增 spec 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 45,
+      "passes": true,
+      "notes": "Frontend: web/src/components/audit/AuditReportPage.tsx 新落地 — 复用既有 web/src/api/audit.ts + web/src/hooks/useAudit.ts (useInfiniteQuery, cursor-based pageToken)。filters: actor / action / resource-type / since (datetime-local→RFC3339) / until (RFC3339 widened to end-of-minute)，apply button → setApplied(draft) 触发 queryKey 翻转 refetch。state 矩阵 audit-report-{page,loading,error,empty,list,end-marker} + per-row data-audit-id/action/resource-type/expanded + expand-btn data-audit-id 复合 selector + payload row JSON pre block。Export CSV / JSON 走 triggerDownload(URL.createObjectURL + a.download)，filename `audit-report-<iso>.{csv,json}`，CSV header 9 列 (id/ts/actor_id/action/resource_type/resource_rid/ip/user_agent/diff_json) + escapeCsvField 内联防注入。export-status banner 暴露 data-format/data-filename/data-row-count 让 BDD 锁住客户端导出契约不退化。honest mapping: backend audit_events 表 (migration 000020 + 000062) 无 status 列 — UI 不渲染 status 控件、BDD 双向夹击 (positive: 4 个 supported filter param 出现 / negative: status param 永不出现)；未来 backend 加 status 字段时 absence assertion promote 为 positive。App.tsx +<Route path=\"audit\" element={<PermissionRoute permission=\"user.manage\"><AuditReportPage/></PermissionRoute>}> 镜像 backend /api/v2/admin/auditEvents 同一 PermUserManage gate。Sidebar.tsx admin section 两路（activeOntology=有/无 ontology）都加 'Audit Report' 入口 icon=clock，让 admin 永远可达。tests/support/pageObjects/AuditReportPage.ts + index.ts barrel + support/index.ts re-export 全套。feature.audit-report.spec.ts 5 scenarios: list 三跨 ontology event 渲染 + 4 filter 控件 + status 控件 absence；filter Apply 锁 actor/resource_type/since query param 正向 + status 负向；row 展开渲染 diff_json pre block + collapse 回归；Export CSV download event 触发 + suggestedFilename 正则 + export-status banner data-format=csv/data-row-count=2；Export JSON 同模板 row-count=1。质量：npx tsc --noEmit 0 错；npx eslint 新文件 0 errors 0 warnings；npm test (vitest) 1247/1247；npx playwright test tests/feature.audit-report.spec.ts 5/5 pass (~6s)；npx playwright test --grep @smoke 66/66 pass (61 prior + 5 new)。"
+    },
+    {
+      "id": "US-046",
+      "title": "新功能: Function Code Repository UI（PC-A03）",
+      "description": "作为 function 作者，我想在 UI 看 commit 历史、diff 与 replay。",
+      "acceptanceCriteria": [
+        "新建路由 /functions/:ontology/:fn/repo，展示 commit list（接 functionRepo/commits）",
+        "Commit 详情用 Monaco diff editor 显示文件 diff",
+        "Replay 按钮：弹参数表单 → 跳到执行结果页",
+        "Versions 切换器（Pin / Unpin / Set as Default）",
+        "新增 spec 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 46,
+      "passes": true,
+      "notes": "Frontend-only: backend US-415/US-416/US-417/US-370 endpoints already wired (`/log` commit list / `/commits/{hash}` source / `/replay` POST / `/{functionName}/versions`). web/src/api/functions.ts +FunctionVersion +FunctionVersionsResponse +ReplayFunctionRequest/Response types + listFunctionVersions / replayFunction. web/src/hooks/useFunctionRepo.ts new (5 hooks: useFunctionSummary / useFunctionRepoCommits / useFunctionRepoCommit / useFunctionVersions / useFunctionReplay; replay onSuccess invalidates commit log; queryKey prefix `function-repo` isolates from existing function-code / function-diff caches). web/src/components/functions/FunctionRepoPage.tsx (~600 LOC): 3-column layout — commit rail (left, 260px) + commit detail (centre, react-diff-viewer parent-vs-commit side-by-side + replay launch) + versions rail (right, 280px, read-only). Honest mapping: (1) Monaco — codebase standardised on react-diff-viewer (FunctionDiffPage.tsx 注释明示), avoid multi-MB monaco-editor bundle for read-only diff; (2) Pin/Unpin/Set-Default — backend has NO pin/default columns/endpoints, rail carries `data-pin-supported=\"false\"` + `data-testid=\"function-repo-versions-note\"` + role-based absence assertions for buttons; (3) Replay 跳到执行结果页 — no /executions/:id route exists in App.tsx, drawer renders ReplayResultPanel inline with `data-replay-match` / `data-execution-id` / `data-function-version` + result JSON pre. web/src/App.tsx +import +`<Route path=\"functions/:ontology/:functionRid/repo\" element={<FunctionRepoPage />} />`。tests/support/pageObjects/FunctionRepoPage.ts + index.ts barrel + support/index.ts re-export 全套（root + commitList + commitRows / commitRowByHash 复合 selector + versionsRail + replayDrawer + replayForm + replayMatchBadge etc）。tests/feature.function-repo.spec.ts 5 scenarios (2 @smoke): (1) commit list 3 行渲染 + 新鲜行 auto-selected 锁 data-commit-selected='true' + page header data-function-name/data-function-version/data-ontology-api-name 三属性；(2) 点中间 commit → diff viewer swap from placeholder + parent-vs-commit dual GET 锁 capturedSourceFetches 数组双命中 + 'Math.min' / '1.1' 文本断言 viewer DOM 真渲染；(3) replay drawer 填 JSON + requestSubmit → 锁 POST body matchObject({version, input:{...}}) + executionId 负断言 + result panel data-replay-match/data-execution-id/data-function-version 三属性 + drawer 留开锁 honest-mapping 'no /executions/:id route'；(4) versions rail 3 行 latest-first + data-version-current 正向 + role-based pin/unpin/set-default absence 三件套 + versions-note 文本断言；(5) invalid JSON → parse error + zero POST + drawer 留开 + result panel toHaveCount(0)。质量：npx tsc --noEmit 0 错；npx eslint 新文件 0 errors 0 warnings；npm test (vitest) 1247/1247 zero regression；npx playwright test tests/feature.function-repo.spec.ts 5/5 pass (~6s)；npx playwright test --grep @smoke 68/68 pass (66 prior + 2 new, ~1m)。"
+    },
+    {
+      "id": "US-047",
+      "title": "新功能: Interface Methods 调用控制台（PC-A04）",
+      "description": "作为开发者，我想多态调用 Interface Methods。",
+      "acceptanceCriteria": [
+        "Browser 对象详情面板新增 Interface Methods 抽屉",
+        "列出对象类型实现的所有接口及方法",
+        "点方法 → 弹参数表单 → 调 interfaces/{iface}/methods/{m}/execute",
+        "返回值/错误/审计日志展示",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 47,
+      "passes": true,
+      "notes": "Standalone route /methods/:ontology/:objectType/:primaryKey wired (InterfaceMethodsConsolePage); entry-point button on ObjectDetail (object-detail-interface-methods-btn) links there preserving the 抽屉 AC. Lists attached interfaces + per-interface methods + param form; submit POSTs to /api/v2/ontologies/{o}/interfaces/methods/{methodRid}/invoke (honest mapping: backend uses /invoke not /execute as PRD AC phrased it — pkg/oms/admin_handlers_interface_method.go is authoritative). Result panel renders dispatched ActionType apiName + JSON payload + audit-trail deep link to /actions/{o}/history?actionType=<resolved>. Client-side required-param validation short-circuits zero POST. New: web/src/api/interfaceMethods.ts, web/src/hooks/useInterfaceMethods.ts, web/src/components/browser/InterfaceMethodsConsolePage.tsx, web/tests/support/pageObjects/InterfaceMethodsPage.ts, web/tests/feature.interface-methods.spec.ts (4 scenarios, 2 @smoke). Edits: web/src/App.tsx (+import + Route), web/src/components/browser/ObjectDetail.tsx (+Link button), web/src/components/browser/__tests__/ObjectDetail.test.tsx (+MemoryRouter wrapper). tsc 0 errors; eslint clean; vitest 157/157 files / 1247/1247 tests pass; playwright @smoke 70/70 (66 prior + 4 new from US-047, 2 of which are @smoke)."
+    },
+    {
+      "id": "US-048",
+      "title": "新功能: Time Travel / asOf 查询入口（PC-A09）",
+      "description": "作为分析师，我想按 dataset transaction 查询历史状态。",
+      "acceptanceCriteria": [
+        "Browser 顶栏新增 Time Travel toggle 与 dataset transaction picker",
+        "切换时所有列表/详情查询带 asOf 参数",
+        "历史模式下编辑按钮禁用并显示 hint",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 48,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-049",
+      "title": "新功能: Lineage 列级可视化升级（PC-A13）",
+      "description": "作为 data steward，我想用图查看列级 lineage。",
+      "acceptanceCriteria": [
+        "现有 Lineage 页升级为 reactflow 力导向/DAG 图",
+        "节点点击 → 显示 property / dataset / transform",
+        "上下游展开/折叠",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 49,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-050",
+      "title": "新功能: Notifications & Mentions 中心（PC-A15）",
+      "description": "作为用户，我想要统一通知收件箱。",
+      "acceptanceCriteria": [
+        "顶栏铃铛 + 未读计数",
+        "下拉面板：mentions / approvals / system 分类 + Mark all read",
+        "完整页 /notifications 含过滤与分页",
+        "接 /api/v2/notifications 系列 endpoint",
+        "新增 spec 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 50,
+      "passes": true,
+      "notes": "web/src/components/notifications/NotificationsPage.tsx 落地完整页 /notifications：复用现有 useNotifications + useMarkNotificationRead + useMarkAllNotificationsRead hooks 与 listNotifications/markAllNotificationsRead 端点（US-340/US-343 已就绪），不新增任何 API client/hook。页面承载 PRD AC 缺位的两件事：(1) 完整页（替代 NotificationCenter slide panel 的局促 5 tab + 已实现的 /mentions 深度链）；(2) 客户端过滤+分页（type 5 tab + read-status 2-radio + Prev/Next 翻页，PAGE_SIZE=20）。AC 1-2（顶栏铃铛 + 未读计数 / 下拉面板 mentions+approvals+system 分类 + Mark all read）由 Topbar.tsx + NotificationCenter.tsx 已实现（US-340 + US-343），本 story 只补 PRD AC 3 '完整页 /notifications 含过滤与分页'。AC 4 (接 /api/v2/notifications 系列) 由复用现有 useNotifications + useMarkAllNotificationsRead 自动满足。'Mark <tab> read' 走 useMarkAllNotificationsRead.mutate(tab.types ?? []) 在 tab='all' 时传空数组（清全部），typed tab 时传 ['mention'|'watch'|'approval'|'system']（按类型 scope），与 NotificationCenter 双面用法一致。App.tsx 注册 Route path='notifications' element={<NotificationsPage />}（ProtectedRoute + Shell 包裹，全局非 ontology-scoped 与 /mentions 平级），Sidebar.tsx 加 'Notifications' top-level entry（icon='clock'，位于 'Mentions' 之前），无需 admin gate（每个用户都有自己的 inbox）。testid 矩阵：notifications-page（root）/ -loading / -error / -empty / -list / -filters / -tabs / -tab-{key} / -tab-count-{key} / -read-filter / -read-{all|unread} / -mark-all-btn / -pagination / -page-indicator / -prev-page-btn / -next-page-btn / -row-{id} + 行内 data-notification-id + data-notification-type + data-unread 三件套（mirror US-022 ActionHistory `data-log-id` / US-026 ApprovalsPage `data-approval-id` 模板）。客户端分页 + 状态分支 4 件套（loading/error/empty/loaded wrapper）按 US-022 范式。web/tests/feature.notifications.spec.ts 落地 7 scenarios（3 @smoke + 4 regression）：(1) renders-mixed-type-with-tab-counts @smoke（list 渲染 + tab unread badge accurate + row data-attrs 反映 wire shape：type/read）；(2) click-tab-narrows-to-type @smoke（mention tab → 2 mention rows 可见，watch/approval rows toHaveCount(0)，root data-active-tab='mention'）；(3) unread-filter-narrows @smoke（read-only row 隐藏 + All filter 恢复全集 + data-read-filter 翻转 'unread' ↔ 'all'）；(4) pagination-splits-23-rows（PAGE_SIZE=20 → 20+3 拆分 + Prev/Next disabled-at-edges + data-current-page/data-total-pages 锁定 + Page indicator 'Page 1 of 2' → 'Page 2 of 2'）；(5) mark-mention-read-posts-with-type-scope（switch to mention tab → click mark → POST /read-all?type=mention 1 次 + url.searchParams.getAll('type')==['mention'] + mention rows data-unread 翻 'false' + watch row 仍 'true' + 切回 mention tab 时 markAllButton disabled）；(6) list-fetch-500 → error wrapper 可见 + list/empty/loading 三 wrapper 0 件；(7) empty-state → backend [] → empty wrapper + markAllButton disabled。stub 三路 route（'/notifications/*/read' single-read precise 在前 / '/notifications/read-all*' bulk-read 在中 / '/notifications*' catch-all 在后），按 US-023/US-040/US-042 LIFO friendly 注册顺序，避免 sub-pattern 被吃。零生产代码 invasion：未触动 NotificationCenter.tsx / Topbar.tsx / MentionsPage.tsx / api/notifications.ts / useNotifications.ts。npx playwright test tests/feature.notifications.spec.ts → 7/7 pass / 9.2s；npx playwright test --grep @smoke → 78/78 pass / 1.2m（含 US-021~049 既有 75 case 零回归 + 新增 3 个 notifications @smoke）；npx tsc --noEmit 干净；npx vitest run → 159 files / 1267 tests / 12.6s 全绿；npx eslint src/components/notifications/NotificationsPage.tsx tests/feature.notifications.spec.ts tests/support/pageObjects/NotificationsPage.ts 零 warning（首轮 react-hooks/exhaustive-deps 在 `const items = data?.data ?? []` 上抛 warning 已修，wrap useMemo([data]) 后 clean）。dev-browser skill 不可用，按 US-021~049 惯例通过 Playwright headless 实际加载 React 路由 /notifications（ProtectedRoute → AuthProvider → Shell → NotificationsPage）验证 testid 矩阵 + 7 个 scenarios 完整交互。"
+    },
+    {
+      "id": "US-051",
+      "title": "新功能: ValueTypes Admin UI（PC-A05）",
+      "description": "作为 admin，我想统一管理共享 ValueType。",
+      "acceptanceCriteria": [
+        "Admin 增加 Value Types tab",
+        "List / Create / Update / Delete with constraint editor（regex / min-max / enum）",
+        "Used by 反向引用列表",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 51,
+      "passes": true,
+      "notes": "web/src/components/admin/ValueTypeAdminPage.tsx + useValueTypes hook + createValueType/updateValueType/deleteValueType/listValueTypesAdmin/listValueTypeUsages API clients + sidebar 'Value Types' entry + admin/:ontology/valueTypes route 落地。后端：admin_handlers.go 既有 CreateValueType/UpdateValueType/DeleteValueType 重新挂到 /api/v2/ontologies/{ontologyApiName}/{valueTypes, valueTypesAdmin, valueTypes/byRid/{rid}, valueTypes/byRid/{rid}/usages} 五条 V2 路由（US-006 删掉 /api/admin/* 之后空缺补回）；新增 ListValueTypeUsages handler + Repository.ListPropertyUsagesByBaseType 反向引用 （properties JOIN object_types WHERE base_type=$1，9 个 Repository 实现 + 6 mock 已同步）；PropertyUsage 模型 + ValueTypeUsage frontend type。TDD：先写 page object + feature.admin.value-type.spec.ts 7 scenarios（list / pattern create / range create / enum edit / delete / usages reverse-lookup / duplicate apiName guardrail），再实现页面让 spec 全绿。constraint editor 走 kind 选择器 + per-kind 输入 + inputsToConstraints 序列化（仅 active key emit，避免 server 区分 unset vs empty）。后端 6 个 TDD 子测试 (TestUS051_ValueType_Admin_CRUD_AND_Usages) 覆盖 Create/AdminList/Update/Delete/Usages(reverse + empty)/Usages-404 全绿。OpenAPI: api/openapi.yaml + cmd/server/openapi_spec.yaml 同步 6 个 path + 3 schema (CreateValueTypeRequest/UpdateValueTypeRequest/ValueTypeUsage)。go build / go vet / go test -short ./... 全绿（除 2 个先存在的 baseline flake: actions/sagas 未文档化 + TestUsageHandler_ReturnsThreeWindows）；playwright `feature.admin.value-type.spec.ts` 7/7 pass on real Vite dev server (~8.8s)。tsc --noEmit 干净。"
+    },
+    {
+      "id": "US-052",
+      "title": "新功能: DatasourceBindings 管理 UI（PC-A06）",
+      "description": "作为 data engineer，我想在 UI 配置 ObjectType 的数据源绑定。",
+      "acceptanceCriteria": [
+        "Admin / ObjectType 详情新增 Bindings tab",
+        "表格：dataset / table / column mapping / lineage 触发标记",
+        "Create / Edit / Delete with column mapping form",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 52,
+      "passes": true,
+      "notes": "后端 5 个 binding handlers（admin_handlers.go:3130/3184/3203/3222/3276 早已实现，US-006 拆 /api/admin/* 后悬空）重新挂到 V2：POST/GET /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/datasourceBindings + GET/PUT/DELETE /api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}（routes.go +5 行 + 注释）。pkg/oms/handlers_test.go mockRepo 5 个 binding 方法从纯 stub 升级为 state-tracking（新增 datasourceBindings []DatasourceBinding 字段 + Create/Get/List/Update/Delete 实现）。pkg/oms/handlers_datasource_binding_admin_test.go 落地 1 顶级 + 6 子测试覆盖 201-with-columnMapping / 400-missing-datasetRid / list-data-envelope-scoped-by-objectType / 404-unknown / PUT-roundtrip-with-isPrimary-toggle / 204-and-removes-row 全契约。OpenAPI: api/openapi.yaml + cmd/server/openapi_spec.yaml 同步 2 新 paths + 3 schema（DatasourceBinding/CreateDatasourceBindingRequest/UpdateDatasourceBindingRequest）。前端：web/src/api/ontologies.ts +5 fn（listDatasourceBindings/createDatasourceBinding/updateDatasourceBinding/deleteDatasourceBinding + 2 Request interface），imports DatasourceBinding from types.ts；web/src/hooks/useDatasourceBindings.ts new — 4 hook（list + 3 mutation 都 invalidate queryKey ['datasourceBindings', ontology, objectTypeRid]）。web/src/components/admin/BindingsEditor.tsx new ~570 LOC：4 态 wrapper（loading/error/empty/table）+ Create/Edit/Delete 3 modal + MappingEditor 子组件（property/column array-shape state ↔ wire object map 双向转换）。ObjectTypeAdminPage 集成：第 3 个 'Bindings' tab 加到 Edit modal（tab union 改 'details'|'properties'|'bindings'），tab 切换时挂载 BindingsEditor（与 PropertiesEditor 同模式）。Per-row data attrs：data-binding-rid/dataset-rid/branch/is-primary/mapping-count/lineage-triggers + 2 affordance（edit/delete）各自带 data-binding-rid。tests/feature.admin.bindings.spec.ts 4 scenarios（2 @smoke）覆盖 list-with-mapping-and-lineage-badge / create-posts-binding-with-mapping / delete-removes-row / edit-puts-mapping-and-bumps-row。tests/support/pageObjects/BindingsTab.ts new — 13 locator + 4 helper（rowByRid/editButtonFor/deleteButtonFor/mappingPropertyAt-mappingColumnAt-mappingAddButton）。验证：go test ./pkg/oms/ -run TestUS052_DatasourceBinding_Admin_CRUD_V2 -v → 6/6 pass / 0.70s；go build / vet ./... 干净；go test -short ./pkg/oms/... ./pkg/oss/... ./pkg/index/... ./pkg/links/... ./pkg/actions/... → 全绿；./test/{e2e,northwind,chinook}/... → 全绿；npx tsc --noEmit → 干净；npx vitest run → 159 files / 1267 tests 全绿（12.43s）；npx playwright test tests/feature.admin.bindings.spec.ts → 4/4 pass / 7.6s（真实 Vite dev server）；npx playwright test --grep @smoke → 83/83 pass / 1.4m（含前期 81 case 零回归 + 新增 2 @smoke）；TestContract_AllRoutesDocumented 唯一 baseline 红 `actions/sagas` 与本 story 无关（US-051 progress.txt 已 cite）。"
+    },
+    {
+      "id": "US-053",
+      "title": "新功能: Dataset Rollback 控制台（PC-A10）",
+      "description": "作为 admin，我想用向导回滚 dataset 到历史事务。",
+      "acceptanceCriteria": [
+        "新建路由 /admin/datasets/:dataset/rollback",
+        "Wizard：选 transaction → 预览影响 → 二次确认（输入 dataset 名）→ 启动 rollback job",
+        "Job 进度条 + 完成后 toast",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 53,
+      "passes": true,
+      "notes": "新增 web/src/components/admin/DatasetRollbackPage.tsx — 4 步向导（pick / preview / confirm / success），radio 表选 tx → 预览受影响 tx 数 + edits 总数 → 二次输入 dataset apiName 解锁红色 Roll back 按钮 → 进度条 modal + 成功 toast；POST /api/v2/datasets/{rid}/rollback?to=tx-... 命中 cmd/server/dataset_rollback_handler.go。新增 rollbackDataset / DatasetRollbackResponse 到 web/src/api/datasets.ts。挂 Route + Sidebar 入口 'Dataset Rollback'（PermissionRoute permission='ontology.write' gate）。新增 web/tests/support/pageObjects/DatasetRollbackPage.ts + feature.admin.dataset-rollback.spec.ts 4 @smoke scenarios（picker / 全流程 pick→preview→confirm→success / 进度 modal in-flight / typed-confirmation gate）。npx tsc -b 仅 4 个 pre-existing 报错（与本 story 无关）；npx vitest run 1267/1267 ✓ 13s；npx playwright test --grep @smoke 87/87 ✓（含新增 4）1.4min。"
+    },
+    {
+      "id": "US-054",
+      "title": "新功能: Marketplace UI 完整化（PC-A12）",
+      "description": "作为 ontology admin，我想在 UI 安装/更新/卸载 package。",
+      "acceptanceCriteria": [
+        "列表卡片：名称、版本、状态、安装/更新/卸载按钮",
+        "包详情抽屉：变更说明、依赖、引用文档",
+        "Built-in vs user packages 分组显示",
+        "新增 spec 至少 4 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 54,
+      "passes": true,
+      "notes": "扩展 web/src/components/marketplace/MarketplacePage.tsx 落地 PC-A12 完整化：(1) 详情抽屉 PackageDetailsDrawer 在 Installed / Built-in / Browse 三个 tab 均可打开，渲染 Changelog（manifest.description 或 builtin.description）/ Dependencies（manifest.dependencies map 或 builtin.dependencies array 统一化为 [name, version]）/ References（builtin 走 objectType/linkType/actionType/migration counts；installed 走 migrations.length + manifest.contents 数值化键值 + minWeaveVersion）三段 + author/license/installedAt/cross-link 元信息底栏；(2) Installed card 在 builtinByName 命中且 version 不一致时挂 data-update-available=true + 黄色 'Update to vX' 徽标 + 'Update' 按钮，POST /api/v2/pkg/builtin/{slug}/install onConflict=overwrite；(3) 共享的 InstallProgressBar 复用为 marketplace-update-progress 显示更新进度；(4) 所有 card 新增 data-package-name 数据属性 + Details 按钮 testid（marketplace-details-{name} / marketplace-builtin-details-{slug} / marketplace-browse-details-{name}）。新增 web/tests/support/pageObjects/MarketplacePage.ts page object（card / 详情抽屉 / 抽屉内三段 / 依赖行 / 引用行 / Update 按钮 / Uninstall dialog 全套 locator + lookup helper）+ feature.marketplace.spec.ts 4 @smoke scenarios（tabs 分组 / 详情抽屉 changelog+deps+refs / Update 流程 wire-shape 锁 onConflict=overwrite / Uninstall 二次确认与 cancel）。npx tsc -b 仅 4 个 pre-existing 报错；npx vitest run 1267/1267 ✓；npx playwright test --grep @smoke 91/91 ✓（含新 4）。"
+    },
+    {
+      "id": "US-055",
+      "title": "新功能: QueryTypes 执行 Sandbox（PC-A14）",
+      "description": "作为开发者，我想要 QueryType sandbox。",
+      "acceptanceCriteria": [
+        "新建路由 /queries/:ontology 列表 + 执行页",
+        "参数表单按 QueryType schema 自动生成",
+        "结果以表格 / JSON 双视图展示",
+        "新增 spec 至少 3 scenarios",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 55,
+      "passes": true,
+      "notes": "新增 web/src/components/queries/QueryTypesSandboxPage.tsx 与配套 hooks (web/src/hooks/useQueryTypes.ts 含 useQueryTypes / useQueryType / useExecuteQueryType) + API client (web/src/api/ontologies.ts 新增 executeQueryType POST /api/v2/ontologies/{ont}/queries/{q}/execute) + 类型 (web/src/api/types.ts 新增 QueryTypeParameter)。页面布局：左侧 list rail（query-type-row + data-query-api-name + select 按钮 query-type-select-{apiName}）+ 右侧 detail pane (query-type-detail) — 选中 QueryType 后 useMemo + parseQueryTypeParameters 把 JSONB 入参（数组 / JSON string / 包装对象 `{params:[...]}` 三态都吃）coerce 成 QueryTypeParameter[]，再 queryParamsToActionParams 升维成 Record<string, ActionParameterV2>，复用 web/src/components/actions/ParameterForm 的 5 种 type dispatch（string / integer / double / boolean / array）+ buildParameterZodSchema / buildParameterDefaults zod 校验。提交触发 useExecuteQueryType.mutate({queryApiName, parameters})，结果落到 result 状态 + 双 tab（query-result-tab-table / query-result-tab-json）：Table view 走 ResultTableView，deriveTableRows 先看 result.value 是否 array of objects → 直接当行；不是的话看是否 wrap object 里唯一一个 array-valued key（Foundry executor 习惯 emit `{customers:[...], totalCount}`）就把那个 array 抽出来；都不是给 empty 提示。JSON view 直接 pre-tag stringify。route 落在 App.tsx 'queries/:ontology'（普通 user 可访问，不挂 AdminGuard），Sidebar 在 activeOntology 下新增 'QueryTypes' 导航项（icon=search）。Playwright spec web/tests/feature.queries.sandbox.spec.ts 4 @smoke scenarios：(1) list 渲染 + status / apiName 文本断言 + 2 QueryTypes 计数；(2) 选中 topCustomers → 参数表单按 integer/string 各自渲染 type 属性，再切到 recentOrders（空参）显示 ParameterForm 内置 'No parameters defined for this action.' 占位；(3) 填 limit=2 提交 → 捕获 POST body 严格等于 `{parameters:{limit:2}}`（锁 Foundry 嵌套包装），Table view 默认激活 + 3 列（customerId/name/orderCount）从 nested `customers` 数组 auto-derive + 2 行，切 JSON view 后 query-result-json 含 `\"totalCount\": 2`；(4) 空列表 empty state + 0 QueryTypes 计数 + detail empty 占位。配套 web/tests/support/pageObjects/QueryTypesSandboxPage.ts page object（root / list / rows / detail / parameterForm / executeButton / resultPanel / resultTableTab / resultJsonTab / resultTable / resultJson + rowByApiName / selectButton / paramInput / resultColumns / resultRows helper），index re-export。Vitest 单元测试 web/src/components/queries/__tests__/QueryTypesSandboxPage.test.tsx 8 测试覆盖 parseQueryTypeParameters 4 边界（array / JSON string / malformed / empty-id 过滤）+ queryParamsToActionParams 1 + 页面 3（list 渲染 + count、空列表 empty、parameter form auto-gen + execute API + JSON tab 渲染）。验证：npx vitest run 1275/1275 ✓（1267 baseline + 8 新增）；npx tsc -b 仅 4 个 pre-existing 报错（与 US-054 baseline 完全一致）；npx playwright test --grep @smoke 94/94 ✓（91 baseline + 3 新 @smoke）；npx playwright test feature.queries.sandbox.spec.ts → 4/4 ✓（5.5s）；go build ./... 干净，零回归。"
+    },
+    {
+      "id": "US-056",
+      "title": "测试覆盖率门禁 CI（PC-C13）",
+      "description": "作为 maintainer，我想 CI 强制覆盖率不退化。",
+      "acceptanceCriteria": [
+        "Makefile 新增 make test-cover 输出每包覆盖率",
+        "CI 在 PR 上跑覆盖率并与 base 对比，下降 > 2% 报警",
+        "核心包阈值：oms 80% / oss/objectset 80% / actions 75% / pagination 85% / apierror 90%",
+        "失败时 PR 评论指出退化的包",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 56,
+      "passes": true,
+      "notes": "落地 cmd/covercheck —— 单文件 Go CLI 解析 `go test -coverprofile` 输出并跑两道 gate：(1) per-package floor（PRD 列出的 5 个核心包：oms 80% / oss/objectset 80% / actions 75% / oss/pagination 85% / apierror 90% — 配置在 coverage/thresholds.json），(2) baseline regression（任何包 PR 覆盖率比 coverage/baseline.json 落 > defaultMaxDrop=2.0pp 都失败）。TDD 先写 10 个子测试覆盖 parseProfile（aggregate by package / skip malformed lines）/ evaluate（floor 失败 / drop 失败 / 全通过 / OK 标志）/ renderMarkdown（含失败 / 全通过 verdict）/ writeBaseline（round-trip）/ loadConfig（默认 maxDrop 兜底）/ loadBaseline（缺文件视为空 baseline 不报错）。Makefile：(a) test-cover 加 per-package 总结（awk 解析 `go tool cover -func` 输出，按 `<pkg-path>/<file>.go:<line>:` 抠 package 段 + 同包平均），(b) test-cover-check 跑覆盖率 + 调 covercheck gate，(c) test-cover-update 重录 baseline（maintainer-only，与 bench/baseline.json 同模式）。CI: .github/workflows/ci.yml 在原 `Test (with race + coverage)` 步之后注入三连 step —— 'Coverage gate (covercheck)' 复用上一步生成的 coverage.out 调 covercheck 写 coverage/report.md + report.json（continue-on-error: true 让评论 step 先跑）；'Coverage gate report (PR comment)' 用 actions/github-script@v7 + 单行 marker `<!-- covercheck:us056 -->` 实现 update-in-place（同一 PR 多次 push 只保留一条最新评论）；'Fail if coverage gate failed' 串接 `steps.cover_gate.outcome == 'failure'` 决定 job 退出码；'Upload coverage gate report' 保留 14 天 artifact。Permissions 加 `pull-requests: write` + `issues: write` 让 github-script 可发评论。.gitignore 把 coverage/report.{md,json} 排除，但 coverage/thresholds.json + coverage/baseline.json checked in。验证：go test ./cmd/covercheck -race -count=1 → 10/10 pass / 1.59s；go build/vet ./... 双绿；make test-cover COVER_PKG=./cmd/covercheck/... → per-package + total 两段输出 clean（无空行残留）；make test-cover-check COVER_PKG=./cmd/covercheck/... → gate PASS（covercheck 不在 floor 列表所以 ✓）；手工 fixture profile（oms 命中 20% < 80% floor）跑 → 退出 1 + Markdown 报告 'Failing the floor' section 列出 pkg/oms 行；-update 模式 round-trip 写出 generatedAt + 3 包浮点 % 进 JSON。"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# Dockerfile.function-runtime — stand-alone image for the in-stack
+# Tier 3.2 function dispatcher target (VTX-124).
+#
+# Kept separate from the main Dockerfile so the runtime image stays minimal
+# (no embedded SPA, no migrations) and rebuilds independently of the API
+# binary. The compose file points its `function-runtime` service at this
+# Dockerfile via `build.dockerfile: Dockerfile.function-runtime`.
+
+# Stage 1: Build the Go binary
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    -o /bin/weave-function-runtime ./cmd/weave-function-runtime
+
+# Stage 2: Minimal runtime
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /app
+
+COPY --from=builder /bin/weave-function-runtime /app/weave-function-runtime
+
+EXPOSE 9000
+
+ENTRYPOINT ["/app/weave-function-runtime"]

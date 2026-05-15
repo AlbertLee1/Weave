@@ -68,6 +68,89 @@ func TestParseProfile_SkipsMalformedLines(t *testing.T) {
 	}
 }
 
+// VTX-122: parseProfile must support an exclude-files filter so packages
+// that intentionally split unit-testable code from integration-only PG
+// implementations can keep one package floor while ignoring the PG files.
+// The filter matches by path suffix (so "pkg/scenarios/pg_repo.go" lands
+// the right line regardless of the module-prefix in the cover output).
+func TestParseProfile_ExcludeFilesDropsMatchingLines(t *testing.T) {
+	in := `mode: atomic
+github.com/liyang/weave/pkg/scenarios/archive.go:1.1,5.2 4 4
+github.com/liyang/weave/pkg/scenarios/pg_repo.go:1.1,10.2 8 0
+github.com/liyang/weave/pkg/scenarios/pg_repo.go:12.1,20.2 6 0
+`
+	cov, err := parseProfileWithExcludes(strings.NewReader(in), []string{"pkg/scenarios/pg_repo.go"})
+	if err != nil {
+		t.Fatalf("parseProfileWithExcludes: %v", err)
+	}
+	pc, ok := cov["github.com/liyang/weave/pkg/scenarios"]
+	if !ok {
+		t.Fatalf("expected pkg scenarios in %v", cov)
+	}
+	if pc.Total != 4 || pc.Covered != 4 {
+		t.Fatalf("expected 4/4 statements after excluding pg_repo.go, got %d/%d", pc.Covered, pc.Total)
+	}
+	if pct := round1(pc.Percent()); pct != 100.0 {
+		t.Errorf("expected 100%% after exclusion, got %v", pct)
+	}
+}
+
+// Suffix matching means a short exclude like "pg_repo.go" applies across
+// every package that shipped a file with that name — which is exactly the
+// shape the PG-impl files take across pkg/scenarios and pkg/vertex/graphsvc.
+func TestParseProfile_ExcludeFilesSuffixMatchesAcrossPackages(t *testing.T) {
+	in := `mode: atomic
+github.com/liyang/weave/pkg/scenarios/pg_repo.go:1.1,5.2 4 0
+github.com/liyang/weave/pkg/vertex/graphsvc/pg_repo.go:1.1,5.2 4 0
+github.com/liyang/weave/pkg/vertex/graphsvc/mem_repo.go:1.1,5.2 4 4
+`
+	cov, err := parseProfileWithExcludes(strings.NewReader(in), []string{"pg_repo.go"})
+	if err != nil {
+		t.Fatalf("parseProfileWithExcludes: %v", err)
+	}
+	if _, ok := cov["github.com/liyang/weave/pkg/scenarios"]; ok {
+		t.Errorf("scenarios should have no remaining lines after excluding pg_repo.go")
+	}
+	pc := cov["github.com/liyang/weave/pkg/vertex/graphsvc"]
+	if pc == nil || pc.Total != 4 || pc.Covered != 4 {
+		t.Fatalf("graphsvc: expected 4/4 after exclusion, got %+v", pc)
+	}
+}
+
+// An empty exclude list must behave identically to parseProfile — the
+// filter is opt-in and must not silently drop lines for callers that
+// don't configure it.
+func TestParseProfile_EmptyExcludesIsIdentity(t *testing.T) {
+	cov, err := parseProfileWithExcludes(strings.NewReader(sampleProfile), nil)
+	if err != nil {
+		t.Fatalf("parseProfileWithExcludes: %v", err)
+	}
+	base, err := parseProfile(strings.NewReader(sampleProfile))
+	if err != nil {
+		t.Fatalf("parseProfile: %v", err)
+	}
+	if len(cov) != len(base) {
+		t.Fatalf("len mismatch: got %d, want %d", len(cov), len(base))
+	}
+	for k, v := range base {
+		if got := cov[k]; got == nil || got.Covered != v.Covered || got.Total != v.Total {
+			t.Errorf("pkg %s: got %+v, want %+v", k, got, v)
+		}
+	}
+}
+
+func TestLoadConfig_ExcludeFilesParsed(t *testing.T) {
+	body := `{"floor":{"github.com/liyang/weave/pkg/scenarios":80.0},"excludeFiles":["pg_repo.go","pg_store.go"]}`
+	path := writeTempFile(t, body)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if len(cfg.ExcludeFiles) != 2 || cfg.ExcludeFiles[0] != "pg_repo.go" {
+		t.Errorf("expected ExcludeFiles=[pg_repo.go pg_store.go], got %v", cfg.ExcludeFiles)
+	}
+}
+
 func TestEvaluate_FloorFailureFlagged(t *testing.T) {
 	cov := CoverageMap{
 		"github.com/liyang/weave/pkg/apierror":   {Covered: 1, Total: 10}, // 10% < 90%
