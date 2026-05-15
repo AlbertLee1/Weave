@@ -50,3 +50,29 @@ Stream: B
   - `≥ 30 fps` 验收无法在 vitest 里测；浏览器接线 story 用 Performance.now()+RAF 计数器验真。本 story 通过 scheduler API 保证理论可达 ≥ 30 fps（1 RAF / 50 节点）。
   - findNearestIndex tie 行为约定取早 index — 配合 step-after style sparkline（值在区间右沿改变）语义最贴合。
 ---
+
+## 2026-05-15 - VTX-033
+- 实现 Series Panel（底部时间线面板）的纯逻辑层：状态 reducer + subplot 布局派生 + 双向游标换算。
+- 新增文件：
+  - `web/src/features/vertex/seriesPanel/seriesPanel.ts` — 导出：
+    - 类型 `SeriesPanelEntry { key, seriesRid, label, property? }` / `SeriesPanelState { expanded, entries }`
+    - `createSeriesPanelState(init?)` — 默认 collapsed + 空 entries；init.entries 复制一份避免外部 mutation
+    - `openSeries(state, entry)` — 按 `key` 幂等（不重复插入），并强制 `expanded=true`，按插入序堆叠
+    - `closeSeries(state, key)` — 删除；entries 清空时自动 collapse；不存在的 key 返回原 state
+    - `togglePanel` / `setPanelExpanded`
+    - `computeSubplotLayouts(entries, totalHeight, gap?)` — N 个 subplot 等分剩余高度（扣除 (N-1)*gap），高度 clamp ≥ 0；空数组返回 `[]`
+    - `timestampFromX(x, width, from, to)` / `xFromTimestamp(t, width, from, to)` — 双向换算，`width<=0` 或 `to<=from` 安全降级（分别返回 from / 0）
+  - `web/src/features/vertex/seriesPanel/seriesPanel.test.ts` — 35 个 BDD 测试覆盖：状态工厂（init 复制）、open/close（幂等 / collapse-on-empty / 中间删 / nonexistent）、toggle/setExpanded、布局（0/1/N、gap、挤压、负 total）、换算（边界 / clamp / 零宽度 / 零窗口 / 往返稳定）。
+- 质量检查：
+  - vitest 子集（src/features/vertex）：29 files / 272 tests 全绿。
+  - vitest 全量：203 files / 1603 tests 全绿。
+  - tsc（web/）：0 错误。
+  - eslint（seriesPanel）：0 warning。
+- **Learnings for future iterations:**
+  - React 接线层用法：sidebar Series tab 的 "Open in series view" 按钮 → `openSeries(state, { key, seriesRid, label })`；底部面板按 `entries.length` 渲染 N 个 uPlot subplot，高度从 `computeSubplotLayouts(entries, panelHeight, gap)` 取。
+  - 游标同步：拖拽 cursor 时 `onPointerMove` 计算容器内 `x`，调 `timestampFromX(x, width, from, to)` 喂回 TopBar 的 `setSelectedTime`；反向（TopBar 滑块动时）用 `xFromTimestamp` 在每个 subplot 上画一根 vertical line。两个方向都不依赖 uPlot 实例。
+  - openSeries 选择"按 key 幂等不动 entries 顺序"而不是"bring to top"，避免用户重复点击同一个按钮导致 subplot 闪烁重排；如果后续 UX 要 bring-to-top，加专门的 `bringToFront` API 而不是改 openSeries 语义。
+  - closeSeries 删完最后一个自动 collapse 是为了避免空 Panel 占空间；用户主动 togglePanel 不影响 entries，所以"折叠但有 entries"是合法状态（再 open 同 key 会重新展开）。
+  - computeSubplotLayouts 把 `Math.max(0, totalHeight - totalGap)` 用于挤压场景：测试里 `totalHeight=10, gap=50, n=2` 不会产生负 height（防止 DOM 报错或 uPlot 异常）。
+  - `to <= from` 的退化窗口（live mode 刚开始或时间窗未初始化）在换算 helper 里直接降级返回 from/0，避免除零；React 层不需要再做防御。
+---

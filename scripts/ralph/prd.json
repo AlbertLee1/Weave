@@ -70,8 +70,8 @@
         "Tests pass"
       ],
       "priority": 33,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/seriesPanel/seriesPanel.ts。导出 SeriesPanelState reducer（createSeriesPanelState/openSeries/closeSeries/togglePanel/setPanelExpanded）+ computeSubplotLayouts（N 个 subplot 在 totalHeight 内均分含 gap，挤压/负值时高度 clamp 至 0）+ timestampFromX / xFromTimestamp（双向游标换算，宽度或时间窗为 0 时安全降级）。openSeries 按 key 幂等并强制 expanded=true；closeSeries 删完最后一个自动 collapse。dev-browser skill 不可用，drag cursor 浏览器验证留到 React 接线层。"
     },
     {
       "id": "VTX-034",
