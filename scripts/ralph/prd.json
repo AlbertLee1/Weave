@@ -420,8 +420,8 @@
         "Tests pass"
       ],
       "priority": 49,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新增 runtime/python/ 完整 Python sidecar：FastAPI app + pydantic 严格 I/O 校验 + 文件系统沙箱 + 示例 sklearn 模型。模块：weave_runtime/functions.py（FunctionRegistry 线程安全 name→spec map + UnknownFunctionError + @register_function 装饰器 + 全局 registry 实例 + invoke 走 input_model.model_validate → fn(instance) → output_model.model_validate → model_dump()）；weave_runtime/app.py（create_app 工厂 + POST /invoke 把 UnknownFunctionError→404 / ValidationError→422 含 loc=['body','inputs',...] 前缀 / SandboxViolation→403 code=ForbiddenFileAccess / 其它 Exception→500 code=<ClassName>，GET /health 返排序 names，RequestValidationError 单独 handler 让 envelope 422 形对齐）；weave_runtime/example_functions.py（predict_delay 走 8 行手训 LinearRegression + Literal['none'|'minor'|'major'] DelayCategory + 5/30 min bucket 边界 + clamp≥0 防 regression 负值）；weave_runtime/__init__.py 重写 export 矩阵。测试 35/35 全绿：11 functions + 10 app + 9 sandbox + 5 example。pyproject.toml + requirements.txt + README.md 全套。Go 侧 pkg/vertex/funcruntime/ + internal/config FunctionRuntimeConfig 前序 commit 已就位（17 funcruntime + 既有 config 测试不回归）。cmd/server/main.go wiring 仍延后（同 VTX-046 / VTX-048 模式）。**沙箱 + tempfile 不能同帧** 关键 gotcha：测试要 tmp_path fixture + 显式 try/finally 在测试体内 uninstall，不要 with TemporaryDirectory 套 sandbox，否则 rmtree onerror 递归 RecursionError。"
     },
     {
       "id": "VTX-050",

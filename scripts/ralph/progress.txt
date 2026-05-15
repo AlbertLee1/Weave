@@ -12,6 +12,7 @@ Stream: B
 - uPlot 类型用 `import type uPlotCtor from 'uplot'`，options 写 `uPlotCtor.Options`（沿用 `MultiSeriesChart` / `TimeSeriesChart` 现有模式）。注意 `select` 配置如果只写 `{ show: false }` 会 TS2739（必须给 left/top/width/height），干脆省略 `select`，默认就是禁用。
 - `src/components/__tests__/admin-removed.test.tsx` 是已知 flaky：在完整 vitest 套件里偶尔超时（5s import App.tsx），单独跑稳定通过。本 stream 不要为它修代码。
 - Phase 6+ 的后端 Go story 模式：在 `pkg/vertex/<feature>/` 新建 package，导出 `Handler` + `RegisterRoutes(chi.Router)` + slim 依赖接口（e.g. `FunctionLookup`、`OntologyResolver`、`EditsReader`）；测试 stub 实现 slim 接口免去标准 mock 全套。Handler 在 `cmd/server/main.go` 留 wiring story（VTX-046 / VTX-048 都是先实现 endpoint，main.go 路由注册延后）。复用 `pkg/oms` 既有基础设施（`Function` / `ParseSemver` / `CompareSemver` / `ParsedFunctionSignature` / `ErrNotFound` / `ErrDuplicate` / `apierror` / `httputil`）不要重新发明。Go 后端 BDD 测试命名 `Test<Feature>_Given_<State>_When_<Action>_Then_<Outcome>`（PRD `tddConvention` 字段约定）。
+- Python runtime（`runtime/python/weave_runtime/`）已落地（VTX-049）：FastAPI app `weave_runtime.app:app` + 全局 `registry` + `@register_function(name, *, input_model, output_model)` 装饰器；wire 形与 `pkg/vertex/funcruntime` 客户端严格对齐（200 `{output}` / 422 list-of-FieldError 含 `loc=["body","inputs",...]` 前缀 / 403 含 `code=ForbiddenFileAccess` / 404 `{detail}` / 5xx `{detail, code=<ClassName>}`）。**沙箱 + tempfile 不能同帧**：测试要 `tmp_path` fixture（pytest 在 session 末清理）+ 显式 `try/finally` 在测试体内 `uninstall_filesystem_sandbox()`，**不要** 把 sandbox 套在 `with tempfile.TemporaryDirectory()` 上下文里，否则 rmtree 的 onerror 会递归到 RecursionError。pytest sys.path 走 `runtime/python/tests/conftest.py` 的 hack 避免 `pip install -e .` 开发循环。
 
 ---
 
@@ -537,4 +538,43 @@ Stream: B
   - `oms.Function` 字段 `OntologyRID` 是私有 JSON 标签 (`json:"-"`)？不，是 `OntologyRID string` 公开但实际 JSON 序列化时省略——这意味着 GET /functions/{rid} 返回的 wire 形不含 ontology 上下文。如果后续 Vertex SDK 要 round-trip 这个字段，需要在 functionResponse 显式补 `OntologyRID` 或单开 `?include=ontology` 参数。本 story 不暴露是为了保持 OMS 既定的 "RID-only 查询路径不泄露 ontology 内部结构" 约束。
   - 文件保存后 gofmt 可能调对齐（const 块、字段对齐），handler.go / handler_test.go / semver_range.go / semver_range_test.go 都被 gofmt -w 重排；下次直接先写后 `gofmt -w` 一遍再 commit 避免 commit 后再补 fix。
   - VTX-048 是 Phase 6 第一个后端 Go story（前 17 story 都是前端纯逻辑 TS 模块），Go 后端 BDD 测试命名沿用 `Test<Feature>_Given_<State>_When_<Action>_Then_<Outcome>`（与 PRD `tddConvention` 字段对齐），与前端 vitest `describe('VTX-### <feature>') it('given_..._when_..._then_...')` 字面值不同但语义同构。
+---
+
+## 2026-05-15 - VTX-049
+- 实现 Function Runtime 内置 Python 沙箱：FastAPI app + pydantic 严格 I/O 校验 + 文件系统沙箱 + 示例 sklearn 模型，与既有 `pkg/vertex/funcruntime`（Go 侧客户端）+ `runtime/python/weave_runtime/sandbox.py`（denylist 工具）对齐。
+- 新增文件：
+  - `runtime/python/weave_runtime/functions.py` — 导出：
+    - `FunctionSpec` (frozen dataclass: name/fn/input_model/output_model)
+    - `FunctionRegistry` 线程安全 name→spec map（`register` 装饰器 / `unregister` / `has` / `get` / `names()` 返排序 snapshot / `invoke(name, inputs)` 走 `input_model.model_validate` → `fn(instance)` → `output_model.model_validate` → `model_dump()`）
+    - 全局 `registry` 实例 + `register_function(name, *, input_model, output_model)` 装饰器 shim
+    - `UnknownFunctionError(KeyError)` 让 FastAPI 层 isinstance 匹配 → 404
+  - `runtime/python/weave_runtime/app.py` — 导出 `create_app(*, registry=None, install_sandbox=True)` 工厂 + 模块级 `app` 实例。POST `/invoke` 把 `UnknownFunctionError`→404 / `ValidationError`→422（loc 前缀 `["body","inputs",...]` 与 FastAPI 自有 RequestValidationError 形对齐）/ `SandboxViolation`→403 `code=ForbiddenFileAccess` / 其它 Exception→500 `code=<ClassName>`。GET `/health` 返 `{status, functions: sorted-names}`。FastAPI `RequestValidationError` 自定义 handler 把 envelope（缺 function 字段等）也走同一 422 detail 形。
+  - `runtime/python/weave_runtime/example_functions.py` — 导出 `predict_delay` 参考函数 + `DelayPredictionInput`（distance_km ∈ [0,20000], weather_severity ∈ [0,1] 默认 0）/ `DelayPredictionOutput`（delay_minutes + DelayCategory='none'|'minor'|'major' Literal）。Import 时训练一份 8 行手工 LinearRegression（避免 pickle 进仓库）+ 5/30 min 边界 bucket helper + 预测 clamp≥0 防 regression 负值。
+  - `runtime/python/weave_runtime/__init__.py` — 重写 export 矩阵：`FunctionRegistry/FunctionSpec/UnknownFunctionError/register_function/registry/SandboxViolation/install_filesystem_sandbox/uninstall_filesystem_sandbox/is_path_denied/app/create_app`。
+  - `runtime/python/tests/conftest.py` — pytest sys.path bootstrap（让 `from weave_runtime import ...` 在不 `pip install -e .` 的情况下解析）。
+  - `runtime/python/tests/test_functions.py` — 11 个 TDD 测试覆盖：register 存 spec / 重名抛 ValueError / blank 名 / names() 排序 snapshot / invoke 校验 input / invoke 返 dict / input 验证错传播 ValidationError / unknown function 抛 UnknownFunctionError / output 验证错传播 / 函数返 BaseModel 或 dict 都支持 / unregister / 全局 register_function shim。
+  - `runtime/python/tests/test_app.py` — 10 个测试覆盖：/invoke 200 happy path / unknown→404 / input 类型 mismatch→422 含 field-level loc（distance_km） / 缺必填字段→422（含 'b'）/ 函数抛 SandboxViolation→403 code=ForbiddenFileAccess / 函数抛 ZeroDivisionError→500 code=ZeroDivisionError / 缺 function 字段→422 / /health 返排序 names / **端到端 BDD #3** 函数 open(denied_path) →403 / output mismatch→422 含 'score' loc。
+  - `runtime/python/tests/test_sandbox.py` — 9 个测试覆盖：is_path_denied 默认 denylist (/etc/passwd, ~/.ssh) / commonpath 守护邻名 (/etchosts 放行) / install + open /etc/passwd→SandboxViolation / install 不挡 denylist 外读 / 自定义 denylist→SandboxViolation / install idempotent / uninstall 恢复 open / os.open 同样受守护。
+  - `runtime/python/tests/test_example_functions.py` — 5 个测试覆盖：predict_delay 已注册 / /invoke round-trip 返 delay_minutes+category ∈ allowed set / weather_severity=5.0 out-of-range→422 含 'weather_severity' loc / distance_km<0→422 / 高 severity 单调不递减预测延迟（避免锁定数值便于未来调参）。
+  - `runtime/python/requirements.txt` — fastapi/pydantic/uvicorn[standard]/scikit-learn + pytest/httpx 测试依赖。
+  - `runtime/python/pyproject.toml` — setuptools 包配置 + pytest testpaths。
+  - `runtime/python/README.md` — wire contract 表 + local install / run uvicorn / 注册自定义函数 / 沙箱说明 / 跑测试。
+- 质量检查：
+  - pytest（runtime/python）：35/35 绿（11 functions + 10 app + 9 sandbox + 5 example）耗时 1.35s（首跑含 sklearn import 约 13.6s）。
+  - go test `./pkg/vertex/funcruntime/... ./internal/config/...`：全绿（17 funcruntime + 既有 config 测试不回归）。
+  - go vet + gofmt：干净（未触发任何 Go 重排）。
+  - go build `./internal/... ./pkg/...`：干净（cmd/server/embed.go 报 `web/dist` 缺失为 pre-existing 与本 stream 无关，需要 `make web-build` 才能跑全量 `go build ./...`）。
+- **Learnings for future iterations:**
+  - **沙箱 + tempfile 的致命组合**：`install_filesystem_sandbox(denylist=[tmp_path])` 后，`with tempfile.TemporaryDirectory()` 的 `__exit__` 会触发 `shutil.rmtree` → 我们的 guarded `os.open` → `SandboxViolation` → rmtree 的 `onerror` 回调再次 rmtree → 无限递归直到 Python recursion limit。修复模式：测试用 `tmp_path` fixture（pytest 在 session 末做清理，与本测试解耦）+ 显式 `try/finally` 在测试体内调 `uninstall_filesystem_sandbox()`，**不要** 把 sandbox 套在 `TemporaryDirectory` 上下文内层。autouse fixture 的 `yield → uninstall` 顺序不够安全，因为 `with` 块的 `__exit__` 在 fixture cleanup 之前跑。
+  - **pydantic v2 ValidationError 形**：`.errors()` 返 `[{type, loc, msg, input, url}]`，`loc` 是 tuple。本 runtime 转 wire 时 prepend `["body", "inputs", ...]` 让 Go 客户端面对 envelope-level 与 invocation-level 422 形一致（FastAPI 自己的 RequestValidationError 也是 `loc=("body", "...")` 起头）。
+  - **registry.invoke 的输出验证三态**：函数可以返 (a) 正确的 output_model 实例直接通过 / (b) 别的 BaseModel 实例先 model_dump 再 model_validate / (c) 任意 dict-like 直接 model_validate。这让 sklearn 函数体可以 `return DelayOutput(...)` 也可以 `return {"delay_minutes": ..., "category": ...}` —— 函数作者按熟悉的方式写，registry 兜底校验。
+  - **`Literal['none'|'minor'|'major']` 输出类型**：在 example_functions 用 Literal 而不是 Enum，让 pydantic 在生成 JSON schema 时直接产 enum 数组（Go 端不依赖 Python Enum 名称），同时拒绝任何 future 函数体 typo 改成 `"sever"` 而 mypy/pydantic 不报警。
+  - **FastAPI exception_handler vs try/except**：500/503/422 在 `/invoke` 内部 try/except 走 JSONResponse 而不是抛 HTTPException —— 因为 HTTPException 的 `detail` 只能是 str/dict（FastAPI 自己包装），但我们想严格控制 envelope 形（422 必须是 list-of-FieldError，403 必须含 code）。直接构造 JSONResponse 绕开 FastAPI 默认 envelope。RequestValidationError 路径单独走 `@app.exception_handler` 因为那个错在 endpoint 函数 *之前* 抛（FastAPI 在解析 InvokeRequest 时已经决定 422），没法在 endpoint body 里 catch。
+  - **registry 默认全局 vs 测试隔离**：tests 都 `FunctionRegistry()` 构造 fresh registry，example_functions 走全局 `registry`。`test_example_functions.py` 用 `_client()` 显式传 `registry=registry` + `install_sandbox=False`（macOS `/var/folders/...` tmp 路径不在 default denylist 但也不想 sandbox 副作用流到其它测试）。
+  - **sklearn import 时序**：第一次 `import sklearn` 在 macOS 上耗时 ~12s（其它系统 5s 以内），随后被 import cache 缓存。runtime/python 的 35 测试首跑 13.6s 主要被 sklearn 占；后续 pytest 跑 1.35s。CI 设计时考虑 cache pip wheel。
+  - **wire 路径一致性 vs spec**：BDD 说 `POST /invoke`、PRD 字段 `FUNCTION_RUNTIME_URL` 不带 WEAVE_ 前缀 —— 都保留原字面。这与 VTX-035 / VTX-048 "spec-vs-codebase 冲突优先 namespace 一致" 不矛盾，因为 runtime 是独立进程（Python sidecar），其 URL 由 Weave 主进程出去调用，不参与 Weave 内部的 `/api/vertex/v1/...` 命名空间。
+  - **Go 侧 client + Python 侧 server 已对齐**：`pkg/vertex/funcruntime/client.go` 在 VTX-049 实施前已经写好（带 17 个测试），本 story 的 Python app 严格按 client 期待的 envelope 形产出 (200 `{output}` / 422 list-of-FieldError / 403 `code=ForbiddenFileAccess` / 404 `{detail}` / 5xx `{detail, code}`)。两侧都用 `pkg/vertex/funcruntime` 包 docstring 的 wire contract 表作为唯一 source of truth。
+  - **cmd/server/main.go wiring 仍延后**：与 VTX-046 scenariodiff / VTX-048 funcregistry 同模式，funcruntime client + config FunctionRuntimeConfig 已就位但 main.go 还没把两者粘起来。需要后续 wiring story 在 `cmd/server/main.go` 读 `cfg.FunctionRuntime.URL`，若非空则 `funcruntime.NewClient(cfg.FunctionRuntime.URL, &http.Client{Timeout: cfg.FunctionRuntime.Timeout})` 并注入到 ActionExecutor（替换 pkg/functions 的 Tier 3.2 dispatcher）或 Scenario runner。
+  - **VTX-049 是 Stream B 第一个 Python 模块**：前面所有 story 都是 Go 或 TypeScript。pytest 配置走 `tests/conftest.py` 的 sys.path hack 避免 `pip install -e .` 的开发循环；`pyproject.toml` 留给 CI / wheel 发布。如果未来要 typecheck，加 mypy + `[tool.mypy] strict = true` 到 pyproject.toml 即可。
+- 浏览器验证不适用 —— VTX-049 是后端 sidecar，没有 UI 触达。BDD #1 #2 #3 全部由 pytest + httpx TestClient + 显式 SandboxViolation 注入覆盖。
 ---
