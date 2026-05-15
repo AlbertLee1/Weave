@@ -201,3 +201,94 @@ Stream: B
   - validateAddAction 的"required param 缺失"用第一个缺失的字段名做 reason（不是数组）—— UX 上一次只提示一条更清晰；React 层用 `param` 字段定位错误 input + 高亮。如果未来要求"一次性显示所有错误"，加新 reason 'multiple_missing_params' 而非改现有形状。
   - dev-browser skill 不可用 — Modal + Action 列表渲染 + 50-cap toast 弹窗的浏览器验证留到 React 组件接线 story；本 story 仅交付纯逻辑层。
 ---
+
+## 2026-05-15 - VTX-039
+- 实现 + Add input or output（参数勾选）的纯逻辑层：对话框 reducer + 参数级 selection map（checked + source）+ Function-backed Action autoBound 自动关联 + Add all parameters 一键勾选 + validation + Pane 列构造器。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/addInputOutput.ts` — 导出：
+    - 类型 `ParameterSourceKind` = 'time_series'|'object_property'|'measure'（与调研报告 §3.2 三类候选源对齐）/ `ParameterSource { kind, rid, label }` / `AddInputOutputParameter { name, displayName?, direction, required?, candidateSources[], autoBound? }` / `AddInputOutputRowRef { rowRid, kind, label, parameters[] }` / `ParamSelection { checked, source }` / `AddInputOutputDialogState` / `AddInputOutputValidation`
+    - reducer：`createAddInputOutputDialogState` / `openAddInputOutputDialog(scenarioRid, row)`（强制非空 scenarioRid；用 row.parameters 全量重建 selections，每个参数 source=autoBound??null —— Function-backed 自动关联，标准 Action 留 null 等手填）/ `closeAddInputOutputDialog` / `toggleAddInputOutputParam`（未 open / 未知参数返回同引用）/ `setAddInputOutputParamSource`（未 open / 未知参数返回同引用；接受 null 清除）/ `setAddInputOutputAllChecked`（未 open 返回同引用；不动 source 保留 autoBound + 已选源）/ `setAddInputOutputSubmitting` / `setAddInputOutputError`
+    - 派生：`getCheckedParamNames`（按 row.parameters 顺序）/ `isAllChecked`（空 row 返回 false）/ `isAllUnchecked`（未 open 返回 true）/ `validateAddInputOutput`（not_open / no_params_checked / unbound_param + 首个缺源参数名 / valid）
+    - column：`buildInputOutputColumnKey(rowRid, paramName)` = `${rowRid}::${paramName}`（避免不同 Action/Model 同名参数冲撞）/ `buildInputOutputColumns(state)`（先 validate；按 row.parameters 顺序输出 ScenarioPaneInputOutputColumn[]；label 用 displayName ?? name）
+  - `web/src/features/vertex/scenarioPane/addInputOutput.test.ts` — 49 个 BDD 测试覆盖：工厂、open（标准 / function-backed autoBound 预填 / 空 rid throws）、close、submitting/error 互斥语义、toggleParam（flip / autoBound 保留 source / unknown / not open）、setSource（设值 / 兄弟参数不动 / unknown / not open / null 清除）、setAllChecked（全勾 / function-backed 保留 autoBound source / 全清 / source 保留 / not open）、derived（getCheckedParamNames 按 param 顺序 / 各 isAll* 边界）、validateAddInputOutput 全四态 + 多 checked 仅首个 unbound 报、buildColumnKey 组合键、buildColumns（invalid throws / 3 checked 顺序 / displayName / subset / function-backed 一键 Apply）、it.each 三种 source kind 圆形测试。
+- 质量检查：
+  - vitest（addInputOutput）：49/49 绿。
+  - vitest 子集（src/features/vertex）：35 files / 502 tests 全绿（+1 file / +49 tests）。
+  - vitest 全量：209 files / 1833 tests 全绿，0 失败（套件级 flaky 这次未触发）。
+  - tsc（web/）：exit 0，0 错误。
+  - eslint（addInputOutput.ts + addInputOutput.test.ts）：0 warning。
+- **Learnings for future iterations:**
+  - 参数级 selection 用 `Record<string, ParamSelection>` 而不是双数组（checkedNames[] + sources Record）：把 checked 和 source 绑在同一 cell 里，让 toggle/setSource 互不污染（撤销勾选保留 source，再勾不必重选源 —— 与典型 UX 期望一致）。React 层渲染 list 时遍历 row.parameters，按 name 反查 selections[name]，O(1) 无重复扫描。
+  - `openAddInputOutputDialog` 每次都全量重建 selections —— 不试图保留前一次 dialog 的部分状态。这与 addAction.setAddActionList 的"保留 selection 仅当它仍在新列表"是相反的设计选择：addAction 的 actions 列表是异步 fetch 来的（用户不主动切换），所以保留有用；addInputOutput 的 row 是用户主动选定的（不同 Action/Model），保留旧 selection 几乎一定造成幽灵字段。原则：异步喂数据 → 试着保留；用户主动切目标 → 全量重建。
+  - autoBound 在 open 时预填 source 但 *不预勾 checked* —— 与"Function-backed Action 自动关联到对象属性 / 时序点"语义一致：自动关联（auto-link）不等于自动添加列（auto-apply）。用户还需要主动 Add（勾选或点 Add all parameters）才把列加进 Pane。如果 spec 改成"function-backed 默认勾选"，把 open 时的 checked 改成 `param.autoBound !== undefined` 即可。
+  - column key 用 `${rowRid}::${paramName}` 组合：与 VTX-036 progress.txt "React 接线层组合 key" 学习项一致 —— 不同 Action/Model 同名参数（多个 model 都叫 demand）共享 Pane 列空间时必然冲撞。本模块统一吐组合键，React 层用 `column.key.split('::')` 反向定位 rowRid + paramName 拿 source binding。
+  - validate 的四态枚举（not_open / no_params_checked / unbound_param + param / valid）让 React Modal 同时驱动 "Apply 按钮 disabled 原因 tooltip"：not_open 不会出现在 UI 路径上（dialog 关着没机会点 Apply）；no_params_checked 提示"勾一个参数"；unbound_param 高亮该行的 source 选择器。一次性返回首个错误的设计延续了 addAction.validateAddAction —— UX 上一次提示一条比一堆 toast 友好。
+  - setAllChecked 不动 source 的语义：用户先勾 2 个（手填了 source），切到 Add all 把所有勾上，再 uncheck 回去时不该清掉用户已选的 source。这个语义在测试 "given_setAllChecked_false_when_param_has_source_then_source_preserved" 显式断言。
+  - `getCheckedParamNames` 按 row.parameters 顺序（不是 selections object 的插入顺序）：JavaScript object 在过去保证插入序，但跨 reducer 复制 spread 可能让 key 顺序漂；统一以 row.parameters 为真理避免列乱序。同理 `buildInputOutputColumns` 也按 row.parameters 过滤。
+  - `ParameterSourceKind = 'time_series' | 'object_property' | 'measure'` 三类与调研报告 §3.2 候选源完全对齐 + 与 VTX-058/059/060/061 Extended Label 的 `kind:property|timeSeries|measure` 命名一致（仅 snake_case vs camelCase 差异）—— React 接线层可以共用 source kind → icon / 渲染器 mapping。如果未来加 'derived_property' kind，在本模块 union 加一项即可，不破坏 buildColumns（label 取 displayName ?? name，不读 kind）。
+  - 测试用 `it.each<ParameterSource>([...])` 三种 source kind 圆形测试，把"模块支持 §3.2 全三类候选源"做成单一 spec 而不是三段重复 —— vitest each 模板字符串 `$kind` 直接展开 fixture 字段，可读性好。
+  - dev-browser skill 不可用 — Modal + checkbox 列表渲染 + Add all parameters 按钮 + Apply 浏览器验证留到 React 组件接线 story；本 story 仅交付纯逻辑层。
+---
+
+## 2026-05-15 - VTX-040
+- 实现 Override 单元格（标量）的纯逻辑层：OverrideMap CRUD + scalar 输入解析 + 单元格 blur 决策中枢 + frozen scenario 守卫。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/overrideCell.ts` — 导出：
+    - 类型 `ScalarOverrideValue` = string|number|boolean / `ScalarValueType` = 'string'|'number'|'boolean' / `ScalarOverride { id, scenarioRid, rowRid, paramName, value }` / `OverrideMap` = Record<key, ScalarOverride> / `OverrideApiRequest { method:'POST'|'DELETE', path, body }` / `ParseScalarResult` 三态 union / `CellEditDecision` 五态 union（noop/create/update/delete/invalid）/ `ResolveCellEditInput`
+    - `FROZEN_SCENARIO_TOOLTIP = 'Scenario is frozen.'` + `ScenarioFrozenError` 子类（携带 scenarioRid + name='ScenarioFrozenError'）
+    - cell key + map：`buildOverrideCellKey(scenarioRid, rowRid, paramName)` = `${scenarioRid}::${rowRid}::${paramName}`（三段而非 VTX-039 的两段，因为 Pane 同时显示多个 Scenario 列，scenarioRid 必须进 key）/ `getOverride` / `setOverride`（immutable update，原 map 不动）/ `removeOverride`（unknown key 返回同引用）/ `isCellHighlighted`（has key 即"已有 override → 黄色边框"）
+    - frozen 守卫：`isCellDisabled(scenario)` / `getCellTooltip(scenario)` 复用 createDialogs.isScenarioImmutable / `assertCellEditable(scenario)` 在 fetch 前抛 ScenarioFrozenError（绕过 React disabled 的兜底）
+    - input 解析：`parseScalarInput(raw, valueType)` — trim 后空 → empty=true；string 透传 trim 值；number 用 Number()+Number.isFinite 排除 NaN/Infinity；boolean 仅接受 'true'/'false' 大小写不敏感字面值，拒 0/1 保持无歧义
+    - 请求构造：`buildCreateOverrideRequest({scenarioRid,rowRid,paramName,value})` → POST /api/vertex/v1/scenarios/{rid}/overrides body=`{rowRid,paramName,value}`（rid 走 encodeURIComponent，全字段 require non-blank） / `buildDeleteOverrideRequest(id)` → DELETE /api/vertex/v1/overrides/{id} body=null
+    - 决策中枢 `resolveCellEdit({scenarioRid,rowRid,paramName,rawInput,valueType,existing})` — invalid 不静默丢 existing；empty+existing=delete+previousId / empty+null=noop / value+null=create / value+existing 相同=noop（避免冗余写） / value+existing 不同=update+previousId（create+update 都走 POST，区分仅给上层 UX 文案）
+  - `web/src/features/vertex/scenarioPane/overrideCell.test.ts` — 55 个 BDD 测试覆盖：cellKey 唯一性、map CRUD（setOverride/removeOverride 不 mutate 原 map / replace / unknown key 同引用）、isCellHighlighted 双态、frozen guards 五法（mutable/undefined immutable/immutable → isCellDisabled+getCellTooltip+assertCellEditable，含 ScenarioFrozenError instance/scenarioRid/message/name 全字段断言+常量 toLowerCase 含 'scenario is frozen' 防文案漂移）、parseScalarInput（空/whitespace/string trim/number 各种/Infinity+NaN 拒/boolean 字面值/case-insensitive/'1' 拒）、build 请求（base/特殊字符 encodeURIComponent/blank 抛错三处/string+boolean+number 三种 value 类型透传）、resolveCellEdit 全五种 outcome（含 invalid 与 existing 共存场景断言"不静默丢 existing"）、end-to-end 三个 happy path（click→input→blur→POST→高亮 / 清空→DELETE→去高亮 / immutable→disabled+tooltip+ScenarioFrozenError 三连）。
+- 质量检查：
+  - vitest（overrideCell）：55/55 绿。
+  - vitest 子集（src/features/vertex）：36 files / 557 tests 全绿（+1 file / +55 tests）。
+  - tsc（web/）：exit 0，0 错误。
+  - eslint（overrideCell.ts + overrideCell.test.ts）：0 warning。
+- **Learnings for future iterations:**
+  - cell key 用 *三段* `${scenarioRid}::${rowRid}::${paramName}` 而非 VTX-039 的两段（`${rowRid}::${paramName}`）—— Pane 同时显示多个 Scenario 列，每列的同一 (row, param) cell 是独立 override 槽位；如果省略 scenarioRid，跨列的 setOverride 会互相覆盖。React 接线层在渲染表格时按 (scenario.rid, row.rid, param.name) 三元组组 key 反查。
+  - update vs create 都走 POST 而不是 PUT —— 后端 endpoint 是 `POST /scenarios/{rid}/overrides` 单一写入路径，服务端按 (scenarioRid, rowRid, paramName) 复合唯一约束做 upsert，前端用同一个 buildCreateOverrideRequest 即可。本模块的 `CellEditDecision` 仍然区分 create / update kind —— 信息保留给上层（UX toast 文案 "Override added" vs "Override updated" + 分析埋点 "scenario.override.created" vs "scenario.override.updated"），代价只是一个 discriminant 字段。如果未来后端拆 PUT，改 buildUpdateOverrideRequest 即可，外部 API 不破。
+  - invalid 输入"不静默丢 existing" 是重要不变式：用户在已有 override 的 cell 里手滑输入 "abc"（valueType=number），blur 时模块返回 `{kind:'invalid', reason:'not_a_number'}`，*不* 返回 delete。React 接线层 toast 提示 + 把 cell 值回滚到 existing.value 而不是显示空。如果模块把 invalid 当 empty 处理→静默 delete，用户会丢数据。测试 `given_invalid_input_with_existing_when_resolve_then_invalid_does_not_emit_delete` 显式锁死。
+  - parseScalarInput 拒 '1'/'0' 当 boolean 是刻意选择：数据库 / OMS 端常见把 boolean 序列化成 0/1，但用户视角的 UI 输入里 '0' 应该作为 "number 0" 而非 "false"。让 valueType=boolean 时仅接受字面值 'true'/'false'（大小写不敏感），歧义留给上层 React 用 checkbox / Radix Switch 组件天然规避输入字符串。
+  - parseScalarInput 拒 Infinity / NaN 文字（"Infinity" / "NaN"）走 Number.isFinite 路径：Number("Infinity") = Infinity，会通过 Number.isNaN 但不会通过 Number.isFinite。Number.isFinite 是正确的过滤器；vitest 测试两个都验证一遍防止有人误改成 Number.isNaN（看似等价实际放过 ±Infinity）。
+  - FROZEN_SCENARIO_TOOLTIP="Scenario is frozen." 与 createDialogs.IMMUTABLE_SCENARIO_MESSAGE="Scenario is immutable. Duplicate to modify." 是两条不同 UX 路径：tooltip 出现在 disabled cell hover 上（被动信息），immutable message 出现在用户主动绕过 guard 时的 toast / Modal（主动提示 + 行动指引）。语义不同，文案分开。测试用 `toLowerCase().toContain('scenario is frozen')` 防大小写漂移又不锁死标点。
+  - ScenarioFrozenError 与 ScenarioImmutableError 是两个独立 Error 子类。它们 message 不同（FROZEN_SCENARIO_TOOLTIP vs IMMUTABLE_SCENARIO_MESSAGE），name 不同，承担的语义角色也不同（cell 级 vs scenario 级）。共享 `ScenarioLike` interface 但不共享 Error class —— React 错误边界可以按 `error.name` 路由到不同 UI 反应（cell tooltip 不需要弹 Modal）。
+  - immutable update（`setOverride` 不 mutate 原 map）与 VTX-036 reducer 风格保持一致：测试 `given_setOverride_when_called_then_does_not_mutate_original_map` 显式断言 —— Zustand store 用 immer middleware 时不破免疫，但本模块同时支持纯对象 store（不用 immer），不 mutate 让两种用法都安全。removeOverride 同理：用 spread + delete 而不是 in-place delete。
+  - resolveCellEdit 的"value 未变 → noop"判断用 `===` 严格相等。number/string/boolean 三类 scalar 都安全（不会有 NaN 自比假），与 React props 浅比较哲学一致。如果未来 ScalarOverrideValue 扩展到 Date / 数组，需要在 noop 判断改为深比较 helper，否则会产生冗余 POST。
+  - dev-browser skill 不可用 — 黄色边框样式、disabled cell hover tooltip、DELETE 后高亮消失的浏览器验证留到 React 接线 story。本 story 仅交付纯逻辑 + 副作用工厂（请求构造器），React 层 fetch wrapper 直接消费 OverrideApiRequest。
+---
+
+## 2026-05-15 - VTX-041
+- 实现 Override 单元格（对象属性）的纯逻辑层：把 VTX-040 的 (rowRid, paramName) override 扩展到 (objectType, primaryKey, property) 对象属性 override，加上"override 仅在 fork 内生效 + 客户端 read overlay"两条不变式。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/objectPropertyOverride.ts` — 导出：
+    - 类型 `ObjectPropertyOverride { id, scenarioRid, objectType, primaryKey, property, value }` / `ObjectPropertyOverrideMap` = Record<key, ovr> / `ObjectPropertyOverrideApiRequest` / `ObjectPropertyCellEditDecision` 五态 union / `WireObjectLike`（WireObject 最小投影：__rid + __primaryKey + __apiName + property bag）
+    - cell key + map：`buildObjectPropertyOverrideKey(scenarioRid, objectType, primaryKey, property)` = `${scenarioRid}::${objectType}::${primaryKey}::${property}`（**4 段**比 VTX-040 的 3 段多一个 objectType —— 对象属性 override 标的不仅是某行的某参数，还要绑定到具体对象 type+pk，否则 Pane 跨 objectType 用同 pk 会混淆）/ `getObjectPropertyOverride` / `setObjectPropertyOverride`（immutable update）/ `removeObjectPropertyOverride`（unknown key 同引用返回）/ `isObjectPropertyCellHighlighted`（has key 即"已 override → 黄色边框"）
+    - frozen 守卫：`assertObjectPropertyCellEditable(scenario)` 复用 VTX-040 `ScenarioFrozenError`（同一 catch 路径，UX 共享 tooltip）
+    - 请求构造：`buildCreateObjectPropertyOverrideRequest({scenarioRid, objectType, primaryKey, property, value})` → POST `/api/vertex/v1/scenarios/{rid}/object-property-overrides` body=`{objectType, primaryKey, property, value}`，rid 走 encodeURIComponent，4 个 string 字段 require non-blank / `buildDeleteObjectPropertyOverrideRequest(id)` → DELETE `/api/vertex/v1/object-property-overrides/{id}` body=null
+    - URL overlay：`withScenarioId(path, scenarioRid?)` —— 把 `?scenarioId=...` 注入 GET URL；scenarioRid null/undefined/blank 时原样返回（base ontology 查询）；已有 query 用 & 拼接，没有用 ? 拼接；scenarioRid 走 encodeURIComponent
+    - 客户端 read overlay：`applyObjectPropertyOverrides(obj, overrides)` —— 给一个 base WireObject + 该 scenario 的 overrides 列表，过滤匹配 (ovr.objectType===obj.__apiName && String(obj.__primaryKey)===ovr.primaryKey)，返回应用 override 后的副本；不 mutate base（保留"base ontology 不变"语义 in-memory）；primaryKey 字符串化对齐（WireObject.__primaryKey 是 `string|number`，override.primaryKey 统一 string）
+    - 决策中枢：`resolveObjectPropertyCellEdit({scenarioRid, objectType, primaryKey, property, rawInput, valueType, existing})` —— 与 VTX-040 同构的五态决策（invalid / empty+null=noop / empty+existing=delete / value+null=create / value+existing 相同=noop / value+existing 不同=update）。复用 VTX-040 `parseScalarInput`
+  - `web/src/features/vertex/scenarioPane/objectPropertyOverride.test.ts` — 58 个 BDD 测试覆盖：cell key 4 段唯一性（同 scenarioRid 不同 objectType 同 pk 也要分开）、CRUD（set/remove 不 mutate 原 map / replace / unknown key 同引用）、isHighlighted 双态、assertCellEditable（mutable / undefined / immutable → ScenarioFrozenError instance + scenarioRid + message 三连）、buildCreate 请求（base / encodeURIComponent / 4 字段 blank 各自抛 / string + boolean value 透传 it.each）、buildDelete（base / encode / blank id 抛）、withScenarioId（null/undefined/blank 原样返回 / 无 query 加 ? / 有 query 加 & / value encode）、applyOverrides（空 overrides 返回 equal-but-不同引用 / 单 override 替换 / base 不 mutate / 不同 objectType 不动 / 不同 pk 不动 / 数字 pk 字符串化匹配 / 多 override 同对象 / 未知 property 加入 / __meta 字段保留 / 混合 overrides 只匹配的生效）、resolveCellEdit 全五态（含 invalid+existing 共存不静默丢、string/boolean valueType 透传）、4 个 end-to-end happy path（capacity 输入 → POST fork only + GET URL 注入 scenarioId + applyOverrides capacity 新值 + immutable assert）。
+- 质量检查：
+  - vitest（objectPropertyOverride）：58/58 绿。
+  - vitest 子集（src/features/vertex）：37 files / 615 tests 全绿（+1 file / +58 tests）。
+  - vitest 全量：211 files / 1946 tests 全绿（套件级 flaky 这次未触发）。
+  - tsc（web/）：exit 0，0 错误。
+  - eslint（objectPropertyOverride.ts + objectPropertyOverride.test.ts）：0 warning。
+- **Learnings for future iterations:**
+  - cell key 用 *4 段* `${scenarioRid}::${objectType}::${primaryKey}::${property}`：VTX-040 是 3 段（scenarioRid + rowRid + paramName），本 story 多一个 objectType。原因：在 Action/Model row 视角里 rowRid 是 unique，paramName 在该 row 下也 unique；但对象属性视角下，objectType + pk 才是对象身份，property 才是属性名 —— 缺一段都会让 cross-objectType 同 pk 的情况冲撞（比如 Airport/42 和 Gate/42 共用 capacity 属性）。React 接线层在渲染 input/output 列时按 `${scenario.rid}::${ovr.objectType}::${ovr.primaryKey}::${ovr.property}` 反向定位 cell。
+  - 同一个 Pane cell 可能同时有 (rowRid, paramName) override（VTX-040）和 (objectType, primaryKey, property) override（本 story） —— 这是两条不同的 override 路径：前者代表"在这次 model run 里把 input 参数手动覆盖成 1500"，后者代表"在这个 scenario fork 里把 Airport/JFK.capacity 永久覆盖成 1500"。后者对其他读 Airport/JFK 的查询（带 scenarioId）也可见；前者只对该次 Action/Model 调用栈可见。Pane UI 上同一个 cell 显示哪种 override 由 VTX-039 的 `ParameterSource.kind` 决定（'object_property' → 本 story 路径；其它 → VTX-040 路径）。
+  - `applyObjectPropertyOverrides` 是客户端 read overlay，但**不是**唯一的 overlay 路径。优先做法仍是把 `scenarioId` 注入 GET URL 让服务端按 fork commit overlay 返回（保证一致性 + 索引命中 + 真正的"base ontology 不变" assertion）。客户端 applyObjectPropertyOverrides 用于：(a) 用户在 cell 里改完 → optimistic UI 立刻显示新值，等 POST 返回再以服务端为准；(b) Pane 表渲染时需要同时显示 baseline 列（无 overlay）+ scenarioA 列（applyOverrides 后）+ scenarioB 列（applyOverrides 后），用同一个 base WireObject 加不同 scenario 的 overrides 派生三列；(c) 测试 / Storybook 不需要起 backend。
+  - 客户端 overlay 的 primaryKey 匹配走 `String(obj.__primaryKey) === ovr.primaryKey`：WireObject.__primaryKey 是 `string | number`（数字 PK 常见），但 ovr.primaryKey 统一是 string（API 序列化稳定）。如果省略字符串化，数字 PK 永远 ≠ string PK，overlay 永远失效。测试 `given_numeric_primaryKey_matches_string_override_when_apply_then_property_replaced` 显式锁死该不变式。
+  - `withScenarioId` 的"已有 query 用 &，没有用 ?" 实现走 `path.includes('?')` 而不是 URL 解析：path 可能是相对路径 + 复合查询字符串（`/api/v2/ontologies/foundry/objects/Airport?pageSize=50&pageToken=abc`），用 new URL() 需要 base 参数还得处理空 base 的边界；includes 简单粗暴够用。如果未来 path 里有 fragment（#section），逻辑要改成"按 # 切割再追加 query"，但当前没有调用方这么用。
+  - withScenarioId blank/null/undefined 都视为"无 overlay"原样返回：base ontology 查询和"没选 scenario"的 Explorer 页面共用同一个 URL builder，调用方传 `scenarioRid: state.activeScenario?.rid ?? null` 即可，不必先判 null 再分支调用。
+  - WireObjectLike 是 WireObject 的最小投影：保留 3 个 __meta 字段 + property bag。本模块不 import `web/src/api/types.ts.WireObject` 是为了避免循环依赖（scenarioPane 模块树独立 + 让 SDK 也能直接用 applyObjectPropertyOverrides 不引 React 端 types.ts）。如果未来 WireObject 加更多 __meta 字段（如 __ontologyRid），WireObjectLike 沿用 Record 通配兼容。
+  - immutable scenario 的 frozen error 复用 VTX-040 `ScenarioFrozenError` 不另起类：error.name 同名（'ScenarioFrozenError'）让 React 错误边界 / toast handler 一处 if(err instanceof ScenarioFrozenError) 同时捕获两类 cell 路径的 frozen 信号，避免上层维护两套 catch。如果未来 UX 需求要把"对象属性 cell frozen"和"参数 cell frozen"显示不同 tooltip，再加 subclass。
+  - 模块复用 VTX-040 `parseScalarInput` 不重复实现：scalar 输入解析（trim / Number.isFinite / boolean 字面值）逻辑是 cross-cutting concern，写两份就会漂；本 story 测试只断言"valueType=string|number|boolean 各自能走通 resolve 决策"，详细 edge case（Infinity/NaN/case-insensitive 'TRUE'）在 VTX-040 测试里已锁死，无需重复。
+  - 服务端 endpoint 路径选 `/object-property-overrides` 而非复用 `/overrides`：与 VTX-040 的 ParameterOverride 区分开，让后端可以用不同 table（scenario_object_property_overrides vs scenario_parameter_overrides）+ 不同 schema（前者有 objectType/primaryKey/property 列，后者有 rowRid/paramName 列）。一个 endpoint 双 payload 也能做但 schema 不齐整。后端实现 story（VTX-002 ScenarioRepo + VTX-043 Run）需要按这个 endpoint 分拆 chi route。
+  - VTX-041 spec 的 BDD `GET /objects/Airport/JFK?scenarioId=s1` 直接对应 `withScenarioId('/api/v2/ontologies/{ont}/objects/Airport/JFK', 's1')`；React 接线层在 ExplorerPage / Browser 拉对象时调 `withScenarioId(basePath, state.activeScenario?.rid ?? null)`，scenarioId 自动 thread 到 query string。Service Worker / MSW mock 路径也走同样 URL，不必 mock 两套。
+  - dev-browser skill 不可用 — 黄色边框 + Explorer 反向查询带 scenarioId 拉到 overlay 值 + immutable cell tooltip 浏览器验证留到 React 接线 story；本 story 仅交付纯逻辑层 + 副作用工厂。
+---

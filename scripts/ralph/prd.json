@@ -204,8 +204,8 @@
         "Tests pass"
       ],
       "priority": 39,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/addInputOutput.ts。导出 AddInputOutputDialogState reducer（createAddInputOutputDialogState/openAddInputOutputDialog/closeAddInputOutputDialog/toggleAddInputOutputParam/setAddInputOutputParamSource/setAddInputOutputAllChecked/setAddInputOutputSubmitting/setAddInputOutputError）+ 派生 helper（getCheckedParamNames/isAllChecked/isAllUnchecked/validateAddInputOutput）+ column 构造器（buildInputOutputColumnKey 用 `${rowRid}::${paramName}` 组合键、buildInputOutputColumns 按 row.parameters 顺序输出 ScenarioPaneInputOutputColumn[]）。openAddInputOutputDialog 强制非空 scenarioRid + 用 row.parameters 全量重建 selections，每个参数 source 取 autoBound ?? null（Function-backed Action 自动关联到对象属性 / 时序点；标准 Action 留 null 等用户手填）。toggle / setSource / setAllChecked 未 open 或参数不在 row 时返回同引用让 React useMemo 不重渲；setAllChecked 不动 source 让用户撤销勾选后再勾不必重选源；validateAddInputOutput 四态（not_open/no_params_checked/unbound_param 含首个缺源参数名/valid）；buildInputOutputColumns 先 validate 再按 row.parameters 顺序输出（含 displayName 兜底）。ParameterSourceKind = 'time_series'|'object_property'|'measure' 与调研报告 §3.2 三类候选源对齐。dev-browser skill 不可用，Modal + checkbox 列表 + Add all parameters 按钮 + Apply 浏览器验证留到 React 组件接线 story。"
     },
     {
       "id": "VTX-040",
@@ -227,8 +227,8 @@
         "Tests pass"
       ],
       "priority": 40,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/overrideCell.ts。导出 ScalarOverrideValue（string|number|boolean）+ ScalarValueType + ScalarOverride + OverrideMap（key=`${scenarioRid}::${rowRid}::${paramName}`）+ OverrideApiRequest + CellEditDecision union（noop/create/update/delete/invalid）。helper：buildOverrideCellKey / getOverride / setOverride / removeOverride（immutable update，原 map 不动）/ isCellHighlighted（has key 即黄边框）/ isCellDisabled + getCellTooltip（复用 createDialogs.isScenarioImmutable，frozen → FROZEN_SCENARIO_TOOLTIP='Scenario is frozen.'）/ assertCellEditable 抛 ScenarioFrozenError 子类（scenarioRid 暴露便于 React 定位）/ parseScalarInput（string trim 透传；number 用 Number+Number.isFinite 排除 Infinity/NaN；boolean 大小写不敏感字面值 'true'/'false'，拒 0/1 保持无歧义）/ buildCreateOverrideRequest（POST /api/vertex/v1/scenarios/{rid}/overrides body=rowRid+paramName+value；rid 走 encodeURIComponent；require 全字段非 blank）/ buildDeleteOverrideRequest（DELETE /api/vertex/v1/overrides/{id} body=null）/ resolveCellEdit（blur 决策中枢：invalid 不静默丢 existing；empty+existing=delete / empty+null=noop / value+null=create / value+existing 相同=noop / value+existing 不同=update；create+update 都走 POST，区分仅给上层文案）。dev-browser skill 不可用，黄色边框/disabled+tooltip 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-041",
@@ -248,8 +248,8 @@
         "Tests pass"
       ],
       "priority": 41,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/objectPropertyOverride.ts。把 VTX-040 的 (rowRid, paramName) override 扩展到 (objectType, primaryKey, property) 对象属性 override。导出 ObjectPropertyOverride 类型 + 4 段 cell key buildObjectPropertyOverrideKey（scenarioRid::objectType::primaryKey::property）+ OverrideMap CRUD（get/set/remove，immutable）+ isObjectPropertyCellHighlighted + assertObjectPropertyCellEditable（复用 VTX-040 ScenarioFrozenError，immutable scenario 抛错）+ buildCreateObjectPropertyOverrideRequest（POST /api/vertex/v1/scenarios/{rid}/object-property-overrides body={objectType,primaryKey,property,value}；rid 走 encodeURIComponent；全字段 require non-blank）+ buildDeleteObjectPropertyOverrideRequest（DELETE /api/vertex/v1/object-property-overrides/{id}，id encode）+ withScenarioId(path, scenarioRid?)（注入 ?scenarioId=...，已有 query 用 &，blank/null/undefined 原样返回支持 base ontology 查询）+ applyObjectPropertyOverrides(obj, overrides)（客户端 read overlay：过滤 ovr.objectType===obj.__apiName && String(obj.__primaryKey)===ovr.primaryKey；不 mutate base；返回带覆盖值的副本）+ resolveObjectPropertyCellEdit（与 VTX-040 同构的五态决策中枢）。复用 VTX-040 parseScalarInput / ScalarOverrideValue / ScalarValueType / ScenarioFrozenError 不重复实现。dev-browser skill 不可用，黄色边框 + Explorer 反向查询 scenarioId overlay 浏览器验证留到 React 接线 story。"
     },
     {
       "id": "VTX-042",
