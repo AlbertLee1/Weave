@@ -707,3 +707,44 @@ Stream: B
   - **clearChainHighlights 无参数**：ESLint flat config 的 unused-vars 是项目级硬约束（VTX-037 progress 已记录），不能用 `_state` 类型的 leading-underscore 约定。语义上「清空 map」也不需要读 prior state，所以索性 `clearChainHighlights(): ChainHighlightMap { return {}; }` —— 接线层直接 `setMap(clearChainHighlights())` 即可触发 React 重渲。
   - **dev-browser skill 不可用**：BDD #1（背景色变蓝）/ #2（hover tooltip）的 DOM 验证留到 React Scenario Pane Table cell renderer 接线 story —— 本 story 只保证 `getCellChainClassNames` + `getCellChainTooltip` 返字面值正确，React 层把 className 注入 `<td>` + tooltip 注入 `title=` 或 Headless UI Tooltip 即落地。
 ---
+
+## 2026-05-15 - VTX-054
+- 实现 Add Model（模型版本管理 UI）的纯逻辑层：Live Model 选定后 model version + configuration version 两个下拉的状态机 + Save 时把版本捕获进 ScenarioPaneModelRow。本 story 不引入新对话框组件，只交付 reducer + 校验 + 行构造器，React 接线层串到 VTX-036 scenarioPane.addModelRow。
+- 新增文件：
+  - `web/src/features/vertex/scenarioPane/addModel.ts` — 导出：
+    - 类型 `AddModelLiveModel { rid, name, modelVersions[], configVersions[], kind?:'live'|'standard' }`、`AddModelDialogState { open, scenarioRid, models, loading, selectedModelRid, selectedModelVersion, selectedConfigVersion, submitting, error }`、`AddModelValidation`（5 个 reason: no_selection / unknown_selection / no_versions_available / missing_model_version / missing_config_version）。
+    - 常量 `MAX_MODELS_PER_SCENARIO=50` + `MAX_MODELS_MESSAGE='Max 50 models per scenario'`（与 VTX-038 addAction 形态对齐 —— 同样是 Pane 行的 50 上限）。
+    - 状态机：`createAddModelDialogState` / `openAddModelDialog(scenarioRid)`（blank rid 抛错） / `closeAddModelDialog` / `setAddModelLoading` / `setAddModelList`（保留 selection；但 modelVersion / configVersion 必须仍出现在新 model 的版本列表里才保留，否则清空）/ `setAddModelSelected`（同 rid 返原引用让 React useMemo 不触发；切换/清 null 时连 versions 一起清）/ `setAddModelVersion` / `setAddModelConfigVersion` / `setAddModelSubmitting`（true 顺手清 error）/ `setAddModelError`（顺手关 submitting）。
+    - 派生 helper：`isLiveModel` / `filterLiveModels` / `getSelectedModel` / `getAvailableModelVersions` / `getAvailableConfigVersions`。
+    - 校验：`validateAddModel` 严格检查 selection → known model → 该 model 至少有 1 个 modelVersion + 1 个 configVersion → modelVersion 在 available 列表里 → configVersion 在 available 列表里。
+    - 容量：`isScenarioAtModelCapacity` / `assertScenarioModelCapacity` + `ScenarioModelCapacityError`（与 VTX-038 ScenarioActionCapacityError 同形）。
+    - 行构造：`buildAddModelRow({state, rid})` 把 dialog state 翻译成 `ScenarioPaneModelRow{kind:'model', rid, label, modelRid, modelVersion, configVersion}`，blank rowRid / 缺 selection / 缺 modelVersion / 缺 configVersion 各自抛错（assertion 风格防御，正常路径调用方先 validate）。
+  - `web/src/features/vertex/scenarioPane/addModel.test.ts` — 49 个 BDD 测试覆盖：
+    - 状态工厂 + open/close + loading（5）
+    - list 替换 + selection 保留 / 全清 / 部分清版本（4）
+    - selection 切换 + 同 rid 返原引用 + null 清空（5）
+    - 版本 setter（3）
+    - submitting + error 互斥（4）
+    - live 谓词 + filter（4）
+    - getSelectedModel / getAvailableModelVersions / getAvailableConfigVersions（7）
+    - validateAddModel 5 个 reason + happy path（8）
+    - 容量 5 个边界（5）
+    - buildAddModelRow happy + 4 个 throw（5）
+- 修改文件：
+  - `web/src/features/vertex/scenarioPane/scenarioPane.ts` — `ScenarioPaneModelRow` 加两个可选字段 `modelVersion?: string` / `configVersion?: string`。可选保留 VTX-036 已有 `{kind, rid, label, modelRid}` 形态向后兼容（toEqual 对未声明字段不 strict，scenarioPane.test.ts 13/13 仍绿）。
+- 质量检查：
+  - `npx vitest run src/features/vertex/scenarioPane/addModel.test.ts`：49/49 绿。
+  - `npx vitest run src/features/vertex/scenarioPane/`：13 files / 658 tests 全绿（确认 ScenarioPaneModelRow 扩展未破坏 VTX-036）。
+  - `npx vitest run`（全量）：218 files / 2322 tests 全绿，0 回归。
+  - `npx tsc --noEmit`（web/）：0 错误。
+  - `npx eslint addModel.ts addModel.test.ts scenarioPane.ts`：0 warning。
+- **Learnings for future iterations:**
+  - **可选字段扩展 ScenarioPaneModelRow 的策略**：往 `ScenarioPaneModelRow` 加 `modelVersion?` + `configVersion?` 是非破坏性改动 —— VTX-036 的 `addModelRow` 单测构造的对象不含这两字段，`toEqual` 在两边都不出现该 key 时仍判等。如果未来要加非可选字段（如 `cluster: string`），必须同步改 VTX-036 的 row 构造与 fixture 保持完整等价；本 story 走的是「开放扩展、封闭修改」OCP 路径，为后续 model row metadata（baseline overlay、performance budget）的演进留出 slot 不破坏现有 reducer。
+  - **modelVersions / configVersions 数组形态由后端聚合**：`pkg/vertex/modelfunctions/wrapper.go` 的 `Deployment` row 单条只带一个 `ModelVersion string`，多版本是「同 name + 同 ontology 的多 deployment row」组成。前端 `AddModelLiveModel` 直接拿数组是因为 React 拉数据后会 group-by name —— 接线层 fetch `/api/vertex/v1/ontologies/.../model-deployments` 后按 `name` 分组，把 `ModelVersion` 收集进 `modelVersions[]`。configVersion 在后端目前没有独立 schema，最简方案是用 deployment 的 created-at suffix 或 deployment.rid 第三段当 configVersion；如果未来加专门表（model_configurations），UI 形态不变。
+  - **setAddModelList 的版本保留语义比 selection 保留更严**：addAction 的 `setAddActionList` 只检查 selection 是否还在；本模块多一层 —— 即使 selection 还在，`modelVersions` / `configVersions` 也可能被后端下线（version drift）。所以 setAddModelList 双重判断：selection 在 → 检查 `modelVersions.includes(state.selectedModelVersion)`，不在则把该字段清空（独立判断 model + config，一个清不影响另一个）。这避免了 React 选了 v1.0 → 后端下线 v1.0 → 用户没刷新就 Save → row 落 v1.0 → run 时 404 的 race condition。
+  - **dropdown 不自动选首项**：BDD 没有要求"only one option then auto-select"。如果将来加 UX 优化（仅一个选项时自动选）应该走专门的 `selectFirstAvailable(state)` helper 而不是把这逻辑塞进 `setAddModelSelected`，否则 React 层无法表达"用户主动重置"的语义。
+  - **kind: 'live' 谓词与 deployment 概念解耦**：`isLiveModel` 在前端只看 `kind === 'live'`，不依赖 `modelfunctions.Deployment.IsLive` 之类的字段。后端目前所有 `model_deployments` row 都默认是 live（VTX-050 wrapper 是为 live deployment 设计的），React 接线层在拉 deployment 列表时把 `kind` 字段填 `'live'` 即可；当未来引入 batch / scheduled / shadow 部署时，kind 字段扩展枚举即可，前端 dialog 不需要改 reducer。
+  - **buildAddModelRow 三处 throw 是 assertion 而非常态路径**：正常 React 接线 `validateAddModel(state).valid === true` 后才调 buildAddModelRow，所以「没选 model / 没选 modelVersion / 没选 configVersion」都不应该走到这里。三处 throw 用于 dev-time 兜底（防御 setState 顺序错误），生产 React 层应该用 validation 结果禁用 Save 按钮而不是 catch 这些 throw。
+  - **不引入 createAddModelLiveModelStore**：本模块刻意不维护「全 ontology 的 deployment 列表」全局 store，所有 models 都从 dialog state.models 读。理由是 deployment 列表会被多个对话框共享（Add Model / Predict Action 选 model），如果本模块塞个 store，会导致多个 dialog 互相依赖。React 接线层用 react-query 的 `useQuery(['model-deployments', ontology])` 拉 + cache 即可，每次 openAddModelDialog 后 `setAddModelList(s, query.data)`。
+  - **dev-browser skill 不可用**：BDD #1（两下拉显示）+ BDD #2（Save 后 row 含三字段）的浏览器层验证留到 React 接线 story（在 Scenario Pane toolbar 加 "Add Model" 按钮 → Modal 组件 → Headless UI Listbox × 2 → onSave 调 buildAddModelRow + scenarioPane.addModelRow）。本 story 通过 `validateAddModel` + `buildAddModelRow` 单测锁死语义。
+---

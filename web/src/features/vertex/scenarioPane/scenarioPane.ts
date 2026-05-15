@@ -28,6 +28,12 @@ export interface ScenarioPaneModelRow {
   rid: string;
   label: string;
   modelRid: string;
+  // VTX-054: live model deployments expose versioned dropdowns. The pane row
+  // captures the operator's selection so re-running the scenario stays
+  // deterministic. Both fields are optional to preserve the VTX-036 row shape
+  // for non-versioned (e.g. simple/test) model rows.
+  modelVersion?: string;
+  configVersion?: string;
 }
 
 export type ScenarioPaneRow = ScenarioPaneActionRow | ScenarioPaneModelRow;
