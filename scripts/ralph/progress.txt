@@ -630,3 +630,46 @@ Stream: B
   - **新 migration 编号 000108**：000107 被 VTX-050 占用；与 progress.txt Codebase Patterns 一致（stream B 取 000107 起步，本 story 顺位 000108）。
   - **Vertex Scenario 执行 wiring 仍延后**：`cmd/server/main.go` 注册 `functionactions.Handler` 路由 + PG 实现 `BindingRepo` + 一条 Scenario-aware ActionInvoke endpoint（POST `/api/vertex/v1/scenarios/{scenarioRID}/actions/{actionTypeRID}/invoke`）留给后续 wiring story。BindingRepo PG SQL：`INSERT INTO vertex_function_actions (rid, ontology_rid, action_type_rid, function_rid, output_mappings, created_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6)`（output_mappings 走 `json.Marshal(b.OutputMappings)`）；UNIQUE 冲突映射 `oms.ErrDuplicate`。
 ---
+
+## 2026-05-15 - VTX-052
+- 实现 Model Mesh（多模型链式编排）后端：纯 Go DAG 规划器（基于 producer-property → consumer-property 数据流隐式建图）+ 分层拓扑排序（Kahn）+ 工作池 Runner（按层并发）+ HTTP Handler（plan / run）。VTX-051 已落地 Function-backed Action 绑定，本 story 在其上提供「多 Function/模型按数据流自动编排」能力，下游 Scenario 执行直接消费 layered topo + 按层 fan-out。
+- 新增文件：
+  - `pkg/vertex/modelmesh/dag.go` — 导出：
+    - `ModelNode { ID, FunctionRID?, InputProperties[], OutputProperties[], Parameters? }` — 计划器只关心 ID + I/O 属性，FunctionRID/Parameters 透传给 Runner 的 ModelExecutor 不必二次查找。
+    - `Layer = []string` —— 同层可并发、IDs 排序保证 wire 输出确定性。
+    - `BuildDependencyGraph(models)` —— 邻接表，A→B 当且仅当 `A.OutputProperties ∩ B.InputProperties ≠ ∅`；空 ID / 重复 ID 立即 error；自环允许（在 TopologicalLayers 处当 cycle 拒）。
+    - `TopologicalLayers(models)` —— Kahn 算法逐层剥皮；剥不出新层 → 调 `findCycle` 走 DFS grey-edge 还原一条 cycle path；返 `*CycleError{Cycle: [...]}`。
+    - `ErrEmptyModelID` / `ErrDuplicateModelID` / `ErrCycleDetected` 三个 sentinel；`*CycleError.Is(target) → target == ErrCycleDetected` 让 `errors.Is(err, ErrCycleDetected)` 与 `errors.As(err, &ce *CycleError)` 都正常工作。
+  - `pkg/vertex/modelmesh/runner.go` — 导出：
+    - `ModelExecutor func(ctx, ModelNode) error` —— wiring 层注入（VTX-049 funcruntime client / VTX-050 HTTP wrapper / VTX-051 function-backed action）。
+    - `RunResult { ModelID, Started, Completed, Err -, ErrMsg }` —— Err 私有方便 wire 时不漏 stack；ErrMsg 走 JSON。
+    - `Runner { Concurrency }`：`Concurrency<=0 || >layerWidth` 兜底为 layerWidth（无 cap）；`Run(ctx, models, exec)` 调 `TopologicalLayers` → 按层 `runLayer` 用 semaphore 限并发 → 任一层 error 排干当前层后短路（不进下游 layer）。
+    - `runLayer` 用 `sem chan struct{}` 控并发 + `WaitGroup` + `out chan slot` 收结果，最终 `firstErr = fmt.Errorf("modelmesh: model %q failed: %w", id, err)`。
+  - `pkg/vertex/modelmesh/handler.go` — 导出：
+    - `OntologyResolver`（同 funcregistry/functionactions/modelfunctions 概念归属，本包独立定义不跨包共享）。
+    - `Handler` + `NewHandler(resolver, exec ModelExecutor)`（exec 可为 nil → plan 仍工作 / run 返 500 ModelMeshExecutorNotConfigured）。
+    - `RegisterRoutes(chi.Router)` 挂两个端点：`POST /api/vertex/v1/ontologies/{ontologyApiName}/model-mesh/plan`（dry-run 预览 layers，UI 提交前用） + `POST .../run`（plan + 执行，返 layers + results）。
+    - 错误映射：`OntologyNotFound`→404 / `InvalidRequestBody`→400 / `CycleDetected`→400 INVALID_ARGUMENT（parameters.cycle = "m1 -> m2 -> m1"，errorName=CycleDetected 与 BDD #3 字面对齐）/ `InvalidParameter:id`→400（空 ID/重复 ID） / `ModelMeshExecutorNotConfigured`→500 / `ModelMeshRunFailed`→500（中途 executor 错误）。
+  - `pkg/vertex/modelmesh/dag_test.go` — 11 个 BDD：edge added / disconnected / duplicate ID / empty ID / linear chain layers / fan-out siblings sorted / diamond 3 layers / cycle 拒 + path / self-loop 拒 / empty no layers / CycleError.Error 含路径且 errors.Is 命中 ErrCycleDetected。
+  - `pkg/vertex/modelmesh/runner_test.go` — 7 个 BDD：linear chain 顺序 / **siblings 真并发**（atomic counter + 共享 channel barrier 让两个兄弟必须都进 exec 才放行，2s 超时兜底失败）/ model fail 短路（下游 layer 不执行 + err 用 errors.Is 解包到原 sentinel）/ cycle 拒 / **Concurrency=1 < layerWidth=4 仍全跑完** / **3-model 链路 < 3s**（每模型 50ms sleep，覆盖 BDD #4 benchmark）/ RunResult timing 填充。
+  - `pkg/vertex/modelmesh/handler_test.go` — 8 个 BDD：plan happy path 返 layers 顺序 / plan 见 cycle → 400 CycleDetected + parameters.cycle 含 m1+m2 / run 见 cycle → 400（且 executor 0 调用，不 leak 副作用） / run happy path 返 layers + results + executor 顺序 [m1,m2] / 未知 ontology→404 / malformed JSON→400 / 重复 ID→400 / 缺 executor → 500。
+- 质量检查：
+  - `go test -count=1 ./pkg/vertex/modelmesh/... -v`：26/26 全绿（dag 11 + runner 7 + handler 8）；3-chain benchmark 实测 0.15 s（远低于 3 s 上限）。
+  - `go test -count=1 ./pkg/vertex/... ./pkg/oms/... ./pkg/funcrepo/... ./pkg/apierror/... ./pkg/httputil/...`：所有包绿（funcregistry / funcruntime / functionactions / graphsvc / modelfunctions / modelmesh / optimistic / scenarioapply / scenariodiff / searcharound / sharelinks / sideeffects / timeline / oms / funcrepo / apierror / httputil 全绿，0 回归）。
+  - `go vet ./pkg/vertex/modelmesh/...`：0 warning；`gofmt -l pkg/vertex/modelmesh/`：0 文件。
+  - `go build ./pkg/... ./internal/...`：clean。`go build ./...` 残留 pre-existing `cmd/server/embed.go:8:12 pattern all:web/dist: no matching files found`（与 `project_dist_drift.md` 同根，与本 stream 无关）。
+- **Learnings for future iterations:**
+  - **隐式 DAG 优于显式 DAG**：BDD #1 给出的是 "M1 写属性 A，M2 读属性 A → M1 在 M2 前跑"，没有要求用户显式传 edges。这意味着规划器从 InputProperties / OutputProperties 自动派生 edges，用户提交的 ModelNode 只要声明 I/O 属性即可。这与 dataflow programming 的传统范式（Spark / Airflow）一致。如果以后要支持「按时序触发」「按事件触发」等非数据流依赖，加 ModelNode.ExplicitDeps `[]string` 字段不打破现有形。
+  - **Kahn + DFS-fallback 两阶段 cycle 检测**：Kahn 算法用 in-degree 剥皮，O(V+E) 拓扑排序顺手；剥不出新层立刻知道有 cycle 但拿不到 cycle path。fallback 走一次 DFS（在残余 in-degree>0 子图上）追 grey-edge 还原 path。两阶段比"只用 DFS"更快（happy path 不会 DFS），比"只用 Kahn"信息更全（caller 拿到具体的 m1→m2→m1 而不是空指针）。这与 npm semver/cycle 检测的常用做法一致。
+  - **自环（self-loop）= 1-model cycle**：M1 同时声明 InputProperties=[A] + OutputProperties=[A] 的 edge case 在 BuildDependencyGraph 里被允许（建出 m1→m1 边），由 TopologicalLayers 当 cycle 拒。这避免了在建图阶段先做"是否自环"特判 —— cycle 检测路径已经覆盖；测试 `Given_SelfLoop_When_Sort_Then_ErrCycleDetected` 锁死语义。
+  - **CycleError 实现 `Is(target)` 让 sentinel + 富错并存**：调用方 `errors.Is(err, ErrCycleDetected)` 拿"是不是 cycle"，`errors.As(err, &ce *CycleError)` 拿 cycle 路径。两套接口共存的关键是给 CycleError.Is(target) 实现 `target == ErrCycleDetected`，否则 `errors.Is` 不会下钻到 *CycleError。这与 Go 标准库的 `os.PathError` 同模式。
+  - **Runner concurrency 兜底语义**：`Concurrency <= 0` 自动设为 layer 宽度（"unbounded within layer"），`Concurrency > layerWidth` 也降为 layerWidth（避免起多余 goroutine）。这两个兜底让 zero-value `&Runner{}` 立刻可用，不需要 caller 算 GOMAXPROCS。production wiring 一般传 `Concurrency = N * runtime.GOMAXPROCS(0)` 之类的全局配置以保护 funcruntime sidecar。
+  - **真·并发测试**：用 `atomic.AddInt32` + 共享 channel barrier 验证两个 sibling 真在 exec 内同时存在，而不是 "一前一后但很快"。第二个进入 exec 的 goroutine `close(siblingsInFlight)`，第一个 select 等待该 channel 关闭（带 2s timeout 兜底）。这比"测时长 < 50ms"之类经验阈值更可靠（CI/本机 jitter 可能让单线程跑也 < 50ms）。
+  - **3-model chain benchmark < 3s 用 50ms sleep 模拟 exec**：BDD #4 的 "3 s" 是给真实 model 调用预算的（含 funcruntime HTTP RTT），单测里没有真 model 所以用 sleep 模拟典型 model 调用延迟。线性链路总延迟 = 3 × 50ms = 150ms，远低于 3s 阈值，实测 0.15s 通过。如果未来 funcruntime 平均 latency 突增，benchmark guard 也会触发（让 CI 暴露问题）。
+  - **plan 与 run 端点拆分**：plan 是 dry-run（不调 executor），run 是 plan + 执行。Vertex Scenario UI 在用户提交"运行 mesh"按钮前可以先调 plan 显示 "M1 → M2 → M3 / M4" 给用户预览 + 暴露 cycle 错误，避免 round-trip 浪费。这与 SQL EXPLAIN vs EXECUTE / git plan vs apply 的分层一致。两个 endpoint 共享 meshRequest 形保持一致。
+  - **executor 注入而不是注册**：Handler 在 NewHandler 时拿一个 ModelExecutor func（而不是 Register/Lookup interface）。意图：mesh runner 内部不区分 Function 是 Python sandbox / HTTP wrapper / function-backed action，统一抽象成 "given a model node, side-effect happens"，让 wiring 层（cmd/server/main.go）把 dispatch table（按 functionRID 路由到 funcruntime 或 modelfunctions wrapper）藏在闭包里。这避免 modelmesh 包反向依赖 funcruntime / modelfunctions 包。
+  - **runLayer 即使中途 error 也排干 sibling**：测试 `Given_ModelFails_When_Run_Then_DownstreamSkipped` 锁死的语义是"下游 layer 不跑"而不是"同层 sibling 不跑"。原因：sibling 已经 dispatch goroutine 出去了，强行 ctx-cancel 会让 metric 不一致（部分 sibling 看见 ctx.Err 部分看见正常 result）。让 sibling 跑完再短路下游是更确定的失败模型，与 errgroup 的传统行为一致。如果未来需要 "fail-fast cancel sibling"，给 Runner 加 `FailFast bool` 而不是改默认。
+  - **wiring 仍延后**：与前面 stream B 全部后端 story 同模式 —— `cmd/server/main.go` 注册 `modelmesh.Handler` 路由 + 注入真 ModelExecutor（按 functionRID 分发到 funcruntime client 或 modelfunctions wrapper，且写 scenario_edits 行）留给后续 wiring story。Handler 没有任何 PG 触达，无 migration。
+  - **未来 wiring 时要考虑的 invoke 语义**：上游 model 写到 fork 的 property A，下游 model 读 property A —— 这意味着 ModelExecutor 在 Run 中写完 scenario_edits 后必须立即 flush 到 OSS 读路径上让下一层读到（要么 commit 后 read-through，要么 in-memory overlay）。这是本 story 范围之外的 Scenario 执行层职责；mesh 模块只保证 *layer 顺序*（M1 完成才开始 M2），不保证 *数据可见性*（那是 OSS Scenario reader 的责任）。
+  - **dev-browser skill 不可用**：纯后端 story，无 UI 改动。BDD #1（拓扑序）/ #2（同层并发）/ #3（cycle 400）/ #4（benchmark）全部由 dag/runner/handler 测试覆盖，3-chain benchmark 实测 0.15s 远低于 3s 阈值。
+---
