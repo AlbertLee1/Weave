@@ -359,8 +359,8 @@
         "Tests pass"
       ],
       "priority": 46,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新增后端 package pkg/vertex/scenariodiff，pure Compute 函数 + chi Handler 暴露 GET /api/vertex/v1/scenarios/{rid}/diff。导出类型 Diff{EditedObjects, CreatedObjects, DeletedObjects, Deltas} + ObjectRef + CreatedObject + EditedObject + PropertyDelta；BaseLoader 接口（LoadBase(ctx, ObjectKey) (*ObjectView, bool, error)）让 Compute 可在不接 OSS 时单测，handler 接 *scenarios.Repo（EditsReader 是 ListEdits 切片，与 scenarios.Repo 签名兼容免 adapter），NoBaseLoader 给纯 created/deleted 场景兜底。Compute 按 Seq ASC 排序 edits，replay 时维护 (created/deleted/createdProps/modifiedProps) 状态 per ObjectKey：createObject→created bucket（merge NewValue 属性 bag）；modifyProperty→如已 created 就 patch createdProps，否则记入 modifiedProps，已 deleted 则忽略（与 scenarios.FoldObject 同语义）；deleteObject→翻 deleted 同时清 created/props；delete-then-create 同 key 净效果 created（不进 deletedObjects）。BaseLoader 仅对 editedObjects 路径调用按需取 base 属性算 oldValue；缺 base 时 oldValue=JSON null（不省略字段让 wire 客户端区分'无前值'与'属性未在 diff 中'）；newValue 与 oldValue 经 jsonEqual round-trip canonicalize 后相等的 modify 视为 non-change 丢弃。Deltas 是 EditedObjects.Changes 的扁平化（同顺序）便于表格客户端枚举；createdObjects 不进 deltas（无 oldValue 可比）。输出按 (objectType, objectId) 字典序排序保证 wire 稳定；EditedObjects 内 Changes 按 property 字典序。Link edits（addLink/deleteLink）silently dropped 不污染对象 buckets。所有 buckets 强制非 nil JSON 数组（[] 而非 null）让 JSON 客户端无需 nil-guard。Handler scenarios.ErrScenarioNotFound→404 ScenarioNotFound + rid，其他 repo error→500 ListEditsFailed，Compute 失败→500 ComputeDiffFailed。17 tests pass（13 Compute + 4 Handler）；go vet + gofmt 干净；相邻 vertex/scenarios 套件 0 回归。后端 endpoint 已就位但 main.go 尚未注册路由（需要后续 wiring story 接入 scenarios.Repo 真实实例 + OSS 反向取 base view 的 BaseLoader 实现）。"
     },
     {
       "id": "VTX-047",
@@ -381,8 +381,8 @@
         "Tests pass"
       ],
       "priority": 47,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "纯逻辑模块 web/src/features/vertex/scenarioPane/multiScenarioCompare.ts。把 VTX-036 ScenarioPane（列定义）+ VTX-045 BaselineRun（baseline outputs + computeBaselineCompare）撮合成多 Scenario 横向并列的派生层 —— 让 Pane 4 列（Baseline + S1 + S2 + S3）、System Graph 节点 Extended Label 多列读数、列头点击切换主视图三件 React 接线层关心的事各自由一组 helper 承担。导出 ActiveScenarioState { activeScenarioRid: string | null }（null = Baseline 主视图）+ createActiveScenarioState / setActiveScenario（同值返回**同引用**让 React useMemo 友好）/ isBaselineActive / isScenarioActive / clearActiveIfMissing（VTX-036 removeScenario 删掉当前主视图 scenario 后调用方调它把 active 回退到 Baseline，避免悬挂引用） + 列定义 BASELINE_COLUMN_KEY='baseline' / BASELINE_COLUMN_LABEL='Baseline' / MultiScenarioColumn { key, label, kind:'baseline'|'scenario', scenarioRid?, isActive } / getMultiScenarioColumns（无 caseStudy 返回 []，否则 Baseline + paneState.scenarios 顺序）/ setActiveColumnFromHeader（'baseline' → setActive(null)，其它 → setActive(scenarioRid)，同值同引用）+ ScenarioOutputs/ScenarioOutputsByRid 共享 VTX-045 BaselineOutputValue scalar 域 + getScenarioOutput（unknown rid → null / unknown key → null / explicit null 保留） + MultiScenarioReading { columnKey, kind, scenarioRid?, value, compare:BaselineCompareResult|null, colorHint:BaselineCompareColor|null } + getMultiScenarioPaneRowReadings / getMultiScenarioObjectReadings（两个 helper 分别用 VTX-045 buildPaneBaselineOutputKey / buildObjectBaselineOutputKey 取 outputs map 的 key，baseline 列自身 compare/colorHint=null，scenario 列在两侧都是有限 number 时调 computeBaselineCompare 派生 delta+deltaPct+colorHint，否则 compare=null） + 节点着色 NodeColoringSource = {kind:'baseline'} | {kind:'scenario',scenarioRid} / getNodeColoringSource / getNodeColoringOutputs（Baseline 主视图返回 baselineOutputs，scenario 主视图返回 scenarioOutputsByRid[rid] ?? Object.freeze({})）。复用 VTX-045 computeBaselineCompare / BaselineCompareResult / BaselineCompareColor / BaselineOutputValue / buildPaneBaselineOutputKey / buildObjectBaselineOutputKey 不重复实现；复用 VTX-036 ScenarioPaneState 取 caseStudy + scenarios，本模块不持有 pane 状态。42 tests pass，vertex 子集 42 files / 909 tests 全绿，vitest 全量 216 files / 2240 tests 全绿（这次未触发 admin-removed flaky）；tsc 0 错误，eslint 0 warning。dev-browser skill 不可用 — 4 列表头渲染、Scenario 列头点击高亮、节点着色按 active scenario 切换、Extended Label 多行带颜色差异的浏览器验证留到 React 接线 story（Pane TanStack Table headerGroup + ColumnDef + SystemGraph 节点 overlay）。"
     },
     {
       "id": "VTX-048",
