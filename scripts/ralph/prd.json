@@ -590,8 +590,8 @@
         "Tests pass"
       ],
       "priority": 57,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新建 pkg/vertex/scenarioruns/ 包：Workflow 把 Activities 按 Layer 分层、层内按 ID 字典序串行执行；RetryPolicy（默认 MaxAttempts=3 + 可选 BackoffMs，cancel/deadline 跳过剩余 retry）；ctx 取消由 Workflow 在层间 + 每个 attempt 前检查；checkpoint 在每个 activity 转换后写回 Persister，存 Completed[] + AttemptsByID 供 SkipCompleted 在 ResumeAll 路径上 fast-forward。Service 内置 worker pool（MaxConcurrentWorkflows，0=无限），sem 在 spawn goroutine 内获取保证 Run() 不阻塞调用方；queued 状态被 cancel 会写 Canceled checkpoint。Handler 暴露 POST /api/vertex/v1/scenarios/{rid}/runs（202 + runRid）/ POST .../runs/{runRid}/cancel（202） / GET .../runs/{runRid}（200，Run + Checkpoint）；ErrAlreadyTerminal → 409，ErrRunNotFound → 404。新 migration 000109_vertex_scenario_runs（scenario_runs 表 + scenario_runs_resumable_idx 部分索引）。43 个新测试覆盖 runs/workflow/service/handler 四层全部 BDD 路径；race 检测器干净；不破坏 pkg/scenarios / pkg/vertex/* 既有测试。cmd/server/main.go 路由 wiring 留给后续 wiring story（与 modelmesh / scenariodiff / functionactions 一致的延后模式）。"
     },
     {
       "id": "VTX-058",
