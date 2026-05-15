@@ -13,6 +13,11 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from weave_runtime.app import create_app
+from weave_runtime.external_http import (
+    ForbiddenExternalCall,
+    configure_allowed_domains,
+    get_allowed_domains,
+)
 from weave_runtime.functions import FunctionRegistry
 from weave_runtime.sandbox import (
     SandboxViolation,
@@ -35,6 +40,9 @@ class DelayOutput(BaseModel):
 def _sandbox_teardown():
     yield
     uninstall_filesystem_sandbox()
+    # VTX-055: the app may configure the external-HTTP allowlist at
+    # construction; reset between tests so module state doesn't leak.
+    configure_allowed_domains([])
 
 
 def _make_client(reg: FunctionRegistry, install_sandbox: bool = False) -> TestClient:
@@ -198,6 +206,42 @@ def test_sandbox_install_blocks_function_reading_etc_passwd(tmp_path):
         assert str(tmp_path) in body["detail"] or "secret" in body["detail"]
     finally:
         uninstall_filesystem_sandbox()
+
+
+def test_invoke_function_raising_forbidden_external_call_returns_403_with_typed_code():
+    """VTX-055 BDD #2 — function code that tries to dial a host outside
+    the allowlist surfaces as a typed 403 envelope. Distinct ``code``
+    from the filesystem sandbox so the Go side can branch on it."""
+
+    reg = FunctionRegistry()
+
+    @reg.register("call_external", input_model=DelayInput, output_model=DelayOutput)
+    def call_external(inputs):  # noqa: ARG001
+        raise ForbiddenExternalCall("untrusted.example.com")
+
+    client = _make_client(reg)
+    resp = client.post(
+        "/invoke",
+        json={"function": "call_external", "inputs": {"distance_km": 1.0}},
+    )
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    assert body["code"] == "ForbiddenExternalCall"
+    assert "untrusted.example.com" in body["detail"]
+
+
+def test_create_app_configures_external_http_allowlist_from_kwarg():
+    """VTX-055 BDD #1 — operators inject ``config.allowedExternalDomains``
+    at app construction; the module-level allowlist reflects it so any
+    ``http_client.post`` call from inside a function sees the policy."""
+
+    reg = FunctionRegistry()
+    create_app(
+        registry=reg,
+        install_sandbox=False,
+        allowed_external_domains=["external-api.test", "predict.ai"],
+    )
+    assert get_allowed_domains() == ("external-api.test", "predict.ai")
 
 
 def test_invoke_output_validation_failure_returns_422():

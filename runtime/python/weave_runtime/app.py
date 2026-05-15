@@ -8,7 +8,8 @@ for the Go-side wire contract:
         200 →  {"output": <jsonable>}
         404 →  {"detail": "..."}                        (unknown function)
         422 →  {"detail": [{"loc": [...], "msg": "...", "type": "..."}]}
-        403 →  {"detail": "...", "code": "ForbiddenFileAccess"}
+        403 →  {"detail": "...", "code": "ForbiddenFileAccess"}      (sandbox)
+        403 →  {"detail": "...", "code": "ForbiddenExternalCall"}    (allowlist)
         5xx →  {"detail": "...", "code": "<ExceptionClass>"}
 
     GET /health  →  200 {"status": "ok", "functions": [...]}
@@ -23,13 +24,18 @@ JSON ad hoc.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from .external_http import (
+    ForbiddenExternalCall,
+    configure_allowed_domains,
+)
 from .functions import FunctionRegistry, UnknownFunctionError, registry as default_registry
 from .sandbox import SandboxViolation, install_filesystem_sandbox
 
@@ -70,10 +76,28 @@ def _format_validation_errors(err: ValidationError) -> List[Dict[str, Any]]:
     return details
 
 
+def _resolve_allowed_external_domains(
+    explicit: Optional[Iterable[str]],
+) -> List[str]:
+    """Pick the active allowlist source for ``create_app``.
+
+    Precedence: explicit kwarg > ``WEAVE_ALLOWED_EXTERNAL_DOMAINS``
+    env var (comma-separated) > empty (deny everything). Centralised
+    here so tests can assert on either source without duplicating the
+    parse logic.
+    """
+
+    if explicit is not None:
+        return [d for d in explicit if d and d.strip()]
+    raw = os.environ.get("WEAVE_ALLOWED_EXTERNAL_DOMAINS", "")
+    return [piece.strip() for piece in raw.split(",") if piece.strip()]
+
+
 def create_app(
     *,
     registry: Optional[FunctionRegistry] = None,
     install_sandbox: bool = True,
+    allowed_external_domains: Optional[Iterable[str]] = None,
 ) -> FastAPI:
     """Construct a FastAPI app bound to ``registry``.
 
@@ -82,11 +106,17 @@ def create_app(
     the patch pass ``install_sandbox=False`` and either install the
     sandbox manually with a narrow denylist or rely on the BDD #3
     end-to-end test for coverage.
+
+    ``allowed_external_domains`` configures the VTX-055 outbound-HTTP
+    allowlist. ``None`` (default) falls back to
+    ``WEAVE_ALLOWED_EXTERNAL_DOMAINS``; an empty iterable explicitly
+    denies every external host.
     """
 
     reg = registry if registry is not None else default_registry
     if install_sandbox:
         install_filesystem_sandbox()
+    configure_allowed_domains(_resolve_allowed_external_domains(allowed_external_domains))
 
     app = FastAPI(title="Weave Vertex Function Runtime", version="0.1.0")
     app.state.registry = reg
@@ -121,6 +151,11 @@ def create_app(
             return JSONResponse(
                 status_code=403,
                 content={"detail": str(e), "code": "ForbiddenFileAccess"},
+            )
+        except ForbiddenExternalCall as e:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": str(e), "code": "ForbiddenExternalCall"},
             )
         except Exception as e:  # noqa: BLE001 - blanket on purpose; see below
             # Any other exception inside the function body becomes a

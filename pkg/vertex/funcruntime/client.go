@@ -12,6 +12,7 @@
 //	  → 200 {"output": <any JSON>}
 //	  → 422 {"detail": [{"loc": [...], "msg": "...", "type": "..."}, ...]}  (pydantic)
 //	  → 403 {"detail": "...", "code": "ForbiddenFileAccess"}                (sandbox)
+//	  → 403 {"detail": "...", "code": "ForbiddenExternalCall"}              (allowlist; VTX-055)
 //	  → 404 {"detail": "..."}                                                (unknown function)
 //	  → 5xx {"detail": "...", "code": "..."}                                 (runtime panic)
 //
@@ -109,9 +110,10 @@ type InvokeResponse struct {
 // Invoke POSTs req to {BaseURL}/invoke and returns the parsed
 // response. Wire-level failures (DNS, dial, TLS, timeout) surface as
 // *TransportError; runtime-side failures surface as one of
-// *ValidationError, *SandboxViolationError, *NotFoundError, or
-// *RuntimeError depending on HTTP status + payload shape. Callers
-// should errors.As on the specific type they want to handle.
+// *ValidationError, *SandboxViolationError, *ExternalCallForbiddenError,
+// *NotFoundError, or *RuntimeError depending on HTTP status + payload
+// shape. Callers should errors.As on the specific type they want to
+// handle.
 func (c *Client) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResponse, error) {
 	if strings.TrimSpace(req.Function) == "" {
 		return nil, errors.New("funcruntime: req.Function is required")
@@ -161,7 +163,7 @@ func (c *Client) Invoke(ctx context.Context, req InvokeRequest) (*InvokeResponse
 	case resp.StatusCode == http.StatusUnprocessableEntity:
 		return nil, parseValidationError(req.Function, resp.StatusCode, rawBody)
 	case resp.StatusCode == http.StatusForbidden:
-		return nil, parseSandboxError(req.Function, resp.StatusCode, rawBody)
+		return nil, parseForbiddenError(req.Function, resp.StatusCode, rawBody)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, parseNotFoundError(req.Function, resp.StatusCode, rawBody)
 	default:
@@ -214,6 +216,27 @@ func (e *SandboxViolationError) Error() string {
 		return fmt.Sprintf("funcruntime: sandbox violation in function %q (%s): %s", e.Function, e.Code, e.Detail)
 	}
 	return fmt.Sprintf("funcruntime: sandbox violation in function %q (%s)", e.Function, e.Code)
+}
+
+// ExternalCallForbiddenError is returned when the runtime blocks an
+// outbound HTTP call because the target host isn't on the active
+// ``allowedExternalDomains`` list (VTX-055). Carried on the wire as
+// HTTP 403 with code "ForbiddenExternalCall" — distinct type from
+// SandboxViolationError so callers can decide which user-facing
+// remediation to surface ("contact security to add the domain" vs.
+// "function is misbehaving").
+type ExternalCallForbiddenError struct {
+	Function   string
+	StatusCode int
+	Code       string
+	Detail     string
+}
+
+func (e *ExternalCallForbiddenError) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("funcruntime: external call blocked in function %q (%s): %s", e.Function, e.Code, e.Detail)
+	}
+	return fmt.Sprintf("funcruntime: external call blocked in function %q (%s)", e.Function, e.Code)
 }
 
 // NotFoundError is returned when the runtime doesn't know the
@@ -294,10 +317,22 @@ func parseValidationError(function string, status int, body []byte) error {
 	return &ValidationError{Function: function, StatusCode: status, Details: env.Detail}
 }
 
-func parseSandboxError(function string, status int, body []byte) error {
+// parseForbiddenError branches on the envelope's ``code`` field so the
+// VTX-055 outbound-HTTP rejection produces a distinct Go error type
+// from the filesystem sandbox violation. Both share the 403 status
+// code but the remediation (and the operator-facing log line) differ.
+func parseForbiddenError(function string, status int, body []byte) error {
 	var env errorEnvelope
 	_ = json.Unmarshal(body, &env)
 	code := env.Code
+	if code == "ForbiddenExternalCall" {
+		return &ExternalCallForbiddenError{
+			Function:   function,
+			StatusCode: status,
+			Code:       code,
+			Detail:     detailAsString(env.Detail),
+		}
+	}
 	if code == "" {
 		code = "Forbidden"
 	}

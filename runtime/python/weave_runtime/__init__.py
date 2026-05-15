@@ -14,6 +14,14 @@ the top of a custom ``run.py``).
 """
 
 from .app import app, create_app
+from .external_http import (
+    ForbiddenExternalCall,
+    HttpClient,
+    configure_allowed_domains,
+    get_allowed_domains,
+    http_client,
+    is_domain_allowed,
+)
 from .functions import (
     FunctionRegistry,
     FunctionSpec,
@@ -38,6 +46,12 @@ __all__ = [
     "install_filesystem_sandbox",
     "uninstall_filesystem_sandbox",
     "is_path_denied",
+    "ForbiddenExternalCall",
+    "HttpClient",
+    "configure_allowed_domains",
+    "get_allowed_domains",
+    "http_client",
+    "is_domain_allowed",
     "app",
     "create_app",
 ]

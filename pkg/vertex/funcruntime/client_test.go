@@ -262,6 +262,42 @@ func TestClient_Given_SandboxViolation_When_Invoke_Then_Returns403(t *testing.T)
 	}
 }
 
+// TestClient_Given_ForbiddenExternalCall_When_Invoke_Then_ReturnsTypedError
+// covers VTX-055: a 403 with code=ForbiddenExternalCall must surface
+// as *ExternalCallForbiddenError, not *SandboxViolationError, so
+// callers can distinguish "function tried to read /etc/passwd" from
+// "function tried to call a non-allowlisted external service".
+func TestClient_Given_ForbiddenExternalCall_When_Invoke_Then_ReturnsTypedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"detail": "forbidden external call: domain not in allowlist: untrusted.example.com", "code": "ForbiddenExternalCall"}`))
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, srv.Client())
+	_, err := c.Invoke(context.Background(), InvokeRequest{Function: "call_external"})
+
+	var ex *ExternalCallForbiddenError
+	if !errors.As(err, &ex) {
+		t.Fatalf("expected *ExternalCallForbiddenError, got %T: %v", err, err)
+	}
+	if ex.Code != "ForbiddenExternalCall" {
+		t.Errorf("Code = %q, want ForbiddenExternalCall", ex.Code)
+	}
+	if !strings.Contains(ex.Detail, "untrusted.example.com") {
+		t.Errorf("Detail = %q, want to mention untrusted.example.com", ex.Detail)
+	}
+	if !strings.Contains(ex.Error(), "untrusted.example.com") {
+		t.Errorf("Error() = %q should embed detail", ex.Error())
+	}
+	// A SandboxViolationError must NOT match — they're disjoint types
+	// at the Go API surface, otherwise the branch is meaningless.
+	var sb *SandboxViolationError
+	if errors.As(err, &sb) {
+		t.Fatalf("ForbiddenExternalCall must not match *SandboxViolationError")
+	}
+}
+
 // TestClient_Given_403WithoutCode_When_Invoke_Then_SetsDefaultCode
 // makes sure a runtime that forgets the code field still produces a
 // usable *SandboxViolationError with a non-empty Code.

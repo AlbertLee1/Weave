@@ -13,12 +13,20 @@ contract.
   output_model)` decorator, module-level `registry` singleton,
   `UnknownFunctionError`.
 - `weave_runtime/app.py` — `create_app(*, registry=None,
-  install_sandbox=True)` FastAPI factory + module-level `app` for
-  uvicorn. Maps registry exceptions to wire envelopes.
+  install_sandbox=True, allowed_external_domains=None)` FastAPI factory
+  + module-level `app` for uvicorn. Maps registry exceptions to wire
+  envelopes. `allowed_external_domains=None` (default) falls back to
+  the `WEAVE_ALLOWED_EXTERNAL_DOMAINS` env var (comma-separated).
 - `weave_runtime/sandbox.py` — process-wide monkey-patch on
   `builtins.open` / `os.open`. Default denylist covers `/etc`,
   `/root`, `/proc`, `/sys`, `/var/log`, `/var/run`, `/Users`, `/home`,
   `~/.ssh`, `~/.aws`, `~/.config`.
+- `weave_runtime/external_http.py` (VTX-055) — `http_client` SDK
+  singleton + `configure_allowed_domains` allowlist + `ForbiddenExternalCall`
+  exception. Functions import `http_client` and call `.get(url)` /
+  `.post(url, json=...)`; calls to hosts outside the allowlist raise
+  `ForbiddenExternalCall` before the transport runs. Subdomain matching
+  is NOT automatic — every host must be listed exactly.
 - `weave_runtime/example_functions.py` — reference `predict_delay`
   function backed by a trivially-trained `LinearRegression`.
 
@@ -57,8 +65,13 @@ The shape of every error envelope is dictated by what the Go client
 - 200 → `{"output": <jsonable>}`
 - 404 → `{"detail": "..."}`
 - 422 → `{"detail": [{"loc": [...], "msg": "...", "type": "..."}, ...]}`
-- 403 → `{"detail": "...", "code": "ForbiddenFileAccess"}`
+- 403 → `{"detail": "...", "code": "ForbiddenFileAccess"}` (sandbox)
+- 403 → `{"detail": "...", "code": "ForbiddenExternalCall"}` (allowlist; VTX-055)
 - 5xx → `{"detail": "...", "code": "<ExceptionClass>"}`
+
+When you add a new 403 sub-type, the Go client's `parseForbiddenError`
+in `pkg/vertex/funcruntime/client.go` must grow a matching `code ==
+"..."` branch so callers can `errors.As` to a distinct Go type.
 
 The Go side's `client_test.go` exercises every branch; run both
 suites whenever you touch envelope encoding:
