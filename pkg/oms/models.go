@@ -92,10 +92,25 @@ type ObjectType struct {
 	// audit_events row with action = "data.access" for every successful
 	// read. Defaults to false so existing ObjectTypes do not pay the audit
 	// write cost until an admin opts in.
-	AuditDataAccess bool       `json:"auditDataAccess,omitempty"`
-	Properties      []Property `json:"properties,omitempty"`
-	CreatedAt      time.Time  `json:"-"`
-	UpdatedAt      time.Time  `json:"-"`
+	AuditDataAccess bool `json:"auditDataAccess,omitempty"`
+	// IsEvent (VTX-077) marks an ObjectType whose rows represent events on a
+	// timeline (e.g. FlightDelay, Maintenance, Weather). When true, the
+	// Vertex Timeline renders each object as a horizontal time bar spanning
+	// EventStartProp → EventEndProp. Defaults to false; non-event types are
+	// invisible to the Timeline.
+	IsEvent bool `json:"isEvent,omitempty"`
+	// EventStartProp names the property holding the event's start timestamp.
+	// Only consulted when IsEvent=true. An empty value while IsEvent=true is
+	// treated as "no Timeline placement possible" and the renderer skips
+	// these objects.
+	EventStartProp string `json:"eventStartProp,omitempty"`
+	// EventEndProp names the property holding the event's end timestamp.
+	// Empty means the event is point-in-time (a single tick on the
+	// Timeline, not a bar).
+	EventEndProp string     `json:"eventEndProp,omitempty"`
+	Properties   []Property `json:"properties,omitempty"`
+	CreatedAt    time.Time  `json:"-"`
+	UpdatedAt    time.Time  `json:"-"`
 }
 
 // EffectivePrimaryKeys returns the canonical key-property list, falling back

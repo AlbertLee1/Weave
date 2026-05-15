@@ -100,11 +100,14 @@ func (r *PGRepository) CreateObjectType(ctx context.Context, ot *ObjectType) err
 	_, err = r.pool.Exec(ctx,
 		`INSERT INTO object_types (rid, ontology_rid, api_name, display_name, plural_display_name,
 		 description, primary_key_prop, title_property, status, visibility, icon_name, color,
-		 deprecated_reason, deprecated_deadline, primary_key_props, extends_rid, classification, audit_data_access)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NULLIF($16, ''), NULLIF($17, ''), $18)`,
+		 deprecated_reason, deprecated_deadline, primary_key_props, extends_rid, classification, audit_data_access,
+		 is_event, event_start_prop, event_end_prop)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NULLIF($16, ''), NULLIF($17, ''), $18,
+		 $19, NULLIF($20, ''), NULLIF($21, ''))`,
 		ot.RID, ot.OntologyRID, ot.APIName, ot.DisplayName, ot.PluralDisplayName,
 		ot.Description, ot.PrimaryKey, ot.TitleProperty, ot.Status, ot.Visibility,
-		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline, pkPropsJSON, ot.ExtendsRID, ot.Classification, ot.AuditDataAccess)
+		ot.IconName, ot.Color, ot.DeprecatedReason, ot.DeprecatedDeadline, pkPropsJSON, ot.ExtendsRID, ot.Classification, ot.AuditDataAccess,
+		ot.IsEvent, ot.EventStartProp, ot.EventEndProp)
 	if err != nil {
 		return wrapPGError(err)
 	}
@@ -121,13 +124,15 @@ func (r *PGRepository) GetObjectType(ctx context.Context, rid string) (*ObjectTy
 		 COALESCE(icon_name, ''), COALESCE(color, ''),
 		 COALESCE(deprecated_reason, ''), deprecated_deadline,
 		 created_at, updated_at, COALESCE(primary_key_props, '[]'::jsonb),
-		 COALESCE(extends_rid, ''), COALESCE(classification, ''), COALESCE(audit_data_access, false)
+		 COALESCE(extends_rid, ''), COALESCE(classification, ''), COALESCE(audit_data_access, false),
+		 COALESCE(is_event, false), COALESCE(event_start_prop, ''), COALESCE(event_end_prop, '')
 		 FROM object_types WHERE rid = $1`, rid).
 		Scan(&ot.RID, &ot.OntologyRID, &ot.APIName, &ot.DisplayName, &ot.PluralDisplayName,
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification, &ot.AuditDataAccess)
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification, &ot.AuditDataAccess,
+			&ot.IsEvent, &ot.EventStartProp, &ot.EventEndProp)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -187,7 +192,8 @@ func (r *PGRepository) ListObjectTypes(ctx context.Context, ontologyRID string) 
 		 COALESCE(icon_name, ''), COALESCE(color, ''),
 		 COALESCE(deprecated_reason, ''), deprecated_deadline,
 		 created_at, updated_at, COALESCE(primary_key_props, '[]'::jsonb),
-		 COALESCE(extends_rid, ''), COALESCE(classification, ''), COALESCE(audit_data_access, false)
+		 COALESCE(extends_rid, ''), COALESCE(classification, ''), COALESCE(audit_data_access, false),
+		 COALESCE(is_event, false), COALESCE(event_start_prop, ''), COALESCE(event_end_prop, '')
 		 FROM object_types
 		 WHERE ontology_rid = $1 OR ontology_rid = (SELECT rid FROM ontologies WHERE api_name = $1 LIMIT 1)
 		 ORDER BY api_name`, ontologyRID)
@@ -204,7 +210,8 @@ func (r *PGRepository) ListObjectTypes(ctx context.Context, ontologyRID string) 
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification, &ot.AuditDataAccess); err != nil {
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification, &ot.AuditDataAccess,
+			&ot.IsEvent, &ot.EventStartProp, &ot.EventEndProp); err != nil {
 			return nil, err
 		}
 		ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)
@@ -218,11 +225,14 @@ func (r *PGRepository) UpdateObjectType(ctx context.Context, ot *ObjectType) err
 		`UPDATE object_types SET display_name=$1, plural_display_name=$2, description=$3,
 		 title_property=$4, status=$5, visibility=$6, icon_name=$7, color=$8,
 		 deprecated_reason=$9, deprecated_deadline=$10, extends_rid=NULLIF($11, ''),
-		 classification=NULLIF($12, ''), audit_data_access=$13, updated_at=now()
-		 WHERE rid=$14`,
+		 classification=NULLIF($12, ''), audit_data_access=$13,
+		 is_event=$14, event_start_prop=NULLIF($15, ''), event_end_prop=NULLIF($16, ''),
+		 updated_at=now()
+		 WHERE rid=$17`,
 		ot.DisplayName, ot.PluralDisplayName, ot.Description,
 		ot.TitleProperty, ot.Status, ot.Visibility, ot.IconName, ot.Color,
-		ot.DeprecatedReason, ot.DeprecatedDeadline, ot.ExtendsRID, ot.Classification, ot.AuditDataAccess, ot.RID)
+		ot.DeprecatedReason, ot.DeprecatedDeadline, ot.ExtendsRID, ot.Classification, ot.AuditDataAccess,
+		ot.IsEvent, ot.EventStartProp, ot.EventEndProp, ot.RID)
 	if err != nil {
 		return err
 	}
@@ -934,7 +944,8 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 		 COALESCE(ot.icon_name, ''), COALESCE(ot.color, ''),
 		 COALESCE(ot.deprecated_reason, ''), ot.deprecated_deadline,
 		 ot.created_at, ot.updated_at, COALESCE(ot.primary_key_props, '[]'::jsonb),
-		 COALESCE(ot.extends_rid, ''), COALESCE(ot.classification, ''), COALESCE(ot.audit_data_access, false)
+		 COALESCE(ot.extends_rid, ''), COALESCE(ot.classification, ''), COALESCE(ot.audit_data_access, false),
+		 COALESCE(ot.is_event, false), COALESCE(ot.event_start_prop, ''), COALESCE(ot.event_end_prop, '')
 		 FROM object_types ot
 		 JOIN object_type_interfaces oti ON ot.rid = oti.object_type_rid
 		 WHERE oti.interface_rid = $1
@@ -952,7 +963,8 @@ func (r *PGRepository) ListInterfaceObjectTypes(ctx context.Context, interfaceRI
 			&ot.Description, &ot.PrimaryKey, &ot.TitleProperty,
 			&ot.Status, &ot.Visibility, &ot.IconName, &ot.Color,
 			&ot.DeprecatedReason, &ot.DeprecatedDeadline,
-			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification, &ot.AuditDataAccess); err != nil {
+			&ot.CreatedAt, &ot.UpdatedAt, &pkPropsJSON, &ot.ExtendsRID, &ot.Classification, &ot.AuditDataAccess,
+			&ot.IsEvent, &ot.EventStartProp, &ot.EventEndProp); err != nil {
 			return nil, err
 		}
 		ot.PrimaryKeys = decodePrimaryKeyProps(pkPropsJSON, ot.PrimaryKey)
