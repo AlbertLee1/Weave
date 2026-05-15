@@ -399,8 +399,8 @@
         "Tests pass"
       ],
       "priority": 27,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Frontend-only. New TopBar button `+ Add objects` (testid `vertex-topbar-add-objects`, disabled until the page can derive an ontology context from the loaded payload's `layers[*].ontology`) opens VertexAddObjectsDialog (`web/src/vertex/VertexAddObjectsDialog.tsx`) — a plain Tailwind modal (no Radix dep, matches the rest of the workspace's popover style). Dialog wires `useObjectTypes(ontologyApiName)` for the dropdown + `useSearchObjects` (where: `{ type:'contains', field: titleProperty, value: term }`) for keystroke-driven search; titleProperty defaults to `name` when the picked ObjectType lacks one. State uses the `userPickedType` + useMemo `type` derivation pattern (mirrors VertexWorkspacePage's seed/diff for pinned positions) to dodge react-hooks/set-state-in-effect for the \"default once data arrives\" case. Page wiring uses unmount-on-close (`{ontologyApiName && addObjectsOpen && <Dialog />}`) so each open gets a fresh state bag without a reset effect. Pure helper `mergeAddedNodes(base, added)` (`web/src/features/vertex/render/mergeAddedNodes.ts`) folds picked objects into the projection: dedupes against existing payload-resident nodes, dedupes within the added list (first occurrence wins), and assigns deterministic positions on a 2nd ring (radius 250) so 5 fresh nodes don't pile up at (0,0) before the next layout pass. Page-level addedSummariesByRid layered on top of payloadToObjectSummaries so the SelectionSidebar's per-tab OSS calls + the ContextMenu's Open-in-Object-Explorer URL resolve for added objects too. 12 new Vitest tests (6 mergeAddedNodes + 4 dialog + 2 page-level VTX-027) + 1 snapshot update for the new TopBar button. Bundle delta vs VTX-026: VertexWorkspacePage chunk 246.36 → 252.32 kB raw (+5.96 kB) / 65.76 → 67.27 kB gzip (+1.51 kB); main bundle unchanged. 1692/1692 Vitest pass; tsc clean; eslint clean. Manual browser verification still needed (no dev-browser skill wired)."
     }
   ]
 }

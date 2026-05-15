@@ -22,6 +22,10 @@ import {
   payloadToGraph,
   type VertexPayloadGraph,
 } from '../features/vertex/render/payloadToGraph';
+import {
+  mergeAddedNodes,
+  type AddedObject,
+} from '../features/vertex/render/mergeAddedNodes';
 import { mergeEdgesByLinkType } from '../features/vertex/render/mergeEdges';
 import {
   extractExtendedLabels,
@@ -49,6 +53,10 @@ import {
   VertexSelectionSidebar,
   type VertexObjectSummary,
 } from './VertexSelectionSidebar';
+import {
+  VertexAddObjectsDialog,
+  type AddedObjectInput,
+} from './VertexAddObjectsDialog';
 
 export interface HierarchicalLayoutSpec {
   kind: 'hierarchical';
@@ -192,6 +200,8 @@ interface TopBarProps {
   onApplyLayout: (spec: LayoutSpec) => void;
   mergeEnabled: boolean;
   onToggleMerge: () => void;
+  onOpenAddObjects: () => void;
+  addObjectsDisabled?: boolean;
 }
 
 const PASSIVE_TOPBAR_BUTTONS: Array<[string, string]> = [
@@ -206,6 +216,8 @@ function TopBar({
   onApplyLayout,
   mergeEnabled,
   onToggleMerge,
+  onOpenAddObjects,
+  addObjectsDisabled,
 }: TopBarProps) {
   return (
     <header
@@ -216,6 +228,15 @@ function TopBar({
         {graph?.name ?? graph?.rid ?? 'Untitled Graph'}
       </span>
       <nav className="flex items-center gap-2">
+        <button
+          type="button"
+          data-testid="vertex-topbar-add-objects"
+          onClick={onOpenAddObjects}
+          disabled={addObjectsDisabled}
+          className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          + Add objects
+        </button>
         <LayoutMenu onApply={onApplyLayout} />
         <button
           type="button"
@@ -509,10 +530,25 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     return { rid };
   }, [state, isNew, rid]);
 
-  const projection = useMemo<VertexPayloadGraph>(() => {
+  const baseProjection = useMemo<VertexPayloadGraph>(() => {
     if (state.kind === 'ready') return payloadToGraph(state.graph.payload);
     return { nodes: [], edges: [] };
   }, [state]);
+
+  // VTX-027: user-added objects layered on top of the payload's projection.
+  // Stored as an ordered list (drives mergeAddedNodes, which handles
+  // dedupe + deterministic positioning).
+  const [addedObjects, setAddedObjects] = useState<AddedObject[]>([]);
+  // Per-rid summary metadata so the SelectionSidebar's per-tab API calls
+  // (OSS get / activity / timeseries) work for added objects too.
+  const [addedSummariesByRid, setAddedSummariesByRid] = useState<
+    ReadonlyMap<string, VertexObjectSummary>
+  >(() => new Map());
+
+  const projection = useMemo<VertexPayloadGraph>(
+    () => mergeAddedNodes(baseProjection, addedObjects),
+    [baseProjection, addedObjects],
+  );
 
   const labelsByRid = useMemo<Map<string, ExtendedLabel[]>>(() => {
     if (state.kind !== 'ready') return new Map();
@@ -525,8 +561,51 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
   }, [state, projection]);
 
   const objectsByRid = useMemo<Map<string, VertexObjectSummary>>(() => {
-    if (state.kind !== 'ready') return new Map();
-    return payloadToObjectSummaries(state.graph.payload);
+    const fromPayload =
+      state.kind === 'ready'
+        ? payloadToObjectSummaries(state.graph.payload)
+        : new Map<string, VertexObjectSummary>();
+    // VTX-027: layer added-object summaries on top so the SelectionSidebar
+    // and ContextMenu can resolve them too. Payload-resident objects keep
+    // priority (the user can't shadow an existing entity by re-adding it).
+    for (const [rid, summary] of addedSummariesByRid) {
+      if (!fromPayload.has(rid)) fromPayload.set(rid, summary);
+    }
+    return fromPayload;
+  }, [state, addedSummariesByRid]);
+
+  // Derive the ontology context for the "+ Add objects" dialog from the
+  // first layer that carries an explicit `ontology` api name. Falls back
+  // to undefined for /vertex/new (the button stays disabled in that case
+  // since there's no payload to infer from).
+  const ontologyApiName = useMemo<string | undefined>(() => {
+    if (state.kind !== 'ready') return undefined;
+    const payload = state.graph.payload;
+    if (!payload || typeof payload !== 'object') return undefined;
+    const layers = (payload as { layers?: unknown }).layers;
+    if (!Array.isArray(layers)) return undefined;
+    for (const layer of layers) {
+      if (layer && typeof layer === 'object') {
+        const ont = (layer as { ontology?: unknown }).ontology;
+        if (typeof ont === 'string' && ont !== '') return ont;
+      }
+    }
+    return undefined;
+  }, [state]);
+
+  const defaultObjectType = useMemo<string | undefined>(() => {
+    if (state.kind !== 'ready') return undefined;
+    const payload = state.graph.payload;
+    if (!payload || typeof payload !== 'object') return undefined;
+    const layers = (payload as { layers?: unknown }).layers;
+    if (!Array.isArray(layers)) return undefined;
+    for (const layer of layers) {
+      if (layer && typeof layer === 'object') {
+        const t = (layer as { objectType?: unknown }).objectType;
+        if (typeof t === 'string' && t !== '') return t;
+      }
+    }
+    return undefined;
   }, [state]);
 
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
@@ -658,6 +737,41 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
     });
   }, []);
 
+  // VTX-027: "+ Add objects" dialog state + commit handler. Ingests
+  // user-picked OSS objects into addedObjects (drives mergeAddedNodes)
+  // and addedSummariesByRid (drives the SelectionSidebar's per-tab
+  // OSS calls + the ContextMenu's Open-in-Object-Explorer URL).
+  const [addObjectsOpen, setAddObjectsOpen] = useState(false);
+  const handleOpenAddObjects = useCallback(() => setAddObjectsOpen(true), []);
+  const handleCloseAddObjects = useCallback(() => setAddObjectsOpen(false), []);
+  const handleAddObjects = useCallback((picked: AddedObjectInput[]) => {
+    if (picked.length === 0) return;
+    setAddedObjects((prev) => {
+      const seen = new Set(prev.map((o) => o.rid));
+      const next = prev.slice();
+      for (const obj of picked) {
+        if (seen.has(obj.rid)) continue;
+        seen.add(obj.rid);
+        next.push({ rid: obj.rid, label: obj.label });
+      }
+      return next;
+    });
+    setAddedSummariesByRid((prev) => {
+      const next = new Map(prev);
+      for (const obj of picked) {
+        if (next.has(obj.rid)) continue;
+        next.set(obj.rid, {
+          rid: obj.rid,
+          label: obj.label,
+          properties: {},
+          ontologyApiName: obj.ontologyApiName,
+          objectType: obj.objectType,
+        });
+      }
+      return next;
+    });
+  }, []);
+
   if (state.kind === 'not-found') return <NotFound rid={rid} />;
 
   return (
@@ -667,6 +781,8 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
         onApplyLayout={handleApplyLayout}
         mergeEnabled={mergeEnabled}
         onToggleMerge={handleToggleMerge}
+        onOpenAddObjects={handleOpenAddObjects}
+        addObjectsDisabled={!ontologyApiName}
       />
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex-1" data-testid="vertex-canvas-host">
@@ -719,6 +835,15 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
           extendedLabelsByRid={labelsByRid}
         />
       </div>
+      {ontologyApiName && addObjectsOpen && (
+        <VertexAddObjectsDialog
+          open
+          ontologyApiName={ontologyApiName}
+          defaultObjectType={defaultObjectType}
+          onClose={handleCloseAddObjects}
+          onAdd={handleAddObjects}
+        />
+      )}
     </div>
   );
 }

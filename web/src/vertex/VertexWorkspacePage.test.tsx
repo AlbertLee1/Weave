@@ -1399,3 +1399,154 @@ describe('VertexWorkspacePage node context menu (VTX-026)', () => {
     expect(screen.queryByTestId('vertex-node-context-menu')).not.toBeInTheDocument();
   });
 });
+
+describe('VertexWorkspacePage add objects dialog (VTX-027)', () => {
+  // Two-airport payload: layer carries `ontology: 'main'` so the dialog
+  // can derive the ontology context without an explicit prop.
+  const seedPayload = {
+    layers: [
+      {
+        id: 'layer-airports',
+        ontology: 'main',
+        objectType: 'Airport',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objects: [
+          { objectRid: 'ri.airport.JFK', properties: { name: 'JFK' } },
+          { objectRid: 'ri.airport.LHR', properties: { name: 'LHR' } },
+        ],
+      },
+    ],
+    edges: [],
+    positions: {},
+  };
+
+  // VTX-027 page tests need to mock multiple endpoints (the graph load
+  // plus OSS objectTypes + search). Replace fetch with a URL-routed
+  // implementation for these tests so each request resolves to the
+  // appropriate body shape.
+  function setupRoutedFetch(graphPayload: unknown) {
+    const fiveAirports = Array.from({ length: 5 }, (_, i) => ({
+      __rid: `ri.airport.NEW${i}`,
+      __primaryKey: `NEW${i}`,
+      __apiName: 'Airport',
+      name: `New Airport ${i}`,
+    }));
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/vertex/v1/graphs/')) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify(graphPayload),
+          json: async () => graphPayload,
+        } as Response;
+      }
+      if (url.includes('/api/v2/ontologies/main/objectTypes')) {
+        const body = {
+          data: [
+            {
+              rid: 'ri.ontology.main.object-type.airport',
+              apiName: 'Airport',
+              displayName: 'Airport',
+              primaryKey: 'icao',
+              titleProperty: 'name',
+              status: 'ACTIVE',
+              visibility: 'NORMAL',
+            },
+          ],
+        };
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        } as Response;
+      }
+      if (url.includes('/Airport/search')) {
+        const body = { data: fiveAirports };
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        } as Response;
+      }
+      throw new Error(`unmocked fetch: ${url}`);
+    }) as unknown as typeof fetch;
+  }
+
+  it('Given_topBarHasAddObjectsButton_When_clicked_Then_dialogOpens', async () => {
+    setupRoutedFetch({ rid: 'ri.g', name: 'g', version: 1, payload: seedPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    expect(screen.queryByTestId('vertex-add-objects-dialog')).not.toBeInTheDocument();
+    const button = screen.getByTestId('vertex-topbar-add-objects');
+    expect(button).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect(await screen.findByTestId('vertex-add-objects-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-add-objects-type')).toBeInTheDocument();
+    expect(screen.getByTestId('vertex-add-objects-search')).toBeInTheDocument();
+  });
+
+  it('Given_userPicksFiveAndClicksAdd_When_added_Then_fiveNewNodesAppearOnTheGraph', async () => {
+    setupRoutedFetch({ rid: 'ri.g', name: 'g', version: 1, payload: seedPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-add-objects'));
+    });
+    await screen.findByTestId('vertex-add-objects-dialog');
+
+    // Wait for the dialog to default the type and trigger the search.
+    await waitFor(() => {
+      expect((screen.getByTestId('vertex-add-objects-type') as HTMLSelectElement).value).toBe('Airport');
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('vertex-add-objects-search'), {
+        target: { value: 'New' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('vertex-add-objects-row-ri.airport.NEW0')).toBeInTheDocument();
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        fireEvent.click(screen.getByTestId(`vertex-add-objects-row-ri.airport.NEW${i}`));
+      });
+    }
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-add-objects-add'));
+    });
+
+    await waitFor(() => {
+      // Original 2 + 5 new = 7 nodes.
+      expect(loadedGraph!.order).toBe(7);
+      for (let i = 0; i < 5; i++) {
+        expect(loadedGraph!.hasNode(`ri.airport.NEW${i}`)).toBe(true);
+      }
+    });
+    // Dialog dismissed itself on Add.
+    expect(screen.queryByTestId('vertex-add-objects-dialog')).not.toBeInTheDocument();
+  });
+});
