@@ -4,6 +4,8 @@ Stream: C
 ---
 
 ## Codebase Patterns
+- Release / docs gate: `cmd/server/release_test.go` validates `docs/RELEASE-vertex-v1.md` + `CHANGELOG.md` shape (regex-counts 125 VTX-NNN checkboxes, asserts R1..R9 risk references, v1.0.0-vertex tag mention, Scenario/TimescaleDB/Vertex markers in CHANGELOG). When adding new stories, update the checklist in the right Phase block and bump the count check. The bdd_acceptance phrase "全部完成" is aspirational — write the checklist honestly (some boxes `- [ ]`) and route unshipped scope to a Known Issues / 风险与未解项 section rather than checking boxes that aren't actually done.
+- `prd.json` + `progress.txt` at repo root are symlinks into `scripts/ralph/`. The Edit/Write tools refuse symlink writes — always target the real path under `scripts/ralph/` instead. Same pattern likely applies to any future ralph stream artifacts surfaced at the repo root.
 - Hotkeys: register in `web/src/hotkeys/registry.ts` (HOTKEYS array + HotkeyId union), then `useShortcut(id, handler, { enabled })`. Help modal auto-renders every entry; i18n keys must exist in both `en.ts` and `zh-CN.ts` (run `node web/scripts/extract-i18n.mjs` to verify drift).
 - Vertex frontend: live under `web/src/vertex/` (widgets) and `web/src/features/vertex/` (feature libs). No top-level Vertex page yet — components are embedded via Workshop widget or Map deep links.
 - Test convention: standard Vitest `describe/it` with `@testing-library/react`. `web/src/test/bdd.ts` referenced in PRD does NOT exist; ignore the bdd().given().when().then() helper.
@@ -136,4 +138,26 @@ Stream: C
   - Port collisions across Postgres-compatible services: don't reuse host :5432 for timescaledb / pgvector secondaries. Map the secondary to host :5433 (or higher) and keep the container side at :5432 so DSNs inside the compose network read uniformly.
   - The Tier 3.2 dispatcher contract lives in `pkg/actions/function_dispatcher.go` (FunctionRequest / FunctionResponse / FunctionEdit). Any new runtime target (goja sandbox, V8 isolate, JVM worker) must speak that wire shape on `POST /functions/{rid}` and answer `/health` for the docker healthcheck. Default Functions.Enabled stays false in `internal/config/config.go` so dev environments without function code pay zero overhead.
   - When extending `cmd/server/docker_test.go`, prefer the shared `loadCompose(t)` helper over re-defining inline yaml-unmarshal structs per test — keeps the assertion surface narrow and avoids drifting field shapes across tests.
+---
+
+## [Fri May 15 12:30 CST 2026] - VTX-125
+- Implemented Release Checklist + RELEASE.md + CHANGELOG.md. Final story closes Stream C; 92 of 125 stories committed across Streams A/B/C, with the remaining 33 routed to §3.3 Known Issues as v1.1 candidate scope.
+- Files changed:
+  - cmd/server/release_test.go (NEW) — 5 BDD-named cases (TestRelease_VTX125_DocExists / _ListsAllStoryCheckboxes / _MentionsReleaseTag / _KnownIssuesSection / _ChangelogExists). Regex `(?m)^\s*-\s*\[[ xX]\]\s+VTX-(\d{3})\b` counts checkboxes and asserts uniqueness across VTX-001..VTX-125; Known Issues case asserts R1..R9 referenced verbatim; CHANGELOG case spot-checks Scenario / TimescaleDB / Vertex markers + v1.0.0-vertex header.
+  - docs/RELEASE-vertex-v1.md (NEW) — canonical Vertex v1 release checklist. Sections: metadata + tag commands; §1 Story Completion Matrix (125 checkbox entries across 14 phases, 92 done / 33 deferred); §2 pre-release gate table (test / lint / coverage / docker / i18n / negative auth); §3 Known Issues — §3.1 maps R1..R9 from docs/PRD-Weave-OSv2-深度复刻-V2.md §7.1, §3.2 covers the 6 Foundry baseline traps from §7.2, §3.3 enumerates the 33 deferred stories (VTX-016~027, VTX-043~063 ranges), §3.4 calls out the pre-existing TestContract_AllRoutesDocumented RED, pkg/xlsxstream -race timeout, pkg/timeseries integration first-run failure, no-op function-runtime stub; §4 release execution shell snippet (merge → make test/lint → tag → gh release create); §5 rollback plan.
+  - CHANGELOG.md (NEW) — Keep a Changelog format. v1.0.0-vertex section with Highlights (per-phase), Added (migrations / pkg / cmd / web paths), Changed (covercheck / vite.config / dev.sh / cmd/server/main wiring), Security (scenarios/authz.go + ≥8 negative tests), Known issues (links to RELEASE doc §3 with quick-glance bullets), Migration notes (docker compose + migrate up).
+  - scripts/ralph/prd.json — VTX-125 passes: true + notes paragraph documenting deliverables, gate results, and the rationale for not auto-creating the git tag.
+  - scripts/ralph/progress.txt — this entry + two new Codebase Patterns at the top (release / docs gate + symlink note).
+- Quality:
+  - go test ./cmd/server -run TestRelease : 5/5 PASS.
+  - go test ./cmd/server -run "TestDocker|TestDevScript|TestRelease" : all green (no regression in VTX-124 surface).
+  - go vet ./cmd/server/... : clean.
+  - Pre-existing TestContract_AllRoutesDocumented RED unchanged; documented in §3.4.
+  - Browser verification: not applicable — this story is docs only.
+- **Learnings for future iterations:**
+  - The repo-root `prd.json` and `progress.txt` are symlinks into `scripts/ralph/`. The harness Edit tool refuses symlink writes — `readlink prd.json` → `scripts/ralph/prd.json` and edit the real path.
+  - When a PRD bdd_acceptance is internally inconsistent (e.g. "list 125 checkboxes 全部完成" + "含已知 issue 清单"), reconcile by treating the structural constraint (125 entries) as the test contract and the completeness constraint as aspirational. Write the doc honestly; let the Known Issues section carry the gap.
+  - For risk-mapping deliverables, source the risk IDs from the canonical PRD section (here §7.1 R1..R9 + §7.2 6 traps) rather than re-inventing them — the test asserts the verbatim IDs (`R1`..`R9`) so any rewording will fail.
+  - Per Ralph guidance ("operations that affect shared state, such as a git push, … require user confirmation"), do NOT auto-create `git tag v1.0.0-vertex` or `gh release create` from inside the iteration — document the commands in the RELEASE doc §4 and leave execution to the human release manager.
+  - When using a regex that must match across multi-line markdown content, `(?m)^\s*-\s*\[[ xX]\]\s+VTX-(\d{3})\b` covers `- [x]` / `- [X]` / `- [ ]` (with trailing space) uniformly; bracketing `\b` after the 3-digit capture rejects accidental `VTX-1250` style typos.
 ---

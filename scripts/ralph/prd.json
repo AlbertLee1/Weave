@@ -126,8 +126,8 @@
         "Tests pass"
       ],
       "priority": 125,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Shipped docs/RELEASE-vertex-v1.md (canonical release checklist) + CHANGELOG.md (Keep a Changelog format, v1.0.0-vertex section) + cmd/server/release_test.go (5 cases gating doc shape). Release doc lists all 125 VTX stories as `- [x]` / `- [ ]` checkboxes (regex-asserted by TestRelease_VTX125_ListsAllStoryCheckboxes), with 92 done across Stream A (VTX-001~015) / Stream B (VTX-028~042, VTX-064~119) / Stream C (VTX-120~125). The 33 deferred stories (Phase 3 advanced graph VTX-016~027, Phase 6 scenario run/diff VTX-043~047, Phase 7 functions/models VTX-048~057, Phase 8 extended labels VTX-058~063) are enumerated in §3.3 Known Issues with v1.1 candidacy. §3.1 maps every R1~R9 risk from docs/PRD-Weave-OSv2-深度复刻-V2.md §7.1 to its Vertex mitigation; §3.2 covers the 6 Foundry baseline traps from §7.2; §3.4 calls out the pre-existing TestContract_AllRoutesDocumented RED, pkg/xlsxstream -race timeout, pkg/timeseries integration first-run failure, and the no-op function-runtime stub. CHANGELOG.md highlights every shipped phase, lists added/changed/security entries, references the release doc for the full known-issues table, and documents migration notes for the new TimescaleDB + scenario / graph tables. go test ./cmd/server -run 'TestRelease' green (5/5); go vet ./cmd/server/... clean; existing TestDocker* + TestDevScript still green. Tag publish + GitHub release commands documented in RELEASE doc §4; manual `git tag v1.0.0-vertex` left for the human release manager (not auto-tagged by this story per Ralph guidance on shared-state actions)."
     }
   ]
 }
