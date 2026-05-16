@@ -275,3 +275,117 @@ func TestScenarioAggregate_Given_HeaderPresent_When_ScenarioMissing_Then_404(t *
 		t.Errorf("errorName: got %v", body["errorName"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// US-479 BDD: scenario modifies the groupBy property itself → folded value
+// drives bucket assignment (not the base value).
+// ---------------------------------------------------------------------------
+
+// TestUS479_GroupByOnFoldedProperty_BucketsReflectScenarioEdits is the
+// canonical PRD scenario: 10 base Orders are all status=pending; a scenario
+// modifyProperty edit flips O-0.status to "shipped". The aggregation must
+// produce TWO buckets (pending=9, shipped=1) — proving that groupBy reads
+// post-fold property values, not the base index.
+func TestUS479_GroupByOnFoldedProperty_BucketsReflectScenarioEdits(t *testing.T) {
+	base := make([]*oss.WireObject, 10)
+	for i := 0; i < 10; i++ {
+		base[i] = makeOrder(fmt.Sprintf("O-%d", i), "pending", 100)
+	}
+	edits := []scenarios.ScenarioEdit{
+		// Move O-0 from pending → shipped. groupBy=status should now place
+		// O-0 in a separate bucket from the other 9 rows.
+		{Seq: 1, Op: "modifyProperty", ObjectType: "Order", ObjectID: "O-0", Property: "status", NewValue: raw("shipped")},
+	}
+	req := &aggregation.AggregationRequest{
+		ObjectType:   "Order",
+		Aggregations: []aggregation.AggregationSpec{{Type: "count", Name: "n"}, {Type: "sum", Field: "total", Name: "s"}},
+		GroupBy:      []aggregation.GroupBySpec{{Type: "exact", Field: "status"}},
+	}
+
+	resp, err := oss.AggregateWithOverlay(base, edits, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 buckets after fold, got %d: %+v", len(resp.Data), resp.Data)
+	}
+
+	got := map[string]map[string]float64{}
+	for _, row := range resp.Data {
+		key := fmt.Sprintf("%v", row.Group["status"])
+		n, _ := metricByName(row, "n")
+		s, _ := metricByName(row, "s")
+		got[key] = map[string]float64{"n": n, "s": s}
+	}
+	if got["pending"]["n"] != 9 {
+		t.Errorf("pending bucket count: got %v want 9", got["pending"]["n"])
+	}
+	if got["pending"]["s"] != 900 {
+		t.Errorf("pending bucket sum: got %v want 900", got["pending"]["s"])
+	}
+	if got["shipped"]["n"] != 1 {
+		t.Errorf("shipped bucket count: got %v want 1", got["shipped"]["n"])
+	}
+	if got["shipped"]["s"] != 100 {
+		t.Errorf("shipped bucket sum: got %v want 100", got["shipped"]["s"])
+	}
+}
+
+// TestUS479_GroupByOnFoldedProperty_OverHTTP exercises the same PRD scenario
+// through the chi router: X-Scenario-Id header → overlay path → groupBy by
+// folded status. Guards the handler wiring + serialization in addition to
+// the executor.
+func TestUS479_GroupByOnFoldedProperty_OverHTTP(t *testing.T) {
+	const ontologyRID = "ri.ontology.main.ontology.northwind"
+	const scenarioRID = "ri.vertex.main.scenario.us479"
+
+	rows := make([]*oss.WireObject, 0, 5)
+	for i := 0; i < 5; i++ {
+		rows = append(rows, makeOrder(fmt.Sprintf("O-%d", i), "pending", 100))
+	}
+	svc := &listingService{rows: rows}
+	reader := &fakeScenarioReader{
+		scenarios: map[string]*scenarios.Scenario{
+			scenarioRID: {RID: scenarioRID, ParentOntologyCommit: ontologyRID},
+		},
+		edits: map[string][]scenarios.ScenarioEdit{
+			scenarioRID: {
+				{Seq: 1, Op: "modifyProperty", ObjectType: "Order", ObjectID: "O-0", Property: "status", NewValue: raw("shipped")},
+				{Seq: 2, Op: "modifyProperty", ObjectType: "Order", ObjectID: "O-1", Property: "status", NewValue: raw("shipped")},
+			},
+		},
+	}
+	router := newTestRouter(svc, reader)
+
+	body := []byte(`{"aggregation":[{"type":"count","name":"n"}],"groupBy":[{"type":"exact","field":"status"}]}`)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/"+ontologyRID+"/objects/Order/aggregate",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Scenario-Id", scenarioRID)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp aggregation.AggregationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("expected 2 buckets, got %d: %+v", len(resp.Data), resp.Data)
+	}
+	counts := map[string]float64{}
+	for _, row := range resp.Data {
+		k := fmt.Sprintf("%v", row.Group["status"])
+		c, _ := metricByName(row, "n")
+		counts[k] = c
+	}
+	if counts["pending"] != 3 {
+		t.Errorf("pending: got %v want 3", counts["pending"])
+	}
+	if counts["shipped"] != 2 {
+		t.Errorf("shipped: got %v want 2", counts["shipped"])
+	}
+}

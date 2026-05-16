@@ -313,8 +313,8 @@
         "Tests pass"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Materialization executor (AggregateWithOverlay + applyOverlayToObjectSet) was already in place from VTX-005; this iteration adds the PRD-literal acceptance gates the prior story did not cover. New tests: (a) pkg/oss/scenario_aggregate_test.go TestUS479_GroupByOnFoldedProperty_BucketsReflectScenarioEdits (modify O-0.status pending→shipped → 2 buckets pending=9 / shipped=1) + TestUS479_GroupByOnFoldedProperty_OverHTTP (handler-level X-Scenario-Id wire path with 5→3/2 split); (b) test/integration/scenario_aggregate_us479_bdd_test.go TestBDD_US479_GroupByOnFoldedProperty_MovesRowBetweenBuckets uses real testcontainers PostgreSQL + scenarios.PGRepo so the X-Scenario-Id lookup + ListEdits hit the same wire SDK clients hit, with negative control proving the base path (no header) does NOT split; TestBDD_US479_GroupByOnUnchangedField_ReflectsFoldedMetricValue covers the dual case (groupBy stays, metric reflects folded total). go vet + go build + pkg/oss + pkg/scenarios + integration tag all green."
     },
     {
       "id": "US-480",
