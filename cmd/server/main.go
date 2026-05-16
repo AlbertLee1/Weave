@@ -1249,6 +1249,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/discard", NewAdminFunnelDLQDiscardHandler(funnelDLQDeps))
 
+		// US-490: zero-downtime JWT signing key rotation. The handler
+		// generates a fresh RSA-2048 keypair and appends it to the
+		// signer's in-memory keyring; previously issued tokens keep
+		// verifying because every kid in the ring participates in
+		// Verify(). Gated behind PermUserManage so only operators with
+		// admin scope can rotate. 503 when the process is running
+		// without a configured signer (degraded boot).
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/auth/keys/rotate", NewAdminAuthKeysRotateHandler(AdminAuthKeysRotateDeps{
+				Signer: deps.JWTSigner,
+			}))
+
 		// Admin: audit events (US-067). Gated to admin-level roles via
 		// PermUserManage. The handler gracefully returns 503 when
 		// AuditStore is nil (no PG pool / degraded mode).

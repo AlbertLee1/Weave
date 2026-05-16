@@ -477,8 +477,8 @@
         "Tests pass"
       ],
       "priority": 32,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "实现：pkg/auth/jwt_signer.go — JWTSigner 改 single-key → append-only key ring（[]signingKey {kid, priv, pub}），Rotate 追加新 kid 即变 active；Sign 用最新 key 签 + 写 kid header；Verify 用 kid 选 verifier（无 kid 自动 fallback 遍历整 ring，兼容 pre-US-490 旧 token；带 kid 但 kid 不在 ring 直接 ErrInvalidSignature）；computeKid = SHA256(PKIX DER)[:8] hex，跨 process 稳定。wire：POST /api/admin/auth/keys/rotate (cmd/server/admin_auth_keys.go) RSA-2048 GenerateKey + Signer.Rotate；返回 {activeKeyId, keyIds[oldest→newest], rotatedAt RFC3339Nano}；503 when signer nil；gated by PermUserManage。测试：pkg/auth/jwt_keyring_us490_test.go 5 个单测 (rotate + verify old + kid header + 无 kid fallback + unknown kid reject + nil-input reject + triple rotate) + cmd/server/admin_auth_keys_test.go 3 个 handler 测 (成功/503/两次 rotate keyring 增 2) + cmd/server/admin_auth_keys_us490_bdd_test.go 3 个 BDD (build tag integration — happy path 真 chi router + 真 RSA + 真 JWT verify；403 non-admin keyring 不变；401 无 token keyring 不变)。OpenAPI 双写：api/openapi.yaml 加 path item + AdminAuthKeysRotateResponse schema；cp 同步 cmd/server/openapi_spec.yaml；TestContract_* 4 个守门全过。"
     },
     {
       "id": "US-491",

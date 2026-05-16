@@ -3142,6 +3142,25 @@ components:
         dropped:
           type: boolean
           description: True when the entry was removed from the DLQ stream.
+    AdminAuthKeysRotateResponse:
+      type: object
+      description: US-490 wire shape for `POST /api/admin/auth/keys/rotate`.
+      required: [activeKeyId, keyIds, rotatedAt]
+      properties:
+        activeKeyId:
+          type: string
+          description: |
+            Kid of the freshly appended key — the one stamped into the JOSE
+            header of every token Sign() issues from now on.
+        keyIds:
+          type: array
+          description: Full keyring, ordered oldest → newest. The last entry equals `activeKeyId`.
+          items:
+            type: string
+        rotatedAt:
+          type: string
+          format: date-time
+          description: Server timestamp at the moment the new key was appended.
     AuditEvent:
       type: object
       description: A single audit log entry.
@@ -11345,6 +11364,34 @@ paths:
         "404":
           $ref: "#/components/responses/NotFoundError"
         "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/auth/keys/rotate:
+    post:
+      operationId: adminAuthKeysRotate
+      summary: Rotate the JWT signing keyring (US-490)
+      description: |
+        Generates a fresh RSA-2048 keypair and appends it to the in-memory
+        JWT signing keyring. The new key becomes the active signing key
+        immediately; tokens previously minted under older keys keep
+        verifying because every kid in the ring participates in `Verify()`
+        until those tokens reach their natural expiration. Gated behind
+        `user.manage`. 503 when the process is running without a configured
+        signer (degraded boot / dev-without-keys).
+      tags: [Admin]
+      responses:
+        "200":
+          description: Rotation completed; the response carries the new active kid plus the full ordered keyring.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuthKeysRotateResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
           $ref: "#/components/responses/InternalError"
   /api/admin/funnel/dlq/{id}/discard:
     post:
