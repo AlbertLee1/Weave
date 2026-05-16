@@ -388,8 +388,8 @@
         "Tests pass"
       ],
       "priority": 26,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "实现已在 US-378 落地（migrations 000089_pipeline_incremental 加 pipeline_runs.last_committed_offset + pipelines.last_known_schema；pkg/pipeline.RunIncremental 驱动 schema-evolution gate；cmd/server.pgPipelineStore round-trips 两列）。本轮按 US-479 同款模式补 PRD-literal PG-backed BDD acceptance gates：新建 cmd/server/pipeline_us484_bdd_test.go 4 scenario 在真 testcontainers PG + migrations 上跑——(a) 模拟增量：APPEND 模式 pipeline 第二次 run 通过 LatestCommittedOffset 拿 prior=100，RunIncremental 只处理新 100 行，新 offset=200 通过 raw SQL 读 pipeline_runs.last_committed_offset 列证实持久化；(b) 负向控制：failed run 高 offset=999 不推进 LatestCommittedOffset（守门 MAX() 的 status='success' 过滤）；(c) 加列：上游 schema 增 email 列 → ResolveSchemaEvolution AddedColumns=[email] + merged schema [{id},{email}] 通过 UpdatePipeline + raw SQL JSONB 读取证实顺序保持；(d) 负向控制：drop 列触发 ErrSchemaBreakingChange，PG 中 pipelines.last_known_schema 保持未变。4 scenario 全绿。"
     },
     {
       "id": "US-485",
