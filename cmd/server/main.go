@@ -2371,9 +2371,17 @@ func main() {
 		}
 	}
 
-	// 2d. Geotemporal store. In-memory only for now — PostGIS/JSONB backend
-	// is deferred per the Phase 4 open question in the PRD.
-	deps.GeotemporalStore = geotemporal.NewMemoryStore()
+	// 2d. Geotemporal store (OSV2-301). Backend selection mirrors TimeSeries:
+	// PG-backed PgStore when a PG pool is wired (so /geotemporalSeries
+	// data survives process restarts), otherwise an in-process MemoryStore
+	// for dev/test paths that do not bootstrap PostgreSQL.
+	if deps.PGPool != nil {
+		deps.GeotemporalStore = geotemporal.NewPgStore(deps.PGPool)
+		log.Printf("[GEOTEMPORAL] backend=postgres")
+	} else {
+		deps.GeotemporalStore = geotemporal.NewMemoryStore()
+		log.Printf("[GEOTEMPORAL] backend=memory (no PG pool)")
+	}
 
 	// 2e. CipherTextProperty decryptor. The WEAVE_CIPHER_KEY env var carries
 	// the 32-byte master key; when unset, the decrypt endpoint returns

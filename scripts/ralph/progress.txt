@@ -1,49 +1,68 @@
 # Ralph Progress Log
-Started: 2026-05-16 00:09:56
+Started: 2026-05-16 07:30  (OSv2 Next iteration — picked up after Vertex v1 + VTX-126 browser fix)
 
 ## Codebase Patterns
 - Browser dogfood is mandatory for Vertex/Sigma runtime changes: Vitest/jsdom and `make web-test` can pass while the real Vite dev server throws React/Sigma runtime errors.
-- For this story, do not mark complete based only on unit tests; preserve enough evidence for Hermes to re-check `/vertex/new` in a fresh browser context and inspect console errors.
-- Heavy ESM-prebundled libs that import `react` (e.g. `@react-sigma/core`) MUST live in `vite.config.ts` `optimizeDeps.include` when they sit behind a `React.lazy` boundary. Vite would otherwise discover them on first navigation, kick off a mid-flight re-optimize, and serve a fresh chunk whose `react` reference differs from the one already mounted — producing `Invalid hook call` / `useRef returning null` on first load while a refresh works fine.
-- Pair `optimizeDeps.include` with `resolve.dedupe: ['react', 'react-dom']` so the dev server can never resolve two React instances across nested `node_modules` layouts.
+- Heavy ESM-prebundled libs that import `react` (e.g. `@react-sigma/core`) MUST live in `vite.config.ts` `optimizeDeps.include` when behind a `React.lazy` boundary. Pair with `resolve.dedupe: ['react', 'react-dom']`.
 - Vitest tests that need to validate `vite.config.ts` content can use Vite's `?raw` query (`import src from '../../vite.config.ts?raw'`) — avoids `node:fs` imports that aren't typed in `tsconfig.app.json`.
+- `internal/testutil.StartPGContainer(t)` is the project's canonical way to get a real PostgreSQL for integration tests; gate the test file with `//go:build integration`.
+- Migrations live in `migrations/` numbered 000NNN with paired up/down SQL files; the next free number as of this iteration is 000205.
+- `cmd/server/main.go` boots dependencies in a long deps struct (Config → PG → IndexManager → LinkResolver → OSSService → ObjectSetStore → NATS Consumer → ActionExecutor → router); GeotemporalStore is currently hard-wired to `geotemporal.NewMemoryStore()` at line ~2376.
+- `pkg/mcp.Server` already has an `oms.Repository` injected; `prompts/list` / `prompts/get` can be added without changing the `NewServer` signature.
+
+## Iteration intent
+This iteration is the post-VTX-126 follow-on. Vertex v1 + browser fix shipped; we now resume the OSv2 deepening track from docs/PRD-Weave-OSv2-深度复刻-V2.md but **only** picking gaps still observable in code (not parroting items already shipped). The three picked stories:
+
+- **OSV2-301 — GeoTemporal PG persistence** — `pkg/geotemporal/store.go` package doc explicitly says PostGIS/JSONB backend is "intentionally deferred"; `cmd/server/main.go` hard-codes `MemoryStore`. Result: `/api/v2/.../geotemporalSeries/.../latestValue` loses all points on process restart — a real correctness bug on the single-machine deployment Weave is meant to be. Owner of fix: add `pg_store.go` + migration 000205, wire as default when PG pool is non-nil.
+
+- **OSV2-302 — MCP prompts/list real** — `pkg/mcp/server.go:107-108` hard-codes `prompts: []`; `pkg/mcp/doc.go:16` says "Weave does not yet expose prompts". Real MCP clients (Claude Desktop, Cursor) therefore cannot surface Weave ActionTypes as prompts. Fix: synthesize prompts from OMS ActionType metadata, implement `prompts/get`, advertise the `prompts` capability in `initialize`.
+
+- **OSV2-303 — weave-mcp stdio truly usable** — `cmd/weave-mcp/main.go:5` literally calls itself a STUB and points users at the HTTP transport. To honour the doc comment's "supported MVP path" intent without bootstrapping PG/NATS twice, this story turns weave-mcp into a stdio↔HTTP bridge to `cmd/server` `POST /mcp`, so local AI clients can spawn `weave-mcp` and consume the same tools/resources/prompts (including the OSV2-302 prompts) as the HTTP transport does.
+
+## Why these and not others
+Probed and ruled out as **already done in code, regardless of what PRD-Weave-OSv2-深度复刻-V2.md text suggests**:
+- Function-backed action runtime (`pkg/functions/goja_runtime.go` + tests US-218 exist).
+- Row-level / property-level / marking policy engine (`pkg/security/policy_engine.go`, `pkg/auth/marking.go`, `pkg/oss/marking_filter.go` wired into Load/Search/Aggregate).
+- Optimistic concurrency (`pkg/actions/optimistic_test.go`).
+- Stream ingest endpoint (`POST /api/v2/.../streams/{ot}/ingest` registered + rate limited).
+- SSE ObjectSet subscribe (`pkg/funnel/broadcast.go` + `cmd/server/sse_subscribe_adapter.go` + `pkg/subscriptions/subscription.go`).
+- Audit events table (migrations 000020 + 000062 hash chain) and audit verify CLI (`cmd/weave-audit-verify`).
+- Parquet cold storage materializer (`pkg/materialize/materialize.go` writing `parquet-go` files; metrics `weave_parquet_files_total`).
+- TimeSeries downsample / aggregate (`pkg/timeseries/downsample.go` + bench).
+- Python SDK ObjectSet + Aggregation + Subscriptions (`sdk/python/weave_client/objectsets.py`, `subscriptions.py`).
+- TypeClass-driven Bleve mapping (`pkg/index/mapping_builder.go`).
+- withProperties single-hop derived (`pkg/oss/objectset/withproperties_test.go`, `withproperties_formula_test.go`).
+- Interface multitype composite cursor (Phase 6 gate noted in v1 progress; covered by `handler_us006_test.go` family).
+
 ---
 
-## Hermes handoff — VTX-126
-- Full quality gates were green before this fix attempt: `make web-build`, `make test`, `go vet ./...`, `make web-test` (246 web test files / 2718 tests).
-- Real-browser issue: first direct navigation to `http://127.0.0.1:5173/vertex/new` emitted React `Invalid hook call` and ErrorBoundary `TypeError: Cannot read properties of null (reading 'useRef')`.
-- Stack evidence: `@react-sigma_core.js` → `VertexWorkspaceForRid` → `VertexWorkspacePage.tsx` → `RouteErrorBoundary`.
-- Later refresh rendered the base UI (`Untitled Graph`, `+ Add objects` disabled, `Layout`, `Merge links`, `Save`, `Share`, `Time`, `Run`, canvas), so investigate first-load/lazy chunk/Vite dependency/react singleton behavior, not just static type errors.
----
-
-## 2026-05-16 00:16 - VTX-126 — Fix Vertex /vertex/new real-browser React/Sigma runtime crash
-- **Diagnosis (matches the "refresh fixes it" symptom):**
-  - `web/src/App.tsx:66-68` lazy-loads `VertexWorkspacePage`, so the bundler chunks `@react-sigma/core` + `sigma` + `graphology` behind the route.
-  - `web/vite.config.ts` had no `optimizeDeps.include` and no `resolve.dedupe`. On first navigation to `/vertex/new`, Vite discovered the Sigma/graphology deps on the fly, triggered a dependency re-optimization, and served a freshly bundled chunk whose `react` module instance was different from the one already mounted in the app shell. `@react-sigma/core`'s `useRef`/`useContext` calls then hit a null dispatcher → `TypeError: Cannot read properties of null (reading 'useRef')`. After the optimize completes and the page reloads, both halves of the app share the same prebundled React, so a manual refresh worked.
-- **Fix:** added explicit prebundling + React dedupe to `web/vite.config.ts`:
-  - `resolve.dedupe: ['react', 'react-dom']` — guarantees a single React instance regardless of nested `node_modules` layouts.
-  - `optimizeDeps.include: ['@react-sigma/core', 'sigma', 'graphology']` — Vite prebundles these at dev-server boot, so the first `/vertex/new` visit never trips a mid-flight re-optimize.
-- **Regression guard:** `web/src/__tests__/viteConfig.vertex.test.ts` — two Vitest cases that import `vite.config.ts` with the `?raw` suffix and assert the `optimizeDeps.include` entries + the `resolve.dedupe` list are present. Would have failed on the previous config; passes now.
+## 2026-05-16 07:55 — OSV2-301 — GeoTemporal PG 持久化 Store
+- **Red:** wrote `pkg/geotemporal/pg_store_test.go` (//go:build integration) with four BDD cases: empty series, out-of-order appends, append→reopen survives restart, multi-series isolation. Compile failed because `PgStore` / `NewPgStore` did not exist — that was the intended Red.
+- **Green:** added migration `migrations/000205_geotemporal_values.{up,down}.sql` (single table, JSONB position, composite PK `(ontology,object_type,primary_key,property,ts)` + matching index) and `pkg/geotemporal/pg_store.go` implementing `geotemporal.Store`. Wired into `cmd/server/main.go` so the GeotemporalStore is now `PgStore` when `deps.PGPool != nil`, falling back to `MemoryStore` only in degraded mode.
+- **Pre-existing-blocker repair (per user direction):** `make test-integration` was already broken on `main`. `migrations/` contained two pairs of duplicate-numbered files from the vertex replication merge (`359648b`):
+  - `000105_object_type_event_metadata` (VTX-077) vs `000105_vertex_scenarios` (VTX-001)
+  - `000106_scenarios_archive` (VTX-116) vs `000106_vertex_object_time_series` (VTX-028)
+  golang-migrate refuses to even instantiate a migrator against that directory. User chose: VTX `vertex_*` files keep their numbers, the other two get rebased to the tail. I renamed:
+  - `000105_object_type_event_metadata` → `000206_object_type_event_metadata`
+  - `000106_scenarios_archive` → `000207_scenarios_archive`
+  No code/doc references to those filenames existed (grepped) — only the VTX `vertex_scenarios` / `vertex_object_time_series` filenames are referenced from `pkg/scenarios/pg_repo.go` + `CHANGELOG.md`, and those kept their original numbers.
 - **Files changed:**
-  - `web/vite.config.ts` — added `resolve.dedupe` + `optimizeDeps.include`.
-  - `web/src/__tests__/viteConfig.vertex.test.ts` — new regression test (also bumps the web-test counts to 247 files / 2720 tests, +1/+2 vs the baseline).
-  - `scripts/ralph/prd.json` — `passes: true`.
-  - `scripts/ralph/progress.txt` — patterns + this entry.
+  - `migrations/000205_geotemporal_values.up.sql` + `down.sql` (new)
+  - `pkg/geotemporal/pg_store.go` (new)
+  - `pkg/geotemporal/pg_store_test.go` (new, integration tag)
+  - `cmd/server/main.go` (geotemporal store wiring)
+  - `migrations/000206_object_type_event_metadata.{up,down}.sql` (renamed from 000105)
+  - `migrations/000207_scenarios_archive.{up,down}.sql` (renamed from 000106)
 - **Quality gates (all green):**
-  - `make web-build` ✓ (vite production build, 3.58s, Vertex chunk 252.53 kB / 67.32 kB gzip).
-  - `go vet ./...` ✓ (no output).
-  - `make test` ✓ (all Go packages cached/pass).
-  - `make web-test` ✓ (247 test files / 2720 tests, 30.95s).
-- **Manual browser verification (Hermes, please run):**
-  - Backend: `make docker-up && make run` (binds `:9117`, healthy at `http://127.0.0.1:9117/health`).
-  - Frontend dev server: `cd web && npm run dev` (Vite on `http://127.0.0.1:5173`, proxy `/api/*` → `:9117`).
-  - In a **fresh** browser context (Cmd+Shift+N / private window so Vite's optimize cache is cold), navigate directly to `http://127.0.0.1:5173/vertex/new` — must:
-    1. Render the Vertex shell on the first paint (no ErrorBoundary fallback).
-    2. Show `Untitled Graph`, `+ Add objects` (disabled — no payload to infer ontology from), `Layout`, `Merge links`, `Save`, `Share`, `Time`, `Run`, and the empty Sigma canvas.
-    3. DevTools console must NOT contain `Invalid hook call` or `Cannot read properties of null (reading 'useRef')`.
-  - If anything fails, re-open this story with the new console output; a structurally similar root cause would be a second nested `react` copy (check `web/node_modules/**/react/package.json` for duplicates).
+  - `go test ./pkg/geotemporal/...` (unit) — ok
+  - `go test -tags integration ./pkg/geotemporal/...` — ok, 4 BDD cases pass (6.25s)
+  - `go test -tags integration -run TestMigrate ./internal/database/` — ok, full migration up survives the renumber
+  - `go vet ./...` — clean
+  - `make test` — green (all packages cached/pass after rename)
+  - `make web-build` — green (vite production, 3.6s)
 - **Learnings for future iterations:**
-  - When debugging a `useRef/useContext returning null` from a third-party React package, treat it as a React-singleton problem, not a hook-order bug — even when the package has been a stable production dep for months. Vite's lazy-chunk + on-demand-optimize behavior is the common trigger.
-  - "Works after refresh" is a strong tell that the bug lives in the first-time `optimizeDeps` flow, not in the component's own state.
-  - Don't import `node:*` from files under `src/` if you want them to pass `tsc -b` in this repo — `tsconfig.app.json` only types `vite/client` + `vitest/globals`. Use Vite's `?raw` instead of `fs.readFile`.
+  - When adding any PG-backed store, follow the `pkg/timeseries/pg_store.go` template: `pgxpool.Pool` field, JSONB for shape-agnostic payloads, `ON CONFLICT … DO UPDATE` for idempotent appends, `errors.Is(err, pgx.ErrNoRows)` mapped to the package's sentinel.
+  - The integration-test gate (`//go:build integration`) goes on the file itself — not just the test name; `go test -tags integration` then picks it up while `go test` skips.
+  - `make test-integration` going forward will only stay green if every new migration uses a unique number; treat the prefix as a global registry. The renumber here was a one-time repair of a vertex merge accident, not a new pattern.
+  - `cmd/server/main.go` "select backend by `PGPool != nil`" pattern is the project's standard for PG-vs-memory store selection (see TimeSeries + Marking + Vertex graphsvc).
 ---
