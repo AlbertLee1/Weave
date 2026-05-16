@@ -33,6 +33,12 @@ type Store interface {
 	List(ctx context.Context, q ListQuery) (rows []*Comment, total int, err error)
 	Update(ctx context.Context, id, author string, upd Update) error
 	Delete(ctx context.Context, id, author string) error
+	// DeleteAllForUser hard-removes every row authored by userID,
+	// including soft-deleted tombstones. Backs the US-494 GDPR
+	// cascade-erase contract — once it returns, the user_id column
+	// holds zero references to userID. Idempotent: a missing user
+	// returns (0, nil).
+	DeleteAllForUser(ctx context.Context, userID string) (rowsAffected int, err error)
 }
 
 // ListQuery scopes a List call. TargetRID is required; ParentID may be
@@ -194,6 +200,25 @@ func (m *MemoryStore) Update(_ context.Context, id, author string, upd Update) e
 	}
 	row.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// DeleteAllForUser hard-removes every row authored by userID, including
+// soft-deleted tombstones. Reply rows authored by other users keep
+// their parent reference even when the parent vanishes — the handler
+// already tolerates a dangling parent_id (renders the thread head as
+// "[removed]") and rebuilding the chain would re-introduce userID
+// references via the historical body.
+func (m *MemoryStore) DeleteAllForUser(_ context.Context, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, row := range m.rows {
+		if row.Author == userID {
+			delete(m.rows, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // Delete soft-deletes a comment. Only the original author may delete;

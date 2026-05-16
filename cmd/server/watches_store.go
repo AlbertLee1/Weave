@@ -63,6 +63,17 @@ func (s *pgWatchesStore) Delete(ctx context.Context, userID, targetRID string) e
 	return nil
 }
 
+// DeleteAllForUser hard-deletes every row whose user_id column matches.
+// Backs the US-494 GDPR cascade-erase contract.
+func (s *pgWatchesStore) DeleteAllForUser(ctx context.Context, userID string) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM watches WHERE user_id = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // List returns every row owned by userID, ordered most-recent first.
 func (s *pgWatchesStore) List(ctx context.Context, userID string) ([]*watches.Watch, error) {
 	rows, err := s.pool.Query(ctx,

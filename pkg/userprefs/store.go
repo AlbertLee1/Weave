@@ -27,6 +27,12 @@ type Store interface {
 	// into the existing row. The returned *Preferences is the post-
 	// merge state including timestamps.
 	Upsert(ctx context.Context, userID string, upd Update) (*Preferences, error)
+
+	// DeleteAllForUser hard-removes the preferences row keyed by
+	// userID. Backs the US-494 GDPR cascade-erase contract: post-call
+	// Get returns ErrNotFound and the user_id PK column carries zero
+	// references. Idempotent — a missing user returns (0, nil).
+	DeleteAllForUser(ctx context.Context, userID string) (rowsAffected int, err error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -122,4 +128,17 @@ func (m *MemoryStore) Upsert(_ context.Context, userID string, upd Update) (*Pre
 	}
 	row.UpdatedAt = now
 	return clonePrefs(row), nil
+}
+
+// DeleteAllForUser removes the preferences row for userID. Reports the
+// number of rows actually removed (0 or 1) so the GDPR job log records
+// a real row count.
+func (m *MemoryStore) DeleteAllForUser(_ context.Context, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.rows[userID]; !ok {
+		return 0, nil
+	}
+	delete(m.rows, userID)
+	return 1, nil
 }

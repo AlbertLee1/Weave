@@ -31,6 +31,11 @@ type Store interface {
 	// emoji) has a row. The bucket order is descending count, then
 	// ascending emoji string for deterministic wire shape.
 	AggregateForTarget(ctx context.Context, userID, targetRID string) ([]EmojiCount, error)
+	// DeleteAllForUser hard-removes every row owned by userID. Backs
+	// the US-494 GDPR cascade-erase contract: post-call the user_id
+	// column carries zero references to userID. Idempotent — a missing
+	// user returns (0, nil).
+	DeleteAllForUser(ctx context.Context, userID string) (rowsAffected int, err error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -91,6 +96,20 @@ func (m *MemoryStore) Delete(_ context.Context, userID, targetRID, emoji string)
 		}
 	}
 	return ErrNotFound
+}
+
+// DeleteAllForUser removes every row whose UserID matches.
+func (m *MemoryStore) DeleteAllForUser(_ context.Context, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, row := range m.rows {
+		if row.UserID == userID {
+			delete(m.rows, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // AggregateForTarget returns one bucket per distinct emoji on the

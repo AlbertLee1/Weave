@@ -126,3 +126,14 @@ func (s *pgUserPrefsStore) Upsert(ctx context.Context, userID string, upd userpr
 	}
 	return s.Get(ctx, userID)
 }
+
+// DeleteAllForUser hard-deletes the preferences row PK'd on userID.
+// Backs the US-494 GDPR cascade-erase contract.
+func (s *pgUserPrefsStore) DeleteAllForUser(ctx context.Context, userID string) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM user_preferences WHERE user_id = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}

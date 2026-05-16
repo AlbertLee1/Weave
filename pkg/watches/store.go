@@ -37,6 +37,11 @@ type Store interface {
 	// batch of changed object RIDs, ask "who has subscribed?" in one
 	// query rather than N IsWatching probes.
 	WatchersFor(ctx context.Context, targetRIDs []string) (map[string][]string, error)
+	// DeleteAllForUser hard-removes every follow row owned by userID.
+	// Backs the US-494 GDPR cascade-erase contract: post-call the
+	// user_id column carries zero references to userID. Idempotent —
+	// a missing user returns (0, nil).
+	DeleteAllForUser(ctx context.Context, userID string) (rowsAffected int, err error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -128,6 +133,20 @@ func (m *MemoryStore) IsWatching(_ context.Context, userID, targetRID string) (b
 		}
 	}
 	return false, nil
+}
+
+// DeleteAllForUser removes every row whose UserID matches.
+func (m *MemoryStore) DeleteAllForUser(_ context.Context, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, row := range m.rows {
+		if row.UserID == userID {
+			delete(m.rows, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // WatchersFor returns userIDs grouped by targetRID for every requested

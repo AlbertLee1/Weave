@@ -29,10 +29,11 @@ import (
 // test router (which doesn't wrap the handler in RequirePermission)
 // would be accidentally permissive.
 type Handler struct {
-	store      JobStore
-	eraser     *Eraser
-	exporter   *Exporter
-	auditStore audit.Store
+	store         JobStore
+	eraser        *Eraser
+	cascadeEraser *Eraser
+	exporter      *Exporter
+	auditStore    audit.Store
 }
 
 // NewHandler constructs a GDPR admin handler. eraser is the shared
@@ -51,12 +52,25 @@ func NewHandler(store JobStore, eraser *Eraser, auditStore audit.Store) *Handler
 // SPA / SDK can surface "not configured" to operators.
 func (h *Handler) SetExporter(e *Exporter) { h.exporter = e }
 
+// SetCascadeEraser wires the optional cascade-eraser used when the
+// US-494 DELETE /users/{id}/erase?cascade=true route is invoked. nil
+// leaves the cascade path falling back to the default eraser so
+// partially-wired deployments still execute SOME cleanup (and the
+// audit row carries cascade=true so operators can see the intent).
+func (h *Handler) SetCascadeEraser(e *Eraser) { h.cascadeEraser = e }
+
 // RegisterRoutes mounts every GDPR admin endpoint on r. Callers should
 // wrap the call in auth.RequirePermission(auth.PermUserManage).
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/admin/gdpr/erase", h.Erase)
 	r.Get("/api/admin/gdpr/erase/{jobId}", h.GetJob)
 	r.Post("/api/admin/gdpr/export", h.Export)
+	// US-494 cascade-erase REST shape. The path-style verb
+	//   DELETE /api/admin/gdpr/users/{userId}/erase?cascade=true
+	// is the wire shape required by the acceptance criteria and is the
+	// preferred entry point — the POST /erase form above stays for
+	// backward compatibility with US-267 SDK callers.
+	r.Delete("/api/admin/gdpr/users/{userId}/erase", h.EraseUser)
 }
 
 // Erase handles POST /api/admin/gdpr/erase.
@@ -133,6 +147,92 @@ func (h *Handler) Erase(w http.ResponseWriter, r *http.Request) {
 	userID := req.UserID
 	go func() {
 		if _, err := h.eraser.Run(bgCtx, jobID, userID); err != nil {
+			log.Printf("gdpr: job %s: Run returned: %v", jobID, err)
+		}
+	}()
+
+	httputil.WriteJSON(w, http.StatusAccepted, &EraseResponse{
+		JobID:  job.JobID,
+		Status: JobStatusPending,
+	})
+}
+
+// EraseUser handles DELETE /api/admin/gdpr/users/{userId}/erase.
+//
+// The userId is taken from the path; cascade is read from the
+// ?cascade=true query param. When cascade=true AND the handler has a
+// cascade eraser wired (via SetCascadeEraser), that eraser runs
+// instead of the default — so the per-step log captures the additional
+// comments_cascade / reactions_cascade / watches_cascade /
+// user_preferences_cascade steps. When cascade=true but no cascade
+// eraser is configured the default eraser runs and the audit row still
+// records cascade=true so operators can see the operator's intent.
+//
+// Response shape mirrors POST /erase: 202 Accepted + {jobId, status}
+// so SDK pollers don't need a second envelope.
+func (h *Handler) EraseUser(w http.ResponseWriter, r *http.Request) {
+	caller := auth.UserFromContext(r.Context())
+	if caller == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser", map[string]string{
+			"reason": "no authenticated user in request context",
+		}))
+		return
+	}
+	if h.store == nil || h.eraser == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GDPREraseUnavailable", map[string]string{
+			"reason": "GDPR erase is not configured on this deployment",
+		}))
+		return
+	}
+	userID := chi.URLParam(r, "userId")
+	if userID == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingUserID", map[string]string{
+			"reason": "userId path parameter is required",
+		}))
+		return
+	}
+	cascade := r.URL.Query().Get("cascade") == "true"
+
+	eraser := h.eraser
+	if cascade && h.cascadeEraser != nil {
+		eraser = h.cascadeEraser
+	}
+
+	job := &ErasureJob{
+		JobID:       uuid.NewString(),
+		UserID:      userID,
+		Status:      JobStatusPending,
+		Progress:    0,
+		RequestedBy: caller.ID,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	if err := h.store.CreateJob(r.Context(), job); err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GDPRJobCreateFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	if h.auditStore != nil {
+		diff, _ := json.Marshal(map[string]interface{}{
+			"jobId":   job.JobID,
+			"userId":  userID,
+			"cascade": cascade,
+		})
+		_ = audit.Record(r.Context(), h.auditStore, audit.AuditEvent{
+			ActorID:      caller.ID,
+			Action:       "gdpr_erase_request",
+			ResourceType: "User",
+			ResourceRID:  userID,
+			DiffJSON:     diff,
+		})
+	}
+
+	bgCtx := copyAuthContext(context.Background(), r.Context())
+	jobID := job.JobID
+	go func() {
+		if _, err := eraser.Run(bgCtx, jobID, userID); err != nil {
 			log.Printf("gdpr: job %s: Run returned: %v", jobID, err)
 		}
 	}()

@@ -1423,6 +1423,20 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.GDPRExporter != nil {
 				gdprHandler.SetExporter(deps.GDPRExporter)
 			}
+			// US-494: cascade-erase composes the default steps with the
+			// per-table cleaners so DELETE /users/{id}/erase?cascade=true
+			// nukes every user_id reference in comments / reactions /
+			// watches / user_preferences. Each cascade step's adapter is
+			// nil-safe so partially-wired deployments (e.g. memory-store
+			// dev mode) still produce a sensible job log.
+			cascadeSteps := append([]gdpr.Step(nil), steps...)
+			cascadeSteps = append(cascadeSteps,
+				gdpr.NewCommentsCascadeStep(deps.CommentsStore),
+				gdpr.NewReactionsCascadeStep(deps.ReactionsStore),
+				gdpr.NewWatchesCascadeStep(deps.WatchesStore),
+				gdpr.NewUserPrefsCascadeStep(deps.UserPreferencesStore),
+			)
+			gdprHandler.SetCascadeEraser(gdpr.NewEraser(deps.GDPRJobStore, cascadeSteps))
 			api.With(auth.RequirePermission(auth.PermUserManage)).
 				Group(func(admin chi.Router) {
 					gdprHandler.RegisterRoutes(admin)
