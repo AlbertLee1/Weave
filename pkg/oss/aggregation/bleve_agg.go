@@ -24,6 +24,37 @@ const (
 	MaxHLLPrecision = 18
 )
 
+// approxConfig captures the request-level approximate-algorithm knobs that
+// each leaf bucket inherits. Spec-level overrides (Spec.Precision,
+// Spec.Compression) take precedence; otherwise the request-level defaults
+// (HLLPrecision, TDigestCompression) win; otherwise the package defaults
+// (DefaultHLLPrecision, DefaultTDigestCompression) are used. Created once
+// per AggregateWithQuery call and threaded through groupBy / sub-aggregation
+// recursion unchanged so a single request has a single accuracy contract.
+type approxConfig struct {
+	hllPrecision       int
+	tdigestCompression float64
+}
+
+// resolveApproxConfig derives the request-wide approx defaults from the
+// AggregationRequest. Per-spec overrides are still consulted inside
+// computeMetrics — this struct only carries the request-level fallback.
+func resolveApproxConfig(req *AggregationRequest) approxConfig {
+	cfg := approxConfig{
+		hllPrecision:       DefaultHLLPrecision,
+		tdigestCompression: DefaultTDigestCompression,
+	}
+	if req != nil {
+		if req.HLLPrecision != nil {
+			cfg.hllPrecision = *req.HLLPrecision
+		}
+		if req.TDigestCompression != nil {
+			cfg.tdigestCompression = *req.TDigestCompression
+		}
+	}
+	return cfg
+}
+
 // computeMetrics computes aggregation metrics from search results.
 // It scans matching documents to compute min, max, sum, avg, count,
 // standardDeviation, variance, and approximatePercentile. The second
@@ -36,8 +67,10 @@ const (
 // Palantir request-level toggle: AccuracyRequireAccurate transparently
 // promotes approximateDistinct → exactDistinct and approximatePercentile
 // → sort-based exact percentile so callers that need byte-exact output
-// can opt out of the sketches without rewriting their specs.
-func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationSpec, accuracyMode string) ([]MetricValue, bool, bool, error) {
+// can opt out of the sketches without rewriting their specs. cfg carries
+// request-level HLL / t-digest defaults (US-465); per-spec overrides on
+// each AggregationSpec still win.
+func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []AggregationSpec, accuracyMode string, cfg approxConfig) ([]MetricValue, bool, bool, error) {
 	metrics := make([]MetricValue, 0, len(specs))
 	truncated := false
 	approximate := false
@@ -89,7 +122,7 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 				metrics = append(metrics, MetricValue{Name: name, Value: val})
 				break
 			}
-			precision := DefaultHLLPrecision
+			precision := cfg.hllPrecision
 			if spec.Precision != nil {
 				precision = *spec.Precision
 			}
@@ -164,8 +197,15 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 				metrics = append(metrics, MetricValue{Name: name, Value: val})
 				break
 			}
+			compression := cfg.tdigestCompression
+			if spec.Compression != nil {
+				compression = *spec.Compression
+			}
+			if !(compression > 0) || math.IsInf(compression, 0) || math.IsNaN(compression) {
+				return nil, false, false, fmt.Errorf("approximatePercentile: compression %v must be a positive finite number", compression)
+			}
 			if len(spec.Percentiles) > 0 {
-				val, t, err := approxPercentilesFromIndex(idx, baseQuery, spec.Field, spec.Percentiles, scanSize)
+				val, t, err := approxPercentilesFromIndex(idx, baseQuery, spec.Field, spec.Percentiles, scanSize, compression)
 				if err != nil {
 					return nil, false, false, err
 				}
@@ -181,7 +221,7 @@ func (e *Engine) computeMetrics(idx bleve.Index, baseQuery query.Query, specs []
 				if spec.Percentile != nil {
 					percentile = *spec.Percentile
 				}
-				val, t, err := approxPercentileFromIndex(idx, baseQuery, spec.Field, percentile, scanSize)
+				val, t, err := approxPercentileFromIndex(idx, baseQuery, spec.Field, percentile, scanSize, compression)
 				if err != nil {
 					return nil, false, false, err
 				}

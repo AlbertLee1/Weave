@@ -2089,6 +2089,17 @@ components:
             HyperLogLog precision for `approximateDistinct` (4..18). Defaults
             to 14 (~0.81% standard error). Higher precision reduces error but
             grows the in-memory sketch: a size-of-sketch ≈ 2^precision bytes.
+            Overrides the request-level hllPrecision when set (US-465).
+        compression:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          description: |
+            t-digest compression for `approximatePercentile`. Defaults to 100
+            (worst-case ≤ 1000 centroids; ≤ 16 KiB heap; p99 error << 1% on
+            smooth distributions). Larger values give finer-grained tails at
+            higher memory cost. Overrides the request-level tdigestCompression
+            when set (US-465). Must be a positive finite number.
     GroupBySpec:
       type: object
       required: [type, field]
@@ -2187,6 +2198,32 @@ components:
             query.
           items:
             type: string
+        hllPrecision:
+          type: integer
+          minimum: 4
+          maximum: 18
+          description: |
+            Request-wide HyperLogLog precision applied to every
+            `approximateDistinct` in this request that does not carry its own
+            spec-level `precision` override (US-465). Default 14. Range 4..18.
+        tdigestCompression:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          description: |
+            Request-wide t-digest compression applied to every
+            `approximatePercentile` in this request that does not carry its
+            own spec-level `compression` override (US-465). Default 100. Must
+            be a positive finite number.
+        approximateScanThreshold:
+          type: integer
+          format: int64
+          description: |
+            Scanned-row count above which the response is force-marked
+            APPROXIMATE even when the scan was not truncated by MaxDocScanSize
+            (US-465). Default 1,000,000. A non-positive value disables the
+            check. Lets callers tighten the cost-of-trust boundary without
+            changing the engine's hard scan ceiling.
     HavingClause:
       type: object
       required: [metric, op, value]

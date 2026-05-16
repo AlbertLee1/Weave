@@ -24,10 +24,18 @@ const DefaultTDigestCompression = 100.0
 // compression. Returns NaN on empty input to match the Bleve dispatch
 // contract upstream.
 func computeApproxPercentileTDigest(values []float64, percentile float64) float64 {
+	return computeApproxPercentileTDigestC(values, percentile, DefaultTDigestCompression)
+}
+
+// computeApproxPercentileTDigestC is the compression-aware variant used by the
+// US-465 request- and spec-level overrides. The default helper is a thin
+// wrapper that calls this with DefaultTDigestCompression so existing callers
+// (and direct-call tests) keep their semantics.
+func computeApproxPercentileTDigestC(values []float64, percentile, compression float64) float64 {
 	if len(values) == 0 {
 		return math.NaN()
 	}
-	td := newBoundedTDigest()
+	td := newBoundedTDigestC(compression)
 	for _, v := range values {
 		td.Add(v, 1)
 	}
@@ -41,11 +49,18 @@ func computeApproxPercentileTDigest(values []float64, percentile float64) float6
 //
 // Returns an empty map when either input slice is empty.
 func computeApproxPercentilesTDigest(values []float64, percentiles []float64) map[string]float64 {
+	return computeApproxPercentilesTDigestC(values, percentiles, DefaultTDigestCompression)
+}
+
+// computeApproxPercentilesTDigestC is the compression-aware multi-percentile
+// counterpart. Single-pass single-digest; the compression value comes from
+// the request- or spec-level US-465 override.
+func computeApproxPercentilesTDigestC(values, percentiles []float64, compression float64) map[string]float64 {
 	out := make(map[string]float64, len(percentiles))
 	if len(values) == 0 || len(percentiles) == 0 {
 		return out
 	}
-	td := newBoundedTDigest()
+	td := newBoundedTDigestC(compression)
 	for _, v := range values {
 		td.Add(v, 1)
 	}
@@ -59,5 +74,13 @@ func computeApproxPercentilesTDigest(values []float64, percentiles []float64) ma
 // Every production approximatePercentile call routes through here so the
 // memory and accuracy guarantees stay uniform across the engine.
 func newBoundedTDigest() *tdigest.TDigest {
-	return tdigest.NewWithCompression(DefaultTDigestCompression)
+	return newBoundedTDigestC(DefaultTDigestCompression)
+}
+
+// newBoundedTDigestC constructs a t-digest at the caller-supplied compression.
+// Production paths (US-465 request/spec overrides) route through here so the
+// digest is bounded by an explicit cost contract rather than the package
+// default.
+func newBoundedTDigestC(compression float64) *tdigest.TDigest {
+	return tdigest.NewWithCompression(compression)
 }

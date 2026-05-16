@@ -11,10 +11,11 @@ import (
 
 // approxPercentilesFromIndex is the Bleve-backed multi-percentile counterpart
 // to approxPercentileFromIndex. It scans the index once, feeds every numeric
-// hit into a single bounded t-digest, and returns a map[string]float64
-// keyed by percentile string. The triple shape mirrors the legacy scalar
-// path so bleve_agg.go can dispatch uniformly.
-func approxPercentilesFromIndex(idx bleve.Index, q query.Query, field string, percentiles []float64, scanSize int) (interface{}, bool, error) {
+// hit into a single bounded t-digest at the supplied compression, and returns
+// a map[string]float64 keyed by percentile string. The triple shape mirrors
+// the legacy scalar path so bleve_agg.go can dispatch uniformly. compression
+// is the request- or spec-level US-465 override.
+func approxPercentilesFromIndex(idx bleve.Index, q query.Query, field string, percentiles []float64, scanSize int, compression float64) (interface{}, bool, error) {
 	values, truncated, err := scanNumericField(idx, q, field, scanSize)
 	if err != nil {
 		return nil, false, err
@@ -22,7 +23,7 @@ func approxPercentilesFromIndex(idx bleve.Index, q query.Query, field string, pe
 	if len(values) == 0 {
 		return nil, truncated, nil
 	}
-	return computeApproxPercentilesTDigest(values, percentiles), truncated, nil
+	return computeApproxPercentilesTDigestC(values, percentiles, compression), truncated, nil
 }
 
 // exactPercentileFromIndex computes percentile(s) exactly via a sorted scan
@@ -83,10 +84,11 @@ func nearestRank(sorted []float64, percentile float64) float64 {
 }
 
 // approxPercentileFromIndex routes the single-percentile approximate path
-// through the bounded t-digest. It preserves the same (value, truncated,
-// error) triple so bleve_agg.go can dispatch uniformly with the multi
-// path and the exact-path fallback.
-func approxPercentileFromIndex(idx bleve.Index, q query.Query, field string, percentile float64, scanSize int) (interface{}, bool, error) {
+// through the bounded t-digest at the supplied compression. It preserves
+// the same (value, truncated, error) triple so bleve_agg.go can dispatch
+// uniformly with the multi path and the exact-path fallback. compression
+// is the request- or spec-level US-465 override.
+func approxPercentileFromIndex(idx bleve.Index, q query.Query, field string, percentile float64, scanSize int, compression float64) (interface{}, bool, error) {
 	values, truncated, err := scanNumericField(idx, q, field, scanSize)
 	if err != nil {
 		return nil, false, err
@@ -94,7 +96,7 @@ func approxPercentileFromIndex(idx bleve.Index, q query.Query, field string, per
 	if len(values) == 0 {
 		return nil, truncated, nil
 	}
-	return computeApproxPercentileTDigest(values, percentile), truncated, nil
+	return computeApproxPercentileTDigestC(values, percentile, compression), truncated, nil
 }
 
 // scanNumericField fetches up to scanSize hits from the index and pulls out
