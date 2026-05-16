@@ -13,7 +13,11 @@
 //   - initialize     : handshake; returns protocolVersion + serverInfo + capabilities
 //   - tools/list     : list registered tools and their input schemas
 //   - tools/call     : invoke a tool by name with arguments
-//   - prompts/list   : returns an empty list (Weave does not yet expose prompts)
+//   - prompts/list   : list MCP prompts synthesised from OMS ActionType
+//     metadata — one prompt per ActionType across all ontologies (OSV2-302)
+//   - prompts/get    : render a user-role text message that names the
+//     ontology, action and supplied arguments so the LLM can invoke
+//     weave_apply_action with the same shape (OSV2-302)
 //   - resources/list : list ontologies and temporary ObjectSets as MCP resources
 //   - resources/read : return the schema for an ontology or the stored
 //     definition for an ObjectSet, given a `weave://<kind>/<id>` URI

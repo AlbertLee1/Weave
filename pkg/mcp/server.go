@@ -105,7 +105,13 @@ func (s *Server) Handle(ctx context.Context, req *Request) *Response {
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
 	case "prompts/list":
-		return NewSuccessResponse(req.ID, map[string]any{"prompts": []any{}})
+		result, err := s.handlePromptsList(ctx)
+		if err != nil {
+			return NewErrorResponse(req.ID, CodeInternalError, err.Error(), nil)
+		}
+		return NewSuccessResponse(req.ID, result)
+	case "prompts/get":
+		return s.handlePromptsGet(ctx, req)
 	case "resources/list":
 		return s.handleResourcesList(ctx, req)
 	case "resources/read":
@@ -119,16 +125,18 @@ func (s *Server) Handle(ctx context.Context, req *Request) *Response {
 }
 
 // handleInitialize implements the MCP initialize handshake. The response
-// advertises tools and resources — Weave does not yet expose prompts or
-// sampling. The resources capability is advertised even when no
-// ObjectSetCatalog is wired because ontologies are always enumerable as
-// long as the OMS repo is present.
+// advertises tools, resources and prompts capabilities. Resources are
+// advertised even when no ObjectSetCatalog is wired because ontologies
+// are always enumerable as long as the OMS repo is present; prompts (added
+// in OSV2-302) likewise default to an empty list when OMS is absent rather
+// than dropping the capability entirely.
 func (s *Server) handleInitialize(req *Request) *Response {
 	result := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
 			"tools":     map[string]any{"listChanged": false},
 			"resources": map[string]any{"listChanged": false, "subscribe": false},
+			"prompts":   map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{
 			"name":    ServerName,

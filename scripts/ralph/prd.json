@@ -31,7 +31,7 @@
       "name": "MCP prompts/list 真实绑定 ActionType（不再返回空数组）",
       "phase": 19,
       "active": true,
-      "passes": false,
+      "passes": true,
       "priority": 2,
       "dependencies": [],
       "description": "今天 pkg/mcp/server.go:107-108 的 prompts/list 写死返回 {prompts: []}，pkg/mcp/doc.go 第 16 行明说 'Weave does not yet expose prompts'，initialize capability 也根本不广告 prompts。这让真 MCP 客户端（Claude Desktop / Cursor）发现不到 Weave 已经声明的 ActionType——而 ActionType 是 Foundry 把 Action 暴露成 prompt 的语义入口。本 story 把 prompts/list 真接到 OMS 的 ActionType 元数据：每个 ActionType 暴露一个 prompt，name=ontology__action_api_name，description 用 ActionType.DisplayName / Description，arguments 来自 ActionType 参数（每个参数 description=参数 displayName/description，required=非 optional）。同时实现 prompts/get，给定 name + arguments 返回一段渲染好的 messages，告诉 LLM 'apply action ... with params {...}'。initialize capabilities 中新增 prompts: {listChanged:false}。",

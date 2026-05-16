@@ -66,3 +66,23 @@ Probed and ruled out as **already done in code, regardless of what PRD-Weave-OSv
   - `make test-integration` going forward will only stay green if every new migration uses a unique number; treat the prefix as a global registry. The renumber here was a one-time repair of a vertex merge accident, not a new pattern.
   - `cmd/server/main.go` "select backend by `PGPool != nil`" pattern is the project's standard for PG-vs-memory store selection (see TimeSeries + Marking + Vertex graphsvc).
 ---
+
+## 2026-05-16 08:15 — OSV2-302 — MCP prompts/list bound to OMS ActionType
+- **Red:** wrote `pkg/mcp/prompts_test.go` with five BDD cases (one prompt per ActionType, arguments in declaration order with required flags, prompts/get renders user message, nil-OMS still returns empty list, initialize advertises prompts capability). Compile failed because `Prompt` / `PromptArgument` / `PromptMessage` types did not exist — that was the intended Red. Also discovered Response.Result is `any`, so tests use a `remarshal` helper to round-trip through JSON before strict decode.
+- **Green:** new `pkg/mcp/prompts.go` with three exported types (Prompt/PromptArgument/PromptMessage) and the handler pair `handlePromptsList` + `handlePromptsGet`. Prompt names are `<ontologyApiName>__<actionApiName>` (double underscore to avoid colliding with single underscores already common in action api names). Arguments come from `ActionType.Parameters` (json.RawMessage of `[{id,type,required,description}]`), preserving declaration order. `prompts/get` resolves ontology apiName → RID via `GetOntology` first so both the PG repo (which already accepts either form) and the in-memory test fake (RID-keyed only) land on the same row. Rendered user message text always contains the ontology, action and supplied parameter k/v pairs in sorted order so tests are deterministic.
+- **Capability advertisement:** `handleInitialize` now emits `capabilities.prompts: {listChanged: false}` alongside `tools` and `resources`. The existing `TestServer_PromptsList_EmptyOK` test still passes — when no ActionTypes are registered the list is naturally empty.
+- **Files changed:**
+  - `pkg/mcp/prompts.go` (new)
+  - `pkg/mcp/prompts_test.go` (new)
+  - `pkg/mcp/server.go` (prompts/list + prompts/get dispatch, initialize capability)
+  - `pkg/mcp/doc.go` (package doc — prompts no longer described as "empty list")
+- **Quality gates (all green):**
+  - `go test ./pkg/mcp/... -count=1` — full package green (added 5 new tests, existing ~30+ pass).
+  - `go vet ./...` — clean.
+  - `make test` — green (full Go suite, cached/pass).
+- **Learnings for future iterations:**
+  - MCP `Response.Result` is `any` in this codebase, not `json.RawMessage` — tests that need strict decoding should remarshal via `json.Marshal` then `json.Unmarshal` (helper `remarshal(v, into)`).
+  - When adding a new MCP method, also update `handleInitialize` capabilities and `pkg/mcp/doc.go` — these are the two surfaces clients use for discovery, and they drift if you only touch `server.go`.
+  - The double-underscore separator (`__`) for `<ontology>__<action>` survives single-underscored API names (`create_order`, `update_order`) which are common — don't use a single underscore for namespace separators.
+  - OMS api-name vs RID asymmetry: the fakeOmsRepo in `pkg/mcp/tools_test.go` is strictly RID-keyed, but the PG repo's `GetActionTypeByAPIName` accepts both. Resolve via `GetOntology` first to stay portable.
+---
