@@ -2549,6 +2549,22 @@ func main() {
 
 	// 6. ObjectSet
 	deps.ObjSetStore = objectset.NewStore(1 * time.Hour)
+	// US-462: when a PG pool exists, run the saved-ObjectSet reaper on a
+	// 5-minute ticker so ephemeral rows (is_immutable=false) older than 1h
+	// are DELETEd while immutable snapshots stay forever. Degraded-mode
+	// (no PG) boots leave the goroutine unstarted — RunSavedSetReaperLoop
+	// is a no-op on a nil reaper.
+	if deps.PGPool != nil {
+		savedReaper := objectset.NewPGSavedStore(deps.PGPool)
+		go objectset.RunSavedSetReaperLoop(ctx, savedReaper, 5*time.Minute, time.Hour,
+			func(n int64) {
+				if n > 0 {
+					log.Printf("[SAVED-OBJECTSET-REAP] dropped %d expired ephemeral rows", n)
+				}
+			},
+			func(err error) { log.Printf("[SAVED-OBJECTSET-REAP] %v", err) },
+		)
+	}
 	if deps.LinkResolver != nil {
 		deps.ObjSetExecutor = objectset.NewExecutor(deps.IndexMgr, deps.LinkResolver, deps.ObjSetStore)
 		// US-041: wire the PG-backed InterfaceResolver so interfaceBase

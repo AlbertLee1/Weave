@@ -13,6 +13,7 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
 - `pkg/funnel.Broadcast` 既是 SSE fan-out hub 也是 replay 缓冲：`SubscribeWithReplayWindow(buffer, fromSeq)` 返回 `(id, ch, outOfWindow)`，时间窗 + ring 容量双重剪裁；SSE handler 把 outOfWindow → 410 Gone（在写 text/event-stream header 之前）。修 SSE 行为时优先改 broadcast 而不是各处自建 ring。
 - ObjectSet `withProperties` direction-aware 套路：link walk 走 `linkResolverForDirection(dp, dir)`、"另一端"ObjectType 走 `resolveLinkTargetType(callerOT, link, dir)`（DirectionalLinkTargetTypeResolver 优先，legacy LinkTargetTypeResolver 只覆盖 forward）。反向 numeric metric 必须两者都过——只换 walk 不换 target type 会从错误的索引读字段。生产 `links.Resolver` 当前不实现 `reverseLinkFinder` / `DirectionalLinkTargetTypeResolver`，反向 withProperties + searchAround 目前只在测试 mock 里跑通；要在 production 启用需要先补 resolver 适配层。
 - OpenAPI 双写规约：`api/openapi.yaml` 是 canonical 源，`cmd/server/openapi_spec.yaml` 是 //go:embed 的复刻，两份必须 byte-identical（TestContract_EmbeddedSpecMatchesCanonical 守门）。改完 canonical 后用 `cp api/openapi.yaml cmd/server/openapi_spec.yaml` 同步，否则 contract 测试当场红。Route ↔ spec 的覆盖率由 TestContract_AllRoutesDocumented / TestContract_NoOrphanedSpecPaths 双向校验，新增 admin 路由必须同时落 spec。
+- Reaper loop 套路：method-bound `Store.RunReaperLoop` 单元测不动（要 PG container），所以约定把驱动逻辑抽成 `RunXxxReaperLoop(ctx, reaper XxxReaper, interval, ttl, onReap, onError)` 自由函数 + `XxxReaper` 最小接口（只暴露 `ReapExpired(ctx, ttl) (int64, error)`），具体 store 满足接口；method 版退化为 thin shim。参考 `pkg/oss/objectset.RunSavedSetReaperLoop`（US-462）与 `pkg/actions.RunActionJobReaperLoop`（US-426）。boot 时机：`deps.ObjSetStore` / store 构造完之后立刻 `go ...Loop(ctx, store, interval, ttl, log, log)`，degraded mode（无 PG）天然 no-op。新增 reaper 别再造 method-only 版。
 
 ## Progress
 
@@ -66,4 +67,22 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - Porter stemmer 测词对的脚踏雷：不是任意同根词都规约到同一个 stem。`fishing`/`fished`/`fishes` 安全；`running`/`runner` 不安全（agentive `-er` 不剥）；`flies`/`fly` 不可靠（不规则）。如果以后要给别的 analyzer 写 stemming 等价性测试，最好直接 grep `pkg/index/mapping_builder_test.go` 沿用本文件已被 CI 验证过的词对。
   - 新加 admin 路由要走"三件套同步"：cmd/server/main.go 注册 + api/openapi.yaml 加 path item + 复制到 cmd/server/openapi_spec.yaml。任一漏掉 contract 测试会当场红，TestContract_AllRoutesDocumented vs TestContract_NoOrphanedSpecPaths 是双向 diff。把这条提到顶部的 Codebase Patterns 了。
   - chi.URLParam 在 httptest 单元测试里只有"在 chi 路由器下分发过"才会拿到非空值——所以 `NewAdminIndexReindexHandler` 的测试不能像 `NewAdminIndexRebuildHandler` 那样直接 `h.ServeHTTP`，必须先挂到 `chi.NewRouter()` 上再发请求。直接调 handler 会拿到空 objectType → 400。
+---
+
+## 2026-05-16 - US-462 (Saved ObjectSet TTL 回收守护)
+- 现状盘点：`pkg/oss/objectset.PGSavedStore.ReapExpired` + 老 `RunReaperLoop` 已有，集成测试覆盖 SQL；但 `cmd/server/main.go` 从未构造 `PGSavedStore` 也从未起 ticker——故事就缺这块 boot wiring，外加可单测的驱动函数。
+- 把驱动逻辑抽成自由函数 `objectset.RunSavedSetReaperLoop(ctx, reaper SavedSetReaper, interval, ttl, onReap, onError)` + `SavedSetReaper` 接口（只暴露 `ReapExpired(ctx, ttl) (int64, error)`）。`*PGSavedStore` 隐式实现接口；`PGSavedStore.RunReaperLoop` 退化为 thin shim 调用自由函数。形状对齐 `pkg/actions.RunActionJobReaperLoop`（US-426），保持单库内 reaper 套路一致。
+- cmd/server/main.go 在 `deps.ObjSetStore = objectset.NewStore(1*time.Hour)` 后面（"// 6. ObjectSet"）加一段：`if deps.PGPool != nil { savedReaper := objectset.NewPGSavedStore(deps.PGPool); go objectset.RunSavedSetReaperLoop(ctx, savedReaper, 5*time.Minute, time.Hour, onReap-log, onError-log) }`。degraded mode（无 PG）天然 no-op。
+- TDD 红：先建 `pkg/oss/objectset/us462_reaper_loop_test.go`，4 个用例（ticks-and-stops-on-context、nil/zero no-op、onError 继续、`*PGSavedStore` 隐式接口 guard），一次构建即报 `undefined: objectset.RunSavedSetReaperLoop` / `undefined: objectset.SavedSetReaper`；加实现后 4 个全绿。
+- 集成测试：`pkg/oss/objectset/persistence_test.go` 加 `TestPGSavedStore_RunReaperLoop_DropsEphemeralKeepsImmutable`（build tag integration）：起 testcontainers PG，create 一个 immutable + 一个 ephemeral，UPDATE …`created_at = NOW() - INTERVAL '2 hours'` 回拨两行；起 loop（interval=20ms, ttl=1h），等 onReap 收到一次 n=1，cancel ctx，断言 immutable 仍在 / ephemeral 已 ErrSavedSetNotFound / 协程干净退出。一遍跑过，1.54s。
+- Files changed:
+  - pkg/oss/objectset/persistence.go — 新增 `SavedSetReaper` 接口 + `RunSavedSetReaperLoop` 自由函数；`PGSavedStore.RunReaperLoop` 改成 thin shim 调用前者。
+  - pkg/oss/objectset/us462_reaper_loop_test.go — 新建 fakeReaper + 4 个 unit test。
+  - pkg/oss/objectset/persistence_test.go — import `sync/atomic`；新增 TestPGSavedStore_RunReaperLoop_DropsEphemeralKeepsImmutable 集成测试。
+  - cmd/server/main.go — `// 6. ObjectSet` 段内 PGPool!=nil 分支起 reaper goroutine（5min interval / 1h ttl / log on reap/err）。
+  - scripts/ralph/prd.json — US-462 passes=true + 实施摘要。
+- **Learnings for future iterations:**
+  - method-bound 长 goroutine（`(*Store).RunReaperLoop`）很难单测：要么起 PG container，要么不能换 store。把驱动抽自由函数 + 最小接口立刻可注入 fake，是把 reaper 类长循环"单测化"的标准重构。本仓库已有 `pkg/actions.RunActionJobReaperLoop` 同形状的先例，US-462 顺势把 saved-objectset 这条也对齐了。继续往后凡是"ticker + ctx 取消 + onReap/onError" 的 store-bound 循环，建议先抽自由函数再写测试。
+  - cmd/server/main.go 的 deps boot 是手工排序的；加新 goroutine 时要紧贴对应 store 的构造位置（这里紧跟 `deps.ObjSetStore = objectset.NewStore(...)`）而不是塞 router 之前，避免 reviewer 找不到生命周期边界。`ctx` 是 main 顶层 rootCtx，graceful shutdown 时会被 cancel，自动停 loop——不要自己再注册 deferred close。
+  - boot 加 goroutine 时 onReap 默认只在 n>0 时打 log（避免每 5min 一条噪音）；onError 始终打 log（PG 真出 trouble 时必须可见）。新加任何 reaper 都按这个噪音预算走。
 ---

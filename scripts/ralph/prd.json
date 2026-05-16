@@ -62,8 +62,8 @@
         "Tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Extracted SavedSetReaper interface + RunSavedSetReaperLoop free function in pkg/oss/objectset/persistence.go so the loop driver can be unit-tested with a fake reaper (mirrors RunActionJobReaperLoop in pkg/actions/cancel.go); PGSavedStore.RunReaperLoop now delegates. cmd/server/main.go starts `go objectset.RunSavedSetReaperLoop(ctx, NewPGSavedStore(pool), 5*time.Minute, time.Hour, ...)` right after deps.ObjSetStore is created (degraded-mode no-PG leaves the goroutine unstarted). Tests: pkg/oss/objectset/us462_reaper_loop_test.go covers ticks-and-stops-on-context, nil/zero no-op, onError-continues, and PGSavedStore-satisfies-interface; pkg/oss/objectset/persistence_test.go (integration) gets TestPGSavedStore_RunReaperLoop_DropsEphemeralKeepsImmutable which spins a real loop against testcontainers PG (20ms interval), backdates one immutable + one ephemeral row, and asserts the ephemeral row gets DELETEd while the immutable one survives + onReap fires once with count=1 + loop exits cleanly on cancel."
     },
     {
       "id": "US-463",
