@@ -1288,6 +1288,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// AuditStore is nil (no PG pool / degraded mode).
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodGet, "/api/v2/admin/auditEvents", NewAdminAuditEventsHandler(deps.AuditStore))
+		// US-493: PRD-literal alias `/api/admin/audit` for the same
+		// audit list endpoint. Shares the underlying handler so query
+		// params (actor / resourceRid / resource_type / since / until /
+		// pageSize / pageToken) and response shape stay byte-identical
+		// across the two paths.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/admin/audit", NewAdminAuditEventsHandler(deps.AuditStore))
 
 		// Developer Console: OAuth application registration (US-141). Any
 		// authenticated user can register apps; the handler enforces per-row
@@ -1880,6 +1887,23 @@ func main() {
 		if sched := startAuditRetention(ctx, cfg.AuditExport, pgAudit, nil); sched != nil {
 			defer sched.Stop()
 		}
+		// US-493: wrap deps.OmsRepo with the AuditedRepository decorator
+		// so every admin write through the OMS admin handlers
+		// (Ontology / ObjectType / Property / LinkType / ActionType /
+		// Interface / SecurityPolicy CREATE/UPDATE/DELETE) lands in
+		// audit_events with the caller's user_id as actor_id and a
+		// {"before":..., "after":...} diff in diff_json. The wrap goes
+		// AROUND the CachedRepository decorator already in place — so
+		// reads still hit the cache and writes still invalidate it,
+		// with audit recording bracketing the inner write. Degraded
+		// boot (no PG) never reaches this branch — deps.OmsRepo stays
+		// unaudited because there's no PG to persist events to anyway.
+		deps.OmsRepo = oms.NewAuditedRepository(deps.OmsRepo, deps.AuditStore, func(ctx context.Context) string {
+			if u := auth.UserFromContext(ctx); u != nil {
+				return u.ID
+			}
+			return ""
+		})
 		// US-011: the index rebuild admin command re-ingests from
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.

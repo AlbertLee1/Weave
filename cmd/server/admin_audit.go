@@ -94,11 +94,20 @@ func NewAdminAuditEventsHandler(store audit.Store) http.Handler {
 			return
 		}
 
-		// Build filter.
+		// Build filter. US-493 adds the resourceRid clause so admins can
+		// pull every audit row for a single resource (ObjectType /
+		// Session / Policy / ...). The PRD writes it camelCase; we
+		// accept both camelCase and snake_case so the same query
+		// string survives CLI/SDK rendering choices.
+		resourceRID := q.Get("resourceRid")
+		if resourceRID == "" {
+			resourceRID = q.Get("resource_rid")
+		}
 		f := audit.ListFilter{
 			ActorID:      q.Get("actor"),
 			Action:       q.Get("action"),
 			ResourceType: q.Get("resource_type"),
+			ResourceRID:  resourceRID,
 			PageSize:     pageSize + 1, // fetch one extra to detect next page
 			Offset:       cursor.Offset,
 		}

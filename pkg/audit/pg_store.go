@@ -90,6 +90,11 @@ func (s *PGStore) List(ctx context.Context, f ListFilter) ([]AuditEvent, error) 
 		args = append(args, f.ResourceType)
 		argN++
 	}
+	if f.ResourceRID != "" {
+		where = append(where, fmt.Sprintf("resource_rid = $%d", argN))
+		args = append(args, f.ResourceRID)
+		argN++
+	}
 	if f.From != nil {
 		where = append(where, fmt.Sprintf("ts >= $%d", argN))
 		args = append(args, *f.From)

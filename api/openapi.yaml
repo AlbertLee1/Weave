@@ -10890,6 +10890,91 @@ paths:
           schema:
             type: string
           description: Filter by resource type (e.g. ObjectType, Property, Session).
+        - name: resourceRid
+          in: query
+          schema:
+            type: string
+          description: |
+            Filter by exact resource RID. Returns every audit event whose
+            `resource_rid` equals this value — useful for "show me
+            everything that ever happened to this ObjectType / Session /
+            Policy". Snake-case alias `resource_rid` is also accepted.
+            Added in US-493.
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only events at or after this RFC 3339 timestamp.
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only events at or before this RFC 3339 timestamp.
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of events per page.
+        - name: pageToken
+          in: query
+          schema:
+            type: string
+          description: Opaque pagination cursor from a previous response.
+      responses:
+        "200":
+          description: Matching audit events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Audit store is not configured (no PostgreSQL pool).
+  /api/admin/audit:
+    get:
+      operationId: listAuditEventsLegacyAlias
+      summary: List audit events (PRD-literal alias, US-493)
+      description: |
+        PRD-literal alias for `/api/v2/admin/auditEvents`. Same handler,
+        same query params, same response shape — exists so the PRD
+        specification's literal path is also routable. Prefer the
+        versioned path in new SDK / CLI integrations.
+      tags: [Admin]
+      parameters:
+        - name: actor
+          in: query
+          schema:
+            type: string
+          description: Filter by actor ID.
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action.
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type.
+        - name: resourceRid
+          in: query
+          schema:
+            type: string
+          description: |
+            Filter by exact resource RID. Snake-case alias `resource_rid`
+            is also accepted.
         - name: since
           in: query
           schema:

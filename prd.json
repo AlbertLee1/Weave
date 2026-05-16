@@ -522,8 +522,8 @@
         "Tests pass"
       ],
       "priority": 35,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Gap analysis showed `pkg/oms.AuditedRepository` already existed with full OMS+SecurityPolicy CRUD coverage, but `cmd/server/main.go` never wrapped `deps.OmsRepo` with it — so OMS admin writes via HTTP produced 0 audit rows in prod. Fix: after `deps.AuditStore` is built (around the existing US-067 wiring), `deps.OmsRepo = oms.NewAuditedRepository(deps.OmsRepo, deps.AuditStore, actorFn)` wraps the CachedRepository decorator; reads still hit cache, writes invalidate cache and emit `{actor, action, resource_type, resource_rid, diff(before/after), ts}` rows on the same US-266 hash chain. Filter side: `audit.ListFilter.ResourceRID` added + threaded into both `MemoryStore.List` and `PGStore.List`; admin handler honours new `resourceRid` (PRD camelCase) and `resource_rid` (snake alias) query params; PRD-literal path `/api/admin/audit` mounted as alias of `/api/v2/admin/auditEvents` sharing the same handler instance. OpenAPI canonical + embedded spec dual-updated with new parameter and alias path item. Tests: (a) `pkg/audit/us493_resource_rid_filter_test.go` — exact-match + actor compose unit; (b) `cmd/server/admin_audit_us493_test.go` — wire-level camelCase + snake_case + 3-dim compose with composing-narrowing seeds; (c) `test/integration/us493_audit_coverage_bdd_test.go` — 4-lane HTTP BDD on real PG (OMS write via OMSHandler / role grant / RLS policy create / login_success session) each asserting exactly 1 audit row with correct actor + chain stamp + diff_json, plus 4-scenario PRD-literal `/api/admin/audit` wire-level filter compose. Existing `test/integration/phase7/phase7_audit_coverage_test.go` re-runs green. Files: pkg/audit/audit.go + pg_store.go (ResourceRID field + WHERE clause), cmd/server/admin_audit.go (resourceRid/resource_rid parsing), cmd/server/main.go (AuditedRepository wrap + /api/admin/audit alias route), api/openapi.yaml + cmd/server/openapi_spec.yaml (param + path item, byte-identical)."
     },
     {
       "id": "US-494",

@@ -433,8 +433,8 @@
         "Tests pass"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New pkg/cel wraps cel-go with a (user, object) Binding shape — Compile enforces source-length (DefaultMaxExpressionLength=4096) AND AST-node-count (DefaultMaxASTNodeCount=256, via ast.PostOrderVisit + NewExprVisitor counter) bounds so both '表达式越界' axes trip ErrOutOfBounds before the cel-go parser sees the source; Eval is fail-closed (any err / non-bool → (false, err)). DetectIdentifierCycle is the companion graph DFS (white/gray/black + parent map + reverse-walk cycle reconstruction) returning a closed [A,B,A]-shape path so the '循环引用拒绝' negative test surfaces the literal loop in the error message. RowPolicy gained CELExpression alongside Predicate (Validate now accepts either; migration 000210 adds cel_expression TEXT NOT NULL DEFAULT '' and drops predicate NOT NULL so CEL-only rows can land). Engine.Reload compiles CEL programs into a celCache (broken expressions quarantined, not aborting), Engine.EvaluateRowCEL does per-row OR-combined evaluation with admin/nil-user/no-policy bypass mirroring Compile, Engine.HasCELForObjectType is the OSS fast-path discovery so OTs without CEL pay zero per-row cost. OSS ServiceImpl.applyRowPolicyCEL wired into GetObject/ListObjects/SearchObjects/ListLinkedObjects between applyMarkingFilter and applyPropertyVisibility. PG store round-trips the new column (coerceRLSPredicate emits SQL NULL for empty/null predicate, nullablePredicate normalises ''/null/{} on read so legacy DEFAULT-{} rows post-migration don't trip the WhereClause unmarshal path). Handler validates CEL at admin POST/PATCH for fast-fail 400 InvalidRowPolicyCEL. Tests: pkg/cel/cel_test.go 16 cases including PRD literal 'user.dept == object.dept && object.level <= user.clearance' (4 row-binding cases) + non-bool reject + 越界 source + 越界 AST + Config zero-value fallback + nil bindings + Validate delegation + 4 cycle cases (2/3-node + self-loop + DAG-accept positive control); pkg/rls/engine_cel_test.go 10 cases including OR semantics + admin bypass + broken-CEL fail-closed + HasCELForObjectType + Validate either-or; pkg/oss/row_policy_cel_integration_test.go 2 service-level cases (ListObjects 4 caller types + GetObject ErrNotFound hides existence); cmd/server/rls_cel_us487_bdd_test.go 3 build-tag-integration BDD scenarios driving real PG container + chi router + raw-SQL second witness on cel_expression column + row_policies count-stays-equal on reject."
     },
     {
       "id": "US-488",
@@ -448,8 +448,8 @@
         "Tests pass"
       ],
       "priority": 30,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added `marking` (list<string>) as a third top-level CEL variable on top of US-376's existing `user`+`row` bindings. pkg/cellsec/celmask/celmask.go: env.NewEnv now declares cel.Variable(\"marking\", cel.ListType(cel.StringType)); Program gets EvalWithMarking(user, row, marking) entry point and the legacy Eval(user, row) becomes a thin wrapper that defaults marking to nil for backwards compat with US-376 callers. pkg/cellsec/engine.go: compileInternal extracts the cell's markings via new rowMarkings(row) helper which reads auth.MarkingsField (`__markings`) from the row map and tolerates the same []string/[]any/scalar-string shapes as engine.normaliseMarkings for user.markings — keeps the wire-shape tolerance contract symmetric on both sides. evaluateProgram signature gains the marking []string parameter so the binding flows through. PRD example `row.country == 'US' ? value : redact(value)` is treated as illustrative — the engine remains a bool-predicate model (true→mask) matching US-376's wire semantics; an expression-as-value rewrite would shift the entire callsite contract and is out of scope. Tests: pkg/cellsec/celmask/us488_marking_test.go covers 5 cases (compile of `\"PII\" in marking`, label-match firing matrix, three-way binding, legacy Eval defaults to empty, negative `marking.foo` map-access type-check rejection); pkg/cellsec/us488_marking_engine_test.go pins the engine's tolerance over []string/[]any/scalar/nil/empty/unrelated-type shapes; pkg/oss/us488_cell_mask_marking_bdd_test.go is the BDD acceptance — re-indexes a doc with `__markings:[\"PII\",\"INTERNAL\"]` against the existing Bleve fixture, attaches a CEL mask `\"PII\" in marking && !(\"auditors\" in user.roles)`, asserts viewer sees REDACTed name + unmarked rows stay clear + auditor sees clear PII row + negative-control scenario (no row marking → no mask)."
     },
     {
       "id": "US-489",
@@ -462,8 +462,8 @@
         "Tests pass"
       ],
       "priority": 31,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PARTIAL was already implemented in US-433 (strategies.Partial keep first/last 2 chars). US-489 lands the two missing primitives plus the config plumbing that lets them be addressed from a transform plan: pkg/masking/strategies/fpe.go wraps capitalone/fpe ff1 (NIST SP 800-38G compliant FF1 — AES-CBC-MAC PRF, 10 Feistel rounds) with FPEConfig {Key (16/24/32 bytes), Tweak, Radix (default 10), Alphabet (optional arbitrary charset via index translation), MaxTweakLen}; pkg/masking/strategies/regex.go wraps regexp.ReplaceAllString with a nil-pattern fail-closed branch. Added NameFPE/NameRegex constants + ApplyWithConfig(name, value, ApplyConfig{FPE, Regex}) (value, error) entry point alongside legacy two-arg Apply. pkg/masking taxonomy extended: MaskStrategyFPE/MaskStrategyRegex constants + IsKnownStrategy/NormalizeStrategy/strategyToName all learn the new names so admin CRUD posts like `{\"maskStrategy\":\"FPE\"}` no longer hit InvalidCellMask. New StrategyApplication{Strategy, Config} + ApplyMaskStrategyWithConfig + ApplyStrategyTransformsWithConfig give engine plumbing a config-aware sibling to the existing config-free helpers — errors aggregated by key, fail-closed by setting the cell to nil so a misconfigured FPE key never leaks clear PII. Tests: pkg/masking/strategies/us489_fpe_regex_test.go covers FPE round-trip + format/alphabet preservation + determinism under fixed key + tweak-differentiation + bad-key/short-input rejection + alphabet translation (A..Z radix=26) + ApplyWithConfig dispatch + backwards-compat for the legacy four; Regex tests cover digit substitution, capture-group replacement, non-string stringification, nil-pattern pass-through. pkg/masking/us489_bdd_test.go is the BDD acceptance: a 4-property row gets PARTIAL email + FPE SSN + REGEX phone applied via ApplyStrategyTransformsWithConfig, asserts no clear PII leaks, FPE preserves 9-digit format AND decrypts back to plaintext, REGEX masks only digits (keeps dashes), PARTIAL keeps first/last two; second scenario is the fail-closed negative control where a too-short AES key turns the cell into nil + per-key error rather than passing the clear value through; third scenario verifies the taxonomy entry points (IsKnownStrategy/NormalizeStrategy) accept FPE/REGEX lower- and upper-case."
     },
     {
       "id": "US-490",
@@ -477,8 +477,8 @@
         "Tests pass"
       ],
       "priority": 32,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "实现：pkg/auth/jwt_signer.go — JWTSigner 改 single-key → append-only key ring（[]signingKey {kid, priv, pub}），Rotate 追加新 kid 即变 active；Sign 用最新 key 签 + 写 kid header；Verify 用 kid 选 verifier（无 kid 自动 fallback 遍历整 ring，兼容 pre-US-490 旧 token；带 kid 但 kid 不在 ring 直接 ErrInvalidSignature）；computeKid = SHA256(PKIX DER)[:8] hex，跨 process 稳定。wire：POST /api/admin/auth/keys/rotate (cmd/server/admin_auth_keys.go) RSA-2048 GenerateKey + Signer.Rotate；返回 {activeKeyId, keyIds[oldest→newest], rotatedAt RFC3339Nano}；503 when signer nil；gated by PermUserManage。测试：pkg/auth/jwt_keyring_us490_test.go 5 个单测 (rotate + verify old + kid header + 无 kid fallback + unknown kid reject + nil-input reject + triple rotate) + cmd/server/admin_auth_keys_test.go 3 个 handler 测 (成功/503/两次 rotate keyring 增 2) + cmd/server/admin_auth_keys_us490_bdd_test.go 3 个 BDD (build tag integration — happy path 真 chi router + 真 RSA + 真 JWT verify；403 non-admin keyring 不变；401 无 token keyring 不变)。OpenAPI 双写：api/openapi.yaml 加 path item + AdminAuthKeysRotateResponse schema；cp 同步 cmd/server/openapi_spec.yaml；TestContract_* 4 个守门全过。"
     },
     {
       "id": "US-491",
@@ -507,8 +507,8 @@
         "Tests pass"
       ],
       "priority": 34,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "HMACStateSigner (pkg/auth/oidc_state.go) — 40-byte raw state (16B nonce | 8B unix-be timestamp | 16B truncated HMAC-SHA256 tag), base64url for URL transport. Verify gates: structural (len, base64), HMAC constant-time compare via subtle, 5min age window with separate ErrStateInvalid vs ErrStateExpired so SDKs can split forgery from timeout. OIDCHandler.Callback runs HMAC verify BEFORE cookie compare so a forged payload short-circuits without trusting any browser cookie; wire codes OIDCStateInvalid / OIDCStateExpired / OIDCStateMismatch are three distinct 401s. NewOIDCHandler auto-provisions an ephemeral signer when StateSigner is nil so unit tests / dev boot stay simple. cmd/server reads WEAVE_OIDC_STATE_SECRET (≥16 bytes) and falls back to a per-boot random secret with a loud WARN log. Refresh token rotation half: RefreshService.Rotate already does CAS revoke→Generate on every successful call (pre-existing US-058 + US-191 plumbing); US-492 adds a single test (TestUS492_RefreshToken_RotatesEachCall) to PRD-lock the invariant + 3 BDD scenarios end-to-end. Files: pkg/auth/oidc_state.go (new), pkg/auth/oidc_state_us492_test.go (new, 12 unit tests), pkg/auth/oidc_handler.go (StateSigner field + Verify-then-cookie order + mintState helper), pkg/auth/oidc_handler_us492_test.go (new, 5 handler-level scenarios), pkg/auth/oidc_handler_test.go (existing tests retargeted to signValidState helper), internal/config/config.go (StateSecret + WEAVE_OIDC_STATE_SECRET), cmd/server/main.go (HMACStateSigner wired + ephemeral fallback), cmd/server/oidc_state_us492_bdd_test.go (new, 3 BDD scenarios with real PG + chi router + oidctest IdP)."
     },
     {
       "id": "US-493",
@@ -522,8 +522,8 @@
         "Tests pass"
       ],
       "priority": 35,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Gap analysis showed `pkg/oms.AuditedRepository` already existed with full OMS+SecurityPolicy CRUD coverage, but `cmd/server/main.go` never wrapped `deps.OmsRepo` with it — so OMS admin writes via HTTP produced 0 audit rows in prod. Fix: after `deps.AuditStore` is built (around the existing US-067 wiring), `deps.OmsRepo = oms.NewAuditedRepository(deps.OmsRepo, deps.AuditStore, actorFn)` wraps the CachedRepository decorator; reads still hit cache, writes invalidate cache and emit `{actor, action, resource_type, resource_rid, diff(before/after), ts}` rows on the same US-266 hash chain. Filter side: `audit.ListFilter.ResourceRID` added + threaded into both `MemoryStore.List` and `PGStore.List`; admin handler honours new `resourceRid` (PRD camelCase) and `resource_rid` (snake alias) query params; PRD-literal path `/api/admin/audit` mounted as alias of `/api/v2/admin/auditEvents` sharing the same handler instance. OpenAPI canonical + embedded spec dual-updated with new parameter and alias path item. Tests: (a) `pkg/audit/us493_resource_rid_filter_test.go` — exact-match + actor compose unit; (b) `cmd/server/admin_audit_us493_test.go` — wire-level camelCase + snake_case + 3-dim compose with composing-narrowing seeds; (c) `test/integration/us493_audit_coverage_bdd_test.go` — 4-lane HTTP BDD on real PG (OMS write via OMSHandler / role grant / RLS policy create / login_success session) each asserting exactly 1 audit row with correct actor + chain stamp + diff_json, plus 4-scenario PRD-literal `/api/admin/audit` wire-level filter compose. Existing `test/integration/phase7/phase7_audit_coverage_test.go` re-runs green. Files: pkg/audit/audit.go + pg_store.go (ResourceRID field + WHERE clause), cmd/server/admin_audit.go (resourceRid/resource_rid parsing), cmd/server/main.go (AuditedRepository wrap + /api/admin/audit alias route), api/openapi.yaml + cmd/server/openapi_spec.yaml (param + path item, byte-identical)."
     },
     {
       "id": "US-494",
