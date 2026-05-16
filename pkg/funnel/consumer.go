@@ -13,6 +13,9 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/metrics"
@@ -451,6 +454,22 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 		consumerSeq = meta.Sequence.Consumer
 	}
 
+	// OSV2-306: extract trace context the publisher injected so the
+	// consume-side work shows up as a child of the publish span on the
+	// HTTP request's trace. Missing or malformed traceparent headers fall
+	// back to a fresh root span, which is acceptable for ingest-from-cli
+	// paths that never had a parent in the first place.
+	traceCtx := ExtractTraceContext(context.Background(), msg.Header)
+	traceCtx, span := otel.Tracer(tracerName).Start(traceCtx, consumeSpanName,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("funnel.subject", msg.Subject),
+			attribute.Int64("funnel.stream_seq", int64(streamSeq)),
+			attribute.Int64("funnel.num_delivered", int64(numDelivered)),
+		),
+	)
+	defer span.End()
+
 	// Skip the work path entirely when the message is already over the
 	// delivery cap — we want to DLQ the original payload, not a partially
 	// decoded batch. decideOutcome with nil errors returns Term in that case.
@@ -461,7 +480,7 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 	if !overCap {
 		unmarshalErr = json.Unmarshal(msg.Data, &batch)
 		if unmarshalErr == nil {
-			applyErr = c.applyBatchWithHistory(context.Background(), batch)
+			applyErr = c.applyBatchWithHistory(traceCtx, batch)
 		}
 	}
 

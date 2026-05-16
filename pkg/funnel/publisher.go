@@ -1,6 +1,7 @@
 package funnel
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,6 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -36,6 +41,20 @@ func NewPublisher(js nats.JetStreamContext) *Publisher {
 // the second copy. Empty batch.IDs are tolerated — the header is omitted in
 // that case and dedupe degrades to consumer-side bleve upsert idempotency.
 func (p *Publisher) Publish(batch *EditBatch) (uint64, error) {
+	return p.PublishContext(context.Background(), batch)
+}
+
+// PublishContext is the context-aware sibling of Publish (OSV2-306). It
+// opens a "funnel.publish" span around the marshal + NATS write so the
+// upstream HTTP trace context (chi middleware in cmd/server, propagated
+// down through pkg/actions / pkg/oss) carries through into the JetStream
+// envelope. The propagated trace headers are written onto msg.Header so
+// the Consumer side can stitch a child span onto the same trace id when
+// it later pulls the message.
+//
+// Publish() — the historical signature — simply forwards a
+// context.Background to here so existing callers keep working unchanged.
+func (p *Publisher) PublishContext(ctx context.Context, batch *EditBatch) (uint64, error) {
 	if len(batch.Edits) == 0 {
 		return 0, fmt.Errorf("batch has no edits")
 	}
@@ -51,13 +70,34 @@ func (p *Publisher) Publish(batch *EditBatch) (uint64, error) {
 	subject := BuildSubject(batch.OntologyAPIName, batch.Edits[0].ObjectType)
 	msg := BuildPublishMsg(batch, data, subject)
 
+	ctx, span := otel.Tracer(tracerName).Start(ctx, publishSpanName,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("funnel.subject", subject),
+			attribute.String("funnel.ontology", batch.OntologyAPIName),
+			attribute.Int("funnel.batch_size", len(batch.Edits)),
+		),
+	)
+	defer span.End()
+	// Inject AFTER starting the span so traceparent points at the publish
+	// span as the parent on the consumer side, not at whatever ctx held
+	// before this call.
+	InjectTraceContext(ctx, msg.Header)
+
 	ack, err := p.js.PublishMsg(msg)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return 0, fmt.Errorf("publish: %w", err)
 	}
-
+	span.SetAttributes(attribute.Int64("funnel.stream_seq", int64(ack.Sequence)))
 	return ack.Sequence, nil
 }
+
+// tracerName is the package-scoped tracer name used by both publisher
+// and consumer spans so dashboards / sampling configs can filter on a
+// stable identifier.
+const tracerName = "github.com/liyang/weave/pkg/funnel"
 
 // BuildPublishMsg wraps an encoded EditBatch in a *nats.Msg with the
 // JetStream-native dedupe header populated. Exposed so callers that need to
