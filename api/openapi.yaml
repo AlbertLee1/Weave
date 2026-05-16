@@ -10907,3 +10907,44 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/admin/index/reindex/{objectType}:
+    post:
+      operationId: adminIndexReindexByPath
+      summary: Rebuild a Bleve index by path-style ObjectType (US-461)
+      description: |
+        REST-shaped sibling of `/api/admin/indexes/rebuild`: the ObjectType
+        API name travels in the URL path and the ontology API name travels in
+        the `ontology` query parameter. Same rebuild machinery, same
+        `{scopedKey, indexedCount}` response, same 503 fallback when no
+        Bleve backend is configured.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+          description: ObjectType API name to reindex.
+        - in: query
+          name: ontology
+          required: true
+          schema:
+            type: string
+          description: Ontology API name that owns the ObjectType.
+      responses:
+        "200":
+          description: Rebuild completed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminIndexRebuildResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"

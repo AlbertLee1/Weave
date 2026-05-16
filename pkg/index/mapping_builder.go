@@ -38,6 +38,11 @@ const (
 	// Chinese / Japanese / Korean content so that token-style queries like
 	// "中国银行" match "中国银行总部" via shared bigrams. US-237.
 	AnalyzerCJK = "cjk"
+	// AnalyzerEnglish is the explicit Foundry-style hint for the English
+	// language analyzer (lowercase + possessive strip + Porter/Snowball
+	// stemmer). Equivalent to AnalyzerStandard / unset — Foundry callers who
+	// spell it as `english` in TypeConfig get the same mapping. US-461.
+	AnalyzerEnglish = "english"
 )
 
 // MarkingsField is the reserved Bleve keyword field that carries every
@@ -120,9 +125,12 @@ func fieldMappingFor(analyzer, baseType string, isSearchable bool) *mapping.Fiel
 			return mapping.NewKeywordFieldMapping()
 		}
 		fm := mapping.NewTextFieldMapping()
-		if analyzer == AnalyzerCJK {
+		switch analyzer {
+		case AnalyzerCJK:
 			fm.Analyzer = AnalyzerCJK
-		} else {
+		case AnalyzerEnglish, AnalyzerStandard, "":
+			fm.Analyzer = standardTextAnalyzer
+		default:
 			fm.Analyzer = standardTextAnalyzer
 		}
 		return fm

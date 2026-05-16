@@ -1215,6 +1215,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				DocSource: deps.IndexDocSource,
 			}))
 
+		// US-461: REST-shaped reindex sibling — same rebuild machinery but
+		// objectType travels in the URL path and ontology in the query
+		// string, so CLI / SDK callers can pick whichever style they prefer.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/index/reindex/{objectType}", NewAdminIndexReindexHandler(AdminIndexRebuildDeps{
+				IndexMgr:  deps.IndexMgr,
+				Repo:      deps.OmsRepo,
+				DocSource: deps.IndexDocSource,
+			}))
+
 		// Admin: audit events (US-067). Gated to admin-level roles via
 		// PermUserManage. The handler gracefully returns 503 when
 		// AuditStore is nil (no PG pool / degraded mode).

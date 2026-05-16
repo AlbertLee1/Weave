@@ -32,8 +32,8 @@
         "Tests pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Reverse-numeric guard removed; evaluateNumericDerived now takes (dir, resolveLinks) so sum/avg/min/max share the same direction-aware path that count already uses via linkResolverForDirection. New resolveLinkTargetType helper asks DirectionalLinkTargetTypeResolver first so reverse traversal reads the link's declared source ObjectType index (e.g. Order in the Northwind Customer-cumulative-orders case). Five new tests in withproperties_reverse_test.go cover sum (c1=600/c2=500/c3=0), avg, min, max, type-mismatch + reverseLinkFinder-missing error path."
     },
     {
       "id": "US-461",
@@ -47,8 +47,8 @@
         "Tests pass"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added AnalyzerEnglish constant + explicit switch in fieldMappingFor so `analyzer:english` deterministically routes to bleve's `en` analyzer (Porter stemmer) instead of relying on default fall-through. New TestBuildMappingEnglishAnalyzer asserts fishing/fished both match stem 'fish'; existing not_analyzed and not_indexed tests already covered the other two acceptance points. REST-shaped POST /api/admin/index/reindex/{objectType}?ontology={ont} wired as NewAdminIndexReindexHandler (chi.URLParam + query string), gated behind PermUserManage just like the legacy /api/admin/indexes/rebuild; both endpoints share index.Rebuild internals. OpenAPI canonical + embedded spec updated; contract tests pass."
     },
     {
       "id": "US-462",

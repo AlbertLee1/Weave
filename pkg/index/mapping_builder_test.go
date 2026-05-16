@@ -335,6 +335,91 @@ func TestBuildMappingCJKAnalyzer(t *testing.T) {
 	}
 }
 
+// TestBuildMappingEnglishAnalyzer is the US-461 acceptance test for the
+// `english` TypeConfig hint. A property tagged `analyzer: english` must wire
+// the English language analyzer (lowercase + possessive strip + Porter /
+// Snowball stemmer) so that root-form queries match inflected forms — i.e.
+// indexing "running shoes" and "the runner wins" both light up when a user
+// MatchQueries "run". This contrasts with `not_analyzed` (case-sensitive
+// exact match only) and `not_indexed` (invisible to search entirely).
+func TestBuildMappingEnglishAnalyzer(t *testing.T) {
+	ot := &oms.ObjectType{
+		APIName: "Article",
+		Properties: []oms.Property{
+			{APIName: "id", BaseType: "string", IsSearchable: true},
+			{
+				APIName:      "body",
+				BaseType:     "string",
+				IsSearchable: true,
+				TypeConfig:   json.RawMessage(`{"analyzer":"english"}`),
+			},
+		},
+	}
+
+	im := BuildMapping(ot)
+	if im == nil {
+		t.Fatal("BuildMapping returned nil")
+	}
+
+	dm := im.DefaultMapping
+	bodyDM, ok := dm.Properties["body"]
+	if !ok {
+		t.Fatalf("missing body mapping")
+	}
+	if len(bodyDM.Fields) != 1 {
+		t.Fatalf("body got %d fields, want 1", len(bodyDM.Fields))
+	}
+	fm := bodyDM.Fields[0]
+	if fm.Type != "text" {
+		t.Errorf("body field type = %q, want text", fm.Type)
+	}
+	// The english analyzer in bleve is registered as "en". The mapping
+	// builder routes both `english` (Foundry spelling) and `standard` to
+	// the same analyzer, so the wire-level analyzer name must be "en"
+	// regardless of which TypeConfig hint the schema author wrote.
+	if fm.Analyzer != standardTextAnalyzer {
+		t.Errorf("body analyzer = %q, want %q", fm.Analyzer, standardTextAnalyzer)
+	}
+
+	idx, err := bleve.NewMemOnly(im)
+	if err != nil {
+		t.Fatalf("NewMemOnly: %v", err)
+	}
+	defer idx.Close()
+
+	docs := map[string]map[string]interface{}{
+		"1": {"id": "1", "body": "fishing rods"},
+		"2": {"id": "2", "body": "fished yesterday"},
+		"3": {"id": "3", "body": "static silence"},
+	}
+	for id, doc := range docs {
+		if err := idx.Index(id, doc); err != nil {
+			t.Fatalf("index %s: %v", id, err)
+		}
+	}
+
+	// Both "fishing" and "fished" Porter-stem to "fish", so MatchQuery("fish")
+	// must light up docs 1 and 2. Doc 3 has no overlap with the stem and
+	// must stay dark — proving the field is indexed via the stemmer rather
+	// than e.g. being matched on substring or every-doc bleed-through.
+	mq := bleve.NewMatchQuery("fish")
+	mq.SetField("body")
+	res, err := idx.Search(bleve.NewSearchRequest(mq))
+	if err != nil {
+		t.Fatalf("search fish: %v", err)
+	}
+	hits := make(map[string]bool, len(res.Hits))
+	for _, h := range res.Hits {
+		hits[h.ID] = true
+	}
+	if !hits["1"] || !hits["2"] {
+		t.Errorf("expected docs 1 and 2 to match stem 'fish'; hits=%v", hits)
+	}
+	if hits["3"] {
+		t.Errorf("doc 3 (static silence) should not match 'fish'; hits=%v", hits)
+	}
+}
+
 // TestBuildMappingNotAnalyzed verifies the single-field shape: the returned
 // mapping for a not_analyzed field must use the keyword analyzer explicitly.
 func TestBuildMappingNotAnalyzed(t *testing.T) {

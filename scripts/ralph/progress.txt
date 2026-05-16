@@ -11,6 +11,8 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
 - 测试范式：TDD（Red → Green → Refactor）。每 story 先写命名 TestX_Given_State_When_Action_Then_Outcome 的失败测试（go test 表驱动 / Vitest），跑一次确认 fail；再写最小实现转绿；再视情重构。
 - 算法/性能 story 在 `bench/` 下加 benchmark；安全 story 必有负向测试；前端 story 必走 dev-browser skill 验证。
 - `pkg/funnel.Broadcast` 既是 SSE fan-out hub 也是 replay 缓冲：`SubscribeWithReplayWindow(buffer, fromSeq)` 返回 `(id, ch, outOfWindow)`，时间窗 + ring 容量双重剪裁；SSE handler 把 outOfWindow → 410 Gone（在写 text/event-stream header 之前）。修 SSE 行为时优先改 broadcast 而不是各处自建 ring。
+- ObjectSet `withProperties` direction-aware 套路：link walk 走 `linkResolverForDirection(dp, dir)`、"另一端"ObjectType 走 `resolveLinkTargetType(callerOT, link, dir)`（DirectionalLinkTargetTypeResolver 优先，legacy LinkTargetTypeResolver 只覆盖 forward）。反向 numeric metric 必须两者都过——只换 walk 不换 target type 会从错误的索引读字段。生产 `links.Resolver` 当前不实现 `reverseLinkFinder` / `DirectionalLinkTargetTypeResolver`，反向 withProperties + searchAround 目前只在测试 mock 里跑通；要在 production 启用需要先补 resolver 适配层。
+- OpenAPI 双写规约：`api/openapi.yaml` 是 canonical 源，`cmd/server/openapi_spec.yaml` 是 //go:embed 的复刻，两份必须 byte-identical（TestContract_EmbeddedSpecMatchesCanonical 守门）。改完 canonical 后用 `cp api/openapi.yaml cmd/server/openapi_spec.yaml` 同步，否则 contract 测试当场红。Route ↔ spec 的覆盖率由 TestContract_AllRoutesDocumented / TestContract_NoOrphanedSpecPaths 双向校验，新增 admin 路由必须同时落 spec。
 
 ## Progress
 
@@ -28,4 +30,40 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - 双写新旧 payload 是无痛上线 PRD 新约定的常用招：legacy keys 留给现有 web/SDK 消费者，canonical keys 给新 SDK；React hook (`web/src/hooks/useObjectSetSubscription.ts`) 这次完全不用动。
   - cursor 越界判定需要区分三种情形：fromSeq==0（新客户端）、fromSeq>lastSeq（客户端跑前面去了，回放 0 条但不 410）、fromSeq<ring 头部 seq-1（真丢事件，410）。中间分支极易写漏，broadcast_window_test 的 4 个正反例就是为了把它们都钉住。
   - `pkg/apierror.NewGone(name, params)` 自带 NOT_FOUND-shaped 410；不要自己 `w.WriteHeader(410)` 写 ad-hoc body。
+---
+
+## 2026-05-16 - US-460 (withProperties 反向链接聚合)
+- 拆掉 `executeWithProperties` 中 sum/avg/min/max 的 `if dir != DirectionForward { return reverse-not-supported }` 守卫，把 count 已经在用的 `linkResolverForDirection(dp, dir)` 闭包透传给数值聚合分支，统一 forward/reverse 的 link walk。
+- 新增 `Executor.resolveLinkTargetType(callerOT, linkAPIName, dir)`：先问 `DirectionalLinkTargetTypeResolver.ResolveTargetObjectTypeDir`，再退化到 legacy `LinkTargetTypeResolver.ResolveTargetObjectType`（只在 forward 方向回答）。这样反向数值聚合知道要从 link 的"声明源端"ObjectType 的 Bleve 索引里读字段，而不是误读 caller 自己的索引。
+- 改了 `evaluateNumericDerived` 签名：`(ctx, inner, dp, dir, resolveLinks, derived)`，把方向 + 直接可用的 walk 函数一起注入，消掉对 `e.linkResolver` 接口断言的重复展开。
+- TDD 红：先建 `pkg/oss/objectset/withproperties_reverse_test.go`，5 个核心用例 (sum/avg/min/max + type-mismatch) 全报旧守卫错误；改完执行器全部转绿，原有 forward/count-reverse/cursor stability/polymorphic 测试也无回归。
+- Northwind 累计金额接受标准：fixture 设置 `orderCustomer` 链接 forward = Order→Customer / reverse = Customer→Order，c1 累计 600 = 100+200+300，c2 累计 500，c3 无入边 → sum=0 / avg|min|max=nil。
+- Files changed:
+  - pkg/oss/objectset/executor.go — executeWithProperties 注释 + 反向数值聚合放行；evaluateNumericDerived 改签名走 direction-aware target type + resolveLinks 闭包；新增 resolveLinkTargetType helper。
+  - pkg/oss/objectset/withproperties_reverse_test.go — 新建 reverseCustomerOrderResolver mock (实现 DirectionalLinkTargetTypeResolver) + setupReverseCustomerOrderExecutor 反向 Northwind fixture + sum/avg/min/max/type-mismatch/missing-finder 6 个测试。
+  - scripts/ralph/prd.json — US-460 passes=true + 实施摘要。
+- **Learnings for future iterations:**
+  - 数值聚合的 link walk 和"另一端"ObjectType 解析是**两条**正交支撑——只换 walk 不换 target type discovery 会让反向 sum 误读 caller 的 Bleve 索引（caller PK 不存在于自己索引、字段缺失，最坏情况悄悄返回 0）。`resolveLinkTargetType` 把两段配对牢牢绑在一起。
+  - `links.Resolver`（pkg/links）目前**没有**实现 `reverseLinkFinder.ResolveLinkedReverseByAPIName` 也**没有**实现 `DirectionalLinkTargetTypeResolver.ResolveTargetObjectTypeDir` —— 反向 withProperties / searchAround 全靠 OMS-aware 测试 mock 跑通。要在 production 启用反向需要：把 `Resolver.ResolveLinked(linkRID, pks, DirectionReverse)` 包装成 API-name 版（先做 listOutgoingLinkTypes 反向匹配），再为 link metadata 实现 forward/reverse 双向 target type 查询。属于后续 story（PRD 未列）。
+  - TDD 红色信号要看具体错误，不仅仅是"FAIL"。最初 `TestWithPropertiesReverseNumericRequiresResolver` 凑巧通过——旧错误信息也含 "reverse"，正好匹配 assertion。新代码改完反而是真的从 `linkResolverForDirection` 拿到 missing-finder 错误，断言依旧成立。这条提示我以后写"失败 fallback"测试时，最好把期望错误字符串收紧到 implementation-specific 关键词（如 "does not support reverse direction"）而不是泛泛的 "reverse"。
+---
+
+## 2026-05-16 - US-461 (TypeClass 驱动 Bleve mapping)
+- mapping_builder.go 新增 `AnalyzerEnglish = "english"` 常量 + 在 `fieldMappingFor` 的文本分支里把 `english` / `standard` / `""` 显式归一到 `standardTextAnalyzer = "en"`（之前 `english` 只能靠 default fall-through 走对，没语义）。CJK 仍单独分支，`not_analyzed` 仍优先短路成 KeywordField，`not_indexed` 仍走 Index=false stored 分支，保持兼容。
+- TDD 红：先写 `TestBuildMappingEnglishAnalyzer`，断言 `body` field 的 analyzer 名 = "en" 且 MatchQuery("fish") 能命中 "fishing rods" + "fished yesterday" 两条。第一次跑红信号清晰：原本想用 running/runner 测 stemming，但 Porter 不把 "runner" 截到 "run"，所以测试只命中 1 条——换成 fishing/fished（两者都规约成 fish）后转绿。算是这条 story 的小教训：Porter stemmer 对 `-er` agentive 后缀不剥离，构造 stemming 测试时要挑两侧都是 `-ing`/`-ed`/`-s` 这类高确定性后缀的词对。
+- 新 admin endpoint `POST /api/admin/index/reindex/{objectType}?ontology={ont}`：在 cmd/server/admin_index.go 加 `NewAdminIndexReindexHandler`，跟现有 `/api/admin/indexes/rebuild` 共用 `AdminIndexRebuildDeps` + `index.Rebuild` 内核；区别只是 objectType 走 `chi.URLParam("objectType")`、ontology 走 `r.URL.Query().Get("ontology")`。语义/状态码完全一致（200 / 400 / 404 / 500 / 503），方便 REST-shaped CLI/SDK 与原有 JSON-body endpoint 并存。cmd/server/main.go 把它跟旧端点一起挂在 `auth.RequirePermission(auth.PermUserManage)` 后面。
+- OpenAPI 双写：`api/openapi.yaml` 加 `/api/admin/index/reindex/{objectType}` path item（query 参数 + 复用 AdminIndexRebuildResponse schema）；用 `cp` 同步到 `cmd/server/openapi_spec.yaml`，TestContract_EmbeddedSpecMatchesCanonical / TestContract_AllRoutesDocumented / TestContract_NoOrphanedSpecPaths 全过。
+- Files changed:
+  - pkg/index/mapping_builder.go — AnalyzerEnglish 常量 + fieldMappingFor 的文本分支 switch 显式枚举 cjk/english/standard/""，把 english 从隐式 fall-through 提到声明级别。
+  - pkg/index/mapping_builder_test.go — 新增 TestBuildMappingEnglishAnalyzer，覆盖 analyzer 名 + Porter stemmer 行为（fishing/fished → fish stem）。
+  - cmd/server/admin_index.go — 新增 NewAdminIndexReindexHandler；import chi v5 + strings。
+  - cmd/server/admin_index_test.go — 新增 newAdminIndexReindexRouter helper + 4 个测试 (Success / MissingOntology / OntologyNotFound / IndexMgrNotConfigured)；import chi v5。
+  - cmd/server/main.go — 在现有 `/api/admin/indexes/rebuild` 路由后面挂 `/api/admin/index/reindex/{objectType}`。
+  - api/openapi.yaml + cmd/server/openapi_spec.yaml — 加 path item，两份同步。
+  - scripts/ralph/prd.json — US-461 passes=true + 实施摘要。
+- **Learnings for future iterations:**
+  - "fall-through 凑巧对 = 实现没声明" 是 TypeClass / 枚举类配置代码里非常容易藏的 bug 形态。比如 `english` 之前没分支但 default 给了 "en"，谁去掉 default 都不会有人发现。改成显式 case + 留 default 兜底，是把"目前正确"升级到"将来仍正确"的最低成本写法。
+  - Porter stemmer 测词对的脚踏雷：不是任意同根词都规约到同一个 stem。`fishing`/`fished`/`fishes` 安全；`running`/`runner` 不安全（agentive `-er` 不剥）；`flies`/`fly` 不可靠（不规则）。如果以后要给别的 analyzer 写 stemming 等价性测试，最好直接 grep `pkg/index/mapping_builder_test.go` 沿用本文件已被 CI 验证过的词对。
+  - 新加 admin 路由要走"三件套同步"：cmd/server/main.go 注册 + api/openapi.yaml 加 path item + 复制到 cmd/server/openapi_spec.yaml。任一漏掉 contract 测试会当场红，TestContract_AllRoutesDocumented vs TestContract_NoOrphanedSpecPaths 是双向 diff。把这条提到顶部的 Codebase Patterns 了。
+  - chi.URLParam 在 httptest 单元测试里只有"在 chi 路由器下分发过"才会拿到非空值——所以 `NewAdminIndexReindexHandler` 的测试不能像 `NewAdminIndexRebuildHandler` 那样直接 `h.ServeHTTP`，必须先挂到 `chi.NewRouter()` 上再发请求。直接调 handler 会拿到空 objectType → 400。
 ---
