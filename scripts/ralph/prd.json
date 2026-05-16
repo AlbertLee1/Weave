@@ -121,8 +121,8 @@
         "Tests pass"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/geotemporal/pg_store.go + migration 000205 (table + composite series-ts btree) landed in OSV2-301; US-466 hardens the spatial+temporal hot path. New migration 000208 adds (1) a standalone btree on ts for cross-series scans, (2) functional expression indexes on `(position->'coordinates'->>0)::float8` and `...->>1` so the planner can BitmapAnd a bbox predicate without parsing every JSONB payload, and (3) an optional PostGIS GIST index wrapped in a DO block that no-ops on databases without postgis (pgvector CI image has none). New geotemporal.BBox + TimeRange + SpatialTemporalQuerier interface + QueryBBoxRange method on both PgStore and MemoryStore — TimeRange.{Start,End} zero-time means \"unbounded on that side\"; bbox edges inclusive; positions whose JSONB isn't a GeoJSON Point are silently skipped. Integration tests in pkg/geotemporal/pg_store_spatial_test.go (build tag `integration`): index-presence inspection, mixed-points semantic, zero-time bounds, and the US-466 hard gate — 1M uniform-random points seeded via pgx CopyFrom, 25 sampled queries (random 7-day window × 20×10° bbox), P99 measured at ≈5ms vs the PRD 100ms budget (≈20× headroom); test fails if total rows over all 25 iters is zero so a degenerate seed can't silently \"pass\" the gate."
     },
     {
       "id": "US-467",

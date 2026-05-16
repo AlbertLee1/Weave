@@ -55,3 +55,75 @@ func (s *MemoryStore) StreamHistoricValues(_ context.Context, key SeriesKey) ([]
 	copy(out, values)
 	return out, nil
 }
+
+// QueryBBoxRange returns the subset of the series whose timestamp lies in
+// tr AND whose position lies in bbox. Results are sorted by Time ascending.
+// Positions that are not GeoJSON Point shaped are skipped (see the
+// SpatialTemporalQuerier doc).
+func (s *MemoryStore) QueryBBoxRange(_ context.Context, key SeriesKey, bbox BBox, tr TimeRange) ([]Value, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	values := s.series[key]
+	out := make([]Value, 0, len(values))
+	for _, v := range values {
+		if !tr.Contains(v.Time) {
+			continue
+		}
+		lng, lat, ok := pointCoords(v.Position)
+		if !ok {
+			continue
+		}
+		if !bbox.Contains(lng, lat) {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// pointCoords extracts (lng, lat) from a GeoJSON Point. It accepts both the
+// canonical map[string]interface{} shape that round-trips through JSON and
+// the typed []float64 slice that callers may use in-process. Anything else
+// returns ok=false so the caller can skip the row.
+func pointCoords(pos interface{}) (lng, lat float64, ok bool) {
+	m, ok := pos.(map[string]interface{})
+	if !ok {
+		return 0, 0, false
+	}
+	coords, ok := m["coordinates"]
+	if !ok {
+		return 0, 0, false
+	}
+	switch c := coords.(type) {
+	case []interface{}:
+		if len(c) < 2 {
+			return 0, 0, false
+		}
+		x, okx := toFloat(c[0])
+		y, oky := toFloat(c[1])
+		if !okx || !oky {
+			return 0, 0, false
+		}
+		return x, y, true
+	case []float64:
+		if len(c) < 2 {
+			return 0, 0, false
+		}
+		return c[0], c[1], true
+	}
+	return 0, 0, false
+}
+
+func toFloat(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
