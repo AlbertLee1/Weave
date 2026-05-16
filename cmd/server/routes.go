@@ -148,6 +148,12 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// against the recorded input and surfaces a hash divergence as
 	// WEAVE_FUNCTION_NONDETERMINISTIC.
 	r.Post("/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay", omsHandler.ReplayFunction)
+	// US-475 top-level alias: same replay contract but without an ontology
+	// URL parameter, so SDK clients that hold only a Function RID can hit
+	// /replay without first mapping back to the ontology api name. The
+	// functionRid MUST be RID-shaped (`ri.*`); bare-name refs are 400'd at
+	// the handler because there is no ontology context to disambiguate.
+	r.Post("/api/v2/functions/{functionRid}/replay", omsHandler.ReplayFunctionByRID)
 
 	// US-415 Function code repository: per-function bare git repo at
 	// `data/repos/{rid}/.git`. POST /commits records a new revision of the

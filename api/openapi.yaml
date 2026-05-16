@@ -5961,7 +5961,27 @@ paths:
                   executionId: { type: string }
                   originalHash: { type: string }
                   replayHash: { type: string }
+                  deterministic:
+                    type: boolean
+                    description: |
+                      US-475 PRD-canonical: true iff the replay output hash
+                      matches the recorded hash. Mirrors `match`; both fields
+                      are emitted so pre-US-475 SDK consumers reading `match`
+                      and US-475+ SDK consumers reading `deterministic` see
+                      the same value.
                   match: { type: boolean }
+                  originalOutput:
+                    description: |
+                      US-475 PRD-canonical: decoded JSON of the captured
+                      execution's historical output. Populated only when the
+                      replay was anchored to an executionId — ad-hoc replays
+                      have no historical output to surface, so the field is
+                      omitted.
+                  replayOutput:
+                    description: |
+                      US-475 PRD-canonical: decoded JSON of the fresh replay
+                      leg. Mirrors `result`; both keys carry the same value
+                      so SDK consumers reading either name agree.
                   result: {}
         "400":
           $ref: "#/components/responses/BadRequestError"
@@ -5969,9 +5989,11 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "409":
           description: |
-            Hash divergence (US-370). The body still includes the fresh
-            `result` plus a `warning.code=WEAVE_FUNCTION_NONDETERMINISTIC`
-            entry referencing the original execution.
+            Hash divergence (US-370 / US-475). The body still includes the
+            fresh `result` / `replayOutput` plus a
+            `warning.code=WEAVE_FUNCTION_NONDETERMINISTIC` entry referencing
+            the original execution, and `deterministic=false` (alongside
+            legacy `match=false`).
           content:
             application/json:
               schema:
@@ -5982,7 +6004,91 @@ paths:
                   executionId: { type: string }
                   originalHash: { type: string }
                   replayHash: { type: string }
+                  deterministic: { type: boolean }
                   match: { type: boolean }
+                  originalOutput: {}
+                  replayOutput: {}
+                  result: {}
+                  warning:
+                    type: object
+                    properties:
+                      code: { type: string }
+                      message: { type: string }
+                  original:
+                    type: object
+                    additionalProperties: true
+  /api/v2/functions/{functionRid}/replay:
+    post:
+      operationId: replayFunctionByRID
+      summary: Replay a Function by RID (US-475 top-level alias)
+      description: |
+        US-475 PRD-literal top-level alias of the ontology-scoped
+        `/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay`
+        endpoint. The functionRid MUST be RID-shaped (`ri.*`); bare-name or
+        `name@version` refs are rejected with 400 InvalidFunctionRef because
+        the URL no longer carries an ontology to disambiguate. Use the
+        ontology-scoped path for those refs.
+
+        The response shape, request body, and 200/400/404/409 semantics are
+        identical to the ontology-scoped endpoint. See that operation for
+        the full contract.
+      tags: [Functions]
+      parameters:
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                executionId: { type: string }
+                version: { type: string }
+                input:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Replay matched the recorded hash.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid: { type: string }
+                  functionVersion: { type: string }
+                  executionId: { type: string }
+                  originalHash: { type: string }
+                  replayHash: { type: string }
+                  deterministic: { type: boolean }
+                  match: { type: boolean }
+                  originalOutput: {}
+                  replayOutput: {}
+                  result: {}
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: Hash divergence.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid: { type: string }
+                  functionVersion: { type: string }
+                  executionId: { type: string }
+                  originalHash: { type: string }
+                  replayHash: { type: string }
+                  deterministic: { type: boolean }
+                  match: { type: boolean }
+                  originalOutput: {}
+                  replayOutput: {}
                   result: {}
                   warning:
                     type: object
