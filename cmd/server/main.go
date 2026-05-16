@@ -1535,7 +1535,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// /api/v2/quiver/* routes unregistered and the SPA's Quiver
 		// workbench falls back to ephemeral in-memory state.
 		if deps.QuiverStore != nil {
-			quiver.NewHandler(deps.QuiverStore).RegisterRoutes(api)
+			quiverHandler := quiver.NewHandler(deps.QuiverStore)
+			// US-482: wire the underlying timeseries store so the
+			// /dashboards/{rid}/data endpoint can resolve per-series
+			// points. Degraded boot (no PG → TimeSeriesStore nil)
+			// leaves the field nil; /data then returns a structured
+			// 5xx QuiverTimeSeriesUnavailable.
+			if deps.TimeSeriesStore != nil {
+				quiverHandler.SetTimeSeriesReader(newQuiverTimeSeriesAdapter(deps.TimeSeriesStore))
+			}
+			quiverHandler.RegisterRoutes(api)
 		}
 
 		// US-334: Comments per-RID CRUD with soft-delete +
