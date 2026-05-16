@@ -973,3 +973,64 @@ func (c *Client) ListFunctionRepoCommits(ctx context.Context, ontology, ref stri
 	}
 	return resp.Data, nil
 }
+
+// ----- OSV2-304 generic POST helpers --------------------------------------
+
+// PostJSONRaw POSTs a raw JSON body and returns the raw JSON response. It is
+// the escape hatch for the OSV2-304 CLI subcommands (aggregate / objectset
+// load / objectset createTemporary) that want to forward user-authored JSON
+// verbatim without coupling cliclient to every wire schema.
+//
+// The body is forwarded byte-for-byte (only its Content-Type and Accept
+// headers are set). On non-2xx responses the returned error is a *APIError.
+func (c *Client) PostJSONRaw(ctx context.Context, path string, body json.RawMessage) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return json.RawMessage(respBody), nil
+	}
+	apiErr := &APIError{StatusCode: resp.StatusCode, RawBody: string(respBody)}
+	_ = json.Unmarshal(respBody, apiErr)
+	return nil, apiErr
+}
+
+// AggregateObjects POSTs the supplied aggregation request to
+// /api/v2/ontologies/{ontology}/objects/{objectType}/aggregate and returns
+// the raw JSON response so the CLI can present it either as pretty JSON or
+// as a flat key/value table (the metric layouts vary too much to typecast).
+func (c *Client) AggregateObjects(ctx context.Context, ontology, objectType string, body json.RawMessage) (json.RawMessage, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) +
+		"/objects/" + url.PathEscape(objectType) + "/aggregate"
+	return c.PostJSONRaw(ctx, path, body)
+}
+
+// LoadObjectSet POSTs an ObjectSet load request and returns the raw JSON
+// response (data + nextPageToken).
+func (c *Client) LoadObjectSet(ctx context.Context, ontology string, body json.RawMessage) (json.RawMessage, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectSets/load"
+	return c.PostJSONRaw(ctx, path, body)
+}
+
+// CreateTemporaryObjectSetRaw POSTs an ObjectSet definition (as raw JSON)
+// and returns the {objectSetRid, expiresAt?} envelope verbatim. The
+// strongly-typed CreateTemporaryObjectSet above remains the preferred API
+// when the caller already has a Go map; this raw flavour exists so the
+// `weave objectset create-temporary` CLI can forward user-authored JSON
+// without round-tripping through map[string]any.
+func (c *Client) CreateTemporaryObjectSetRaw(ctx context.Context, ontology string, body json.RawMessage) (json.RawMessage, error) {
+	path := "/api/v2/ontologies/" + url.PathEscape(ontology) + "/objectSets/createTemporary"
+	return c.PostJSONRaw(ctx, path, body)
+}

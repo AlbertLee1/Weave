@@ -32,6 +32,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runOntology(rest, stdout, stderr)
 	case "object":
 		return runObject(rest, stdout, stderr)
+	case "action":
+		return runAction(rest, stdout, stderr)
+	case "aggregate":
+		return runAggregate(rest, stdout, stderr)
+	case "objectset":
+		return runObjectSet(rest, stdout, stderr)
 	case "auth":
 		return runAuth(rest, stdout, stderr)
 	case "config":
@@ -72,6 +78,9 @@ Usage:
 Commands:
   ontology   Manage and inspect ontologies (list, get)
   object     Retrieve objects (list, get, search)
+  action     Apply an Action against an ontology (apply)
+  aggregate  Run an Aggregation against an ObjectType (POST /objects/{ot}/aggregate)
+  objectset  Load / create-temporary ObjectSets (POST /objectSets/{load|createTemporary})
   auth       Authenticate against the server (login, logout, status)
   config     Read and write the local config file (~/.config/weave/config.toml)
   admin      Server administration (index rebuild, ...)

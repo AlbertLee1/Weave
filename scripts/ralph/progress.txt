@@ -1,107 +1,69 @@
 # Ralph Progress Log
-Started: 2026-05-16 07:30  (OSv2 Next iteration — picked up after Vertex v1 + VTX-126 browser fix)
+Started: 2026-05-16 12:30  (OSv2 Next iteration — picked up after OSV2-301/302/303 完成并归档；本轮以 OSV2-304..307 开跑)
 
 ## Codebase Patterns
-- Browser dogfood is mandatory for Vertex/Sigma runtime changes: Vitest/jsdom and `make web-test` can pass while the real Vite dev server throws React/Sigma runtime errors.
-- Heavy ESM-prebundled libs that import `react` (e.g. `@react-sigma/core`) MUST live in `vite.config.ts` `optimizeDeps.include` when behind a `React.lazy` boundary. Pair with `resolve.dedupe: ['react', 'react-dom']`.
-- Vitest tests that need to validate `vite.config.ts` content can use Vite's `?raw` query (`import src from '../../vite.config.ts?raw'`) — avoids `node:fs` imports that aren't typed in `tsconfig.app.json`.
-- `internal/testutil.StartPGContainer(t)` is the project's canonical way to get a real PostgreSQL for integration tests; gate the test file with `//go:build integration`.
-- Migrations live in `migrations/` numbered 000NNN with paired up/down SQL files; the next free number as of this iteration is 000205.
-- `cmd/server/main.go` boots dependencies in a long deps struct (Config → PG → IndexManager → LinkResolver → OSSService → ObjectSetStore → NATS Consumer → ActionExecutor → router); GeotemporalStore is currently hard-wired to `geotemporal.NewMemoryStore()` at line ~2376.
-- `pkg/mcp.Server` already has an `oms.Repository` injected; `prompts/list` / `prompts/get` can be added without changing the `NewServer` signature.
+- 后端 dependency boot 顺序在 cmd/server/main.go 的 deps struct：Config → PG → IndexManager → LinkResolver → OSSService → ObjectSetStore → NATS Consumer → ActionExecutor → router。新加跨包依赖往里挂时，遵循"select backend by `PGPool != nil`"模式（参考 GeotemporalStore / TimeSeries / Marking 选型）。
+- `internal/cliclient` 是 weave-cli 公用 HTTP 入口；新增子命令复用它的 base URL / auth token 解析，不要重新发明轮子。
+- httptest.Server 模式：CLI / bridge 测试一律用 httptest 而非启 cmd/server，能避免 PG/NATS 依赖。OSV2-303 的 cmd/weave-mcp/main_test.go 是参考实现。
+- MCP 改动同步三处：`pkg/mcp/server.go`（dispatch）+ `pkg/mcp/<feature>.go`（handler）+ `pkg/mcp/doc.go`（客户端发现说明）。漏改 doc.go 是常见漂移源。
+- `pkg/tracing` 已经装了 W3C TraceContext + Baggage 复合 propagator；跨进程 / 跨 transport 传 trace 直接 `otel.GetTextMapPropagator()` Inject/Extract，不要再造一个 propagator。
+- 真正的 OSv2 自评分见 docs/PRD-Weave-OSv2-深度复刻-V2.md §2.1 矩阵；选 story 时先扫该表黄/红格，再 grep 代码确认未做。
 
 ## Iteration intent
-This iteration is the post-VTX-126 follow-on. Vertex v1 + browser fix shipped; we now resume the OSv2 deepening track from docs/PRD-Weave-OSv2-深度复刻-V2.md but **only** picking gaps still observable in code (not parroting items already shipped). The three picked stories:
+本轮是 OSV2-301/302/303 完成 + 旧 PRD 归档（scripts/ralph/archive/osv2-next-complete-20260516-121036/）之后的下一轮。GeoTemporal 已落 PG、MCP prompts 已绑 ActionType、weave-mcp stdio↔HTTP bridge 已替掉 STUB。继续按 PRD-V2 §2.1 自评分表往未达 90% 的格子推，本轮挑了四处用户/客户端能直接看到的真实缺口：
 
-- **OSV2-301 — GeoTemporal PG persistence** — `pkg/geotemporal/store.go` package doc explicitly says PostGIS/JSONB backend is "intentionally deferred"; `cmd/server/main.go` hard-codes `MemoryStore`. Result: `/api/v2/.../geotemporalSeries/.../latestValue` loses all points on process restart — a real correctness bug on the single-machine deployment Weave is meant to be. Owner of fix: add `pg_store.go` + migration 000205, wire as default when PG pool is non-nil.
-
-- **OSV2-302 — MCP prompts/list real** — `pkg/mcp/server.go:107-108` hard-codes `prompts: []`; `pkg/mcp/doc.go:16` says "Weave does not yet expose prompts". Real MCP clients (Claude Desktop, Cursor) therefore cannot surface Weave ActionTypes as prompts. Fix: synthesize prompts from OMS ActionType metadata, implement `prompts/get`, advertise the `prompts` capability in `initialize`.
-
-- **OSV2-303 — weave-mcp stdio truly usable** — `cmd/weave-mcp/main.go:5` literally calls itself a STUB and points users at the HTTP transport. To honour the doc comment's "supported MVP path" intent without bootstrapping PG/NATS twice, this story turns weave-mcp into a stdio↔HTTP bridge to `cmd/server` `POST /mcp`, so local AI clients can spawn `weave-mcp` and consume the same tools/resources/prompts (including the OSV2-302 prompts) as the HTTP transport does.
+- **OSV2-304 — CLI 三件套** — cmd/weave-cli/main.go 的 switch 只有 ontology/object/auth/admin/fn/pkg 等 14 个子命令。PRD-V2 §6 US-079 列的 `weave action apply / weave aggregate / weave objectset run` 三件套根本没实现。一个 CLI 用户因此不能在不 curl 的情况下跑 Action / Aggregation / ObjectSet — 这三个恰恰是 Foundry 用户最常用的能力。
+- **OSV2-305 — weave-mcp bridge Authorization 透传** — OSV2-303 progress.txt 第 102 行明确留下 follow-up：bridge 不带 Authorization，AUTH_MODE=token 部署下 Claude Desktop / Cursor 一连就 401。本 story 就是把这个 explicit TODO 收掉。
+- **OSV2-306 — Funnel OTel 链路追踪** — pkg/funnel 整个目录 0 处 otel/tracing 引用（grep 验证）。HTTP→Action→Funnel→Bleve 这条线在 trace 上断成两截，违背 PRD-V2 §4.6 Gap-O2。
+- **OSV2-307 — MCP resources/list 加 ObjectType** — pkg/mcp/resources.go 只 list ontology + 临时 ObjectSet；AI client 想看 northwind.Order 的 schema 要 client-side filter 整个 ontology。违背 PRD-V2 §4.7 Gap-D4。
 
 ## Why these and not others
-Probed and ruled out as **already done in code, regardless of what PRD-Weave-OSv2-深度复刻-V2.md text suggests**:
-- Function-backed action runtime (`pkg/functions/goja_runtime.go` + tests US-218 exist).
-- Row-level / property-level / marking policy engine (`pkg/security/policy_engine.go`, `pkg/auth/marking.go`, `pkg/oss/marking_filter.go` wired into Load/Search/Aggregate).
-- Optimistic concurrency (`pkg/actions/optimistic_test.go`).
-- Stream ingest endpoint (`POST /api/v2/.../streams/{ot}/ingest` registered + rate limited).
-- SSE ObjectSet subscribe (`pkg/funnel/broadcast.go` + `cmd/server/sse_subscribe_adapter.go` + `pkg/subscriptions/subscription.go`).
-- Audit events table (migrations 000020 + 000062 hash chain) and audit verify CLI (`cmd/weave-audit-verify`).
-- Parquet cold storage materializer (`pkg/materialize/materialize.go` writing `parquet-go` files; metrics `weave_parquet_files_total`).
-- TimeSeries downsample / aggregate (`pkg/timeseries/downsample.go` + bench).
-- Python SDK ObjectSet + Aggregation + Subscriptions (`sdk/python/weave_client/objectsets.py`, `subscriptions.py`).
-- TypeClass-driven Bleve mapping (`pkg/index/mapping_builder.go`).
-- withProperties single-hop derived (`pkg/oss/objectset/withproperties_test.go`, `withproperties_formula_test.go`).
-- Interface multitype composite cursor (Phase 6 gate noted in v1 progress; covered by `handler_us006_test.go` family).
+按当前代码 grep 实际状态裁剪掉的（这些被 PRD-V2 §6 列过但已落地了）：
+- US-048 withProperties 单 hop — pkg/oss/objectset/withproperties_formula_test.go 已绿。
+- US-049 Interface composite cursor — handler_us006_test.go 家族覆盖。
+- US-050 TypeClass driven Bleve mapping — pkg/index/mapping_builder.go 已建。
+- US-053/054/055 Edit conflict / optimistic concurrency / edit-only — pkg/actions/optimistic_test.go 已绿。
+- US-056/057/058/059 Policy engine / 列级过滤 / Marking / JWT markings — pkg/security/policy_engine.go + pkg/auth/marking.go + /api/v2/me TestMeEndpointMarkings 已绿。
+- US-060 SSE subscribe — cmd/server/main.go:1172 register objectSets/{rid}/subscribe；pkg/subscriptions 已建。
+- US-062 Stream ingest — IngestRateLimiter + /streams/{ot}/ingest 已建。
+- US-063 Audit events table — pkg/audit/audit.go + admin/auditEvents endpoint。
+- US-065/066/067 Function runtime / function-backed action / executeQuery — pkg/functions/goja_runtime.go + pkg/oms/execute_query_goja_test.go。
+- US-068 Ontology branches — pkg/oms/models.go OntologyBranch + handlers_branch_merge.go + branched_repository_test.go。
+- US-071 TimeSeries downsample — pkg/timeseries/downsample.go + downsample_bench_test.go。
+- US-072 GeoTemporal PG — OSV2-301（本轮的上一轮）。
+- US-075 Parquet 冷存 — pkg/materialize/materialize.go + weave_parquet_files_total metric。
+- US-076 Performance bench — bench/ 目录 + make bench gate。
+- US-078 Python SDK ObjectSet/Aggregation/Subscriptions — sdk/python/weave_client/{objectsets,subscriptions,actions}.py。
+- US-080 weave-mcp stdio 真可用 — OSV2-303（本轮的上一轮）。
+
+仍未达 90% 但本轮没收的，留给后续：
+- `?branch=` 在 OSS Load/Search/Aggregate/Interface 主链路上还没读 query param（只 pkg/oss/objectset/handler.go 读了）；这要动 OSS 多个 handler + 触及行为差异，单 story 装不下。
+- sdkgen 生成的 Go/TS SDK 里 OTel 是 stub 模板，需要单独 story 配 docs。
+- MCP completion/complete + sampling/createMessage + logging/setLevel 暂不收，AI 客户端目前没硬需求。
 
 ---
 
-## 2026-05-16 07:55 — OSV2-301 — GeoTemporal PG 持久化 Store
-- **Red:** wrote `pkg/geotemporal/pg_store_test.go` (//go:build integration) with four BDD cases: empty series, out-of-order appends, append→reopen survives restart, multi-series isolation. Compile failed because `PgStore` / `NewPgStore` did not exist — that was the intended Red.
-- **Green:** added migration `migrations/000205_geotemporal_values.{up,down}.sql` (single table, JSONB position, composite PK `(ontology,object_type,primary_key,property,ts)` + matching index) and `pkg/geotemporal/pg_store.go` implementing `geotemporal.Store`. Wired into `cmd/server/main.go` so the GeotemporalStore is now `PgStore` when `deps.PGPool != nil`, falling back to `MemoryStore` only in degraded mode.
-- **Pre-existing-blocker repair (per user direction):** `make test-integration` was already broken on `main`. `migrations/` contained two pairs of duplicate-numbered files from the vertex replication merge (`359648b`):
-  - `000105_object_type_event_metadata` (VTX-077) vs `000105_vertex_scenarios` (VTX-001)
-  - `000106_scenarios_archive` (VTX-116) vs `000106_vertex_object_time_series` (VTX-028)
-  golang-migrate refuses to even instantiate a migrator against that directory. User chose: VTX `vertex_*` files keep their numbers, the other two get rebased to the tail. I renamed:
-  - `000105_object_type_event_metadata` → `000206_object_type_event_metadata`
-  - `000106_scenarios_archive` → `000207_scenarios_archive`
-  No code/doc references to those filenames existed (grepped) — only the VTX `vertex_scenarios` / `vertex_object_time_series` filenames are referenced from `pkg/scenarios/pg_repo.go` + `CHANGELOG.md`, and those kept their original numbers.
+## 2026-05-16 13:00 — OSV2-304 — weave CLI 补齐 action apply / aggregate / objectset 三件套子命令
+- **Red:** 写 cmd/weave-cli/cli_us304_test.go，11 个 BDD 用例：action apply 三种形态（--param KV + --returnEdits ALL_V2 速记、--params @file 保留 JSON 类型、缺 --action 直接 exit 2、server 4xx 透出 errorCode）；aggregate 两种 output（table + json）+ 缺 --body exit 2；objectset load + create-temporary + 未知子命令 exit 2；top-level dispatch 不再 'unknown command'；root usage 列出三个新命令。第一次跑全部 fail（"unknown command" 路径）— intended Red。
+- **Green:** 新文件 cmd/weave-cli/cmd_action.go（action apply + 共用 readJSONBlobRef / printAPIError helper / normaliseReturnEdits 把 ALL_V2 -> ALL_V2_WITH_DELETIONS）、cmd_aggregate.go（aggregate + jsonIndentOrRaw + printAggregateTable）、cmd_objectset.go（load + create-temporary，create-temporary 也接受驼峰拼写 createTemporary）。internal/cliclient/client.go 加 PostJSONRaw / AggregateObjects / LoadObjectSet / CreateTemporaryObjectSetRaw（保留既有强类型 CreateTemporaryObjectSet）。main.go switch 增加 3 个 case + printRootUsage 加 3 行。
+- **遇到的事先没料到的：** internal/cliclient/client.go 已有一个 `CreateTemporaryObjectSet(...) (string, error)` 强类型版；新加的 raw 版本不能同名，最终命名 `CreateTemporaryObjectSetRaw`。
+- **Pre-existing-blocker repair（不在本 story 范围内，但顺手修）:** `make test` / `go vet ./...` 在 main 上已经因为 `scripts/ralph/archive/osv2-next-complete-20260516-121036/dirty-worktree-backups/...` 这个 gitignored 但物理存在的目录里塞着会 import-fail 的 .go 文件而炸（38 个 oms/internal stream-A backup 文件）。这是上一轮 archive 操作把 dirty worktree 直接拷贝过来的本地遗留。我把目录改名为 `_dirty-worktree-backups`（`_` 前缀让 Go tool 自动跳过该树，约定见 https://pkg.go.dev/cmd/go#hdr-Package_lists_and_patterns）—— 不动内容、可逆、不在 git 里所以无 commit footprint。`make test` / `go vet ./...` 立刻转绿。
 - **Files changed:**
-  - `migrations/000205_geotemporal_values.up.sql` + `down.sql` (new)
-  - `pkg/geotemporal/pg_store.go` (new)
-  - `pkg/geotemporal/pg_store_test.go` (new, integration tag)
-  - `cmd/server/main.go` (geotemporal store wiring)
-  - `migrations/000206_object_type_event_metadata.{up,down}.sql` (renamed from 000105)
-  - `migrations/000207_scenarios_archive.{up,down}.sql` (renamed from 000106)
+  - cmd/weave-cli/cmd_action.go (new, ~165 lines)
+  - cmd/weave-cli/cmd_aggregate.go (new, ~115 lines)
+  - cmd/weave-cli/cmd_objectset.go (new, ~95 lines)
+  - cmd/weave-cli/cli_us304_test.go (new, ~415 lines, 11 BDD cases)
+  - cmd/weave-cli/main.go (3 dispatch cases + 3 usage lines)
+  - internal/cliclient/client.go (PostJSONRaw + 3 helper methods)
+  - scripts/ralph/archive/osv2-next-complete-20260516-121036/{dirty-worktree-backups → _dirty-worktree-backups}/ (rename — gitignored, no commit)
 - **Quality gates (all green):**
-  - `go test ./pkg/geotemporal/...` (unit) — ok
-  - `go test -tags integration ./pkg/geotemporal/...` — ok, 4 BDD cases pass (6.25s)
-  - `go test -tags integration -run TestMigrate ./internal/database/` — ok, full migration up survives the renumber
-  - `go vet ./...` — clean
-  - `make test` — green (all packages cached/pass after rename)
-  - `make web-build` — green (vite production, 3.6s)
+  - `go test ./cmd/weave-cli/... ./internal/cliclient/... -count=1` — green (11 new + ~16 existing pass)
+  - `go vet ./...` — clean (after archive rename)
+  - `make web-build` — green (3.7s)
 - **Learnings for future iterations:**
-  - When adding any PG-backed store, follow the `pkg/timeseries/pg_store.go` template: `pgxpool.Pool` field, JSONB for shape-agnostic payloads, `ON CONFLICT … DO UPDATE` for idempotent appends, `errors.Is(err, pgx.ErrNoRows)` mapped to the package's sentinel.
-  - The integration-test gate (`//go:build integration`) goes on the file itself — not just the test name; `go test -tags integration` then picks it up while `go test` skips.
-  - `make test-integration` going forward will only stay green if every new migration uses a unique number; treat the prefix as a global registry. The renumber here was a one-time repair of a vertex merge accident, not a new pattern.
-  - `cmd/server/main.go` "select backend by `PGPool != nil`" pattern is the project's standard for PG-vs-memory store selection (see TimeSeries + Marking + Vertex graphsvc).
+  - 当一个 internal/cliclient 已有强类型方法名占用时，新增 raw / variant 方法用 `*Raw` 后缀（参考本次 CreateTemporaryObjectSetRaw 与既有 CreateTemporaryObjectSet 共存）。
+  - `--param key=value` 走 string 路径、`--params @file.json` 走 JSON 解析路径，两者用同一个 map 收口；测试要分别覆盖这两条 path 以确认类型差异（一个保 string，一个保 number/bool）。
+  - 单测里捕获 httptest 收到的请求体 byte-for-byte，是验证 CLI flag → wire body 的 mapping 最可靠的方式；用 sync.Mutex 保护 request slice 让并行 t.Parallel 安全。
+  - Go tool chain 对 `_` 前缀目录与 `.` 前缀目录自动跳过；处理 gitignored-yet-on-disk 旧 backup 树时，重命名加 `_` 比 build-tag 批改文件友好得多。
 ---
 
-## 2026-05-16 08:15 — OSV2-302 — MCP prompts/list bound to OMS ActionType
-- **Red:** wrote `pkg/mcp/prompts_test.go` with five BDD cases (one prompt per ActionType, arguments in declaration order with required flags, prompts/get renders user message, nil-OMS still returns empty list, initialize advertises prompts capability). Compile failed because `Prompt` / `PromptArgument` / `PromptMessage` types did not exist — that was the intended Red. Also discovered Response.Result is `any`, so tests use a `remarshal` helper to round-trip through JSON before strict decode.
-- **Green:** new `pkg/mcp/prompts.go` with three exported types (Prompt/PromptArgument/PromptMessage) and the handler pair `handlePromptsList` + `handlePromptsGet`. Prompt names are `<ontologyApiName>__<actionApiName>` (double underscore to avoid colliding with single underscores already common in action api names). Arguments come from `ActionType.Parameters` (json.RawMessage of `[{id,type,required,description}]`), preserving declaration order. `prompts/get` resolves ontology apiName → RID via `GetOntology` first so both the PG repo (which already accepts either form) and the in-memory test fake (RID-keyed only) land on the same row. Rendered user message text always contains the ontology, action and supplied parameter k/v pairs in sorted order so tests are deterministic.
-- **Capability advertisement:** `handleInitialize` now emits `capabilities.prompts: {listChanged: false}` alongside `tools` and `resources`. The existing `TestServer_PromptsList_EmptyOK` test still passes — when no ActionTypes are registered the list is naturally empty.
-- **Files changed:**
-  - `pkg/mcp/prompts.go` (new)
-  - `pkg/mcp/prompts_test.go` (new)
-  - `pkg/mcp/server.go` (prompts/list + prompts/get dispatch, initialize capability)
-  - `pkg/mcp/doc.go` (package doc — prompts no longer described as "empty list")
-- **Quality gates (all green):**
-  - `go test ./pkg/mcp/... -count=1` — full package green (added 5 new tests, existing ~30+ pass).
-  - `go vet ./...` — clean.
-  - `make test` — green (full Go suite, cached/pass).
-- **Learnings for future iterations:**
-  - MCP `Response.Result` is `any` in this codebase, not `json.RawMessage` — tests that need strict decoding should remarshal via `json.Marshal` then `json.Unmarshal` (helper `remarshal(v, into)`).
-  - When adding a new MCP method, also update `handleInitialize` capabilities and `pkg/mcp/doc.go` — these are the two surfaces clients use for discovery, and they drift if you only touch `server.go`.
-  - The double-underscore separator (`__`) for `<ontology>__<action>` survives single-underscored API names (`create_order`, `update_order`) which are common — don't use a single underscore for namespace separators.
-  - OMS api-name vs RID asymmetry: the fakeOmsRepo in `pkg/mcp/tools_test.go` is strictly RID-keyed, but the PG repo's `GetActionTypeByAPIName` accepts both. Resolve via `GetOntology` first to stay portable.
----
-
-## 2026-05-16 08:40 — OSV2-303 — weave-mcp stdio↔HTTP bridge
-- **Red:** wrote `cmd/weave-mcp/main_test.go` with four BDD cases (initialize round-trip with prompts capability, tools/list verbatim forwarding, prompts/list verbatim forwarding, upstream-unreachable produces a JSON-RPC error line with the original id echoed). Compile failed because `RunHTTPBridge` did not exist — Red.
-- **Green:** new `cmd/weave-mcp/http_bridge.go` with `RunHTTPBridge(ctx, in, out, url)` — a tiny stdio↔HTTP proxy that POSTs every newline-delimited JSON-RPC envelope to cmd/server's `POST /mcp` and writes the verbatim response back as a single line. Sniffs the id off the request so error lines on upstream failure still echo the right correlator. Notifications (no `id`) are forwarded but never produce an output line. The bridge intentionally returns `nil` on upstream errors and surfaces them as JSON-RPC error responses instead of crashing the binary — local MCP clients then see a transport-layer error code (`-32000`) per request rather than the subprocess dying mid-conversation.
-- **Wiring:** `cmd/weave-mcp/main.go` rewritten — `WEAVE_MCP_URL` set ⇒ bridge mode; unset ⇒ legacy in-memory demo mode (preserved so framing-only tests can still run without a cmd/server). The "STUB" header notice in the file's doc comment is gone and replaced with the real two-mode contract plus a sample Claude Desktop `claude_desktop_config.json` snippet pointing at `http://127.0.0.1:9117/mcp`.
-- **Files changed:**
-  - `cmd/weave-mcp/http_bridge.go` (new)
-  - `cmd/weave-mcp/main_test.go` (new)
-  - `cmd/weave-mcp/main.go` (mode-switch + doc rewrite)
-- **Quality gates (all green):**
-  - `go test ./cmd/weave-mcp/... -count=1` — 4 new + 1 existing tests pass.
-  - `go vet ./...` — clean.
-  - `make test` — full Go suite green.
-- **Operational note for follow-up:** the bridge does not currently inject Authorization headers. When cmd/server is run with `AUTH_MODE=token`, the operator must set `WEAVE_MCP_URL` to a URL form that includes auth (the project's `POST /mcp` already supports bearer tokens through chi middleware; wiring an env-passthrough is a single small addition if anyone hits it). For dev/local Claude Desktop the default `AUTH_MODE=dev` server needs nothing.
-- **Learnings for future iterations:**
-  - When a binary's doc comment self-identifies as "STUB", treat it as a real product gap on par with a TODO — the assertion shows up in `grep`s during planning and is the single best signal that something user-visible isn't yet wired.
-  - Stdio MCP bridges should always emit one JSON-RPC line per request even on failure; a silent subprocess is the worst failure mode for Claude Desktop / Cursor because the client retries forever.
-  - `http.Client{Timeout: 30s}` is appropriate for MCP — tool calls can be slow (semantic_search hits pgvector) but not multi-minute slow.
----
