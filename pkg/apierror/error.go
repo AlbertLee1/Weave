@@ -166,6 +166,16 @@ func NewValidationSchema(name string, params map[string]string) *APIError {
 	return newAPIError("WEAVE_VALIDATION_SCHEMA", name, params, http.StatusUnprocessableEntity)
 }
 
+// NewAutomationRuleCycle creates a WEAVE_AUTOMATION_RULE_CYCLE API error
+// (HTTP 422). US-477: returned by the Automate rule register / update path
+// when topological sort of the action→event→action graph surfaces a cycle
+// (A→B→A, self-loop, or any longer ring). Callers populate Parameters with
+// at minimum `cycle` (the dotted cycle path) and `ruleId` so SDK consumers
+// can guide the author back to the broken edge.
+func NewAutomationRuleCycle(name string, params map[string]string) *APIError {
+	return newAPIError("WEAVE_AUTOMATION_RULE_CYCLE", name, params, http.StatusUnprocessableEntity)
+}
+
 // NewPipelineBreakingChange creates a WEAVE_PIPELINE_BREAKING_CHANGE API error
 // (HTTP 422). US-378: returned when an APPEND-mode pipeline run detects a
 // schema diff that drops or alters the type of a column the pipeline has
