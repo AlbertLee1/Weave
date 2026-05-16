@@ -595,24 +595,32 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Method(http.MethodGet, "/swagger/", swaggerUIHandler())
 	r.Method(http.MethodGet, "/swagger", http.RedirectHandler("/swagger/", http.StatusMovedPermanently))
 
-	// MCP server (public JSON-RPC 2.0 endpoint for AI agents)
-	if deps.OssSvc != nil && deps.OmsRepo != nil {
-		mcpSrv := mcp.NewServer(deps.OssSvc, deps.OmsRepo, deps.ActionExecutor)
-		// US-046: wire the semantic searcher so weave_semantic_search and
-		// weave_ask_objectset can run nearestNeighbors queries via the
-		// ObjectSet executor. Optional — when nil the AI search tools
-		// return a clear "not configured" error.
-		if deps.ObjSetExecutor != nil {
-			mcpSrv.SetSemanticSearcher(newExecutorSemanticSearcher(deps.ObjSetExecutor))
-		}
-		// US-286: expose temporary ObjectSet entries as MCP resources alongside
-		// the ontology catalogue. Optional — when no Store is wired the
-		// resources/list and resources/read methods still work for ontologies.
-		if deps.ObjSetStore != nil {
-			mcpSrv.SetObjectSetCatalog(newObjectSetCatalogAdapter(deps.ObjSetStore))
-		}
-		r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
+	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
+	//
+	// OSV2-303: register POST /mcp UNCONDITIONALLY. The previous wiring gated
+	// on `deps.OssSvc != nil && deps.OmsRepo != nil`, so a degraded boot (no
+	// PG, or PG unreachable) left the route unbound and chi's NotFound
+	// handler — which serves the SPA index.html in production — caught
+	// POST /mcp and returned `text/html`. MCP clients have no recovery path
+	// from that response. mcp.NewServer accepts nil deps; the protocol
+	// methods (initialize, tools/list, prompts/list, resources/list) all
+	// handle nil gracefully and only tool execution paths surface a JSON
+	// "not configured" error envelope.
+	mcpSrv := mcp.NewServer(deps.OssSvc, deps.OmsRepo, deps.ActionExecutor)
+	// US-046: wire the semantic searcher so weave_semantic_search and
+	// weave_ask_objectset can run nearestNeighbors queries via the
+	// ObjectSet executor. Optional — when nil the AI search tools
+	// return a clear "not configured" error.
+	if deps.ObjSetExecutor != nil {
+		mcpSrv.SetSemanticSearcher(newExecutorSemanticSearcher(deps.ObjSetExecutor))
 	}
+	// US-286: expose temporary ObjectSet entries as MCP resources alongside
+	// the ontology catalogue. Optional — when no Store is wired the
+	// resources/list and resources/read methods still work for ontologies.
+	if deps.ObjSetStore != nil {
+		mcpSrv.SetObjectSetCatalog(newObjectSetCatalogAdapter(deps.ObjSetStore))
+	}
+	r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
 
 	// Prometheus metrics scrape endpoint (public).
 	r.Method(http.MethodGet, "/metrics", promhttp.HandlerFor(metrics.Default(), promhttp.HandlerOpts{}))
