@@ -2810,6 +2810,27 @@ func main() {
 			deps.FunnelConsumer.SetLinkPropagationResolver(newLinkPropagationResolver(deps.OmsRepo))
 		}
 
+		// US-472: edit-only conflict exemption in the production consumer.
+		// US-027 wired the SetEditOnlyField hook + preserveEditOnlyFields
+		// filter in pkg/funnel; this block closes the prod-wiring gap by
+		// building an in-memory (objectType, field) -> IsEditOnly cache from
+		// the live OMS schema and keeping it fresh on a 5-minute tick so
+		// admin schema changes propagate without a server restart. Without
+		// this wiring, ingest could silently overwrite user-managed editOnly
+		// fields in production even though the unit/integration tests in
+		// pkg/funnel and test/integration/edit_only_test.go have been green
+		// since US-027.
+		if deps.OmsRepo != nil {
+			editOnlyRes := newEditOnlyResolver(deps.OmsRepo)
+			if err := editOnlyRes.Refresh(ctx); err != nil {
+				log.Printf("[edit-only] initial refresh: %v", err)
+			}
+			deps.FunnelConsumer.SetEditOnlyField(editOnlyRes.IsEditOnly)
+			go runEditOnlyRefreshLoop(ctx, editOnlyRes, 5*time.Minute, func(err error) {
+				log.Printf("[edit-only] refresh: %v", err)
+			})
+		}
+
 		// US-379: per-batch dataset_transactions recording. Wired only when
 		// the PG-backed store is available; degraded-mode routers without
 		// PG leave the hook unset and the consumer silently no-ops on the
