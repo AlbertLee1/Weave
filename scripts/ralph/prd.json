@@ -76,8 +76,8 @@
         "Tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Composite-cursor heap merge (executor `executeInterfaceBase` + handler `writePreviewInterfacePage`) already landed in US-007/US-008 with sorted-ASC per-type buckets, deterministic lexicographic tie-break, and exhausted-sub-cursor drop. US-463 closed by adding `pkg/oss/objectset/us463_interface_cursor_stability_test.go` — two new unit tests at the literal PRD scale (pageSize=5, 3 sub-types, asymmetric buckets 7+5+11=23 and 1+4+6=11) that pin down four invariants the prior tests left implicit: (1) set integrity end-to-end via expected-row map keyed by (apiName, pk), (2) global PK sequence is strictly monotone ASC across all pages, (3) emitted MultiTypeCursor is decode→encode→decode idempotent and never carries exhausted sub-cursors, (4) resume from a captured mid-walk token returns the exact same next-5 rows as the original walk — proving the composite cursor is a true serializable resumption point, not same-process bookkeeping. Both tests pass first run against the existing implementation; story is coverage hardening, not new code."
     },
     {
       "id": "US-464",

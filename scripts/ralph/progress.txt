@@ -14,6 +14,7 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
 - ObjectSet `withProperties` direction-aware 套路：link walk 走 `linkResolverForDirection(dp, dir)`、"另一端"ObjectType 走 `resolveLinkTargetType(callerOT, link, dir)`（DirectionalLinkTargetTypeResolver 优先，legacy LinkTargetTypeResolver 只覆盖 forward）。反向 numeric metric 必须两者都过——只换 walk 不换 target type 会从错误的索引读字段。生产 `links.Resolver` 当前不实现 `reverseLinkFinder` / `DirectionalLinkTargetTypeResolver`，反向 withProperties + searchAround 目前只在测试 mock 里跑通；要在 production 启用需要先补 resolver 适配层。
 - OpenAPI 双写规约：`api/openapi.yaml` 是 canonical 源，`cmd/server/openapi_spec.yaml` 是 //go:embed 的复刻，两份必须 byte-identical（TestContract_EmbeddedSpecMatchesCanonical 守门）。改完 canonical 后用 `cp api/openapi.yaml cmd/server/openapi_spec.yaml` 同步，否则 contract 测试当场红。Route ↔ spec 的覆盖率由 TestContract_AllRoutesDocumented / TestContract_NoOrphanedSpecPaths 双向校验，新增 admin 路由必须同时落 spec。
 - Reaper loop 套路：method-bound `Store.RunReaperLoop` 单元测不动（要 PG container），所以约定把驱动逻辑抽成 `RunXxxReaperLoop(ctx, reaper XxxReaper, interval, ttl, onReap, onError)` 自由函数 + `XxxReaper` 最小接口（只暴露 `ReapExpired(ctx, ttl) (int64, error)`），具体 store 满足接口；method 版退化为 thin shim。参考 `pkg/oss/objectset.RunSavedSetReaperLoop`（US-462）与 `pkg/actions.RunActionJobReaperLoop`（US-426）。boot 时机：`deps.ObjSetStore` / store 构造完之后立刻 `go ...Loop(ctx, store, interval, ttl, log, log)`，degraded mode（无 PG）天然 no-op。新增 reaper 别再造 method-only 版。
+- 多类型 composite-cursor 测试套路：除了 no-miss/no-dupe，必带四条断言——`(apiName, pk)` tuple 去重（PK 跨类型可撞）、全局 flat PK 严格单调递增（heap-merge 自检）、emit token 里没有 `IsExhausted()` 的 SubCursor、用保存的 mid-walk token 发**新一次 http request** 比对续后行（"真正可序列化 resume" vs "in-process bookkeeping"）。`pagination.CompositeCursor` 因为 SortKey.Value 是 `any` 不可 `==` 比较，deep-equal 要逐字段 + 逐 SortKey。参考 `pkg/oss/objectset/us463_interface_cursor_stability_test.go`。
 
 ## Progress
 
@@ -85,4 +86,22 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - method-bound 长 goroutine（`(*Store).RunReaperLoop`）很难单测：要么起 PG container，要么不能换 store。把驱动抽自由函数 + 最小接口立刻可注入 fake，是把 reaper 类长循环"单测化"的标准重构。本仓库已有 `pkg/actions.RunActionJobReaperLoop` 同形状的先例，US-462 顺势把 saved-objectset 这条也对齐了。继续往后凡是"ticker + ctx 取消 + onReap/onError" 的 store-bound 循环，建议先抽自由函数再写测试。
   - cmd/server/main.go 的 deps boot 是手工排序的；加新 goroutine 时要紧贴对应 store 的构造位置（这里紧跟 `deps.ObjSetStore = objectset.NewStore(...)`）而不是塞 router 之前，避免 reviewer 找不到生命周期边界。`ctx` 是 main 顶层 rootCtx，graceful shutdown 时会被 cancel，自动停 loop——不要自己再注册 deferred close。
   - boot 加 goroutine 时 onReap 默认只在 n>0 时打 log（避免每 5min 一条噪音）；onError 始终打 log（PG 真出 trouble 时必须可见）。新加任何 reaper 都按这个噪音预算走。
+---
+
+## 2026-05-16 - US-463 (Interface 多态查询稳定 cursor)
+- 现状盘点：composite-cursor heap merge 在 US-007/US-008 已经落地——executor.executeInterfaceBase 加载每个实现类型并 sort.Strings 每个 per-type bucket（pkg/oss/objectset/executor.go:326-329），handler.writePreviewInterfacePage 用 min-heap 选 PK / 同 PK 时按 type 名字典序 tie-break / 耗尽的 sub-cursor 从 emitted token 里 drop（pkg/oss/objectset/handler_preview.go:165-311）。`pkg/oss/pagination.MultiTypeCursor.SubCursors []CompositeCursor` 已经是 PRD 要求的 `{objectTypeApiName, innerCursor}` 复合形态。早期 `TestInterfacePagingHeapMerge`（3 类 × 20 / pageSize=7）和 `TestInterfacePaging_NorthwindHasOwner` 集成测试已经覆盖了"no miss / no dupe"。
+- US-463 这条因此本质是**覆盖率硬化**——把 PRD 字面要求的"3 子类型 / page=5 / 走完全部页"做成 deterministic unit test，并把"cursor 真正可序列化恢复"这条没被显式 pin 住的不变量钉牢。
+- 新加 `pkg/oss/objectset/us463_interface_cursor_stability_test.go`，两个表驱动测试：
+  - `TestInterfacePaging_Page5_ThreeSubtypes_Given_AsymmetricBuckets_When_PageAll_Then_StableCompositeCursor` — 3 种 ObjectType (ti3_a / ti3_b / ti3_c) 容量 7+5+11=23，pageSize=5，预期 5 页（最后 1 页 3 行）。除了基本的 no-miss/no-dupe，额外锁住四个不变量：(1) 每行用 (apiName, pk) tuple 去 dedup 而不是裸 pk，PK 跨类型撞了也分得开；(2) 全局 flat PK 序列严格单调递增——heap-merge 没乱序；(3) 每页 emit 的 MultiTypeCursor decode→encode→decode 幂等（SortKey.Value 是 `any` 不能直接 `!=`，所以逐字段比较 ObjectType / InnerCursor / 逐个 SortKey）；(4) emit 的 SubCursor 里没有任何 `IsExhausted()==true` 的条目。
+  - `..._When_DropsExhaustedType_Then_NoOrphanRows` — 1+4+6 三类型，page=5。第一页就把 a / b 全榨干，emit 的 token 只剩 r463_c 一个 SubCursor。然后从这个 token resume，断言后续两页只产 r463_c 的行——handler 不能把"SubCursors 里没出现"误解成"offset=0 重启"，否则 a01..b04 会被重复返回。这条直接守住 handler_preview.go:194-198 那个 `live[t]==false → offsets[t]=len(bucket)` 分支的语义。
+  - 同时第一个测试在 resume 路径上还做了一遍**对比验证**：保存 page 2 的 outbound token → 用 token 单独发一次请求 → 断言返回的 5 行 PK 序列 == 原 walk 里 page 3 的 5 行。这是"真正可序列化"的硬证明，区别于"in-process bookkeeping"。
+- TDD 状态：本次"红"只走到编译错误就过线——既有实现已经满足 PRD 全部 acceptance，两测试首跑即绿（0.81s + 0.41s）。这点在 prd.json US-463 notes 里写明：story 是 coverage hardening 而非新代码。后续如果有人改 heap-merge 或者 MultiTypeCursor 的 encode 形态，这两个测试会立刻把回归打出来。
+- Files changed:
+  - pkg/oss/objectset/us463_interface_cursor_stability_test.go — 新建（两测试 + getPage helper）。
+  - scripts/ralph/prd.json — US-463 passes=true + 实施摘要。
+- **Learnings for future iterations:**
+  - 已经实现的 story 不要硬凑"实现 patch"——找不到真 bug 就老老实实把"PRD 字面 acceptance 没写成测试"这条覆盖率漏洞补齐，并在 prd.json notes 里把"coverage hardening / 无新代码"这句话写出来。掩盖比补齐贵。
+  - `pagination.SortKey.Value` 是 `any`，所以 `CompositeCursor` 这个结构体本身**不可比较**——任何 `==`/`!=` 触发的对比都会触发 `cannot be compared` 编译错误。要 deep-equal 两个 CompositeCursor，要么逐字段比 + 逐 SortKey 比，要么 `reflect.DeepEqual`。这条今天踩了一次，已经在 us463_interface_cursor_stability_test.go 里写成模式。
+  - heap-merge 的"全局 flat PK 序列严格单调递增"是个非常便宜但价值很高的不变量断言——只要每个 per-type bucket 都按 ASC 排好，merge 算法对了它就一定成立。之前的测试都只断"no dupe / no miss"，没断 order；这次补上后能在 executor 里 sort 被误删 / heap-merge 算法写错（比如把 `<` 写成 `<=`）的 case 立刻爆。新写 heap-merge 类测试都建议带这个断言。
+  - composite cursor 的"真正可序列化 resume"测试 = save token → 起**新一次 http request** → 比对续后行序列。如果只在同一 process 同一 handler 实例里 follow 链式 token，bookkeeping bug（比如 offset 写到了 handler.field 而不是 wire token 里）会被同 process 状态遮蔽。新一次请求才能暴露这种 bug。资源便宜（httptest 一次 round-trip）但语义价值很高。
 ---
