@@ -2978,7 +2978,11 @@ components:
           description: |
             Present when type is "failed". Known values:
             "ExecutionError" (engine returned an error),
-            "NonSelectQuery" (query was rejected at execution time).
+            "NonSelectQuery" (query was rejected at execution time),
+            "StackedStatement" (more than one statement in the input),
+            "SystemTableAccess" (query references pg_* / information_schema.*),
+            "QueryTimeout" (query exceeded the configured timeout — US-468),
+            "MaxRowsExceeded" (query streamed more than the configured row cap — US-468).
     AdminIndexRebuildRequest:
       type: object
       description: |

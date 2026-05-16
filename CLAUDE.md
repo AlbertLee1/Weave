@@ -139,6 +139,54 @@ make test
 make web-test
 ```
 
+## Development Process: BDD (MANDATORY)
+
+**TDD 保证"代码做对了"，BDD 保证"做的是对的功能"。两者并行，不可替代。**
+
+每一次 commit，除非有足够的理由（见下文「豁免条件」）并在 commit message 中明确说明，否则必须附带 BDD 集成测试，从外部可观察的行为层面覆盖本次改动引入或修改的功能。
+
+### BDD Workflow (Given → When → Then)
+
+1. **先写 scenario** —— 用 Given/When/Then 描述用户或调用方可观察的行为，作为本次 commit 的"功能契约"。
+2. **以集成测试形式落地** —— 不允许只用单元测试 + mock 来满足 BDD 要求。必须是端到端可观测的集成测试：
+   - 后端：走 chi router 的 HTTP 集成测试（`test/e2e/` 或 `_integration_test.go`，使用 `testutil.StartPGContainer` 起真实 PG，必要时起真实 NATS），断言 HTTP 响应、DB 状态、NATS 事件等外部可见结果。
+   - 前端：Vitest + React Testing Library + MSW 模拟 API，断言渲染结果与用户交互行为；或 Playwright 端到端用例（如已配置）。
+3. **scenario 先红后绿** —— 集成测试必须先失败，再通过实现让它变绿；与 TDD 的 Red→Green→Refactor 保持一致。
+4. **命名约定** —— BDD 测试函数以 `TestBDD_` 前缀或 `_bdd_test.go` 文件后缀命名（前端：`*.bdd.test.tsx`），便于检索与统计覆盖。
+
+### Rules
+
+- **NEVER commit a feature change without an accompanying BDD integration test in the same commit.**
+- 单元测试 + mock **不能**替代 BDD 集成测试，二者职责不同：单元测试覆盖分支，BDD 集成测试覆盖功能契约。
+- bug 修复：BDD 测试必须先复现该 bug 的用户可见症状（HTTP 4xx/5xx、错误 UI 状态、丢失的 NATS 事件等），再修复。
+- 新功能：以 BDD scenario 为接口设计的起点，scenario 通过即视为功能完成。
+- 重构：行为不变，已有 BDD 测试必须在重构前后保持通过；不允许借重构之名删除或弱化 BDD 断言。
+
+### 豁免条件（必须在 commit message 中显式声明）
+
+满足以下之一可不附带 BDD 集成测试，但必须在 commit message 里写明理由（例如 `BDD-exempt: docs-only`）：
+
+- 纯文档、注释、CLAUDE.md / README 更新
+- 纯依赖升级且无行为变化（`go.mod` / `package.json` lockfile only）
+- 纯格式化 / lint 修复 / 重命名变量等无行为变化的改动
+- migrations 仅含 schema 变更且尚无任何代码读写新字段（下一次引入用法的 commit 必须补上 BDD）
+- 实验性脚本 / `scripts/` 下的一次性工具（且未被生产代码引用）
+
+任何对 `cmd/`, `pkg/`, `internal/`, `web/src/` 下的功能性代码改动，默认**不**适用豁免。
+
+### Test Commands (BDD)
+
+```bash
+# 运行所有 BDD 集成测试（后端）
+go test -tags integration ./... -run '^TestBDD_'
+
+# 运行某个 BDD 场景
+go test -tags integration ./test/e2e/... -run TestBDD_CreateOntology -v
+
+# 前端 BDD
+npm --prefix web test -- --run bdd
+```
+
 ## Testing Patterns
 
 - **Unit tests**: alongside source files, use in-memory implementations and table-driven subtests
