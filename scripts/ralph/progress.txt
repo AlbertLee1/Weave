@@ -67,3 +67,74 @@ Started: 2026-05-16 12:30  (OSv2 Next iteration — picked up after OSV2-301/302
   - Go tool chain 对 `_` 前缀目录与 `.` 前缀目录自动跳过；处理 gitignored-yet-on-disk 旧 backup 树时，重命名加 `_` 比 build-tag 批改文件友好得多。
 ---
 
+## 2026-05-16 13:30 — OSV2-305 — weave-mcp HTTP bridge 透传 Authorization
+- **Red:** 写 cmd/weave-mcp/auth_us305_test.go，5 个 BDD：WEAVE_MCP_TOKEN -> Authorization: Bearer 透传成功；无任何 auth env -> 不发 Authorization / 不发 X-Weave-API-Key、上游 401 -> 客户端拿 -32000 JSON-RPC error；WEAVE_MCP_API_KEY 单独设 -> 走 X-Weave-API-Key；token + api-key 都设 -> token 赢、不带 X-Weave-API-Key；多个请求串行 -> 每个都带同样的 Authorization。第一次跑 build fail（WithBearerToken/WithAPIKey 不存在、RunHTTPBridge 签名只接 4 参数）— 这就是 Red。
+- **Green:** cmd/weave-mcp/http_bridge.go 引入 `type BridgeOption func(*bridgeOptions)` + `WithBearerToken` / `WithAPIKey` helper + 把 `RunHTTPBridge` 改成 `RunHTTPBridge(ctx, in, out, url, opts ...BridgeOption)` — variadic 兼容既有 OSV2-303 main_test.go 调用方（不带 opts 时行为 100% 不变）。forwardOnce 在已有 Content-Type/Accept 之后 if cfg.authHeader != "" 就 Set(cfg.authHeader, cfg.authValue)。WithAPIKey 内置一个 "如果 Authorization 已经被 token 占了就 no-op" 的 guard，把 token > api-key 的优先级在选项注入侧而不是 forwardOnce 侧。
+- **Wiring:** cmd/weave-mcp/main.go 新加 bridgeAuthOptionsFromEnv()：读 WEAVE_MCP_TOKEN（fallback 到 WEAVE_MCP_BEARER 作为常见同义词）+ WEAVE_MCP_API_KEY，按顺序 append 成 []BridgeOption 传给 RunHTTPBridge。doc comment 内的 Claude Desktop 配置样例同步更新，env 段加 WEAVE_MCP_TOKEN / WEAVE_MCP_API_KEY 两行 + 注释说明二选一。
+- **顺手修了一个测试断言期望:** OSV2-303 的 -32000 error message 含 'upstream HTTP <code>'，OSV2-305 既有测试只要 'upstream' 或 'status'，所以我把 forwardOnce 里 4xx 的错误格式从 `upstream HTTP %d: %s` 改成 `upstream HTTP status %d: %s`，让两边都覆盖且不改 -32000 code。
+- **Files changed:**
+  - cmd/weave-mcp/http_bridge.go (+57 lines: BridgeOption / WithBearerToken / WithAPIKey / forwardOnce auth injection / minor error-message tweak)
+  - cmd/weave-mcp/main.go (+26 lines: bridgeAuthOptionsFromEnv + doc comment refresh)
+  - cmd/weave-mcp/auth_us305_test.go (new, 5 BDD cases)
+- **Quality gates (all green):**
+  - `go test ./cmd/weave-mcp/... -count=1` — 5 new + 4 既有 (OSV2-303) 全绿
+  - `go vet ./...` — clean
+- **Learnings for future iterations:**
+  - 给现有 exported 函数加可选行为时，用 variadic functional-option 而不是改签名 — 既有 callers 不动，新 callers 用 WithX。本次 RunHTTPBridge(... opts ...BridgeOption) 是参考模板。
+  - 同一组 env 用一个 small builder 函数（bridgeAuthOptionsFromEnv）拼出 []Option 列表传进去，比在 main 里 if-else 直接调 RunHTTPBridge 干净；测试 builder 时也容易隔离 env 副作用。
+  - 优先级语义（token > api-key）在 WithAPIKey 的 guard 里实现 — 比在 forwardOnce 里搞 priority 选择简单，且失败模式是显式的（如果以后要换成 "都发"，guard 是唯一要改的点）。
+---
+
+## 2026-05-16 14:00 — OSV2-306 — Funnel publish/consume OTel 链路追踪
+- **Red:** 写 pkg/funnel/tracing_us306_test.go，6 个 BDD：(1) InjectTraceContext 把当前 span 的 traceparent 写到 nats.Header；(2) ExtractTraceContext 拿 header 起 child span，TraceID 同源；(3) 空 header 退化成新 root；(4) 畸形 'traceparent' 不 panic 同样退化成新 root；(5) natsHeaderCarrier 的 Get/Set/Keys round-trip；(6) end-to-end：HTTP root → funnel.publish → funnel.consume 三个 span 共享同一 TraceID 且 consume.Parent.SpanID == publish.SpanID。第一次跑 build fail（InjectTraceContext / ExtractTraceContext / natsHeaderCarrier 不存在）— Red。
+- **Green:** 新增 pkg/funnel/tracing.go（46 行有效代码）：natsHeaderCarrier = nats.Header alias，实现 TextMapCarrier 三方法；InjectTraceContext / ExtractTraceContext 复用 `otel.GetTextMapPropagator()`（pkg/tracing.Init 已经装好 W3C TraceContext + Baggage 复合 propagator）；packet-internal 'funnel.publish' / 'funnel.consume' 两个常量 span name。
+- **Publisher 接入:** pkg/funnel/publisher.go 引入 `PublishContext(ctx, batch)` 新方法，老 `Publish(batch)` 改成 `return p.PublishContext(context.Background(), batch)`。在 PublishMsg 之前 `otel.Tracer(tracerName).Start(ctx, "funnel.publish", trace.WithSpanKind(trace.SpanKindProducer), attribute.String("funnel.subject"/.ontology, ...), attribute.Int("funnel.batch_size", N))`，然后 InjectTraceContext(ctx, msg.Header)。NATS PublishMsg 报错时 RecordError + SetStatus(Error)；成功后 SetAttributes(funnel.stream_seq)。tracerName 常量 = "github.com/liyang/weave/pkg/funnel"。
+- **Consumer 接入:** pkg/funnel/consumer.go handleMessage：在做 unmarshal 之前 `traceCtx := ExtractTraceContext(context.Background(), msg.Header)` + 起 'funnel.consume' span（SpanKindConsumer，attrs: subject + stream_seq + num_delivered）。applyBatchWithHistory 改成接 traceCtx 而不是 context.Background()，让 oms / bleve 调用如果将来加 span 也能挂在这条链上。defer span.End() 收口。
+- **既有 API 影响:** Publish(batch) 签名零变化（既有调用方都不受影响）。PublishContext 是新增公开方法，cmd/server / pkg/actions 后续可以渐进切换。
+- **Files changed:**
+  - pkg/funnel/tracing.go (new, 70 lines)
+  - pkg/funnel/tracing_us306_test.go (new, 6 BDD cases)
+  - pkg/funnel/publisher.go (+50 lines: PublishContext + imports)
+  - pkg/funnel/consumer.go (+15 lines: span around handleMessage)
+- **Quality gates (all green):**
+  - `go test ./pkg/funnel/... -count=1` — 全包绿（含既有 funnel_test / consumer_*_test / marking_propagation_test / dlq_test 等约 80+ 个用例 + 6 个新 US306）
+  - `go vet ./...` — clean
+  - `go build ./...` — clean
+- **Learnings for future iterations:**
+  - 当一个底层包（publisher / consumer）已有 ctx-less 公开 API 时，先加 `XxxContext(ctx, ...)` 兄弟方法 + 让老方法 forward 到 `XxxContext(context.Background(), ...)`，是给 trace propagation 做迁移最低 churn 的模式（这里 Publish → PublishContext）。
+  - propagator 不要重复 install — pkg/tracing.Init 已经在 boot 时装好 W3C TraceContext + Baggage 复合 propagator；测试里要起隔离 provider，记得**同时**临时 SetTextMapPropagator 并在 t.Cleanup 里复原，否则 InMemoryExporter 内 traceparent 注入是空字符串。
+  - InjectTraceContext 必须在 funnel.publish span Start 之后调用，这样 consumer 拿到的 parent SpanID 是 publish span 而不是 publish span 的 parent（典型 off-by-one 错误）。
+  - span kind 在 trace UI 里是有视觉差异的：publisher 用 SpanKindProducer、consumer 用 SpanKindConsumer，Jaeger/Tempo 会把它们渲染成 messaging 时间轴。
+---
+
+## 2026-05-16 14:30 — OSV2-307 — MCP resources/list 暴露 ObjectType
+- **Red:** 写 pkg/mcp/resources_us307_test.go，6 个 BDD：(1) ontology 下两个 ObjectType -> resources/list 返回 weave://objecttype/demo/Order + weave://objecttype/demo/Customer + 既有 ontology URI 仍在 + 全列表 URI 升序；(2) resources/read 收到 weave://objecttype/demo/Order -> Text 含 apiName + primaryKey；(3) 未知 ObjectType -> -32602（CodeInvalidParams）+ 'object type' 字面量；(4) 未知 ontology on objecttype URI -> -32602；(5) URI 缺 type segment（'objecttype/demo'）-> -32602；(6) erroringRepo 在 ListObjectTypes 上返 boom -> -32603（CodeInternalError），不静默丢分片。第一次跑 4 fail / 2 pass（malformed URI 路径偶然命中既有 default -> CodeInvalidParams）— intended Red 已经覆盖。
+- **Green:** pkg/mcp/resources.go handleResourcesList 在 ontology loop 内部加 `s.oms.ListObjectTypes(ctx, o.RID)` 调用 + per-ObjectType append `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` 条目；ListObjectTypes 失败时直接 CodeInternalError 整体退（注释里说明 partial result 对 discovery endpoint 是更差的失败模式）。handleResourcesRead 加 `case "objecttype":` 用 strings.Cut(id, "/") 拆 ontologyApiName/objectTypeApiName，调新 helper readObjectType：先 GetOntology(ctx, ontologyApiName)，再 GetObjectTypeByAPIName(ctx, ontology.RID, otApiName)，json.MarshalIndent 后返字符串。任何 lookup 失败都返 CodeInvalidParams 并把 'object type' 字面量嵌进 message 里。
+- **doc 同步:** pkg/mcp/doc.go 第 21-23 行 resources/list 描述更新为 'list ontologies, ObjectTypes (one per ontology, OSV2-307), and temporary ObjectSets as MCP resources' + resources/read 描述加 'objecttype' 分支。
+- **Files changed:**
+  - pkg/mcp/resources.go (+45 lines: handleResourcesList 增 ObjectType 枝丫；handleResourcesRead case objecttype；新 helper readObjectType)
+  - pkg/mcp/resources_us307_test.go (new, 6 BDD cases + 一个 erroringRepo fake)
+  - pkg/mcp/doc.go (resources/list + resources/read 描述同步)
+- **Quality gates (all green):**
+  - `go test ./pkg/mcp/... -count=1` — 全包绿（既有 30+ 用例 + 6 新增）
+  - `go vet ./...` — clean
+- **Learnings for future iterations:**
+  - 当扩展 resources/list 之类 discovery 端点：partial result（"列出一半失败一半 ObjectType"）对 MCP 客户端是最差的失败模式，因为客户端 cache 后看不出缺东西。本次选择"任一 ListObjectTypes 失败就整体 -32603"是显式的"loud fail" 模式。
+  - resources/read 的 id 段允许带 `/`（既有 parseResourceURI 已经做了 IndexByte(rest,'/')）；新增 `objecttype` 时复用 strings.Cut 在 case 内部拆 sub-segment 即可，不动 parser。
+  - fake MCP fakeOmsRepo（pkg/mcp/tools_test.go:16-81）已支持 GetOntology(ctx, ridORapiName) 和 GetObjectTypeByAPIName(ctx, rid, apiName) 两条 lookup 路径；resources/read 的 objecttype 实现先按 apiName lookup ontology -> 拿 RID -> 再 lookup ObjectType，是测试 fake + 真 PG repo 都兼容的最短路径。
+  - MCP error code 的选择：发现类（list / read）的"找不到资源"用 CodeInvalidParams 而不是 CodeInternalError，跟既有 unknown-ontology 路径保持一致；CodeInternalError 留给上游真正 broken 的情况。
+---
+
+## 2026-05-16 14:50 — Round-final quality gate
+- `go vet ./...` — clean
+- `make test` — full Go suite green（含 chinook integration ~3min、e2e 17s、test/foundry_parity）
+- `make web-build` — green（vite production 3.7s，bundle 3.6MB；warning 关于 chunk size 是 pre-existing 的）
+- `make web-test` — 247 files / 2720 tests 全绿（35.77s）
+- 本轮四条 stories 全部 passes=true：OSV2-304 (c3ca59b) → OSV2-305 (f583194) → OSV2-306 (50674b5) → OSV2-307 (baf4811)
+- 没有 push（按用户指令）；本地 main 比 origin/main 领先 4 个 commits。
+---
+
+
+
+
+
