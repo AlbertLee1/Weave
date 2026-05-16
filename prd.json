@@ -507,8 +507,8 @@
         "Tests pass"
       ],
       "priority": 34,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "HMACStateSigner (pkg/auth/oidc_state.go) — 40-byte raw state (16B nonce | 8B unix-be timestamp | 16B truncated HMAC-SHA256 tag), base64url for URL transport. Verify gates: structural (len, base64), HMAC constant-time compare via subtle, 5min age window with separate ErrStateInvalid vs ErrStateExpired so SDKs can split forgery from timeout. OIDCHandler.Callback runs HMAC verify BEFORE cookie compare so a forged payload short-circuits without trusting any browser cookie; wire codes OIDCStateInvalid / OIDCStateExpired / OIDCStateMismatch are three distinct 401s. NewOIDCHandler auto-provisions an ephemeral signer when StateSigner is nil so unit tests / dev boot stay simple. cmd/server reads WEAVE_OIDC_STATE_SECRET (≥16 bytes) and falls back to a per-boot random secret with a loud WARN log. Refresh token rotation half: RefreshService.Rotate already does CAS revoke→Generate on every successful call (pre-existing US-058 + US-191 plumbing); US-492 adds a single test (TestUS492_RefreshToken_RotatesEachCall) to PRD-lock the invariant + 3 BDD scenarios end-to-end. Files: pkg/auth/oidc_state.go (new), pkg/auth/oidc_state_us492_test.go (new, 12 unit tests), pkg/auth/oidc_handler.go (StateSigner field + Verify-then-cookie order + mintState helper), pkg/auth/oidc_handler_us492_test.go (new, 5 handler-level scenarios), pkg/auth/oidc_handler_test.go (existing tests retargeted to signValidState helper), internal/config/config.go (StateSecret + WEAVE_OIDC_STATE_SECRET), cmd/server/main.go (HMACStateSigner wired + ephemeral fallback), cmd/server/oidc_state_us492_bdd_test.go (new, 3 BDD scenarios with real PG + chi router + oidctest IdP)."
     },
     {
       "id": "US-493",

@@ -2251,6 +2251,21 @@ func main() {
 				if deps.PGPool != nil {
 					markingRepo = auth.NewPGMarkingRepository(deps.PGPool)
 				}
+				// US-492: HMAC-signed state. Prefer WEAVE_OIDC_STATE_SECRET;
+				// fall back to an ephemeral random secret so dev boots still
+				// work but loudly warn so operators set the env var in prod.
+				stateSecretBytes := []byte(cfg.OIDC.StateSecret)
+				if len(stateSecretBytes) < 16 {
+					ephemeral := make([]byte, 32)
+					if _, err := rand.Read(ephemeral); err == nil {
+						stateSecretBytes = ephemeral
+						log.Printf("[OIDC] WARNING: WEAVE_OIDC_STATE_SECRET unset or <16 bytes; ephemeral state HMAC secret generated — restarts invalidate in-flight redirects")
+					}
+				}
+				oidcStateSigner, err := auth.NewHMACStateSigner(stateSecretBytes, auth.DefaultStateTTL)
+				if err != nil {
+					log.Printf("[OIDC] WARNING: HMACStateSigner construction failed: %v — falling back to random state", err)
+				}
 				deps.OIDCHandler = auth.NewOIDCHandler(auth.OIDCHandlerDeps{
 					Config: auth.OIDCConfig{
 						IssuerURL:          cfg.OIDC.IssuerURL,
@@ -2267,6 +2282,7 @@ func main() {
 					Signer:         deps.JWTSigner,
 					RefreshService: deps.RefreshService,
 					MarkingRepo:    markingRepo,
+					StateSigner:    oidcStateSigner,
 				})
 				// US-255: back-channel logout reuses the same Verifier
 				// so IdP key rotations apply to both surfaces in lockstep.

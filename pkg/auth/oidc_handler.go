@@ -94,6 +94,14 @@ type OIDCHandlerDeps struct {
 	Signer         *JWTSigner
 	RefreshService *RefreshService
 	MarkingRepo    MarkingRepository
+	// StateSigner mints HMAC-signed state values with a 5-minute window
+	// (US-492). When nil, NewOIDCHandler auto-provisions an ephemeral signer
+	// with a freshly random secret so tests don't have to wire one — but the
+	// server-bound instance loses validity across restarts (any in-flight
+	// state survives by being stored only client-side). Production callers
+	// MUST inject a stable shared signer; cmd/server does so from
+	// WEAVE_OIDC_STATE_SECRET.
+	StateSigner *HMACStateSigner
 	// Now returns the current time; defaults to time.Now. Injectable for
 	// deterministic state-cookie expiry in tests.
 	Now func() time.Time
@@ -123,6 +131,17 @@ func NewOIDCHandler(deps OIDCHandlerDeps) *OIDCHandler {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
+	if deps.StateSigner == nil {
+		// Ephemeral fallback so unit tests / dev boots don't have to wire a
+		// secret. Restarts invalidate any in-flight state; cmd/server logs a
+		// loud warning when this branch is hit so operators notice.
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err == nil {
+			if s, sErr := NewHMACStateSigner(secret, DefaultStateTTL); sErr == nil {
+				deps.StateSigner = s
+			}
+		}
+	}
 	return &OIDCHandler{deps: deps}
 }
 
@@ -145,7 +164,7 @@ func (h *OIDCHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	state, err := newRandomState()
+	state, err := h.mintState()
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("OIDCStateFailed", map[string]string{
 			"reason": err.Error(),
@@ -190,8 +209,32 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := r.URL.Query().Get("state")
+	// US-492: HMAC + 5min window verification BEFORE cookie comparison so a
+	// tampered or expired state short-circuits without trusting any
+	// browser-bound cookie. The cookie comparison stays on as defense in
+	// depth (binds the callback to the originating browser session).
+	if state == "" {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("OIDCStateInvalid", map[string]string{
+			"reason": "state query parameter is required",
+		}))
+		return
+	}
+	if h.deps.StateSigner != nil {
+		switch err := h.deps.StateSigner.Verify(state); {
+		case errors.Is(err, ErrStateExpired):
+			apierror.WriteJSON(w, apierror.NewUnauthorized("OIDCStateExpired", map[string]string{
+				"reason": "state is older than the allowed 5-minute window",
+			}))
+			return
+		case err != nil:
+			apierror.WriteJSON(w, apierror.NewUnauthorized("OIDCStateInvalid", map[string]string{
+				"reason": "state HMAC verification failed",
+			}))
+			return
+		}
+	}
 	cookie, err := r.Cookie(stateCookieName)
-	if err != nil || cookie.Value == "" || state == "" || cookie.Value != state {
+	if err != nil || cookie.Value == "" || cookie.Value != state {
 		apierror.WriteJSON(w, apierror.NewUnauthorized("OIDCStateMismatch", map[string]string{
 			"reason": "state query parameter does not match session cookie",
 		}))
@@ -349,8 +392,21 @@ func (h *OIDCHandler) issueSession(ctx context.Context, user *UserRecord) (*Logi
 	}, nil
 }
 
+// mintState returns the value to embed in the authorize URL + state cookie.
+// US-492 prefers an HMAC-signed (nonce|timestamp) blob over a plain random
+// string so the callback can reject tampered / expired states without
+// trusting any server-side cookie. Falls back to a random 32-byte token in
+// case the signer is unavailable (degraded boot).
+func (h *OIDCHandler) mintState() (string, error) {
+	if h.deps.StateSigner != nil {
+		return h.deps.StateSigner.Sign(h.deps.Now())
+	}
+	return newRandomState()
+}
+
 // newRandomState returns a URL-safe random string suitable for use as an
-// OAuth2 state/nonce. 32 bytes = 256 bits of entropy.
+// OAuth2 state/nonce. 32 bytes = 256 bits of entropy. Retained as the
+// degraded-mode fallback when no HMAC signer is wired.
 func newRandomState() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {

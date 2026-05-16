@@ -128,6 +128,14 @@ func newOIDCHarness(t *testing.T, claims map[string]interface{}) (*OIDCHandler, 
 		idToken: rawIDToken,
 	}
 
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	stateSigner, err := NewHMACStateSigner(secret, DefaultStateTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := NewOIDCHandler(OIDCHandlerDeps{
 		Config: OIDCConfig{
 			IssuerURL:    httpSrv.URL,
@@ -141,8 +149,21 @@ func newOIDCHarness(t *testing.T, claims map[string]interface{}) (*OIDCHandler, 
 		Resolver:       resolver,
 		Signer:         signer,
 		RefreshService: rs,
+		StateSigner:    stateSigner,
 	})
 	return h, exchanger, repo
+}
+
+// signValidState mints an HMAC-signed state that the harness's signer will
+// accept. Existing pre-US-492 tests called this implicitly via a hardcoded
+// random string; now they must round-trip through the real signer.
+func (h *OIDCHandler) signValidState(t *testing.T) string {
+	t.Helper()
+	state, err := h.deps.StateSigner.Sign(h.deps.Now())
+	if err != nil {
+		t.Fatalf("sign state: %v", err)
+	}
+	return state
 }
 
 func goodClaims() map[string]interface{} {
@@ -210,7 +231,7 @@ func TestOIDCHandler_Login_RejectsNonGET(t *testing.T) {
 func TestOIDCHandler_Callback_HappyPath(t *testing.T) {
 	h, exchanger, repo := newOIDCHarness(t, goodClaims())
 
-	state := "test-state-xyz"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -249,8 +270,16 @@ func TestOIDCHandler_Callback_HappyPath(t *testing.T) {
 func TestOIDCHandler_Callback_RejectsStateMismatch(t *testing.T) {
 	h, _, _ := newOIDCHarness(t, goodClaims())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state=query-state", nil)
-	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: "different-state"})
+	// Both states are HMAC-valid (so we get past US-492's HMAC gate) but the
+	// cookie value differs from the query — the legacy CSRF cookie-binding
+	// defense must still trip in that case.
+	queryState := h.signValidState(t)
+	cookieState := h.signValidState(t)
+	if queryState == cookieState {
+		t.Fatal("nonces collided — test setup broken")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+queryState, nil)
+	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: cookieState})
 	rec := httptest.NewRecorder()
 	h.Callback(rec, req)
 
@@ -265,7 +294,11 @@ func TestOIDCHandler_Callback_RejectsStateMismatch(t *testing.T) {
 func TestOIDCHandler_Callback_MissingStateCookie(t *testing.T) {
 	h, _, _ := newOIDCHarness(t, goodClaims())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state=anything", nil)
+	// Use an HMAC-valid state so the request gets past the US-492 verify
+	// gate; with no cookie at all, the cookie-binding defense must still
+	// reject the callback.
+	state := h.signValidState(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	rec := httptest.NewRecorder()
 	h.Callback(rec, req)
 
@@ -277,7 +310,7 @@ func TestOIDCHandler_Callback_MissingStateCookie(t *testing.T) {
 func TestOIDCHandler_Callback_MissingCode(t *testing.T) {
 	h, _, _ := newOIDCHarness(t, goodClaims())
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -293,7 +326,7 @@ func TestOIDCHandler_Callback_MissingCode(t *testing.T) {
 func TestOIDCHandler_Callback_SurfacesProviderError(t *testing.T) {
 	h, _, _ := newOIDCHarness(t, goodClaims())
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?error=access_denied&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -310,7 +343,7 @@ func TestOIDCHandler_Callback_ExchangeFailure(t *testing.T) {
 	h, exch, _ := newOIDCHarness(t, goodClaims())
 	exch.err = errors.New("token endpoint unreachable")
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -330,7 +363,7 @@ func TestOIDCHandler_Callback_InvalidIDToken(t *testing.T) {
 	badClaims["iss"] = "https://wrong-issuer.example.com"
 	h, _, _ := newOIDCHarness(t, badClaims)
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -348,7 +381,7 @@ func TestOIDCHandler_Callback_RejectsMissingEmailClaim(t *testing.T) {
 	delete(claims, "email")
 	h, _, _ := newOIDCHarness(t, claims)
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -368,7 +401,7 @@ func TestOIDCHandler_Callback_ExistingUserKeepsPassword(t *testing.T) {
 	// NOT overwrite password_hash.
 	seedUser(t, repo, "user:alice@example.com", "alice@example.com", "letmein123!", "Old Name", "editor")
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
@@ -392,7 +425,7 @@ func TestOIDCHandler_Callback_SuccessRedirectURL(t *testing.T) {
 	h, _, _ := newOIDCHarness(t, goodClaims())
 	h.deps.Config.SuccessRedirectURL = "https://weave.example.com/sso-done"
 
-	state := "s"
+	state := h.signValidState(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: stateCookieName, Value: state})
 	rec := httptest.NewRecorder()
