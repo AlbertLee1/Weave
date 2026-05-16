@@ -72,11 +72,15 @@ func (a AppliesTo) IsApplicable(user *auth.User, userGroups []string) bool {
 
 // RowPolicy is one row of the row_policies table. Predicate is a
 // pkg/oss/where.WhereClause serialised as JSON; callers that need a typed
-// view can json.Unmarshal the field.
+// view can json.Unmarshal the field. CELExpression is the US-487
+// alternative predicate shape — a CEL expression accessing the user.*
+// and object.* bindings. Exactly one of Predicate / CELExpression must
+// be populated.
 type RowPolicy struct {
 	RID           string          `json:"rid"`
 	ObjectTypeRID string          `json:"objectTypeRid"`
-	Predicate     json.RawMessage `json:"predicate"`
+	Predicate     json.RawMessage `json:"predicate,omitempty"`
+	CELExpression string          `json:"celExpression,omitempty"`
 	AppliesTo     AppliesTo       `json:"appliesTo"`
 	Description   string          `json:"description,omitempty"`
 	CreatedBy     string          `json:"createdBy,omitempty"`
@@ -84,9 +88,21 @@ type RowPolicy struct {
 	UpdatedAt     time.Time       `json:"updatedAt,omitempty"`
 }
 
+// HasCEL reports whether this policy carries a US-487 CEL expression
+// gate (vs the legacy WhereClause predicate). Used by the engine to
+// route the policy into the CEL post-filter lane.
+func (p *RowPolicy) HasCEL() bool {
+	if p == nil {
+		return false
+	}
+	return strings.TrimSpace(p.CELExpression) != ""
+}
+
 // Validate enforces required fields. Shape of the predicate is not checked
 // here — the policy engine's Compile step runs it through
 // where.ConvertToBleveQuery which rejects unknown / malformed clauses.
+// For CEL-shaped policies, syntactic validation happens at Engine.Reload
+// (via pkg/cel.Compile) so the error message can name the offending RID.
 func (p *RowPolicy) Validate() error {
 	if p == nil {
 		return ErrObjectTypeRIDRequired
@@ -94,16 +110,21 @@ func (p *RowPolicy) Validate() error {
 	if strings.TrimSpace(p.ObjectTypeRID) == "" {
 		return ErrObjectTypeRIDRequired
 	}
-	if len(p.Predicate) == 0 || string(p.Predicate) == "null" {
+	hasPred := len(p.Predicate) > 0 && string(p.Predicate) != "null"
+	hasCEL := p.HasCEL()
+	if !hasPred && !hasCEL {
 		return ErrPredicateRequired
 	}
 	return nil
 }
 
 // RowPolicyUpdate is the PATCH shape for mutable fields. All pointer-typed
-// so omit is distinguishable from explicit clear.
+// so omit is distinguishable from explicit clear. CELExpression added in
+// US-487 follows the same pointer convention — pass a pointer to "" to
+// drop the CEL gate, or omit to leave the existing value untouched.
 type RowPolicyUpdate struct {
-	Predicate   *json.RawMessage `json:"predicate,omitempty"`
-	AppliesTo   *AppliesTo       `json:"appliesTo,omitempty"`
-	Description *string          `json:"description,omitempty"`
+	Predicate     *json.RawMessage `json:"predicate,omitempty"`
+	CELExpression *string          `json:"celExpression,omitempty"`
+	AppliesTo     *AppliesTo       `json:"appliesTo,omitempty"`
+	Description   *string          `json:"description,omitempty"`
 }

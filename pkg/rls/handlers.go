@@ -15,10 +15,14 @@ import (
 	"github.com/liyang/weave/pkg/rid"
 )
 
-// CreateRequest is the POST body for /api/admin/row-policies.
+// CreateRequest is the POST body for /api/admin/row-policies. Either
+// Predicate (legacy WhereClause) or CELExpression (US-487 CEL gate) must
+// be supplied; both populated is allowed but the CEL gate is enforced as
+// a strict additional filter on top of the predicate.
 type CreateRequest struct {
 	ObjectTypeRID string          `json:"objectTypeRid"`
-	Predicate     json.RawMessage `json:"predicate"`
+	Predicate     json.RawMessage `json:"predicate,omitempty"`
+	CELExpression string          `json:"celExpression,omitempty"`
 	AppliesTo     AppliesTo       `json:"appliesTo"`
 	Description   string          `json:"description,omitempty"`
 }
@@ -71,6 +75,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		RID:           rid.New("rls", "main", "row-policy"),
 		ObjectTypeRID: req.ObjectTypeRID,
 		Predicate:     req.Predicate,
+		CELExpression: strings.TrimSpace(req.CELExpression),
 		AppliesTo:     req.AppliesTo,
 		Description:   strings.TrimSpace(req.Description),
 		CreatedBy:     u.ID,
@@ -80,6 +85,17 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			"reason": err.Error(),
 		}))
 		return
+	}
+	// US-487: reject invalid CEL up front (size / type / parse). The
+	// engine also rejects on Reload, but failing fast at admin-create
+	// gives the operator a clean 400 instead of a silent broken policy.
+	if p.HasCEL() {
+		if err := validateCELExpression(p.CELExpression); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRowPolicyCEL", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
 	}
 	if err := h.store.Create(r.Context(), p); err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("RowPolicyCreateFailed", map[string]string{
@@ -180,6 +196,19 @@ func (h *Handler) updateFor(w http.ResponseWriter, r *http.Request, ridStr strin
 		}))
 		return
 	}
+	if upd.CELExpression != nil {
+		expr := strings.TrimSpace(*upd.CELExpression)
+		if expr != "" {
+			if err := validateCELExpression(expr); err != nil {
+				apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRowPolicyCEL", map[string]string{
+					"reason": err.Error(),
+				}))
+				return
+			}
+		}
+		// Re-bind to the trimmed value so storage never holds whitespace.
+		upd.CELExpression = &expr
+	}
 	p, err := h.store.Update(r.Context(), ridStr, upd)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -243,6 +272,17 @@ func (h *Handler) refreshEngine(ctx context.Context) {
 		return
 	}
 	_ = h.engine.Reload(ctx)
+}
+
+// validateCELExpression is the admin-create / admin-update CEL gatekeeper.
+// Wraps pkg/cel.Validate so the handler can stay free of the package import
+// cycle risk (handlers → cel → ...). Empty string is treated as "no CEL
+// gate" and accepted; the caller is expected to TrimSpace beforehand.
+func validateCELExpression(expression string) error {
+	if expression == "" {
+		return nil
+	}
+	return celValidate(expression)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

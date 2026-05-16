@@ -96,6 +96,9 @@ func (m *MemoryStore) Update(_ context.Context, rid string, upd RowPolicyUpdate)
 	if upd.Predicate != nil {
 		p.Predicate = *upd.Predicate
 	}
+	if upd.CELExpression != nil {
+		p.CELExpression = *upd.CELExpression
+	}
 	if upd.AppliesTo != nil {
 		p.AppliesTo = *upd.AppliesTo
 	}

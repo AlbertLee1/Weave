@@ -195,6 +195,50 @@ func (s *ServiceImpl) applyPolicyFilter(ctx context.Context, ontologyRID, object
 	return s.policyFilter.FilterObjects(ctx, user, ontologyRID, objectTypeAPIName, objs)
 }
 
+// applyRowPolicyCEL enforces US-487 row-level CEL gates as a per-row
+// post-filter. Skipped (returns input unchanged) when:
+//
+//   - the rowPolicyEngine is not wired (degraded mode),
+//   - the input slice is empty,
+//   - no CEL policy is registered for this ObjectType.
+//
+// Otherwise each candidate WireObject is run through
+// Engine.EvaluateRowCEL with the caller's user binding and the object's
+// Properties map. Any policy that rejects the row drops it from the
+// output; any runtime error in policy evaluation also drops the row
+// (fail-closed) so a broken CEL never silently leaks data.
+//
+// Call order: downstream of applyMarkingFilter (markings already
+// scrubbed the obvious denies) and upstream of applyPropertyVisibility
+// so column masks operate on the post-CEL survivors only.
+func (s *ServiceImpl) applyRowPolicyCEL(ctx context.Context, ot *oms.ObjectType, objs []*WireObject) ([]*WireObject, error) {
+	if s.rowPolicyEngine == nil || ot == nil || len(objs) == 0 {
+		return objs, nil
+	}
+	if !s.rowPolicyEngine.HasCELForObjectType(ot.RID) {
+		return objs, nil
+	}
+	user := auth.UserFromContext(ctx)
+	out := make([]*WireObject, 0, len(objs))
+	for _, obj := range objs {
+		if obj == nil {
+			continue
+		}
+		ok, err := s.rowPolicyEngine.EvaluateRowCEL(ctx, user, ot.RID, obj.Properties)
+		if err != nil {
+			// Fail-closed: skip the row but do not abort the whole page —
+			// one broken policy / one missing field on one row should
+			// not nuke the entire list response.
+			continue
+		}
+		if !ok {
+			continue
+		}
+		out = append(out, obj)
+	}
+	return out, nil
+}
+
 // applyMarkingFilter enforces US-052 Foundry-style mandatory access control
 // (subset / AND semantics) as a post-Bleve verification pass. The policy
 // engine's auto-marking clause (US-051) compiles to a should-terms
@@ -452,6 +496,13 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 		// Policy denied: hide existence with ErrNotFound rather than 403.
 		return nil, oms.ErrNotFound
 	}
+	filtered, err = s.applyRowPolicyCEL(ctx, ot, filtered)
+	if err != nil {
+		return nil, err
+	}
+	if len(filtered) == 0 {
+		return nil, oms.ErrNotFound
+	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
 	filtered = s.applyCellMasking(ctx, ot, filtered)
@@ -523,6 +574,10 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		return nil, err
 	}
 	filtered = s.applyMarkingFilter(ctx, ot, filtered)
+	filtered, err = s.applyRowPolicyCEL(ctx, ot, filtered)
+	if err != nil {
+		return nil, err
+	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
 	page.Data = s.applyCellMasking(ctx, ot, filtered)
@@ -690,6 +745,10 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		return nil, err
 	}
 	filtered = s.applyMarkingFilter(ctx, ot, filtered)
+	filtered, err = s.applyRowPolicyCEL(ctx, ot, filtered)
+	if err != nil {
+		return nil, err
+	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
 	page.Data = s.applyCellMasking(ctx, ot, filtered)
@@ -953,6 +1012,10 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 		return nil, err
 	}
 	filtered = s.applyMarkingFilter(ctx, targetOT, filtered)
+	filtered, err = s.applyRowPolicyCEL(ctx, targetOT, filtered)
+	if err != nil {
+		return nil, err
+	}
 	filtered = s.applyPropertyVisibility(ctx, targetOT, filtered)
 	filtered = s.applyColumnMasking(ctx, targetOT, filtered)
 	page.Data = s.applyCellMasking(ctx, targetOT, filtered)
