@@ -13,9 +13,14 @@ import (
 )
 
 // Config holds configuration for the Goja runtime sandbox.
+//
+// MaxCallStackSize caps recursion depth (US-476). Zero falls back to
+// defaultMaxCallStackSize so legacy Config literals built before US-476
+// still get stack protection.
 type Config struct {
 	MaxExecutionTime time.Duration
 	MaxMemoryBytes   int64
+	MaxCallStackSize int
 }
 
 // DefaultConfig returns the production defaults required by US-218: a 5s
@@ -23,10 +28,27 @@ type Config struct {
 // inside Execute — the context deadline drives goja's Interrupt watchdog,
 // and a companion goroutine polls runtime.MemStats.HeapAlloc against a
 // baseline snapshot captured before execution.
+//
+// US-476 added MaxCallStackSize to the struct; DefaultConfig keeps it at
+// the historical 1024 so existing wiring is numerically unchanged.
 func DefaultConfig() Config {
 	return Config{
 		MaxExecutionTime: 5 * time.Second,
 		MaxMemoryBytes:   128 * 1024 * 1024,
+		MaxCallStackSize: defaultMaxCallStackSize,
+	}
+}
+
+// RestrictedConfig returns the security-engineer-facing locked-down
+// profile required by US-476: 1s CPU budget, 100MB heap, 8 levels of
+// recursion. The numbers are the PRD literal; callers who want maximum
+// safety opt-in by constructing the runtime with this config instead of
+// DefaultConfig.
+func RestrictedConfig() Config {
+	return Config{
+		MaxExecutionTime: 1 * time.Second,
+		MaxMemoryBytes:   100 * 1024 * 1024,
+		MaxCallStackSize: 8,
 	}
 }
 
@@ -39,8 +61,11 @@ const (
 	interruptReasonMemory  = "function.memory"
 )
 
-// maxCallStackSize caps recursion depth to prevent stack overflow.
-const maxCallStackSize = 1024
+// defaultMaxCallStackSize is the fallback recursion cap used when a Config
+// literal leaves MaxCallStackSize at zero. Production callers that want a
+// tighter quota set Config.MaxCallStackSize explicitly (see RestrictedConfig
+// for the US-476 8-level profile).
+const defaultMaxCallStackSize = 1024
 
 // memCheckInterval is how often the memory watchdog polls heap usage.
 const memCheckInterval = 50 * time.Millisecond
@@ -68,7 +93,13 @@ func (r *Runtime) Execute(ctx context.Context, source string, input interface{})
 	vm := goja.New()
 
 	// Sandbox: limit call stack depth to prevent runaway recursion.
-	vm.SetMaxCallStackSize(maxCallStackSize)
+	// MaxCallStackSize=0 (legacy Config literals or zero-value) falls back
+	// to the package default so callers never accidentally uncap the stack.
+	stackSize := r.config.MaxCallStackSize
+	if stackSize <= 0 {
+		stackSize = defaultMaxCallStackSize
+	}
+	vm.SetMaxCallStackSize(stackSize)
 
 	// Sandbox: explicitly remove dangerous globals.
 	dangerousGlobals := []string{
