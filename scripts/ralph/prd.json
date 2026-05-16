@@ -90,8 +90,8 @@
         "Tests pass"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "US-366 already supplied executor.go cycle-detection (visited set seeded with source PKs + cross-hop prune) and a 10K/3-hop benchmark inside pkg/oss/objectset/searcharound_us366_test.go::BenchmarkExecute_SearchAround_Path_ThreeHops_10K. US-464 hardens coverage to the PRD literal: pkg/oss/objectset/searcharound_us464_test.go adds five table-driven cases — single-hop wide diamond (3 nodes→1 sink), 2-hop diamond (1 root → 2 mids → 1 sink), reflexive self-loop on the seed, downstream self-loop reached after hop 1, and a triangle with PK-dedup invariant via hasDuplicateStrings. The bench/ side gets a hard latency gate: bench/searcharound_us464_bench_test.go::TestSearchAround_ThreeHops_10K_US464_P99WithinBudget samples 25 Execute calls over a deterministic e0..e9999→d0..d199→p0..p49→c0..c4 fanout (shrinking cardinality so dedupeStrings fires each hop) and fails if P99 > 200ms — recorded P99 ≈ 3.5ms / BenchmarkSearchAround_ThreeHops_10K_US464 ≈ 3 ms/op on Apple M3 Max, leaving ~60× headroom. baseline.json untouched (the 200ms budget is the contract, not a 20% regression delta)."
     },
     {
       "id": "US-465",

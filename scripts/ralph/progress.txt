@@ -15,6 +15,8 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
 - OpenAPI 双写规约：`api/openapi.yaml` 是 canonical 源，`cmd/server/openapi_spec.yaml` 是 //go:embed 的复刻，两份必须 byte-identical（TestContract_EmbeddedSpecMatchesCanonical 守门）。改完 canonical 后用 `cp api/openapi.yaml cmd/server/openapi_spec.yaml` 同步，否则 contract 测试当场红。Route ↔ spec 的覆盖率由 TestContract_AllRoutesDocumented / TestContract_NoOrphanedSpecPaths 双向校验，新增 admin 路由必须同时落 spec。
 - Reaper loop 套路：method-bound `Store.RunReaperLoop` 单元测不动（要 PG container），所以约定把驱动逻辑抽成 `RunXxxReaperLoop(ctx, reaper XxxReaper, interval, ttl, onReap, onError)` 自由函数 + `XxxReaper` 最小接口（只暴露 `ReapExpired(ctx, ttl) (int64, error)`），具体 store 满足接口；method 版退化为 thin shim。参考 `pkg/oss/objectset.RunSavedSetReaperLoop`（US-462）与 `pkg/actions.RunActionJobReaperLoop`（US-426）。boot 时机：`deps.ObjSetStore` / store 构造完之后立刻 `go ...Loop(ctx, store, interval, ttl, log, log)`，degraded mode（无 PG）天然 no-op。新增 reaper 别再造 method-only 版。
 - 多类型 composite-cursor 测试套路：除了 no-miss/no-dupe，必带四条断言——`(apiName, pk)` tuple 去重（PK 跨类型可撞）、全局 flat PK 严格单调递增（heap-merge 自检）、emit token 里没有 `IsExhausted()` 的 SubCursor、用保存的 mid-walk token 发**新一次 http request** 比对续后行（"真正可序列化 resume" vs "in-process bookkeeping"）。`pagination.CompositeCursor` 因为 SortKey.Value 是 `any` 不可 `==` 比较，deep-equal 要逐字段 + 逐 SortKey。参考 `pkg/oss/objectset/us463_interface_cursor_stability_test.go`。
+- bench/ 是 cross-subsystem 性能 regression 套件（US-441 起 8 条；coverage_test.go 守门只校验 8 个 US-441 名字，新加 bench **不**需要同步 baseline.json，但放进 bench/ 是为了和别的 latency 契约同居）。**硬 latency 预算** story（PRD 写 "P99 < Xms"）的标准做法：bench 函数 + 同文件 TestXxx_P99WithinBudget，用 `measureP99`-shaped 25 次采样 + sort + index = `int(float64(iters)*0.99)-1` 取分位（iters 必须运行期 int，否则 const arithmetic 在 vet 上爆 "cannot convert 24.75 to int"）。参考 `bench/vertex/scenario_overlay_bench_test.go` 与 `bench/searcharound_us464_bench_test.go`（US-464）。
+- searchAround cycle prune 不变量：`visited` 集合在 hop 0 就被 source PKs 预填，所以 self-loop (A→A 的 seed 自身) 和 closed triangle (A→B→C→A) 都会回到空集；fan-in 场景（A,B,C→D）由 dedupeStrings 在 hop 后做集合化；fan-in + 后续 hop 的 diamond (A→{B1,B2}→D) 同样靠 dedupeStrings 收口。修 executor cycle 逻辑前先在 `pkg/oss/objectset/searcharound_us464_test.go` + `searcharound_us366_test.go` 上跑一遍——这两份覆盖了 diamond / self-loop / triangle / direct-loop / fresh-node / too-large 6 类形状。
 
 ## Progress
 
@@ -104,4 +106,26 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - `pagination.SortKey.Value` 是 `any`，所以 `CompositeCursor` 这个结构体本身**不可比较**——任何 `==`/`!=` 触发的对比都会触发 `cannot be compared` 编译错误。要 deep-equal 两个 CompositeCursor，要么逐字段比 + 逐 SortKey 比，要么 `reflect.DeepEqual`。这条今天踩了一次，已经在 us463_interface_cursor_stability_test.go 里写成模式。
   - heap-merge 的"全局 flat PK 序列严格单调递增"是个非常便宜但价值很高的不变量断言——只要每个 per-type bucket 都按 ASC 排好，merge 算法对了它就一定成立。之前的测试都只断"no dupe / no miss"，没断 order；这次补上后能在 executor 里 sort 被误删 / heap-merge 算法写错（比如把 `<` 写成 `<=`）的 case 立刻爆。新写 heap-merge 类测试都建议带这个断言。
   - composite cursor 的"真正可序列化 resume"测试 = save token → 起**新一次 http request** → 比对续后行序列。如果只在同一 process 同一 handler 实例里 follow 链式 token，bookkeeping bug（比如 offset 写到了 handler.field 而不是 wire token 里）会被同 process 状态遮蔽。新一次请求才能暴露这种 bug。资源便宜（httptest 一次 round-trip）但语义价值很高。
+---
+
+## 2026-05-16 - US-464 (searchAround cycle 测试 + benchmark)
+- 现状盘点：US-366 已经在 executor.go 落地 cycle 检测（visited 集合以 source PKs 预填 + 跨 hop prune）和一个 10K/3-hop benchmark（pkg/oss/objectset/searcharound_us366_test.go::BenchmarkExecute_SearchAround_Path_ThreeHops_10K）。已有 cycle 测试覆盖：直接回环（A→B→A）、三角（A→B→C→A）、fresh-node 不误剪、过大中间集合 → ErrQueryTooLarge。**PRD 字面要求里缺**：diamond / 自环（self-loop）、bench/ 下的硬 latency 预算门（P99 < 200ms）。
+- 单测覆盖率硬化（5 新增 case，全跑首过即绿，定位为 coverage hardening 而非新代码）：
+  - `TestExecute_SearchAround_Path_Diamond_NoDuplicates` — 单跳 fan-in (3 nodes → 1 sink)；同时用 `hasDuplicateStrings` 锁住 "无重复 PK" 不变量，与长度断言正交。
+  - `TestExecute_SearchAround_Path_Diamond_TwoHop` — 两跳菱形 (1 root → 2 mids → 1 sink)，确认 hop 2 的 `dedupeStrings` 在 cycle prune 之前就收拢 d1。
+  - `TestExecute_SearchAround_Path_SelfLoop_Reflexive` — seed (a1) 上的反身链接 a1→a1；visited 预填后第一 hop 直接返回空集。
+  - `TestExecute_SearchAround_Path_SelfLoop_TwoHopDownstream` — 下游 hop 1 拿到 b1 后 b1→b1 也被 prune（visited 在 hop 1 中加 b1，hop 2 第一时间裁掉）。
+  - `TestExecute_SearchAround_Path_Triangle_NoDuplicates` — A→B→C→A，二维（PK + dedup）双断言，跟 US-366 的 Triangle 在同 shape 上多一层 dup 检查。
+- bench/ 硬预算门：`bench/searcharound_us464_bench_test.go`，`BenchmarkSearchAround_ThreeHops_10K_US464` + `TestSearchAround_ThreeHops_10K_US464_P99WithinBudget`。fixture 是 e0..e9999→d0..d199→p0..p49→c0..c4 的 shrinking-cardinality fanout（每跳 dedupeStrings 都会触发），ObjectSet 用 `static`（避开 Bleve query 噪音，把 200ms 预算花在 executor 上）；P99 用 25 次采样 + sort + `int(float64(iters)*0.99)-1` 取分位，超 200ms 即 fail。实测 P99 ≈ 3.5ms，BenchmarkSearchAround_ThreeHops_10K_US464 ≈ 3 ms/op (Apple M3 Max)。baseline.json 不动 —— 这条不进 8-子系统 regression suite，硬预算门 = 200ms，是契约不是 20% delta。
+- TDD 注脚：和 US-463 同形，US-364 cycle 检测已上线，单测只在写法上加 fan-in + 反身两个 shape，初次跑即绿；bench 也是初次跑即绿（远低于预算）。两份测试的价值是 PRD-spec 形状已被钉住，未来 executor 改 cycle / dedup 任一步就会爆。
+- Files changed:
+  - pkg/oss/objectset/searcharound_us464_test.go — 新建（5 测试 + hasDuplicateStrings helper）。
+  - bench/searcharound_us464_bench_test.go — 新建（1 benchmark + 1 P99 test gate + 共享 fixture + us464Resolver）。
+  - scripts/ralph/prd.json — US-464 passes=true + 实施摘要。
+  - scripts/ralph/progress.txt — 本条进展 + Codebase Patterns 新增 bench-pattern 行 + searchAround cycle-prune 不变量行。
+- **Learnings for future iterations:**
+  - bench/ 包是 cross-subsystem latency 契约的标准库；硬预算 story（PRD 写 "P99 < Xms"）应当在 bench/ 里同文件落 `BenchmarkXxx` + `TestXxx_P99WithinBudget`，pattern 复制自 `bench/vertex/scenario_overlay_bench_test.go::TestScenarioOverlay_Given_NEdits_When_Fold_Then_P99WithinBudget`。`coverage_test.go::TestBaselineCoversAllSubsystems` 只 enforce 8 个 US-441 名字，所以新 bench **不**需要触 baseline.json；如果以后想纳入 20%-regression 守门，再 `make bench-update` 一并写入。
+  - 算 P99 sample index：`int(float64(iters)*0.99)-1`，但 **iters 必须运行期 int**——写成 `const iters = 25` 在 go vet 里立刻爆 "cannot convert float64(iters) * 0.99 (constant 24.75 of type float64) to type int"（const arithmetic 不允许有损 float→int 转换）。把它从 const 降级为 `iters := 25` 即可通过。这条今天踩了一次，已经在 us464 bench 上写成模式。
+  - searchAround cycle prune 的"visited 预填 seed"语义：测自环 (a1→a1) 不需要 graph 上真的有 reflexive 边——visited 在 hop 0 就被 source PKs 填满，所以**任何**回到 seed 的边都会被裁掉。同理 closed triangle (A→B→C→A) 总是回空集。fan-in (3→1) 形状要看的不是 cycle prune 而是 `dedupeStrings`（在每个 hop 末尾跑），所以测试名要么写 `_NoDuplicates` 要么 `_Diamond` 不要混为 `_CycleDetection`。US-464 五个 case 把这两条机制拆开测了。
+  - 已实现 story 的 "coverage hardening" 模式（US-463/464 都是这样）已经成了节奏：找到 PRD 字面 acceptance 没被显式钉成测试的 invariant → 写下来 → 在 prd.json notes 里讲清楚这是 hardening 不是新代码。这种 story 的提交往往很小（两个 test 文件 + prd.json），但护栏价值高——下次 cycle/dedup/sort 代码被改坏时，红是这条测试爆，不是用户在 bench 里发现 P99 飙到 10s。
 ---
