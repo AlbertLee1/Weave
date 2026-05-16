@@ -12,6 +12,45 @@ import (
 	"time"
 )
 
+// BridgeOption mutates a bridgeOptions value before the bridge starts. It
+// is the OSV2-305 extension point that lets the caller add per-request
+// headers (Authorization, X-Weave-API-Key) without changing the bridge's
+// existing four-argument signature — older callers like the OSV2-303 tests
+// (RunHTTPBridge(ctx, in, out, url)) keep working unchanged.
+type BridgeOption func(*bridgeOptions)
+
+// bridgeOptions collects the auth header (if any) the bridge should attach
+// to every upstream request. Token wins over API key when both are set.
+type bridgeOptions struct {
+	authHeader string // e.g. "Authorization" or "X-Weave-API-Key"
+	authValue  string // e.g. "Bearer xyz..." or "wvk_..."
+}
+
+// WithBearerToken makes the bridge send Authorization: Bearer <token> on
+// every upstream request. An empty token is a no-op (the bridge sends no
+// auth at all).
+func WithBearerToken(token string) BridgeOption {
+	return func(o *bridgeOptions) {
+		if token == "" {
+			return
+		}
+		o.authHeader = "Authorization"
+		o.authValue = "Bearer " + token
+	}
+}
+
+// WithAPIKey makes the bridge send X-Weave-API-Key: <key> on every upstream
+// request. Ignored when a bearer token is already set (token wins).
+func WithAPIKey(key string) BridgeOption {
+	return func(o *bridgeOptions) {
+		if key == "" || o.authHeader == "Authorization" {
+			return
+		}
+		o.authHeader = "X-Weave-API-Key"
+		o.authValue = key
+	}
+}
+
 // RunHTTPBridge pumps newline-delimited JSON-RPC 2.0 requests from `in` to
 // the cmd/server `POST /mcp` endpoint at `url` and writes each verbatim
 // response back on `out` as a single line. This is what makes weave-mcp
@@ -28,10 +67,17 @@ import (
 //     nil) — instead a JSON-RPC error response is written to `out`, with the
 //     original request id echoed back so the stdio peer can correlate.
 //   - The loop exits cleanly on EOF or input scanner error.
+//   - When the operator supplies a BridgeOption that sets an auth header
+//     (WithBearerToken / WithAPIKey), every upstream POST carries the
+//     resolved header.
 //
 // The bridge stays in `package main` of cmd/weave-mcp so it is not part of
 // the public pkg/mcp API surface — it's a transport-edge concern.
-func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string) error {
+func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string, opts ...BridgeOption) error {
+	cfg := bridgeOptions{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 
@@ -54,7 +100,7 @@ func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string)
 		_ = json.Unmarshal(line, &sniff)
 		isNotification := len(sniff.ID) == 0 || string(sniff.ID) == "null"
 
-		respBytes, fwdErr := forwardOnce(ctx, client, url, line)
+		respBytes, fwdErr := forwardOnce(ctx, client, url, line, cfg)
 		if fwdErr != nil {
 			if isNotification {
 				// Notifications never produce a response per JSON-RPC 2.0,
@@ -90,13 +136,16 @@ func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string)
 
 // forwardOnce POSTs a single JSON-RPC envelope to the upstream URL and
 // returns the verbatim response bytes on success.
-func forwardOnce(ctx context.Context, client *http.Client, url string, payload []byte) ([]byte, error) {
+func forwardOnce(ctx context.Context, client *http.Client, url string, payload []byte, cfg bridgeOptions) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if cfg.authHeader != "" && cfg.authValue != "" {
+		req.Header.Set(cfg.authHeader, cfg.authValue)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("upstream POST: %w", err)
@@ -107,7 +156,7 @@ func forwardOnce(ctx context.Context, client *http.Client, url string, payload [
 		return nil, fmt.Errorf("read upstream body: %w", err)
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("upstream HTTP status %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
 }
