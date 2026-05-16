@@ -70,6 +70,31 @@ export interface LinkType {
   typeClasses?: string[];
 }
 
+// US-210 / US-497 — declared typed property on a MANY_TO_MANY link's
+// edges. Shape mirrors pkg/oms.LinkProperty so the same form code can
+// render both Property and LinkProperty.
+export interface LinkProperty {
+  rid: string;
+  linkTypeRid: string;
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  baseType: string;
+  typeConfig?: unknown;
+  isArray: boolean;
+  isNullable: boolean;
+}
+
+// US-210 / US-497 — single row of link_edges, returned by the
+// PUT /links/{rid}/edges/{src}/{tgt}/properties endpoint.
+export interface LinkEdge {
+  linkTypeRid: string;
+  sourceObjectPk: string;
+  targetObjectPk: string;
+  edgeProperties?: Record<string, unknown>;
+  createdAt: string;
+}
+
 // ActionParameterV2 — Foundry OSv2 parameter definition with nested dataType.
 export interface ActionParameterV2 {
   dataType: DataType;

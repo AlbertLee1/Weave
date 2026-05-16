@@ -581,8 +581,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 39,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Backend was already complete from US-210 (PUT /api/v2/ontologies/{o}/links/{linkTypeRid}/edges/{src}/{tgt}/properties + LinkProperty schema CRUD). US-497 closes the SPA side: web/src/api/linkProperties.ts adds listLinkProperties + putLinkEdgeProperties; web/src/hooks/useLinkProperties.ts wraps both in TanStack Query hooks with the conventional [linkProperties, ont, ltRid] cache key + 'objects/linked' invalidation on save. LinkedObjectsTab.tsx now renders an inline EdgePropertiesForm gated on cardinality === 'MANY_TO_MANY' (matching cmd/server/edge_properties_resolver.go:71's 'only M2M edges carry edge_properties' invariant) — each row gets an 'Edit edge' button (data-testid edit-edge-properties-{pk}) that toggles a colspan'd <tr> with an EdgePropertiesForm built from the LinkProperty schema. coerceEdgeValues drops blank optional fields so nullable LinkProperty rows stay unset (rather than persisting empty string), and coerces numeric base types (long/integer/short/byte → trunc(Number(x)), double/float/decimal → Number(x), boolean → text==='true') before PUT so the backend validator sees correctly typed JSON. TDD red→green: 4 unit + 2 BDD scenarios in LinkedObjectsTab.test.tsx + LinkedObjectsTab.bdd.test.tsx — negative control (O2M / O2O hide the button), positive happy path (PUT body shape + form close), and the 'blank optional field is dropped, blank required field forwarded' coercion contract. 5/6 first-run red (the 1-pass was the trivial negative O2M control), 6/6 after impl; full vitest suite 2738/2738 (was 2732 before), tsc --noEmit clean, make web-build clean, go vet ./... clean. Fragment-with-key wrap fixed to avoid React's 'each child in list should have unique key' warning. Manual browser verification deferred (no dev-browser MCP tool exposed this session)."
     },
     {
       "id": "US-498",

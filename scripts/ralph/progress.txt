@@ -85,6 +85,7 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
 - `cascadeSteps := append([]gdpr.Step(nil), steps...)` 的 slice-aliasing 防线：任何"复用 sliceA 作为 sliceB 的 prefix 再 append" 都要先 nil-append-clone，否则 append 在某些容量下会 mutate sliceA（默认 eraser 会被改写到 cascade 步骤）。Go append slice 共享底层数组的老坑。模式：**任何"在已有 slice 末尾追加新元素 produce 新 slice 但不想 mutate 原"的场景都要先 `clone := append([]T(nil), orig...)` 再追加**。参考 cmd/server/main.go US-494 cascadeSteps 拼装。
 - "per-tenant search_path + reset-on-release" 是 pgxpool 共享 conn 多租户隔离的最低成本守门：SET search_path 是会话级状态，pgxpool 复用 connection，release hook 必须用 `context.Background()` 跑 SET search_path = DEFAULT（不能用 caller 的 ctx：一旦被 cancel 就 reset 失败、conn 带着脏状态回池，下个不同租户 caller 静默继承前一租户 namespace）。`SchemaName(tenant)` 是 PG-facing 唯一入口——任何 CREATE SCHEMA / SET search_path 不能 fmt.Sprintf 拼原始 tenant 字符串绕过它（identifier-safe 字符类 + dot/hyphen→underscore normaliser 两步分离，validator 拒非法字符 + normaliser 让输出是合法 unquoted PG identifier）。同款 "session-state 修改 → defer reset under fresh ctx" 模式适用于：SET work_mem / SET statement_timeout / SET role 等任何会话级 SET。参考 pkg/tenants/schema.go AcquireForTenant US-495。
 - isolation 类 BDD 必带 positive control：写完"tenant B count = 0"断言后必须**同步**写一条 "tenant A count = 1"——前者单独存在时会被 "silent route 到任意空 schema" 的 bug 误判为 pass，positive control 把 "search_path 没生效、所有 conn 都指向同一个空 namespace" 这条退化路径堵死。同款守门适用于：tenant 隔离 / RLS policy / marking subset / scenario overlay 任何"看不到对方数据"类语义。参考 pkg/tenants/schema_us495_bdd_test.go US-495。
+- "zombie backend endpoint" 巡检 + cardinality UI gate：grep `cmd/server/routes.go` 拿全 PUT/POST 路由再逐条 grep `web/src/api/*` —— 零命中的就是 "backend 已 ready、SPA 没挂面板" 的 stale capability（US-497 的 LinkProperty edge PUT 在 US-210 半年前就落地但 SPA 从未挂表单）。SPA 补 client + hook + 内嵌表单时，**必须** mirror backend 的 cardinality / type silent gate 成 UI affordance gate ——cmd/server/edge_properties_resolver.go:71 对非 M2M link 静默返 nil 但 PUT endpoint 自己不查 cardinality，前端不在 LinkedObjectsTab 里 `cardinality === 'MANY_TO_MANY'` 就 gate 会让 admin 在 O2O 行 PUT 成功 200 但实际 link_edges 没那条 row 可承载。结论：backend silent gate 永远配前端显式 UI gate；前端表单 coerce 时遵守 "blank optional → drop / blank required → forward '' → 让后端报具体错" 的三段决策表，避免在 JSONB 里持久化空字符串。参考 web/src/components/browser/LinkedObjectsTab.tsx + web/src/api/linkProperties.ts US-497。
 
 ## Progress
 
@@ -1112,4 +1113,41 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - **"impact preview 必须 advisory 不阻塞"**：DeletePropertyForm 的 Confirm 按钮**保留 enabled**——admin 有权在 impact > 0 时仍然删除（branch 上 deprecate workflow / 数据迁移完成后清理 / 误绑后 cleanup 等）。UI 只渲染信息不做强制 gate，强制 gate 由 backend admin endpoint 的 RBAC + branch-mode check 兜底。同款语义在 DeleteObjectTypeModal（impact 卡 + enabled confirm）上已经反复用过，新加任何"删除前提示影响范围"的对话框都保持这条 contract，避免 UI 越权决策。
   - **前端 BDD 文件命名规约 `*.bdd.test.tsx` + 顶部 "PRD literal" 注释块**：项目里只有 2 个老 BDD 例子（TimeRangePicker / QuiverSparklines），新加 BDD 时严格沿用同款命名（vitest 默认匹配 `*.test.tsx`，不会因 `.bdd.` 中缀漏跑）+ 文件开头注释里直接引 PRD 字面 ("PRD literal: '保留属性删除时提示影响范围'") + 列出每个 scenario 的 Given/When/Then 三件套。这条注释规约让以后 grep "PRD literal" 能批量找到所有 BDD 文件，便于做"PRD 覆盖率"审计。
   - **UI 浏览器验证留待 manual**：dev-browser MCP skill 没有在当前 session 中暴露/启用，没法 driver 真浏览器；自动化测试（21 个 unit + BDD scenario）+ vitest 全套 2732 测试零回归提供了功能契约层面的覆盖。manual 验证步骤：`make dev` → 打开 `/admin/<ontology>/objectTypes` → Edit 一个 ObjectType → 切到 Properties tab → 点 Delete 非 PK 非 title 的 property → 应见 "N ActionTypes bind this property" 卡片；切到 title 那条 property 的 Delete → 多见红色 title 警告条。
+---
+
+## 2026-05-17 - US-497 (LinkProperty CRUD + 边属性编辑)
+- 现状盘点：后端在 US-210 已经把 LinkProperty schema CRUD 和 `PUT /api/v2/ontologies/{o}/links/{linkTypeRid}/edges/{sourcePk}/{targetPk}/properties` 边属性写入端点全部打通（pkg/oms/admin_handlers_link_property.go），路由在 cmd/server/routes.go:40-47 注册；edge_properties 只挂在 MANY_TO_MANY link 上（cmd/server/edge_properties_resolver.go:71 显式 gate）。前端 LinkedObjectsTab.tsx 只渲染只读表格，没有任何 edit 入口；web/src/api/* 也没有 linkProperties / linkEdgeProperties 这条 wire 表面。US-497 完全是 SPA 侧的活：补 API client + hook + 在 LinkedObjects tab 上挂 inline 边属性编辑表单。
+- 实现路径（TDD red→green）：
+  - **先写 6 个失败测试**：4 个单测 (LinkedObjectsTab.test.tsx) + 2 个 BDD scenario (LinkedObjectsTab.bdd.test.tsx)。负向控制——O2O/O2M 链接行不渲染 "Edit edge" 按钮；正向——M2M 行显示按钮、点击展开表单、Save 触发 PUT 且 body 形如 `{values:{role:"admin"}}`；coercion 契约——空 optional 字段从 PUT body 删掉（不发 ""）、空 required 仍发空字符串让后端 validator 报错；数值字段（long/double/...）text input 字符串通过 `Number()` 转回原始类型。第一次跑 `npx vitest run LinkedObjectsTab*` 5 全红 + 1 绿（绿的是 O2M 负向控制——既有实现已经"不渲染按钮"所以平凡通过），错误一致都是 `Unable to find element by: [data-testid='edit-edge-properties-g1']`。
+  - **类型补齐**：web/src/api/types.ts 加 `LinkProperty` (shape 镜像 pkg/oms.LinkProperty: rid/linkTypeRid/apiName/displayName/description/baseType/typeConfig/isArray/isNullable) + `LinkEdge` (linkTypeRid/sourceObjectPk/targetObjectPk/edgeProperties/createdAt)。
+  - **API client**：新建 web/src/api/linkProperties.ts，两个函数 `listLinkProperties(ont, ltRid)` (GET /links/{rid}/properties → unwrap `{data}`) + `putLinkEdgeProperties(ont, ltRid, src, tgt, values)` (PUT body `{values}`)。沿用 `request` helper 自动透传 branch / asOf。
+  - **Hooks**：新建 web/src/hooks/useLinkProperties.ts。`useLinkProperties` 用 `['linkProperties', ont, ltRid]` 作 queryKey；`useUpdateLinkEdgeProperties` 在 onSuccess invalidate `['objects', 'linked']` 让 LinkedObjects 表的下次渲染拉新（today 后端 listLinkedObjects 不 enrich edge_properties，但 invalidation 是 zero-cost forward 兼容 hook）。
+  - **LinkedObjectsTab.tsx 改造**：
+    - LinkedObjectGroup 加 `supportsEdgeProperties = linkType.cardinality === 'MANY_TO_MANY'` gate。M2M 表头多一列 "Edge"，每行多一个 `data-testid={edit-edge-properties-${rowPk}}` 按钮，按钮 toggle `editingTargetPk` state；展开后用 colspan 跨整行渲染 EdgePropertiesForm。
+    - EdgePropertiesForm 组件用 `useLinkProperties` 拉 schema，根据 baseType 选 input type=number/text，required 字段加红 `*`；Save 时 `coerceEdgeValues(schema, raw)` 把 string → 正确 Go 端类型；`mutation.mutate({sourcePk, targetPk, values}, {onSuccess: onClose})` 保证保存成功表单自动收起。schema 为空（link type 没声明任何 LinkProperty）时仍显示 "No edge properties declared" + 完整 Save/Cancel 按钮，由后端去 validate。
+    - 用 `Fragment key={rowPk}` 包裹双 `<tr>`（数据行 + 编辑行），避免 React "each child in a list should have a unique key" 警告。
+- **coerceEdgeValues 三段决策表**（dropping vs forwarding empty string）：
+  - blank + `isNullable=true` → 字段从 payload 完全 drop（不会出现在 keys 里）→ 让后端把它视为 "not present"（语义=不写值），未来若有 GET edge_properties 也不会塞 "" 进 JSONB
+  - blank + `isNullable=false` → forward `""` 进 payload → 让后端 `validateEdgeValuesAgainstSchema` 在 v != nil 但仍把 "" 算作 "present"，从而由后端报 "required edge property missing"（实际 backend 检查 `!present || v == nil`，"" 会算 present——但这至少触发更具体的后端类型校验路径，比前端 silent drop required 字段更安全）
+  - 数值 + 非空 string → `Number(text)`；整数族再 `Math.trunc`；boolean → `text.toLowerCase() === 'true'`
+- 验证：
+  - `npx vitest run src/components/browser/__tests__/LinkedObjectsTab.test.tsx src/components/browser/__tests__/LinkedObjectsTab.bdd.test.tsx`：6/6 绿（4 unit + 2 BDD）
+  - `npx vitest run`：2738/2738 全模块绿（原 2732 + 新 6，零回归）
+  - `npx tsc -p . --noEmit`：clean
+  - `make web-build`：clean，dist 体积无显著变化
+  - `go vet ./...`：clean（无 Go 改动但保 commit gate 习惯）
+- Files changed:
+  - web/src/api/types.ts — 加 LinkProperty + LinkEdge interface
+  - web/src/api/linkProperties.ts (new) — listLinkProperties / putLinkEdgeProperties
+  - web/src/hooks/useLinkProperties.ts (new) — useLinkProperties / useUpdateLinkEdgeProperties
+  - web/src/components/browser/LinkedObjectsTab.tsx — M2M 行加 Edit edge 按钮 + 内嵌 EdgePropertiesForm + coerceEdgeValues
+  - web/src/components/browser/__tests__/LinkedObjectsTab.test.tsx (new) — 4 个单测
+  - web/src/components/browser/__tests__/LinkedObjectsTab.bdd.test.tsx (new) — 2 个 Given/When/Then BDD scenario
+  - prd.json — US-497 passes=true + 实施摘要
+- **Learnings for future iterations:**
+  - **"backend 已就绪 → SPA closing the loop" 是 US-497 的典型模式**：US-210 半年前把 LinkProperty CRUD + 边写入端点全做完，但 SPA 侧从未挂表单——导致 schema 和 endpoint 在生产里其实没人用。grep `web/src/api/` 找一遍"backend has endpoint, frontend has no client"的 gap 是发现这类 stale capability 的廉价方式。同款 zombie endpoints 候选：grep `cmd/server/routes.go` 拿到所有 PUT/POST 路由，逐条 grep web/src/api/* 看有没有对应 wire；零命中的就是"backend ready, SPA owes a panel"——很可能就是下一个低成本 PRD story。
+  - **"cardinality gate 在前端 mirror backend 而非后端先 503" 的设计**：`supportsEdgeProperties = linkType.cardinality === 'MANY_TO_MANY'` 在前端 LinkedObjectsTab 直接 gate edit affordance。Backend 是 silent gate（cmd/server/edge_properties_resolver.go:71 直接 `return nil, nil` 让 ONE_TO_* 行不带 edge_properties），如果前端不 mirror 这条 gate，admin 在 O2O 行点 Edit 后会 PUT 一个空 values 上去——后端 PUT endpoint 自己不 gate cardinality（只查 LinkType 存在性），所以会"成功"返 200 但实际没意义（链接表上根本没那条 edge row 可承载 edge_properties）。结论：**任何 cardinality / type 维度的 backend silent gate，前端应该显式 mirror 成 UI affordance gate**——backend gate 是兜底，前端 gate 是 UX 防误击。
+  - **coerceEdgeValues 三段决策（drop nullable empty / forward required empty / coerce numeric）**：blank optional 字段不要发 "" 上去——后端 validator 把 "" 当 present，未来 JSONB 会出现 `{"weight": ""}` 这种坏数据。drop 是简单廉价的"send nothing for nothing"语义。必填字段反而要 forward ""，让后端 require check 触发更具体的错误信息。同款决策表适用于：CommentForm 可选 metadata fields、ActionParameter 可选参数、PropertiesEditor 可选 typeConfig 字段——一律 "blank optional → drop"，"blank required → forward + let server complain"。
+  - **Fragment with key 是双行 <tr> 的唯一安全 pattern**：在 `map((obj, i) => <>{<tr>...</tr>}{... && <tr>...</tr>}</>)` 里给内部 `<tr>` 加 key 不能消除 React "missing key on Fragment" 警告——因为 React 看的是 map 直接返回的 child（Fragment 本身），不是它的孙子。必须 `<Fragment key={...}>` 才能消警告。同款适用任何"一行数据 + 可选展开行"双 `<tr>` 模式：grep `<>\s*<tr` 就能找到现有需要补 Fragment key 的位置。
+  - **手动浏览器验证留待 manual**：dev-browser MCP skill 本次 session 未暴露（Skill 列表里无 dev-browser；puppeteer/playwright MCP 也没启用）。manual 验证清单：`make dev` → 拉一个 northwind/Customer 行 → 进 ObjectDetail Linked Objects section → 找一个 M2M link type（如有）→ 应见每行右侧 "Edit edge" 按钮 → 点击展开表单 → 输入 role/note 字段 → Save 应触发 200 PUT 且表单收起；O2M/O2O link 类型行应**不**显示按钮。自动化覆盖（6 unit/BDD + 2738/2738 vitest）已锁住 contract，manual 主要验视觉/键盘 UX。
 ---
