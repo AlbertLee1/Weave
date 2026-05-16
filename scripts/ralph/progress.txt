@@ -1151,3 +1151,24 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - **Fragment with key 是双行 <tr> 的唯一安全 pattern**：在 `map((obj, i) => <>{<tr>...</tr>}{... && <tr>...</tr>}</>)` 里给内部 `<tr>` 加 key 不能消除 React "missing key on Fragment" 警告——因为 React 看的是 map 直接返回的 child（Fragment 本身），不是它的孙子。必须 `<Fragment key={...}>` 才能消警告。同款适用任何"一行数据 + 可选展开行"双 `<tr>` 模式：grep `<>\s*<tr` 就能找到现有需要补 Fragment key 的位置。
   - **手动浏览器验证留待 manual**：dev-browser MCP skill 本次 session 未暴露（Skill 列表里无 dev-browser；puppeteer/playwright MCP 也没启用）。manual 验证清单：`make dev` → 拉一个 northwind/Customer 行 → 进 ObjectDetail Linked Objects section → 找一个 M2M link type（如有）→ 应见每行右侧 "Edit edge" 按钮 → 点击展开表单 → 输入 role/note 字段 → Save 应触发 200 PUT 且表单收起；O2M/O2O link 类型行应**不**显示按钮。自动化覆盖（6 unit/BDD + 2738/2738 vitest）已锁住 contract，manual 主要验视觉/键盘 UX。
 ---
+
+## 2026-05-17 - US-498 (Interface Method CRUD + 多态调用)
+- 后端在 US-214 已经把 InterfaceMethod CRUD + invoke 全做完（pkg/oms/admin_handlers_interface_method.go + interface_method.go + cmd/server/interface_method_dispatcher.go + cmd/server/routes.go 6 个 endpoint），本轮纯 SPA 侧补 UI 收尾：在 InterfaceAdminPage 的 Edit 模态里加 Methods tab，挂上 add / delete / invoke 流。
+- API client (web/src/api/interfaceMethods.ts) 之前只有 list + invoke 两个 helper，补加 createInterfaceMethod / updateInterfaceMethod / deleteInterfaceMethod 三个 + 对应 request types，URL shape 与 cmd/server/routes.go 1:1 对齐（POST /interfaces/{rid}/methods、PUT/DELETE /interfaces/methods/byRid/{methodRid}）。
+- Hooks (web/src/hooks/useInterfaceMethods.ts) 扩 useCreateInterfaceMethod / useUpdateInterfaceMethod / useDeleteInterfaceMethod，全部走 ['interface-methods', ontologyApiName, interfaceRid] cache key invalidation，复用 useInterfaceMethods 已经定下的 prefix。
+- InterfaceBuilderModal 改成 tabbed shell（仅 edit 模式显式渲染 tabs，新建模式继续单表单——method 需要 interfaceRid 才能挂）；Methods tab 渲染新 MethodsEditor 组件。Create 模式保持单表单零回归（已有 7 个 InterfaceAdminPage.test.tsx 测试全过）。
+- MethodsEditor：上方 list 已存在的 methods（每行展示 name(params) → returnType + Invoke/Delete 按钮）、下方 inline draft form（name + returns + 0..N params with required toggle + description）；params 用 METHOD_TYPES 子集（string/integer/long/double/boolean/date/timestamp/object）配 pkg/types 校验。create.mutateAsync 后 form 自动收起、list invalidate 拉新。
+- InvokeMethodModal：input 是 ObjectType apiName + parameters JSON object（带 method.params 提示模板），submit 走 useInvokeInterfaceMethod 命中 /interfaces/methods/{methodRid}/invoke。结果区显示 typed result：ActionType apiName + RID + ObjectType + return type + pretty-printed result payload（pkg/oms InvokeInterfaceMethodResponse 5 字段全展示）。JSON parse 失败 / objectType 空 / mutation error 三类错误分别走 inline alert。
+- TDD red→green：先写 web/src/components/admin/__tests__/InterfaceAdminPage.methods.bdd.test.tsx（2 BDD scenarios — create method via tab、invoke 后渲染 typed result），命中"interface-edit-tab-methods 不存在"红信号；实现 tab + MethodsEditor + InvokeMethodModal 后转绿。
+- Files changed:
+  - web/src/api/interfaceMethods.ts — 加 CreateInterfaceMethodRequest / UpdateInterfaceMethodRequest types + createInterfaceMethod / updateInterfaceMethod / deleteInterfaceMethod。
+  - web/src/hooks/useInterfaceMethods.ts — 加 useCreateInterfaceMethod / useUpdateInterfaceMethod / useDeleteInterfaceMethod。
+  - web/src/components/admin/InterfaceAdminPage.tsx — InterfaceBuilderModal 加 tabs；新增 MethodsEditor + InvokeMethodModal 组件 + METHOD_TYPES 常量。
+  - web/src/components/admin/__tests__/InterfaceAdminPage.methods.bdd.test.tsx — 新建，2 BDD scenarios 覆盖 create + invoke。
+  - scripts/ralph/prd.json — US-498 passes=true。
+- 质量门：vitest 全套 253 files / 2740 tests 全过；tsc -b 静默通过；npm run lint 我改动的 3 个文件零问题（仓库存量 lint 错误不归本轮）；go test ./cmd/server -run Contract 通过；go build ./cmd/server 通过；cmd/server/web/dist 已同步嵌入。
+- **Learnings for future iterations:**
+  - "backend 已完整 / SPA 缺一块 UI" 的 stale capability 模式与 US-497 LinkProperty 几乎完全同形：先 grep cmd/server/routes.go 全部 POST/PUT + 对应 web/src/api/ 是否有 client / web/src/hooks/ 是否有 hook / web/src/components/ 是否有 UI 入口；任一缺失就是潜在"backend 现成可调但 SPA 不暴露"的 dead capability。InterfaceMethod 本轮的链条断点恰好在 "API client 有 list+invoke 但没 create/update/delete + 没 UI 入口"，与 US-497 的 "edge properties PUT 已 ready 但 LinkedObjectsTab 不暴露表单" 一模一样。新加 ralph story 涉及 UI 收尾时默认先跑这套四档巡检（route ↔ client ↔ hook ↔ UI 入口），避免重复实现 backend 部分。
+  - 已有 modal 加 tabs 的 minimal-risk 套路：tabs 状态 useState('details' / 'methods')，**只在 isEdit 模式渲染 tab bar**——create 模式没有 RID，子 tab CRUD 无法工作（method 需要 interfaceRid 才能挂）；用 `{isEdit && tab === 'methods' ? <SubEditor /> : <existingForm />}` 三元分支保留 create 路径零行为变化。同款套路适用于：任何"父实体 + 子实体 CRUD" 的 admin modal 改造（ObjectType + Properties / Interface + Methods / ActionType + Rules 等都已经在用这个模式）。
+  - userEvent.type 解析 `{` 为修饰键：在 BDD 测试里输入 JSON 字面量必须用 `{{` 转义 literal `{`（注意 `}` 不用转义）。例：要让 textarea 收到 `{"value":"x"}`，要写 `user.type(el, '{{"value":"x"}')`。同款陷阱适用于任何在 vitest/RTL 里测 textarea/input 收 JSON / 代码片段 / `${...}` 模板字符串的场景。
+---

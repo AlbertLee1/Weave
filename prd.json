@@ -595,8 +595,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 40,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Wired admin Methods tab on InterfaceBuilderModal (edit mode only — methods need RID). Added create/update/delete API client + hooks, MethodsEditor with add/delete + per-method Invoke button, and InvokeMethodModal that POSTs to /interfaces/methods/{methodRid}/invoke and renders typed result (ActionType apiName/RID, ObjectType, return type, result payload). BDD scenarios cover (a) create method via Methods tab and (b) invoke + render typed result. Backend (handlers, store, dispatcher) already existed from US-214."
     },
     {
       "id": "US-499",

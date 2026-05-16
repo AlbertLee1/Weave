@@ -12,6 +12,10 @@ import type {
   UpdateInterfaceRequest,
 } from '../../api/ontologies';
 import { listObjectTypeInterfaces } from '../../api/ontologies';
+import type {
+  InterfaceMethod,
+  InterfaceMethodParam,
+} from '../../api/interfaceMethods';
 import {
   useInterfacesAdmin,
   useCreateInterface,
@@ -20,6 +24,12 @@ import {
   useAttachInterface,
   useDetachInterface,
 } from '../../hooks/useInterfaces';
+import {
+  useCreateInterfaceMethod,
+  useDeleteInterfaceMethod,
+  useInterfaceMethods,
+  useInvokeInterfaceMethod,
+} from '../../hooks/useInterfaceMethods';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
 import { Modal } from '../common/Modal';
 import { LoadingSpinner } from '../common/LoadingSpinner';
@@ -459,6 +469,10 @@ function InterfaceBuilderModal({
   }
 
   const modePrefix = isEdit ? 'interface-edit' : 'interface-create';
+  // US-498: edit-mode modal grows a Methods tab that hosts CRUD + invoke
+  // for InterfaceMethods. Create mode keeps the single-form layout
+  // because methods need the interface RID to exist first.
+  const [tab, setTab] = useState<'definition' | 'methods'>('definition');
   return (
     <Modal
       open
@@ -466,6 +480,50 @@ function InterfaceBuilderModal({
       title={isEdit ? `Edit: ${editing.displayName}` : 'New Interface'}
       size="xl"
     >
+      {isEdit && (
+        <div
+          data-testid="interface-edit-tabs"
+          className="flex gap-2 border-b mb-4"
+          style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+          role="tablist"
+        >
+          <button
+            type="button"
+            role="tab"
+            data-testid="interface-edit-tab-definition"
+            aria-selected={tab === 'definition'}
+            onClick={() => setTab('definition')}
+            className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+              tab === 'definition'
+                ? 'border-accent-cyan text-accent-cyan'
+                : 'border-transparent text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Definition
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="interface-edit-tab-methods"
+            aria-selected={tab === 'methods'}
+            onClick={() => setTab('methods')}
+            className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+              tab === 'methods'
+                ? 'border-accent-cyan text-accent-cyan'
+                : 'border-transparent text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Methods
+          </button>
+        </div>
+      )}
+      {isEdit && tab === 'methods' ? (
+        <MethodsEditor
+          ontologyApiName={ontologyApiName}
+          iface={editing}
+          onClose={onClose}
+        />
+      ) : (
       <form
         onSubmit={onSubmit}
         data-testid={`${modePrefix}-form`}
@@ -642,6 +700,7 @@ function InterfaceBuilderModal({
           </button>
         </div>
       </form>
+      )}
     </Modal>
   );
 }
@@ -813,6 +872,545 @@ function OutgoingLinkTypesEditor({
         </div>
       ))}
     </div>
+  );
+}
+
+// US-498: Method param/return base types — narrowed to the subset
+// supported by the OMS InterfaceMethod validator (pkg/types BaseType).
+// Strings stay strings on the wire; the dispatcher does its own
+// downstream validation at invoke time.
+const METHOD_TYPES = [
+  'string',
+  'integer',
+  'long',
+  'double',
+  'boolean',
+  'date',
+  'timestamp',
+  'object',
+] as const;
+type MethodType = (typeof METHOD_TYPES)[number];
+
+interface MethodDraft {
+  name: string;
+  returnType: MethodType;
+  description: string;
+  params: InterfaceMethodParam[];
+}
+
+function emptyDraft(): MethodDraft {
+  return {
+    name: '',
+    returnType: 'string',
+    description: '',
+    params: [],
+  };
+}
+
+function MethodsEditor({
+  ontologyApiName,
+  iface,
+  onClose,
+}: {
+  ontologyApiName: string;
+  iface: OntologyInterface;
+  onClose: () => void;
+}) {
+  const list = useInterfaceMethods(ontologyApiName, iface.rid);
+  const create = useCreateInterfaceMethod(ontologyApiName, iface.rid);
+  const del = useDeleteInterfaceMethod(ontologyApiName, iface.rid);
+
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState<MethodDraft>(emptyDraft);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [invoking, setInvoking] = useState<InterfaceMethod | null>(null);
+
+  const methods = list.data?.data ?? [];
+
+  async function onCreateMethod(e: React.FormEvent) {
+    e.preventDefault();
+    setDraftError(null);
+    try {
+      await create.mutateAsync({
+        name: draft.name.trim(),
+        params: draft.params.filter((p) => p.name.trim() !== ''),
+        returns: { type: draft.returnType },
+        description: draft.description.trim() || undefined,
+      });
+      setDraft(emptyDraft());
+      setDrafting(false);
+    } catch (err) {
+      setDraftError((err as Error).message);
+    }
+  }
+
+  async function onDelete(method: InterfaceMethod) {
+    try {
+      await del.mutateAsync(method.rid);
+    } catch {
+      // surfaced inline elsewhere if needed; the row will simply not
+      // disappear, signalling failure.
+    }
+  }
+
+  return (
+    <div
+      data-testid="interface-methods-editor"
+      data-interface-rid={iface.rid}
+      className="flex flex-col gap-4"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+          Methods
+        </span>
+        <div className="flex-1" />
+        {!drafting && (
+          <button
+            type="button"
+            data-testid="interface-methods-add-btn"
+            onClick={() => {
+              setDraft(emptyDraft());
+              setDraftError(null);
+              setDrafting(true);
+            }}
+            className="text-xs text-accent-cyan hover:underline"
+          >
+            + Add method
+          </button>
+        )}
+      </div>
+
+      {list.isLoading && (
+        <div className="flex items-center justify-center py-6">
+          <LoadingSpinner size="sm" />
+        </div>
+      )}
+
+      {!list.isLoading && methods.length === 0 && !drafting && (
+        <p
+          data-testid="interface-methods-empty"
+          className="text-[11px] text-text-muted italic"
+        >
+          No methods defined yet. Add one to expose a polymorphic
+          dispatch point that any implementing ObjectType can satisfy
+          via an ActionType.
+        </p>
+      )}
+
+      {methods.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {methods.map((m) => (
+            <li
+              key={m.rid}
+              data-testid="interface-method-row"
+              data-method-rid={m.rid}
+              data-method-name={m.name}
+              className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2 rounded border"
+              style={{
+                borderColor: 'rgba(31,41,55,0.5)',
+                background: 'rgba(13,17,23,0.4)',
+              }}
+            >
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-text-primary font-mono">
+                  {m.name}
+                  <span className="ml-2 text-[11px] text-text-secondary">
+                    ({(m.params ?? [])
+                      .map((p) => `${p.name}: ${p.type}`)
+                      .join(', ')}) → {m.returns?.type ?? 'void'}
+                  </span>
+                </span>
+                {m.description && (
+                  <span className="text-[11px] text-text-muted">
+                    {m.description}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="interface-method-invoke-btn"
+                  data-method-rid={m.rid}
+                  onClick={() => setInvoking(m)}
+                  className="px-2 py-1 text-[11px] rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30"
+                >
+                  Invoke
+                </button>
+                <button
+                  type="button"
+                  data-testid="interface-method-delete-btn"
+                  data-method-rid={m.rid}
+                  onClick={() => onDelete(m)}
+                  disabled={del.isPending}
+                  className="px-2 py-1 text-[11px] rounded text-accent-error hover:bg-accent-error/10 disabled:opacity-40"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {drafting && (
+        <form
+          onSubmit={onCreateMethod}
+          data-testid="interface-method-draft-form"
+          className="flex flex-col gap-3 px-3 py-3 rounded border"
+          style={{
+            borderColor: 'rgba(31,41,55,0.5)',
+            background: 'rgba(13,17,23,0.4)',
+          }}
+        >
+          <div className="grid grid-cols-[2fr_1fr] gap-3">
+            <Field label="Name" required>
+              <input
+                type="text"
+                data-testid="interface-method-draft-name"
+                value={draft.name}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, name: e.target.value }))
+                }
+                required
+                className={inputClass + ' font-mono'}
+              />
+            </Field>
+            <Field label="Returns" required>
+              <select
+                data-testid="interface-method-draft-return-type"
+                value={draft.returnType}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    returnType: e.target.value as MethodType,
+                  }))
+                }
+                className={inputClass + ' text-xs'}
+              >
+                {METHOD_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <Field label="Description">
+            <textarea
+              data-testid="interface-method-draft-description"
+              value={draft.description}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, description: e.target.value }))
+              }
+              rows={2}
+              className={inputClass}
+            />
+          </Field>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+                Parameters
+              </span>
+              <div className="flex-1" />
+              <button
+                type="button"
+                data-testid="interface-method-draft-add-param"
+                onClick={() =>
+                  setDraft((d) => ({
+                    ...d,
+                    params: [
+                      ...d.params,
+                      { name: '', type: 'string', required: false },
+                    ],
+                  }))
+                }
+                className="text-xs text-accent-cyan hover:underline"
+              >
+                + Add parameter
+              </button>
+            </div>
+            {draft.params.length === 0 ? (
+              <p className="text-[11px] text-text-muted italic">
+                No parameters. Add one to make this method accept input.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {draft.params.map((p, idx) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-[1fr_10rem_5rem_auto] gap-2 items-center"
+                  >
+                    <input
+                      aria-label={`Param ${idx + 1} name`}
+                      type="text"
+                      placeholder="name"
+                      value={p.name}
+                      onChange={(e) => {
+                        const next = [...draft.params];
+                        next[idx] = { ...p, name: e.target.value };
+                        setDraft((d) => ({ ...d, params: next }));
+                      }}
+                      className={inputClass + ' font-mono text-xs'}
+                    />
+                    <select
+                      aria-label={`Param ${idx + 1} type`}
+                      value={p.type}
+                      onChange={(e) => {
+                        const next = [...draft.params];
+                        next[idx] = { ...p, type: e.target.value };
+                        setDraft((d) => ({ ...d, params: next }));
+                      }}
+                      className={inputClass + ' text-xs'}
+                    >
+                      {METHOD_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+                      <input
+                        type="checkbox"
+                        checked={!!p.required}
+                        onChange={(e) => {
+                          const next = [...draft.params];
+                          next[idx] = { ...p, required: e.target.checked };
+                          setDraft((d) => ({ ...d, params: next }));
+                        }}
+                      />
+                      Required
+                    </label>
+                    <button
+                      type="button"
+                      aria-label={`Remove param ${idx + 1}`}
+                      onClick={() => {
+                        const next = draft.params.filter((_, i) => i !== idx);
+                        setDraft((d) => ({ ...d, params: next }));
+                      }}
+                      className="px-2 py-1 text-[11px] rounded text-accent-error hover:bg-accent-error/10"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {draftError && (
+            <p
+              role="alert"
+              data-testid="interface-method-draft-error"
+              className="text-xs text-accent-error"
+            >
+              {draftError}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid="interface-method-draft-cancel"
+              onClick={() => {
+                setDrafting(false);
+                setDraftError(null);
+              }}
+              className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              data-testid="interface-method-draft-submit"
+              disabled={!draft.name.trim() || create.isPending}
+              className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {create.isPending ? 'Creating…' : 'Create method'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="flex justify-end pt-2 border-t" style={{ borderColor: 'rgba(31,41,55,0.5)' }}>
+        <button
+          type="button"
+          data-testid="interface-methods-close"
+          onClick={onClose}
+          className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
+        >
+          Done
+        </button>
+      </div>
+
+      {invoking && (
+        <InvokeMethodModal
+          ontologyApiName={ontologyApiName}
+          method={invoking}
+          onClose={() => setInvoking(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function InvokeMethodModal({
+  ontologyApiName,
+  method,
+  onClose,
+}: {
+  ontologyApiName: string;
+  method: InterfaceMethod;
+  onClose: () => void;
+}) {
+  const invoke = useInvokeInterfaceMethod(ontologyApiName);
+  const [objectType, setObjectType] = useState('');
+  const [paramsText, setParamsText] = useState('{}');
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    actionTypeRid: string;
+    actionTypeApiName: string;
+    objectType: string;
+    methodRid: string;
+    result?: unknown;
+  } | null>(null);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitError(null);
+    setResult(null);
+    let parsed: Record<string, unknown> = {};
+    const trimmed = paramsText.trim();
+    if (trimmed !== '') {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+          throw new Error('parameters must be a JSON object');
+        }
+        parsed = obj as Record<string, unknown>;
+      } catch (err) {
+        setSubmitError(`Invalid JSON: ${(err as Error).message}`);
+        return;
+      }
+    }
+    try {
+      const resp = await invoke.mutateAsync({
+        methodRid: method.rid,
+        body: {
+          objectType: objectType.trim(),
+          parameters: parsed,
+        },
+      });
+      setResult(resp);
+    } catch (err) {
+      setSubmitError((err as Error).message);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Invoke: ${method.name}`} size="lg">
+      <form
+        onSubmit={onSubmit}
+        data-testid="interface-method-invoke"
+        data-method-rid={method.rid}
+        className="flex flex-col gap-3"
+      >
+        <Field label="Object type apiName" required hint="Polymorphic dispatch resolves the ActionType that implements this method for the chosen ObjectType.">
+          <input
+            type="text"
+            data-testid="interface-method-invoke-object-type"
+            value={objectType}
+            onChange={(e) => setObjectType(e.target.value)}
+            required
+            className={inputClass + ' font-mono'}
+          />
+        </Field>
+        <Field
+          label="Parameters (JSON object)"
+          hint={`Expected shape: { ${(method.params ?? [])
+            .map((p) => `"${p.name}": ${p.type}`)
+            .join(', ')} }`}
+        >
+          <textarea
+            data-testid="interface-method-invoke-parameters"
+            value={paramsText}
+            onChange={(e) => setParamsText(e.target.value)}
+            rows={5}
+            className={inputClass + ' font-mono text-xs'}
+          />
+        </Field>
+        {submitError && (
+          <p
+            role="alert"
+            data-testid="interface-method-invoke-error"
+            className="text-xs text-accent-error"
+          >
+            {submitError}
+          </p>
+        )}
+        {result && (
+          <div
+            data-testid="interface-method-invoke-result"
+            className="flex flex-col gap-2 px-3 py-2 rounded border"
+            style={{
+              borderColor: 'rgba(31,41,55,0.5)',
+              background: 'rgba(13,17,23,0.4)',
+            }}
+          >
+            <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+              Typed result
+            </span>
+            <dl className="grid grid-cols-[10rem_1fr] gap-1 text-xs">
+              <dt className="text-text-secondary">ActionType</dt>
+              <dd
+                className="text-text-primary font-mono"
+                data-testid="interface-method-invoke-result-action-name"
+              >
+                {result.actionTypeApiName}
+              </dd>
+              <dt className="text-text-secondary">ActionType RID</dt>
+              <dd className="text-text-primary font-mono text-[11px] break-all">
+                {result.actionTypeRid}
+              </dd>
+              <dt className="text-text-secondary">Object type</dt>
+              <dd
+                className="text-text-primary font-mono"
+                data-testid="interface-method-invoke-result-object-type"
+              >
+                {result.objectType}
+              </dd>
+              <dt className="text-text-secondary">Returns</dt>
+              <dd className="text-text-primary font-mono">
+                {method.returns?.type ?? 'void'}
+              </dd>
+            </dl>
+            {result.result !== undefined && result.result !== null && (
+              <pre
+                data-testid="interface-method-invoke-result-payload"
+                className="text-[11px] font-mono whitespace-pre-wrap text-text-primary bg-bg-tertiary rounded px-2 py-1 overflow-x-auto"
+              >
+                {JSON.stringify(result.result, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            data-testid="interface-method-invoke-close"
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs rounded text-text-secondary hover:text-text-primary"
+          >
+            Close
+          </button>
+          <button
+            type="submit"
+            data-testid="interface-method-invoke-submit"
+            disabled={!objectType.trim() || invoke.isPending}
+            className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {invoke.isPending ? 'Invoking…' : 'Invoke'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
