@@ -105,6 +105,12 @@ type ServerDeps struct {
 	PolicyEngine    *security.Engine
 	FunnelPublisher oss.IngestPublisher // US-061: may be *funnel.Publisher or stub
 	FunnelConsumer  *funnel.Consumer
+	// US-470: read + replay surface over the OBJECT_EDITS_DLQ JetStream
+	// stream. FunnelDLQReader nil in degraded mode leaves
+	// /api/admin/funnel/dlq endpoints returning 503; FunnelDLQPublish nil
+	// disables the replay route specifically (list + discard still work).
+	FunnelDLQReader  funnel.DLQReader
+	FunnelDLQPublish funnel.DLQPublishFunc
 	// FunnelBroadcast is the in-process fan-out hub the SSE subscribe
 	// endpoint (US-055) reads from. The consumer can opt in to publishing
 	// events onto the hub via its OnChange hook; tests (and degraded-mode
@@ -1224,6 +1230,24 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				Repo:      deps.OmsRepo,
 				DocSource: deps.IndexDocSource,
 			}))
+
+		// US-470: Funnel DLQ inspection + replay. List returns pending
+		// envelopes from OBJECT_EDITS_DLQ; replay republishes the captured
+		// payload to its original `edits.<objectType>` subject; discard
+		// drops without replay. Routes mount unconditionally so the
+		// OpenAPI surface stays consistent — degraded-mode bootstraps
+		// without NATS leave FunnelDLQReader nil and each handler
+		// short-circuits to 503 FunnelDLQNotConfigured.
+		funnelDLQDeps := AdminFunnelDLQDeps{
+			Reader:  deps.FunnelDLQReader,
+			Publish: deps.FunnelDLQPublish,
+		}
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/admin/funnel/dlq", NewAdminFunnelDLQListHandler(funnelDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/replay", NewAdminFunnelDLQReplayHandler(funnelDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/discard", NewAdminFunnelDLQDiscardHandler(funnelDLQDeps))
 
 		// Admin: audit events (US-067). Gated to admin-level roles via
 		// PermUserManage. The handler gracefully returns 503 when
@@ -2667,7 +2691,19 @@ func main() {
 			cfg.IngestRateLimit.Burst,
 		)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
-		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
+		dlqPub := funnel.NewDLQPublishFunc(js)
+		deps.FunnelConsumer.SetDLQPublish(dlqPub)
+
+		// US-470: wire the read + replay surface so the admin endpoints
+		// (/api/admin/funnel/dlq[...]) can introspect dead-lettered batches.
+		// A background poll loop refreshes weave_funnel_dlq_size every 30s
+		// so dashboards stay accurate without waiting for an admin
+		// list-call to push a fresh observation.
+		deps.FunnelDLQReader = funnel.NewJetStreamDLQReader(js)
+		deps.FunnelDLQPublish = dlqPub
+		go metrics.RunFunnelDLQSizePollLoop(ctx, deps.FunnelDLQReader, 30*time.Second, func(err error) {
+			log.Printf("[funnel-dlq] size poll error: %v", err)
+		})
 
 		// US-055: stand up the in-process SSE broadcast hub and have the
 		// consumer fan every applied edit onto it so HTTP subscribers can

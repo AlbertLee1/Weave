@@ -3012,6 +3012,97 @@ components:
           type: integer
           format: int32
           description: Number of documents indexed from the source.
+    AdminFunnelDLQEntry:
+      type: object
+      description: |
+        US-470: a single dead-lettered EditBatch envelope stored in the
+        OBJECT_EDITS_DLQ JetStream stream. `id` is the stream sequence number
+        rendered as a decimal string; it is stable across server restarts so
+        callers can replay or discard by id without race risk.
+      required: [id, subject, message]
+      properties:
+        id:
+          type: string
+          description: Stream sequence number for this DLQ entry.
+        subject:
+          type: string
+          description: "DLQ subject this envelope was published under, e.g. `edits.dlq.employee`."
+        message:
+          $ref: "#/components/schemas/AdminFunnelDLQMessage"
+    AdminFunnelDLQMessage:
+      type: object
+      description: |
+        US-470: the wrapper envelope the consumer writes to the DLQ stream
+        when a message exceeds max deliveries. `originalSubject` is the live
+        edits subject the replay endpoint republishes to; `originalData` is
+        the raw EditBatch payload (already JSON-encoded).
+      required: [originalSubject, originalData, reason, numDelivered, maxDeliveries, terminatedAt, streamSequence, consumerSequence]
+      properties:
+        originalSubject:
+          type: string
+          description: "Live subject the consumer was about to NAK on, e.g. `edits.employee`."
+        originalData:
+          type: string
+          format: byte
+          description: Base64 JSON of the original EditBatch payload.
+        reason:
+          type: string
+          description: Operator-readable explanation of why the message was dead-lettered.
+        numDelivered:
+          type: integer
+          format: int64
+          description: Number of delivery attempts when the message was terminated.
+        maxDeliveries:
+          type: integer
+          format: int64
+          description: Configured max deliveries threshold the consumer hit.
+        terminatedAt:
+          type: string
+          format: date-time
+        streamSequence:
+          type: integer
+          format: int64
+          description: Sequence number on the original OBJECT_EDITS stream.
+        consumerSequence:
+          type: integer
+          format: int64
+          description: Sequence number on the consumer's delivery view.
+    AdminFunnelDLQListResponse:
+      type: object
+      description: US-470 wire shape for `GET /api/admin/funnel/dlq`.
+      required: [entries, size]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminFunnelDLQEntry"
+        size:
+          type: integer
+          format: int64
+          description: |
+            Authoritative count of pending messages in the DLQ stream.
+            May exceed `entries.length` when the page was capped by `limit`.
+    AdminFunnelDLQReplayResponse:
+      type: object
+      description: US-470 wire shape for `POST /api/admin/funnel/dlq/{id}/replay`.
+      required: [id, originalSubject]
+      properties:
+        id:
+          type: string
+          description: Stream sequence id of the replayed entry.
+        originalSubject:
+          type: string
+          description: "Live subject the payload was republished onto, e.g. `edits.employee`."
+    AdminFunnelDLQDiscardResponse:
+      type: object
+      description: US-470 wire shape for `POST /api/admin/funnel/dlq/{id}/discard`.
+      required: [id, dropped]
+      properties:
+        id:
+          type: string
+        dropped:
+          type: boolean
+          description: True when the entry was removed from the DLQ stream.
     AuditEvent:
       type: object
       description: A single audit log entry.
@@ -11032,6 +11123,107 @@ paths:
                 $ref: "#/components/schemas/AdminIndexRebuildResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/funnel/dlq:
+    get:
+      operationId: adminFunnelDLQList
+      summary: List dead-lettered EditBatch envelopes (US-470)
+      description: |
+        Lists pending entries in the `OBJECT_EDITS_DLQ` JetStream stream so
+        operators can inspect what failed and triage replay vs. discard.
+        Returns the per-entry envelope plus the authoritative `size` field
+        (used by `weave_funnel_dlq_size`). Gated behind `user.manage`; 503
+        when NATS isn't configured.
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of entries to return.
+      responses:
+        "200":
+          description: Pending DLQ entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFunnelDLQListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/funnel/dlq/{id}/replay:
+    post:
+      operationId: adminFunnelDLQReplay
+      summary: Replay a dead-lettered EditBatch (US-470)
+      description: |
+        Republishes the DLQ entry's `originalData` onto its
+        `originalSubject` (the live edits subject) and removes the entry
+        from the DLQ stream so dashboards and the
+        `weave_funnel_dlq_size` gauge reflect the drain. Publish failure
+        leaves the entry in place so operators can retry. 503 when the
+        publisher isn't wired.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Stream sequence id returned by the list endpoint.
+      responses:
+        "200":
+          description: Entry replayed and removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFunnelDLQReplayResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/funnel/dlq/{id}/discard:
+    post:
+      operationId: adminFunnelDLQDiscard
+      summary: Discard a dead-lettered EditBatch without replaying (US-470)
+      description: |
+        Removes the DLQ entry without republishing it; useful when the
+        underlying ObjectType has been retired or the payload is
+        unrecoverable. 404 when the id is unknown.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Stream sequence id returned by the list endpoint.
+      responses:
+        "200":
+          description: Entry removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFunnelDLQDiscardResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "403":
