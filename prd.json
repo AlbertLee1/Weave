@@ -567,8 +567,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 38,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Properties 编辑 tab + CRUD 已在 US-147 落地（PropertiesEditor.tsx 挂在 ObjectTypeAdminPage Edit 模态的 'Properties' tab，CreatePropertyRequest/UpdatePropertyRequest/deleteProperty 三件套通 admin API）。本轮补齐 PRD 缺口 — '保留属性删除时提示影响范围'：DeletePropertyForm 加 useActionTypes(ontology) + findActionsBindingProperty(actions, otApiName, propApiName) helper（walk ActionType.rules 找 `objectType === otApiName && propApiName in propertyBindings` 命中，narrow 在两条 axis 上避免 sibling property 的 rule 误增计数；shape 与 pkg/oms/breaking_changes.go::actionRule 同形）。Impact 卡片渲染 'N ActionTypes bind this property' + 前 5 个 apiName 列表（+X more 截断），confirm 按钮保留 enabled 让 impact 仅咨询不阻塞；并对 titleProperty === property.apiName 时增加 title-loss 警告条 data-testid=delete-property-impact-title。TDD: 先写 3 个失败单测（bound-count narrowing + title warning + zero-impact 不带 title-warning）+ 2 个 BDD scenario（PropertiesEditor.bdd.test.tsx：given ActionType binds prop → 渲染计数+apiName + 负向控制不冒充 unrelated；given titleProperty → 显示 title 警告），跑一次确认 5 全红（missing testId），加 helper + JSX 后 21/21 绿。`make web-build` clean、`npx tsc -p . --noEmit` clean、`npx vitest run`（2732 测试）零回归、`go vet ./...` clean。"
     },
     {
       "id": "US-497",
