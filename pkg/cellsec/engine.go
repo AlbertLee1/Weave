@@ -181,7 +181,7 @@ func (e *Engine) compileInternal(ctx context.Context, user *auth.User, objectTyp
 			if !includeExpression {
 				continue
 			}
-			fire, err := evaluateProgram(entry, view, row)
+			fire, err := evaluateProgram(entry, view, row, rowMarkings(row))
 			if err != nil {
 				// Fail closed: a broken expression masks the cell rather
 				// than silently leaking the clear value.
@@ -202,9 +202,10 @@ func (e *Engine) compileInternal(ctx context.Context, user *auth.User, objectTyp
 }
 
 // evaluateProgram runs the compiled CEL program. A nil program (compile
-// failed at Reload) is treated as "fire and mask" so a malformed expression
-// never opens a hole in enforcement.
-func evaluateProgram(entry *compiledCellMask, view celmask.UserView, row map[string]any) (bool, error) {
+// failed at Reload) is treated as "fail closed" so a malformed expression
+// never opens a hole in enforcement. marking is the cell/row's
+// classification markings (US-488); pass nil for an empty list.
+func evaluateProgram(entry *compiledCellMask, view celmask.UserView, row map[string]any, marking []string) (bool, error) {
 	if entry == nil {
 		return false, errors.New("cellsec: nil compiled entry")
 	}
@@ -214,7 +215,41 @@ func evaluateProgram(entry *compiledCellMask, view celmask.UserView, row map[str
 		}
 		return false, errors.New("cellsec: missing compiled program")
 	}
-	return entry.program.Eval(view, row)
+	return entry.program.EvalWithMarking(view, row, marking)
+}
+
+// rowMarkings extracts the row's classification markings from the reserved
+// auth.MarkingsField key (`__markings`). Tolerates the same raw shapes the
+// upstream writer paths emit — []string, []any, scalar string — and returns
+// an empty slice for any other shape (including nil). The result is the
+// `marking` binding handed to CEL programs at evaluation time.
+func rowMarkings(row map[string]any) []string {
+	if len(row) == 0 {
+		return nil
+	}
+	raw, ok := row[auth.MarkingsField]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
+	}
 }
 
 // userViewFromAuth bridges auth.User into the celmask binding shape. The

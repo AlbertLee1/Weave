@@ -448,8 +448,8 @@
         "Tests pass"
       ],
       "priority": 30,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added `marking` (list<string>) as a third top-level CEL variable on top of US-376's existing `user`+`row` bindings. pkg/cellsec/celmask/celmask.go: env.NewEnv now declares cel.Variable(\"marking\", cel.ListType(cel.StringType)); Program gets EvalWithMarking(user, row, marking) entry point and the legacy Eval(user, row) becomes a thin wrapper that defaults marking to nil for backwards compat with US-376 callers. pkg/cellsec/engine.go: compileInternal extracts the cell's markings via new rowMarkings(row) helper which reads auth.MarkingsField (`__markings`) from the row map and tolerates the same []string/[]any/scalar-string shapes as engine.normaliseMarkings for user.markings — keeps the wire-shape tolerance contract symmetric on both sides. evaluateProgram signature gains the marking []string parameter so the binding flows through. PRD example `row.country == 'US' ? value : redact(value)` is treated as illustrative — the engine remains a bool-predicate model (true→mask) matching US-376's wire semantics; an expression-as-value rewrite would shift the entire callsite contract and is out of scope. Tests: pkg/cellsec/celmask/us488_marking_test.go covers 5 cases (compile of `\"PII\" in marking`, label-match firing matrix, three-way binding, legacy Eval defaults to empty, negative `marking.foo` map-access type-check rejection); pkg/cellsec/us488_marking_engine_test.go pins the engine's tolerance over []string/[]any/scalar/nil/empty/unrelated-type shapes; pkg/oss/us488_cell_mask_marking_bdd_test.go is the BDD acceptance — re-indexes a doc with `__markings:[\"PII\",\"INTERNAL\"]` against the existing Bleve fixture, attaches a CEL mask `\"PII\" in marking && !(\"auditors\" in user.roles)`, asserts viewer sees REDACTed name + unmarked rows stay clear + auditor sees clear PII row + negative-control scenario (no row marking → no mask)."
     },
     {
       "id": "US-489",
