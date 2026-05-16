@@ -284,6 +284,14 @@ func (e *Executor) ApplyBatchSagaWithOptions(ctx context.Context, ontologyRID st
 
 	for i := range reqs {
 		p, err := e.Prepare(ctx, ontologyRID, &reqs[i])
+		// US-471: enforce per-action optimistic locks at prepare time so
+		// a stale ExpectedVersion(s) ref aborts the saga before any
+		// commit and triggers the same rollback path as a prepare error.
+		// The *StaleObjectError is preserved as BatchError.Cause so the
+		// handler can surface 409 StaleObject if it inspects errors.As.
+		if err == nil && hasOptimisticLockOptions(reqs[i].Options) {
+			err = e.checkExpectedVersions(ctx, ontologyRID, p.Edits, reqs[i].Options)
+		}
 		if err != nil {
 			failure := &BatchError{
 				Phase:             classifyPrepareError(err),

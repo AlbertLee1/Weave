@@ -2417,6 +2417,45 @@ components:
           enum: [ALL, ALL_V2_WITH_DELETIONS, NONE]
           default: ALL
           description: Controls whether edit summaries are returned in the response.
+        expectedVersion:
+          type: integer
+          format: int32
+          description: |
+            US-023 legacy single-target optimistic concurrency token. When set,
+            the first MODIFY/DELETE target of the action is verified against this
+            version count; mismatch surfaces 409 StaleObject. Superseded by
+            expectedVersions for multi-target locks; when both are set
+            expectedVersions takes precedence.
+        expectedVersions:
+          type: array
+          description: |
+            US-471 per-target optimistic concurrency tokens. Each entry locks
+            one (objectType, primaryKey) tuple against the version the caller
+            observed. A single mismatch aborts the publish before NATS is
+            contacted and surfaces 409 StaleObject pointing at the failing ref
+            (deterministic order: first stale ref wins). Refs may target
+            objects the action does not modify — the lock is a snapshot
+            predicate on the caller's read set.
+          items:
+            $ref: "#/components/schemas/ExpectedVersionRef"
+    ExpectedVersionRef:
+      type: object
+      description: US-471 per-target optimistic-lock token.
+      required: [objectType, primaryKey, version]
+      properties:
+        objectType:
+          type: string
+          description: API name of the ObjectType being locked.
+        primaryKey:
+          type: string
+          description: Primary key of the object being locked.
+        version:
+          type: integer
+          format: int32
+          description: |
+            Observed object_history version count. The apply is rejected with
+            409 StaleObject if the live version differs from this value at
+            prepare time.
     BatchApplyOptions:
       type: object
       description: Options for batch action apply (Foundry OSv2).

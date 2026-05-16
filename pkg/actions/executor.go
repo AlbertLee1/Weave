@@ -25,10 +25,31 @@ import (
 // non-nil, Apply loads the current version of the MODIFY/DELETE target and
 // returns a *StaleObjectError if it does not match, preventing silent
 // overwrites of data the caller has not yet observed.
+//
+// US-471: ExpectedVersions extends the single-target token to a per-target
+// list so a single action (or batch of actions) that touches multiple
+// objects across multiple ObjectTypes can lock against every observed
+// version. Any single mismatch aborts the publish before NATS is contacted
+// and surfaces the same *StaleObjectError → 409 StaleObject the legacy
+// token produces. When both fields are set the per-target list takes
+// precedence and the legacy single-target check is skipped.
 type ApplyOptions struct {
-	Mode            string `json:"mode"`                      // VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
-	ReturnEdits     string `json:"returnEdits"`               // ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
-	ExpectedVersion *int   `json:"expectedVersion,omitempty"` // optional, omitempty
+	Mode             string               `json:"mode"`                       // VALIDATE_ONLY | VALIDATE_AND_EXECUTE (default)
+	ReturnEdits      string               `json:"returnEdits"`                // ALL | ALL_V2_WITH_DELETIONS | NONE (default ALL)
+	ExpectedVersion  *int                 `json:"expectedVersion,omitempty"`  // legacy single-target token (US-023)
+	ExpectedVersions []ExpectedVersionRef `json:"expectedVersions,omitempty"` // per-target tokens (US-471)
+}
+
+// ExpectedVersionRef is a per-target optimistic concurrency token (US-471).
+// Each ref names an (ObjectType, PrimaryKey) tuple the caller observed at
+// version Version and asks the executor to abort the action if the
+// authoritative version has drifted in between. Refs may point at objects
+// the action does not itself modify — the lock is a snapshot guarantee on
+// the caller's read set, not a side-effect predicate.
+type ExpectedVersionRef struct {
+	ObjectType string `json:"objectType"`
+	PrimaryKey string `json:"primaryKey"`
+	Version    int    `json:"version"`
 }
 
 // StaleObjectError is returned by Executor.Apply when a caller-supplied
@@ -881,12 +902,14 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 		return nil, err
 	}
 
-	// US-023: optimistic concurrency. If the caller supplied an expected
-	// version, fail-fast before publishing on mismatch. Done here (not
-	// in Prepare) because it depends on live version state rather than
-	// the pure request → edits transform.
-	if req.Options != nil && req.Options.ExpectedVersion != nil {
-		if err := e.checkExpectedVersion(ctx, ontologyRID, prep.Edits, *req.Options.ExpectedVersion); err != nil {
+	// US-023 / US-471: optimistic concurrency. If the caller supplied an
+	// expected version (legacy single-target *int OR US-471 per-target
+	// ExpectedVersions list), fail-fast before publishing on any mismatch
+	// and stamp the observed EditVersion onto every MODIFY/DELETE edit.
+	// Done here (not in Prepare) because it depends on live version state
+	// rather than the pure request → edits transform.
+	if hasOptimisticLockOptions(req.Options) {
+		if err := e.checkExpectedVersions(ctx, ontologyRID, prep.Edits, req.Options); err != nil {
 			return nil, err
 		}
 	}
@@ -920,6 +943,13 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 // On any prepare failure it returns a *BatchError with the failing action's
 // index and phase, and NOTHING is published. This is the default ApplyBatch
 // semantics (Option B in the design).
+//
+// US-471: After every action is prepared the per-action ApplyOptions
+// optimistic-lock tokens are verified cross-batch — a single stale ref in
+// any action's Options aborts the whole batch with a *StaleObjectError so
+// no NATS publish happens. The error surfaces unwrapped (NOT wrapped in
+// *BatchError) so the handler routes it through staleObjectAPIError → 409
+// StaleObject, identical to the single-Apply 409 shape.
 func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, reqs []ApplyRequest) (*BatchResult, error) {
 	prepared := make([]*PreparedAction, 0, len(reqs))
 	for i := range reqs {
@@ -935,7 +965,33 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 		}
 		prepared = append(prepared, p)
 	}
+	if err := e.enforceBatchOptimisticLock(ctx, ontologyRID, reqs, prepared); err != nil {
+		return nil, err
+	}
 	return e.CommitBatch(ctx, ontologyRID, prepared)
+}
+
+// enforceBatchOptimisticLock walks every prepared action and runs the
+// US-471 cross-action expectedVersion check. Returns the first
+// *StaleObjectError encountered (caller-supplied action order); a nil
+// return means every action either skipped the check (no Options) or
+// matched all of its refs. EditVersion stamping is applied to each
+// action's prepared edits in place as a side effect so the persisted
+// payload carries the snapshot the batch was authored against.
+func (e *Executor) enforceBatchOptimisticLock(ctx context.Context, ontologyRID string, reqs []ApplyRequest, prepared []*PreparedAction) error {
+	for i, p := range prepared {
+		if i >= len(reqs) {
+			continue
+		}
+		opts := reqs[i].Options
+		if !hasOptimisticLockOptions(opts) {
+			continue
+		}
+		if err := e.checkExpectedVersions(ctx, ontologyRID, p.Edits, opts); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ApplyBatchBestEffort prepares every request and commits the ones that
@@ -959,6 +1015,9 @@ func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string,
 		prepared = append(prepared, p)
 	}
 
+	if err := e.enforceBatchOptimisticLock(ctx, ontologyRID, reqs, prepared); err != nil {
+		return nil, err
+	}
 	result, err := e.CommitBatch(ctx, ontologyRID, prepared)
 	if err != nil {
 		return nil, err
@@ -1006,6 +1065,10 @@ func (e *Executor) ApplyBatchAtomicTx(ctx context.Context, ontologyRID string, r
 			}
 		}
 		prepared = append(prepared, p)
+	}
+
+	if err := e.enforceBatchOptimisticLock(ctx, ontologyRID, reqs, prepared); err != nil {
+		return nil, err
 	}
 
 	return e.commitBatchAtomicTx(ctx, ontologyRID, prepared)
@@ -1164,47 +1227,136 @@ func (e *Executor) recordLineage(ctx context.Context, actionLogID int64, edits [
 	}
 }
 
-// checkExpectedVersion enforces the US-023 optimistic concurrency contract
-// for a single apply. The first MODIFY or DELETE edit is treated as the
-// target: its ObjectType API name is resolved to an RID via the OMS repo
-// (falling back to the raw API name when no mapping is configured, mirroring
-// pkg/funnel consumer behaviour), and GetObjectVersionCount returns the
-// current version. Mismatch surfaces a *StaleObjectError. CREATE-only
-// actions are silently skipped because there is no pre-existing object to
-// version-check against.
-func (e *Executor) checkExpectedVersion(ctx context.Context, ontologyRID string, edits []funnel.Edit, expected int) error {
-	var target *funnel.Edit
+// checkExpectedVersions enforces both the US-023 legacy single-target
+// contract (Options.ExpectedVersion *int) and the US-471 per-target
+// contract (Options.ExpectedVersions []ExpectedVersionRef). Behaviour:
+//
+//   - When Options.ExpectedVersions is non-empty, every ref is verified in
+//     caller-supplied order; the first mismatch aborts and surfaces a
+//     *StaleObjectError pointing at the failing ref. Refs may target
+//     objects the action does not modify — the lock is a snapshot
+//     predicate on the caller's read set.
+//   - Otherwise, when Options.ExpectedVersion is non-nil, the first
+//     MODIFY/DELETE edit in the prepared slice is checked against the
+//     legacy single token (preserves pre-US-471 wire compatibility).
+//   - When neither is set the call is a no-op.
+//
+// On success the observed version for every MODIFY/DELETE edit is stamped
+// onto Edit.EditVersion so the downstream NATS payload, action log, and
+// replay layers can reason about the snapshot the batch was authored
+// against (PRD US-471 acceptance: "Edit 记录加 edit_version").
+func (e *Executor) checkExpectedVersions(ctx context.Context, ontologyRID string, edits []funnel.Edit, opts *ApplyOptions) error {
+	if opts == nil {
+		return e.stampEditVersions(ctx, ontologyRID, edits)
+	}
+
+	// Multi-target list wins when both are set: the per-target contract is
+	// strictly stronger so a caller who opted in to it should not have the
+	// legacy single-target check shadow a mismatch they care about.
+	if len(opts.ExpectedVersions) > 0 {
+		// Resolve each ref against the live version count and compare.
+		for _, ref := range opts.ExpectedVersions {
+			current, err := e.lookupObjectVersion(ctx, ontologyRID, ref.ObjectType, ref.PrimaryKey)
+			if err != nil {
+				return err
+			}
+			if current != int64(ref.Version) {
+				return &StaleObjectError{
+					ObjectType:      ref.ObjectType,
+					PrimaryKey:      ref.PrimaryKey,
+					ExpectedVersion: ref.Version,
+					CurrentVersion:  current,
+				}
+			}
+		}
+		return e.stampEditVersions(ctx, ontologyRID, edits)
+	}
+
+	if opts.ExpectedVersion != nil {
+		expected := *opts.ExpectedVersion
+		// US-023 contract: lock the first MODIFY/DELETE edit only.
+		for i := range edits {
+			switch edits[i].Type {
+			case funnel.EditTypeModify, funnel.EditTypeDelete:
+				current, err := e.lookupObjectVersion(ctx, ontologyRID, edits[i].ObjectType, edits[i].PrimaryKey)
+				if err != nil {
+					return err
+				}
+				if current != int64(expected) {
+					return &StaleObjectError{
+						ObjectType:      edits[i].ObjectType,
+						PrimaryKey:      edits[i].PrimaryKey,
+						ExpectedVersion: expected,
+						CurrentVersion:  current,
+					}
+				}
+				return e.stampEditVersions(ctx, ontologyRID, edits)
+			}
+		}
+		return nil // CREATE-only action: legacy token is a no-op.
+	}
+
+	return nil
+}
+
+// lookupObjectVersion resolves an ObjectType API name to its RID and
+// returns the current object_history version count for (RID, primaryKey).
+// Falls back to the raw API name when no mapping is configured, mirroring
+// pkg/funnel consumer behaviour for degraded-mode test routers.
+func (e *Executor) lookupObjectVersion(ctx context.Context, ontologyRID, objectType, primaryKey string) (int64, error) {
+	otRID := objectType
+	if e.omsRepo != nil {
+		if ot, err := e.omsRepo.GetObjectTypeByAPIName(ctx, ontologyRID, objectType); err == nil && ot != nil && ot.RID != "" {
+			otRID = ot.RID
+		}
+	}
+	current, err := e.omsRepo.GetObjectVersionCount(ctx, otRID, primaryKey)
+	if err != nil {
+		return 0, fmt.Errorf("load object version: %w", err)
+	}
+	return current, nil
+}
+
+// stampEditVersions writes the observed version onto every MODIFY/DELETE
+// edit so the downstream NATS payload (US-471 acceptance "Edit 记录加
+// edit_version") carries the snapshot the action was authored against.
+// CREATE and LINK_* edits keep EditVersion=0 because there is no pre-
+// existing version to attribute. Best-effort: a failure to load any
+// version is propagated so the executor still fails-fast at the boundary.
+func (e *Executor) stampEditVersions(ctx context.Context, ontologyRID string, edits []funnel.Edit) error {
+	if e == nil || e.omsRepo == nil || len(edits) == 0 {
+		return nil
+	}
+	cache := make(map[string]int64, len(edits))
 	for i := range edits {
 		switch edits[i].Type {
 		case funnel.EditTypeModify, funnel.EditTypeDelete:
-			target = &edits[i]
+		default:
+			continue
 		}
-		if target != nil {
-			break
+		key := edits[i].ObjectType + "|" + edits[i].PrimaryKey
+		if v, ok := cache[key]; ok {
+			edits[i].EditVersion = v
+			continue
 		}
-	}
-	if target == nil {
-		return nil
-	}
-
-	otRID := target.ObjectType
-	if ot, err := e.omsRepo.GetObjectTypeByAPIName(ctx, ontologyRID, target.ObjectType); err == nil && ot != nil && ot.RID != "" {
-		otRID = ot.RID
-	}
-
-	current, err := e.omsRepo.GetObjectVersionCount(ctx, otRID, target.PrimaryKey)
-	if err != nil {
-		return fmt.Errorf("load object version: %w", err)
-	}
-	if current != int64(expected) {
-		return &StaleObjectError{
-			ObjectType:      target.ObjectType,
-			PrimaryKey:      target.PrimaryKey,
-			ExpectedVersion: expected,
-			CurrentVersion:  current,
+		v, err := e.lookupObjectVersion(ctx, ontologyRID, edits[i].ObjectType, edits[i].PrimaryKey)
+		if err != nil {
+			return err
 		}
+		cache[key] = v
+		edits[i].EditVersion = v
 	}
 	return nil
+}
+
+// hasOptimisticLockOptions reports whether the request has opted into any
+// optimistic-concurrency check (legacy single-target or US-471 per-target).
+// Used by the batch path to decide whether to walk the version-check step.
+func hasOptimisticLockOptions(opts *ApplyOptions) bool {
+	if opts == nil {
+		return false
+	}
+	return opts.ExpectedVersion != nil || len(opts.ExpectedVersions) > 0
 }
 
 // classifyPrepareError maps a Prepare-time error to one of the design doc's

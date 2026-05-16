@@ -34,6 +34,11 @@ type bridgePublisher struct {
 	ctx      context.Context
 	offset   uint64
 	mu       sync.Mutex
+	// batches captures every EditBatch routed through Publish so US-471
+	// cross-tests can assert on the post-collapse payload (e.g. that
+	// Edit.EditVersion was stamped at prepare time). Pre-US-471 callers
+	// ignore this field; the slice is goroutine-safe via b.mu.
+	batches []funnel.EditBatch
 }
 
 func (b *bridgePublisher) Publish(batch *funnel.EditBatch) (uint64, error) {
@@ -43,6 +48,7 @@ func (b *bridgePublisher) Publish(batch *funnel.EditBatch) (uint64, error) {
 		return 0, err
 	}
 	b.offset++
+	b.batches = append(b.batches, *batch)
 	return b.offset, nil
 }
 
