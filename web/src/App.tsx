@@ -18,6 +18,7 @@ import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { ObjectSetDiffPage } from './components/objectsets/ObjectSetDiffPage';
 import { ObjectSetSnapshotsPage } from './components/objectsets/ObjectSetSnapshotsPage';
 import { ObjectSetLineagePage } from './components/objectsets/ObjectSetLineagePage';
+import { ObjectSetLivePage } from './components/objectsets/ObjectSetLivePage';
 import { SavedObjectSetsPage } from './components/objectsets/SavedObjectSetsPage';
 import { BranchDiffPage } from './components/explorer/BranchDiffPage';
 import { BranchReconcilePage } from './components/explorer/BranchReconcilePage';
@@ -318,6 +319,7 @@ export default function App() {
               <Route path="objectsets/:ontology/diff" element={<ObjectSetDiffPage />} />
               <Route path="objectsets/:ontology/snapshots" element={<ObjectSetSnapshotsPage />} />
               <Route path="objectsets/:ontology/lineage" element={<ObjectSetLineagePage />} />
+              <Route path="objectsets/:ontology/live" element={<ObjectSetLivePage />} />
               <Route path="import/:ontology" element={<ImportWizardPage />} />
               <Route path="schema/infer" element={<SchemaInferencePage />} />
               <Route path="schema-inference" element={<Navigate to="/schema/infer" replace />} />

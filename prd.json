@@ -637,8 +637,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 43,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "New /objectsets/:ontology/live route + ObjectSetLivePage with Go-Live/Stop toggle, status indicator (idle/connecting/connected/reconnecting, color-dot + label, data-state attribute drives both tests and CSS), event list rendering US-459 canonical {seq, type, rid, properties} payload (type badge created/modified/deleted, rid + seq #, properties JSON tail, ring-buffer cap 200). useObjectSetSubscription extended with optional onStatusChange + canonical fields on ObjectSetEvent — BrowserPage path unchanged (status callback is opt-in nil-safe). Saved-set picker calls createTemporary to materialise rid for any saved Definition; ?rid= query param seeds the input for share-link usage; Composer header gained Live nav button (encodes current shareInfo.objectSetRid when available). Tests: 7 unit + 3 BDD in web/src/components/objectsets/__tests__/ObjectSetLivePage{,.bdd}.test.tsx pin (a) idle/connecting/connected/reconnecting state transitions, (b) canonical payload rendering keyed by seq, (c) negative control 'malformed JSON does not crash or increment counter', (d) reconnect preserves prior events (no wipe-on-disconnect regression), (e) saved-set picker → createTemporary → rid flow. Existing useObjectSetSubscription unit tests all green (10/10 — no signature break)."
     },
     {
       "id": "US-502",
