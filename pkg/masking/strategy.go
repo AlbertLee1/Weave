@@ -25,12 +25,21 @@ const (
 	MaskStrategyHash    MaskStrategy = "HASH"
 	MaskStrategyNull    MaskStrategy = "NULL"
 	MaskStrategyPartial MaskStrategy = "PARTIAL"
+	// MaskStrategyFPE applies NIST SP 800-38G FF1 format-preserving
+	// encryption. Requires per-mask config (AES key, tweak, radix or
+	// alphabet) — not addressable through ApplyMaskStrategy; route through
+	// ApplyMaskStrategyWithConfig / ApplyStrategyTransformsWithConfig.
+	MaskStrategyFPE MaskStrategy = "FPE"
+	// MaskStrategyRegex applies a regex.ReplaceAllString rewrite. Requires
+	// per-mask config (compiled pattern + replacement).
+	MaskStrategyRegex MaskStrategy = "REGEX"
 )
 
 // IsKnownStrategy reports whether s is a recognised MaskStrategy.
 func IsKnownStrategy(s MaskStrategy) bool {
 	switch s {
-	case MaskStrategyRedact, MaskStrategyHash, MaskStrategyNull, MaskStrategyPartial:
+	case MaskStrategyRedact, MaskStrategyHash, MaskStrategyNull, MaskStrategyPartial,
+		MaskStrategyFPE, MaskStrategyRegex:
 		return true
 	default:
 		return false
@@ -100,6 +109,10 @@ func strategyToName(s MaskStrategy) strategies.Name {
 		return strategies.NameNull
 	case MaskStrategyPartial:
 		return strategies.NamePartial
+	case MaskStrategyFPE:
+		return strategies.NameFPE
+	case MaskStrategyRegex:
+		return strategies.NameRegex
 	default:
 		return strategies.Name(s)
 	}
@@ -109,6 +122,11 @@ func strategyToName(s MaskStrategy) strategies.Name {
 // Mutates props in place, rewriting each key listed in transforms with the
 // corresponding strategy. Keys not present in props are ignored; keys present
 // in props but not in transforms are untouched.
+//
+// Strategies that need per-mask configuration (FPE / REGEX) cannot be applied
+// via this entry point — there is nowhere to thread the config in — so they
+// pass through unchanged. Callers wiring FPE / REGEX must route through
+// ApplyStrategyTransformsWithConfig.
 func ApplyStrategyTransforms(props map[string]interface{}, transforms map[string]MaskStrategy) {
 	if len(props) == 0 || len(transforms) == 0 {
 		return
@@ -119,4 +137,55 @@ func ApplyStrategyTransforms(props map[string]interface{}, transforms map[string
 		}
 		props[k] = ApplyMaskStrategy(s, props[k])
 	}
+}
+
+// StrategyApplication carries a strategy together with the per-mask
+// configuration it needs (FPE key/tweak/radix, REGEX pattern/replacement).
+// HASH / REDACT / NULL / PARTIAL ignore Config and may pass the zero value.
+type StrategyApplication struct {
+	Strategy MaskStrategy
+	Config   strategies.ApplyConfig
+}
+
+// ApplyMaskStrategyWithConfig is the config-aware US-489 sibling of
+// ApplyMaskStrategy. Returns (value, error) so callers can fail closed on
+// misconfigured FPE keys / bad regex pattern shapes without conflating the
+// failure with "strategy not applicable, pass through". HASH / REDACT / NULL
+// / PARTIAL ignore cfg and return a nil error.
+func ApplyMaskStrategyWithConfig(s MaskStrategy, value interface{}, cfg strategies.ApplyConfig) (interface{}, error) {
+	return strategies.ApplyWithConfig(strategyToName(s), value, cfg)
+}
+
+// ApplyStrategyTransformsWithConfig is the config-aware US-489 sibling of
+// ApplyStrategyTransforms. Mutates props in place, rewriting each key listed
+// in transforms with the matching strategy + per-mask config. Errors are
+// aggregated by key and returned to the caller — successfully applied keys
+// are NOT rolled back, matching the existing in-place semantics; callers
+// reading the error can decide whether to short-circuit the response or
+// surface a per-row warning.
+func ApplyStrategyTransformsWithConfig(props map[string]interface{}, transforms map[string]StrategyApplication) map[string]error {
+	if len(props) == 0 || len(transforms) == 0 {
+		return nil
+	}
+	var errs map[string]error
+	for k, app := range transforms {
+		if _, ok := props[k]; !ok {
+			continue
+		}
+		out, err := ApplyMaskStrategyWithConfig(app.Strategy, props[k], app.Config)
+		if err != nil {
+			if errs == nil {
+				errs = make(map[string]error)
+			}
+			errs[k] = err
+			// Fail closed: replace the value with nil so a misconfigured
+			// FPE / REGEX policy never leaks the clear value just because
+			// the cipher errored. Callers that want a different fallback
+			// (e.g. redact) can inspect the error map and rewrite.
+			props[k] = nil
+			continue
+		}
+		props[k] = out
+	}
+	return errs
 }

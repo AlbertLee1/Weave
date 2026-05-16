@@ -10,6 +10,7 @@ require (
 	github.com/axiomhq/hyperloglog v0.2.6
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/blevesearch/bleve_index_api v1.2.11
+	github.com/capitalone/fpe v1.2.1
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/cucumber/godog v0.15.1
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
