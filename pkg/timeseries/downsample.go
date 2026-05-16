@@ -18,6 +18,13 @@ const (
 	DownsampleMin   DownsampleAggregation = "min"
 	DownsampleMax   DownsampleAggregation = "max"
 	DownsampleCount DownsampleAggregation = "count"
+	// US-467: TimescaleDB's `first(value, ts)` / `last(value, ts)`
+	// hyperfunctions surfaced as canonical aggregation names so a single
+	// resample step or DownsamplePoints call can pick a leading/trailing
+	// per-bucket sample. PGStore.DownsamplePoints translates these to the
+	// hyperfunction; non-Timescale backends emulate via window/order-by.
+	DownsampleFirst DownsampleAggregation = "first"
+	DownsampleLast  DownsampleAggregation = "last"
 )
 
 // NormalizeAggregation maps the resample-style names (including "mean")
@@ -35,6 +42,10 @@ func NormalizeAggregation(name string) (DownsampleAggregation, bool) {
 		return DownsampleMax, true
 	case "count":
 		return DownsampleCount, true
+	case "first":
+		return DownsampleFirst, true
+	case "last":
+		return DownsampleLast, true
 	default:
 		return "", false
 	}

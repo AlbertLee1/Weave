@@ -2368,6 +2368,7 @@ func main() {
 	//                         but PG is wired
 	//   - "" / "auto"       → historical behaviour: PG when wired, memory
 	//                         otherwise.
+	var tsPGStore *timeseries.PGStore
 	switch strings.ToLower(strings.TrimSpace(cfg.TimeSeries.Backend)) {
 	case "victoriametrics":
 		deps.TimeSeriesStore = timeseries.NewVMStore(cfg.TimeSeries.URL)
@@ -2379,14 +2380,32 @@ func main() {
 		if deps.PGPool == nil {
 			log.Fatalf("WEAVE_TS_BACKEND=postgres but no PG pool wired")
 		}
-		deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+		tsPGStore = timeseries.NewPGStore(deps.PGPool)
+		deps.TimeSeriesStore = tsPGStore
 		log.Printf("[TIMESERIES] backend=postgres (forced)")
 	default:
 		if deps.PGPool != nil {
-			deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+			tsPGStore = timeseries.NewPGStore(deps.PGPool)
+			deps.TimeSeriesStore = tsPGStore
 		} else {
 			deps.TimeSeriesStore = timeseries.NewMemoryStore()
 		}
+	}
+
+	// US-467: when the TimeSeries backend is PG-backed, probe the
+	// timeseries_cagg_5min continuous aggregate once and spawn the
+	// 5-minute refresh ticker as an app-side fallback for environments
+	// without pg_cron. pg_cron, when present, schedules the same
+	// refresh server-side (migration 000209); refresh_continuous_aggregate
+	// is idempotent so the two paths cooperate harmlessly. Degraded
+	// mode (no TimescaleDB → DetectCAGG returns false) leaves
+	// RefreshCAGG as a no-op and the ticker harmless.
+	if tsPGStore != nil {
+		caggReady := tsPGStore.DetectCAGG(ctx)
+		log.Printf("[TIMESERIES] cagg=%t (timeseries_cagg_5min)", caggReady)
+		go timeseries.RunCAGGRefreshLoop(ctx, tsPGStore, 5*time.Minute,
+			func() { /* per-refresh log noise budget: silent on success */ },
+			func(err error) { log.Printf("[TIMESERIES] cagg refresh: %v", err) })
 	}
 
 	// 2d. Geotemporal store (OSV2-301). Backend selection mirrors TimeSeries:
