@@ -893,9 +893,13 @@ func dedupeStrings(pks []string) []string {
 // When no DerivedProperties are declared the call degenerates to the inner
 // ObjectSet so pre-existing callers that only used Properties keep working.
 //
-// Scope: count / sum / avg / min / max over forward direction. Reverse
-// direction lands in US-003 and intentionally returns an explicit error so
-// the unsupported surface is obvious.
+// Scope: count / sum / avg / min / max over both forward and reverse
+// directions. Reverse-direction numeric metrics walk
+// reverseLinkFinder.ResolveLinkedReverseByAPIName for link traversal and
+// DirectionalLinkTargetTypeResolver.ResolveTargetObjectTypeDir for the
+// "other end" ObjectType discovery; resolvers that satisfy only the legacy
+// forward-only interfaces surface a clear "reverse not supported" error
+// instead of silently returning zeros.
 func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (*Result, error) {
 	inner, err := e.execute(ctx, def.ObjectSet)
 	if err != nil {
@@ -965,10 +969,7 @@ func (e *Executor) executeWithProperties(ctx context.Context, def *Definition) (
 				derived[pk][dp.Name] = int64(len(targets))
 			}
 		case "sum", "avg", "min", "max":
-			if dir != links.DirectionForward {
-				return nil, fmt.Errorf("withProperties %q: reverse direction numeric metrics not yet supported", dp.Name)
-			}
-			if err := e.evaluateNumericDerived(ctx, inner, dp, derived); err != nil {
+			if err := e.evaluateNumericDerived(ctx, inner, dp, dir, resolveLinks, derived); err != nil {
 				return nil, err
 			}
 		default:
@@ -1120,27 +1121,47 @@ func (e *Executor) linkResolverForDirection(dp DerivedPropertyDef, dir links.Dir
 	return finder.ResolveLinkedReverseByAPIName, nil
 }
 
-// evaluateNumericDerived computes sum / avg / min / max of dp.Field across
-// forward-linked target objects for every base PK in inner. The target
-// ObjectType is resolved via LinkTargetTypeResolver so the numeric field can
-// be read from the correct Bleve index. Non-numeric fields surface as
-// DerivedPropertyTypeMismatch.
-func (e *Executor) evaluateNumericDerived(ctx context.Context, inner *Result, dp DerivedPropertyDef, derived map[string]map[string]interface{}) error {
-	targetType := ""
-	if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok {
-		tt, err := resolver.ResolveTargetObjectType(ctx, inner.ObjectType, dp.Link)
-		if err != nil {
-			return fmt.Errorf("withProperties %q resolve target type for link %q: %w", dp.Name, dp.Link, err)
+// resolveLinkTargetType returns the "other end" ObjectType API name for a
+// link walk in the requested direction. Forward direction prefers the
+// direction-aware resolver and falls back to the legacy
+// LinkTargetTypeResolver; reverse direction requires
+// DirectionalLinkTargetTypeResolver because the legacy interface only
+// reports the link's declared target. An empty string return means the
+// installed resolver cannot answer the question — callers MUST treat that
+// as a hard failure so numeric metrics never silently read the wrong index.
+func (e *Executor) resolveLinkTargetType(ctx context.Context, callerObjectType, linkAPIName string, dir links.Direction) (string, error) {
+	if resolver, ok := e.linkResolver.(DirectionalLinkTargetTypeResolver); ok {
+		return resolver.ResolveTargetObjectTypeDir(ctx, callerObjectType, linkAPIName, dir)
+	}
+	if dir == links.DirectionForward {
+		if resolver, ok := e.linkResolver.(LinkTargetTypeResolver); ok {
+			return resolver.ResolveTargetObjectType(ctx, callerObjectType, linkAPIName)
 		}
-		targetType = tt
+	}
+	return "", nil
+}
+
+// evaluateNumericDerived computes sum / avg / min / max of dp.Field across
+// the linked "other end" objects for every base PK in inner. The "other end"
+// is direction-aware — for forward traversal it is the link's declared
+// target; for reverse traversal it is the link's declared source — so the
+// numeric field is read from the correct Bleve index in both cases.
+// resolveLinks is the direction-aware link walk produced by
+// linkResolverForDirection; callers MUST pass the one matching dp.Direction
+// so reverse-direction sums see the right edges. Non-numeric fields surface
+// as DerivedPropertyTypeMismatch.
+func (e *Executor) evaluateNumericDerived(ctx context.Context, inner *Result, dp DerivedPropertyDef, dir links.Direction, resolveLinks func(context.Context, string, string, []string) ([]string, error), derived map[string]map[string]interface{}) error {
+	targetType, err := e.resolveLinkTargetType(ctx, inner.ObjectType, dp.Link, dir)
+	if err != nil {
+		return fmt.Errorf("withProperties %q resolve target type for link %q: %w", dp.Name, dp.Link, err)
 	}
 	if targetType == "" {
-		return fmt.Errorf("withProperties %q: link resolver cannot determine target ObjectType for link %q", dp.Name, dp.Link)
+		return fmt.Errorf("withProperties %q: link resolver cannot determine target ObjectType for link %q (direction=%s)", dp.Name, dp.Link, dir)
 	}
 	targetIndexKey := scopedIndexKey(ctx, e.indexMgr, targetType)
 
 	for _, pk := range inner.PrimaryKeys {
-		targets, err := e.linkResolver.ResolveLinkedObjectsByAPIName(ctx, inner.ObjectType, dp.Link, []string{pk})
+		targets, err := resolveLinks(ctx, inner.ObjectType, dp.Link, []string{pk})
 		if err != nil {
 			return fmt.Errorf("withProperties %q resolve link %q: %w", dp.Name, dp.Link, err)
 		}
