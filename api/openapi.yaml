@@ -3161,6 +3161,35 @@ components:
           type: string
           format: date-time
           description: Server timestamp at the moment the new key was appended.
+    AdminAuthRevokeRequest:
+      type: object
+      description: |
+        US-491 request body for `POST /api/auth/tokens/{jti}/revoke`. All fields
+        are optional; the JTI in the path is sufficient on its own.
+      properties:
+        userId:
+          type: string
+          description: Optional subject of the token (recorded for audit).
+        reason:
+          type: string
+          description: Free-form operator note (`logout`, `compromised`, etc.).
+        expiresAt:
+          type: string
+          format: date-time
+          description: |
+            Original `exp` claim of the revoked token. When set, the background
+            reaper prunes the row after this timestamp passes; otherwise a
+            default 24h horizon is applied.
+    AdminAuthRevokeResponse:
+      type: object
+      description: US-491 wire shape returned after a successful revoke.
+      required: [jti, revokedAt]
+      properties:
+        jti:
+          type: string
+        revokedAt:
+          type: string
+          format: date-time
     AuditEvent:
       type: object
       description: A single audit log entry.
@@ -11364,6 +11393,50 @@ paths:
         "404":
           $ref: "#/components/responses/NotFoundError"
         "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/tokens/{jti}/revoke:
+    post:
+      operationId: adminAuthRevokeToken
+      summary: Revoke a JWT access token by jti (US-491)
+      description: |
+        Inserts the supplied jti into the `auth_revoked_tokens` blacklist so
+        subsequent requests carrying that token are rejected with
+        `401 TokenRevoked` even when the token's signature and `exp` claim
+        are still valid. The middleware fronts the table with a 30s TTL
+        cache; the admin handler invalidates the cache for the affected jti
+        so same-process callers observe the revoke on the very next request.
+        Gated behind `user.manage`. Returns 503 when the process boots
+        without a PG-backed RevocationStore (degraded mode).
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: jti
+          required: true
+          schema:
+            type: string
+          description: The JWT ID (`jti` claim) of the access token to revoke.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAuthRevokeRequest"
+      responses:
+        "200":
+          description: Token added to the revocation blacklist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuthRevokeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
           $ref: "#/components/responses/InternalError"
   /api/admin/auth/keys/rotate:
     post:

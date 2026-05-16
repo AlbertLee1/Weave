@@ -66,7 +66,16 @@ func IsOAuthAccessToken(tok string) bool {
 // When oauth is nil the middleware degrades identically to
 // MiddlewareWithAPIKeys.
 func MiddlewareFull(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository, resolver *RoleResolver, oauth OAuthTokenValidator) func(http.Handler) http.Handler {
-	inner := MiddlewareWithAPIKeys(signer, apiKeys, users, resolver)
+	return MiddlewareFullWithRevocation(signer, apiKeys, users, resolver, oauth, nil)
+}
+
+// MiddlewareFullWithRevocation is MiddlewareFull plus a US-491 JTI
+// revocation checker. A nil checker is equivalent to MiddlewareFull; the
+// production wiring in cmd/server/main.go passes a *CachedRevocationChecker
+// so revoked access tokens get rejected at the middleware boundary on the
+// very next request after the admin revoke endpoint returns 200.
+func MiddlewareFullWithRevocation(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository, resolver *RoleResolver, oauth OAuthTokenValidator, revoked RevocationChecker) func(http.Handler) http.Handler {
+	inner := MiddlewareWithRevocation(signer, apiKeys, users, resolver, revoked)
 	if oauth == nil {
 		return inner
 	}

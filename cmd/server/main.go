@@ -228,6 +228,14 @@ type ServerDeps struct {
 	SqlQueryEngine        sqlqueries.Engine
 	IndexDocSource        index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
 	AuditStore            audit.Store                // US-067: audit event store (nil = endpoint returns 503)
+	// US-491: JWT access-token revocation blacklist. RevocationStore backs
+	// the admin POST /api/auth/tokens/{jti}/revoke handler; RevocationChecker
+	// is the TTL-cached read surface consulted by the JWT middleware on
+	// every authenticated request. Both nil in degraded mode (no PG pool)
+	// — the admin route then returns 503 and the middleware degrades to its
+	// pre-US-491 no-revocation behaviour.
+	RevocationStore   auth.RevocationStore
+	RevocationChecker *auth.CachedRevocationChecker
 	IngestRateLimiter     oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
 	WebSocketHub          *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	// US-141: Developer Console application registry. When nil the
@@ -770,12 +778,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// auth. Any optional dependency can be nil (dev / minimal test
 		// harness): the middleware degrades gracefully. A nil
 		// oauthValidator falls through to MiddlewareWithAPIKeys.
-		api.Use(auth.MiddlewareFull(
+		api.Use(auth.MiddlewareFullWithRevocation(
 			deps.JWTSigner,
 			deps.APIKeyRepo,
 			deps.UserRepo,
 			deps.RoleResolver,
 			oauthValidator,
+			deps.RevocationChecker,
 		))
 
 		// US-044: enforce per-ontology scope on every route that carries an
@@ -1259,6 +1268,19 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodPost, "/api/admin/auth/keys/rotate", NewAdminAuthKeysRotateHandler(AdminAuthKeysRotateDeps{
 				Signer: deps.JWTSigner,
+			}))
+
+		// US-491: JWT access-token revocation. The admin caller hands the
+		// jti claim of a still-live access token to this endpoint; the
+		// row is inserted into auth_revoked_tokens and the in-process TTL
+		// cache is flushed for that jti so the next middleware lookup
+		// observes the revoke immediately. Gated behind PermUserManage to
+		// match the keyring rotation handler above. Returns 503 when the
+		// process boots without a PG-backed RevocationStore.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/auth/tokens/{jti}/revoke", NewAdminAuthRevokeHandler(AdminAuthRevokeDeps{
+				Store:   deps.RevocationStore,
+				Checker: deps.RevocationChecker,
 			}))
 
 		// Admin: audit events (US-067). Gated to admin-level roles via
@@ -1911,6 +1933,19 @@ func main() {
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),
 			auth.RefreshServiceOptions{AbsoluteTTL: cfg.JWT.RefreshTokenTTL},
+		)
+		// US-491: JWT access-token revocation blacklist. The store backs the
+		// admin revoke endpoint; the checker fronts it with a 30s TTL cache so
+		// the JWT middleware avoids one round-trip per request for the same
+		// JTI. The background reaper prunes naturally-expired rows every
+		// 5min — once an access token has passed its `exp` claim the JWT
+		// verifier rejects it on its own, so keeping it on the blacklist is
+		// pure noise.
+		deps.RevocationStore = auth.NewPGRevocationStore(pool)
+		deps.RevocationChecker = auth.NewCachedRevocationChecker(deps.RevocationStore, 30*time.Second)
+		go auth.RunRevocationReaperLoop(ctx, deps.RevocationStore, 5*time.Minute,
+			func(n int64) { log.Printf("auth: pruned %d expired revoked-token rows", n) },
+			func(err error) { log.Printf("auth: revoked-token reaper error: %v", err) },
 		)
 		// US-254: PG-backed session inventory. Same uncached pattern — admin
 		// volume is low and the /api/auth/sessions endpoints need to see their
