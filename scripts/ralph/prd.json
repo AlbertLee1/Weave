@@ -299,8 +299,8 @@
         "Tests pass"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented Flow.TopoLayers grouping nodes by topological level + concurrent same-layer dispatch via sync.WaitGroup with serial commit pass for deterministic trace order; added retry.strategy=exponential (base * 2^(i-1) per attempt) alongside legacy fixed strategy; added node-level fallbackNodeId routing on primary retry exhaustion plus optional config.fallbackOnly to keep fallback-target nodes off the normal topo path. TraceEntry now records UsedFallbackNode + FallbackNodeID. Validate rejects unknown / self-referential fallbackNodeId. 9 unit cases in pkg/aip/logic/us478_dag_executor_test.go (diamond concurrency barrier proof, TopoLayers grouping, exponential vs fixed timing, fallback success/failure routing, fallbackOnly skip semantics, validation negatives) + 3 BDD scenarios in test/integration/aip_logic_dag_us478_bdd_test.go exercising the same gates over the chi router /execute wire. go vet + go build + race detector green; pkg/aip/logic/oms/actions/funnel/cmd/server unit suites unchanged."
     },
     {
       "id": "US-479",
