@@ -259,28 +259,26 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	// US-057 / US-307: parse the resume cursor for Server-Sent Events replay.
+	// US-057 / US-307 / US-459: parse the resume cursor for SSE replay.
 	// The cursor carries the NATS stream sequence the client last observed;
 	// the hub replays any buffered events with Sequence > fromSeq before
-	// attaching the live subscription. Two channels are accepted:
+	// attaching the live subscription. Three channels are accepted, in
+	// precedence order:
 	//   1. Last-Event-ID HTTP header — the SSE-protocol-canonical channel
 	//      browsers send automatically on EventSource auto-reconnect.
-	//   2. ?lastEventId= query parameter — the manual fallback the web
-	//      client uses when it explicitly recreates the EventSource (where
-	//      the browser cannot set a custom header on the first connect).
-	// The header wins when both are present so a stale URL never overrides
-	// a fresher header value. Malformed values degrade to fromSeq == 0 so a
-	// broken cursor never silently disables replay by erroring out the
-	// request.
+	//   2. ?since= query parameter — the US-459 canonical SDK-facing alias,
+	//      used by non-browser clients that recreate the connection.
+	//   3. ?lastEventId= query parameter — legacy fallback retained so the
+	//      existing React EventSource client (web/src/hooks/useObjectSetSubscription.ts)
+	//      continues to resume across reconnects without code changes.
+	// The header wins when present so a stale URL never overrides a fresher
+	// header value. Malformed values degrade to fromSeq == 0 so a broken
+	// cursor never silently disables replay by erroring out the request.
 	var fromSeq uint64
 	cursorVal := r.Header.Get("Last-Event-ID")
+	if cursorVal == "" {
+		cursorVal = r.URL.Query().Get("since")
+	}
 	if cursorVal == "" {
 		cursorVal = r.URL.Query().Get("lastEventId")
 	}
@@ -290,8 +288,34 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	id, ch := h.broadcast.SubscribeWithReplay(16, fromSeq)
+	// US-459: SubscribeWithReplayWindow signals outOfWindow=true when the
+	// supplied fromSeq is older than the oldest event the hub still retains
+	// (after the 5-minute time-bounded prune). In that case the handler MUST
+	// emit a 410 Gone with the typed apierror body BEFORE writing any SSE
+	// streaming headers — once headers are flushed the status line is fixed
+	// and the SDK has no clean way to tell "stream ended" from "replay
+	// window exceeded".
+	id, ch, outOfWindow := h.broadcast.SubscribeWithReplayWindow(16, fromSeq)
+	if outOfWindow {
+		apierror.WriteJSON(w, apierror.NewGone("SSEReplayWindowExceeded", map[string]string{
+			"objectSetRid": objectSetRid,
+			"since":        cursorVal,
+			"reason":       "cursor is older than the replay retention window; refetch the ObjectSet and resume from the latest seq",
+		}))
+		return
+	}
 	defer h.broadcast.Unsubscribe(id)
+
+	// Replay window OK — only now write SSE streaming headers. Doing this
+	// AFTER the out-of-window check preserves a clean JSON 410 body when
+	// the cursor is too old, instead of half-initialising a text/event-stream
+	// response and then trying to convey the error through the data channel.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	// US-058: heartbeat ticker. SSE comment lines (`:ping\n\n`) are a
 	// protocol-standard way to probe the connection without delivering a
@@ -354,15 +378,35 @@ func (h *SubscribeSSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 // sseEventPayload maps a funnel.BroadcastEvent into the public SSE
-// payload shape. CREATE / MODIFY collapse to ADDED_OR_UPDATED so frontend
-// consumers can treat both as "refresh this row"; DELETE maps to DELETED.
-// The object side carries __primaryKey / __apiName in the same reserved-key
-// convention LoadObjects uses (see pkg/oss/wire.go FormatObject), so the
-// React hook can reuse the existing WireObject parsing path unchanged.
+// payload shape. The frame carries two parallel views of the same edit:
+//
+//   - US-459 canonical keys ({seq, type, rid, properties}) — the SDK-facing
+//     contract spelled out in the PRD acceptance criteria. type collapses
+//     onto the lower-case verbs created/modified/deleted; rid composes the
+//     objectType and primaryKey so SDK clients have a single addressable
+//     identifier; seq mirrors evt.Sequence so the client can resume by
+//     passing it back via ?since=.
+//   - Legacy keys ({eventType, object}) — preserved so the existing React
+//     hook (web/src/hooks/useObjectSetSubscription.ts) continues to parse
+//     the same payload without code changes. CREATE / MODIFY collapse to
+//     ADDED_OR_UPDATED and the object map embeds __primaryKey / __apiName
+//     in the reserved-key convention LoadObjects uses
+//     (see pkg/oss/wire.go FormatObject).
+//
+// Emitting both views keeps the migration zero-friction for browser
+// consumers while satisfying the canonical {seq, type, rid, properties}
+// shape downstream tooling now relies on.
 func sseEventPayload(evt funnel.BroadcastEvent) map[string]interface{} {
 	eventType := "ADDED_OR_UPDATED"
 	if evt.Type == "DELETE" {
 		eventType = "DELETED"
+	}
+	canonicalType := "modified"
+	switch evt.Type {
+	case "CREATE":
+		canonicalType = "created"
+	case "DELETE":
+		canonicalType = "deleted"
 	}
 	obj := map[string]interface{}{
 		"__primaryKey": evt.PrimaryKey,
@@ -374,7 +418,20 @@ func sseEventPayload(evt funnel.BroadcastEvent) map[string]interface{} {
 		}
 		obj[k] = v
 	}
+	// US-459 properties view: deliver an empty map (never nil) so SDK clients
+	// can iterate without a nil guard. Reserved __-prefixed keys are NOT
+	// included here — the rid already encodes the addressing info.
+	properties := make(map[string]interface{}, len(evt.Properties))
+	for k, v := range evt.Properties {
+		properties[k] = v
+	}
 	return map[string]interface{}{
+		// US-459 canonical view
+		"seq":        evt.Sequence,
+		"type":       canonicalType,
+		"rid":        evt.ObjectType + ":" + evt.PrimaryKey,
+		"properties": properties,
+		// Legacy view (kept for backwards compatibility with the React hook).
 		"eventType": eventType,
 		"object":    obj,
 	}

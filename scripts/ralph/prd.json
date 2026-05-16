@@ -1,95 +1,885 @@
 {
-  "project": "Weave-Palantir-OSv2-Next",
-  "branchName": "main",
-  "description": "Weave 单机复刻 Palantir OSv2 — OSv2-301/302/303 之后的下一轮迭代。上一轮把 GeoTemporal 落到 PG、MCP prompts/list 接到 ActionType、weave-mcp stdio↔HTTP bridge 收掉之后，仍然有四处可被本地 AI 客户端 / CLI 用户直接观察到的真实代码 gap：(1) cmd/weave-cli 只有 ontology/object/auth/admin/fn/pkg 等子命令，没法 apply action、跑 aggregation、load/createTemporary objectSet —— 一个 CLI 用户没法用最常见的 OSv2 三件套；(2) cmd/weave-mcp/http_bridge.go 不转发 Authorization 头，OSV2-303 progress 显式留下 follow-up，在 AUTH_MODE=token 的真实部署下 Claude Desktop / Cursor 完全连不上；(3) pkg/funnel 整个目录 0 处 OTel/tracing 引用，HTTP request 上的 trace 上下文走到 publisher 立刻断掉，consumer 这边也起不了带 parent 的 span，违背 PRD-V2 §4.6 Gap-O2；(4) pkg/mcp/resources.go 的 resources/list 只列 Ontology 和临时 ObjectSet，未列 ObjectType，AI 客户端拿不到单类型 schema 资源，违背 PRD-V2 §4.7 Gap-D4。所有 story 均基于当前代码事实 + git log + PRD-V2 已锁定方向，不重复已完成的 OSV2-301/302/303。",
-  "tddConvention": "Red → Green → Refactor。每个 story 先写命名 TestX_Given_State_When_Action_Then_Outcome 的失败测试（go test 表驱动 / Vitest），跑一次明确确认 fail；再写最小实现让测试转绿；再视情重构。CLI story 用 httptest.Server 作为后端，避免依赖 cmd/server 启动。weave-mcp bridge auth story 在测试内验证 Authorization 头透传。Funnel tracing 用 SpanRecorder/InMemoryExporter 断言 span 父子关系。每个 story 提交前必须分别跑通相关 go test + make web-build + go vet ./...，最终全部 story 完成时再跑一遍 make test / make web-test / go vet ./... 作为整轮质量门禁。",
+  "project": "Weave-OSv2-Iteration-R1",
+  "branchName": "ralph/osv2-iteration-r1",
+  "description": "Weave OSv2 下一轮迭代路线图 — 深度补强与质量收敛。承接 prd-osv2-full-parity-v3.md（US-365~458 已合入）。基于 5 路并行调研，本轮关闭：ObjectSet SSE、RLS/Cell masking CEL、Audit 全覆盖、Function 版本+确定性重放、AIP Block DAG、Pipeline 增量、Parquet 冷存、GeoTemporal/TimeSeries PG 持久化、Saga 补偿策略、Funnel DLQ replay、跨对象乐观锁、TypeClass→Bleve mapping、Scenario→Aggregation 渗透、Quiver 实时数据、JWT 轮换/撤销、OIDC 安全、Tenants schema 隔离、Frontend 35 处 backend gap UI、CLI/SDK 奇偶、OpenAPI 输出、OTel 全链路、Prometheus 规范化、cookbook 全绿。60 个故事分 6 个 Phase (36~41)。详见 tasks/prd-osv2-iteration-roadmap.md。",
+  "tddConvention": "Red → Green → Refactor。每个 story 先写命名 TestX_Given_State_When_Action_Then_Outcome 的失败测试（go test 表驱动 / Vitest），跑一次明确确认 fail；再写最小实现让测试转绿；再视情重构。算法/性能 story 必附 benchmark（bench/ 目录）；安全 story 必附负向测试；前端 story 必走 dev-browser skill 验证。每 story 提交前必须 go vet ./... + make test 相关包 + make web-build（若涉前端）通过。",
   "userStories": [
     {
-      "id": "OSV2-304",
-      "name": "weave CLI 补齐 action apply / aggregate / objectset 三件套子命令",
-      "phase": 20,
-      "active": true,
-      "passes": true,
+      "id": "US-459",
+      "title": "ObjectSet 客户端实时订阅 SSE",
+      "description": "As an SDK user, I want to subscribe to ObjectSet changes and replay missed events via cursor, so I avoid polling.",
+      "acceptanceCriteria": [
+        "GET /api/v2/ontologies/{ont}/objectSets/{rid}/subscribe?since={eventId} 返回 SSE 流",
+        "事件格式 {seq, type: created|modified|deleted, rid, properties} 序列号严格递增",
+        "服务端缓存 5min 重放窗口；超窗返回 410 Gone",
+        "单元测试覆盖：重连重放、cursor 越界、并发 ack",
+        "Typecheck passes",
+        "Tests pass"
+      ],
       "priority": 1,
-      "dependencies": [],
-      "description": "今天 cmd/weave-cli/main.go 只 dispatch ontology / object / auth / config / admin / fixtures / pitr / materialize / index / pkg / fn / backup / restore / repl。对应 PRD-V2 §6 US-079 的 'weave action apply / weave aggregate / weave objectset run' 三件套未实现。一个 CLI 用户因此没法在不写 curl 的情况下：跑一次 Action、跑一次 Aggregation、对临时 ObjectSet load / createTemporary。本 story 在 cmd/weave-cli 内新增三个子命令：(1) `weave action apply --ontology <name> --action <api-name> [--params @file.json | --param k=v...] [--returnEdits ALL_V2|NONE] [--async]` → POST /api/v2/ontologies/{ont}/actions/{action}/apply；(2) `weave aggregate --ontology <name> --type <ot-api-name> --body @file.json` → POST /api/v2/ontologies/{ont}/objects/{ot}/aggregate；(3) `weave objectset <load|create-temporary> --ontology <name> --body @file.json` → POST /api/v2/ontologies/{ont}/objectSets/{load|createTemporary}。输入支持文件 @filename 和 --param key=value 重复（仅 action apply）。输出默认 JSON pretty，--output table 提供窄表显示（aggregate 列：bucket / value）。所有命令复用 internal/cliclient（已有 auth token / base URL 处理）。",
-      "bdd_acceptance": [
-        "Given cmd/weave-cli/main.go 的 dispatch，When 用户输入 weave action apply / weave aggregate / weave objectset，Then 三个子命令都不再返回 'unknown command' 退出码 2，而是各自 dispatch 到 runAction / runAggregate / runObjectSet（用 go test 的 ExitCode 断言）。",
-        "Given httptest.Server 接管 POST /api/v2/ontologies/northwind/actions/create-order/apply 并返回 {validation:{result:'VALID'}, edits:{type:'edits', addedObjectCount:1, modifiedObjectCount:0, deletedObjectCount:0}}，When 用户跑 'weave action apply --ontology northwind --action create-order --param customer=ALFKI --param qty=3 --returnEdits ALL_V2'，Then httptest 实际收到的 request body parameters.customer='ALFKI' (string)、parameters.qty='3' (string)、options.returnEdits='ALL_V2_WITH_DELETIONS'，stdout 输出包含 'VALID' 字面量且 exit code = 0。",
-        "Given 同一 httptest.Server，When 用户跑 'weave action apply --ontology northwind --action create-order --params @/tmp/params.json'（文件内是 {customer:'ALFKI', qty:3}），Then 服务端收到 parameters.qty=3 (number)、parameters.customer='ALFKI' (string)；exit code = 0（验证文件 mode 保留 JSON 类型）。",
-        "Given httptest.Server 接管 POST /api/v2/ontologies/northwind/objects/Order/aggregate 并返回 {data:{country:[{key:'USA', value:42},{key:'DE', value:9}]}}，When 'weave aggregate --ontology northwind --type Order --body @/tmp/agg.json --output table'，Then stdout 是包含 'USA' 'DE' '42' '9' 字面量的文本（tab 对齐），exit code = 0。",
-        "Given httptest.Server 接管 POST /api/v2/ontologies/northwind/objectSets/createTemporary 并返回 {objectSetRid:'ri.oss.main.objectset.tmp-123'}，When 'weave objectset create-temporary --ontology northwind --body @/tmp/def.json'，Then stdout JSON 解析后 .objectSetRid 字面匹配，exit code = 0。",
-        "Given 用户漏掉必选 flag（如缺 --action），When dispatch 进 action apply，Then stderr 含 'usage' 和 'required' 字面量，exit code = 2，不发任何 HTTP 请求（用 httptest.Server 的请求计数断言）。",
-        "Given 后端返回 HTTP 4xx + ApplicationException JSON，When CLI 收到，Then stderr 输出 errorCode + 文本（不只 'unknown error'），exit code 非 0（约定 = 1）。",
-        "三个子命令在 cmd/weave-cli/main.go 的 printRootUsage 出现，与现有 'ontology' / 'object' 同一缩进风格。",
-        "go test ./cmd/weave-cli/... 全绿（新增 cmd_action_test.go / cmd_aggregate_test.go / cmd_objectset_test.go，每个 ≥ 3 BDD 案例）。",
-        "go vet ./... passes。"
-      ],
-      "notes": "所有新文件放在 cmd/weave-cli/ 内：cmd_action.go + cmd_action_test.go、cmd_aggregate.go + cmd_aggregate_test.go、cmd_objectset.go + cmd_objectset_test.go；main.go 的 switch 加 3 个 case；printRootUsage 加 3 行。内部 HTTP client 复用 internal/cliclient（已用于 object 子命令）。@filename 读法在 cmd_action.go 内放一个小 helper 单独测。"
+      "passes": true,
+      "notes": "5min time-window replay + 410 Gone + since= alias + concurrent ack tests landed on top of the existing US-055..058 SSE scaffold; canonical {seq, type, rid, properties} payload added alongside legacy {eventType, object} for the React hook."
     },
     {
-      "id": "OSV2-305",
-      "name": "weave-mcp HTTP bridge 透传 Authorization（token 模式下也能用）",
-      "phase": 20,
-      "active": true,
-      "passes": true,
+      "id": "US-460",
+      "title": "withProperties 反向链接聚合",
+      "description": "As an analyst, I want sum/avg/min/max over reverse-direction links (one-to-many reversed), equal to forward direction.",
+      "acceptanceCriteria": [
+        "pkg/oss/objectset/executor.go 移除 reverse direction not-supported 错误",
+        "复用 forward 路径的 linkResolverForDirection 覆盖 ReverseLinkFinder",
+        "Northwind 用例：每个 Customer 的累计订单金额（反向）正确",
+        "Typecheck passes",
+        "Tests pass"
+      ],
       "priority": 2,
-      "dependencies": [],
-      "description": "cmd/weave-mcp/http_bridge.go 当前只 Set Content-Type 和 Accept。当 cmd/server 跑在 AUTH_MODE=token 时，bridge 每个 POST /mcp 都会被 chi middleware 401 拒掉，Claude Desktop / Cursor 因此完全连不上。OSV2-303 progress.txt 第 102 行也明确把这条留为 follow-up：'wiring an env-passthrough is a single small addition if anyone hits it'。本 story 就是落地这一步：bridge 启动时读 WEAVE_MCP_TOKEN（或 WEAVE_MCP_BEARER）环境变量，非空时为每个上游请求加 Authorization: Bearer <token>。同时支持 WEAVE_MCP_API_KEY → X-Weave-API-Key 头（API Key 模式）；优先级 token > api-key，两者都没设则跟今天一致不加任何 auth 头（向后兼容）。",
-      "bdd_acceptance": [
-        "Given 一个 httptest.Server 在 handler 内检查 Authorization 头，仅当值精确等于 'Bearer test-token-abc' 时回 200，否则回 401，When weave-mcp 在 WEAVE_MCP_URL=该 server URL + WEAVE_MCP_TOKEN=test-token-abc 下跑 RunHTTPBridge 并 stdin 发 initialize，Then stdout 拿到 200 路径的合法 JSON-RPC result（不是 -32000 error）。",
-        "Given 同一 httptest.Server 但不设 WEAVE_MCP_TOKEN，When stdin 发 initialize，Then httptest 这一侧不收到 Authorization 头（断言 r.Header.Get('Authorization') == ''），客户端这一侧拿到 401 路径的 JSON-RPC error，error.code = -32000，message 含 'upstream' 或 'status'。",
-        "Given httptest.Server 检查 X-Weave-API-Key 头仅当 'wvk_unit_test' 时回 200，When 只设 WEAVE_MCP_API_KEY=wvk_unit_test（不设 WEAVE_MCP_TOKEN），Then bridge 在请求里带 X-Weave-API-Key 头而非 Authorization，stdout 拿到合法响应。",
-        "Given 同时设置 WEAVE_MCP_TOKEN=tok 和 WEAVE_MCP_API_KEY=key，When 发请求，Then 请求里只有 Authorization: Bearer tok（token 优先），不带 X-Weave-API-Key 头（断言 r.Header.Get('X-Weave-API-Key') == ''）。",
-        "Given 通过 RunHTTPBridge 多次串行请求（initialize → tools/list → prompts/list），Then 每次都加同样的 Authorization 头（不只第一次）。",
-        "cmd/weave-mcp/main.go 的注释里更新 Claude Desktop 配置样例：env 段加 WEAVE_MCP_TOKEN / WEAVE_MCP_API_KEY 注释，说明二选一。",
-        "go test ./cmd/weave-mcp/... 全绿（新增 ≥ 4 个 BDD 案例覆盖以上五条）。",
-        "go vet ./... passes。"
-      ],
-      "notes": "实现核心：在 RunHTTPBridge 内或一个新 BridgeOptions struct 上挂 Authorization 字段，env 解析放在 main.go；http.NewRequest 之后 if opts.Authorization != \"\" { req.Header.Set(\"Authorization\", opts.Authorization) }。保持 RunHTTPBridge 现有签名向后兼容（最简单方案是改成 RunHTTPBridge(ctx, in, out, url, opts...)，没传 opt 时行为不变 — 既有 main_test.go 不需要改）。"
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "OSV2-306",
-      "name": "Funnel publish/consume OTel 跨 NATS 链路追踪（HTTP→NATS→Bleve trace 连起来）",
-      "phase": 20,
-      "active": true,
-      "passes": true,
+      "id": "US-461",
+      "title": "TypeClass 驱动 Bleve mapping",
+      "description": "As an ObjectType author, when I set analyzer=not_analyzed/keyword/english the Bleve index uses the matching field mapping, not the default.",
+      "acceptanceCriteria": [
+        "pkg/index/mapping_builder.go 按 properties.type_config.analyzer 构造 FieldMapping",
+        "集成测试：not_analyzed=KeywordField、english=stemming、not_indexed 不在索引",
+        "新增 admin endpoint POST /api/admin/index/reindex/{objectType}",
+        "Typecheck passes",
+        "Tests pass"
+      ],
       "priority": 3,
-      "dependencies": [],
-      "description": "pkg/funnel 整个目录里没有任何一处 import otel/trace 或调用 pkg/tracing。当 HTTP request 在 cmd/server 上被 chi middleware 包成一个 span 之后，请求执行进入 Action executor → pkg/funnel.Publish 时，trace context 全部被丢弃 —— consumer 这一侧另起 goroutine 也起不了带 parent 的 child span。整条 'HTTP → Action → Funnel → Bleve' 链路在 Jaeger / Tempo 上看就是两段断裂的 trace。这违背 PRD-V2 §4.6 Gap-O2。本 story 在 funnel.Publisher.Publish 路径上：(1) 从 ctx 取当前 span，调用 otel TextMapPropagator 把 trace context 序列化成 NATS message header（NATS JetStream 支持 Headers）；(2) consumer 接收 message 时反序列化 header → 注入 ctx，再用 pkg/tracing.StartSpan 起 'funnel.consume' 子 span；(3) 在 publish / consume 两端各起一个 span 包住编码 + 写入 NATS / 反序列化 + 应用 Edit 的工作，让端到端 trace 可见。所有原 API 签名保持不变 — 仅内部加 span。",
-      "bdd_acceptance": [
-        "Given InMemoryExporter（go.opentelemetry.io/otel/sdk/trace/tracetest）+ pkg/funnel 既有的 mock pub/sub，起一个 root span ctx_root，When 在 ctx_root 下调用 funnel.Publish(ctx_root, batch) 并等待 consumer 处理完，Then 导出的 span 集合至少包含：funnel.publish (parent=ctx_root.span)、funnel.consume (parent=funnel.publish via remote trace context)，且 publish.SpanContext.TraceID == consume.SpanContext.TraceID。",
-        "Given 同样 setup 但 ctx_root 不带任何 span（context.Background()），When publish + consume，Then 仍然各起一个 span（同一新 trace id），不 panic、不 leak。",
-        "Given publish 时 NATS Header 已经被填充，When 直接 NATS subscribe 拿到 message，Then message.Header 含 'traceparent' 这个 W3C TraceContext 标准键（用 propagation.TraceContext 的格式）。",
-        "Given consumer 反序列化失败（header 缺失或畸形），When 处理该 message，Then 仍然起一个新 root span 处理（不要因为 propagation 失败就 drop 消息），且不输出 panic 堆栈到 stderr。",
-        "Given 已有 pkg/funnel 的 unit / integration 测试，When 改造完成，Then 既有 publish / consume / marking propagation / retry 用例全部保持原样绿色（不改既有行为，只加 span）。",
-        "pkg/funnel 内只新增 1~2 个 .go（如 tracing.go + tracing_test.go）；publisher.go / consumer.go 各只加 ≤ 30 行（StartSpan + propagator inject/extract）。",
-        "go test ./pkg/funnel/... 全绿；go test -tags integration ./pkg/funnel/... 保持原状（不要求新 integration 路径）。",
-        "go vet ./... passes。"
-      ],
-      "notes": "实现选型：用 go.opentelemetry.io/otel/propagation.TextMapPropagator（pkg/tracing 已经装了 W3C TraceContext 组合 propagator）。NATS Header 实现 TextMapCarrier 用 type natsHeaderCarrier nats.Header；Get/Set/Keys 三个方法直接代理。span name 用 'funnel.publish' / 'funnel.consume'，attributes 至少含 'funnel.subject' 和 'funnel.batch_size'。"
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "OSV2-307",
-      "name": "MCP resources/list 暴露 ObjectType（AI 客户端可直接读单类型 schema）",
-      "phase": 20,
-      "active": true,
-      "passes": true,
-      "priority": 4,
-      "dependencies": [],
-      "description": "今天 pkg/mcp/resources.go handleResourcesList 只列两类 URI：weave://ontology/<rid>（全 ontology 元数据快照）和 weave://objectset/<id>（临时 ObjectSet 定义）。ObjectType 这个最自然的'单类型 schema 资源'根本不出现 —— AI agent 想看 northwind 下 Order 这个 ObjectType 的属性 / linkTypes / actionTypes，要先 fetch 整个 ontology 再 client-side filter，违背 PRD-V2 §4.7 Gap-D4。本 story：(1) resources/list 在每个 ontology 之外，再 append 该 ontology 下所有 ObjectType，URI 形如 'weave://objecttype/<ontologyApiName>/<objectTypeApiName>'，Name = ObjectType.DisplayName，Description = ObjectType.Description；(2) resources/read 接收 weave://objecttype/<ont>/<ot> URI，返回 {apiName, displayName, primaryKey, properties, ...} 的 JSON 文本（直接复用 OMS Repository 的 GetObjectTypeByAPIName 输出原样序列化）；(3) 对未知 ObjectType 返回与未知 Ontology 同形错误。",
-      "bdd_acceptance": [
-        "Given OMSRepository 有 ontology 'northwind' 下含 ObjectType Order 和 Customer（每个含 ≥ 2 个 property），When 调用 resources/list，Then 返回的 resources 数组至少包含三类 URI 前缀：weave://ontology/、weave://objecttype/northwind/Order、weave://objecttype/northwind/Customer，列表按 URI 排序保持稳定。",
-        "Given 同上，When 调用 resources/read with uri='weave://objecttype/northwind/Order'，Then 返回 ResourceContent.Text 是合法 JSON 且至少含 {apiName:'Order', properties:[...], primaryKey:...} 字段（具体 schema 用 OMS Repository 的 GetObjectTypeByAPIName 输出原样序列化即可）。",
-        "Given resources/read 收到 weave://objecttype/northwind/UnknownType，Then 返回 error.code = -32602（InvalidParams）且 error.message 含 'object type' 字面量；不 panic。",
-        "Given OMSRepository 为 nil（degraded 测试路径），When resources/list，Then 仍只返回临时 ObjectSet（如有）；不 panic、不 leak。",
-        "Given OMSRepository 列出 ontology 但 ListObjectTypes 在某个 ontology 上返回错误，When resources/list，Then 返回 -32603（InternalError），其它 ontology 也不被错误地丢失（要么整体失败要么整体成功，二选一选'整体失败'更安全，测试断言这一选择）。",
-        "Given 既有 pkg/mcp/resources_test.go 的 ontology / objectset 路径测试，When 改造完成，Then 全部保持绿色；新增 ≥ 3 个 BDD 测试覆盖以上 ObjectType 路径。",
-        "pkg/mcp/doc.go 第 21-23 行 resources/list 描述更新为 'list ontologies, ObjectTypes, and temporary ObjectSets as MCP resources'。",
-        "go test ./pkg/mcp/... 全绿。",
-        "go vet ./... passes。"
+      "id": "US-462",
+      "title": "Saved ObjectSet TTL 回收守护",
+      "description": "As an operator, I want temporary ObjectSets cleaned after 1h while immutable ones stay forever.",
+      "acceptanceCriteria": [
+        "服务启动期开启 Store.ReapExpired() ticker（默认 5min）",
+        "Immutable=true 永不回收；Expired temporary 行被 DELETE",
+        "集成测试：写入 → 等待 → 验证已/未回收",
+        "Typecheck passes",
+        "Tests pass"
       ],
-      "notes": "实现核心：在 handleResourcesList 的 `if s.oms != nil` 分支里，对每个 ontology 调一次 ListObjectTypes，append 到 resources。URI 解析需要在 handleResourcesRead 内加一段 startsWith 'objecttype/' 的分支：split 出 ontology api name + object type api name → 调 GetOntology(ctx, ontApiName) → GetObjectTypeByAPIName(ctx, ontology.RID, otApiName)。GetObjectType 输出可直接 json.Marshal 进 ResourceContent.Text。"
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-463",
+      "title": "Interface 多态查询稳定 cursor",
+      "description": "As an SDK user, when I paginate across an Interface's subtypes, I never miss or duplicate rows.",
+      "acceptanceCriteria": [
+        "复合游标 {objectTypeApiName, innerCursor} 按子类型有序 merge",
+        "单元测试：混合 3 个子类型、page=5，走完全部页验证 set 完整",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-464",
+      "title": "searchAround cycle 测试 + benchmark",
+      "description": "As a developer, I need confidence that 3-hop searchAround dedupes cycles and stays under 200ms P99.",
+      "acceptanceCriteria": [
+        "单元测试覆盖 diamond / 自环 / 三角图，结果无重复对象",
+        "Benchmark：10K 对象 / 3 跳 P99 < 200ms（bench/ 下新增）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-465",
+      "title": "HLL / t-digest 精度可配置 + 误差基准",
+      "description": "As an analyst, I want to tune approxDistinct precision and verify accuracy on 1M-cardinality data.",
+      "acceptanceCriteria": [
+        "AggregationRequest 接受 hllPrecision (4-18, 默认 14) 与 tdigestCompression (默认 100)",
+        "1M 唯一值数据集：HLL p99 误差 < 2%、t-digest percentile 误差 < 1%",
+        "扫描行数阈值可配置（默认 1M）触发 APPROXIMATE 标记",
+        "Benchmark 加入 CI",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-466",
+      "title": "GeoTemporal PG 持久化",
+      "description": "As an operator, I want Geo+Time queries persisted in PostgreSQL, not memory-only.",
+      "acceptanceCriteria": [
+        "新增 pkg/geotemporal/pg_store.go + migration",
+        "时间戳 btree 索引；可选 PostGIS GIST 索引",
+        "集成测试：1M 点位空间+时间双过滤 < 100ms",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-467",
+      "title": "TimeSeries time_bucket 聚合 + cagg_5min cron",
+      "description": "As an analyst, I want real downsampling backed by TimescaleDB time_bucket_gapfill + last hyperfunction, with a 5min continuous aggregate.",
+      "acceptanceCriteria": [
+        "pkg/timeseries/pg_store.go 真实 SQL 执行 avg/sum/min/max/count + last/first",
+        "物化视图 timeseries_cagg_5min，pg_cron 每 5min 刷新（无 pg_cron 时退化 app ticker）",
+        "集成测试：1M 点 1h 降采样 → cagg 命中",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-468",
+      "title": "SQL Queries 沙箱（read-only + timeout + result cap）",
+      "description": "As a security engineer, I want SQL Query API to reject DML/DDL, enforce 5s timeout, and cap rows at 10K.",
+      "acceptanceCriteria": [
+        "pkg/sqlqueries/safety.go plan analyzer 拒绝 DELETE/UPDATE/INSERT/DROP",
+        "Context timeout + max rows 配置",
+        "负向测试：DML/DDL 全部拒绝",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-469",
+      "title": "Saga 补偿策略明确化（best-effort + DLQ）",
+      "description": "As an operator, I want a failed compensation step to not block compensating subsequent steps; all failures land in DLQ.",
+      "acceptanceCriteria": [
+        "SagaResult 增 CompensationStrategy: best-effort|stop-on-first、FailedCompensations []StepRef",
+        "失败补偿写入 funnel_dlq 表",
+        "单元测试：3 步全成功 → 中间步失败 → 后续步仍补偿",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-470",
+      "title": "Funnel DLQ replay API + 监控",
+      "description": "As an operator, I want to list DLQ items, replay individually, and clean by time window.",
+      "acceptanceCriteria": [
+        "GET /api/admin/funnel/dlq 列表、POST /api/admin/funnel/dlq/{id}/replay 重投",
+        "Prometheus metric weave_funnel_dlq_size",
+        "集成测试：人为失败 → DLQ → replay 成功",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-471",
+      "title": "跨 ObjectType 乐观锁 + 409 冲突",
+      "description": "As an SDK user, when two batches modify the same object concurrently, only one wins (409 returned to the loser).",
+      "acceptanceCriteria": [
+        "对象表 / Edit 记录加 edit_version",
+        "Executor 在 prepare 阶段比对所有 expectedVersion，全部一致才 publish",
+        "测试：并发两路 apply 同对象，一路成功一路 409",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-472",
+      "title": "Edit-only 属性冲突豁免在 Consumer 生效",
+      "description": "As a data engineer, ingest-driven edits should skip version check on edit-only properties to avoid overwriting user edits.",
+      "acceptanceCriteria": [
+        "Consumer 应用 edit 时跳过 edit-only 属性的 version check",
+        "测试：用户改 A.title → ingest 不覆盖",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-473",
+      "title": "Edit collapse 属性时间线去重 + schema 校验",
+      "description": "As an engineer, when a batch modifies the same property 3 times only the last should survive; merged edits must match ObjectType schema.",
+      "acceptanceCriteria": [
+        "pkg/actions/collapse.go 增属性时间线追踪 + LWW 去重",
+        "CREATE+MODIFY 合并时校验属性与 ObjectType schema 兼容",
+        "单元测试：5 步 edit → 合并后属性 set 等价",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-474",
+      "title": "Marking 多跳传播 + E2E 覆盖",
+      "description": "As a security engineer, A→(propagate)→B→(propagate)→C must transitively inherit A's markings on C.",
+      "acceptanceCriteria": [
+        "Consumer 内 BFS 合并 transitive markings",
+        "E2E 测试：3 跳 propagate=true、含分叉、含 propagate=false 截断",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-475",
+      "title": "Function 版本表 + 确定性 hash 重放",
+      "description": "As a Function author, I want each call recorded with code_hash; replay verifies output_hash matches.",
+      "acceptanceCriteria": [
+        "新增 function_versions 表 + migration（code_hash, output_hash）",
+        "POST /api/v2/functions/{rid}/replay 返回 {deterministic, originalOutput, replayOutput}",
+        "测试：纯函数 100% 一致；引用时间的函数标记 non-deterministic",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-476",
+      "title": "Function 沙箱配额（栈/内存/超时）",
+      "description": "As a security engineer, Goja runtime must enforce explicit quotas and abort on breach.",
+      "acceptanceCriteria": [
+        "8 层递归、100MB heap、1s 超时（可配）",
+        "负向测试：无限递归被 abort；超时函数被 cancel",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-477",
+      "title": "Automate 触发器 DAG 防环",
+      "description": "As an operator, Automate rule registration must reject action→event→action cycles.",
+      "acceptanceCriteria": [
+        "注册期走拓扑排序，环检测失败拒绝 + 422",
+        "测试：A→B→A 环拒绝；A→B→C 合法",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-478",
+      "title": "AIP Logic Block DAG 执行器（topological + retry + fallback）",
+      "description": "As a Logic author, Block graphs execute by nodes_json/edges_json topology with per-node retry and fallback.",
+      "acceptanceCriteria": [
+        "Executor 拓扑排序 + 并发执行同层节点",
+        "节点 retry policy（指数退避，maxAttempts=3）",
+        "节点 fallback：失败时跳转 fallbackNodeId",
+        "测试：菱形 DAG、含 retry 节点、含 fallback",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-479",
+      "title": "Scenario fold 对 Aggregation 生效",
+      "description": "As an analyst, when I pass X-Scenario-Id to aggregation endpoints, groupBy uses folded property values.",
+      "acceptanceCriteria": [
+        "Aggregation executor materialize scenario objects",
+        "集成测试：scenario 改对象属性 → groupBy 结果按 folded 值分桶",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-480",
+      "title": "System Graph diff RFC 6902",
+      "description": "As a Vertex user, /api/vertex/v1/graphs/{rid}/diff returns standardized JSON Patch ops.",
+      "acceptanceCriteria": [
+        "Diff.go 实现 RFC 6902 op=add/remove/replace",
+        "单元测试：增/删节点、改边、属性变更各一例",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-481",
+      "title": "Scenario fold 冲突 audit",
+      "description": "As an operator, scenario fold conflicts (modify deleted, duplicate add) must be auditable.",
+      "acceptanceCriteria": [
+        "fold 链条返回 (view, conflicts []ScenarioConflict)",
+        "冲突写 pkg/audit log",
+        "测试：deleted+modify、duplicate add 各覆盖",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-482",
+      "title": "Quiver 时序数据 API + TopBar 时间同步",
+      "description": "As a Quiver user, dashboard data loads from one endpoint with from/to/step; TopBar time-range syncs to query params.",
+      "acceptanceCriteria": [
+        "GET /api/v2/quiver/dashboards/{rid}/data?from=&to=&step= 返回多 series",
+        "前端 TopBar 时间范围 → query 参数双向绑定",
+        "集成测试：3 series / 1d 范围 / 5min step 数据正确",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-483",
+      "title": "Quiver Sparkline 多系列预加载",
+      "description": "As a Quiver user, dashboard initial load should batch all sparkline data in one request, not N.",
+      "acceptanceCriteria": [
+        "POST /api/v2/quiver/dashboards/{rid}/sparklines 批量返回",
+        "前端 dashboard load 改为单请求",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-484",
+      "title": "Pipeline 增量构建（offset + schema evolution）",
+      "description": "As a pipeline author, runs track last_committed_offset and upstream column adds propagate non-destructively.",
+      "acceptanceCriteria": [
+        "pipeline_runs 表加 offset 字段",
+        "schema diff 检测：上游加列 → 下游 schema 自动扩展",
+        "测试：模拟增量 + 加列两种场景",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-485",
+      "title": "Parquet 冷存 + tier router",
+      "description": "As an operator, hot data goes Bleve/PG and cold data goes Parquet; OSS executor routes by query time window.",
+      "acceptanceCriteria": [
+        "pkg/materialize/parquet_writer.go 真实写 Parquet（apache-arrow Go）",
+        "Executor 检测 query 时间窗 → 路由热/冷",
+        "测试：跨界查询 union 热冷结果正确",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-486",
+      "title": "Materialization 数据集真实物化",
+      "description": "As an operator, materialized views run on schedule, retry on failure, and persist state.",
+      "acceptanceCriteria": [
+        "pkg/materialize cron 定期重算",
+        "失败重试 + 状态记录",
+        "测试覆盖 schedule trigger",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-487",
+      "title": "RLS CEL 表达式引擎",
+      "description": "As a security engineer, row policies support CEL expressions accessing user.* and object.*.",
+      "acceptanceCriteria": [
+        "集成 cel-go (pkg/cel 包)",
+        "示例 rule: user.dept == object.dept && object.level <= user.clearance",
+        "负向测试：表达式越界、循环引用拒绝",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-488",
+      "title": "Cell-level masking CEL 含 row.* 变量",
+      "description": "As a security engineer, masking expressions can access the current row's properties for conditional masking.",
+      "acceptanceCriteria": [
+        "CEL eval 注入 row、user、marking 三个变量",
+        "示例：row.country == 'US' ? value : redact(value)",
+        "负向测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-489",
+      "title": "Masking 算法补全（PARTIAL / FPE / Regex）",
+      "description": "As a security engineer, beyond NULL/REDACT/HASH we need PARTIAL (keep first/last), Format-Preserving Encryption, and Regex replace.",
+      "acceptanceCriteria": [
+        "三种策略各覆盖单元测试",
+        "FPE 用 FF1 (NIST SP 800-38G)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-490",
+      "title": "JWT 多密钥轮换（kid header）",
+      "description": "As an operator, I want zero-downtime key rotation: old tokens still verify, new tokens sign with newest key.",
+      "acceptanceCriteria": [
+        "JWTSigner 持有 key ring (oldest verifies, newest signs)",
+        "POST /api/admin/auth/keys/rotate",
+        "测试：旧 token 仍校验 + 新 token 用新 key",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-491",
+      "title": "JWT token 撤销 + 黑名单",
+      "description": "As an operator, logout or admin revoke invalidates a token immediately (cached blacklist).",
+      "acceptanceCriteria": [
+        "表 auth_revoked_tokens(jti, expires_at)；middleware 查 + cache",
+        "POST /api/auth/tokens/{jti}/revoke",
+        "测试：撤销后再请求 401",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-492",
+      "title": "OIDC state HMAC + refresh token 轮换",
+      "description": "As a security engineer, OIDC state must be HMAC-signed with timestamp, and refresh tokens must rotate on each refresh.",
+      "acceptanceCriteria": [
+        "state = HMAC(secret, nonce|timestamp); 回调验签 + 5min 时间窗",
+        "grant_type=refresh_token 每次旋转 refresh token",
+        "负向测试：篡改 state 拒绝、过期 state 拒绝",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-493",
+      "title": "Audit 全覆盖（OMS write / role / policy / session）",
+      "description": "As a compliance officer, every mutating operation must be audited with actor/before/after/rid/ts.",
+      "acceptanceCriteria": [
+        "OMS admin write、role change、policy update、session create/destroy 全部入 audit",
+        "GET /api/admin/audit 支持按 actor / resourceRid / 时间范围筛选",
+        "测试:每类操作至少 1 条 audit 记录",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-494",
+      "title": "GDPR right-to-be-forgotten 级联删除",
+      "description": "As a privacy officer, user erasure cascades through comments, reactions, edits, time-series.",
+      "acceptanceCriteria": [
+        "DELETE /api/admin/gdpr/users/{id}/erase?cascade=true",
+        "关联表一并清理或匿名化",
+        "测试：擦除前后 user_id 出现次数 = 0",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-495",
+      "title": "Tenants PG schema 强隔离",
+      "description": "As a security engineer, multi-tenancy promotes from row filter to per-tenant PG schema.",
+      "acceptanceCriteria": [
+        "新 tenant 创建期 CREATE SCHEMA tenant_<id> + 迁移",
+        "连接池按 tenant 切 search_path",
+        "负向测试：tenant A 无法访问 tenant B 任意行",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-496",
+      "title": "ObjectType Property CRUD 面板",
+      "description": "As an admin, I can add/edit/delete properties on an ObjectType via UI.",
+      "acceptanceCriteria": [
+        "Admin 页面新增 Property 编辑 tab",
+        "增删改对应 admin API",
+        "保留属性删除时提示影响范围",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-497",
+      "title": "LinkProperty CRUD + 边属性编辑",
+      "description": "As an admin, I can edit link properties on the LinkedObjects tab.",
+      "acceptanceCriteria": [
+        "Browser 页 LinkedObjects tab 内嵌边属性表单",
+        "调用 PUT .../links/{rid}/edges/{pk}/{pk}/properties",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-498",
+      "title": "Interface Method CRUD + 多态调用",
+      "description": "As an admin, I can define Interface methods and invoke them returning typed results.",
+      "acceptanceCriteria": [
+        "Interface admin 增 Methods tab",
+        "Invoke 后展示 typed result",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-499",
+      "title": "ObjectType Resolved 视图 + 编辑历史",
+      "description": "As an admin, I can see the inheritance-resolved view and the time-ordered edit history of an ObjectType.",
+      "acceptanceCriteria": [
+        "Resolved tab (继承合并)、History tab (时间排序 edits)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-500",
+      "title": "ObjectSet Diff / Snapshot / Lineage 三页",
+      "description": "As an analyst, I can compare two ObjectSets, save snapshots, and view lineage.",
+      "acceptanceCriteria": [
+        "Diff 三列布局",
+        "Snapshot 列表 + restore",
+        "Lineage 树视图",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-501",
+      "title": "ObjectSet 实时订阅页（Live toggle）",
+      "description": "As a user, I can toggle Live on an ObjectSet page to see SSE push events streaming.",
+      "acceptanceCriteria": [
+        "接入 US-459 SSE endpoint",
+        "UI 显示 push 事件 + 断线指示器",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-502",
+      "title": "Action applyWithOverrides 高级面板 + 撤销",
+      "description": "As a power user, I can override parameters per row and revert past actions.",
+      "acceptanceCriteria": [
+        "Console 增 Advanced 区：参数覆写表",
+        "History tab 增 Revert 按钮",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-503",
+      "title": "Approvals Impact 面板",
+      "description": "As an approver, before approving an action I see which objects are impacted.",
+      "acceptanceCriteria": [
+        "拉 GET /api/v2/actions/{rid}/impact",
+        "侧栏展示受影响对象列表",
+        "Approve/Reject 后失效缓存",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-504",
+      "title": "AutomationRules 整页",
+      "description": "As an operator, I can list/create automation rules and see execution history; cycle errors are surfaced clearly.",
+      "acceptanceCriteria": [
+        "列表 + 创建表单 + 执行历史",
+        "DAG 防环错误友好提示",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-505",
+      "title": "BranchDiff 三列视图（含冲突）",
+      "description": "As a developer, I see Source / Target / Merged Preview side-by-side with conflict highlighting.",
+      "acceptanceCriteria": [
+        "三列布局：Source / Target / Merged Preview",
+        "冲突高亮 + 解决器",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-506",
+      "title": "Function 版本 + 确定性重放页",
+      "description": "As a Function author, I can see versions in a dropdown and replay a past run from history.",
+      "acceptanceCriteria": [
+        "Function 详情页加 Versions 列",
+        "Run 历史增 Replay 按钮 → 调用 US-475 API",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-507",
+      "title": "Quiver 时序工作台前端",
+      "description": "As a Quiver user, I see uPlot charts, TopBar time-range, Search, and Sparklines on the dashboard page.",
+      "acceptanceCriteria": [
+        "嵌入 uPlot",
+        "接 US-482/483 API",
+        "TopBar 时间范围、Search、Sparkline",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-508",
+      "title": "Workshop App Editor 可视化（Phase 1）",
+      "description": "As an app author, I can drag widgets onto a grid and edit their properties; JSON config syncs both ways.",
+      "acceptanceCriteria": [
+        "Widget palette + Grid + Property inspector",
+        "JSON 双向同步",
+        "内置 widget：KPI / Chart / Table / Map / TimeSeries",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-509",
+      "title": "Marketplace 启用/禁用 + 本体导出/导入",
+      "description": "As an admin, I can toggle marketplace packages and export/import ontologies as zip.",
+      "acceptanceCriteria": [
+        "MarketplacePage toggle 调 POST /api/v2/pkg/{name}/enabled",
+        "Explorer 加 Export；Import wizard 上传 zip",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-510",
+      "title": "列级 Lineage 浏览 + Compliance Reports",
+      "description": "As a data steward, I can view property-level lineage and compliance control mapping reports.",
+      "acceptanceCriteria": [
+        "Lineage 页 Property tab",
+        "Compliance 页展示 SOC2/ISO 控制点映射",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-511",
+      "title": "CLI ↔ Python SDK 命令奇偶",
+      "description": "As a CLI user, I can do everything the Python SDK exposes: action apply, objectset load/search/diff/snapshot.",
+      "acceptanceCriteria": [
+        "CLI 补 weave action apply、weave objectset {load|search|diff|snapshot}",
+        "cookbook 对比脚本：CLI 与 SDK 输出等价",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-512",
+      "title": "docs/cli.md & docs/mcp.md 与代码同步",
+      "description": "As a docs reader, the CLI and MCP reference docs list every command and tool the code actually exposes.",
+      "acceptanceCriteria": [
+        "cli.md 列出全部子命令（含 aggregate / fixtures / pitr / materialize / index / pkg / fn / backup / repl）",
+        "mcp.md 列出全部 tools；附 prompts/list 行为说明",
+        "Typecheck passes"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-513",
+      "title": "SDK Generator 输出 OpenAPI 3.0 spec",
+      "description": "As an integrator, weave sdkgen produces an OpenAPI spec usable as single source of truth.",
+      "acceptanceCriteria": [
+        "weave sdkgen --format=openapi 生成完整 spec",
+        "Mock server 切到该 spec",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-514",
+      "title": "Mock Server record / replay",
+      "description": "As a test author, weave-mock can record real HTTP traffic and replay it offline.",
+      "acceptanceCriteria": [
+        "--record=path/、--replay=path/ 模式",
+        "集成测试：先 record 再 replay 验证响应一致",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-515",
+      "title": "MCP prompts/list 真生成 ActionType prompts",
+      "description": "As an AI client, /mcp prompts/list returns a prompt per ActionType, not an empty array.",
+      "acceptanceCriteria": [
+        "遍历 OMS ActionType → 输出 prompt {ontology}__{actionName} + argument schema",
+        "客户端测试：claude desktop 能列出 prompt",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-516",
+      "title": "OTel W3C tracecontext HTTP 全链路传播",
+      "description": "As an SRE, every HTTP handler extracts/injects traceparent/tracestate, and Funnel publish/consume already propagated.",
+      "acceptanceCriteria": [
+        "pkg/tracing 新增 HTTPMiddleware 提取/注入 traceparent / tracestate",
+        "Funnel publish / consume 透传 baggage",
+        "集成测试：跨服务 trace ID 一致",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-517",
+      "title": "Prometheus metrics 命名规范化 + cardinality 守护",
+      "description": "As an SRE, all metrics are prefixed weave_*, label values are bounded, and a CI check prevents query-string/RID labels.",
+      "acceptanceCriteria": [
+        "全部指标前缀 weave_*",
+        "CI 检查：label value 无 query string / RID",
+        "文档化基数预算",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-518",
+      "title": "docs/cookbook 全部跑通",
+      "description": "As a developer onboarding, all 6 cookbook examples run green in CI.",
+      "acceptanceCriteria": [
+        "cookbook_test.go 覆盖 async / retry / batch / subscription / RAG / ws 6 个示例",
+        "CI 跑 cookbook job",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": ""
     }
   ]
 }
