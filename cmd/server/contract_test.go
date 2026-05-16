@@ -151,6 +151,8 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:       true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:                 true,
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}:      true,
+	// US-480: RFC 6902 JSON Patch diff between two graph versions.
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}: true,
 	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}:         true,
 	// VTX-013: Vertex graph share-link surface — owner mints / revokes
 	// opaque tokens; recipients exchange them for masked graph payloads.

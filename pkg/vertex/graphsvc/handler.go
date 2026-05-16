@@ -64,6 +64,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/vertex/v1/graphs/{rid}/save-as-template", h.saveAsTemplate)
 	r.Get("/api/vertex/v1/graphs/{rid}/history", h.history)
 	r.Get("/api/vertex/v1/graphs/{rid}/versions/{version}", h.getVersion)
+	r.Get("/api/vertex/v1/graphs/{rid}/diff", h.diff)
 	r.Post("/api/vertex/v1/templates/{rid}/instantiate", h.instantiate)
 	// VTX-013: share link surface.
 	r.Post("/api/vertex/v1/graphs/{rid}/share-links", h.createShareLink)
@@ -408,6 +409,68 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 		"rid":      ridStr,
 		"versions": out,
 	})
+}
+
+// diff serves US-480: GET /api/vertex/v1/graphs/{rid}/diff?from=N&to=M
+// returns an RFC 6902 JSON Patch that transforms version N's payload into
+// version M's. Both versions must exist in graph history; missing rows
+// surface as 404 GraphVersionNotFound via writeRepoError.
+func (h *Handler) diff(w http.ResponseWriter, r *http.Request) {
+	if h.repo == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	ridStr := chi.URLParam(r, "rid")
+	fromVer, ok := parseDiffVersionParam(w, r, "from")
+	if !ok {
+		return
+	}
+	toVer, ok := parseDiffVersionParam(w, r, "to")
+	if !ok {
+		return
+	}
+	fromGraph, err := h.repo.GetVersion(r.Context(), ridStr, fromVer)
+	if err != nil {
+		writeRepoError(w, err, ridStr)
+		return
+	}
+	toGraph, err := h.repo.GetVersion(r.Context(), ridStr, toVer)
+	if err != nil {
+		writeRepoError(w, err, ridStr)
+		return
+	}
+	ops, err := JSONPatch(fromGraph.Payload, toGraph.Payload)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GraphDiffFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"rid":  ridStr,
+		"from": fromVer,
+		"to":   toVer,
+		"ops":  ops,
+	})
+}
+
+// parseDiffVersionParam pulls the named query param, validates it is a
+// positive int, and writes 400 InvalidVersion on failure. Returns (n,
+// true) on success or (0, false) when the response has already been
+// written.
+func parseDiffVersionParam(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingVersion",
+			map[string]string{"param": name}))
+		return 0, false
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidVersion",
+			map[string]string{"param": name, "value": raw}))
+		return 0, false
+	}
+	return n, true
 }
 
 func (h *Handler) getVersion(w http.ResponseWriter, r *http.Request) {

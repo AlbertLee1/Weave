@@ -10,8 +10,200 @@
 package graphsvc
 
 import (
+	"encoding/json"
 	"sort"
 )
+
+// PatchOp is one RFC 6902 JSON Patch operation. Only the three canonical
+// ops used by JSONPatch are produced: add / remove / replace. The Value
+// field is omitted for remove ops via the omitempty JSON tag — RFC 6902
+// forbids "value" on remove.
+type PatchOp struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value any    `json:"value,omitempty"`
+}
+
+// keyedArrayFields are top-level payload fields whose arrays carry stable
+// per-item id handles. Diffing treats them as id-keyed maps so add /
+// remove / replace ops emit paths like /layers/L1 rather than /layers/3 —
+// the latter shifts under intervening insertions, breaking byte-stability.
+var keyedArrayFields = map[string]bool{
+	"layers": true,
+	"edges":  true,
+}
+
+// JSONPatch computes the RFC 6902 patch that transforms from into to.
+// Returns a non-nil empty slice when the two payloads are equal (so the
+// JSON encoder emits `[]` rather than `null`).
+//
+// Algorithm: walk both payloads as decoded any-trees in parallel. For
+// known keyed-array fields (layers, edges) we index by id and diff
+// per-item; for nested objects we recurse key-by-key; for scalar values
+// we emit replace on inequality. Paths are sorted lexicographically so
+// repeated calls produce byte-identical output.
+func JSONPatch(from, to json.RawMessage) ([]PatchOp, error) {
+	fromV, err := decodePayload(from)
+	if err != nil {
+		return nil, err
+	}
+	toV, err := decodePayload(to)
+	if err != nil {
+		return nil, err
+	}
+	var ops []PatchOp
+	diffValue(&ops, "", fromV, toV)
+	sort.Slice(ops, func(i, j int) bool { return ops[i].Path < ops[j].Path })
+	if ops == nil {
+		return []PatchOp{}, nil
+	}
+	return ops, nil
+}
+
+func decodePayload(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return map[string]any{}, nil
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func diffValue(ops *[]PatchOp, path string, from, to any) {
+	if jsonValuesEqual(from, to) {
+		return
+	}
+	if from == nil {
+		*ops = append(*ops, PatchOp{Op: "add", Path: path, Value: to})
+		return
+	}
+	if to == nil {
+		*ops = append(*ops, PatchOp{Op: "remove", Path: path})
+		return
+	}
+	fromMap, fromIsMap := from.(map[string]any)
+	toMap, toIsMap := to.(map[string]any)
+	if fromIsMap && toIsMap {
+		diffMap(ops, path, fromMap, toMap)
+		return
+	}
+	*ops = append(*ops, PatchOp{Op: "replace", Path: path, Value: to})
+}
+
+func diffMap(ops *[]PatchOp, prefix string, from, to map[string]any) {
+	keys := sortedKeyUnion(from, to)
+	for _, k := range keys {
+		fv, fOK := from[k]
+		tv, tOK := to[k]
+		subPath := prefix + "/" + escapeJSONPointer(k)
+		// Top-level layers / edges are arrays-of-objects that carry id
+		// handles; route them through diffKeyedArray so paths stay stable
+		// against intervening insertions.
+		if prefix == "" && keyedArrayFields[k] {
+			diffKeyedArray(ops, subPath, fv, tv)
+			continue
+		}
+		switch {
+		case !fOK && tOK:
+			*ops = append(*ops, PatchOp{Op: "add", Path: subPath, Value: tv})
+		case fOK && !tOK:
+			*ops = append(*ops, PatchOp{Op: "remove", Path: subPath})
+		default:
+			diffValue(ops, subPath, fv, tv)
+		}
+	}
+}
+
+func diffKeyedArray(ops *[]PatchOp, prefix string, from, to any) {
+	fromIdx := indexArrayByID(from)
+	toIdx := indexArrayByID(to)
+	keys := sortedKeyUnion(fromIdx, toIdx)
+	for _, k := range keys {
+		fv, fOK := fromIdx[k]
+		tv, tOK := toIdx[k]
+		sub := prefix + "/" + escapeJSONPointer(k)
+		switch {
+		case !fOK && tOK:
+			*ops = append(*ops, PatchOp{Op: "add", Path: sub, Value: tv})
+		case fOK && !tOK:
+			*ops = append(*ops, PatchOp{Op: "remove", Path: sub})
+		default:
+			diffValue(ops, sub, fv, tv)
+		}
+	}
+}
+
+func indexArrayByID(v any) map[string]any {
+	out := map[string]any{}
+	arr, ok := v.([]any)
+	if !ok {
+		return out
+	}
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, ok := m["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		out[id] = m
+	}
+	return out
+}
+
+func sortedKeyUnion(a, b map[string]any) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	keys := make([]string, 0, len(a)+len(b))
+	for k := range a {
+		if _, ok := seen[k]; !ok {
+			seen[k] = struct{}{}
+			keys = append(keys, k)
+		}
+	}
+	for k := range b {
+		if _, ok := seen[k]; !ok {
+			seen[k] = struct{}{}
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// jsonValuesEqual compares two decoded JSON trees by re-encoding them.
+// Both inputs come from json.Unmarshal, so map key order is the only
+// source of byte-level divergence; encoding/json sorts map keys, so the
+// comparison is canonical without us reaching for reflect.DeepEqual.
+func jsonValuesEqual(a, b any) bool {
+	ab, errA := json.Marshal(a)
+	bb, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return string(ab) == string(bb)
+}
+
+// escapeJSONPointer applies RFC 6901 segment escaping: ~ → ~0, / → ~1.
+// The order matters — escape ~ first so / introduced by escaping doesn't
+// get re-escaped.
+func escapeJSONPointer(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '~':
+			out = append(out, '~', '0')
+		case '/':
+			out = append(out, '~', '1')
+		default:
+			out = append(out, s[i])
+		}
+	}
+	return string(out)
+}
 
 // NodePosition is the (x, y) coordinate of a node in graph layout space.
 type NodePosition struct {
