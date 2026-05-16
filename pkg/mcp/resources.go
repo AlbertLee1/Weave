@@ -67,9 +67,17 @@ type resourcesReadParams struct {
 }
 
 // handleResourcesList implements MCP resources/list. It enumerates every
-// ontology in the OMS repo plus every entry in the optional ObjectSetCatalog.
-// The list is sorted by URI for deterministic wire output — clients that
-// cache the catalogue benefit from a stable ordering.
+// ontology in the OMS repo, every ObjectType under each ontology (OSV2-307,
+// so AI clients can resource://read a single type's schema instead of
+// fetching the entire ontology), plus every entry in the optional
+// ObjectSetCatalog. The list is sorted by URI for deterministic wire
+// output — clients that cache the catalogue benefit from a stable ordering.
+//
+// Failure semantics: if any per-ontology ListObjectTypes call errors out
+// we surface an InternalError rather than returning a partial catalogue.
+// A partial result would silently hide types from the client, which is
+// the worst failure mode for a discovery endpoint — better to fail loudly
+// and let the client retry once the upstream is healthy again.
 func (s *Server) handleResourcesList(ctx context.Context, req *Request) *Response {
 	resources := []Resource{}
 
@@ -90,6 +98,27 @@ func (s *Server) handleResourcesList(ctx context.Context, req *Request) *Respons
 				Description: o.Description,
 				MimeType:    "application/json",
 			})
+
+			// OSV2-307: emit one resource per ObjectType under the ontology
+			// so clients can address them directly via
+			// weave://objecttype/<ontologyApiName>/<objectTypeApiName>.
+			ots, err := s.oms.ListObjectTypes(ctx, o.RID)
+			if err != nil {
+				return NewErrorResponse(req.ID, CodeInternalError,
+					fmt.Sprintf("list object types for %s: %s", o.APIName, err.Error()), nil)
+			}
+			for _, ot := range ots {
+				otName := ot.DisplayName
+				if otName == "" {
+					otName = ot.APIName
+				}
+				resources = append(resources, Resource{
+					URI:         uriScheme + "objecttype/" + o.APIName + "/" + ot.APIName,
+					Name:        otName,
+					Description: ot.Description,
+					MimeType:    "application/json",
+				})
+			}
 		}
 	}
 
@@ -150,10 +179,49 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 				URI: p.URI, MimeType: "application/json", Text: text,
 			}},
 		})
+	case "objecttype":
+		// id shape: <ontologyApiName>/<objectTypeApiName>. OSV2-307.
+		ontAPI, otAPI, ok := strings.Cut(id, "/")
+		if !ok || ontAPI == "" || otAPI == "" {
+			return NewErrorResponse(req.ID, CodeInvalidParams,
+				"objecttype uri must be weave://objecttype/<ontologyApiName>/<objectTypeApiName>", nil)
+		}
+		text, err := s.readObjectType(ctx, ontAPI, otAPI)
+		if err != nil {
+			return NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+		}
+		return NewSuccessResponse(req.ID, map[string]any{
+			"contents": []ResourceContent{{
+				URI: p.URI, MimeType: "application/json", Text: text,
+			}},
+		})
 	default:
 		return NewErrorResponse(req.ID, CodeInvalidParams,
 			fmt.Sprintf("unsupported resource kind %q", kind), nil)
 	}
+}
+
+// readObjectType resolves <ontologyApiName>/<objectTypeApiName> via the OMS
+// repository and returns the ObjectType row JSON-encoded. Unknown ontology
+// and unknown ObjectType both produce errors with the substring 'object
+// type' so callers can match on it deterministically (OSV2-307 acceptance).
+func (s *Server) readObjectType(ctx context.Context, ontologyAPIName, objectTypeAPIName string) (string, error) {
+	if s.oms == nil {
+		return "", errors.New("oms repository not configured")
+	}
+	ont, err := s.oms.GetOntology(ctx, ontologyAPIName)
+	if err != nil {
+		return "", fmt.Errorf("get ontology %q for object type lookup: %w", ontologyAPIName, err)
+	}
+	ot, err := s.oms.GetObjectTypeByAPIName(ctx, ont.RID, objectTypeAPIName)
+	if err != nil || ot == nil {
+		return "", fmt.Errorf("object type %q not found under ontology %q", objectTypeAPIName, ontologyAPIName)
+	}
+	buf, err := json.MarshalIndent(ot, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal object type: %w", err)
+	}
+	return string(buf), nil
 }
 
 // parseResourceURI splits a `weave://kind/id` URI into its parts. The id may

@@ -18,9 +18,11 @@
 //   - prompts/get    : render a user-role text message that names the
 //     ontology, action and supplied arguments so the LLM can invoke
 //     weave_apply_action with the same shape (OSV2-302)
-//   - resources/list : list ontologies and temporary ObjectSets as MCP resources
-//   - resources/read : return the schema for an ontology or the stored
-//     definition for an ObjectSet, given a `weave://<kind>/<id>` URI
+//   - resources/list : list ontologies, ObjectTypes (one per ontology, OSV2-307),
+//     and temporary ObjectSets as MCP resources
+//   - resources/read : return the schema for an ontology, the schema for a
+//     single ObjectType (weave://objecttype/<ontology>/<objectType>),
+//     or the stored definition for an ObjectSet, given a `weave://<kind>/<id>` URI
 //
 // Notifications (requests with no id) such as notifications/initialized are
 // accepted and dispatched but, per JSON-RPC 2.0, never receive a response.
