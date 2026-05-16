@@ -8653,6 +8653,14 @@ paths:
         replays the prior result instead of re-executing, and any compensator
         that itself fails to prepare or commit is enqueued to the dead-letter
         queue (action_saga_dlq) for manual or scheduled retry.
+
+        US-469: clients can choose how the reverse-walk reacts to a broken
+        compensator via `compensationStrategy`: `best-effort` (default —
+        skip the broken compensator and keep running the rest) or
+        `stop-on-first` (halt the walk on the first failure; remaining
+        prepared steps are recorded as skipped). Either way, the structured
+        `failedCompensations` slice tells callers which steps did not
+        compensate cleanly.
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -8670,6 +8678,15 @@ paths:
                     Optional dedupe token. Two requests with the same key
                     return the same SagaResult; the second is marked
                     replayed=true and does not re-execute.
+                compensationStrategy:
+                  type: string
+                  enum: [best-effort, stop-on-first]
+                  description: |
+                    US-469 rollback strategy. `best-effort` (default) keeps
+                    compensating the rest of the prepared steps even when
+                    one compensator fails; `stop-on-first` halts walking on
+                    the first failure. Empty string is accepted and means
+                    best-effort.
                 steps:
                   type: array
                   description: Ordered list of action invocations.
@@ -8716,6 +8733,40 @@ paths:
                     type: array
                     items:
                       type: string
+                  compensationStrategy:
+                    type: string
+                    enum: [best-effort, stop-on-first]
+                    description: |
+                      US-469. Echoes the strategy that drove the rollback walk.
+                  failedCompensations:
+                    type: array
+                    description: |
+                      US-469. Per-step record of compensators that did not
+                      complete cleanly. Each entry identifies the failing
+                      primary step (stepIndex / stepId / actionType /
+                      compensateRid), the phase the failure occurred in
+                      (prepare / commit / skipped), a human-readable reason,
+                      and the action_saga_dlq row id when one was enqueued
+                      (skipped entries under stop-on-first carry no dlqId).
+                    items:
+                      type: object
+                      required: [stepIndex, actionType, phase, reason]
+                      properties:
+                        stepIndex:
+                          type: integer
+                        stepId:
+                          type: string
+                        actionType:
+                          type: string
+                        compensateRid:
+                          type: string
+                        phase:
+                          type: string
+                          enum: [prepare, commit, skipped]
+                        reason:
+                          type: string
+                        dlqId:
+                          type: string
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":

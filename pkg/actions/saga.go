@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/liyang/weave/pkg/auth"
@@ -17,9 +18,104 @@ import (
 // result back instead of re-running. RequestedBy is recorded on the
 // saga header row for audit; the executor falls back to the auth
 // context user id when this is empty.
+//
+// US-469 CompensationStrategy chooses how runCompensations reacts to a
+// compensator that fails: "best-effort" (default) skips the broken
+// compensator (logging to DLQ + FailedCompensations) and continues the
+// reverse walk so the rest of the prepared steps still get rolled back;
+// "stop-on-first" stops walking as soon as one compensator fails (only
+// the failure itself is enqueued to DLQ, but every later-walked step is
+// recorded in FailedCompensations with phase="skipped" for operator
+// visibility). Empty string defaults to best-effort.
 type SagaOptions struct {
-	IdempotencyKey string
-	RequestedBy    string
+	IdempotencyKey       string
+	RequestedBy          string
+	CompensationStrategy SagaCompensationStrategy
+}
+
+// SagaCompensationStrategy is the US-469 enum controlling the rollback
+// walk's reaction to a broken compensator.
+type SagaCompensationStrategy string
+
+const (
+	// CompensationStrategyBestEffort attempts every compensator in
+	// reverse order. A compensator that fails to prepare or commit is
+	// logged + enqueued to DLQ but does NOT block the remaining
+	// compensators from running. Pre-US-469 callers got this behaviour
+	// implicitly; it remains the default when SagaOptions.CompensationStrategy
+	// is the empty string.
+	CompensationStrategyBestEffort SagaCompensationStrategy = "best-effort"
+	// CompensationStrategyStopOnFirst halts the reverse walk as soon as
+	// one compensator fails. The failure itself is enqueued to DLQ;
+	// every subsequent (still-prepared) step is recorded in
+	// FailedCompensations with phase="skipped" so an operator can see
+	// what was left un-compensated, but no further publishes happen.
+	CompensationStrategyStopOnFirst SagaCompensationStrategy = "stop-on-first"
+)
+
+// FailedCompensation phase constants used on FailedCompensationRef.Phase.
+const (
+	// FailedCompensationPhasePrepare is set when prepareCompensator failed
+	// (e.g. the compensator's ActionType could not be resolved or its
+	// rules could not be evaluated).
+	FailedCompensationPhasePrepare = "prepare"
+	// FailedCompensationPhaseCommit is set when prepareCompensator succeeded
+	// but the compensation batch's CommitBatch / Publish failed.
+	FailedCompensationPhaseCommit = "commit"
+	// FailedCompensationPhaseSkipped is set under stop-on-first when a
+	// prepared step's compensator was never attempted because the walk
+	// halted on a prior failure.
+	FailedCompensationPhaseSkipped = "skipped"
+)
+
+// FailedCompensationRef identifies a step whose compensator did not
+// complete cleanly. It is the structured counterpart to the DLQEntries
+// slice (which only carries raw DLQ row ids) — it tells the SDK / UI
+// which primary step is affected and why, so callers can decide whether
+// to retry, drop, or replay.
+type FailedCompensationRef struct {
+	// StepIndex is the zero-based index of the failing step in the
+	// original saga request.
+	StepIndex int `json:"stepIndex"`
+	// StepID is the action_saga_steps row id when a SagaStore is wired;
+	// empty in degraded mode.
+	StepID string `json:"stepId,omitempty"`
+	// ActionType is the primary (NOT compensator) action API name —
+	// matches the StepIndex'th entry in the original ApplySagaRequest.
+	ActionType string `json:"actionType"`
+	// CompensateRID is the CompensateActionRID declared on the primary
+	// ActionType. Empty if the primary action had no compensator
+	// declared (skipped entries do not appear here either way).
+	CompensateRID string `json:"compensateRid,omitempty"`
+	// Phase is "prepare", "commit", or "skipped".
+	Phase string `json:"phase"`
+	// Reason is a human-readable description of the failure (or the
+	// reason the walk skipped this step under stop-on-first).
+	Reason string `json:"reason"`
+	// DLQID is the action_saga_dlq.dlq_id for the row this failure
+	// enqueued, when applicable. Empty for skipped entries (no DLQ row
+	// is written for stop-on-first skips) and for degraded mode (no
+	// SagaStore wired).
+	DLQID string `json:"dlqId,omitempty"`
+}
+
+// NormalizeCompensationStrategy is the wire-side normaliser used by
+// handlers + executor entry points: accepts case- and whitespace-loose
+// variants of the two known values and rejects everything else with a
+// descriptive error so the handler can surface a clean 400.
+func NormalizeCompensationStrategy(s string) (SagaCompensationStrategy, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(s))
+	switch trimmed {
+	case "":
+		return CompensationStrategyBestEffort, nil
+	case string(CompensationStrategyBestEffort):
+		return CompensationStrategyBestEffort, nil
+	case string(CompensationStrategyStopOnFirst):
+		return CompensationStrategyStopOnFirst, nil
+	default:
+		return "", fmt.Errorf("unknown compensationStrategy %q (expected %q or %q)",
+			s, CompensationStrategyBestEffort, CompensationStrategyStopOnFirst)
+	}
 }
 
 // SagaResult is the response envelope for ApplyBatchSaga.
@@ -69,6 +165,18 @@ type SagaResult struct {
 	// compensator that itself failed). Empty on the happy path and
 	// when every compensator ran cleanly.
 	DLQEntries []string `json:"dlqEntries,omitempty"`
+	// CompensationStrategy echoes the strategy that drove the rollback
+	// walk: "best-effort" (default — broken compensator does not block
+	// the rest) or "stop-on-first" (broken compensator halts walking,
+	// later steps recorded as skipped). Populated on every result —
+	// even happy-path success — so SDK clients can confirm which mode
+	// the server applied. (US-469)
+	CompensationStrategy SagaCompensationStrategy `json:"compensationStrategy,omitempty"`
+	// FailedCompensations is the structured per-step view of which
+	// compensators did not run cleanly. Populated alongside DLQEntries
+	// when the rollback walk encountered failures; empty on the happy
+	// path and on a clean rollback. (US-469)
+	FailedCompensations []FailedCompensationRef `json:"failedCompensations,omitempty"`
 }
 
 // ApplyBatchSaga is the US-239 saga coordinator. It prepares every request in
@@ -95,6 +203,18 @@ func (e *Executor) ApplyBatchSaga(ctx context.Context, ontologyRID string, reqs 
 // enqueues failed compensators into the DLQ. Falls back to in-memory
 // behaviour when no SagaStore is wired.
 func (e *Executor) ApplyBatchSagaWithOptions(ctx context.Context, ontologyRID string, reqs []ApplyRequest, opts SagaOptions) (*SagaResult, error) {
+	// Normalise the strategy once at entry — empty string defaults to
+	// best-effort. Caller-side wire validation should already have
+	// rejected unknown values via NormalizeCompensationStrategy, but
+	// the executor stays robust if it sees an empty or unrecognised
+	// value: fall back to best-effort silently.
+	strategy := opts.CompensationStrategy
+	if normalised, err := NormalizeCompensationStrategy(string(strategy)); err == nil {
+		strategy = normalised
+	} else {
+		strategy = CompensationStrategyBestEffort
+	}
+
 	// Idempotency replay: if the same key has been seen, return the
 	// stored result verbatim (with Replayed=true). Conflicts during
 	// CreateSaga also fall back here so a concurrent retry races
@@ -176,20 +296,22 @@ func (e *Executor) ApplyBatchSagaWithOptions(ctx context.Context, ontologyRID st
 				_ = e.sagaStore.UpdateSagaStep(ctx, stepIDs[i], SagaStepUpdate{Status: SagaStepStatusFailed})
 				_ = e.sagaStore.UpdateSagaStatus(ctx, sagaID, SagaUpdate{Status: SagaStatusCompensating})
 			}
-			compensations, compEdits, batchID, offset, dlq := e.runCompensations(ctx, ontologyRID, prepared, sagaID, stepIDs)
+			compOut := e.runCompensations(ctx, ontologyRID, prepared, reqs, sagaID, stepIDs, strategy)
 			result := &SagaResult{
-				Mode:           "saga",
-				SagaID:         sagaID,
-				IdempotencyKey: opts.IdempotencyKey,
-				Applied:        primaryResults,
-				Compensations:  compensations,
-				AppliedEdits:   compEdits,
-				BatchID:        batchID,
-				Offset:         offset,
-				Failure:        failure,
-				DLQEntries:     dlq,
+				Mode:                 "saga",
+				SagaID:               sagaID,
+				IdempotencyKey:       opts.IdempotencyKey,
+				Applied:              primaryResults,
+				Compensations:        compOut.compensations,
+				AppliedEdits:         compOut.appliedEdits,
+				BatchID:              compOut.batchID,
+				Offset:               compOut.offset,
+				Failure:              failure,
+				DLQEntries:           compOut.dlqIDs,
+				CompensationStrategy: strategy,
+				FailedCompensations:  compOut.failedCompensations,
 			}
-			result.Status = sagaTerminalStatus(dlq)
+			result.Status = sagaTerminalStatus(compOut.dlqIDs)
 			e.persistSagaTerminal(ctx, sagaID, result, failure.Message)
 			return result, failure
 		}
@@ -221,33 +343,36 @@ func (e *Executor) ApplyBatchSagaWithOptions(ctx context.Context, ontologyRID st
 		if e.sagaStore != nil {
 			_ = e.sagaStore.UpdateSagaStatus(ctx, sagaID, SagaUpdate{Status: SagaStatusCompensating})
 		}
-		compensations, compEdits, batchID, offset, dlq := e.runCompensations(ctx, ontologyRID, prepared, sagaID, stepIDs)
+		compOut := e.runCompensations(ctx, ontologyRID, prepared, reqs, sagaID, stepIDs, strategy)
 		result := &SagaResult{
-			Mode:           "saga",
-			SagaID:         sagaID,
-			IdempotencyKey: opts.IdempotencyKey,
-			Applied:        primaryResults,
-			Compensations:  compensations,
-			AppliedEdits:   compEdits,
-			BatchID:        batchID,
-			Offset:         offset,
-			Failure:        be,
-			DLQEntries:     dlq,
+			Mode:                 "saga",
+			SagaID:               sagaID,
+			IdempotencyKey:       opts.IdempotencyKey,
+			Applied:              primaryResults,
+			Compensations:        compOut.compensations,
+			AppliedEdits:         compOut.appliedEdits,
+			BatchID:              compOut.batchID,
+			Offset:               compOut.offset,
+			Failure:              be,
+			DLQEntries:           compOut.dlqIDs,
+			CompensationStrategy: strategy,
+			FailedCompensations:  compOut.failedCompensations,
 		}
-		result.Status = sagaTerminalStatus(dlq)
+		result.Status = sagaTerminalStatus(compOut.dlqIDs)
 		e.persistSagaTerminal(ctx, sagaID, result, be.Message)
 		return result, be
 	}
 
 	result := &SagaResult{
-		Mode:           "saga",
-		SagaID:         sagaID,
-		Status:         SagaStatusSuccess,
-		IdempotencyKey: opts.IdempotencyKey,
-		BatchID:        br.BatchID,
-		Offset:         br.Offset,
-		Applied:        br.Results,
-		AppliedEdits:   br.AppliedEdits,
+		Mode:                 "saga",
+		SagaID:               sagaID,
+		Status:               SagaStatusSuccess,
+		IdempotencyKey:       opts.IdempotencyKey,
+		BatchID:              br.BatchID,
+		Offset:               br.Offset,
+		Applied:              br.Results,
+		AppliedEdits:         br.AppliedEdits,
+		CompensationStrategy: strategy,
 	}
 	e.persistSagaTerminal(ctx, sagaID, result, "")
 	return result, nil
@@ -344,44 +469,112 @@ func (e *Executor) RetrySagaDLQ(ctx context.Context, entry *SagaDLQEntry) error 
 	return nil
 }
 
+// compensationOutcome bundles every piece of state the saga
+// coordinator needs back from runCompensations. Refactored from a
+// 5-tuple return so the US-469 additions (FailedCompensations) do not
+// inflate the signature beyond readability.
+type compensationOutcome struct {
+	compensations       []*ApplyResult
+	appliedEdits        []funnel.Edit
+	batchID             string
+	offset              uint64
+	dlqIDs              []string
+	failedCompensations []FailedCompensationRef
+}
+
 // runCompensations prepares and publishes the compensating actions for a
 // slice of successfully-prepared primary actions. Walks the slice in
 // REVERSE order (matches PRD "逆序执行补偿") and skips any action whose
-// ActionType declares no CompensateActionRID. Returns the compensating
-// per-action results plus the post-collapse edits actually published.
+// ActionType declares no CompensateActionRID. Returns the structured
+// outcome via compensationOutcome.
 //
 // The compensation path never calls back into ApplyBatchSaga so a
 // compensator whose own ActionType has a CompensateActionRID does NOT
 // trigger a recursive rollback — saga depth is bounded at 1 deliberately.
 //
+// US-469 introduces an explicit CompensationStrategy:
+//   - best-effort (default): a broken compensator is logged to DLQ +
+//     FailedCompensations but the reverse walk continues — partial
+//     compensation strictly better than none.
+//   - stop-on-first: as soon as one compensator fails, halt walking.
+//     The failure itself is DLQ-enqueued; every still-prepared step
+//     later in the walk is recorded in FailedCompensations with
+//     phase="skipped" for operator visibility but does NOT enter DLQ
+//     (it was deliberately not attempted).
+//
+// reqs is the original ApplyRequest slice — required so failed entries
+// can carry the primary action's API name on FailedCompensationRef.
+//
 // When sagaID and stepIDs are provided (i.e. the executor has a wired
-// SagaStore) the per-step rows are advanced to COMPENSATED on the happy
-// rollback path and to COMPENSATION_FAILED with a DLQ row when a
+// SagaStore) the per-step rows are advanced to COMPENSATED on the
+// happy rollback path and to COMPENSATION_FAILED with a DLQ row when a
 // compensator could not be prepared OR the compensation batch publish
-// failed. The returned dlq slice is the list of dlq_id strings created
-// in this run.
-func (e *Executor) runCompensations(ctx context.Context, ontologyRID string, prepared []*PreparedAction, sagaID string, stepIDs []string) ([]*ApplyResult, []funnel.Edit, string, uint64, []string) {
+// failed.
+func (e *Executor) runCompensations(
+	ctx context.Context,
+	ontologyRID string,
+	prepared []*PreparedAction,
+	reqs []ApplyRequest,
+	sagaID string,
+	stepIDs []string,
+	strategy SagaCompensationStrategy,
+) compensationOutcome {
 	if len(prepared) == 0 {
-		return nil, nil, "", 0, nil
+		return compensationOutcome{}
 	}
 
+	out := compensationOutcome{
+		compensations:       make([]*ApplyResult, 0, len(prepared)),
+		dlqIDs:              make([]string, 0),
+		failedCompensations: make([]FailedCompensationRef, 0),
+	}
 	compensators := make([]*PreparedAction, 0, len(prepared))
-	results := make([]*ApplyResult, 0, len(prepared))
 	// Parallel slice of source-step indices so we can advance step
 	// statuses after the compensation batch commits.
 	compStepIdx := make([]int, 0, len(prepared))
-	dlqIDs := make([]string, 0)
+	// stopped tracks whether stop-on-first has already triggered, in
+	// which case the remaining steps go into failedCompensations with
+	// phase="skipped" instead of being attempted.
+	stopped := false
 
 	for i := len(prepared) - 1; i >= 0; i-- {
 		primary := prepared[i]
+		// No compensator declared → silently skip (correct for
+		// read-only / idempotent steps); this is NOT a failure and does
+		// not produce a FailedCompensations entry.
 		if primary.ActionType == nil || primary.ActionType.CompensateActionRID == "" {
 			continue
 		}
+
+		if stopped {
+			// Stop-on-first already triggered earlier in the walk. Every
+			// remaining step with a declared compensator goes into
+			// FailedCompensations as "skipped" so an operator can see
+			// what was left un-rolled-back. No DLQ row — we never
+			// attempted these.
+			ref := FailedCompensationRef{
+				StepIndex:     i,
+				ActionType:    primaryActionTypeName(reqs, i, primary),
+				CompensateRID: primary.ActionType.CompensateActionRID,
+				Phase:         FailedCompensationPhaseSkipped,
+				Reason:        "compensation halted by stop-on-first strategy after earlier failure",
+			}
+			if i < len(stepIDs) {
+				ref.StepID = stepIDs[i]
+			}
+			out.failedCompensations = append(out.failedCompensations, ref)
+			continue
+		}
+
 		comp, err := e.prepareCompensator(ctx, ontologyRID, primary)
 		if err != nil {
-			// Log-and-skip: a broken compensator should not block the rest
-			// of the rollback — partial compensation is strictly better
-			// than no compensation.
+			ref := FailedCompensationRef{
+				StepIndex:     i,
+				ActionType:    primaryActionTypeName(reqs, i, primary),
+				CompensateRID: primary.ActionType.CompensateActionRID,
+				Phase:         FailedCompensationPhasePrepare,
+				Reason:        fmt.Sprintf("prepare compensator: %v", err),
+			}
 			if e.sagaStore != nil && sagaID != "" && i < len(stepIDs) {
 				stepID := stepIDs[i]
 				_ = e.sagaStore.UpdateSagaStep(ctx, stepID, SagaStepUpdate{Status: SagaStepStatusCompensationFailed})
@@ -392,15 +585,21 @@ func (e *Executor) runCompensations(ctx context.Context, ontologyRID string, pre
 					StepID:         stepID,
 					Ontology:       ontologyRID,
 					EditsJSON:      json.RawMessage("[]"),
-					FailureMessage: fmt.Sprintf("prepare compensator: %v", err),
+					FailureMessage: ref.Reason,
 					Status:         SagaDLQStatusPending,
 				})
-				dlqIDs = append(dlqIDs, dlqID)
+				out.dlqIDs = append(out.dlqIDs, dlqID)
+				ref.StepID = stepID
+				ref.DLQID = dlqID
+			}
+			out.failedCompensations = append(out.failedCompensations, ref)
+			if strategy == CompensationStrategyStopOnFirst {
+				stopped = true
 			}
 			continue
 		}
 		compensators = append(compensators, comp)
-		results = append(results, &ApplyResult{
+		out.compensations = append(out.compensations, &ApplyResult{
 			ActionRID: comp.ActionType.RID,
 			Edits:     comp.Edits,
 		})
@@ -408,19 +607,31 @@ func (e *Executor) runCompensations(ctx context.Context, ontologyRID string, pre
 	}
 
 	if len(compensators) == 0 {
-		return nil, nil, "", 0, dlqIDs
+		// No compensators ever made it past prepare. Reset compensations
+		// slice to nil so the response stays clean ("no rollback ran")
+		// rather than emitting an empty array.
+		out.compensations = nil
+		return out
 	}
 
 	br, err := e.CommitBatch(ctx, ontologyRID, compensators)
 	if err != nil {
-		// Best-effort: surface whatever we managed to build so the caller
-		// can see which compensators ran and which skipped. Each
-		// compensator that we BUILT but couldn't COMMIT lands in the DLQ.
-		if e.sagaStore != nil && sagaID != "" {
-			for k, srcIdx := range compStepIdx {
-				if srcIdx >= len(stepIDs) {
-					continue
-				}
+		// Each compensator that we BUILT but couldn't COMMIT lands in
+		// the DLQ + FailedCompensations as a commit-phase failure.
+		// stop-on-first cannot bite here because the commit is a
+		// single all-or-nothing batch — by the time we got here, every
+		// prepared compensator either succeeded its prepare or was
+		// already recorded as prepare-failure above. The commit error
+		// affects all of them at once.
+		for k, srcIdx := range compStepIdx {
+			ref := FailedCompensationRef{
+				StepIndex:     srcIdx,
+				ActionType:    primaryActionTypeName(reqs, srcIdx, prepared[srcIdx]),
+				CompensateRID: prepared[srcIdx].ActionType.CompensateActionRID,
+				Phase:         FailedCompensationPhaseCommit,
+				Reason:        fmt.Sprintf("commit compensation: %v", err),
+			}
+			if e.sagaStore != nil && sagaID != "" && srcIdx < len(stepIDs) {
 				stepID := stepIDs[srcIdx]
 				_ = e.sagaStore.UpdateSagaStep(ctx, stepID, SagaStepUpdate{Status: SagaStepStatusCompensationFailed})
 				editsJSON, _ := MarshalEdits(compensators[k].Edits)
@@ -431,17 +642,20 @@ func (e *Executor) runCompensations(ctx context.Context, ontologyRID string, pre
 					StepID:         stepID,
 					Ontology:       ontologyRID,
 					EditsJSON:      editsJSON,
-					FailureMessage: fmt.Sprintf("commit compensation: %v", err),
+					FailureMessage: ref.Reason,
 					Status:         SagaDLQStatusPending,
 				})
-				dlqIDs = append(dlqIDs, dlqID)
+				out.dlqIDs = append(out.dlqIDs, dlqID)
+				ref.StepID = stepID
+				ref.DLQID = dlqID
 			}
+			out.failedCompensations = append(out.failedCompensations, ref)
 		}
-		return results, nil, "", 0, dlqIDs
+		return out
 	}
 	// Stamp the compensation batch ID onto the per-action compensator
 	// results so downstream consumers can correlate them.
-	for _, r := range results {
+	for _, r := range out.compensations {
 		r.BatchID = br.BatchID
 		r.Offset = br.Offset
 	}
@@ -457,7 +671,25 @@ func (e *Executor) runCompensations(ctx context.Context, ontologyRID string, pre
 			})
 		}
 	}
-	return results, br.AppliedEdits, br.BatchID, br.Offset, dlqIDs
+	out.appliedEdits = br.AppliedEdits
+	out.batchID = br.BatchID
+	out.offset = br.Offset
+	return out
+}
+
+// primaryActionTypeName picks the best primary action API name for a
+// FailedCompensationRef: prefer reqs[i].ActionType (the literal name the
+// caller declared), fall back to the prepared action's ActionType when
+// the slice is short. The dual lookup keeps the helper robust against
+// out-of-bounds indexes from degraded code paths.
+func primaryActionTypeName(reqs []ApplyRequest, idx int, prepared *PreparedAction) string {
+	if idx >= 0 && idx < len(reqs) && reqs[idx].ActionType != "" {
+		return reqs[idx].ActionType
+	}
+	if prepared != nil && prepared.ActionType != nil {
+		return prepared.ActionType.APIName
+	}
+	return ""
 }
 
 // prepareCompensator resolves a primary action's CompensateActionRID into an
