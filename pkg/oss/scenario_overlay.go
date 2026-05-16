@@ -28,6 +28,13 @@ func (h *Handler) SetScenarioReader(r ScenarioReader) {
 	h.scenarioReader = r
 }
 
+// SetScenarioConflictAuditor wires the US-481 audit sink that records one
+// row per Read request whose fold surfaces ≥1 ScenarioConflict. Nil disables
+// auditing (degraded-mode default).
+func (h *Handler) SetScenarioConflictAuditor(a *ScenarioConflictAuditor) {
+	h.scenarioConflictAuditor = a
+}
+
 // ScenarioOverlay caches scenario metadata + edits for one HTTP request so
 // each handler doesn't re-query the scenarios store.
 type ScenarioOverlay struct {
@@ -76,34 +83,57 @@ func (h *Handler) loadScenarioOverlay(ctx context.Context, r *http.Request, onto
 
 // applyToObject folds the overlay's edits onto a single WireObject. Returns
 // (overlaid, deleted). When deleted=true the caller should respond 404
-// because the scenario removed this object.
+// because the scenario removed this object. Conflicts surfaced by fold are
+// silently dropped — callers that need audit visibility should call
+// applyToObjectWithConflicts instead.
 func (o *ScenarioOverlay) applyToObject(obj *WireObject) (*WireObject, bool) {
+	overlaid, deleted, _ := o.applyToObjectWithConflicts(obj)
+	return overlaid, deleted
+}
+
+// applyToObjectWithConflicts is the US-481 superset of applyToObject. It
+// additionally returns any ScenarioConflict the fold surfaced for the
+// per-object key. The conflicts list is empty when no edit touches the key
+// or the touching edits replay cleanly.
+func (o *ScenarioOverlay) applyToObjectWithConflicts(obj *WireObject) (*WireObject, bool, []scenarios.ScenarioConflict) {
 	if o == nil || obj == nil {
-		return obj, false
+		return obj, false, nil
 	}
 	target := scenarios.ObjectKey{ObjectType: obj.APIName, ObjectID: fmt.Sprintf("%v", obj.PrimaryKey)}
 	baseView := wireObjectToView(obj)
-	folded, deleted := scenarios.FoldObject(target, baseView, o.Edits)
+	folded, deleted, conflicts := scenarios.FoldObjectWithConflicts(target, baseView, o.Edits)
 	if deleted {
-		return nil, true
+		return nil, true, conflicts
 	}
 	if folded == nil {
 		// No edit touched this key — return original.
-		return obj, false
+		return obj, false, conflicts
 	}
-	return viewToWireObject(folded, obj), false
+	return viewToWireObject(folded, obj), false, conflicts
 }
 
 // applyToPage folds the overlay's edits onto every row in an ObjectPage.
 // Deleted rows are filtered out. Order is preserved. The page is returned
-// unchanged if the overlay or the page itself is nil / empty.
+// unchanged if the overlay or the page itself is nil / empty. Conflicts are
+// silently dropped — callers that need audit visibility should use
+// applyToPageWithConflicts.
 func (o *ScenarioOverlay) applyToPage(page *ObjectPage) *ObjectPage {
+	out, _ := o.applyToPageWithConflicts(page)
+	return out
+}
+
+// applyToPageWithConflicts is the US-481 superset of applyToPage. It returns
+// the same overlaid page plus the union of all per-row conflicts in
+// row-then-edit-seq order.
+func (o *ScenarioOverlay) applyToPageWithConflicts(page *ObjectPage) (*ObjectPage, []scenarios.ScenarioConflict) {
 	if o == nil || page == nil || len(page.Data) == 0 {
-		return page
+		return page, nil
 	}
 	out := make([]*WireObject, 0, len(page.Data))
+	var allConflicts []scenarios.ScenarioConflict
 	for _, obj := range page.Data {
-		overlaid, deleted := o.applyToObject(obj)
+		overlaid, deleted, conflicts := o.applyToObjectWithConflicts(obj)
+		allConflicts = append(allConflicts, conflicts...)
 		if deleted {
 			continue
 		}
@@ -111,7 +141,7 @@ func (o *ScenarioOverlay) applyToPage(page *ObjectPage) *ObjectPage {
 	}
 	cp := *page
 	cp.Data = out
-	return &cp
+	return &cp, allConflicts
 }
 
 func wireObjectToView(obj *WireObject) *scenarios.ObjectView {

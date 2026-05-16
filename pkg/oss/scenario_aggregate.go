@@ -23,10 +23,20 @@ import (
 // rollup, approximate*, accuracy modes, exclude lists. Use the Bleve path
 // (no X-Scenario-Id header) for those.
 func AggregateWithOverlay(base []*WireObject, edits []scenarios.ScenarioEdit, req *aggregation.AggregationRequest) (*aggregation.AggregationResponse, error) {
+	resp, _, err := AggregateWithOverlayAndConflicts(base, edits, req)
+	return resp, err
+}
+
+// AggregateWithOverlayAndConflicts is the US-481 superset of
+// AggregateWithOverlay. It additionally returns the per-object fold
+// conflicts surfaced while replaying edits over the base object set. The
+// conflicts list is the union across every base row plus any synthesised
+// createObject row — callers can pivot per ConflictType when emitting audit.
+func AggregateWithOverlayAndConflicts(base []*WireObject, edits []scenarios.ScenarioEdit, req *aggregation.AggregationRequest) (*aggregation.AggregationResponse, []scenarios.ScenarioConflict, error) {
 	if req == nil {
-		return nil, fmt.Errorf("nil aggregation request")
+		return nil, nil, fmt.Errorf("nil aggregation request")
 	}
-	overlaid := applyOverlayToObjectSet(base, edits, req.ObjectType)
+	overlaid, conflicts := applyOverlayToObjectSetWithConflicts(base, edits, req.ObjectType)
 
 	// Single-level groupBy only. No groupBy → one synthetic bucket.
 	type bucket struct {
@@ -40,7 +50,7 @@ func AggregateWithOverlay(base []*WireObject, edits []scenarios.ScenarioEdit, re
 	case 1:
 		field := req.GroupBy[0].Field
 		if req.GroupBy[0].Type != "" && req.GroupBy[0].Type != "exact" {
-			return nil, fmt.Errorf("scenario overlay aggregation: only exact groupBy is supported (got %q)", req.GroupBy[0].Type)
+			return nil, conflicts, fmt.Errorf("scenario overlay aggregation: only exact groupBy is supported (got %q)", req.GroupBy[0].Type)
 		}
 		byKey := map[string]*bucket{}
 		var order []string
@@ -60,14 +70,14 @@ func AggregateWithOverlay(base []*WireObject, edits []scenarios.ScenarioEdit, re
 			buckets = append(buckets, byKey[k])
 		}
 	default:
-		return nil, fmt.Errorf("scenario overlay aggregation: multi-level groupBy not supported in PoC (got %d levels)", len(req.GroupBy))
+		return nil, conflicts, fmt.Errorf("scenario overlay aggregation: multi-level groupBy not supported in PoC (got %d levels)", len(req.GroupBy))
 	}
 
 	rows := make([]aggregation.AggregationRow, 0, len(buckets))
 	for _, b := range buckets {
 		metrics, err := computeOverlayMetrics(b.rows, req.Aggregations)
 		if err != nil {
-			return nil, err
+			return nil, conflicts, err
 		}
 		rows = append(rows, aggregation.AggregationRow{
 			Group:   b.key,
@@ -77,7 +87,7 @@ func AggregateWithOverlay(base []*WireObject, edits []scenarios.ScenarioEdit, re
 	return &aggregation.AggregationResponse{
 		Data:     rows,
 		Accuracy: aggregation.AccuracyRequireAccurate,
-	}, nil
+	}, conflicts, nil
 }
 
 // applyOverlayToObjectSet folds edits over a set of base objects for a single
@@ -90,6 +100,16 @@ func AggregateWithOverlay(base []*WireObject, edits []scenarios.ScenarioEdit, re
 //
 // Edits for other objectTypes are ignored at this scope.
 func applyOverlayToObjectSet(base []*WireObject, edits []scenarios.ScenarioEdit, objectType string) []*WireObject {
+	out, _ := applyOverlayToObjectSetWithConflicts(base, edits, objectType)
+	return out
+}
+
+// applyOverlayToObjectSetWithConflicts is the US-481 superset that returns
+// the union of per-row fold conflicts alongside the overlaid object set.
+// Conflicts from synthesised createObject rows (no base counterpart) are
+// captured too — e.g. two createObject edits for the same brand-new id surface
+// a duplicate_create conflict here exactly the same as on a base row.
+func applyOverlayToObjectSetWithConflicts(base []*WireObject, edits []scenarios.ScenarioEdit, objectType string) ([]*WireObject, []scenarios.ScenarioConflict) {
 	editsByID := map[string][]scenarios.ScenarioEdit{}
 	createdIDs := map[string]bool{}
 	for _, e := range edits {
@@ -103,6 +123,7 @@ func applyOverlayToObjectSet(base []*WireObject, edits []scenarios.ScenarioEdit,
 	}
 
 	out := make([]*WireObject, 0, len(base))
+	var allConflicts []scenarios.ScenarioConflict
 	seen := map[string]bool{}
 	for _, obj := range base {
 		id := fmt.Sprintf("%v", obj.PrimaryKey)
@@ -113,26 +134,37 @@ func applyOverlayToObjectSet(base []*WireObject, edits []scenarios.ScenarioEdit,
 			continue
 		}
 		ov := (&ScenarioOverlay{Edits: objEdits})
-		overlaid, deleted := ov.applyToObject(obj)
+		overlaid, deleted, conflicts := ov.applyToObjectWithConflicts(obj)
+		allConflicts = append(allConflicts, conflicts...)
 		if deleted {
 			continue
 		}
 		out = append(out, overlaid)
 	}
-	// Synthesize created objects that were not in base.
+	// Synthesize created objects that were not in base. Iterate in a sorted
+	// key order so the conflict slice is deterministic across runs. Fold
+	// directly with base=nil — passing a stub WireObject through
+	// applyToObjectWithConflicts would let the fold treat the stub as a
+	// live base and mis-flag the first createObject as a duplicate.
+	createdIDOrder := make([]string, 0, len(createdIDs))
 	for id := range createdIDs {
 		if seen[id] {
 			continue
 		}
-		ov := (&ScenarioOverlay{Edits: editsByID[id]})
-		obj := &WireObject{APIName: objectType, PrimaryKey: id}
-		overlaid, deleted := ov.applyToObject(obj)
-		if deleted {
+		createdIDOrder = append(createdIDOrder, id)
+	}
+	sort.Strings(createdIDOrder)
+	for _, id := range createdIDOrder {
+		target := scenarios.ObjectKey{ObjectType: objectType, ObjectID: id}
+		view, deleted, conflicts := scenarios.FoldObjectWithConflicts(target, nil, editsByID[id])
+		allConflicts = append(allConflicts, conflicts...)
+		if deleted || view == nil {
 			continue
 		}
-		out = append(out, overlaid)
+		template := &WireObject{APIName: objectType, PrimaryKey: id}
+		out = append(out, viewToWireObject(view, template))
 	}
-	return out
+	return out, allConflicts
 }
 
 func computeOverlayMetrics(rows []*WireObject, specs []aggregation.AggregationSpec) ([]aggregation.MetricValue, error) {

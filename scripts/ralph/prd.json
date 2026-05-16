@@ -342,8 +342,8 @@
         "Tests pass"
       ],
       "priority": 23,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/scenarios: FoldObjectWithConflicts / FoldLinksWithConflicts return (view, deleted, []ScenarioConflict) — 5 conflict shapes (modify_after_delete, duplicate_create, delete_after_delete, duplicate_add_link, delete_missing_link). Legacy FoldObject / FoldLinks kept as thin wrappers for unchanged callers. pkg/oss: ScenarioConflictAuditor (audit.Store) emits one scenario.fold.conflict audit row per Read request whose fold surfaces ≥1 conflict; wired into GetObject / ListObjects / ListLinkedObjects / AggregateObjects via applyToObjectWithConflicts / applyToPageWithConflicts / AggregateWithOverlayAndConflicts. Nil-safe: SetScenarioConflictAuditor optional — degraded boot stays silent. BDD: 3 PG-backed scenarios (modify-after-delete via GET, duplicate_create via aggregate, clean-fold negative control)."
     },
     {
       "id": "US-482",

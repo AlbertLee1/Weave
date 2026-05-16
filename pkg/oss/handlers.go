@@ -17,6 +17,7 @@ import (
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/where"
+	"github.com/liyang/weave/pkg/scenarios"
 	"github.com/liyang/weave/pkg/timeseries"
 )
 
@@ -65,6 +66,10 @@ type Handler struct {
 	// X-Scenario-Id header on Read endpoints (VTX-004). Wired via
 	// SetScenarioReader.
 	scenarioReader ScenarioReader
+	// scenarioConflictAuditor, when non-nil, emits one audit row per Read
+	// request whose scenario fold surfaces ≥1 conflict (US-481). Nil-safe:
+	// degraded-mode test routers do not have to wire it.
+	scenarioConflictAuditor *ScenarioConflictAuditor
 	// vertexTSQuerier, when non-nil, powers the Vertex window-aggregation
 	// timeseries endpoint (VTX-030). Wired via SetVertexTimeSeriesQuerier.
 	vertexTSQuerier VertexTimeSeriesQuerier
@@ -195,7 +200,8 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if overlay != nil {
-		overlaid, deleted := overlay.applyToObject(obj)
+		overlaid, deleted, conflicts := overlay.applyToObjectWithConflicts(obj)
+		h.scenarioConflictAuditor.Record(r.Context(), overlay.Scenario.RID, "getObject", conflicts)
 		if deleted {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectNotFound", map[string]string{
 				"objectType": objectType,
@@ -254,7 +260,9 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if overlay != nil {
-		page = overlay.applyToPage(page)
+		var conflicts []scenarios.ScenarioConflict
+		page, conflicts = overlay.applyToPageWithConflicts(page)
+		h.scenarioConflictAuditor.Record(r.Context(), overlay.Scenario.RID, "listObjects", conflicts)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
@@ -606,7 +614,9 @@ func (h *Handler) ListLinkedObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if overlay != nil {
-		page = overlay.applyToPage(page)
+		var conflicts []scenarios.ScenarioConflict
+		page, conflicts = overlay.applyToPageWithConflicts(page)
+		h.scenarioConflictAuditor.Record(r.Context(), overlay.Scenario.RID, "listLinkedObjects", conflicts)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, page)
