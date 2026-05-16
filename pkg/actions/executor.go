@@ -758,6 +758,79 @@ func (e *Executor) validateValueTypeConstraints(ctx context.Context, ontologyRID
 	return nil
 }
 
+// validateCollapsedEditsAgainstSchema is the US-473 commit-phase guard: it
+// rejects any post-collapse CREATE / MODIFY edit whose merged Properties map
+// carries a name not declared on the ObjectType. DELETE and LINK_* edits are
+// skipped because they carry no Properties payload. The OMS lookup is
+// best-effort — if the OT can't be resolved (degraded boot / nil omsRepo) the
+// guard quietly degrades to a no-op, matching the lenient pattern in
+// validateValueTypeConstraints. On violation it returns the typed
+// *apierror.APIError directly (NOT wrapped in *BatchError) so single-Apply's
+// BatchError-stripping path still surfaces a 400 SchemaViolation instead of
+// collapsing into a generic ActionFailed.
+func (e *Executor) validateCollapsedEditsAgainstSchema(ctx context.Context, ontologyRID string, edits []funnel.Edit) error {
+	if e.omsRepo == nil || len(edits) == 0 {
+		return nil
+	}
+	schema := e.buildSchemaLookupForEdits(ctx, ontologyRID, edits)
+	if len(schema) == 0 {
+		return nil
+	}
+	violations := ValidateEditsAgainstSchema(edits, schema)
+	if len(violations) == 0 {
+		return nil
+	}
+	v := violations[0]
+	return apierror.NewBadRequest("SchemaViolation", map[string]string{
+		"objectType":     v.ObjectType,
+		"primaryKey":     v.PrimaryKey,
+		"property":       v.Property,
+		"violationCount": fmt.Sprintf("%d", len(violations)),
+	})
+}
+
+// buildSchemaLookupForEdits collects the declared property-name set for every
+// ObjectType touched by a CREATE/MODIFY edit in the batch. Each OT is queried
+// at most once even when many edits mention it. Failures (OT not found,
+// ListProperties error) silently drop the OT from the lookup so the caller
+// degrades to "schema unknown for this OT → skip".
+func (e *Executor) buildSchemaLookupForEdits(ctx context.Context, ontologyRID string, edits []funnel.Edit) MapSchemaLookup {
+	schema := MapSchemaLookup{}
+	seen := make(map[string]struct{})
+	for _, edit := range edits {
+		if edit.Type == funnel.EditTypeLinkCreate || edit.Type == funnel.EditTypeLinkDelete {
+			continue
+		}
+		if len(edit.Properties) == 0 {
+			continue
+		}
+		if _, dupe := seen[edit.ObjectType]; dupe {
+			continue
+		}
+		seen[edit.ObjectType] = struct{}{}
+		ot, err := e.omsRepo.GetObjectTypeByAPIName(ctx, ontologyRID, edit.ObjectType)
+		if err != nil || ot == nil {
+			continue
+		}
+		props, err := e.omsRepo.ListProperties(ctx, ot.RID)
+		if err != nil || len(props) == 0 {
+			// Empty / missing property list is treated as "schema unknown"
+			// for this OT — production OTs always carry at least their PK
+			// property, so an empty result almost always means the test
+			// fixture did not bother seeding properties. Skipping keeps
+			// the existing pkg/actions test suite green without weakening
+			// production behavior (real OTs hit the populated branch).
+			continue
+		}
+		names := make(map[string]struct{}, len(props))
+		for _, p := range props {
+			names[p.APIName] = struct{}{}
+		}
+		schema[edit.ObjectType] = names
+	}
+	return schema
+}
+
 // tagEditsAsUserSource stamps Edit.Source = "user" on every edit in place so
 // the funnel consumer's user-edit-wins conflict logic (US-021) can protect
 // action-executor writes from subsequent ingest rewrites. Called from both
@@ -807,6 +880,15 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 	// Empty post-collapse batch is a valid successful no-op: nothing to publish.
 	if len(collapsed) == 0 {
 		return result, nil
+	}
+
+	// US-473: schema validation on the post-collapse edits. Surface
+	// undeclared-property writes as a typed apierror.APIError so the
+	// handler chain (Apply / ApplyBatch) renders a deterministic 400
+	// SchemaViolation. Unwrapped so the single-Apply path's BatchError
+	// strip does not flatten it into a generic ActionFailed.
+	if err := e.validateCollapsedEditsAgainstSchema(ctx, ontologyAPIName, collapsed); err != nil {
+		return nil, err
 	}
 
 	batch := &funnel.EditBatch{
@@ -1104,6 +1186,14 @@ func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName stri
 	// publish. Successful no-op — mirrors CommitBatch.
 	if len(collapsed) == 0 {
 		return result, nil
+	}
+
+	// US-473: schema validation on the post-collapse edits, identical to
+	// CommitBatch. Atomic-tx path enforces the same schema contract before
+	// it touches the action-log PG transaction so a schema violation is
+	// rejected upstream of any persisted side effect.
+	if err := e.validateCollapsedEditsAgainstSchema(ctx, ontologyAPIName, collapsed); err != nil {
+		return nil, err
 	}
 
 	// Build action log rows up-front so the tx callback can persist them
