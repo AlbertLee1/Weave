@@ -96,6 +96,33 @@ type LinkPropagationResolver interface {
 	LookupLinkPropagation(ctx context.Context, linkTypeRID string) (LinkPropagation, bool, error)
 }
 
+// PropagatingOutgoingEdge describes a single downstream propagating edge
+// the consumer can walk during US-474 BFS marking propagation. Each entry
+// is one (linkTypeRID, targetObjectType, targetPK) triple; the consumer
+// uses TargetObjectTypeAPIName to scope the bleve doc fetch + re-index.
+type PropagatingOutgoingEdge struct {
+	LinkTypeRID             string
+	TargetObjectTypeAPIName string
+	TargetPK                string
+}
+
+// LinkPropagationTraverser is the US-474 capability the consumer consults
+// when walking forward through the link graph during multi-hop marking
+// propagation. Implementations must return only edges whose LinkType has
+// PropagateMarkings=true — non-propagating outgoing edges are invisible
+// to the BFS so a propagate=false hop naturally truncates the walk.
+//
+// Nil traverser disables BFS and the consumer falls back to pre-US-474
+// one-hop propagation, which is the safe degradation mode when prod
+// wiring has not yet been refreshed.
+type LinkPropagationTraverser interface {
+	ListPropagatingOutgoingEdges(
+		ctx context.Context,
+		sourceObjectTypeAPIName string,
+		sourcePKs []string,
+	) ([]PropagatingOutgoingEdge, error)
+}
+
 // PIIDetector reports whether an edit's property values carry PII
 // (email / SSN / phone / credit card). When wired on the consumer
 // every CREATE/MODIFY edit is scanned and a positive result auto-
@@ -187,6 +214,13 @@ type Consumer struct {
 	// onto the target after a LINK_CREATE upsert. Nil disables propagation
 	// entirely, which preserves pre-US-261 behaviour.
 	linkPropagation LinkPropagationResolver
+
+	// linkPropagationTraverser, when set, enables US-474 multi-hop BFS:
+	// after merging markings into a LINK_CREATE target, the consumer walks
+	// the target's outgoing propagating edges and continues until no
+	// downstream node's marking set changes. Nil keeps the pre-US-474
+	// one-hop behaviour — cmd/server wires a PG-backed adapter at boot.
+	linkPropagationTraverser LinkPropagationTraverser
 
 	// piiDetector, when set, scans every CREATE/MODIFY edit's property
 	// values and auto-attaches the PII marking on a positive match
@@ -283,6 +317,15 @@ func (c *Consumer) SetLinkEdgeDeleter(d LinkEdgeDeleter) {
 // to call before Start().
 func (c *Consumer) SetLinkPropagationResolver(r LinkPropagationResolver) {
 	c.linkPropagation = r
+}
+
+// SetLinkPropagationTraverser wires the US-474 multi-hop BFS hook. When
+// set, the consumer walks downstream propagating edges from the target
+// of every LINK_CREATE so transitively-linked nodes inherit markings in
+// the same consumer pass. Pass nil to disable BFS (one-hop only). Safe
+// to call before Start().
+func (c *Consumer) SetLinkPropagationTraverser(t LinkPropagationTraverser) {
+	c.linkPropagationTraverser = t
 }
 
 // SetPIIDetector wires the US-263 PII auto-detection hook. When set,
@@ -572,18 +615,22 @@ func (c *Consumer) applyLinkCreate(ontologyAPIName string, edit Edit) error {
 	return nil
 }
 
-// propagateMarkings is the US-261 hook that copies the source object's
-// `_markings` set onto the target object after a successful LINK_CREATE
-// upsert when the LinkType opts in via PropagateMarkings=true. Returns nil
-// for every "soft" skip (resolver not wired, LinkType not found, propagation
-// disabled, source has no markings, target not yet indexed) so the caller
-// only logs genuine errors. Bleve fetch + index writes are scoped to the
-// per-objectType indexes that the resolver returns.
+// propagateMarkings is the US-261/US-474 hook that copies the source
+// object's `_markings` onto the target after a successful LINK_CREATE
+// upsert when the LinkType opts in via PropagateMarkings=true, then
+// (when a LinkPropagationTraverser is wired) walks the link graph
+// forward via BFS so transitively-linked downstream nodes inherit the
+// same markings in one consumer pass. Returns nil for every "soft" skip
+// (resolver not wired, LinkType not found, propagation disabled, source
+// has no markings, target not yet indexed) so the caller only logs
+// genuine errors. Bleve fetch + index writes are scoped to the
+// per-objectType indexes that the resolver / traverser return.
 func (c *Consumer) propagateMarkings(ontologyAPIName string, edit Edit) error {
 	if c.linkPropagation == nil || edit.LinkTypeRID == "" {
 		return nil
 	}
-	info, found, err := c.linkPropagation.LookupLinkPropagation(context.Background(), edit.LinkTypeRID)
+	ctx := context.Background()
+	info, found, err := c.linkPropagation.LookupLinkPropagation(ctx, edit.LinkTypeRID)
 	if err != nil {
 		return err
 	}
@@ -598,26 +645,97 @@ func (c *Consumer) propagateMarkings(ontologyAPIName string, edit Edit) error {
 	if len(sourceMarkings) == 0 {
 		return nil
 	}
-	tgtDoc := c.fetchDocument(ontologyAPIName, info.TargetObjectTypeAPIName, edit.TargetPrimaryKey)
-	if tgtDoc == nil {
-		return nil
+	return c.bfsPropagateMarkings(ctx, ontologyAPIName, info.TargetObjectTypeAPIName, edit.TargetPrimaryKey, sourceMarkings)
+}
+
+// bfsPropagateMarkings walks the link graph forward starting from
+// (rootObjectType, rootPK), merging `incoming` into each visited node's
+// `_markings`. The walk stops on a per-node basis when the merge is a
+// no-op (the node already covers the incoming set) so cycles, fan-out
+// re-converging diamonds, and "propagate=false" truncation all terminate
+// naturally. Visited bookkeeping is keyed on (objectType, pk) so a node
+// reachable via multiple paths is re-indexed at most once.
+//
+// When linkPropagationTraverser is nil, only the root is touched —
+// equivalent to the pre-US-474 one-hop behaviour. The first merge
+// failure short-circuits the rest of the walk so callers see the same
+// error semantics as a one-hop propagation failure.
+func (c *Consumer) bfsPropagateMarkings(
+	ctx context.Context,
+	ontologyAPIName, rootObjectType, rootPK string,
+	incoming []string,
+) error {
+	type frontierEntry struct {
+		objectType string
+		pk         string
+		incoming   []string
 	}
-	existing := decodeMarkings(tgtDoc)
-	merged := mergeMarkings(existing, sourceMarkings)
-	if equalStringSet(existing, merged) {
-		return nil
-	}
-	newDoc := make(map[string]interface{}, len(tgtDoc))
-	for k, v := range tgtDoc {
-		if k == markingsField {
+	visited := map[string]bool{rootObjectType + "\x00" + rootPK: true}
+	queue := []frontierEntry{{rootObjectType, rootPK, incoming}}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		doc := c.fetchDocument(ontologyAPIName, cur.objectType, cur.pk)
+		if doc == nil {
+			// Target not indexed yet — skip. US-474 BFS does not retry; the
+			// downstream link's own LINK_CREATE will re-trigger propagation
+			// once the target is indexed.
 			continue
 		}
-		newDoc[k] = v
+		existing := decodeMarkings(doc)
+		merged := mergeMarkings(existing, cur.incoming)
+		if equalStringSet(existing, merged) {
+			// No delta on this node — anything reachable via this node has
+			// already been covered by an earlier walk (or is irrelevant
+			// because we'd send the same merged set). Stop expanding here.
+			continue
+		}
+		newDoc := make(map[string]interface{}, len(doc))
+		for k, v := range doc {
+			if k == markingsField {
+				continue
+			}
+			newDoc[k] = v
+		}
+		newDoc[markingsField] = merged
+		if err := c.indexMgr.IndexDocument(
+			index.ScopedKey(ontologyAPIName, cur.objectType), cur.pk, newDoc); err != nil {
+			return err
+		}
+
+		if c.linkPropagationTraverser == nil {
+			continue
+		}
+		edges, err := c.linkPropagationTraverser.ListPropagatingOutgoingEdges(ctx, cur.objectType, []string{cur.pk})
+		if err != nil {
+			// Surface traverser errors so applyLinkCreate logs them. The
+			// edge upsert has already succeeded; partial propagation is
+			// acceptable because the next LINK_CREATE on any downstream
+			// hop will re-trigger the BFS over the affected branch.
+			return err
+		}
+		for _, e := range edges {
+			if e.TargetObjectTypeAPIName == "" || e.TargetPK == "" {
+				continue
+			}
+			key := e.TargetObjectTypeAPIName + "\x00" + e.TargetPK
+			if visited[key] {
+				continue
+			}
+			visited[key] = true
+			queue = append(queue, frontierEntry{
+				objectType: e.TargetObjectTypeAPIName,
+				pk:         e.TargetPK,
+				// Downstream nodes see the merged set: the markings that
+				// propagated into the current node now flow to every
+				// outgoing propagating neighbour.
+				incoming: merged,
+			})
+		}
 	}
-	newDoc[markingsField] = merged
-	return c.indexMgr.IndexDocument(
-		index.ScopedKey(ontologyAPIName, info.TargetObjectTypeAPIName),
-		edit.TargetPrimaryKey, newDoc)
+	return nil
 }
 
 // decodeMarkings extracts a deduplicated, sorted slice of marking names

@@ -2810,6 +2810,29 @@ func main() {
 			deps.FunnelConsumer.SetLinkPropagationResolver(newLinkPropagationResolver(deps.OmsRepo))
 		}
 
+		// US-474: multi-hop BFS marking propagation. Builds a per-source-
+		// ObjectType view of every propagating LinkType (cached in-memory,
+		// refreshed every 5 min so PropagateMarkings flag flips take effect
+		// without a restart) and walks downstream PKs via LinkEdgeStore
+		// during the BFS. Wired only when both OMS repo and a LinkEdgeStore
+		// that implements ListEdgeTargets are available — degraded boots
+		// fall back to the US-261 one-hop propagation, which is the safe
+		// default. Capability discovery via type assertion matches the
+		// "narrow capability interface + atomic state" pattern noted in
+		// progress.txt Codebase Patterns.
+		if deps.OmsRepo != nil && deps.LinkEdgeStore != nil {
+			if edgeTargets, ok := deps.LinkEdgeStore.(linkEdgeTargetLister); ok {
+				traverser := newLinkPropagationTraverser(deps.OmsRepo, edgeTargets)
+				if err := traverser.Refresh(ctx); err != nil {
+					log.Printf("[link-propagation] initial refresh: %v", err)
+				}
+				deps.FunnelConsumer.SetLinkPropagationTraverser(traverser)
+				go runLinkPropagationTraverserRefreshLoop(ctx, traverser, 5*time.Minute, func(err error) {
+					log.Printf("[link-propagation] refresh: %v", err)
+				})
+			}
+		}
+
 		// US-472: edit-only conflict exemption in the production consumer.
 		// US-027 wired the SetEditOnlyField hook + preserveEditOnlyFields
 		// filter in pkg/funnel; this block closes the prod-wiring gap by

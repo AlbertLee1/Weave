@@ -240,8 +240,8 @@
         "Tests pass"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "pkg/funnel 新增 PropagatingOutgoingEdge 类型 + LinkPropagationTraverser 接口 + Consumer.SetLinkPropagationTraverser 钩子；propagateMarkings 重写为 bfsPropagateMarkings：从 LINK_CREATE 的 target 出发，BFS 走下游 propagating 出边（每跳读取 _markings → mergeMarkings → 若有变化才 reindex 并入队），visited 集合按 (objectType, pk) key 避免环 / 钻石重复访问；'merge no-op = stop expanding' 是天然剪枝（节点已覆盖 incoming markings 时停止扩张），同时让 propagate=false 出边（traverser 直接不返回）成为天然截断。cmd/server 新增 linkPropagationTraverser：缓存 sourceObjectTypeAPIName → propagating LinkType 映射，5 分钟 ticker 重新 Refresh；运行期 ListPropagatingOutgoingEdges 一次 map lookup + 一次 PG ListEdgeTargets 拿下游 PKs，pkg/funnel 不必引入 OMS 依赖。Wiring：main.go 在 SetLinkPropagationResolver 旁加 SetLinkPropagationTraverser 调用，用 deps.LinkEdgeStore type-assert 到 linkEdgeTargetLister（capability 发现 via type assertion，匹配 'narrow capability interface' Codebase Pattern）；初次 Refresh + 5min ticker。Tests: pkg/funnel/marking_propagation_bfs_test.go 5 个 unit（3 跳传播 / 分叉 / 截断 / 环 / 无 traverser 单跳退化）；cmd/server/link_propagation_traverser_test.go 4 个 unit（Refresh 建 map / ListOntologies 错误传播 / 空入参 no-op / 缺失 ObjectType soft-skip）；test/integration/marking_propagation_bfs_bdd_test.go 3 个 BDD（走 testcontainers PG + 真 link_edges + 真 PGRepository 验 prod-wiring path）。"
     },
     {
       "id": "US-475",
