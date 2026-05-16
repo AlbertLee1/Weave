@@ -52,7 +52,7 @@
       "name": "weave-mcp stdio 桥接 cmd/server /mcp（去掉 STUB 警告，本地 AI 客户端真可用）",
       "phase": 19,
       "active": true,
-      "passes": false,
+      "passes": true,
       "priority": 3,
       "dependencies": ["OSV2-302"],
       "description": "cmd/weave-mcp/main.go 顶部目前自承 STUB：'does NOT yet wire up a live PostgreSQL/NATS-backed Weave instance'，注释还说 'HTTP transport at POST /mcp on the main server is the supported MVP path'。本 story 不再尝试在 weave-mcp 内部从零重启 PG/NATS，而是把它做成一个 stdio↔HTTP 透明桥：从 stdin 读 JSON-RPC，POST 到 WEAVE_MCP_URL（默认 http://127.0.0.1:9117/mcp）拿到 JSON-RPC 响应，写回 stdout。这样本地 stdio MCP 客户端（Claude Desktop / Cursor / GPT desktop）配置 weave-mcp 后能直接消费 cmd/server 已暴露的全部 tools/resources/prompts（含 OSV2-302 引入的 prompts）。当 WEAVE_MCP_URL 不可达时 fallback 到当前 in-memory dummy 行为（dev 测试可用）。",

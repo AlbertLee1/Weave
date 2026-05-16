@@ -1,23 +1,28 @@
-// Command weave-mcp is a thin wrapper that runs Weave's MCP server over
-// stdio so local AI clients (Claude Desktop, Cursor, GPT desktop apps) can
-// spawn it as a subprocess.
+// Command weave-mcp is the stdio entry point local AI clients (Claude
+// Desktop, Cursor, GPT desktop apps) spawn as a subprocess to talk to a
+// running Weave server. It reads newline-delimited JSON-RPC 2.0 from
+// stdin and writes responses to stdout, with two operating modes:
 //
-// The current binary is a STUB: it speaks the MCP JSON-RPC 2.0 envelope
-// (initialize, tools/list, etc.) but does NOT yet wire up a live
-// PostgreSQL/NATS-backed Weave instance. Building the full subprocess
-// requires deciding how to bootstrap the same dependency graph cmd/server
-// uses (PG pool, NATS, Bleve dir) without bringing the entire HTTP server
-// along; that work is tracked separately.
+//  1. **Bridge mode (default when WEAVE_MCP_URL is set)** — forwards every
+//     stdin request to the cmd/server `POST /mcp` HTTP transport and
+//     writes the verbatim response back. This is the supported production
+//     path: a single Weave server bootstraps PG/NATS/Bleve once, and any
+//     number of stdio MCP clients connect to it through this thin proxy.
+//     OSV2-302 prompts, OSV2-301 GeoTemporal data, and every other tool
+//     are surfaced unchanged.
 //
-// The HTTP transport at POST /mcp on the main server is the supported
-// MVP path — point Claude Desktop's HTTP MCP client at the running Weave
-// server instead of running this binary directly.
+//  2. **In-memory demo mode (when WEAVE_MCP_URL is unset)** — falls back
+//     to an in-process mcp.Server with no Weave dependencies. Suitable for
+//     verifying stdio framing in isolation; do NOT use for real client
+//     workflows because all Weave tools will return "not configured".
 //
-// To verify the stdio framing in isolation, this stub registers an
-// in-memory dummy ontology and responds to initialize/tools/list/ping so
-// you can pipe JSON-RPC into it via:
+// Configure WEAVE_MCP_URL in the client's MCP launcher config, e.g. for
+// Claude Desktop's claude_desktop_config.json:
 //
-//	echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | weave-mcp
+//	"weave": {
+//	    "command": "/usr/local/bin/weave-mcp",
+//	    "env": {"WEAVE_MCP_URL": "http://127.0.0.1:9117/mcp"}
+//	}
 package main
 
 import (
@@ -29,9 +34,17 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+	if url := os.Getenv("WEAVE_MCP_URL"); url != "" {
+		if err := RunHTTPBridge(ctx, os.Stdin, os.Stdout, url); err != nil {
+			fmt.Fprintf(os.Stderr, "weave-mcp bridge: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	srv := mcp.NewServer(nil, nil, nil)
 	transport := mcp.NewStdioTransport(srv, os.Stdin, os.Stdout)
-	if err := transport.Run(context.Background()); err != nil {
+	if err := transport.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "weave-mcp: %v\n", err)
 		os.Exit(1)
 	}
