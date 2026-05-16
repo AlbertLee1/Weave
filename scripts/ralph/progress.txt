@@ -1202,3 +1202,30 @@ Started: 2026-05-16  (OSv2 Iteration R1 — picked up after OSV2-304/305/306/307
   - **POST endpoint 接受 empty body 的客户端处理**：前端 request<T> helper 在 body===undefined 时不设 Content-Type，chi router 部分版本对 POST 缺 Content-Type 严格；最便宜的 fix 是客户端显式发 `{}` 空 JSON 对象——backend POST handler 通常 json.NewDecoder().Decode(&req) 错误时 graceful skip / 直接 default。**任何 POST endpoint 客户端都默认发 `{}` 比 undefined body 更稳**，未来后端加 optional filter 也无须改前端默认调用。
   - **`make web-build` 必跑**：CLAUDE.md 提的 "//go:embed dist drift" 陷阱真实——本次改的 TSX 文件全套 vitest 绿但如果不 web-build，cmd/server/web/dist 还嵌着旧版本，`go build` 出来的 binary 跑 dev server 上仍是旧 UI。前端 story 的 commit gate 三件套永远是 `tsc --noEmit` + `vitest run` + `make web-build`（后者负责 `cp web/dist cmd/server/web/dist` 让嵌入产物对齐）。前端纯 SPA 改动不需要 go build，但 web-build 的 dist 同步是不可省略步骤。
 ---
+
+## 2026-05-17 - US-500 - ObjectSet Diff / Snapshot / Lineage 三页
+- Refactored `ObjectSetDiffPage` from stacked sections to a true 3-column grid (`grid-cols-1 lg:grid-cols-3`) ordering Only-in-A | Changed | Only-in-B; added `objectset-diff-three-column` testid + a Vitest assertion that all three sections share the grid container as their parent.
+- New `ObjectSetSnapshotsPage` at `/objectsets/:ontology/snapshots`: lets user pick a saved set, calls `POST createTemporary` → `POST objectSets/{rid}/snapshot`, stores snapshot metadata + original Definition in `localStorage` under `weave.objectset.snapshots.{ontology}` so a refresh keeps the list; per-row "Restore" link routes back to composer with `?def=<base64>` and "Forget" removes the entry from the local index (server-side snapshot row stays — there's no DELETE endpoint).
+- New `ObjectSetLineagePage` at `/objectsets/:ontology/lineage`: client-side recursive walk of `ObjectSetDefinition` (no server round-trip) via `lib/objectSetLineage.buildLineageTree`, mirroring the backend `pkg/oss/objectset.GetObjectSetLineage` shape. Tree renders with depth-based indentation, surfaces operation-specific info (filter `where` JSON, withProperties `derivedProperties`, searchAround link/direction, etc.). Node count badge.
+- Added 3 API client functions to `web/src/api/objectsets.ts`: `createObjectSetSnapshot`, `getObjectSetSnapshot`, `getObjectSetLineage` (latter two reserved for future server-backed flows; lineage page uses client-side walker for snappier UX without TTL dependency on the in-memory temporary set store).
+- Wired routes in `App.tsx` and added Snapshots/Lineage buttons in `ObjectSetPage` header alongside the existing Saved/Diff links.
+- Files changed:
+  - web/src/api/objectsets.ts (+5 funcs, +5 types)
+  - web/src/lib/objectSetLineage.ts (new — buildLineageTree + countLineageNodes)
+  - web/src/lib/objectSetSnapshots.ts (new — local index helpers)
+  - web/src/components/objectsets/ObjectSetDiffPage.tsx (3-col layout)
+  - web/src/components/objectsets/ObjectSetSnapshotsPage.tsx (new)
+  - web/src/components/objectsets/ObjectSetLineagePage.tsx (new)
+  - web/src/components/objectsets/ObjectSetPage.tsx (added 2 nav buttons)
+  - web/src/App.tsx (wired 2 new routes)
+  - web/src/components/objectsets/__tests__/ObjectSetDiffPage.test.tsx (added 3-col layout test)
+  - web/src/components/objectsets/__tests__/ObjectSetSnapshotsPage.test.tsx (new — 4 cases)
+  - web/src/components/objectsets/__tests__/ObjectSetLineagePage.test.tsx (new — 4 cases)
+  - web/src/lib/__tests__/objectSetLineage.test.ts (new — 6 cases)
+- Quality: `npx tsc --noEmit` clean; `npx eslint` clean on all changed/new files (the only error is a pre-existing react-hooks/set-state-in-effect at ObjectSetPage.tsx:59 unrelated to this story); `npx vitest run src/components/objectsets src/lib` 242/242 pass; `npm run build` succeeds.
+- **Learnings for future iterations:**
+  - The backend ObjectSet snapshot endpoint (`POST .../objectSets/{rid}/snapshot`) expects an *already-stored* temporary `objectSetRid`, not a raw Definition body — so any UI flow that lets users snapshot a saved set must first call `createTemporary` to get the rid. The `GetSnapshotResponse` includes resolved row data but NOT the original Definition; if the UI wants to "restore" a snapshot back into the composer, it has to keep its own copy of the Definition locally at snapshot-create time. We do this via `lib/objectSetSnapshots.ts` (localStorage index keyed by `weave.objectset.snapshots.{ontology}`).
+  - Client-side ObjectSet lineage walker mirrors the backend `walkDefinitionLineage` in shape (same field names, same per-type branching) — keeping the two in lockstep avoids surprises when we eventually swap the page to fetch from `GET .../objectSets/{rid}/lineage`. The tradeoff for "client-side": no TTL dependency on the in-memory temporary set store, instant render, works on saved sets that were never materialized. Lose: properties that only the server can compute (e.g., resolved operation cost). For the v1 tree view those don't matter.
+  - 3-column diff layout pattern: keep the three sections in the SAME direct parent so tests can assert `section.parentElement === grid` instead of fragile DOM-walk lookups. `grid grid-cols-1 lg:grid-cols-3` keeps mobile usable (stack) while desktop side-by-side.
+  - `getByText(/name/)` can blow up when the name appears in BOTH a select option AND the list row — scope to a row container via `getByTestId(rowId).textContent.toMatch(...)` to disambiguate. Bit me on the Snapshots page test.
+

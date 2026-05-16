@@ -623,8 +623,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 42,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Three pages added under /objectsets/:ontology — Diff page refactored to 3-column grid (Only in A | Changed | Only in B); Snapshots page lists local snapshot RIDs created via POST snapshot endpoint with restore link to composer; Lineage page renders client-side tree walk of ObjectSet Definition."
     },
     {
       "id": "US-501",

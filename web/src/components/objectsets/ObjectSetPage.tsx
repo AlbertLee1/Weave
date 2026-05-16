@@ -195,6 +195,18 @@ export function ObjectSetPage() {
           >
             Diff
           </Link>
+          <Link
+            to={`/objectsets/${ontologyApiName}/snapshots`}
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+          >
+            Snapshots
+          </Link>
+          <Link
+            to={`/objectsets/${ontologyApiName}/lineage`}
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+          >
+            Lineage
+          </Link>
         </div>
       </div>
 

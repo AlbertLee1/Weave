@@ -261,7 +261,10 @@ function DiffResults({
   }, [objectType]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div
+      data-testid="objectset-diff-three-column"
+      className="grid grid-cols-1 lg:grid-cols-3 gap-3"
+    >
       <DiffSection
         title="Only in A"
         nameLabel={savedA?.name}
@@ -270,6 +273,11 @@ function DiffResults({
         accentClass="text-accent-cyan"
         testId="diff-only-in-a"
       />
+      <ChangedSection
+        rows={diff.changed}
+        savedAName={savedA?.name}
+        savedBName={savedB?.name}
+      />
       <DiffSection
         title="Only in B"
         nameLabel={savedB?.name}
@@ -277,11 +285,6 @@ function DiffResults({
         propertyOrder={propertyOrder}
         accentClass="text-accent-amber"
         testId="diff-only-in-b"
-      />
-      <ChangedSection
-        rows={diff.changed}
-        savedAName={savedA?.name}
-        savedBName={savedB?.name}
       />
     </div>
   );
