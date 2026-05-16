@@ -11,6 +11,8 @@ import {
   type QuiverDashboardConfig,
 } from '../../api/quiver';
 import { ApiRequestError } from '../../api/client';
+import { useQuiverSparklines } from '../../hooks/useQuiverSparklines';
+import type { TimeSeriesPoint } from '../../api/timeseries';
 
 // US-403: read-only view of a saved Quiver dashboard. Any authenticated
 // caller who knows the RID can render the workbench — the rid IS the
@@ -44,6 +46,27 @@ export function QuiverViewPage() {
       ...(s.branch ? { branch: s.branch } : {}),
     }));
   }, [data]);
+
+  // US-483: one POST replaces the per-series fan-out. Enabled only once
+  // the dashboard envelope has loaded so we never hit /sparklines with
+  // a stale RID, and only when the dashboard actually declares series.
+  const sparklinesQuery = useQuiverSparklines({
+    rid,
+    enabled: !!data && seriesList.length > 0,
+  });
+
+  const preloadedPoints = useMemo<Record<string, TimeSeriesPoint[]>>(() => {
+    const out: Record<string, TimeSeriesPoint[]> = {};
+    const resp = sparklinesQuery.data;
+    if (!resp || !Array.isArray(resp.series)) return out;
+    for (const s of resp.series) {
+      out[s.id] = (s.points ?? []).map((p) => ({
+        time: p.time,
+        value: p.value,
+      }));
+    }
+    return out;
+  }, [sparklinesQuery.data]);
 
   if (!rid) {
     return (
@@ -113,7 +136,10 @@ export function QuiverViewPage() {
             description="This dashboard has no series."
           />
         ) : (
-          <QuiverWorkbenchView seriesList={seriesList} />
+          <QuiverWorkbenchView
+            seriesList={seriesList}
+            preloadedPoints={preloadedPoints}
+          />
         )}
       </div>
     </div>

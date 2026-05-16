@@ -48,6 +48,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	// US-482: multi-series time-series fetch for a saved dashboard.
 	// Share-link semantics — same authentication contract as /view.
 	r.Get("/api/v2/quiver/dashboards/{rid}/data", h.Data)
+	// US-483: batch sparkline fetch — one round-trip carries every
+	// series in the saved dashboard's config so the SPA's initial
+	// load drops from N requests to 1. Same share-link semantics.
+	r.Post("/api/v2/quiver/dashboards/{rid}/sparklines", h.Sparklines)
 	r.Delete("/api/v2/quiver/dashboards/{rid}", h.Delete)
 }
 

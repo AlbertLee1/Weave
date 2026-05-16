@@ -79,13 +79,23 @@ interface QuiverWorkbenchViewProps {
   // panel — the editor passes the remove handler, the share view does
   // not.
   onRemove?: (id: string) => void;
+  // US-483: when supplied, the view treats these as the authoritative
+  // points map and skips the per-series SeriesFetcher fan-out. Used by
+  // QuiverViewPage to feed batched /sparklines results in. Editor mode
+  // omits this and continues with per-series fetch so newly drafted
+  // (unsaved) series still render.
+  preloadedPoints?: Record<string, TimeSeriesPoint[]>;
 }
 
 export function QuiverWorkbenchView({
   seriesList,
   onRemove,
+  preloadedPoints,
 }: QuiverWorkbenchViewProps) {
-  const [pointsById, setPointsById] = useState<Record<string, TimeSeriesPoint[]>>({});
+  const usePreloaded = preloadedPoints !== undefined;
+  const [pointsById, setPointsById] = useState<Record<string, TimeSeriesPoint[]>>(
+    preloadedPoints ?? {},
+  );
   const [statusById, setStatusById] = useState<Record<string, SeriesStatus>>({});
   const [selection, setSelection] = useState<{ start: number | null; end: number | null }>({
     start: null,
@@ -105,6 +115,14 @@ export function QuiverWorkbenchView({
     },
     [],
   );
+
+  // US-483: when the parent passes preloaded points (the batched
+  // /sparklines result), keep our internal state in sync as the parent
+  // refreshes the dashboard.
+  useEffect(() => {
+    if (!usePreloaded) return;
+    setPointsById(preloadedPoints ?? {});
+  }, [usePreloaded, preloadedPoints]);
 
   const handleRangeSelect = useCallback(
     (start: number | null, end: number | null) => {
@@ -138,9 +156,13 @@ export function QuiverWorkbenchView({
 
   return (
     <>
-      {seriesList.map((s) => (
-        <SeriesFetcher key={s.id} spec={s} onLoaded={handleLoaded} />
-      ))}
+      {/* US-483: skip the per-series fan-out when the parent already
+          handed us the batched /sparklines result. */}
+      {usePreloaded
+        ? null
+        : seriesList.map((s) => (
+            <SeriesFetcher key={s.id} spec={s} onLoaded={handleLoaded} />
+          ))}
 
       <div
         className="border border-border rounded p-4 bg-bg-tertiary"
