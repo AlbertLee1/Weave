@@ -403,8 +403,8 @@
         "Tests pass"
       ],
       "priority": 27,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Extracted parquet writer (EditRecord schema + atomic write) into pkg/materialize/parquet_writer.go; added Definition.TimeRange + classifyTierRouting so executeBase short-circuits hot-only / cold-only windows and unions cross-window queries. Pre-existing parquet-go/parquet-go writer (real Parquet PAR1) preserved over apache-arrow swap to avoid CGO churn — tests pin physical PAR1 header + schema."
     },
     {
       "id": "US-486",

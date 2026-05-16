@@ -423,6 +423,14 @@ func (e *Executor) executeInterfaceLinkSearchAround(ctx context.Context, def *De
 // (Parquet) tier for rows older than `now - hotWindow` and merges the two
 // streams hot-wins. Hot ordering is preserved; cold-only PKs append in the
 // order the cold tier returned them.
+//
+// US-485: when the caller declares a Definition.TimeRange the executor
+// short-circuits the irrelevant tier:
+//   - Hot-only window (From ≥ now-hotWindow): skip the cold lookup entirely.
+//   - Cold-only window (To ≤ now-hotWindow): skip the Bleve search and
+//     pass the request's upper bound to the cold tier as the cutoff so
+//     materialise rows beyond the window are clipped before merge.
+//   - Cross-window (straddles now-hotWindow): both tiers, classic union.
 func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, error) {
 	policyQ, err := e.resolvePolicyQuery(ctx, def.ObjectType)
 	if err != nil {
@@ -443,25 +451,31 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 		return e.executeBaseDuringRebuild(ctx, def)
 	}
 
-	searchReq := bleve.NewSearchRequest(mergePolicyQuery(bleve.NewMatchAllQuery(), policyQ))
-	searchReq.Size = BaseExecutionCap
-	searchReq.Fields = []string{"*"}
+	routing := classifyTierRouting(def.TimeRange, e.effectiveNow(), e.effectiveHotWindow())
 
-	result, err := e.indexMgr.Search(scopedKey, searchReq)
-	if err != nil {
-		return nil, fmt.Errorf("search base objectSet %q: %w", def.ObjectType, err)
+	var (
+		pks       []string
+		truncated bool
+	)
+	if routing.queryHot {
+		searchReq := bleve.NewSearchRequest(mergePolicyQuery(bleve.NewMatchAllQuery(), policyQ))
+		searchReq.Size = BaseExecutionCap
+		searchReq.Fields = []string{"*"}
+
+		result, err := e.indexMgr.Search(scopedKey, searchReq)
+		if err != nil {
+			return nil, fmt.Errorf("search base objectSet %q: %w", def.ObjectType, err)
+		}
+		pks = make([]string, 0, len(result.Hits))
+		for _, hit := range result.Hits {
+			pks = append(pks, hit.ID)
+		}
+		truncated = len(pks) >= BaseExecutionCap
 	}
 
-	pks := make([]string, 0, len(result.Hits))
-	for _, hit := range result.Hits {
-		pks = append(pks, hit.ID)
-	}
-	truncated := len(pks) >= BaseExecutionCap
-
-	if e.tierRouter != nil {
+	if e.tierRouter != nil && routing.queryCold {
 		ontology := OntologyScopeFromContextOrEmpty(ctx)
-		before := e.effectiveNow().Add(-e.effectiveHotWindow())
-		coldPKs, coldErr := e.tierRouter.ColdPrimaryKeys(ctx, ontology, def.ObjectType, before)
+		coldPKs, coldErr := e.tierRouter.ColdPrimaryKeys(ctx, ontology, def.ObjectType, routing.coldCutoff)
 		if coldErr != nil {
 			return nil, fmt.Errorf("cold tier base objectSet %q: %w", def.ObjectType, coldErr)
 		}

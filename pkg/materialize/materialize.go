@@ -23,13 +23,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync/atomic"
 	"time"
-
-	"github.com/parquet-go/parquet-go"
 
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/metrics"
@@ -40,27 +37,8 @@ const (
 	filePerm = 0o644
 )
 
-// EditRecord is the parquet row schema for materialized edits.
-//
-// __is_deleted and __patch_offset are required by the US-406 snapshot
-// rebuild: a reader dedupes by (object_type, primary_key) keeping the
-// row with the maximum __patch_offset, and discards it when
-// __is_deleted is true. PropertiesJSON / MarkingsJSON store the
-// per-edit user payload because the schema cannot anticipate every
-// ObjectType's property shape.
-type EditRecord struct {
-	ObjectType     string `parquet:"object_type"`
-	PrimaryKey     string `parquet:"primary_key"`
-	EditType       string `parquet:"edit_type"`
-	PropertiesJSON string `parquet:"properties_json"`
-	MarkingsJSON   string `parquet:"markings_json"`
-	Source         string `parquet:"source"`
-	BatchID        string `parquet:"batch_id"`
-	UserID         string `parquet:"user_id"`
-	TimestampMs    int64  `parquet:"timestamp_ms"`
-	IsDeleted      bool   `parquet:"__is_deleted"`
-	PatchOffset    int64  `parquet:"__patch_offset"`
-}
+// EditRecord — see parquet_writer.go for the canonical schema (declared
+// alongside the file writer so the on-disk shape lives in one place).
 
 // Materializer writes EditBatches to per-(ontology, objectType) Parquet
 // files under rootDir. Safe for concurrent use; the offset counter is
@@ -186,42 +164,9 @@ func (m *Materializer) writeFile(ontology, objectType string, ts time.Time, reco
 		return 0, nil
 	}
 	dir := filepath.Join(m.rootDir, ontology, objectType)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return 0, fmt.Errorf("materialize: mkdir %s: %w", dir, err)
-	}
 	name := fmt.Sprintf("%s_%020d.parquet", ts.Format("20060102T150405"), records[0].PatchOffset)
 	path := filepath.Join(dir, name)
-	tmp := path + ".tmp"
-
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
-	if err != nil {
-		return 0, fmt.Errorf("materialize: open %s: %w", tmp, err)
-	}
-	w := parquet.NewGenericWriter[EditRecord](f)
-	if _, err := w.Write(records); err != nil {
-		_ = w.Close()
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return 0, fmt.Errorf("materialize: write rows: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return 0, fmt.Errorf("materialize: close writer: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return 0, fmt.Errorf("materialize: close file: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return 0, fmt.Errorf("materialize: rename %s: %w", tmp, err)
-	}
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		return 0, nil
-	}
-	return info.Size(), nil
+	return writeParquetFile(path, records)
 }
 
 // encodePropertiesJSON returns the JSON encoding of an edit's properties
