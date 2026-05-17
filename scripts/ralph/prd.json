@@ -1,62 +1,100 @@
 {
-  "project": "Weave WebUI Dogfood Repair",
-  "branchName": "ralph/webui-dogfood-20260517",
-  "description": "Focused Ralph repair loop from Hermes browser dogfood. Fix WebUI/data completeness issues found on 2026-05-17. Follow TDD/BDD, add regression tests, run quality gates, commit one story per iteration.",
+  "project": "Weave AI News Ontology Dogfood Repair",
+  "branchName": "ralph/ainews-dogfood-20260517",
+  "description": "Focused Ralph repair loop from Hermes dogfood of an AI News ontology E2E scenario. Fix issues found while creating ainews ontology, ingesting one week of AI news, and browsing/searching it in the WebUI. Follow TDD/BDD, add regression tests, run quality gates, commit one story per iteration.",
   "userStories": [
     {
-      "id": "DOG-001",
-      "name": "Fix Northwind E2E seed wipe so seeded ontology is populated and idempotent",
-      "phase": "Dogfood Repair",
+      "id": "DOG-003",
+      "name": "Ensure imported ontology object indexes exist before accepted stream ingest",
+      "phase": "AI News Dogfood Repair",
       "active": true,
       "priority": 1,
-      "passes": true,
+      "passes": false,
       "dependencies": [],
-      "description": "Hermes dogfood found /explorer/northwind empty. Running scripts/e2e-setup.sh fails during test/fixtures/e2e_seed.sh with: seed: wipe: delete ontology: ERROR: update or delete on table \"ontologies\" violates foreign key constraint \"functions_ontology_rid_fkey\" on table \"functions\" (SQLSTATE 23503). Investigate seed_northwind wipe order and related FK dependencies; fix root cause so repeated seed runs converge and Northwind has object types/data.",
+      "description": "Hermes dogfood imported ontology `ainews` and immediately streamed 103 AI_News CREATE edits. Ingest returned 200 with edit counts, but list/search/aggregate failed with `index not found for object type \"AI_News\"` or showed zero rows. Manual index rebuild created an empty index (`indexedCount: 0`), and only a second ingest made data visible. Fix root cause so import/create-object-type bootstraps the index before ingest is accepted, or ingest fails fast instead of claiming success. Preferred behavior: import/create path creates the object index automatically and immediate ingest becomes visible without rebuild/reingest.",
       "bdd_acceptance": [
-        "Given an existing dev database that may contain a prior northwind ontology with functions, When ./scripts/e2e-setup.sh runs, Then it completes successfully without foreign-key violations.",
-        "Given the setup has completed, When a browser opens /explorer/northwind, Then the OBJECT TYPES list is non-empty and the page does not show \"No object types\".",
-        "Given the setup has completed, When GET /api/v2/ontologies/northwind/objectTypes is called, Then the JSON data array has length greater than 0.",
-        "Given the Northwind seed is run twice, When the second run completes, Then it is idempotent and does not leave duplicate or partial ontology state."
+        "Given a new ontology is imported with object type AI_News, When CREATE edits are immediately posted to /api/v2/ontologies/ainews/streams/AI_News/ingest, Then the accepted records become visible via GET /objects/AI_News without manual index rebuild.",
+        "Given import/create object type succeeds, When POST /api/v2/ontologies/ainews/objects/AI_News/search is called after ingest, Then it does not return IndexNotFound/SearchObjectsFailed for the new object type.",
+        "Given the index cannot be created, When stream ingest is requested, Then the API must fail fast with a non-2xx error and must not return an editCount success that later disappears.",
+        "Given an existing ontology is replaced or re-imported, When indexes are rebuilt/bootstraped, Then stale index state does not leak old rows and new ingests converge idempotently."
       ],
       "dogfood_evidence": [
-        "scripts/e2e-setup.sh output: functions_ontology_rid_fkey violation on table functions during northwind wipe.",
-        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_123ae2f8533245039e617c16990a8c1d.png"
+        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-003",
+        "First ingest returned 200 for 50+50+3 edits; list/search then returned `index not found for object type \"AI_News\"`.",
+        "POST /api/admin/indexes/rebuild returned scopedKey ainews__AI_News indexedCount 0; re-ingest after rebuild produced browser totalCount 103."
       ],
       "quality_gates": [
-        "targeted seed regression test red->green",
-        "./scripts/e2e-setup.sh",
-        "make web-build",
-        "make test",
+        "targeted backend regression test for import/create-object-type + immediate ingest/list/search red->green",
+        "targeted index bootstrap tests for replace/re-import if applicable",
+        "go test ./pkg/... or narrower package tests covering the changed code",
         "go vet ./...",
-        "make web-test"
+        "make test",
+        "make web-build",
+        "make web-test",
+        "Hermes/browser verification of /browser/ainews/AI_News totalCount 103 after a fresh import+single ingest"
       ]
     },
     {
-      "id": "DOG-002",
-      "name": "Fix Dashboard total object type metric to reflect actual per-ontology counts",
-      "phase": "Dogfood Repair",
+      "id": "DOG-004",
+      "name": "Fix BrowserPage full-text search contract for containsAnyTerm",
+      "phase": "AI News Dogfood Repair",
       "active": true,
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "dependencies": [
-        "DOG-001"
+        "DOG-003"
       ],
-      "description": "Dashboard shows 0 object types while IoT Demo card shows 4 types. Source currently hardcodes totalObjectTypes = 0 in web/src/components/dashboard/DashboardPage.tsx. Replace with real aggregation over fetched per-ontology object types or a tested API-backed count; handle loading/error states without misleading 0.",
+      "description": "On /browser/ainews/AI_News, typing OpenAI into Search objects and pressing Enter renders `INVALID_ARGUMENT: SearchObjectsFailed`. BrowserPage builds where `{type:'containsAnyTerm', field:'title', value:['OpenAI']}`, but the Go backend expects a string value and reports `containsAnyTerm value must be a string`. Align frontend/backend contract so browser search works for normal multi-term text.",
       "bdd_acceptance": [
-        "Given the dashboard loads ontologies with object type counts, When at least one ontology has object types, Then the global Object Types stat equals the sum of per-card counts rather than 0.",
-        "Given IoT Demo has 4 object types and Northwind has seeded types, When / is opened in the browser, Then the dashboard Object Types stat is greater than or equal to 4 and matches API-derived totals.",
-        "Given per-ontology object type fetches are still loading, When the dashboard renders, Then it does not present a final misleading 0 as the completed total."
+        "Given /browser/ainews/AI_News is loaded with 103 rows, When the user searches for OpenAI, Then matching rows are displayed and the UI does not show INVALID_ARGUMENT/SearchObjectsFailed.",
+        "Given BrowserPage submits a full-text search, Then the request body matches the backend where contract (no array/string mismatch).",
+        "Given a multi-word search such as `OpenAI Codex`, When submitted, Then backend semantics are correct and covered by tests (either one string accepted by backend or backend explicitly supports an array of terms).",
+        "Given the search API returns an error, Then the UI error should include the backend reason when available, not just `INVALID_ARGUMENT: SearchObjectsFailed`."
       ],
       "dogfood_evidence": [
-        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_27ed0d20c07a413a95a00455f0ff0041.png",
-        "Source: web/src/components/dashboard/DashboardPage.tsx line 33: const totalObjectTypes = 0;"
+        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-004",
+        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_d35533c3ab0a4ca8abe04a7e129be2f4.png",
+        "Exact failing reason: `containsAnyTerm value must be a string: json: cannot unmarshal array into Go value of type string`."
       ],
       "quality_gates": [
-        "frontend BDD/unit regression test red->green",
+        "frontend BDD/unit regression test for BrowserPage search request shape red->green",
+        "backend where-clause test if backend is changed",
         "make web-build",
+        "make web-test",
         "make test",
         "go vet ./...",
-        "make web-test"
+        "Hermes/browser verification: search OpenAI on /browser/ainews/AI_News returns rows"
+      ]
+    },
+    {
+      "id": "DOG-005",
+      "name": "Render accurate Explorer property metadata flags",
+      "phase": "AI News Dogfood Repair",
+      "active": true,
+      "priority": 3,
+      "passes": false,
+      "dependencies": [
+        "DOG-004"
+      ],
+      "description": "/explorer/ainews/AI_News properties table shows Searchable and Sortable as false for every field. Direct detailed properties API reports true for many fields, including title/category/deliveredDate/source/summary. Fix Explorer object type detail so Nullable/Searchable/Sortable reflect authoritative detailed property metadata rather than lossy objectType.properties map defaults.",
+      "bdd_acceptance": [
+        "Given detailed property metadata marks title as searchable and sortable, When /explorer/ainews/AI_News renders, Then title shows Searchable ✓ and Sortable ✓.",
+        "Given detailed property metadata marks rank sortable but not searchable, When the properties table renders, Then rank shows Sortable ✓ and Searchable ✕.",
+        "Given detailed property metadata marks rawItem searchable but not sortable, When the properties table renders, Then rawItem shows Searchable ✓ and Sortable ✕.",
+        "Given the detailed properties request is loading or fails, Then the UI degrades explicitly (loading/error or unknown) rather than confidently showing all flags as false."
+      ],
+      "dogfood_evidence": [
+        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-005",
+        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_99ec29c831ed4e99be0f8c06f3ae3351.png",
+        "API `/objectTypes/byRid/<rid>/properties` reports isSearchable/isSortable true while UI renders all ✕."
+      ],
+      "quality_gates": [
+        "frontend BDD/unit regression test for ObjectType detail property flags red->green",
+        "make web-build",
+        "make web-test",
+        "make test",
+        "go vet ./...",
+        "Hermes/browser verification of /explorer/ainews/AI_News property flags"
       ]
     }
   ]

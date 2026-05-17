@@ -1,0 +1,47 @@
+# Ralph Progress Log
+Started: 2026-05-17T22:50:03.619090
+
+## Codebase Patterns
+- For Weave browser/UI regressions, Hermes browser verification is final truth; Claude/Playwright self-checks are necessary but not sufficient.
+- Dashboard evidence from dogfood: `/` top object type stat must match actual object type counts visible on ontology cards.
+- Northwind E2E seed must be idempotent against existing dev DB state; wipe order must include all FK dependents before deleting the ontology row.
+- Non-cascading FKs to ontologies(rid) in migrations: functions (000021), query_types (000005), ontology_snapshots (000004), automation_rules (000026). Any wipe-and-reseed of an ontology MUST delete these explicitly — the leaf tables 000003/000007/000024/000025/000105/000107/000108/000200 use ON DELETE CASCADE and clean themselves up.
+- BDD integration tests for seeder live in test/fixtures/seed_northwind/seed_test.go behind //go:build integration; run with `go test -tags integration ./test/fixtures/seed_northwind/... -run TestBDD_<name> -v`.
+- Per-ontology fan-out fetches on the dashboard share React Query cache keys with `useObjectTypes` (`['objectTypes', apiName]`). Using `useQueries` at the page level for aggregate stats deduplicates with per-card hooks for free.
+- Frontend BDD tests stub `fetch` directly with `vi.stubGlobal('fetch', ...)` (see web/src/components/admin/__tests__/ObjectTypeAdminPage.resolved.bdd.test.tsx) — MSW is not the project convention. Match URLs with regex `\/api\/v2\/...$`.
+---
+
+## Dogfood Evidence
+Report: dogfood-output/weave-webui-dogfood-20260517.md
+Screenshots:
+- /Users/liyang/.hermes/cache/screenshots/browser_screenshot_123ae2f8533245039e617c16990a8c1d.png
+- /Users/liyang/.hermes/cache/screenshots/browser_screenshot_27ed0d20c07a413a95a00455f0ff0041.png
+---
+
+## 2026-05-17T22:58 - DOG-001
+- Reproduced 23503 FK violation in TestBDD_SeedSurvivesNonCascadingFKDependents: pre-seed a function/query_type/snapshot/automation_rule referencing the northwind ontology, then call Seed() again — old wipe aborted with functions_ontology_rid_fkey, then ontology_snapshots_ontology_rid_fkey.
+- Fixed test/fixtures/seed_northwind/seed.go wipe() to DELETE FROM functions, query_types, ontology_snapshots, automation_rules WHERE ontology_rid = $1 before deleting object_types/ontologies. automation_executions cascades through automation_rules(id) so no separate step needed.
+- Verified end-to-end: ran `scripts/e2e-setup.sh` against the dev compose DB with a `functions` + `ontology_snapshots` row pre-injected for the northwind ontology — seed completed, `GET /api/v2/ontologies/northwind/objectTypes` returns 4 object types (customer/order/product/employee).
+- Files changed:
+  - test/fixtures/seed_northwind/seed.go — added 4 DELETE statements in wipe()
+  - test/fixtures/seed_northwind/seed_test.go — added TestBDD_SeedSurvivesNonCascadingFKDependents
+- Quality gates: `go test -tags integration ./test/fixtures/seed_northwind/... -v` (PASS), `make test` (PASS, 0 failures), `go vet ./...` (clean), `make web-build` (clean), `make web-test` (259 files, 2767 tests pass), `scripts/e2e-setup.sh` against live compose DB (PASS).
+- **Learnings for future iterations:**
+  - Patterns discovered: when adding new ontology-scoped tables, decide on ON DELETE CASCADE up front. Migrations 000004, 000005, 000021, 000026 omitted it and turned wipe-and-reseed into a leaf-table audit task. CASCADE on ontology_rid is the project default — the four exceptions above are the regression surface for any future Northwind seed change.
+  - Gotchas: pre-seeded dev DBs accumulate non-seeded rows over time (admin UI creating functions, automation_rules, etc.). The seeder's "wipe" loop is the only contract that survives this drift — add a DELETE for every new non-cascading FK to ontologies(rid).
+  - Useful context: BDD integration tests for the seeder are gated by `//go:build integration` and require Docker (testcontainers spins up pgvector/pgvector:pg16). Run with `go test -tags integration`. The legacy idempotency test is TestSeed_IdempotentAndComplete; pair every wipe change with both tests.
+---
+
+## 2026-05-17T23:05 - DOG-002
+- Replaced the hardcoded `totalObjectTypes = 0` in DashboardPage with a `useQueries` fan-out over `listObjectTypes(ontology.apiName)` for every loaded ontology. Sum drives the StatsBar `objectTypeCount`. While any per-ontology fetch is in-flight, StatsBar renders `—` for the object-types value instead of the misleading literal `0`.
+- BDD test (`DashboardPage.totalObjectTypes.bdd.test.tsx`) covers all three PRD acceptance criteria: sum equals 8 for two 4-type ontologies; sum matches per-card chips; loading state never shows the bogus `0`.
+- Files changed:
+  - web/src/components/dashboard/DashboardPage.tsx — useQueries + isLoading aggregate
+  - web/src/components/dashboard/StatsBar.tsx — `objectTypeCountLoading` prop and `—` placeholder
+  - web/src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx — new BDD suite (3 scenarios, red→green)
+- Quality gates: targeted vitest (PASS), `make web-build` (PASS), `make web-test` (260 files / 2770 tests pass), `make test` (all green via cache), `go vet ./...` (clean).
+- **Learnings for future iterations:**
+  - Patterns discovered: any "aggregate of per-card derived state" on a dashboard should hoist the per-ontology fetches into `useQueries` at the page level — sharing keys with the existing per-card hooks (e.g. `useObjectTypes`) means there is zero double-fetch cost. This is the canonical fix for any future dashboard total that currently reads `0` or "Loading".
+  - Gotchas: with TanStack `useQuery`, `isLoading` is `true` only on initial fetch (no cached data). When the array of queries is empty (no ontologies yet), `some(isLoading)` is `false` — which means the loading branch correctly degrades to "show 0" only when there really are zero ontologies. If a future story adds revalidation indicators, prefer `isFetching` over `isLoading`.
+  - Useful context: dashboard tests should NOT use MSW. The project convention is `vi.stubGlobal('fetch', ...)` with regex URL matching — see `ObjectTypeAdminPage.resolved.bdd.test.tsx` for the pattern. Browser dogfood verification is still recommended via Hermes before declaring complete; this story's automated coverage replicates the bug shape end-to-end through the React tree but does not exercise the real Vite build.
+---
