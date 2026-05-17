@@ -9,7 +9,7 @@
       "phase": "Dogfood Repair",
       "active": true,
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Hermes dogfood found /explorer/northwind empty. Running scripts/e2e-setup.sh fails during test/fixtures/e2e_seed.sh with: seed: wipe: delete ontology: ERROR: update or delete on table \"ontologies\" violates foreign key constraint \"functions_ontology_rid_fkey\" on table \"functions\" (SQLSTATE 23503). Investigate seed_northwind wipe order and related FK dependencies; fix root cause so repeated seed runs converge and Northwind has object types/data.",
       "bdd_acceptance": [

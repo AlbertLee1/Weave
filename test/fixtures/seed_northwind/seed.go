@@ -397,6 +397,30 @@ func wipe(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 			 )`, ontRID); err != nil {
 			return fmt.Errorf("delete object_history: %w", err)
 		}
+		// Non-cascading dependents of ontologies(rid). Real dev/install
+		// state (and Hermes dogfood on 2026-05-17) accumulates rows in
+		// these tables that block the final DELETE FROM ontologies if
+		// the seeder ignores them. Their migrations omit ON DELETE
+		// CASCADE on the ontology_rid FK (see migrations 000004, 000005,
+		// 000021, 000026) so the wipe owns cleanup directly.
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM functions WHERE ontology_rid = $1`, ontRID); err != nil {
+			return fmt.Errorf("delete functions: %w", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM query_types WHERE ontology_rid = $1`, ontRID); err != nil {
+			return fmt.Errorf("delete query_types: %w", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM ontology_snapshots WHERE ontology_rid = $1`, ontRID); err != nil {
+			return fmt.Errorf("delete ontology_snapshots: %w", err)
+		}
+		// automation_executions cascades through automation_rules(id),
+		// so deleting the rules suffices.
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM automation_rules WHERE ontology_rid = $1`, ontRID); err != nil {
+			return fmt.Errorf("delete automation_rules: %w", err)
+		}
 		// Link types (ontology scoped). link_edges cascades through
 		// link_type_rid ON DELETE CASCADE so we do not need a separate
 		// wipe for the edge table (see migration 000006_link_edges).

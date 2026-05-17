@@ -5,6 +5,8 @@ Started: 2026-05-17T22:50:03.619090
 - For Weave browser/UI regressions, Hermes browser verification is final truth; Claude/Playwright self-checks are necessary but not sufficient.
 - Dashboard evidence from dogfood: `/` top object type stat must match actual object type counts visible on ontology cards.
 - Northwind E2E seed must be idempotent against existing dev DB state; wipe order must include all FK dependents before deleting the ontology row.
+- Non-cascading FKs to ontologies(rid) in migrations: functions (000021), query_types (000005), ontology_snapshots (000004), automation_rules (000026). Any wipe-and-reseed of an ontology MUST delete these explicitly — the leaf tables 000003/000007/000024/000025/000105/000107/000108/000200 use ON DELETE CASCADE and clean themselves up.
+- BDD integration tests for seeder live in test/fixtures/seed_northwind/seed_test.go behind //go:build integration; run with `go test -tags integration ./test/fixtures/seed_northwind/... -run TestBDD_<name> -v`.
 ---
 
 ## Dogfood Evidence
@@ -12,4 +14,18 @@ Report: dogfood-output/weave-webui-dogfood-20260517.md
 Screenshots:
 - /Users/liyang/.hermes/cache/screenshots/browser_screenshot_123ae2f8533245039e617c16990a8c1d.png
 - /Users/liyang/.hermes/cache/screenshots/browser_screenshot_27ed0d20c07a413a95a00455f0ff0041.png
+---
+
+## 2026-05-17T22:58 - DOG-001
+- Reproduced 23503 FK violation in TestBDD_SeedSurvivesNonCascadingFKDependents: pre-seed a function/query_type/snapshot/automation_rule referencing the northwind ontology, then call Seed() again — old wipe aborted with functions_ontology_rid_fkey, then ontology_snapshots_ontology_rid_fkey.
+- Fixed test/fixtures/seed_northwind/seed.go wipe() to DELETE FROM functions, query_types, ontology_snapshots, automation_rules WHERE ontology_rid = $1 before deleting object_types/ontologies. automation_executions cascades through automation_rules(id) so no separate step needed.
+- Verified end-to-end: ran `scripts/e2e-setup.sh` against the dev compose DB with a `functions` + `ontology_snapshots` row pre-injected for the northwind ontology — seed completed, `GET /api/v2/ontologies/northwind/objectTypes` returns 4 object types (customer/order/product/employee).
+- Files changed:
+  - test/fixtures/seed_northwind/seed.go — added 4 DELETE statements in wipe()
+  - test/fixtures/seed_northwind/seed_test.go — added TestBDD_SeedSurvivesNonCascadingFKDependents
+- Quality gates: `go test -tags integration ./test/fixtures/seed_northwind/... -v` (PASS), `make test` (PASS, 0 failures), `go vet ./...` (clean), `make web-build` (clean), `make web-test` (259 files, 2767 tests pass), `scripts/e2e-setup.sh` against live compose DB (PASS).
+- **Learnings for future iterations:**
+  - Patterns discovered: when adding new ontology-scoped tables, decide on ON DELETE CASCADE up front. Migrations 000004, 000005, 000021, 000026 omitted it and turned wipe-and-reseed into a leaf-table audit task. CASCADE on ontology_rid is the project default — the four exceptions above are the regression surface for any future Northwind seed change.
+  - Gotchas: pre-seeded dev DBs accumulate non-seeded rows over time (admin UI creating functions, automation_rules, etc.). The seeder's "wipe" loop is the only contract that survives this drift — add a DELETE for every new non-cascading FK to ontologies(rid).
+  - Useful context: BDD integration tests for the seeder are gated by `//go:build integration` and require Docker (testcontainers spins up pgvector/pgvector:pg16). Run with `go test -tags integration`. The legacy idempotency test is TestSeed_IdempotentAndComplete; pair every wipe change with both tests.
 ---
