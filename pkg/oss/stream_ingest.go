@@ -42,6 +42,19 @@ type IngestRateLimiter interface {
 	Allow(ontology string) bool
 }
 
+// IndexReadinessChecker reports whether a Bleve index already exists for
+// (ontologyAPIName, objectType). DOG-003: the funnel consumer's
+// IndexDocument call silently fails with "index not found" when an ingest
+// targets an ObjectType whose index was never bootstrapped — but the
+// publisher has already returned 200 by then, so the operator sees an
+// editCount success that later disappears. When wired, the handler checks
+// readiness before publishing and rejects the batch with 409 IndexNotReady
+// so the caller can retry after a rebuild rather than discovering the
+// silent drop via a missing list/search row hours later.
+type IndexReadinessChecker interface {
+	IndexReady(ontologyAPIName, objectType string) bool
+}
+
 // PerOntologyRateLimiter maintains a token-bucket rate limiter per ontology.
 // Limiters are lazily created on first access and share the same rate/burst.
 type PerOntologyRateLimiter struct {
@@ -76,9 +89,10 @@ func (l *PerOntologyRateLimiter) Allow(ontology string) bool {
 // StreamIngestHandler handles POST .../streams/{objectType}/ingest requests
 // for bulk-importing edits that bypass Action rules.
 type StreamIngestHandler struct {
-	publisher     IngestPublisher
-	policyChecker IngestPolicyChecker
-	rateLimiter   IngestRateLimiter
+	publisher       IngestPublisher
+	policyChecker   IngestPolicyChecker
+	rateLimiter     IngestRateLimiter
+	indexReadiness  IndexReadinessChecker
 }
 
 // NewStreamIngestHandler creates a new stream ingest handler.
@@ -98,6 +112,15 @@ func (h *StreamIngestHandler) SetPolicyChecker(c IngestPolicyChecker) {
 // is applied (backwards compatible with pre-US-063 deployments).
 func (h *StreamIngestHandler) SetRateLimiter(l IngestRateLimiter) {
 	h.rateLimiter = l
+}
+
+// SetIndexReadinessChecker wires the DOG-003 fail-fast hook. When set,
+// ServeHTTP rejects ingest batches whose ObjectType has no open Bleve
+// index with 409 IndexNotReady, preventing the silent
+// edits-accepted-but-never-visible failure mode the dogfood report
+// captured. A nil checker disables the guard (pre-DOG-003 behaviour).
+func (h *StreamIngestHandler) SetIndexReadinessChecker(c IndexReadinessChecker) {
+	h.indexReadiness = c
 }
 
 // streamIngestRequest is the JSON request body for the ingest endpoint.
@@ -126,6 +149,21 @@ func (h *StreamIngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			map[string]string{
 				"ontology": ontology,
 				"reason":   "ingest rate limit exceeded for this ontology",
+			}))
+		return
+	}
+
+	// DOG-003: fail fast if the target Bleve index does not exist. Without
+	// this guard a NATS publish would 200-OK the caller but the consumer's
+	// IndexDocument would then drop every edit with "index not found",
+	// producing a silent data-loss surface that misled the dogfood operator
+	// into thinking ingest had succeeded.
+	if h.indexReadiness != nil && !h.indexReadiness.IndexReady(ontology, objectType) {
+		apierror.WriteJSON(w, apierror.NewConflict("IndexNotReady",
+			map[string]string{
+				"ontology":   ontology,
+				"objectType": objectType,
+				"reason":     "object index has not been bootstrapped; rebuild via /api/admin/indexes/rebuild and retry",
 			}))
 		return
 	}

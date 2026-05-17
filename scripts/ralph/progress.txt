@@ -7,6 +7,30 @@ Started: 2026-05-17T23:24:00
 - Frontend BDD tests conventionally stub `fetch` directly with `vi.stubGlobal('fetch', ...)` and regex URL matching; do not default to MSW for new focused tests unless the local suite already uses it.
 - AI News dogfood fixture lives in `dogfood-output/ainews-records-20260517.json` / `.csv` and contains 103 records over 6 delivery dates.
 - BrowserPage search currently exercises the `WhereClause` path, not the simple backend `query` parameter path; tests should assert the exact request body sent by `searchObjects`/BrowserPage.
+- OMS handlers grow narrow `Set*` hooks (e.g. `SetIndexBootstrapper`) for cross-package wiring; the concrete adapter lives in cmd/server so pkg/oms never imports pkg/index. Mirror this pattern for any future capability that needs index/funnel knowledge.
+- Stream ingest must verify the target Bleve index exists BEFORE publishing to NATS; the consumer's "index not found" error fires too late and the 200 response has already gone out.
+---
+
+## [2026-05-17 23:48] - DOG-003
+- Added `oms.IndexBootstrapper` interface + `OMSHandler.SetIndexBootstrapper` hook; ImportOntologyV2 and the admin CreateObjectType handler now call `EnsureObjectTypeIndex` synchronously so a freshly created ObjectType has an open Bleve index shell before the response returns.
+- Replace-mode import drops every prior ObjectType's index before recreating so stale rows do not leak into the new schema.
+- Added `oss.IndexReadinessChecker` hook on `StreamIngestHandler`; ingest now fails fast with 409 `IndexNotReady` instead of returning a fake editCount success that the funnel consumer would silently drop.
+- Wired `indexBootstrapAdapter` + `indexReadinessAdapter` in cmd/server/main.go translating oms.Property → index.Property via the existing `index.AnalyzerFromTypeConfig`.
+- Files changed:
+  - pkg/oms/index_bootstrap.go (new)
+  - pkg/oms/handlers.go (field)
+  - pkg/oms/handlers_import.go (bootstrap on import; drop on replace)
+  - pkg/oms/admin_handlers.go (bootstrap on admin create)
+  - pkg/oms/index_bootstrap_bdd_test.go (new — 3 BDD scenarios)
+  - pkg/oss/stream_ingest.go (readiness hook + 409 fail-fast)
+  - pkg/oss/stream_ingest_dog003_bdd_test.go (new — 2 BDD scenarios)
+  - cmd/server/index_bootstrap_adapter.go (new — bootstrap + readiness adapters)
+  - cmd/server/main.go (wiring)
+- Quality gates: go vet, go test ./pkg/... ./cmd/server/..., make test (full Go suite including testcontainers), make web-build, make web-test.
+- **Learnings for future iterations:**
+  - The index bootstrap path lived in 3 places (import, admin POST, alternative create routes) — covering all of them is what prevents the "creates objectType but ingest fails silently" surface from reappearing. Future ObjectType-creating handlers (proposals, packages) should call `ensureObjectTypeIndex` too.
+  - Use `index.AnalyzerFromTypeConfig` (already exported) when translating oms.Property → index.Property in any adapter — do not reinvent typeclass parsing.
+  - The funnel consumer's `IndexDocument` returns "index not found" but that error path runs after NATS ack — it cannot retroactively turn a 200 ingest into a 4xx. Surface readiness at the HTTP edge.
 ---
 
 ## Dogfood Evidence

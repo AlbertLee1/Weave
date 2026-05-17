@@ -490,6 +490,14 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DOG-003: bootstrap the Bleve index shell synchronously so an immediate
+	// stream ingest against this ObjectType lands in a real index instead of
+	// silently failing with "index not found".
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	if ontologyAPIName != "" {
+		_ = h.ensureObjectTypeIndex(ontologyAPIName, ot.APIName, nil)
+	}
+
 	httputil.WriteJSON(w, http.StatusCreated, ot)
 }
 

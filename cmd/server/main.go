@@ -901,6 +901,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.CommitJobRunner != nil {
 				omsHandler.SetCommitJobRunner(deps.CommitJobRunner)
 			}
+			// DOG-003: synchronously bootstrap a Bleve index shell whenever
+			// admin / import creates an ObjectType so an immediate stream
+			// ingest does not silently drop rows on a missing index. The
+			// adapter is a no-op when IndexMgr is nil (degraded mode).
+			if deps.IndexMgr != nil {
+				omsHandler.SetIndexBootstrapper(newIndexBootstrapAdapter(deps.IndexMgr))
+			}
 			RegisterRoutes(api, omsHandler)
 		}
 
@@ -1010,6 +1017,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// US-063: per-ontology token-bucket rate limiter for stream ingest.
 			if deps.IngestRateLimiter != nil {
 				ingestHandler.SetRateLimiter(deps.IngestRateLimiter)
+			}
+			// DOG-003: fail-fast guard — reject ingest batches whose target
+			// ObjectType has no open Bleve index instead of returning a 200
+			// success that the funnel consumer would then silently drop.
+			if deps.IndexMgr != nil {
+				ingestHandler.SetIndexReadinessChecker(newIndexReadinessAdapter(deps.IndexMgr))
 			}
 			api.With(auth.RequirePermission(auth.PermStreamIngest)).
 				Method(http.MethodPost,

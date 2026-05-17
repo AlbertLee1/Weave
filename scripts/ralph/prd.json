@@ -9,7 +9,7 @@
       "phase": "AI News Dogfood Repair",
       "active": true,
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Hermes dogfood imported ontology `ainews` and immediately streamed 103 AI_News CREATE edits. Ingest returned 200 with edit counts, but list/search/aggregate failed with `index not found for object type \"AI_News\"` or showed zero rows. Manual index rebuild created an empty index (`indexedCount: 0`), and only a second ingest made data visible. Fix root cause so import/create-object-type bootstraps the index before ingest is accepted, or ingest fails fast instead of claiming success. Preferred behavior: import/create path creates the object index automatically and immediate ingest becomes visible without rebuild/reingest.",
       "bdd_acceptance": [

@@ -82,8 +82,15 @@ func (h *OMSHandler) ImportOntologyV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For replace mode on existing ontology: delete all entities first
+	// For replace mode on existing ontology: delete all entities first.
+	// DOG-003: also drop the Bleve index for every prior ObjectType so the
+	// recreated index does not inherit stale rows from the previous schema.
 	if req.Mode == "replace" && isExisting {
+		if priorOTs, err := h.repo.ListObjectTypes(ctx, ontology.RID); err == nil {
+			for _, ot := range priorOTs {
+				_ = h.dropObjectTypeIndex(ontology.APIName, ot.APIName)
+			}
+		}
 		h.deleteOntologyEntities(ctx, ontology.RID)
 	}
 
@@ -259,6 +266,16 @@ func (h *OMSHandler) importFunctions(ctx context.Context, ontologyRID, mode stri
 
 func (h *OMSHandler) importObjectTypes(ctx context.Context, ontologyRID, mode string, ots []ObjectType, spRIDMap map[string]string) (int, int) {
 	otCount, propCount := 0, 0
+	// DOG-003: ImportOntologyV2 hands us an OntologyRID but the
+	// IndexBootstrapper hook lives at the apiName layer (the Bleve scoped
+	// key is "{ontologyApiName}__{objectTypeApiName}"). Resolve once up
+	// front so each ensure call below stays O(1).
+	ontologyAPIName := ""
+	if h.indexBootstrapper != nil {
+		if ont, err := h.repo.GetOntology(ctx, ontologyRID); err == nil {
+			ontologyAPIName = ont.APIName
+		}
+	}
 	for _, ot := range ots {
 		var targetOTRID string
 
@@ -284,6 +301,14 @@ func (h *OMSHandler) importObjectTypes(ctx context.Context, ontologyRID, mode st
 
 				// Upsert properties for existing ObjectType
 				propCount += h.importProperties(ctx, targetOTRID, mode, ot.Properties, spRIDMap)
+				// DOG-003: refresh the index shell so an updated property
+				// schema (e.g. new searchable field) is reflected before any
+				// subsequent ingest. The bootstrapper is a no-op when nil.
+				if ontologyAPIName != "" {
+					if latestProps, err := h.repo.ListProperties(ctx, targetOTRID); err == nil {
+						_ = h.ensureObjectTypeIndex(ontologyAPIName, ot.APIName, latestProps)
+					}
+				}
 				continue
 			}
 		}
@@ -322,6 +347,16 @@ func (h *OMSHandler) importObjectTypes(ctx context.Context, ontologyRID, mode st
 				continue
 			}
 			propCount++
+		}
+
+		// DOG-003: bootstrap the Bleve index shell synchronously so the
+		// follow-up stream ingest does not race against a missing index.
+		// Re-list properties so we pass the persisted, schema-faithful set
+		// (with new RIDs) instead of the request payload.
+		if ontologyAPIName != "" {
+			if persisted, err := h.repo.ListProperties(ctx, targetOTRID); err == nil {
+				_ = h.ensureObjectTypeIndex(ontologyAPIName, ot.APIName, persisted)
+			}
 		}
 	}
 	return otCount, propCount
