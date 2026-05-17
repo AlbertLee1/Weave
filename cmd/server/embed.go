@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed all:web/dist
+//go:embed all:web
 var webDistRaw embed.FS
 
 func webDistFS() (fs.FS, error) {
