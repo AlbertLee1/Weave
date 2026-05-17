@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 interface StatsBarProps {
   ontologyCount: number;
   objectTypeCount: number;
+  objectTypeCountLoading?: boolean;
 }
 
 interface StatItemProps {
@@ -12,9 +13,10 @@ interface StatItemProps {
   color: string;
   delay: number;
   testId?: string;
+  loading?: boolean;
 }
 
-function StatItem({ icon, label, value, color, delay, testId }: StatItemProps) {
+function StatItem({ icon, label, value, color, delay, testId, loading }: StatItemProps) {
   return (
     <div
       data-testid={testId}
@@ -41,7 +43,7 @@ function StatItem({ icon, label, value, color, delay, testId }: StatItemProps) {
           className="text-xl font-semibold leading-none"
           style={{ color, fontFamily: 'var(--font-sans)' }}
         >
-          {value}
+          {loading ? '—' : value}
         </div>
         <div className="text-xs text-text-secondary mt-0.5" style={{ fontFamily: 'var(--font-sans)' }}>
           {label}
@@ -51,7 +53,7 @@ function StatItem({ icon, label, value, color, delay, testId }: StatItemProps) {
   );
 }
 
-export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
+export function StatsBar({ ontologyCount, objectTypeCount, objectTypeCountLoading }: StatsBarProps) {
   const { t } = useTranslation();
   return (
     <div className="flex items-stretch gap-3">
@@ -81,6 +83,7 @@ export function StatsBar({ ontologyCount, objectTypeCount }: StatsBarProps) {
         color="#14B8A6"
         delay={80}
         testId="stat-object-types"
+        loading={objectTypeCountLoading}
       />
     </div>
   );
