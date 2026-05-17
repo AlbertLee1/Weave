@@ -1,7 +1,9 @@
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { useQueries } from '@tanstack/react-query';
 import { useOntologies } from '../../hooks/useOntologies';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
+import { listObjectTypes } from '../../api/ontologies';
 import type { Ontology } from '../../api/types';
 import { SkeletonCard } from '../common/Skeleton';
 import { EmptyState } from '../common/EmptyState';
@@ -30,7 +32,22 @@ export function DashboardPage() {
   const { data: ontologies, isLoading, error } = useOntologies();
   const { t } = useTranslation();
 
-  const totalObjectTypes = 0;
+  // DOG-002: aggregate per-ontology object type counts into the global stat.
+  // useQueries shares cache keys with useObjectTypes inside OntologyCardWithCount,
+  // so the per-card fetches are deduplicated with this top-level batch.
+  const objectTypeQueries = useQueries({
+    queries: (ontologies ?? []).map((o) => ({
+      queryKey: ['objectTypes', o.apiName],
+      queryFn: () => listObjectTypes(o.apiName),
+      enabled: !!o.apiName,
+    })),
+  });
+
+  const objectTypeCountsLoading = objectTypeQueries.some((q) => q.isLoading);
+  const totalObjectTypes = objectTypeQueries.reduce(
+    (acc, q) => acc + (q.data?.length ?? 0),
+    0,
+  );
 
   if (isLoading) {
     return (
@@ -156,6 +173,7 @@ export function DashboardPage() {
         <StatsBar
           ontologyCount={ontologies?.length ?? 0}
           objectTypeCount={totalObjectTypes}
+          objectTypeCountLoading={objectTypeCountsLoading}
         />
       </div>
 

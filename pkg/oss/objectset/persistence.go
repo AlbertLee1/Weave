@@ -340,17 +340,26 @@ func (s *PGSavedStore) ReapExpired(ctx context.Context, ttl time.Duration) (int6
 	return tag.RowsAffected(), nil
 }
 
-// RunReaperLoop drives ReapExpired on a fixed interval until ctx is cancelled.
-// onReap (optional) is invoked after each successful sweep with the number of
-// rows deleted so the caller can publish a metric. Errors are passed through
-// onError (also optional) so the loop can keep running even if a single pass
-// fails — typical of a transient PG hiccup.
+// SavedSetReaper is the minimal contract the reaper loop needs from a saved
+// ObjectSet store: drop expired ephemeral rows older than ttl and return the
+// count removed. *PGSavedStore satisfies it via its real DELETE; tests can
+// plug a fake to exercise the loop driver without booting Postgres.
+type SavedSetReaper interface {
+	ReapExpired(ctx context.Context, ttl time.Duration) (int64, error)
+}
+
+// RunSavedSetReaperLoop drives reaper.ReapExpired on a fixed interval until
+// ctx is cancelled. onReap (optional) is invoked after each successful sweep
+// with the number of rows deleted so the caller can publish a metric. Errors
+// are passed through onError (also optional) so a transient PG hiccup does
+// not kill the loop. A nil reaper / non-positive interval / non-positive ttl
+// is a no-op so degraded-mode boot (no PG pool) is safe.
 //
 // The intended caller is cmd/server: spawn a goroutine on startup,
-// `RunReaperLoop(rootCtx, time.Minute, time.Hour, ...)`, and let context
-// cancellation on graceful shutdown stop the loop.
-func (s *PGSavedStore) RunReaperLoop(ctx context.Context, interval, ttl time.Duration, onReap func(int64), onError func(error)) {
-	if interval <= 0 || ttl <= 0 {
+// `RunSavedSetReaperLoop(rootCtx, store, 5*time.Minute, time.Hour, ...)`,
+// and let context cancellation on graceful shutdown stop the loop. US-462.
+func RunSavedSetReaperLoop(ctx context.Context, reaper SavedSetReaper, interval, ttl time.Duration, onReap func(int64), onError func(error)) {
+	if reaper == nil || interval <= 0 || ttl <= 0 {
 		return
 	}
 	ticker := time.NewTicker(interval)
@@ -360,7 +369,7 @@ func (s *PGSavedStore) RunReaperLoop(ctx context.Context, interval, ttl time.Dur
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := s.ReapExpired(ctx, ttl)
+			n, err := reaper.ReapExpired(ctx, ttl)
 			if err != nil {
 				if onError != nil {
 					onError(err)
@@ -372,6 +381,13 @@ func (s *PGSavedStore) RunReaperLoop(ctx context.Context, interval, ttl time.Dur
 			}
 		}
 	}
+}
+
+// RunReaperLoop is the method-bound shim retained for callers that hold a
+// *PGSavedStore directly; new wiring should prefer RunSavedSetReaperLoop
+// (US-462) so a fake reaper can drive the loop in unit tests.
+func (s *PGSavedStore) RunReaperLoop(ctx context.Context, interval, ttl time.Duration, onReap func(int64), onError func(error)) {
+	RunSavedSetReaperLoop(ctx, s, interval, ttl, onReap, onError)
 }
 
 // scanSavedSet pulls a single row into a SavedObjectSet, normalising the

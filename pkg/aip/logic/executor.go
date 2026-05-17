@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/liyang/weave/pkg/aip"
@@ -64,6 +65,12 @@ func NewExecutor(p ProviderResolver, t ToolRegistry) *Executor {
 // populated (status / output / trace / error). Validation errors are
 // surfaced via err AND captured on Run.Error so callers may persist the
 // run row even on early failure.
+//
+// US-478: nodes within the same topological layer are dispatched
+// concurrently via goroutines, then results are merged into shared
+// state under a single goroutine's serial commit pass so trace order
+// remains deterministic (layer-by-layer, declaration order inside each
+// layer) and downstream state reads see a fully merged upstream layer.
 func (e *Executor) Execute(ctx context.Context, flow *Flow, input map[string]any) (*Run, error) {
 	if flow == nil {
 		return nil, errors.New("flow is nil")
@@ -71,7 +78,7 @@ func (e *Executor) Execute(ctx context.Context, flow *Flow, input map[string]any
 	if err := flow.Validate(); err != nil {
 		return &Run{FlowID: flow.ID, Status: RunStatusFailed, Error: err.Error()}, err
 	}
-	order, err := flow.TopoOrder()
+	layers, err := flow.TopoLayers()
 	if err != nil {
 		return &Run{FlowID: flow.ID, Status: RunStatusFailed, Error: err.Error()}, err
 	}
@@ -80,51 +87,84 @@ func (e *Executor) Execute(ctx context.Context, flow *Flow, input map[string]any
 	if input != nil {
 		state["input"] = input
 	}
-	skipped := map[string]bool{}
 	edgeActive := make([]bool, len(flow.Edges))
 	for i := range edgeActive {
 		edgeActive[i] = true
 	}
 	incomingByNode := buildIncomingEdges(flow.Edges)
 	outgoingByNode := buildOutgoingEdges(flow.Edges)
-	trace := make([]TraceEntry, 0, len(order))
+	trace := make([]TraceEntry, 0, len(flow.Nodes))
 	nodesByID := indexNodes(flow.Nodes)
 
-	for _, id := range order {
-		node := nodesByID[id]
-		if !nodeReachable(node.ID, incomingByNode, edgeActive) {
-			skipped[node.ID] = true
-			trace = append(trace, TraceEntry{NodeID: node.ID, Type: node.Type, Status: TraceStatusSkipped})
-			// Disable outgoing edges so dead branches propagate.
-			for _, idx := range outgoingByNode[node.ID] {
-				edgeActive[idx] = false
+	type nodeResult struct {
+		entry       TraceEntry
+		branchTaken string
+		skipped     bool
+		err         error
+	}
+
+	for _, layer := range layers {
+		results := make([]nodeResult, len(layer))
+		// Snapshot the state map so concurrent goroutines can read it
+		// without locking — within a layer no node depends on another
+		// (by topological invariant), so reads only touch earlier-layer
+		// keys that are stable for the duration of this layer.
+		stateSnap := state
+		var wg sync.WaitGroup
+		for i, id := range layer {
+			node := nodesByID[id]
+			if !nodeReachable(node.ID, incomingByNode, edgeActive) || isFallbackOnly(node) {
+				results[i] = nodeResult{
+					entry:   TraceEntry{NodeID: node.ID, Type: node.Type, Status: TraceStatusSkipped},
+					skipped: true,
+				}
+				continue
 			}
-			continue
+			wg.Add(1)
+			go func(idx int, n Node) {
+				defer wg.Done()
+				entry, branch, runErr := e.executeNodeWithPolicy(ctx, flow, n, stateSnap, input, nodesByID, true)
+				results[idx] = nodeResult{entry: entry, branchTaken: branch, err: runErr}
+			}(i, node)
 		}
-		entry, branchTaken, err := e.executeNodeWithPolicy(ctx, flow, node, state, input)
-		trace = append(trace, entry)
-		if err != nil {
-			run := &Run{
-				FlowID: flow.ID,
-				Status: RunStatusFailed,
-				Input:  input,
-				Output: state,
-				Trace:  trace,
-				Error:  err.Error(),
-			}
-			return run, err
-		}
-		if entry.Output != nil {
-			state[node.ID] = entry.Output
-		}
-		// For if-nodes, deactivate outgoing edges that label a different
-		// branch than the one taken. Unlabelled edges (Branch == "") on
-		// an if-node are unconditional — fan out to every downstream.
-		if node.Type == NodeTypeIf {
-			for _, idx := range outgoingByNode[node.ID] {
-				e := flow.Edges[idx]
-				if e.Branch != "" && e.Branch != branchTaken {
+		wg.Wait()
+
+		// Serial commit: append trace, merge outputs, apply if-branch
+		// deactivation. Doing this single-threaded keeps the trace order
+		// deterministic (= layer declaration order) and makes state
+		// writes safe without an extra mutex.
+		for i, id := range layer {
+			r := results[i]
+			node := nodesByID[id]
+			trace = append(trace, r.entry)
+			if r.skipped {
+				// Disable outgoing edges so dead branches propagate
+				// downstream — same logic as the legacy executor.
+				for _, idx := range outgoingByNode[id] {
 					edgeActive[idx] = false
+				}
+				continue
+			}
+			if r.err != nil {
+				run := &Run{
+					FlowID: flow.ID,
+					Status: RunStatusFailed,
+					Input:  input,
+					Output: state,
+					Trace:  trace,
+					Error:  r.err.Error(),
+				}
+				return run, r.err
+			}
+			if r.entry.Output != nil {
+				state[id] = r.entry.Output
+			}
+			if node.Type == NodeTypeIf {
+				for _, idx := range outgoingByNode[id] {
+					edge := flow.Edges[idx]
+					if edge.Branch != "" && edge.Branch != r.branchTaken {
+						edgeActive[idx] = false
+					}
 				}
 			}
 		}
@@ -140,32 +180,53 @@ func (e *Executor) Execute(ctx context.Context, flow *Flow, input map[string]any
 	}, nil
 }
 
+// isFallbackOnly reports whether a node opted out of normal topological
+// execution by setting config.fallbackOnly: true (US-478). Such nodes
+// exist solely as fallback targets for sibling nodes; the executor
+// emits a Skipped trace entry so the run record still acknowledges them.
+func isFallbackOnly(n Node) bool {
+	v, ok := n.Config["fallbackOnly"]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
 // executeNodeWithPolicy is the single chokepoint that wraps a node's
 // concrete dispatch in the retry + fallback policy. It calls runNode
 // up to `attempts` times (per-node config.retry.maxAttempts overriding
-// the flow-level MaxRetries default + 1 baseline attempt). When all
-// retries fail AND the node is an LLM AND a fallback model is wired,
-// one additional attempt fires against fallback_model with the same
-// prompt. The returned entry records Attempts + UsedFallback so audit
-// trails preserve "how many tries did this take?".
-func (e *Executor) executeNodeWithPolicy(ctx context.Context, flow *Flow, n Node, state, input map[string]any) (TraceEntry, string, error) {
+// the flow-level MaxRetries default + 1 baseline attempt). Between
+// retries it sleeps according to the configured strategy: "fixed"
+// (default) waits backoffMs constant; "exponential" (US-478) doubles
+// the wait per retry (base, 2·base, 4·base, …). When all retries fail
+// AND the node is an LLM AND a fallback model is wired, one additional
+// attempt fires against fallback_model with the same prompt. When all
+// retries fail AND the node has config.fallbackNodeId set (US-478), the
+// referenced node is invoked once and its output replaces the failed
+// node's. The allowNodeFallback parameter is false when this call is
+// itself the fallback hop, so fallback chains cannot recurse. The
+// returned entry records Attempts + UsedFallback + UsedFallbackNode so
+// audit trails preserve "how many tries did this take?".
+func (e *Executor) executeNodeWithPolicy(ctx context.Context, flow *Flow, n Node, state, input map[string]any, nodesByID map[string]Node, allowNodeFallback bool) (TraceEntry, string, error) {
 	attempts := nodeMaxAttempts(n, flow)
 	if attempts < 1 {
 		attempts = 1
 	}
-	backoff := nodeBackoff(n)
+	base, strategy := nodeBackoff(n)
 	var (
 		entry  TraceEntry
 		branch string
 		err    error
 	)
 	for i := 0; i < attempts; i++ {
-		if i > 0 && backoff > 0 {
+		if i > 0 && base > 0 {
+			wait := backoffForAttempt(base, strategy, i)
 			select {
 			case <-ctx.Done():
 				entry = TraceEntry{NodeID: n.ID, Type: n.Type, Status: TraceStatusFailed, Error: ctx.Err().Error(), Attempts: i}
 				return entry, "", ctx.Err()
-			case <-time.After(backoff):
+			case <-time.After(wait):
 			}
 		}
 		entry, branch, err = e.runNode(ctx, n, state, input)
@@ -174,11 +235,10 @@ func (e *Executor) executeNodeWithPolicy(ctx context.Context, flow *Flow, n Node
 			return entry, branch, nil
 		}
 	}
-	// LLM fallback: every primary-provider attempt has failed; if the
-	// flow declares a fallback_model and the node hasn't already been
-	// rerouted onto it, swap models and retry once. Fallback applies
-	// only to llm nodes — tool / iterate / if / output have no model
-	// concept.
+	// LLM model fallback: every primary-provider attempt has failed; if
+	// the flow declares a fallback_model and the node hasn't already
+	// been rerouted onto it, swap models and retry once. Applies only
+	// to llm nodes — tool / iterate / if / output have no model concept.
 	if n.Type == NodeTypeLLM && flow.FallbackModel != "" {
 		fbNode := nodeWithModel(n, flow.FallbackModel)
 		fbEntry, fbBranch, fbErr := e.runNode(ctx, fbNode, state, input)
@@ -191,7 +251,58 @@ func (e *Executor) executeNodeWithPolicy(ctx context.Context, flow *Flow, n Node
 		branch = fbBranch
 		err = fbErr
 	}
+	// US-478 node-level fallback: if the failing node points to a
+	// sibling via config.fallbackNodeId, dispatch the sibling once and
+	// adopt its output as the primary's. A successful fallback marks
+	// the primary trace as Success + UsedFallbackNode; an unsuccessful
+	// one keeps the failure but still records the routing attempt so
+	// operators can see which alternative was tried. Recursive fallbacks
+	// are disabled (allowNodeFallback=false) on the recursive call.
+	fallbackID := cfgString(n.Config, "fallbackNodeId")
+	if allowNodeFallback && err != nil && fallbackID != "" {
+		entry.UsedFallbackNode = true
+		entry.FallbackNodeID = fallbackID
+		target, ok := nodesByID[fallbackID]
+		if !ok {
+			return entry, branch, err
+		}
+		fbEntry, fbBranch, fbErr := e.executeNodeWithPolicy(ctx, flow, target, state, input, nodesByID, false)
+		if fbErr == nil {
+			entry.Status = TraceStatusSuccess
+			entry.Error = ""
+			entry.Output = fbEntry.Output
+			return entry, fbBranch, nil
+		}
+		// Fallback also failed — keep the primary failure but preserve
+		// the routing attempt on the trace entry.
+	}
 	return entry, branch, err
+}
+
+// backoffForAttempt returns the per-retry wait duration. attemptIdx is
+// 0 for the first run (no sleep happens at that index) and increases
+// monotonically; the caller already checked attemptIdx > 0 before
+// invoking this helper. The exponential strategy doubles each step
+// (base, 2·base, 4·base, …); other values fall back to fixed.
+func backoffForAttempt(base time.Duration, strategy string, attemptIdx int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	switch strategy {
+	case BackoffStrategyExponential:
+		shift := attemptIdx - 1
+		if shift < 0 {
+			shift = 0
+		}
+		// Cap shift so 1<<shift cannot overflow a duration; 16 doublings
+		// of even 1ms is over 1 minute, well above any sane retry wait.
+		if shift > 16 {
+			shift = 16
+		}
+		return base * time.Duration(1<<shift)
+	default:
+		return base
+	}
 }
 
 // runNode dispatches one node to its concrete handler and returns the
@@ -281,22 +392,27 @@ func nodeMaxAttempts(n Node, flow *Flow) int {
 	return 1
 }
 
-// nodeBackoff returns the per-retry backoff duration. 0 disables sleep
-// between attempts (default).
-func nodeBackoff(n Node) time.Duration {
+// nodeBackoff returns (base, strategy) for retry waits. 0 disables sleep
+// between attempts (default). Strategy defaults to BackoffStrategyFixed
+// when absent / empty so pre-US-478 flows keep their existing semantics.
+func nodeBackoff(n Node) (time.Duration, string) {
 	retry, ok := n.Config["retry"].(map[string]any)
 	if !ok {
-		return 0
+		return 0, BackoffStrategyFixed
 	}
 	v, ok := retry["backoffMs"]
 	if !ok {
-		return 0
+		return 0, BackoffStrategyFixed
 	}
 	ms, ok := toInt(v)
 	if !ok || ms <= 0 {
-		return 0
+		return 0, BackoffStrategyFixed
 	}
-	return time.Duration(ms) * time.Millisecond
+	strategy, _ := retry["strategy"].(string)
+	if strategy == "" {
+		strategy = BackoffStrategyFixed
+	}
+	return time.Duration(ms) * time.Millisecond, strategy
 }
 
 // nodeWithModel returns a shallow clone of n with config.model

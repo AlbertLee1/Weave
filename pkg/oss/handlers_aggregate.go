@@ -142,7 +142,8 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 		if page != nil {
 			base = page.Data
 		}
-		result, err := AggregateWithOverlay(base, overlay.Edits, &req)
+		result, conflicts, err := AggregateWithOverlayAndConflicts(base, overlay.Edits, &req)
+		h.scenarioConflictAuditor.Record(ctx, overlay.Scenario.RID, "aggregate", conflicts)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("ScenarioAggregationFailed", map[string]string{
 				"reason": err.Error(),

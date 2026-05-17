@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '../common/LanguageSwitcher';
 import { BranchPicker } from './BranchPicker';
+import { TimeRangePicker } from './TimeRangePicker';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
 import { useOntologyStore } from '../../stores/ontologyStore';
@@ -92,6 +93,7 @@ export function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-1">
+        <TimeRangePicker />
         <BranchPicker ontologyApiName={activeOntology} />
         <div ref={themeMenuRef} className="relative">
           <button

@@ -37,10 +37,15 @@ type ListFilter struct {
 	ActorID      string
 	Action       string
 	ResourceType string
-	From         *time.Time
-	To           *time.Time
-	PageSize     int
-	Offset       int
+	// ResourceRID matches audit_events.resource_rid exactly. Added for
+	// US-493 so the admin `GET /api/admin/audit` endpoint can scope to a
+	// single resource (e.g. "show me everything that ever happened to
+	// this ObjectType / Session / Policy").
+	ResourceRID string
+	From        *time.Time
+	To          *time.Time
+	PageSize    int
+	Offset      int
 }
 
 // Store is the persistence interface for audit events.
@@ -117,6 +122,9 @@ func (s *MemoryStore) List(_ context.Context, f ListFilter) ([]AuditEvent, error
 			continue
 		}
 		if f.ResourceType != "" && e.ResourceType != f.ResourceType {
+			continue
+		}
+		if f.ResourceRID != "" && e.ResourceRID != f.ResourceRID {
 			continue
 		}
 		if f.From != nil && e.Timestamp.Before(*f.From) {

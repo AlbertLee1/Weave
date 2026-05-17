@@ -73,6 +73,48 @@ func (e *Executor) effectiveNow() time.Time {
 	return time.Now().UTC()
 }
 
+// tierRoutingPlan captures the executor's decision for a single base
+// query: whether to fan out to hot, cold, or both, and what cutoff to
+// stamp on the cold-tier lookup.
+//
+// Centralising the rules here keeps `executeBase` linear and makes the
+// US-485 classifier independently unit-testable.
+type tierRoutingPlan struct {
+	queryHot   bool
+	queryCold  bool
+	coldCutoff time.Time
+}
+
+// classifyTierRouting decides hot/cold routing for an optional
+// caller-declared TimeRangeHint (US-485). When no hint is supplied the
+// executor preserves the US-407 behaviour: query both tiers and merge.
+//
+// Rules (with hotBoundary = now - hotWindow):
+//   - Hot-only: TimeRange.From != nil AND From >= hotBoundary →
+//     skip cold, cutoff irrelevant.
+//   - Cold-only: TimeRange.To != nil AND To <= hotBoundary →
+//     skip hot, cold cutoff = *To (so the router clips rows past the
+//     request's upper bound).
+//   - Cross-window or open-ended: both tiers, cold cutoff = hotBoundary.
+//
+// Both bounds may be nil — a hint with only To set falls into either the
+// cold-only or cross-window branch depending on where To lands. A hint
+// whose From sits beyond now (in the future) is treated as hot-only
+// because no cold rows can satisfy "later than now".
+func classifyTierRouting(tr *TimeRangeHint, now time.Time, hotWindow time.Duration) tierRoutingPlan {
+	hotBoundary := now.Add(-hotWindow)
+	if tr == nil {
+		return tierRoutingPlan{queryHot: true, queryCold: true, coldCutoff: hotBoundary}
+	}
+	if tr.From != nil && !tr.From.Before(hotBoundary) {
+		return tierRoutingPlan{queryHot: true, queryCold: false}
+	}
+	if tr.To != nil && !tr.To.After(hotBoundary) {
+		return tierRoutingPlan{queryHot: false, queryCold: true, coldCutoff: *tr.To}
+	}
+	return tierRoutingPlan{queryHot: true, queryCold: true, coldCutoff: hotBoundary}
+}
+
 // mergeHotColdPKs returns the union of hot and cold primary keys, dedup'd
 // by string, preserving the hot tier's original ordering and appending
 // cold-only PKs in the order the cold tier delivered them. Hot-wins is

@@ -195,6 +195,31 @@ export function ObjectSetPage() {
           >
             Diff
           </Link>
+          <Link
+            to={`/objectsets/${ontologyApiName}/snapshots`}
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+          >
+            Snapshots
+          </Link>
+          <Link
+            to={`/objectsets/${ontologyApiName}/lineage`}
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+          >
+            Lineage
+          </Link>
+          <Link
+            to={
+              shareInfo
+                ? `/objectsets/${ontologyApiName}/live?rid=${encodeURIComponent(
+                    shareInfo.objectSetRid,
+                  )}`
+                : `/objectsets/${ontologyApiName}/live`
+            }
+            className="bg-bg-tertiary border border-border text-text-primary px-3 py-1.5 rounded text-xs font-mono hover:bg-bg-elevated"
+            data-testid="objectset-page-live-link"
+          >
+            Live
+          </Link>
         </div>
       </div>
 

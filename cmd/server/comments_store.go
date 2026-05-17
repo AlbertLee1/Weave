@@ -187,6 +187,21 @@ func (s *pgCommentsStore) Delete(ctx context.Context, id, author string) error {
 	return classifyMutationResult(s.pool, ctx, id, author, tag.RowsAffected())
 }
 
+// DeleteAllForUser hard-deletes every row authored by userID — live OR
+// soft-deleted — so the cascade-erase contract ("user_id 出现次数 =
+// 0") holds. Replies authored by other users keep their dangling
+// parent_id; the comments handler already tolerates that and renders
+// the thread head as a removed tombstone. Reports the number of rows
+// actually removed so the GDPR job log carries an honest count.
+func (s *pgCommentsStore) DeleteAllForUser(ctx context.Context, userID string) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM comments WHERE author = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // classifyMutationResult turns a "no rows updated" outcome into the
 // right typed error: ErrNotFound when the row is missing or already
 // soft-deleted, ErrForbidden when the row exists and is live but

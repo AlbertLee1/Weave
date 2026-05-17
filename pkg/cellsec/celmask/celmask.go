@@ -9,9 +9,11 @@
 //	user.id          string
 //	user.email       string
 //	user.roles       list<string>
-//	user.markings    list<string>
+//	user.markings    list<string>           (caller's clearance markings)
 //	user.attributes  map<string, dyn>      (full Attributes map)
 //	row              map<string, dyn>      (object Properties map)
+//	marking          list<string>           (US-488: cell/row's markings —
+//	                                         independent of caller clearance)
 //
 // The expression must return a bool. true → MASK applies (caller receives
 // the masked value). false → caller sees the clear value. This direction
@@ -91,6 +93,11 @@ func init() {
 	env, err := cel.NewEnv(
 		cel.Variable("user", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("row", cel.MapType(cel.StringType, cel.DynType)),
+		// US-488: `marking` is the cell/row's classification markings,
+		// independent of user.markings (the caller's clearance). Authors
+		// can target rows carrying a label without needing to stamp it as
+		// an ordinary property.
+		cel.Variable("marking", cel.ListType(cel.StringType)),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("celmask: build env: %v", err))
@@ -128,7 +135,18 @@ func Compile(expression string) (*Program, error) {
 // the expression, or runtime panics inside cel-go surface as a wrapped
 // error; callers should treat any error as "fail closed" — i.e., apply the
 // mask — to avoid leaking clear values when policy evaluation breaks.
+//
+// The `marking` binding defaults to an empty list; call EvalWithMarking to
+// pass the cell/row's classification markings explicitly.
 func (p *Program) Eval(user UserView, row map[string]any) (bool, error) {
+	return p.EvalWithMarking(user, row, nil)
+}
+
+// EvalWithMarking is the US-488 entry point that additionally binds the
+// cell/row's classification markings to the top-level `marking` variable.
+// Pass nil to default to an empty list; the list is defensively copied so
+// callers can mutate their input slice after the call returns.
+func (p *Program) EvalWithMarking(user UserView, row map[string]any, marking []string) (bool, error) {
 	if p == nil || p.prg == nil {
 		return false, errors.New("celmask: nil program")
 	}
@@ -137,8 +155,9 @@ func (p *Program) Eval(user UserView, row map[string]any) (bool, error) {
 		rowBinding = map[string]any{}
 	}
 	out, _, err := p.prg.Eval(map[string]any{
-		"user": user.AsMap(),
-		"row":  rowBinding,
+		"user":    user.AsMap(),
+		"row":     rowBinding,
+		"marking": stringSliceCopy(marking),
 	})
 	if err != nil {
 		return false, fmt.Errorf("celmask: eval %q: %w", p.src, err)

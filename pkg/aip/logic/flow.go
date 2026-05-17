@@ -113,15 +113,22 @@ type Run struct {
 // "success", "skipped", or "failed". Attempts is the number of dispatch
 // attempts the executor made before recording this entry (1 when no
 // retry occurred); UsedFallback is true when the LLM fallback model
-// was substituted for the node's primary provider.
+// was substituted for the node's primary provider. UsedFallbackNode +
+// FallbackNodeID are set (US-478) when a node-level config.fallbackNodeId
+// rerouted execution to a sibling node after the primary retry budget
+// was exhausted — they are recorded whether the fallback target itself
+// succeeded or also failed, so post-hoc audits see which alternative was
+// tried.
 type TraceEntry struct {
-	NodeID       string         `json:"nodeId"`
-	Type         string         `json:"type"`
-	Status       string         `json:"status"`
-	Output       map[string]any `json:"output,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	Attempts     int            `json:"attempts,omitempty"`
-	UsedFallback bool           `json:"usedFallback,omitempty"`
+	NodeID           string         `json:"nodeId"`
+	Type             string         `json:"type"`
+	Status           string         `json:"status"`
+	Output           map[string]any `json:"output,omitempty"`
+	Error            string         `json:"error,omitempty"`
+	Attempts         int            `json:"attempts,omitempty"`
+	UsedFallback     bool           `json:"usedFallback,omitempty"`
+	UsedFallbackNode bool           `json:"usedFallbackNode,omitempty"`
+	FallbackNodeID   string         `json:"fallbackNodeId,omitempty"`
 }
 
 // Run status constants.
@@ -209,6 +216,21 @@ func (f *Flow) Validate() error {
 			return fmt.Errorf("edge[%d] is a self-loop on %q", i, e.From)
 		}
 	}
+	// US-478 fallback target validation runs after the node-id set is
+	// fully built so cross-references resolve regardless of declaration
+	// order.
+	for _, n := range f.Nodes {
+		fb := cfgString(n.Config, "fallbackNodeId")
+		if fb == "" {
+			continue
+		}
+		if _, ok := seen[fb]; !ok {
+			return fmt.Errorf("node %q: fallbackNodeId %q is not a known node", n.ID, fb)
+		}
+		if fb == n.ID {
+			return fmt.Errorf("node %q: fallbackNodeId must not reference the node itself", n.ID)
+		}
+	}
 	if _, err := f.TopoOrder(); err != nil {
 		return err
 	}
@@ -219,6 +241,24 @@ func (f *Flow) Validate() error {
 // edge goes from an earlier ID to a later ID. Returns an error if the
 // graph contains a cycle.
 func (f *Flow) TopoOrder() ([]string, error) {
+	layers, err := f.TopoLayers()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(f.Nodes))
+	for _, layer := range layers {
+		out = append(out, layer...)
+	}
+	return out, nil
+}
+
+// TopoLayers returns node IDs grouped into topological layers: every
+// node in layer[i] has all its dependencies in some earlier layer, so
+// nodes within the same layer may be dispatched concurrently (US-478).
+// Layers preserve declaration order as a tie-breaker so each layer's
+// ordering is deterministic across runs even though the executor fans
+// the layer out into goroutines.
+func (f *Flow) TopoLayers() ([][]string, error) {
 	indeg := make(map[string]int, len(f.Nodes))
 	adj := make(map[string][]string, len(f.Nodes))
 	for _, n := range f.Nodes {
@@ -228,30 +268,35 @@ func (f *Flow) TopoOrder() ([]string, error) {
 		adj[e.From] = append(adj[e.From], e.To)
 		indeg[e.To]++
 	}
-	// Use the original node-declaration order as a tie-breaker so the
-	// output is deterministic across runs.
-	queue := make([]string, 0)
+	// Initial layer: every node with indegree 0, in declaration order.
+	var layers [][]string
+	current := make([]string, 0)
 	for _, n := range f.Nodes {
 		if indeg[n.ID] == 0 {
-			queue = append(queue, n.ID)
+			current = append(current, n.ID)
 		}
 	}
-	out := make([]string, 0, len(f.Nodes))
-	for len(queue) > 0 {
-		head := queue[0]
-		queue = queue[1:]
-		out = append(out, head)
-		for _, dst := range adj[head] {
-			indeg[dst]--
-			if indeg[dst] == 0 {
-				queue = append(queue, dst)
+	visited := 0
+	for len(current) > 0 {
+		layers = append(layers, current)
+		visited += len(current)
+		next := map[string]bool{}
+		nextOrder := make([]string, 0)
+		for _, id := range current {
+			for _, dst := range adj[id] {
+				indeg[dst]--
+				if indeg[dst] == 0 && !next[dst] {
+					next[dst] = true
+					nextOrder = append(nextOrder, dst)
+				}
 			}
 		}
+		current = nextOrder
 	}
-	if len(out) != len(f.Nodes) {
+	if visited != len(f.Nodes) {
 		return nil, fmt.Errorf("flow contains a cycle")
 	}
-	return out, nil
+	return layers, nil
 }
 
 // validateNodeConfig enforces the minimum config keys per node type.
@@ -298,9 +343,16 @@ func validateNodeConfig(n Node) error {
 }
 
 // validateRetryConfig enforces the optional retry knob shape:
-// {"retry": {"maxAttempts": <0..MaxRetryAttempts>, "backoffMs": <int>}}.
-// Both fields are optional inside retry; their absence falls back to
-// flow-level defaults at execute time.
+//
+//	{"retry": {
+//	    "maxAttempts": <0..MaxRetryAttempts>,
+//	    "backoffMs":   <int>,
+//	    "strategy":    "fixed"|"exponential"  // US-478
+//	}}
+//
+// All inner fields are optional; their absence falls back to flow-level
+// defaults at execute time. strategy defaults to "fixed" so pre-US-478
+// flows preserve their existing backoff semantics byte-for-byte.
 func validateRetryConfig(cfg map[string]any) error {
 	raw, ok := cfg["retry"]
 	if !ok {
@@ -328,8 +380,27 @@ func validateRetryConfig(cfg map[string]any) error {
 			return errors.New("config.retry.backoffMs must be non-negative")
 		}
 	}
+	if v, has := m["strategy"]; has {
+		s, ok := v.(string)
+		if !ok {
+			return errors.New("config.retry.strategy must be a string")
+		}
+		switch s {
+		case "", BackoffStrategyFixed, BackoffStrategyExponential:
+		default:
+			return fmt.Errorf("config.retry.strategy %q must be %q or %q",
+				s, BackoffStrategyFixed, BackoffStrategyExponential)
+		}
+	}
 	return nil
 }
+
+// Backoff strategy constants. US-478 introduces "exponential" alongside
+// the existing fixed strategy. Empty / absent strategy defaults to fixed.
+const (
+	BackoffStrategyFixed       = "fixed"
+	BackoffStrategyExponential = "exponential"
+)
 
 // iterateBody parses the body field of an iterate node back into a Node.
 // Returns (nil, false) when the body is missing or malformed.

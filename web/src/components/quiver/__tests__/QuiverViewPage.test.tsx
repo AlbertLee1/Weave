@@ -9,6 +9,10 @@ const apiMocks = vi.hoisted(() => ({
   getQuiverDashboard: vi.fn(),
   saveQuiverDashboard: vi.fn(),
   deleteQuiverDashboard: vi.fn(),
+  // US-483: batch sparkline fetch invoked once the dashboard envelope
+  // resolves. Default to an empty series list so existing scenarios
+  // that don't seed data still render without spinners.
+  batchQuiverSparklines: vi.fn().mockResolvedValue({ rid: '', series: [] }),
 }));
 
 vi.mock('../../../api/quiver', () => apiMocks);
@@ -42,6 +46,8 @@ describe('QuiverViewPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     apiMocks.viewQuiverDashboard.mockReset();
+    apiMocks.batchQuiverSparklines.mockReset();
+    apiMocks.batchQuiverSparklines.mockResolvedValue({ rid: '', series: [] });
     tsMocks.streamTimeSeriesPoints.mockResolvedValue([]);
   });
 

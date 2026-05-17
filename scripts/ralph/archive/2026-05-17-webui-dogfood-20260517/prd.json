@@ -1,0 +1,63 @@
+{
+  "project": "Weave WebUI Dogfood Repair",
+  "branchName": "ralph/webui-dogfood-20260517",
+  "description": "Focused Ralph repair loop from Hermes browser dogfood. Fix WebUI/data completeness issues found on 2026-05-17. Follow TDD/BDD, add regression tests, run quality gates, commit one story per iteration.",
+  "userStories": [
+    {
+      "id": "DOG-001",
+      "name": "Fix Northwind E2E seed wipe so seeded ontology is populated and idempotent",
+      "phase": "Dogfood Repair",
+      "active": true,
+      "priority": 1,
+      "passes": true,
+      "dependencies": [],
+      "description": "Hermes dogfood found /explorer/northwind empty. Running scripts/e2e-setup.sh fails during test/fixtures/e2e_seed.sh with: seed: wipe: delete ontology: ERROR: update or delete on table \"ontologies\" violates foreign key constraint \"functions_ontology_rid_fkey\" on table \"functions\" (SQLSTATE 23503). Investigate seed_northwind wipe order and related FK dependencies; fix root cause so repeated seed runs converge and Northwind has object types/data.",
+      "bdd_acceptance": [
+        "Given an existing dev database that may contain a prior northwind ontology with functions, When ./scripts/e2e-setup.sh runs, Then it completes successfully without foreign-key violations.",
+        "Given the setup has completed, When a browser opens /explorer/northwind, Then the OBJECT TYPES list is non-empty and the page does not show \"No object types\".",
+        "Given the setup has completed, When GET /api/v2/ontologies/northwind/objectTypes is called, Then the JSON data array has length greater than 0.",
+        "Given the Northwind seed is run twice, When the second run completes, Then it is idempotent and does not leave duplicate or partial ontology state."
+      ],
+      "dogfood_evidence": [
+        "scripts/e2e-setup.sh output: functions_ontology_rid_fkey violation on table functions during northwind wipe.",
+        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_123ae2f8533245039e617c16990a8c1d.png"
+      ],
+      "quality_gates": [
+        "targeted seed regression test red->green",
+        "./scripts/e2e-setup.sh",
+        "make web-build",
+        "make test",
+        "go vet ./...",
+        "make web-test"
+      ]
+    },
+    {
+      "id": "DOG-002",
+      "name": "Fix Dashboard total object type metric to reflect actual per-ontology counts",
+      "phase": "Dogfood Repair",
+      "active": true,
+      "priority": 2,
+      "passes": true,
+      "dependencies": [
+        "DOG-001"
+      ],
+      "description": "Dashboard shows 0 object types while IoT Demo card shows 4 types. Source currently hardcodes totalObjectTypes = 0 in web/src/components/dashboard/DashboardPage.tsx. Replace with real aggregation over fetched per-ontology object types or a tested API-backed count; handle loading/error states without misleading 0.",
+      "bdd_acceptance": [
+        "Given the dashboard loads ontologies with object type counts, When at least one ontology has object types, Then the global Object Types stat equals the sum of per-card counts rather than 0.",
+        "Given IoT Demo has 4 object types and Northwind has seeded types, When / is opened in the browser, Then the dashboard Object Types stat is greater than or equal to 4 and matches API-derived totals.",
+        "Given per-ontology object type fetches are still loading, When the dashboard renders, Then it does not present a final misleading 0 as the completed total."
+      ],
+      "dogfood_evidence": [
+        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_27ed0d20c07a413a95a00455f0ff0041.png",
+        "Source: web/src/components/dashboard/DashboardPage.tsx line 33: const totalObjectTypes = 0;"
+      ],
+      "quality_gates": [
+        "frontend BDD/unit regression test red->green",
+        "make web-build",
+        "make test",
+        "go vet ./...",
+        "make web-test"
+      ]
+    }
+  ]
+}

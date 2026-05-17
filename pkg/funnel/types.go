@@ -49,6 +49,13 @@ type Edit struct {
 	// Link edit fields — populated for LINK_CREATE / LINK_DELETE edits only.
 	LinkTypeRID      string `json:"linkTypeRid,omitempty"`
 	TargetPrimaryKey string `json:"targetPrimaryKey,omitempty"`
+	// EditVersion is the object_history version count observed at prepare
+	// time (US-471 cross-ObjectType optimistic locking). Populated by the
+	// action executor for MODIFY / DELETE edits when an ApplyOptions
+	// ExpectedVersion(s) check ran; zero on CREATE / LINK_* edits and on
+	// pre-US-471 wire shapes. omitempty so legacy consumers and replay
+	// streams keep decoding cleanly.
+	EditVersion int64 `json:"editVersion,omitempty"`
 }
 
 // EditBatch represents a batch of edits to be applied atomically.

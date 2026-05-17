@@ -16,9 +16,14 @@ import (
 // Steps is a full ApplyRequest (with its own actionType + parameters).
 // IdempotencyKey is optional; when set, repeating a request with the
 // same key returns the prior SagaResult verbatim with replayed=true.
+// CompensationStrategy is the US-469 knob: "best-effort" (default —
+// broken compensator does not block remaining compensators) or
+// "stop-on-first" (halt the reverse walk on the first compensator
+// failure). Empty string defaults to best-effort.
 type ApplySagaRequest struct {
-	IdempotencyKey string         `json:"idempotencyKey,omitempty"`
-	Steps          []ApplyRequest `json:"steps"`
+	IdempotencyKey       string         `json:"idempotencyKey,omitempty"`
+	CompensationStrategy string         `json:"compensationStrategy,omitempty"`
+	Steps                []ApplyRequest `json:"steps"`
 }
 
 // ApplySaga handles POST
@@ -48,7 +53,21 @@ func (h *Handler) ApplySaga(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	opts := SagaOptions{IdempotencyKey: body.IdempotencyKey}
+	strategy, err := NormalizeCompensationStrategy(body.CompensationStrategy)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidCompensationStrategy",
+			map[string]string{
+				"field": "compensationStrategy",
+				"value": body.CompensationStrategy,
+				"error": err.Error(),
+			}))
+		return
+	}
+
+	opts := SagaOptions{
+		IdempotencyKey:       body.IdempotencyKey,
+		CompensationStrategy: strategy,
+	}
 	if u := auth.UserFromContext(r.Context()); u != nil {
 		opts.RequestedBy = u.ID
 	}

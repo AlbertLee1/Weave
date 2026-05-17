@@ -105,6 +105,12 @@ type ServerDeps struct {
 	PolicyEngine    *security.Engine
 	FunnelPublisher oss.IngestPublisher // US-061: may be *funnel.Publisher or stub
 	FunnelConsumer  *funnel.Consumer
+	// US-470: read + replay surface over the OBJECT_EDITS_DLQ JetStream
+	// stream. FunnelDLQReader nil in degraded mode leaves
+	// /api/admin/funnel/dlq endpoints returning 503; FunnelDLQPublish nil
+	// disables the replay route specifically (list + discard still work).
+	FunnelDLQReader  funnel.DLQReader
+	FunnelDLQPublish funnel.DLQPublishFunc
 	// FunnelBroadcast is the in-process fan-out hub the SSE subscribe
 	// endpoint (US-055) reads from. The consumer can opt in to publishing
 	// events onto the hub via its OnChange hook; tests (and degraded-mode
@@ -222,6 +228,14 @@ type ServerDeps struct {
 	SqlQueryEngine        sqlqueries.Engine
 	IndexDocSource        index.LatestDocumentSource // Authoritative source for index.Rebuild (nil in degraded mode)
 	AuditStore            audit.Store                // US-067: audit event store (nil = endpoint returns 503)
+	// US-491: JWT access-token revocation blacklist. RevocationStore backs
+	// the admin POST /api/auth/tokens/{jti}/revoke handler; RevocationChecker
+	// is the TTL-cached read surface consulted by the JWT middleware on
+	// every authenticated request. Both nil in degraded mode (no PG pool)
+	// — the admin route then returns 503 and the middleware degrades to its
+	// pre-US-491 no-revocation behaviour.
+	RevocationStore   auth.RevocationStore
+	RevocationChecker *auth.CachedRevocationChecker
 	IngestRateLimiter     oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
 	WebSocketHub          *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	// US-141: Developer Console application registry. When nil the
@@ -764,12 +778,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// auth. Any optional dependency can be nil (dev / minimal test
 		// harness): the middleware degrades gracefully. A nil
 		// oauthValidator falls through to MiddlewareWithAPIKeys.
-		api.Use(auth.MiddlewareFull(
+		api.Use(auth.MiddlewareFullWithRevocation(
 			deps.JWTSigner,
 			deps.APIKeyRepo,
 			deps.UserRepo,
 			deps.RoleResolver,
 			oauthValidator,
+			deps.RevocationChecker,
 		))
 
 		// US-044: enforce per-ontology scope on every route that carries an
@@ -886,6 +901,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.CommitJobRunner != nil {
 				omsHandler.SetCommitJobRunner(deps.CommitJobRunner)
 			}
+			// DOG-003: synchronously bootstrap a Bleve index shell whenever
+			// admin / import creates an ObjectType so an immediate stream
+			// ingest does not silently drop rows on a missing index. The
+			// adapter is a no-op when IndexMgr is nil (degraded mode).
+			if deps.IndexMgr != nil {
+				omsHandler.SetIndexBootstrapper(newIndexBootstrapAdapter(deps.IndexMgr))
+			}
 			RegisterRoutes(api, omsHandler)
 		}
 
@@ -995,6 +1017,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// US-063: per-ontology token-bucket rate limiter for stream ingest.
 			if deps.IngestRateLimiter != nil {
 				ingestHandler.SetRateLimiter(deps.IngestRateLimiter)
+			}
+			// DOG-003: fail-fast guard — reject ingest batches whose target
+			// ObjectType has no open Bleve index instead of returning a 200
+			// success that the funnel consumer would then silently drop.
+			if deps.IndexMgr != nil {
+				ingestHandler.SetIndexReadinessChecker(newIndexReadinessAdapter(deps.IndexMgr))
 			}
 			api.With(auth.RequirePermission(auth.PermStreamIngest)).
 				Method(http.MethodPost,
@@ -1215,11 +1243,71 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 				DocSource: deps.IndexDocSource,
 			}))
 
+		// US-461: REST-shaped reindex sibling — same rebuild machinery but
+		// objectType travels in the URL path and ontology in the query
+		// string, so CLI / SDK callers can pick whichever style they prefer.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/index/reindex/{objectType}", NewAdminIndexReindexHandler(AdminIndexRebuildDeps{
+				IndexMgr:  deps.IndexMgr,
+				Repo:      deps.OmsRepo,
+				DocSource: deps.IndexDocSource,
+			}))
+
+		// US-470: Funnel DLQ inspection + replay. List returns pending
+		// envelopes from OBJECT_EDITS_DLQ; replay republishes the captured
+		// payload to its original `edits.<objectType>` subject; discard
+		// drops without replay. Routes mount unconditionally so the
+		// OpenAPI surface stays consistent — degraded-mode bootstraps
+		// without NATS leave FunnelDLQReader nil and each handler
+		// short-circuits to 503 FunnelDLQNotConfigured.
+		funnelDLQDeps := AdminFunnelDLQDeps{
+			Reader:  deps.FunnelDLQReader,
+			Publish: deps.FunnelDLQPublish,
+		}
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/admin/funnel/dlq", NewAdminFunnelDLQListHandler(funnelDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/replay", NewAdminFunnelDLQReplayHandler(funnelDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/discard", NewAdminFunnelDLQDiscardHandler(funnelDLQDeps))
+
+		// US-490: zero-downtime JWT signing key rotation. The handler
+		// generates a fresh RSA-2048 keypair and appends it to the
+		// signer's in-memory keyring; previously issued tokens keep
+		// verifying because every kid in the ring participates in
+		// Verify(). Gated behind PermUserManage so only operators with
+		// admin scope can rotate. 503 when the process is running
+		// without a configured signer (degraded boot).
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/auth/keys/rotate", NewAdminAuthKeysRotateHandler(AdminAuthKeysRotateDeps{
+				Signer: deps.JWTSigner,
+			}))
+
+		// US-491: JWT access-token revocation. The admin caller hands the
+		// jti claim of a still-live access token to this endpoint; the
+		// row is inserted into auth_revoked_tokens and the in-process TTL
+		// cache is flushed for that jti so the next middleware lookup
+		// observes the revoke immediately. Gated behind PermUserManage to
+		// match the keyring rotation handler above. Returns 503 when the
+		// process boots without a PG-backed RevocationStore.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/auth/tokens/{jti}/revoke", NewAdminAuthRevokeHandler(AdminAuthRevokeDeps{
+				Store:   deps.RevocationStore,
+				Checker: deps.RevocationChecker,
+			}))
+
 		// Admin: audit events (US-067). Gated to admin-level roles via
 		// PermUserManage. The handler gracefully returns 503 when
 		// AuditStore is nil (no PG pool / degraded mode).
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodGet, "/api/v2/admin/auditEvents", NewAdminAuditEventsHandler(deps.AuditStore))
+		// US-493: PRD-literal alias `/api/admin/audit` for the same
+		// audit list endpoint. Shares the underlying handler so query
+		// params (actor / resourceRid / resource_type / since / until /
+		// pageSize / pageToken) and response shape stay byte-identical
+		// across the two paths.
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/admin/audit", NewAdminAuditEventsHandler(deps.AuditStore))
 
 		// Developer Console: OAuth application registration (US-141). Any
 		// authenticated user can register apps; the handler enforces per-row
@@ -1348,6 +1436,20 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.GDPRExporter != nil {
 				gdprHandler.SetExporter(deps.GDPRExporter)
 			}
+			// US-494: cascade-erase composes the default steps with the
+			// per-table cleaners so DELETE /users/{id}/erase?cascade=true
+			// nukes every user_id reference in comments / reactions /
+			// watches / user_preferences. Each cascade step's adapter is
+			// nil-safe so partially-wired deployments (e.g. memory-store
+			// dev mode) still produce a sensible job log.
+			cascadeSteps := append([]gdpr.Step(nil), steps...)
+			cascadeSteps = append(cascadeSteps,
+				gdpr.NewCommentsCascadeStep(deps.CommentsStore),
+				gdpr.NewReactionsCascadeStep(deps.ReactionsStore),
+				gdpr.NewWatchesCascadeStep(deps.WatchesStore),
+				gdpr.NewUserPrefsCascadeStep(deps.UserPreferencesStore),
+			)
+			gdprHandler.SetCascadeEraser(gdpr.NewEraser(deps.GDPRJobStore, cascadeSteps))
 			api.With(auth.RequirePermission(auth.PermUserManage)).
 				Group(func(admin chi.Router) {
 					gdprHandler.RegisterRoutes(admin)
@@ -1501,7 +1603,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// /api/v2/quiver/* routes unregistered and the SPA's Quiver
 		// workbench falls back to ephemeral in-memory state.
 		if deps.QuiverStore != nil {
-			quiver.NewHandler(deps.QuiverStore).RegisterRoutes(api)
+			quiverHandler := quiver.NewHandler(deps.QuiverStore)
+			// US-482: wire the underlying timeseries store so the
+			// /dashboards/{rid}/data endpoint can resolve per-series
+			// points. Degraded boot (no PG → TimeSeriesStore nil)
+			// leaves the field nil; /data then returns a structured
+			// 5xx QuiverTimeSeriesUnavailable.
+			if deps.TimeSeriesStore != nil {
+				quiverHandler.SetTimeSeriesReader(newQuiverTimeSeriesAdapter(deps.TimeSeriesStore))
+			}
+			quiverHandler.RegisterRoutes(api)
 		}
 
 		// US-334: Comments per-RID CRUD with soft-delete +
@@ -1803,6 +1914,23 @@ func main() {
 		if sched := startAuditRetention(ctx, cfg.AuditExport, pgAudit, nil); sched != nil {
 			defer sched.Stop()
 		}
+		// US-493: wrap deps.OmsRepo with the AuditedRepository decorator
+		// so every admin write through the OMS admin handlers
+		// (Ontology / ObjectType / Property / LinkType / ActionType /
+		// Interface / SecurityPolicy CREATE/UPDATE/DELETE) lands in
+		// audit_events with the caller's user_id as actor_id and a
+		// {"before":..., "after":...} diff in diff_json. The wrap goes
+		// AROUND the CachedRepository decorator already in place — so
+		// reads still hit the cache and writes still invalidate it,
+		// with audit recording bracketing the inner write. Degraded
+		// boot (no PG) never reaches this branch — deps.OmsRepo stays
+		// unaudited because there's no PG to persist events to anyway.
+		deps.OmsRepo = oms.NewAuditedRepository(deps.OmsRepo, deps.AuditStore, func(ctx context.Context) string {
+			if u := auth.UserFromContext(ctx); u != nil {
+				return u.ID
+			}
+			return ""
+		})
 		// US-011: the index rebuild admin command re-ingests from
 		// object_history. Keep the uncached *PGRepository reference so the
 		// rebuild path always observes the authoritative tail.
@@ -1856,6 +1984,19 @@ func main() {
 		deps.RefreshService = auth.NewRefreshService(
 			auth.NewPGRefreshStore(pool),
 			auth.RefreshServiceOptions{AbsoluteTTL: cfg.JWT.RefreshTokenTTL},
+		)
+		// US-491: JWT access-token revocation blacklist. The store backs the
+		// admin revoke endpoint; the checker fronts it with a 30s TTL cache so
+		// the JWT middleware avoids one round-trip per request for the same
+		// JTI. The background reaper prunes naturally-expired rows every
+		// 5min — once an access token has passed its `exp` claim the JWT
+		// verifier rejects it on its own, so keeping it on the blacklist is
+		// pure noise.
+		deps.RevocationStore = auth.NewPGRevocationStore(pool)
+		deps.RevocationChecker = auth.NewCachedRevocationChecker(deps.RevocationStore, 30*time.Second)
+		go auth.RunRevocationReaperLoop(ctx, deps.RevocationStore, 5*time.Minute,
+			func(n int64) { log.Printf("auth: pruned %d expired revoked-token rows", n) },
+			func(err error) { log.Printf("auth: revoked-token reaper error: %v", err) },
 		)
 		// US-254: PG-backed session inventory. Same uncached pattern — admin
 		// volume is low and the /api/auth/sessions endpoints need to see their
@@ -2161,6 +2302,21 @@ func main() {
 				if deps.PGPool != nil {
 					markingRepo = auth.NewPGMarkingRepository(deps.PGPool)
 				}
+				// US-492: HMAC-signed state. Prefer WEAVE_OIDC_STATE_SECRET;
+				// fall back to an ephemeral random secret so dev boots still
+				// work but loudly warn so operators set the env var in prod.
+				stateSecretBytes := []byte(cfg.OIDC.StateSecret)
+				if len(stateSecretBytes) < 16 {
+					ephemeral := make([]byte, 32)
+					if _, err := rand.Read(ephemeral); err == nil {
+						stateSecretBytes = ephemeral
+						log.Printf("[OIDC] WARNING: WEAVE_OIDC_STATE_SECRET unset or <16 bytes; ephemeral state HMAC secret generated — restarts invalidate in-flight redirects")
+					}
+				}
+				oidcStateSigner, err := auth.NewHMACStateSigner(stateSecretBytes, auth.DefaultStateTTL)
+				if err != nil {
+					log.Printf("[OIDC] WARNING: HMACStateSigner construction failed: %v — falling back to random state", err)
+				}
 				deps.OIDCHandler = auth.NewOIDCHandler(auth.OIDCHandlerDeps{
 					Config: auth.OIDCConfig{
 						IssuerURL:          cfg.OIDC.IssuerURL,
@@ -2177,6 +2333,7 @@ func main() {
 					Signer:         deps.JWTSigner,
 					RefreshService: deps.RefreshService,
 					MarkingRepo:    markingRepo,
+					StateSigner:    oidcStateSigner,
 				})
 				// US-255: back-channel logout reuses the same Verifier
 				// so IdP key rotations apply to both surfaces in lockstep.
@@ -2358,6 +2515,7 @@ func main() {
 	//                         but PG is wired
 	//   - "" / "auto"       → historical behaviour: PG when wired, memory
 	//                         otherwise.
+	var tsPGStore *timeseries.PGStore
 	switch strings.ToLower(strings.TrimSpace(cfg.TimeSeries.Backend)) {
 	case "victoriametrics":
 		deps.TimeSeriesStore = timeseries.NewVMStore(cfg.TimeSeries.URL)
@@ -2369,14 +2527,32 @@ func main() {
 		if deps.PGPool == nil {
 			log.Fatalf("WEAVE_TS_BACKEND=postgres but no PG pool wired")
 		}
-		deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+		tsPGStore = timeseries.NewPGStore(deps.PGPool)
+		deps.TimeSeriesStore = tsPGStore
 		log.Printf("[TIMESERIES] backend=postgres (forced)")
 	default:
 		if deps.PGPool != nil {
-			deps.TimeSeriesStore = timeseries.NewPGStore(deps.PGPool)
+			tsPGStore = timeseries.NewPGStore(deps.PGPool)
+			deps.TimeSeriesStore = tsPGStore
 		} else {
 			deps.TimeSeriesStore = timeseries.NewMemoryStore()
 		}
+	}
+
+	// US-467: when the TimeSeries backend is PG-backed, probe the
+	// timeseries_cagg_5min continuous aggregate once and spawn the
+	// 5-minute refresh ticker as an app-side fallback for environments
+	// without pg_cron. pg_cron, when present, schedules the same
+	// refresh server-side (migration 000209); refresh_continuous_aggregate
+	// is idempotent so the two paths cooperate harmlessly. Degraded
+	// mode (no TimescaleDB → DetectCAGG returns false) leaves
+	// RefreshCAGG as a no-op and the ticker harmless.
+	if tsPGStore != nil {
+		caggReady := tsPGStore.DetectCAGG(ctx)
+		log.Printf("[TIMESERIES] cagg=%t (timeseries_cagg_5min)", caggReady)
+		go timeseries.RunCAGGRefreshLoop(ctx, tsPGStore, 5*time.Minute,
+			func() { /* per-refresh log noise budget: silent on success */ },
+			func(err error) { log.Printf("[TIMESERIES] cagg refresh: %v", err) })
 	}
 
 	// 2d. Geotemporal store (OSV2-301). Backend selection mirrors TimeSeries:
@@ -2539,6 +2715,22 @@ func main() {
 
 	// 6. ObjectSet
 	deps.ObjSetStore = objectset.NewStore(1 * time.Hour)
+	// US-462: when a PG pool exists, run the saved-ObjectSet reaper on a
+	// 5-minute ticker so ephemeral rows (is_immutable=false) older than 1h
+	// are DELETEd while immutable snapshots stay forever. Degraded-mode
+	// (no PG) boots leave the goroutine unstarted — RunSavedSetReaperLoop
+	// is a no-op on a nil reaper.
+	if deps.PGPool != nil {
+		savedReaper := objectset.NewPGSavedStore(deps.PGPool)
+		go objectset.RunSavedSetReaperLoop(ctx, savedReaper, 5*time.Minute, time.Hour,
+			func(n int64) {
+				if n > 0 {
+					log.Printf("[SAVED-OBJECTSET-REAP] dropped %d expired ephemeral rows", n)
+				}
+			},
+			func(err error) { log.Printf("[SAVED-OBJECTSET-REAP] %v", err) },
+		)
+	}
 	if deps.LinkResolver != nil {
 		deps.ObjSetExecutor = objectset.NewExecutor(deps.IndexMgr, deps.LinkResolver, deps.ObjSetStore)
 		// US-041: wire the PG-backed InterfaceResolver so interfaceBase
@@ -2622,7 +2814,19 @@ func main() {
 			cfg.IngestRateLimit.Burst,
 		)
 		deps.FunnelConsumer = funnel.NewConsumer(js, deps.IndexMgr)
-		deps.FunnelConsumer.SetDLQPublish(funnel.NewDLQPublishFunc(js))
+		dlqPub := funnel.NewDLQPublishFunc(js)
+		deps.FunnelConsumer.SetDLQPublish(dlqPub)
+
+		// US-470: wire the read + replay surface so the admin endpoints
+		// (/api/admin/funnel/dlq[...]) can introspect dead-lettered batches.
+		// A background poll loop refreshes weave_funnel_dlq_size every 30s
+		// so dashboards stay accurate without waiting for an admin
+		// list-call to push a fresh observation.
+		deps.FunnelDLQReader = funnel.NewJetStreamDLQReader(js)
+		deps.FunnelDLQPublish = dlqPub
+		go metrics.RunFunnelDLQSizePollLoop(ctx, deps.FunnelDLQReader, 30*time.Second, func(err error) {
+			log.Printf("[funnel-dlq] size poll error: %v", err)
+		})
 
 		// US-055: stand up the in-process SSE broadcast hub and have the
 		// consumer fan every applied edit onto it so HTTP subscribers can
@@ -2727,6 +2931,50 @@ func main() {
 		// it unset and the consumer silently no-ops.
 		if deps.OmsRepo != nil {
 			deps.FunnelConsumer.SetLinkPropagationResolver(newLinkPropagationResolver(deps.OmsRepo))
+		}
+
+		// US-474: multi-hop BFS marking propagation. Builds a per-source-
+		// ObjectType view of every propagating LinkType (cached in-memory,
+		// refreshed every 5 min so PropagateMarkings flag flips take effect
+		// without a restart) and walks downstream PKs via LinkEdgeStore
+		// during the BFS. Wired only when both OMS repo and a LinkEdgeStore
+		// that implements ListEdgeTargets are available — degraded boots
+		// fall back to the US-261 one-hop propagation, which is the safe
+		// default. Capability discovery via type assertion matches the
+		// "narrow capability interface + atomic state" pattern noted in
+		// progress.txt Codebase Patterns.
+		if deps.OmsRepo != nil && deps.LinkEdgeStore != nil {
+			if edgeTargets, ok := deps.LinkEdgeStore.(linkEdgeTargetLister); ok {
+				traverser := newLinkPropagationTraverser(deps.OmsRepo, edgeTargets)
+				if err := traverser.Refresh(ctx); err != nil {
+					log.Printf("[link-propagation] initial refresh: %v", err)
+				}
+				deps.FunnelConsumer.SetLinkPropagationTraverser(traverser)
+				go runLinkPropagationTraverserRefreshLoop(ctx, traverser, 5*time.Minute, func(err error) {
+					log.Printf("[link-propagation] refresh: %v", err)
+				})
+			}
+		}
+
+		// US-472: edit-only conflict exemption in the production consumer.
+		// US-027 wired the SetEditOnlyField hook + preserveEditOnlyFields
+		// filter in pkg/funnel; this block closes the prod-wiring gap by
+		// building an in-memory (objectType, field) -> IsEditOnly cache from
+		// the live OMS schema and keeping it fresh on a 5-minute tick so
+		// admin schema changes propagate without a server restart. Without
+		// this wiring, ingest could silently overwrite user-managed editOnly
+		// fields in production even though the unit/integration tests in
+		// pkg/funnel and test/integration/edit_only_test.go have been green
+		// since US-027.
+		if deps.OmsRepo != nil {
+			editOnlyRes := newEditOnlyResolver(deps.OmsRepo)
+			if err := editOnlyRes.Refresh(ctx); err != nil {
+				log.Printf("[edit-only] initial refresh: %v", err)
+			}
+			deps.FunnelConsumer.SetEditOnlyField(editOnlyRes.IsEditOnly)
+			go runEditOnlyRefreshLoop(ctx, editOnlyRes, 5*time.Minute, func(err error) {
+				log.Printf("[edit-only] refresh: %v", err)
+			})
 		}
 
 		// US-379: per-batch dataset_transactions recording. Wired only when

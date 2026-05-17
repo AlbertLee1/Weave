@@ -1,6 +1,7 @@
 package sqlqueries
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -86,6 +87,11 @@ func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
 	if err := h.engine.Execute(r.Context(), body.Query); err != nil {
 		reason := "ExecutionError"
 		switch {
+		case errors.Is(err, ErrQueryTimeout),
+			errors.Is(err, context.DeadlineExceeded):
+			reason = "QueryTimeout"
+		case errors.Is(err, ErrMaxRowsExceeded):
+			reason = "MaxRowsExceeded"
 		case errors.Is(err, ErrNotSelect),
 			errors.Is(err, ErrForbiddenStatement),
 			errors.Is(err, ErrEmptyQuery):

@@ -6,6 +6,7 @@ import type {
   Property,
   LinkType,
   ActionType,
+  ActionLog,
   OntologyInterface,
   InterfaceSharedProperty,
   InterfaceOutgoingLinkType,
@@ -20,6 +21,46 @@ import type {
   OntologyBranch,
   DatasourceBinding,
 } from './types';
+
+// US-499: wire shape for GET /api/v2/ontologies/{o}/objectTypes/{ot}/resolved.
+// Mirrors pkg/oms.OMSHandler.GetObjectTypeResolved: parent properties +
+// outgoing links are merged in with `inheritedFrom` provenance.
+export interface ResolvedProperty {
+  dataType: unknown;
+  rid: string;
+  displayName?: string;
+  description?: string;
+  inheritedFrom?: string;
+}
+
+export interface ResolvedOutgoingLink {
+  apiName: string;
+  displayName: string;
+  rid: string;
+  objectTypeApiName: string;
+  linkedObjectTypeApiName: string;
+  cardinality: string;
+  required: boolean;
+  description?: string;
+  inheritedFrom?: string;
+}
+
+export interface ResolvedObjectType {
+  apiName: string;
+  displayName: string;
+  status: string;
+  primaryKey: string;
+  primaryKeys?: string[];
+  rid: string;
+  visibility: string;
+  pluralDisplayName?: string;
+  description?: string;
+  titleProperty?: string;
+  extendsRid?: string;
+  extendsChain?: string[];
+  properties: Record<string, ResolvedProperty>;
+  outgoingLinkTypes: ResolvedOutgoingLink[];
+}
 
 // --- Ontology endpoints ---
 
@@ -103,6 +144,34 @@ export async function listOutgoingLinkTypes(
     `/api/v2/ontologies/${ontologyApiName}/objectTypes/${objectTypeApiName}/outgoingLinkTypes`,
   );
   return resp.data;
+}
+
+// US-499: GET the inheritance-resolved view of an ObjectType — parent
+// properties + outgoing links merged in with `inheritedFrom` provenance.
+export function getResolvedObjectType(
+  ontologyApiName: string,
+  objectTypeApiName: string,
+): Promise<ResolvedObjectType> {
+  return request<ResolvedObjectType>(
+    'GET',
+    `/api/v2/ontologies/${ontologyApiName}/objectTypes/${objectTypeApiName}/resolved`,
+  );
+}
+
+// US-499: POST the ObjectType edit history (action_logs scoped to this OT).
+// Backend (pkg/oms.PostObjectTypeEditsHistoryV2) returns logs in
+// repository-default order — the UI is responsible for the time-descending
+// presentation contract the PRD requires.
+export async function postObjectTypeEditsHistory(
+  ontologyApiName: string,
+  objectTypeApiName: string,
+): Promise<ActionLog[]> {
+  const resp = await request<{ data: ActionLog[] }>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/objectTypes/${objectTypeApiName}/editsHistory`,
+    {},
+  );
+  return resp.data ?? [];
 }
 
 // --- LinkType admin endpoints (US-148) ---

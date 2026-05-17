@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
@@ -83,6 +85,78 @@ func NewAdminIndexRebuildHandler(deps AdminIndexRebuildDeps) http.Handler {
 				apierror.WriteJSON(w, apierror.NewNotFound("IndexRebuildTargetNotFound", map[string]string{
 					"ontology":   req.Ontology,
 					"objectType": req.ObjectType,
+				}))
+				return
+			}
+			apierror.WriteJSON(w, apierror.NewInternal("IndexRebuildFailed", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(AdminIndexRebuildResponse{
+			ScopedKey:    res.ScopedKey,
+			IndexedCount: res.IndexedCount,
+		})
+	})
+}
+
+// NewAdminIndexReindexHandler is the US-461 path-style reindex endpoint.
+// It is a thin wrapper around the same rebuild machinery used by
+// /api/admin/indexes/rebuild, but accepts {objectType} from the URL and
+// reads the ontology API name from the `ontology` query string. The two
+// endpoints coexist so REST-shaped CLI / SDK callers can choose either
+// style without server-side divergence.
+//
+// Response shape and status semantics mirror NewAdminIndexRebuildHandler:
+//   - 200 + AdminIndexRebuildResponse on success
+//   - 400 when ontology is missing
+//   - 404 when ontology or objectType is unknown
+//   - 500 when the doc source fails
+//   - 503 when no Bleve backend is configured
+//
+// Must be mounted on a chi router so {objectType} can be extracted via
+// chi.URLParam — the bare http.ServeMux does not bind path parameters.
+func NewAdminIndexReindexHandler(deps AdminIndexRebuildDeps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if deps.IndexMgr == nil || deps.Repo == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"errorCode": "SERVICE_UNAVAILABLE",
+				"errorName": "IndexRebuildNotConfigured",
+			})
+			return
+		}
+
+		objectType := strings.TrimSpace(chi.URLParam(r, "objectType"))
+		ontology := strings.TrimSpace(r.URL.Query().Get("ontology"))
+		if objectType == "" {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:objectType", map[string]string{
+				"parameter": "objectType",
+				"reason":    "objectType is required",
+			}))
+			return
+		}
+		if ontology == "" {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:ontology", map[string]string{
+				"parameter": "ontology",
+				"reason":    "ontology query parameter is required",
+			}))
+			return
+		}
+
+		res, err := index.Rebuild(r.Context(), deps.IndexMgr, deps.Repo, deps.DocSource, index.RebuildRequest{
+			OntologyAPIName:   ontology,
+			ObjectTypeAPIName: objectType,
+		})
+		if err != nil {
+			if errors.Is(err, oms.ErrNotFound) {
+				apierror.WriteJSON(w, apierror.NewNotFound("IndexRebuildTargetNotFound", map[string]string{
+					"ontology":   ontology,
+					"objectType": objectType,
 				}))
 				return
 			}

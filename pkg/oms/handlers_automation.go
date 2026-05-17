@@ -1,16 +1,42 @@
 package oms
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
 )
+
+// runAutomationDAGCheck runs the US-477 cycle detector for the candidate
+// automation rule and writes a 422 WEAVE_AUTOMATION_RULE_CYCLE response on
+// cycle. Returns true if the request handler should stop (cycle detected or
+// internal lookup failure surfaced as 500).
+func (h *OMSHandler) runAutomationDAGCheck(ctx context.Context, w http.ResponseWriter, ontologyRID string, candidate *AutomationRule) bool {
+	cycle, err := ValidateAutomationDAG(ctx, h.repo, ontologyRID, candidate)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("AutomationDAGCheckFailed", nil))
+		return true
+	}
+	if cycle == nil {
+		return false
+	}
+	params := map[string]string{
+		"cycle":  strings.Join(cycle, " → "),
+		"ruleId": candidate.ID,
+	}
+	if candidate.Name != "" {
+		params["name"] = candidate.Name
+	}
+	apierror.WriteJSON(w, apierror.NewAutomationRuleCycle("AutomationRuleCycle", params))
+	return true
+}
 
 // CreateAutomationRuleRequest is the request body for creating an automation rule.
 type CreateAutomationRuleRequest struct {
@@ -96,6 +122,10 @@ func (h *OMSHandler) CreateAutomationRule(w http.ResponseWriter, r *http.Request
 		Effects:       req.Effects,
 		RetryPolicy:   req.RetryPolicy,
 		CreatedBy:     req.CreatedBy,
+	}
+
+	if stop := h.runAutomationDAGCheck(r.Context(), w, ontologyRID, rule); stop {
+		return
 	}
 
 	if err := h.repo.CreateAutomationRule(r.Context(), rule); err != nil {
@@ -197,6 +227,10 @@ func (h *OMSHandler) UpdateAutomationRule(w http.ResponseWriter, r *http.Request
 	}
 	if req.RetryPolicy != nil {
 		existing.RetryPolicy = req.RetryPolicy
+	}
+
+	if stop := h.runAutomationDAGCheck(r.Context(), w, existing.OntologyRID, existing); stop {
+		return
 	}
 
 	if err := h.repo.UpdateAutomationRule(r.Context(), existing); err != nil {

@@ -1,95 +1,101 @@
 {
-  "project": "Weave-Palantir-OSv2-Next",
-  "branchName": "main",
-  "description": "Weave 单机复刻 Palantir OSv2 — OSv2-301/302/303 之后的下一轮迭代。上一轮把 GeoTemporal 落到 PG、MCP prompts/list 接到 ActionType、weave-mcp stdio↔HTTP bridge 收掉之后，仍然有四处可被本地 AI 客户端 / CLI 用户直接观察到的真实代码 gap：(1) cmd/weave-cli 只有 ontology/object/auth/admin/fn/pkg 等子命令，没法 apply action、跑 aggregation、load/createTemporary objectSet —— 一个 CLI 用户没法用最常见的 OSv2 三件套；(2) cmd/weave-mcp/http_bridge.go 不转发 Authorization 头，OSV2-303 progress 显式留下 follow-up，在 AUTH_MODE=token 的真实部署下 Claude Desktop / Cursor 完全连不上；(3) pkg/funnel 整个目录 0 处 OTel/tracing 引用，HTTP request 上的 trace 上下文走到 publisher 立刻断掉，consumer 这边也起不了带 parent 的 span，违背 PRD-V2 §4.6 Gap-O2；(4) pkg/mcp/resources.go 的 resources/list 只列 Ontology 和临时 ObjectSet，未列 ObjectType，AI 客户端拿不到单类型 schema 资源，违背 PRD-V2 §4.7 Gap-D4。所有 story 均基于当前代码事实 + git log + PRD-V2 已锁定方向，不重复已完成的 OSV2-301/302/303。",
-  "tddConvention": "Red → Green → Refactor。每个 story 先写命名 TestX_Given_State_When_Action_Then_Outcome 的失败测试（go test 表驱动 / Vitest），跑一次明确确认 fail；再写最小实现让测试转绿；再视情重构。CLI story 用 httptest.Server 作为后端，避免依赖 cmd/server 启动。weave-mcp bridge auth story 在测试内验证 Authorization 头透传。Funnel tracing 用 SpanRecorder/InMemoryExporter 断言 span 父子关系。每个 story 提交前必须分别跑通相关 go test + make web-build + go vet ./...，最终全部 story 完成时再跑一遍 make test / make web-test / go vet ./... 作为整轮质量门禁。",
+  "project": "Weave AI News Ontology Dogfood Repair",
+  "branchName": "ralph/ainews-dogfood-20260517",
+  "description": "Focused Ralph repair loop from Hermes dogfood of an AI News ontology E2E scenario. Fix issues found while creating ainews ontology, ingesting one week of AI news, and browsing/searching it in the WebUI. Follow TDD/BDD, add regression tests, run quality gates, commit one story per iteration.",
   "userStories": [
     {
-      "id": "OSV2-304",
-      "name": "weave CLI 补齐 action apply / aggregate / objectset 三件套子命令",
-      "phase": 20,
+      "id": "DOG-003",
+      "name": "Ensure imported ontology object indexes exist before accepted stream ingest",
+      "phase": "AI News Dogfood Repair",
       "active": true,
-      "passes": true,
       "priority": 1,
+      "passes": true,
       "dependencies": [],
-      "description": "今天 cmd/weave-cli/main.go 只 dispatch ontology / object / auth / config / admin / fixtures / pitr / materialize / index / pkg / fn / backup / restore / repl。对应 PRD-V2 §6 US-079 的 'weave action apply / weave aggregate / weave objectset run' 三件套未实现。一个 CLI 用户因此没法在不写 curl 的情况下：跑一次 Action、跑一次 Aggregation、对临时 ObjectSet load / createTemporary。本 story 在 cmd/weave-cli 内新增三个子命令：(1) `weave action apply --ontology <name> --action <api-name> [--params @file.json | --param k=v...] [--returnEdits ALL_V2|NONE] [--async]` → POST /api/v2/ontologies/{ont}/actions/{action}/apply；(2) `weave aggregate --ontology <name> --type <ot-api-name> --body @file.json` → POST /api/v2/ontologies/{ont}/objects/{ot}/aggregate；(3) `weave objectset <load|create-temporary> --ontology <name> --body @file.json` → POST /api/v2/ontologies/{ont}/objectSets/{load|createTemporary}。输入支持文件 @filename 和 --param key=value 重复（仅 action apply）。输出默认 JSON pretty，--output table 提供窄表显示（aggregate 列：bucket / value）。所有命令复用 internal/cliclient（已有 auth token / base URL 处理）。",
+      "description": "Hermes dogfood imported ontology `ainews` and immediately streamed 103 AI_News CREATE edits. Ingest returned 200 with edit counts, but list/search/aggregate failed with `index not found for object type \"AI_News\"` or showed zero rows. Manual index rebuild created an empty index (`indexedCount: 0`), and only a second ingest made data visible. Fix root cause so import/create-object-type bootstraps the index before ingest is accepted, or ingest fails fast instead of claiming success. Preferred behavior: import/create path creates the object index automatically and immediate ingest becomes visible without rebuild/reingest.",
       "bdd_acceptance": [
-        "Given cmd/weave-cli/main.go 的 dispatch，When 用户输入 weave action apply / weave aggregate / weave objectset，Then 三个子命令都不再返回 'unknown command' 退出码 2，而是各自 dispatch 到 runAction / runAggregate / runObjectSet（用 go test 的 ExitCode 断言）。",
-        "Given httptest.Server 接管 POST /api/v2/ontologies/northwind/actions/create-order/apply 并返回 {validation:{result:'VALID'}, edits:{type:'edits', addedObjectCount:1, modifiedObjectCount:0, deletedObjectCount:0}}，When 用户跑 'weave action apply --ontology northwind --action create-order --param customer=ALFKI --param qty=3 --returnEdits ALL_V2'，Then httptest 实际收到的 request body parameters.customer='ALFKI' (string)、parameters.qty='3' (string)、options.returnEdits='ALL_V2_WITH_DELETIONS'，stdout 输出包含 'VALID' 字面量且 exit code = 0。",
-        "Given 同一 httptest.Server，When 用户跑 'weave action apply --ontology northwind --action create-order --params @/tmp/params.json'（文件内是 {customer:'ALFKI', qty:3}），Then 服务端收到 parameters.qty=3 (number)、parameters.customer='ALFKI' (string)；exit code = 0（验证文件 mode 保留 JSON 类型）。",
-        "Given httptest.Server 接管 POST /api/v2/ontologies/northwind/objects/Order/aggregate 并返回 {data:{country:[{key:'USA', value:42},{key:'DE', value:9}]}}，When 'weave aggregate --ontology northwind --type Order --body @/tmp/agg.json --output table'，Then stdout 是包含 'USA' 'DE' '42' '9' 字面量的文本（tab 对齐），exit code = 0。",
-        "Given httptest.Server 接管 POST /api/v2/ontologies/northwind/objectSets/createTemporary 并返回 {objectSetRid:'ri.oss.main.objectset.tmp-123'}，When 'weave objectset create-temporary --ontology northwind --body @/tmp/def.json'，Then stdout JSON 解析后 .objectSetRid 字面匹配，exit code = 0。",
-        "Given 用户漏掉必选 flag（如缺 --action），When dispatch 进 action apply，Then stderr 含 'usage' 和 'required' 字面量，exit code = 2，不发任何 HTTP 请求（用 httptest.Server 的请求计数断言）。",
-        "Given 后端返回 HTTP 4xx + ApplicationException JSON，When CLI 收到，Then stderr 输出 errorCode + 文本（不只 'unknown error'），exit code 非 0（约定 = 1）。",
-        "三个子命令在 cmd/weave-cli/main.go 的 printRootUsage 出现，与现有 'ontology' / 'object' 同一缩进风格。",
-        "go test ./cmd/weave-cli/... 全绿（新增 cmd_action_test.go / cmd_aggregate_test.go / cmd_objectset_test.go，每个 ≥ 3 BDD 案例）。",
-        "go vet ./... passes。"
+        "Given a new ontology is imported with object type AI_News, When CREATE edits are immediately posted to /api/v2/ontologies/ainews/streams/AI_News/ingest, Then the accepted records become visible via GET /objects/AI_News without manual index rebuild.",
+        "Given import/create object type succeeds, When POST /api/v2/ontologies/ainews/objects/AI_News/search is called after ingest, Then it does not return IndexNotFound/SearchObjectsFailed for the new object type.",
+        "Given the index cannot be created, When stream ingest is requested, Then the API must fail fast with a non-2xx error and must not return an editCount success that later disappears.",
+        "Given an existing ontology is replaced or re-imported, When indexes are rebuilt/bootstraped, Then stale index state does not leak old rows and new ingests converge idempotently."
       ],
-      "notes": "所有新文件放在 cmd/weave-cli/ 内：cmd_action.go + cmd_action_test.go、cmd_aggregate.go + cmd_aggregate_test.go、cmd_objectset.go + cmd_objectset_test.go；main.go 的 switch 加 3 个 case；printRootUsage 加 3 行。内部 HTTP client 复用 internal/cliclient（已用于 object 子命令）。@filename 读法在 cmd_action.go 内放一个小 helper 单独测。"
+      "dogfood_evidence": [
+        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-003",
+        "First ingest returned 200 for 50+50+3 edits; list/search then returned `index not found for object type \"AI_News\"`.",
+        "POST /api/admin/indexes/rebuild returned scopedKey ainews__AI_News indexedCount 0; re-ingest after rebuild produced browser totalCount 103."
+      ],
+      "quality_gates": [
+        "targeted backend regression test for import/create-object-type + immediate ingest/list/search red->green",
+        "targeted index bootstrap tests for replace/re-import if applicable",
+        "go test ./pkg/... or narrower package tests covering the changed code",
+        "go vet ./...",
+        "make test",
+        "make web-build",
+        "make web-test",
+        "Hermes/browser verification of /browser/ainews/AI_News totalCount 103 after a fresh import+single ingest"
+      ]
     },
     {
-      "id": "OSV2-305",
-      "name": "weave-mcp HTTP bridge 透传 Authorization（token 模式下也能用）",
-      "phase": 20,
+      "id": "DOG-004",
+      "name": "Fix BrowserPage full-text search contract for containsAnyTerm",
+      "phase": "AI News Dogfood Repair",
       "active": true,
-      "passes": true,
       "priority": 2,
-      "dependencies": [],
-      "description": "cmd/weave-mcp/http_bridge.go 当前只 Set Content-Type 和 Accept。当 cmd/server 跑在 AUTH_MODE=token 时，bridge 每个 POST /mcp 都会被 chi middleware 401 拒掉，Claude Desktop / Cursor 因此完全连不上。OSV2-303 progress.txt 第 102 行也明确把这条留为 follow-up：'wiring an env-passthrough is a single small addition if anyone hits it'。本 story 就是落地这一步：bridge 启动时读 WEAVE_MCP_TOKEN（或 WEAVE_MCP_BEARER）环境变量，非空时为每个上游请求加 Authorization: Bearer <token>。同时支持 WEAVE_MCP_API_KEY → X-Weave-API-Key 头（API Key 模式）；优先级 token > api-key，两者都没设则跟今天一致不加任何 auth 头（向后兼容）。",
-      "bdd_acceptance": [
-        "Given 一个 httptest.Server 在 handler 内检查 Authorization 头，仅当值精确等于 'Bearer test-token-abc' 时回 200，否则回 401，When weave-mcp 在 WEAVE_MCP_URL=该 server URL + WEAVE_MCP_TOKEN=test-token-abc 下跑 RunHTTPBridge 并 stdin 发 initialize，Then stdout 拿到 200 路径的合法 JSON-RPC result（不是 -32000 error）。",
-        "Given 同一 httptest.Server 但不设 WEAVE_MCP_TOKEN，When stdin 发 initialize，Then httptest 这一侧不收到 Authorization 头（断言 r.Header.Get('Authorization') == ''），客户端这一侧拿到 401 路径的 JSON-RPC error，error.code = -32000，message 含 'upstream' 或 'status'。",
-        "Given httptest.Server 检查 X-Weave-API-Key 头仅当 'wvk_unit_test' 时回 200，When 只设 WEAVE_MCP_API_KEY=wvk_unit_test（不设 WEAVE_MCP_TOKEN），Then bridge 在请求里带 X-Weave-API-Key 头而非 Authorization，stdout 拿到合法响应。",
-        "Given 同时设置 WEAVE_MCP_TOKEN=tok 和 WEAVE_MCP_API_KEY=key，When 发请求，Then 请求里只有 Authorization: Bearer tok（token 优先），不带 X-Weave-API-Key 头（断言 r.Header.Get('X-Weave-API-Key') == ''）。",
-        "Given 通过 RunHTTPBridge 多次串行请求（initialize → tools/list → prompts/list），Then 每次都加同样的 Authorization 头（不只第一次）。",
-        "cmd/weave-mcp/main.go 的注释里更新 Claude Desktop 配置样例：env 段加 WEAVE_MCP_TOKEN / WEAVE_MCP_API_KEY 注释，说明二选一。",
-        "go test ./cmd/weave-mcp/... 全绿（新增 ≥ 4 个 BDD 案例覆盖以上五条）。",
-        "go vet ./... passes。"
+      "passes": true,
+      "dependencies": [
+        "DOG-003"
       ],
-      "notes": "实现核心：在 RunHTTPBridge 内或一个新 BridgeOptions struct 上挂 Authorization 字段，env 解析放在 main.go；http.NewRequest 之后 if opts.Authorization != \"\" { req.Header.Set(\"Authorization\", opts.Authorization) }。保持 RunHTTPBridge 现有签名向后兼容（最简单方案是改成 RunHTTPBridge(ctx, in, out, url, opts...)，没传 opt 时行为不变 — 既有 main_test.go 不需要改）。"
+      "description": "On /browser/ainews/AI_News, typing OpenAI into Search objects and pressing Enter renders `INVALID_ARGUMENT: SearchObjectsFailed`. BrowserPage builds where `{type:'containsAnyTerm', field:'title', value:['OpenAI']}`, but the Go backend expects a string value and reports `containsAnyTerm value must be a string`. Align frontend/backend contract so browser search works for normal multi-term text.",
+      "bdd_acceptance": [
+        "Given /browser/ainews/AI_News is loaded with 103 rows, When the user searches for OpenAI, Then matching rows are displayed and the UI does not show INVALID_ARGUMENT/SearchObjectsFailed.",
+        "Given BrowserPage submits a full-text search, Then the request body matches the backend where contract (no array/string mismatch).",
+        "Given a multi-word search such as `OpenAI Codex`, When submitted, Then backend semantics are correct and covered by tests (either one string accepted by backend or backend explicitly supports an array of terms).",
+        "Given the search API returns an error, Then the UI error should include the backend reason when available, not just `INVALID_ARGUMENT: SearchObjectsFailed`."
+      ],
+      "dogfood_evidence": [
+        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-004",
+        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_d35533c3ab0a4ca8abe04a7e129be2f4.png",
+        "Exact failing reason: `containsAnyTerm value must be a string: json: cannot unmarshal array into Go value of type string`."
+      ],
+      "quality_gates": [
+        "frontend BDD/unit regression test for BrowserPage search request shape red->green",
+        "backend where-clause test if backend is changed",
+        "make web-build",
+        "make web-test",
+        "make test",
+        "go vet ./...",
+        "Hermes/browser verification: search OpenAI on /browser/ainews/AI_News returns rows"
+      ]
     },
     {
-      "id": "OSV2-306",
-      "name": "Funnel publish/consume OTel 跨 NATS 链路追踪（HTTP→NATS→Bleve trace 连起来）",
-      "phase": 20,
+      "id": "DOG-005",
+      "name": "Render accurate Explorer property metadata flags",
+      "phase": "AI News Dogfood Repair",
       "active": true,
-      "passes": true,
       "priority": 3,
-      "dependencies": [],
-      "description": "pkg/funnel 整个目录里没有任何一处 import otel/trace 或调用 pkg/tracing。当 HTTP request 在 cmd/server 上被 chi middleware 包成一个 span 之后，请求执行进入 Action executor → pkg/funnel.Publish 时，trace context 全部被丢弃 —— consumer 这一侧另起 goroutine 也起不了带 parent 的 child span。整条 'HTTP → Action → Funnel → Bleve' 链路在 Jaeger / Tempo 上看就是两段断裂的 trace。这违背 PRD-V2 §4.6 Gap-O2。本 story 在 funnel.Publisher.Publish 路径上：(1) 从 ctx 取当前 span，调用 otel TextMapPropagator 把 trace context 序列化成 NATS message header（NATS JetStream 支持 Headers）；(2) consumer 接收 message 时反序列化 header → 注入 ctx，再用 pkg/tracing.StartSpan 起 'funnel.consume' 子 span；(3) 在 publish / consume 两端各起一个 span 包住编码 + 写入 NATS / 反序列化 + 应用 Edit 的工作，让端到端 trace 可见。所有原 API 签名保持不变 — 仅内部加 span。",
-      "bdd_acceptance": [
-        "Given InMemoryExporter（go.opentelemetry.io/otel/sdk/trace/tracetest）+ pkg/funnel 既有的 mock pub/sub，起一个 root span ctx_root，When 在 ctx_root 下调用 funnel.Publish(ctx_root, batch) 并等待 consumer 处理完，Then 导出的 span 集合至少包含：funnel.publish (parent=ctx_root.span)、funnel.consume (parent=funnel.publish via remote trace context)，且 publish.SpanContext.TraceID == consume.SpanContext.TraceID。",
-        "Given 同样 setup 但 ctx_root 不带任何 span（context.Background()），When publish + consume，Then 仍然各起一个 span（同一新 trace id），不 panic、不 leak。",
-        "Given publish 时 NATS Header 已经被填充，When 直接 NATS subscribe 拿到 message，Then message.Header 含 'traceparent' 这个 W3C TraceContext 标准键（用 propagation.TraceContext 的格式）。",
-        "Given consumer 反序列化失败（header 缺失或畸形），When 处理该 message，Then 仍然起一个新 root span 处理（不要因为 propagation 失败就 drop 消息），且不输出 panic 堆栈到 stderr。",
-        "Given 已有 pkg/funnel 的 unit / integration 测试，When 改造完成，Then 既有 publish / consume / marking propagation / retry 用例全部保持原样绿色（不改既有行为，只加 span）。",
-        "pkg/funnel 内只新增 1~2 个 .go（如 tracing.go + tracing_test.go）；publisher.go / consumer.go 各只加 ≤ 30 行（StartSpan + propagator inject/extract）。",
-        "go test ./pkg/funnel/... 全绿；go test -tags integration ./pkg/funnel/... 保持原状（不要求新 integration 路径）。",
-        "go vet ./... passes。"
-      ],
-      "notes": "实现选型：用 go.opentelemetry.io/otel/propagation.TextMapPropagator（pkg/tracing 已经装了 W3C TraceContext 组合 propagator）。NATS Header 实现 TextMapCarrier 用 type natsHeaderCarrier nats.Header；Get/Set/Keys 三个方法直接代理。span name 用 'funnel.publish' / 'funnel.consume'，attributes 至少含 'funnel.subject' 和 'funnel.batch_size'。"
-    },
-    {
-      "id": "OSV2-307",
-      "name": "MCP resources/list 暴露 ObjectType（AI 客户端可直接读单类型 schema）",
-      "phase": 20,
-      "active": true,
       "passes": true,
-      "priority": 4,
-      "dependencies": [],
-      "description": "今天 pkg/mcp/resources.go handleResourcesList 只列两类 URI：weave://ontology/<rid>（全 ontology 元数据快照）和 weave://objectset/<id>（临时 ObjectSet 定义）。ObjectType 这个最自然的'单类型 schema 资源'根本不出现 —— AI agent 想看 northwind 下 Order 这个 ObjectType 的属性 / linkTypes / actionTypes，要先 fetch 整个 ontology 再 client-side filter，违背 PRD-V2 §4.7 Gap-D4。本 story：(1) resources/list 在每个 ontology 之外，再 append 该 ontology 下所有 ObjectType，URI 形如 'weave://objecttype/<ontologyApiName>/<objectTypeApiName>'，Name = ObjectType.DisplayName，Description = ObjectType.Description；(2) resources/read 接收 weave://objecttype/<ont>/<ot> URI，返回 {apiName, displayName, primaryKey, properties, ...} 的 JSON 文本（直接复用 OMS Repository 的 GetObjectTypeByAPIName 输出原样序列化）；(3) 对未知 ObjectType 返回与未知 Ontology 同形错误。",
-      "bdd_acceptance": [
-        "Given OMSRepository 有 ontology 'northwind' 下含 ObjectType Order 和 Customer（每个含 ≥ 2 个 property），When 调用 resources/list，Then 返回的 resources 数组至少包含三类 URI 前缀：weave://ontology/、weave://objecttype/northwind/Order、weave://objecttype/northwind/Customer，列表按 URI 排序保持稳定。",
-        "Given 同上，When 调用 resources/read with uri='weave://objecttype/northwind/Order'，Then 返回 ResourceContent.Text 是合法 JSON 且至少含 {apiName:'Order', properties:[...], primaryKey:...} 字段（具体 schema 用 OMS Repository 的 GetObjectTypeByAPIName 输出原样序列化即可）。",
-        "Given resources/read 收到 weave://objecttype/northwind/UnknownType，Then 返回 error.code = -32602（InvalidParams）且 error.message 含 'object type' 字面量；不 panic。",
-        "Given OMSRepository 为 nil（degraded 测试路径），When resources/list，Then 仍只返回临时 ObjectSet（如有）；不 panic、不 leak。",
-        "Given OMSRepository 列出 ontology 但 ListObjectTypes 在某个 ontology 上返回错误，When resources/list，Then 返回 -32603（InternalError），其它 ontology 也不被错误地丢失（要么整体失败要么整体成功，二选一选'整体失败'更安全，测试断言这一选择）。",
-        "Given 既有 pkg/mcp/resources_test.go 的 ontology / objectset 路径测试，When 改造完成，Then 全部保持绿色；新增 ≥ 3 个 BDD 测试覆盖以上 ObjectType 路径。",
-        "pkg/mcp/doc.go 第 21-23 行 resources/list 描述更新为 'list ontologies, ObjectTypes, and temporary ObjectSets as MCP resources'。",
-        "go test ./pkg/mcp/... 全绿。",
-        "go vet ./... passes。"
+      "dependencies": [
+        "DOG-004"
       ],
-      "notes": "实现核心：在 handleResourcesList 的 `if s.oms != nil` 分支里，对每个 ontology 调一次 ListObjectTypes，append 到 resources。URI 解析需要在 handleResourcesRead 内加一段 startsWith 'objecttype/' 的分支：split 出 ontology api name + object type api name → 调 GetOntology(ctx, ontApiName) → GetObjectTypeByAPIName(ctx, ontology.RID, otApiName)。GetObjectType 输出可直接 json.Marshal 进 ResourceContent.Text。"
+      "description": "/explorer/ainews/AI_News properties table shows Searchable and Sortable as false for every field. Direct detailed properties API reports true for many fields, including title/category/deliveredDate/source/summary. Fix Explorer object type detail so Nullable/Searchable/Sortable reflect authoritative detailed property metadata rather than lossy objectType.properties map defaults.",
+      "bdd_acceptance": [
+        "Given detailed property metadata marks title as searchable and sortable, When /explorer/ainews/AI_News renders, Then title shows Searchable ✓ and Sortable ✓.",
+        "Given detailed property metadata marks rank sortable but not searchable, When the properties table renders, Then rank shows Sortable ✓ and Searchable ✕.",
+        "Given detailed property metadata marks rawItem searchable but not sortable, When the properties table renders, Then rawItem shows Searchable ✓ and Sortable ✕.",
+        "Given the detailed properties request is loading or fails, Then the UI degrades explicitly (loading/error or unknown) rather than confidently showing all flags as false."
+      ],
+      "dogfood_evidence": [
+        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-005",
+        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_99ec29c831ed4e99be0f8c06f3ae3351.png",
+        "API `/objectTypes/byRid/<rid>/properties` reports isSearchable/isSortable true while UI renders all ✕."
+      ],
+      "quality_gates": [
+        "frontend BDD/unit regression test for ObjectType detail property flags red->green",
+        "make web-build",
+        "make web-test",
+        "make test",
+        "go vet ./...",
+        "Hermes/browser verification of /explorer/ainews/AI_News property flags"
+      ]
     }
   ]
 }

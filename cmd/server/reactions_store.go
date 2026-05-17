@@ -65,6 +65,17 @@ func (s *pgReactionsStore) Delete(ctx context.Context, userID, targetRID, emoji 
 	return nil
 }
 
+// DeleteAllForUser hard-deletes every row whose user_id column matches.
+// Backs the US-494 GDPR cascade-erase contract.
+func (s *pgReactionsStore) DeleteAllForUser(ctx context.Context, userID string) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM reactions WHERE user_id = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // AggregateForTarget returns one bucket per distinct emoji on the
 // target with the caller's "mine" flag set when (userID, target, emoji)
 // has a row. Single GROUP BY query backed by the (target_rid, emoji)

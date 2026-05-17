@@ -27,7 +27,8 @@ import (
 // who knows the RID can read the row. Owner-only routes use the same
 // `?rid=...` matcher under a shared chi route group.
 type Handler struct {
-	store Store
+	store    Store
+	tsReader TimeSeriesReader
 }
 
 // NewHandler constructs a Handler. nil store leaves every endpoint
@@ -44,6 +45,13 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/quiver/dashboards", h.List)
 	r.Get("/api/v2/quiver/dashboards/{rid}", h.Get)
 	r.Get("/api/v2/quiver/dashboards/{rid}/view", h.View)
+	// US-482: multi-series time-series fetch for a saved dashboard.
+	// Share-link semantics — same authentication contract as /view.
+	r.Get("/api/v2/quiver/dashboards/{rid}/data", h.Data)
+	// US-483: batch sparkline fetch — one round-trip carries every
+	// series in the saved dashboard's config so the SPA's initial
+	// load drops from N requests to 1. Same share-link semantics.
+	r.Post("/api/v2/quiver/dashboards/{rid}/sparklines", h.Sparklines)
 	r.Delete("/api/v2/quiver/dashboards/{rid}", h.Delete)
 }
 

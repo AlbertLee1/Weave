@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,22 +29,42 @@ type ReplayFunctionRequest struct {
 }
 
 // ReplayFunctionResponse is the wire shape returned by replay. When the
-// fresh hash matches the original the response is HTTP 200 + match=true. A
-// hash divergence still returns the fresh result on the body but flips
-// match=false and embeds a WEAVE_FUNCTION_NONDETERMINISTIC warning under
-// `warning` so SDK consumers can surface the audit notice without losing
-// the replay output. Replay rows are themselves persisted with
-// is_replay=true and replay_of pointing at the original execution id.
+// fresh hash matches the original the response is HTTP 200 + deterministic=
+// true. A hash divergence still returns the fresh result on the body but
+// flips deterministic=false and embeds a WEAVE_FUNCTION_NONDETERMINISTIC
+// warning under `warning` so SDK consumers can surface the audit notice
+// without losing the replay output. Replay rows are themselves persisted
+// with is_replay=true and replay_of pointing at the original execution id.
+//
+// US-475 PRD-canonical fields: `deterministic`, `originalOutput`,
+// `replayOutput` are the literal contract callers must rely on. The legacy
+// `match`, `result`, `original` keys are kept as omitempty/duplicated views
+// so pre-US-475 SDK consumers stay green during the transition.
 type ReplayFunctionResponse struct {
 	FunctionRID     string          `json:"functionRid"`
 	FunctionVersion string          `json:"functionVersion"`
 	ExecutionID     string          `json:"executionId,omitempty"`
 	OriginalHash    string          `json:"originalHash,omitempty"`
 	ReplayHash      string          `json:"replayHash"`
-	Match           bool            `json:"match"`
-	Result          interface{}     `json:"result"`
-	Warning         *replayWarning  `json:"warning,omitempty"`
-	Original        json.RawMessage `json:"original,omitempty"`
+	// Deterministic mirrors Match; both fields carry the same boolean so
+	// US-475 SDK consumers reading the PRD literal key and pre-US-475
+	// consumers reading `match` stay agreement.
+	Deterministic bool `json:"deterministic"`
+	Match         bool `json:"match"`
+	// OriginalOutput is the decoded JSON of the historical execution's
+	// recorded output. Populated only when the replay was anchored to an
+	// existing executionId (the only case where there IS a historical
+	// output to surface). For ad-hoc (version + input) replays it stays
+	// nil so callers don't mistake a fresh-only run for a determinism
+	// audit.
+	OriginalOutput interface{} `json:"originalOutput,omitempty"`
+	// ReplayOutput is the decoded JSON of the fresh replay leg. Mirrors
+	// `result` byte-for-byte; both keys are serialised so SDKs reading
+	// either name see the same value.
+	ReplayOutput interface{}     `json:"replayOutput"`
+	Result       interface{}     `json:"result"`
+	Warning      *replayWarning  `json:"warning,omitempty"`
+	Original     json.RawMessage `json:"original,omitempty"`
 }
 
 type replayWarning struct {
@@ -58,6 +79,35 @@ type replayWarning struct {
 // + WEAVE_FUNCTION_NONDETERMINISTIC and the replay row records the new
 // hash so future audits can spot recurring drift.
 func (h *OMSHandler) ReplayFunction(w http.ResponseWriter, r *http.Request) {
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	fnIdentifier := chi.URLParam(r, "functionRid")
+	h.replayFunctionCore(w, r, ontologyAPIName, fnIdentifier)
+}
+
+// ReplayFunctionByRID handles POST /api/v2/functions/{functionRid}/replay
+// (US-475). It is the PRD-literal top-level alias that lets SDK clients
+// holding only a Function RID hit /replay without first looking up the
+// ontology. The functionRid path parameter MUST be RID-shaped (`ri.*`); a
+// bare name or `name@version` would require ontology disambiguation that
+// the path no longer carries, so we 400 those refs explicitly.
+func (h *OMSHandler) ReplayFunctionByRID(w http.ResponseWriter, r *http.Request) {
+	fnIdentifier := chi.URLParam(r, "functionRid")
+	if !strings.HasPrefix(fnIdentifier, "ri.") {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidFunctionRef", map[string]string{
+			"parameter": "functionRid",
+			"reason":    "top-level /api/v2/functions/{rid}/replay requires a Function RID (ri.*); use the ontology-scoped path for bare-name refs",
+		}))
+		return
+	}
+	h.replayFunctionCore(w, r, "", fnIdentifier)
+}
+
+// replayFunctionCore is the shared body used by both ReplayFunction (the
+// ontology-scoped POST under /api/v2/ontologies/{ontology}/functions/{rid}/replay)
+// and ReplayFunctionByRID (the US-475 top-level alias). Splitting it out
+// lets the top-level path skip the ontology URL parameter without losing
+// any of the hash / version / determinism contract.
+func (h *OMSHandler) replayFunctionCore(w http.ResponseWriter, r *http.Request, ontologyAPIName, fnIdentifier string) {
 	if h.functionExecutor == nil {
 		w.Header().Set("X-Function-Executor", "not-configured")
 		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -73,9 +123,6 @@ func (h *OMSHandler) ReplayFunction(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
-	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
-	fnIdentifier := chi.URLParam(r, "functionRid")
 
 	var req ReplayFunctionRequest
 	if r.ContentLength != 0 {
@@ -190,8 +237,10 @@ func (h *OMSHandler) ReplayFunction(w http.ResponseWriter, r *http.Request) {
 		FunctionRID:     fn.RID,
 		FunctionVersion: fn.NormalisedVersion(),
 		ReplayHash:      replayHash,
+		Deterministic:   true,
 		Match:           true,
 		Result:          result,
+		ReplayOutput:    result,
 	}
 	if row != nil {
 		resp.ExecutionID = row.ExecutionID
@@ -199,7 +248,15 @@ func (h *OMSHandler) ReplayFunction(w http.ResponseWriter, r *http.Request) {
 
 	if original != nil {
 		resp.OriginalHash = original.OutputHash
+		// PRD-canonical key: surface the historical output decoded so the
+		// auditor can diff it against the fresh leg without a second round
+		// trip. We tolerate a malformed stored payload by leaving the field
+		// nil — the originalHash + Original raw bytes are still wire-visible.
+		if decoded, err := decodeStoredOutput(original.OutputJSON); err == nil {
+			resp.OriginalOutput = decoded
+		}
 		if original.OutputHash != "" && original.OutputHash != replayHash {
+			resp.Deterministic = false
 			resp.Match = false
 			resp.Warning = &replayWarning{
 				Code: "WEAVE_FUNCTION_NONDETERMINISTIC",
@@ -212,12 +269,29 @@ func (h *OMSHandler) ReplayFunction(w http.ResponseWriter, r *http.Request) {
 				resp.Original = originalRaw
 			}
 			w.WriteHeader(http.StatusConflict)
+			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// decodeStoredOutput decodes a persisted output JSON payload into a Go value
+// suitable for embedding back into the replay response. Empty / null payloads
+// collapse to (nil, nil). Malformed payloads return the encountered decode
+// error so the caller can decide whether to surface or swallow.
+func decodeStoredOutput(raw json.RawMessage) (interface{}, error) {
+	trimmed := trimASCIISpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, nil
+	}
+	var v interface{}
+	if err := json.Unmarshal(trimmed, &v); err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // resolveFunctionForReplay loads the row that backed the original execution.

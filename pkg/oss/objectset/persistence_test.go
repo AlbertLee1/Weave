@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -431,6 +432,84 @@ func TestPGSavedStore_ReapExpired_KeepsRecent(t *testing.T) {
 	}
 	if dropped != 0 {
 		t.Errorf("ReapExpired dropped %d rows, want 0 (row was just created)", dropped)
+	}
+}
+
+// TestPGSavedStore_RunReaperLoop_DropsEphemeralKeepsImmutable is the US-462
+// integration: 写入 → 等待 → 验证已/未回收. With a short tick interval the
+// loop must drop a backdated ephemeral row while leaving the immutable one
+// untouched, then exit cleanly on context cancel.
+func TestPGSavedStore_RunReaperLoop_DropsEphemeralKeepsImmutable(t *testing.T) {
+	store, pool := setupSavedStoreWithPool(t)
+	ctx := context.Background()
+
+	immutable := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "loop-immutable",
+		Definition:      baseDef(t, "employee"),
+		IsImmutable:     true,
+	}
+	ephemeral := &objectset.SavedObjectSet{
+		OntologyAPIName: "north",
+		Name:            "loop-ephemeral",
+		Definition:      baseDef(t, "employee"),
+		IsImmutable:     false,
+	}
+	for _, r := range []*objectset.SavedObjectSet{immutable, ephemeral} {
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create %s: %v", r.Name, err)
+		}
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE saved_object_sets SET created_at = NOW() - INTERVAL '2 hours' WHERE id IN ($1, $2)`,
+		immutable.ID, ephemeral.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	loopCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var reapedTotal atomic.Int64
+	reapped := make(chan int64, 4)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		store.RunReaperLoop(loopCtx, 20*time.Millisecond, time.Hour,
+			func(n int64) {
+				reapedTotal.Add(n)
+				if n > 0 {
+					select {
+					case reapped <- n:
+					default:
+					}
+				}
+			},
+			func(err error) { t.Errorf("reaper loop error: %v", err) },
+		)
+	}()
+
+	select {
+	case n := <-reapped:
+		if n != 1 {
+			t.Errorf("first reap dropped %d rows, want 1 (the ephemeral one)", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("reaper loop never dropped a row")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reaper loop did not exit after context cancel")
+	}
+
+	if _, err := store.Get(ctx, immutable.ID); err != nil {
+		t.Errorf("immutable row lost: %v", err)
+	}
+	if _, err := store.Get(ctx, ephemeral.ID); !errors.Is(err, objectset.ErrSavedSetNotFound) {
+		t.Errorf("ephemeral row should be reaped, got err=%v", err)
 	}
 }
 

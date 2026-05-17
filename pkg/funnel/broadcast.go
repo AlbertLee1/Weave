@@ -30,6 +30,12 @@ type BroadcastEvent struct {
 // override via NewBroadcastWithReplay.
 const DefaultBroadcastReplayCapacity = 1024
 
+// DefaultBroadcastReplayWindow is the US-459 default replay window — a
+// reconnecting client with a cursor inside this window receives a
+// gap-free tail replay; a cursor older than it is signaled out-of-window so
+// the SSE handler can emit 410 Gone instead of silently truncating.
+const DefaultBroadcastReplayWindow = 5 * time.Minute
+
 // Broadcast is an in-memory fan-out hub. The funnel consumer calls Publish
 // after each successful edit application; HTTP handlers (the SSE endpoint)
 // call Subscribe to receive the live event stream and Unsubscribe on
@@ -55,17 +61,31 @@ type Broadcast struct {
 	ringMax    int
 	lastSeqSet bool
 	lastSeq    uint64
+
+	// US-459: time-bounded replay. window > 0 evicts ring entries whose
+	// EditedAt falls outside the window during Publish AND during the
+	// SubscribeWithReplayWindow check so a stale cursor produces a 410
+	// Gone instead of a silently truncated replay. nowFn is a hook the
+	// tests use to inject a deterministic clock — production callers
+	// leave it as time.Now.
+	window time.Duration
+	nowFn  func() time.Time
 }
 
 // NewBroadcast constructs an empty broadcast hub with the default replay
-// ring capacity (DefaultBroadcastReplayCapacity).
+// ring capacity (DefaultBroadcastReplayCapacity) and the default 5-minute
+// time-bounded replay window (DefaultBroadcastReplayWindow).
 func NewBroadcast() *Broadcast {
-	return NewBroadcastWithReplay(DefaultBroadcastReplayCapacity)
+	b := NewBroadcastWithReplay(DefaultBroadcastReplayCapacity)
+	b.window = DefaultBroadcastReplayWindow
+	return b
 }
 
 // NewBroadcastWithReplay constructs a hub with a custom ring buffer size.
 // A size <= 0 disables replay entirely — Publish still fans out to live
-// subscribers but SubscribeWithReplay yields no historical events.
+// subscribers but SubscribeWithReplay yields no historical events. The
+// replay window is left disabled (time.Duration(0)); callers wanting the
+// US-459 5-minute window should use NewBroadcast or NewBroadcastWithWindow.
 func NewBroadcastWithReplay(ringCapacity int) *Broadcast {
 	if ringCapacity < 0 {
 		ringCapacity = 0
@@ -73,7 +93,20 @@ func NewBroadcastWithReplay(ringCapacity int) *Broadcast {
 	return &Broadcast{
 		subs:    make(map[int64]chan BroadcastEvent),
 		ringMax: ringCapacity,
+		nowFn:   time.Now,
 	}
+}
+
+// NewBroadcastWithWindow constructs a hub with the default ring capacity
+// and a caller-supplied time-bounded replay window (US-459). A
+// non-positive duration disables time-based eviction — only the capacity
+// cap applies and the hub behaves identically to NewBroadcastWithReplay.
+func NewBroadcastWithWindow(window time.Duration) *Broadcast {
+	b := NewBroadcastWithReplay(DefaultBroadcastReplayCapacity)
+	if window > 0 {
+		b.window = window
+	}
+	return b
 }
 
 // Subscribe registers a new subscriber and returns its id together with a
@@ -99,12 +132,46 @@ func (b *Broadcast) Subscribe(buffer int) (int64, <-chan BroadcastEvent) {
 // A fromSeq larger than every buffered Sequence yields no replay. The
 // returned channel capacity is sized to max(buffer, replayCount+buffer) so
 // the pre-loaded replay events never block the caller thread.
+//
+// SubscribeWithReplay never signals out-of-window — callers that need the
+// US-459 410 Gone signal should use SubscribeWithReplayWindow instead.
 func (b *Broadcast) SubscribeWithReplay(buffer int, fromSeq uint64) (int64, <-chan BroadcastEvent) {
+	id, ch, _ := b.SubscribeWithReplayWindow(buffer, fromSeq)
+	return id, ch
+}
+
+// SubscribeWithReplayWindow is the US-459 entry point. It behaves like
+// SubscribeWithReplay AND signals out-of-window when the supplied fromSeq
+// predates the oldest event the hub still retains. The SSE handler maps
+// outOfWindow=true to a 410 Gone response so the SDK can surface a typed
+// "resume window exceeded" error rather than silently dropping the missing
+// events.
+//
+// Semantics:
+//   - fromSeq == 0          → no cursor, outOfWindow=false, replay everything retained.
+//   - fromSeq > lastSeq     → client is ahead, outOfWindow=false, no replay (matches
+//                             the US-057 TestSSEReplayRingBufferSkipsSeenEvents path).
+//   - fromSeq < oldestSeq-1 → cursor predates retained tail, outOfWindow=true,
+//                             the hub does NOT register a subscription and returns
+//                             a nil channel; the caller MUST emit 410 Gone.
+//   - everything else       → outOfWindow=false, replay events with seq > fromSeq.
+//
+// When outOfWindow=true the returned id is 0 and the channel is nil — there
+// is nothing for the caller to Unsubscribe.
+func (b *Broadcast) SubscribeWithReplayWindow(buffer int, fromSeq uint64) (int64, <-chan BroadcastEvent, bool) {
 	if buffer <= 0 {
 		buffer = 1
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// US-459: prune stale entries before consulting the ring so eviction is
+	// observed even on subscribe-only traffic (without an interleaved Publish).
+	b.pruneByTimeLocked()
+
+	if outOfWindow := b.cursorOutOfWindowLocked(fromSeq); outOfWindow {
+		return 0, nil, true
+	}
 
 	var replay []BroadcastEvent
 	for _, e := range b.ring {
@@ -125,7 +192,51 @@ func (b *Broadcast) SubscribeWithReplay(buffer int, fromSeq uint64) (int64, <-ch
 	b.next++
 	id := b.next
 	b.subs[id] = ch
-	return id, ch
+	return id, ch, false
+}
+
+// pruneByTimeLocked drops every leading ring entry whose EditedAt is
+// strictly older than now - window. Must be called with b.mu held. The
+// scan walks the ring head only (events are appended in arrival / time
+// order, so once we hit a fresh entry the rest are fresh too).
+func (b *Broadcast) pruneByTimeLocked() {
+	if b.window <= 0 || len(b.ring) == 0 {
+		return
+	}
+	now := b.nowFn()
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-b.window)
+	i := 0
+	for i < len(b.ring) && b.ring[i].EditedAt.Before(cutoff) {
+		i++
+	}
+	if i > 0 {
+		// Allocate a fresh backing array so the GC can reclaim the evicted
+		// events instead of holding them via b.ring[:cap(b.ring)] aliasing.
+		newRing := make([]BroadcastEvent, len(b.ring)-i)
+		copy(newRing, b.ring[i:])
+		b.ring = newRing
+	}
+}
+
+// cursorOutOfWindowLocked decides whether a reconnecting client's fromSeq
+// cursor falls behind the hub's current retention. See
+// SubscribeWithReplayWindow for the full state matrix. Must be called with
+// b.mu held and after pruneByTimeLocked so the ring reflects current time.
+func (b *Broadcast) cursorOutOfWindowLocked(fromSeq uint64) bool {
+	if fromSeq == 0 || !b.lastSeqSet {
+		return false
+	}
+	if fromSeq > b.lastSeq {
+		return false
+	}
+	if len(b.ring) == 0 {
+		return fromSeq < b.lastSeq
+	}
+	oldest := b.ring[0].Sequence
+	return fromSeq+1 < oldest
 }
 
 // Unsubscribe removes the subscription identified by id, closing its channel.
@@ -157,6 +268,13 @@ func (b *Broadcast) Unsubscribe(id int64) {
 func (b *Broadcast) Publish(event BroadcastEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// US-459: evict ring entries whose EditedAt has aged out of the window
+	// BEFORE appending the new event so the ring head always reflects the
+	// current retention. We still admit the new event itself even if its
+	// own EditedAt is stale — Publish is the canonical place to record the
+	// event for live fan-out; pruneByTimeLocked on the next call will drop
+	// it if it remains stale.
+	b.pruneByTimeLocked()
 	if b.ringMax > 0 && event.Sequence > 0 {
 		if !b.lastSeqSet || event.Sequence > b.lastSeq {
 			b.ring = append(b.ring, event)

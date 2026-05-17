@@ -31,6 +31,22 @@ export interface InterfaceMethodsListResponse {
   data: InterfaceMethod[];
 }
 
+// US-498 admin CRUD request bodies — mirror
+// pkg/oms/admin_handlers_interface_method.go {Create,Update}InterfaceMethodRequest.
+export interface CreateInterfaceMethodRequest {
+  name: string;
+  params: InterfaceMethodParam[];
+  returns: InterfaceMethodReturns;
+  description?: string;
+}
+
+export interface UpdateInterfaceMethodRequest {
+  name: string;
+  params: InterfaceMethodParam[];
+  returns: InterfaceMethodReturns;
+  description?: string;
+}
+
 export interface InvokeInterfaceMethodRequest {
   objectType: string;
   parameters?: Record<string, unknown>;
@@ -72,5 +88,42 @@ export function invokeInterfaceMethod(
     'POST',
     `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces/methods/${encodeURIComponent(methodRid)}/invoke`,
     body,
+  );
+}
+
+// US-498 admin CRUD — Create / Update / Delete InterfaceMethod for the
+// Interface admin "Methods" tab. Backend routes live in cmd/server/routes.go
+// alongside the list/invoke endpoints; URL shapes are mirrored 1:1.
+export function createInterfaceMethod(
+  ontologyApiName: string,
+  interfaceRid: string,
+  body: CreateInterfaceMethodRequest,
+): Promise<InterfaceMethod> {
+  return request<InterfaceMethod>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces/${encodeURIComponent(interfaceRid)}/methods`,
+    body,
+  );
+}
+
+export function updateInterfaceMethod(
+  ontologyApiName: string,
+  methodRid: string,
+  body: UpdateInterfaceMethodRequest,
+): Promise<InterfaceMethod> {
+  return request<InterfaceMethod>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces/methods/byRid/${encodeURIComponent(methodRid)}`,
+    body,
+  );
+}
+
+export function deleteInterfaceMethod(
+  ontologyApiName: string,
+  methodRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/interfaces/methods/byRid/${encodeURIComponent(methodRid)}`,
   );
 }

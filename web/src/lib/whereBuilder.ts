@@ -29,14 +29,23 @@ export function buildContainsAnyTermClause(
   field: string,
   searchText: string,
 ): WhereClause | undefined {
-  const terms = searchText
+  // DOG-004: the backend converter (pkg/oss/where/converter.go)
+  // unmarshals containsAnyTerm.value as a string and runs it through
+  // a Bleve MatchQuery, which already tokenises on whitespace and ORs the
+  // resulting terms. Sending the pre-split array form returns
+  // `containsAnyTerm value must be a string` and the UI surfaces
+  // `INVALID_ARGUMENT: SearchObjectsFailed`. Normalise to a single
+  // space-joined string so the contract matches and multi-word searches
+  // such as "OpenAI Codex" behave correctly.
+  const normalized = searchText
     .trim()
     .split(/\s+/)
-    .filter((t) => t.length > 0);
-  if (terms.length === 0) return undefined;
+    .filter((t) => t.length > 0)
+    .join(' ');
+  if (normalized.length === 0) return undefined;
   return {
     type: 'containsAnyTerm',
     field,
-    value: terms,
+    value: normalized,
   };
 }

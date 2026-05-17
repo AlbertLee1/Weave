@@ -121,6 +121,13 @@ type OIDCConfig struct {
 	RedirectURL        string
 	Scopes             []string
 	SuccessRedirectURL string
+	// StateSecret is the HMAC secret (US-492) the OIDC handler uses to sign
+	// and verify the `state` parameter that round-trips through the IdP.
+	// Loaded from WEAVE_OIDC_STATE_SECRET (raw string, must be ≥16 bytes).
+	// When empty, cmd/server generates an ephemeral secret at boot and logs
+	// a loud warning — restarts will invalidate any in-flight authorize
+	// redirects, so production deployments MUST set this.
+	StateSecret string
 }
 
 // SAMLConfig controls the SAML 2.0 SSO front-door (US-248). When Enabled is
@@ -573,6 +580,9 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("WEAVE_OIDC_SUCCESS_REDIRECT_URL"); v != "" {
 		cfg.OIDC.SuccessRedirectURL = v
+	}
+	if v := os.Getenv("WEAVE_OIDC_STATE_SECRET"); v != "" {
+		cfg.OIDC.StateSecret = v
 	}
 
 	// SAML 2.0 SSO front-door (US-248). AUTH_MODE=saml is shorthand for

@@ -100,6 +100,61 @@ describe('ObjectSetDiffPage', () => {
     expect(screen.getByText(/no saved object sets/i)).toBeInTheDocument();
   });
 
+  it('lays the diff sections out in a 3-column grid (only-in-A | changed | only-in-B)', async () => {
+    server.use(
+      http.get(
+        '/api/v2/ontologies/test/objectTypes/Employee',
+        () =>
+          HttpResponse.json({
+            rid: 'ri.ot',
+            apiName: 'Employee',
+            displayName: 'Employee',
+            primaryKey: 'id',
+            status: 'ACTIVE',
+            visibility: 'NORMAL',
+            properties: {
+              id: { dataType: { type: 'string' }, rid: 'ri.p.id' },
+              name: { dataType: { type: 'string' }, rid: 'ri.p.name' },
+            },
+          }),
+      ),
+      http.post(
+        '/api/v2/ontologies/test/objectSets/loadObjects',
+        () =>
+          HttpResponse.json({
+            data: [
+              {
+                __rid: 'r1',
+                __primaryKey: '1',
+                __apiName: 'Employee',
+                name: 'Alice',
+              },
+            ],
+            totalCount: '1',
+          }),
+      ),
+    );
+    renderPage();
+    fireEvent.change(screen.getByLabelText(/object set a/i), {
+      target: { value: 'sa-1' },
+    });
+    fireEvent.change(screen.getByLabelText(/object set b/i), {
+      target: { value: 'sb-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /compute diff/i }));
+
+    const layout = await screen.findByTestId('objectset-diff-three-column');
+    expect(layout.className).toMatch(/grid/);
+    expect(layout.className).toMatch(/grid-cols-3|grid-cols-1/);
+    const sections = ['diff-only-in-a', 'diff-changed', 'diff-only-in-b'].map(
+      (id) => screen.getByTestId(id),
+    );
+    // All three sections share the same direct parent (the 3-column grid).
+    expect(sections[0].parentElement).toBe(layout);
+    expect(sections[1].parentElement).toBe(layout);
+    expect(sections[2].parentElement).toBe(layout);
+  });
+
   it('computes the diff and shows only-in-A, only-in-B, and changed sections', async () => {
     server.use(
       http.get(

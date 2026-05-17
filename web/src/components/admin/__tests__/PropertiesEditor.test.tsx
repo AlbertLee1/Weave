@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PropertiesEditor } from '../PropertiesEditor';
-import type { ObjectType, Property } from '../../../api/types';
+import type { ActionType, ObjectType, Property } from '../../../api/types';
 
 const OBJECT_TYPE: ObjectType = {
   rid: 'ri.ontology.main.object-type.emp-1',
@@ -52,6 +52,7 @@ const PROPERTIES: Property[] = [
 interface StubState {
   properties: Property[];
   objectType: ObjectType;
+  actionTypes: ActionType[];
   createCalls: Array<{ body: unknown }>;
   updateCalls: Array<{ rid: string; body: unknown }>;
   deleteCalls: string[];
@@ -62,6 +63,7 @@ function makeStub(): StubState {
   return {
     properties: PROPERTIES.map((p) => ({ ...p })),
     objectType: { ...OBJECT_TYPE },
+    actionTypes: [],
     createCalls: [],
     updateCalls: [],
     deleteCalls: [],
@@ -137,6 +139,13 @@ function installFetch(state: StubState) {
           state.deleteCalls.push(rid);
           state.properties = state.properties.filter((p) => p.rid !== rid);
           return new Response('', { status: 200 });
+        }
+
+        if (
+          /\/api\/v2\/ontologies\/northwind\/actionTypes(\?.*)?$/.test(url) &&
+          method === 'GET'
+        ) {
+          return jsonResponse({ data: state.actionTypes });
         }
 
         const otUpdateMatch = url.match(
@@ -659,5 +668,128 @@ describe('PropertiesEditor', () => {
     expect(
       (state.updateCalls[0].body as { classification?: string }).classification,
     ).toBe('Secret');
+  });
+
+  // US-496: Delete-property confirmation must surface the blast radius —
+  // ActionType rules that bind the property, and a warning that clearing
+  // the titleProperty leaves the ObjectType title unset. These tests pin
+  // the contract that lets admins audit downstream usage before they
+  // commit a destructive change.
+
+  it('delete-property confirm shows ActionType references that bind the property', async () => {
+    state.actionTypes = [
+      {
+        rid: 'ri.ontology.main.action-type.update-employee',
+        apiName: 'updateEmployee',
+        displayName: 'Update Employee',
+        status: 'ACTIVE',
+        parameters: {},
+        rules: [
+          {
+            type: 'modifyObject',
+            objectType: 'Employee',
+            propertyBindings: { lastName: { parameter: 'newLastName' } },
+          },
+        ],
+      },
+      {
+        rid: 'ri.ontology.main.action-type.touch-firstname',
+        apiName: 'touchFirstName',
+        displayName: 'Touch First Name',
+        status: 'ACTIVE',
+        parameters: {},
+        rules: [
+          {
+            type: 'modifyObject',
+            objectType: 'Employee',
+            propertyBindings: { firstName: { parameter: 'fn' } },
+          },
+        ],
+      },
+    ];
+
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('lastName')).toBeInTheDocument(),
+    );
+    const row = screen.getByText('lastName').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByTestId('delete-property-confirm');
+    await waitFor(() => {
+      expect(
+        within(confirm).getByTestId('delete-property-impact-actions'),
+      ).toBeInTheDocument();
+    });
+    const actionsImpact = within(confirm).getByTestId(
+      'delete-property-impact-actions',
+    );
+    // Exactly one ActionType references lastName via propertyBindings.
+    expect(actionsImpact.textContent).toMatch(/\b1\b/);
+    // The unrelated touchFirstName ActionType must not be conflated.
+    expect(actionsImpact.textContent).not.toMatch(/\b2\b/);
+    expect(
+      within(confirm).getByText(/updateEmployee/i),
+    ).toBeInTheDocument();
+    // Confirm button stays enabled — the impact is advisory, not blocking.
+    const confirmBtn = within(confirm).getByRole('button', {
+      name: /Delete property/i,
+    }) as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(false);
+  });
+
+  it('delete-property confirm warns when the property is the current title', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('firstName')).toBeInTheDocument(),
+    );
+    const row = screen.getByText('firstName').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByTestId('delete-property-confirm');
+    expect(
+      within(confirm).getByTestId('delete-property-impact-title'),
+    ).toBeInTheDocument();
+  });
+
+  it('delete-property confirm reports zero references when nothing depends on the property', async () => {
+    // ActionTypes only reference firstName, not lastName.
+    state.actionTypes = [
+      {
+        rid: 'ri.ontology.main.action-type.touch-firstname',
+        apiName: 'touchFirstName',
+        displayName: 'Touch First Name',
+        status: 'ACTIVE',
+        parameters: {},
+        rules: [
+          {
+            type: 'modifyObject',
+            objectType: 'Employee',
+            propertyBindings: { firstName: { parameter: 'fn' } },
+          },
+        ],
+      },
+    ];
+
+    const user = userEvent.setup();
+    renderEditor();
+    await waitFor(() =>
+      expect(screen.getByText('lastName')).toBeInTheDocument(),
+    );
+    const row = screen.getByText('lastName').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByTestId('delete-property-confirm');
+    await waitFor(() => {
+      expect(
+        within(confirm).getByTestId('delete-property-impact-actions'),
+      ).toBeInTheDocument();
+    });
+    expect(
+      within(confirm).getByTestId('delete-property-impact-actions').textContent,
+    ).toMatch(/\b0\b/);
+    // lastName is not the title, so no title warning is shown.
+    expect(
+      within(confirm).queryByTestId('delete-property-impact-title'),
+    ).not.toBeInTheDocument();
   });
 });

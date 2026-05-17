@@ -24,6 +24,8 @@ const (
 	NameRedact  Name = "REDACT"
 	NameNull    Name = "NULL"
 	NamePartial Name = "PARTIAL"
+	NameFPE     Name = "FPE"
+	NameRegex   Name = "REGEX"
 )
 
 // RedactReplacement is the constant string emitted by the REDACT strategy.
@@ -77,6 +79,13 @@ func Partial(value interface{}) interface{} {
 // in a newer release that hasn't propagated to this binary) never panics in
 // production. nil inputs short-circuit to nil for HASH / REDACT / PARTIAL;
 // NULL collapses any input to nil regardless.
+//
+// FPE and REGEX are NOT dispatchable through Apply — they require per-mask
+// configuration (key/tweak/radix or pattern/replacement). Callers must route
+// those through ApplyWithConfig. To preserve the back-compat contract, Apply
+// passes FPE/REGEX inputs through unchanged rather than panicking; this
+// matches the "unknown name" fall-through and prevents a runtime regression
+// against any caller still on the legacy two-arg signature.
 func Apply(name Name, value interface{}) interface{} {
 	if name == NameNull {
 		return Null()
@@ -93,6 +102,49 @@ func Apply(name Name, value interface{}) interface{} {
 		return Partial(value)
 	default:
 		return value
+	}
+}
+
+// ApplyConfig bundles the per-strategy configuration used by ApplyWithConfig.
+// HASH / REDACT / NULL / PARTIAL ignore the field entirely; FPE / REGEX
+// require the matching sub-config. Splitting the config into nested structs
+// (rather than a flat map) keeps "valid config for strategy X" type-checkable
+// at the call site.
+type ApplyConfig struct {
+	FPE   FPEConfig
+	Regex RegexConfig
+}
+
+// ApplyWithConfig is the config-aware US-489 extension of Apply. It returns
+// (value, error) so callers can fail closed on misconfigured FPE keys / bad
+// alphabets without conflating them with "strategy not applicable, pass
+// through". Strategies that don't need config are forwarded to Apply so the
+// transform table on the wire stays a single source of truth.
+//
+// nil inputs short-circuit to nil for every strategy except NULL (which
+// collapses to nil regardless). Unknown names pass through with a nil error,
+// matching Apply's stale-policy semantics.
+func ApplyWithConfig(name Name, value interface{}, cfg ApplyConfig) (interface{}, error) {
+	if name == NameNull {
+		return Null(), nil
+	}
+	if value == nil {
+		return nil, nil
+	}
+	switch name {
+	case NameFPE:
+		s := toString(value)
+		out, err := FPE(s, cfg.FPE)
+		if err != nil {
+			return value, err
+		}
+		return out, nil
+	case NameRegex:
+		return Regex(value, cfg.Regex), nil
+	default:
+		// Delegate the four legacy strategies + the unknown fall-through to
+		// the config-free Apply so the legacy contract stays byte-identical.
+		return Apply(name, value), nil
 	}
 }
 

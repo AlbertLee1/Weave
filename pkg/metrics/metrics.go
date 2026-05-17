@@ -195,6 +195,7 @@ func allCollectors() []prometheus.Collector {
 		costCPUSecondsTotal,
 		costNATSMessagesTotal,
 		costPGRows,
+		funnelDLQSize,
 		buildInfo,
 	}
 	return append(base, vertexCollectors()...)

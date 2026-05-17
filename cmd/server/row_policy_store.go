@@ -39,28 +39,28 @@ func (s *pgRowPolicyStore) Create(ctx context.Context, p *rls.RowPolicy) error {
 	predicate := coerceRLSPredicate(p.Predicate)
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO row_policies
-		   (rid, object_type_rid, predicate, applies_to, description, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		p.RID, p.ObjectTypeRID, predicate, appliesJSON, p.Description, p.CreatedBy,
+		   (rid, object_type_rid, predicate, cel_expression, applies_to, description, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		p.RID, p.ObjectTypeRID, predicate, p.CELExpression, appliesJSON, p.Description, p.CreatedBy,
 	)
 	return err
 }
 
 func (s *pgRowPolicyStore) Get(ctx context.Context, rid string) (*rls.RowPolicy, error) {
 	return s.scanOne(ctx,
-		`SELECT rid, object_type_rid, predicate, applies_to, description, created_by, created_at, updated_at
+		`SELECT rid, object_type_rid, predicate, cel_expression, applies_to, description, created_by, created_at, updated_at
 		 FROM row_policies WHERE rid = $1`, rid)
 }
 
 func (s *pgRowPolicyStore) List(ctx context.Context) ([]*rls.RowPolicy, error) {
 	return s.scanMany(ctx,
-		`SELECT rid, object_type_rid, predicate, applies_to, description, created_by, created_at, updated_at
+		`SELECT rid, object_type_rid, predicate, cel_expression, applies_to, description, created_by, created_at, updated_at
 		 FROM row_policies ORDER BY created_at ASC`)
 }
 
 func (s *pgRowPolicyStore) ListByObjectType(ctx context.Context, objectTypeRID string) ([]*rls.RowPolicy, error) {
 	return s.scanMany(ctx,
-		`SELECT rid, object_type_rid, predicate, applies_to, description, created_by, created_at, updated_at
+		`SELECT rid, object_type_rid, predicate, cel_expression, applies_to, description, created_by, created_at, updated_at
 		 FROM row_policies WHERE object_type_rid = $1 ORDER BY created_at ASC`, objectTypeRID)
 }
 
@@ -71,6 +71,11 @@ func (s *pgRowPolicyStore) Update(ctx context.Context, rid string, upd rls.RowPo
 	if upd.Predicate != nil {
 		sets = append(sets, "predicate = $"+strconv.Itoa(argN))
 		args = append(args, coerceRLSPredicate(*upd.Predicate))
+		argN++
+	}
+	if upd.CELExpression != nil {
+		sets = append(sets, "cel_expression = $"+strconv.Itoa(argN))
+		args = append(args, *upd.CELExpression)
 		argN++
 	}
 	if upd.AppliesTo != nil {
@@ -116,18 +121,20 @@ func (s *pgRowPolicyStore) scanOne(ctx context.Context, sql string, args ...inte
 	var (
 		p          rls.RowPolicy
 		predicate  []byte
+		celExpr    string
 		appliesRaw []byte
 		createdAt  time.Time
 		updatedAt  time.Time
 	)
-	err := row.Scan(&p.RID, &p.ObjectTypeRID, &predicate, &appliesRaw, &p.Description, &p.CreatedBy, &createdAt, &updatedAt)
+	err := row.Scan(&p.RID, &p.ObjectTypeRID, &predicate, &celExpr, &appliesRaw, &p.Description, &p.CreatedBy, &createdAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, rls.ErrNotFound
 		}
 		return nil, err
 	}
-	p.Predicate = predicate
+	p.Predicate = nullablePredicate(predicate)
+	p.CELExpression = celExpr
 	if err := json.Unmarshal(appliesRaw, &p.AppliesTo); err != nil {
 		return nil, fmt.Errorf("rls: decode appliesTo: %w", err)
 	}
@@ -147,14 +154,16 @@ func (s *pgRowPolicyStore) scanMany(ctx context.Context, sql string, args ...int
 		var (
 			p          rls.RowPolicy
 			predicate  []byte
+			celExpr    string
 			appliesRaw []byte
 			createdAt  time.Time
 			updatedAt  time.Time
 		)
-		if err := rows.Scan(&p.RID, &p.ObjectTypeRID, &predicate, &appliesRaw, &p.Description, &p.CreatedBy, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&p.RID, &p.ObjectTypeRID, &predicate, &celExpr, &appliesRaw, &p.Description, &p.CreatedBy, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		p.Predicate = predicate
+		p.Predicate = nullablePredicate(predicate)
+		p.CELExpression = celExpr
 		if err := json.Unmarshal(appliesRaw, &p.AppliesTo); err != nil {
 			return nil, fmt.Errorf("rls: decode appliesTo: %w", err)
 		}
@@ -165,12 +174,27 @@ func (s *pgRowPolicyStore) scanMany(ctx context.Context, sql string, args ...int
 	return out, rows.Err()
 }
 
-// coerceRLSPredicate substitutes "{}" for nil json.RawMessage. Mirrors the
-// coerceJSON helper from action_job_store.go — pgx encodes nil RawMessage as
-// the literal "null" which trips JSON decoding back out.
+// coerceRLSPredicate substitutes nil for the wire-side "no predicate" case so
+// the JSONB column can stay NULL when only a CEL gate is supplied. Pre-US-487
+// callers always passed a non-empty WhereClause; CEL-only callers send nothing.
+// Returning untyped nil lets pgx encode an SQL NULL — a literal []byte("null")
+// would re-trip the json decoder on the read path with "unexpected end of JSON
+// input" once we filter CEL-only policies out of the Bleve compile lane.
 func coerceRLSPredicate(b []byte) []byte {
-	if len(b) == 0 {
-		return []byte("{}")
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	return b
+}
+
+// nullablePredicate normalises the read-side: a NULL row column lands as a
+// nil byte slice, and the legacy DEFAULT '{}'::jsonb shape from rows that
+// were created before the CEL migration is treated as "no predicate". Either
+// shape becomes a nil json.RawMessage on the RowPolicy struct, which the
+// engine's CEL-aware Compile path skips cleanly.
+func nullablePredicate(b []byte) []byte {
+	if len(b) == 0 || string(b) == "null" || string(b) == "{}" {
+		return nil
 	}
 	return b
 }

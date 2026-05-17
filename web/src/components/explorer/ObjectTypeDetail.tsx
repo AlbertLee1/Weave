@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ObjectType } from '../../api/types';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
+import { useProperties } from '../../hooks/useProperties';
 import { PropertiesTable } from './PropertiesTable';
 import { LinkTypesPanel } from './LinkTypesPanel';
 import { SkeletonList } from '../common/Skeleton';
@@ -26,6 +27,24 @@ export function ObjectTypeDetail({ ontologyApiName, objectType }: ObjectTypeDeta
     data: linkTypes,
     isLoading: linksLoading,
   } = useOutgoingLinkTypes(ontologyApiName, objectType.apiName);
+
+  // DOG-005: the compact `objectType.properties` map omits the
+  // Nullable / Searchable / Sortable flags — fetch the authoritative
+  // detailed Property[] so PropertiesTable renders the real metadata
+  // instead of defaulting every flag to false.
+  const {
+    data: detailedProperties,
+    isLoading: detailedLoading,
+    isError: detailedFailed,
+  } = useProperties(ontologyApiName, objectType.rid);
+
+  const detailedStatus = detailedFailed
+    ? 'error'
+    : detailedLoading
+      ? 'loading'
+      : detailedProperties
+        ? 'ready'
+        : 'idle';
 
   return (
     <div className="flex flex-col h-full" data-testid="object-type-detail">
@@ -65,7 +84,13 @@ export function ObjectTypeDetail({ ontologyApiName, objectType }: ObjectTypeDeta
       <div className="flex-1 overflow-auto p-4">
         {activeTab === 'properties' && (
           objectType.properties
-            ? <PropertiesTable properties={objectType.properties} />
+            ? (
+              <PropertiesTable
+                properties={objectType.properties}
+                detailedProperties={detailedProperties}
+                detailedStatus={detailedStatus}
+              />
+            )
             : <EmptyState title="No properties" description="This object type has no properties defined." />
         )}
 

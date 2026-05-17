@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import type { ObjectType, Property, Classification } from '../../api/types';
+import type {
+  ActionType,
+  ObjectType,
+  Property,
+  Classification,
+} from '../../api/types';
 import { CLASSIFICATION_VALUES } from '../../api/types';
 import type {
   CreatePropertyRequest,
@@ -12,6 +17,7 @@ import {
   useUpdateProperty,
 } from '../../hooks/useProperties';
 import { useUpdateObjectType } from '../../hooks/useObjectTypes';
+import { useActionTypes } from '../../hooks/useActions';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 
 export const BASE_TYPES = [
@@ -741,6 +747,18 @@ function DeletePropertyForm({
 }) {
   const del = useDeleteProperty(ontologyApiName, objectType.rid);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const { data: actionTypes } = useActionTypes(ontologyApiName);
+
+  const boundActions = useMemo(
+    () =>
+      findActionsBindingProperty(
+        actionTypes ?? [],
+        objectType.apiName,
+        property.apiName,
+      ),
+    [actionTypes, objectType.apiName, property.apiName],
+  );
+  const isTitle = objectType.titleProperty === property.apiName;
 
   async function onConfirm() {
     setSubmitError(null);
@@ -771,6 +789,48 @@ function DeletePropertyForm({
         Existing objects will keep the stored value, but new edits to this
         property will be rejected. This cannot be undone outside a branch.
       </p>
+      <div
+        className="rounded border p-3 flex flex-col gap-1.5"
+        style={{
+          borderColor: 'rgba(31,41,55,0.5)',
+          background: 'rgba(13,17,23,0.4)',
+        }}
+      >
+        <p className="text-[10px] uppercase tracking-widest text-text-secondary">
+          Impact
+        </p>
+        <p
+          className="text-xs text-text-primary"
+          data-testid="delete-property-impact-actions"
+        >
+          <span className="font-semibold">{boundActions.length}</span>{' '}
+          ActionType{boundActions.length === 1 ? '' : 's'} bind this property
+          {boundActions.length > 0 && (
+            <>
+              {': '}
+              <span className="font-mono text-text-secondary">
+                {boundActions
+                  .slice(0, 5)
+                  .map((a) => a.apiName)
+                  .join(', ')}
+                {boundActions.length > 5
+                  ? `, +${boundActions.length - 5} more`
+                  : ''}
+              </span>
+            </>
+          )}
+        </p>
+        {isTitle && (
+          <p
+            className="text-xs text-accent-error"
+            data-testid="delete-property-impact-title"
+          >
+            This is the current title property — deleting it will leave{' '}
+            <span className="font-semibold">{objectType.displayName}</span>{' '}
+            without a title until another property is assigned.
+          </p>
+        )}
+      </div>
       {submitError && (
         <p role="alert" className="text-xs text-accent-error">
           {submitError}
@@ -795,6 +855,46 @@ function DeletePropertyForm({
       </div>
     </div>
   );
+}
+
+// Walks ActionType.rules looking for entries that bind the given
+// (objectTypeApiName, propertyApiName) pair via propertyBindings.
+// Backend shape mirrors pkg/oms breaking-change detector (see
+// pkg/oms/breaking_changes.go::actionRule): each rule has
+// `{ type, objectType, propertyBindings }`, where propertyBindings is
+// keyed by the destination property apiName. We narrow on both the
+// objectType and the property key so unrelated rules on sibling
+// properties don't inflate the count.
+export function findActionsBindingProperty(
+  actionTypes: ActionType[],
+  objectTypeApiName: string,
+  propertyApiName: string,
+): ActionType[] {
+  const hits: ActionType[] = [];
+  for (const at of actionTypes) {
+    if (actionTypeBindsProperty(at, objectTypeApiName, propertyApiName)) {
+      hits.push(at);
+    }
+  }
+  return hits;
+}
+
+function actionTypeBindsProperty(
+  at: ActionType,
+  objectTypeApiName: string,
+  propertyApiName: string,
+): boolean {
+  const rules = at.rules;
+  if (!Array.isArray(rules)) return false;
+  for (const raw of rules) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    if (r.objectType !== objectTypeApiName) continue;
+    const bindings = r.propertyBindings;
+    if (!bindings || typeof bindings !== 'object') continue;
+    if (propertyApiName in (bindings as Record<string, unknown>)) return true;
+  }
+  return false;
 }
 
 function StructFieldsEditor({

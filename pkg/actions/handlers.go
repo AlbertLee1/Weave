@@ -842,6 +842,15 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("saga") == "true" {
 		sagaResult, sagaErr := h.executor.ApplyBatchSaga(r.Context(), ontologyRID, reqs.Actions)
 		if sagaErr != nil {
+			// US-471: a stale-version prepare failure inside the saga
+			// path bubbles up as a BatchError wrapping *StaleObjectError;
+			// route it through staleObjectAPIError → 409 so SDK clients
+			// see the same shape regardless of which executor entrypoint
+			// served the request.
+			if staleErr := staleObjectAPIError(sagaErr); staleErr != nil {
+				apierror.WriteJSON(w, staleErr)
+				return
+			}
 			apierror.WriteJSON(w, asBatchError(sagaErr))
 			return
 		}
@@ -868,6 +877,14 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 		result, err = h.executor.ApplyBatchAtomic(r.Context(), ontologyRID, reqs.Actions)
 	}
 	if err != nil {
+		// US-471: cross-action optimistic-lock failure surfaces as
+		// *StaleObjectError → 409 StaleObject, identical to the single
+		// Apply 409 shape. Must come before asBatchError because the
+		// stale error isn't wrapped in *BatchError on the batch path.
+		if staleErr := staleObjectAPIError(err); staleErr != nil {
+			apierror.WriteJSON(w, staleErr)
+			return
+		}
 		apierror.WriteJSON(w, asBatchError(err))
 		return
 	}

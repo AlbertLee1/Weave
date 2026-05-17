@@ -54,16 +54,19 @@ describe('buildContainsAnyTermClause', () => {
     expect(result).toEqual({
       type: 'containsAnyTerm',
       field: 'name',
-      value: ['Alice'],
+      value: 'Alice',
     });
   });
 
-  it('splits multiple terms by whitespace', () => {
-    const result = buildContainsAnyTermClause('name', 'Alice Bob');
+  // DOG-004: backend expects a string and tokenises internally via the
+  // Bleve MatchQuery analyzer, so the frontend normalises whitespace and
+  // joins with a single space rather than sending the pre-split array.
+  it('normalises multiple terms into a single space-joined string', () => {
+    const result = buildContainsAnyTermClause('name', '  Alice   Bob  ');
     expect(result).toEqual({
       type: 'containsAnyTerm',
       field: 'name',
-      value: ['Alice', 'Bob'],
+      value: 'Alice Bob',
     });
   });
 });

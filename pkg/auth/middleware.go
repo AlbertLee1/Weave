@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -36,6 +37,40 @@ func Middleware(signers ...*JWTSigner) func(http.Handler) http.Handler {
 		signer = signers[0]
 	}
 	return MiddlewareWithAPIKeys(signer, nil, nil, nil)
+}
+
+// MiddlewareWithRevocation extends MiddlewareWithAPIKeys with a JTI
+// revocation checker (US-491). When the checker is non-nil and AUTH_MODE=jwt,
+// handleJWT consults it after JWT.Verify and rejects revoked JTIs with
+// 401 TokenRevoked. Passing nil for the checker is equivalent to
+// MiddlewareWithAPIKeys — used by tests and degraded-mode bootstraps that
+// don't have a backing PG table.
+func MiddlewareWithRevocation(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository, resolver *RoleResolver, revoked RevocationChecker) func(http.Handler) http.Handler {
+	mode := os.Getenv("AUTH_MODE")
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch mode {
+			case "", "dev":
+				handleDev(signer, next, w, r)
+			case "jwt":
+				handleJWTWithRevocation(signer, apiKeys, users, resolver, revoked, next, w, r)
+			case "token":
+				handleProd(next, w, r)
+			default:
+				apierror.WriteJSON(w, apierror.NewInternal("InvalidAuthMode", map[string]string{
+					"mode": mode,
+				}))
+			}
+		})
+	}
+}
+
+// RevocationChecker is the narrow interface the middleware consumes for JTI
+// blacklist lookups. CachedRevocationChecker is the canonical implementation;
+// tests can supply lighter fakes via this interface.
+type RevocationChecker interface {
+	IsRevoked(ctx context.Context, jti string) (bool, error)
 }
 
 // MiddlewareWithAPIKeys is the extended middleware constructor that also
@@ -79,6 +114,19 @@ func MiddlewareWithAPIKeys(signer *JWTSigner, apiKeys APIKeyRepository, users Us
 // to handleAPIKey before attempting JWT verification. This is the only new
 // branch added for Tier 2.4.
 func handleJWT(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository, resolver *RoleResolver, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	handleJWTWithRevocation(signer, apiKeys, users, resolver, nil, next, w, r)
+}
+
+// handleJWTWithRevocation is the US-491 extension of handleJWT that consults
+// a RevocationChecker after JWT verification but before next.ServeHTTP. A
+// nil checker is treated as "no blacklist configured" and the request flows
+// through unchanged so legacy callers / degraded bootstraps don't regress.
+//
+// The blacklist check is fail-open: if the underlying store errors, the
+// request is logged and allowed through rather than wedging the entire API
+// when the PG pool dips. Operators who need fail-closed semantics can plug
+// a strict RevocationChecker wrapper at the call site.
+func handleJWTWithRevocation(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository, resolver *RoleResolver, revoked RevocationChecker, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	tok := extractBearer(r)
 	if tok == "" {
 		// API keys still need a Bearer token, so we can fall through to the
@@ -124,6 +172,21 @@ func handleJWT(signer *JWTSigner, apiKeys APIKeyRepository, users UserRepository
 			apierror.WriteJSON(w, apierror.NewUnauthorized("InvalidToken", map[string]string{"reason": err.Error()}))
 		}
 		return
+	}
+
+	// US-491: reject revoked JTIs. Errors are logged and treated as "not
+	// revoked" so a transient store outage does not lock everyone out.
+	if revoked != nil && claims.ID != "" {
+		isRev, rerr := revoked.IsRevoked(r.Context(), claims.ID)
+		if rerr != nil {
+			log.Printf("auth: revocation lookup failed jti=%s err=%v (allowing request)", claims.ID, rerr)
+		} else if isRev {
+			apierror.WriteJSON(w, apierror.NewUnauthorized("TokenRevoked", map[string]string{
+				"reason": "access token has been revoked",
+				"jti":    claims.ID,
+			}))
+			return
+		}
 	}
 
 	u := &User{

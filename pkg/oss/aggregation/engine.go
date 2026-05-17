@@ -49,6 +49,25 @@ type AggregationRequest struct {
 	// uniformly visible to every downstream code path (groupBy, sub-aggs,
 	// derived-field path).
 	ExcludedItems []string `json:"excludedItems,omitempty"`
+	// HLLPrecision is the request-wide HyperLogLog precision used by every
+	// approximateDistinct in this request that does not carry a per-spec
+	// Precision override (US-465). Range: 4..18, default 14. Out-of-range
+	// values are rejected at AggregateWithQuery time so callers get a clean
+	// 400 instead of a panic from inside the sketch.
+	HLLPrecision *int `json:"hllPrecision,omitempty"`
+	// TDigestCompression is the request-wide t-digest compression used by
+	// every approximatePercentile in this request that does not carry a
+	// per-spec Compression override (US-465). Default 100. Must be a
+	// positive finite float — negative, zero, NaN, or +Inf are rejected at
+	// validation time.
+	TDigestCompression *float64 `json:"tdigestCompression,omitempty"`
+	// ApproximateScanThreshold is the per-request override of the scanned-
+	// row count above which the response is forced to APPROXIMATE accuracy
+	// (US-465). nil falls back to DefaultApproximateScanThreshold (1M).
+	// The check fires AFTER the engine knows the scoped baseQuery total,
+	// so it is independent of whether MaxDocScanSize truncated the scan.
+	// A non-positive override disables the threshold entirely.
+	ApproximateScanThreshold *int64 `json:"approximateScanThreshold,omitempty"`
 }
 
 // Accuracy mode constants for AggregationRequest.Accuracy. Match the Palantir
@@ -58,6 +77,13 @@ const (
 	AccuracyAllowApproximate = "ALLOW_APPROXIMATE"
 	AccuracyRequireAccurate  = "REQUIRE_ACCURATE"
 )
+
+// DefaultApproximateScanThreshold is the per-request scanned-row count above
+// which an aggregation response is force-marked APPROXIMATE even when the
+// scan was not truncated by MaxDocScanSize (US-465). 1M matches the PRD
+// "扫描行数阈值默认 1M" acceptance and lines up with the cardinality budget
+// the HLL/t-digest accuracy gates exercise.
+const DefaultApproximateScanThreshold int64 = 1_000_000
 
 // requireAccurate reports whether the caller demanded exact algorithms for
 // approximate-by-default aggregations. The engine forwards this verdict to
@@ -97,7 +123,8 @@ type AggregationSpec struct {
 	Percentile  *float64  `json:"percentile,omitempty"`  // for approximatePercentile (0-100), scalar result
 	Percentiles []float64 `json:"percentiles,omitempty"` // for approximatePercentile batch: single t-digest pass, map[string]float64 result
 	MaxItems    *int      `json:"maxItems,omitempty"`    // for collectList: max values to collect (default 100)
-	Precision   *int      `json:"precision,omitempty"`   // for approximateDistinct: HyperLogLog precision, 4..18 (default 14 — ~0.81% standard error)
+	Precision   *int      `json:"precision,omitempty"`   // for approximateDistinct: HyperLogLog precision, 4..18 (default 14 — ~0.81% standard error). Overrides request-level HLLPrecision.
+	Compression *float64  `json:"compression,omitempty"` // for approximatePercentile: t-digest compression (default 100). Overrides request-level TDigestCompression. Must be positive finite.
 }
 
 // GroupBySpec defines how to group results.
@@ -173,6 +200,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if err := ValidateHaving(req.Having); err != nil {
 		return nil, err
 	}
+	if err := validateApproxConfig(req); err != nil {
+		return nil, err
+	}
 
 	// US-382: pre-filter excludedItems BEFORE any metric or facet runs. We
 	// count the actual intersection (caller-requested PKs that resolve in
@@ -186,22 +216,24 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 
 	var resp *AggregationResponse
 
+	cfg := resolveApproxConfig(req)
+
 	switch {
 	case (req.Cube || req.Rollup) && len(req.GroupBy) > 0:
-		resp, err = e.aggregateCubeOrRollup(idx, baseQuery, req)
+		resp, err = e.aggregateCubeOrRollup(idx, baseQuery, req, cfg)
 	case len(req.GroupBy) > 0:
 		// If groupBy is specified, use Bleve facets.
-		resp, err = e.aggregateWithGroupBy(idx, baseQuery, req)
+		resp, err = e.aggregateWithGroupBy(idx, baseQuery, req, cfg)
 	default:
 		// Simple aggregation without groupBy.
-		resp, err = e.aggregateSimple(idx, baseQuery, req)
+		resp, err = e.aggregateSimple(idx, baseQuery, req, cfg)
 	}
 	if err != nil {
 		return nil, err
 	}
 
 	if len(req.SubAggregations) > 0 && len(req.GroupBy) == 0 {
-		subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations, req.Accuracy)
+		subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations, req.Accuracy, req)
 		if err != nil {
 			return nil, err
 		}
@@ -215,16 +247,55 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		resp.Data = ApplyHaving(resp.Data, req.Having)
 	}
 
+	scannedRows := countScannedRows(idx, baseQuery)
+	if exceedsApproximateScanThreshold(scannedRows, req.ApproximateScanThreshold) {
+		resp.Accuracy = "APPROXIMATE"
+	}
 	if resp.Accuracy == "" {
 		resp.Accuracy = "ACCURATE"
 	}
 	resp.ExcludedItems = excludedCount
 	resp.ComputeUsage = &ComputeUsage{
-		ScannedRows: countScannedRows(idx, baseQuery),
+		ScannedRows: scannedRows,
 		DurationMs:  time.Since(startTime).Milliseconds(),
 		Accuracy:    resp.Accuracy,
 	}
 	return resp, nil
+}
+
+// validateApproxConfig range-checks the request-level approximate-algorithm
+// knobs (hllPrecision, tdigestCompression). It runs before any spec-level
+// override is consulted so a single source of truth governs both paths.
+// Per-spec Precision is re-validated inside computeMetrics for clarity.
+func validateApproxConfig(req *AggregationRequest) error {
+	if req.HLLPrecision != nil {
+		p := *req.HLLPrecision
+		if p < MinHLLPrecision || p > MaxHLLPrecision {
+			return fmt.Errorf("hllPrecision %d out of range [%d,%d]", p, MinHLLPrecision, MaxHLLPrecision)
+		}
+	}
+	if req.TDigestCompression != nil {
+		c := *req.TDigestCompression
+		if !(c > 0) || math.IsInf(c, 0) || math.IsNaN(c) {
+			return fmt.Errorf("tdigestCompression %v must be a positive finite number", c)
+		}
+	}
+	return nil
+}
+
+// exceedsApproximateScanThreshold reports whether the scanned-row count has
+// crossed the configured threshold. A nil override picks the package default
+// (1M); a non-positive override disables the check. Centralised so the
+// behaviour stays uniform between the simple, grouped, and cube/rollup paths.
+func exceedsApproximateScanThreshold(scannedRows int64, override *int64) bool {
+	threshold := DefaultApproximateScanThreshold
+	if override != nil {
+		threshold = *override
+	}
+	if threshold <= 0 {
+		return false
+	}
+	return scannedRows > threshold
 }
 
 // applyExcludedItems wraps baseQuery so that any document whose ID matches one
@@ -325,8 +396,12 @@ func validateSubAggregationsAtDepth(subs []SubAggregationSpec, depth int) error 
 // scope query and returns the results keyed by Name. Each sub-aggregation
 // reuses Aggregate's grouping + recursion machinery so nested sub-aggregations
 // resolve transparently. accuracyMode is propagated unchanged so children
-// inherit the request-level REQUIRE_ACCURATE / ALLOW_APPROXIMATE toggle.
-func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []SubAggregationSpec, accuracyMode string) (map[string]*AggregationResponse, bool, error) {
+// inherit the request-level REQUIRE_ACCURATE / ALLOW_APPROXIMATE toggle. The
+// parentReq pointer carries the request-level HLLPrecision / TDigestCompression
+// / ApproximateScanThreshold defaults (US-465) so a sub-aggregation inherits
+// the same approximate-algorithm contract as its parent unless it sets
+// per-spec overrides.
+func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []SubAggregationSpec, accuracyMode string, parentReq *AggregationRequest) (map[string]*AggregationResponse, bool, error) {
 	if len(subs) == 0 {
 		return nil, false, nil
 	}
@@ -339,6 +414,11 @@ func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []S
 			SubAggregations: s.SubAggregations,
 			Having:          s.Having,
 			Accuracy:        accuracyMode,
+		}
+		if parentReq != nil {
+			childReq.HLLPrecision = parentReq.HLLPrecision
+			childReq.TDigestCompression = parentReq.TDigestCompression
+			childReq.ApproximateScanThreshold = parentReq.ApproximateScanThreshold
 		}
 		childResp, err := e.AggregateWithQuery(idx, scope, childReq)
 		if err != nil {
@@ -353,8 +433,8 @@ func (e *Engine) runSubAggregations(idx bleve.Index, scope query.Query, subs []S
 }
 
 // aggregateSimple performs aggregation without groupBy.
-func (e *Engine) aggregateSimple(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
-	metrics, truncated, approximate, err := e.computeMetrics(idx, baseQuery, req.Aggregations, req.Accuracy)
+func (e *Engine) aggregateSimple(idx bleve.Index, baseQuery query.Query, req *AggregationRequest, cfg approxConfig) (*AggregationResponse, error) {
+	metrics, truncated, approximate, err := e.computeMetrics(idx, baseQuery, req.Aggregations, req.Accuracy, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("compute metrics: %w", err)
 	}
@@ -401,12 +481,12 @@ func sortGroupEntries(entries []groupEntry) {
 
 // aggregateWithGroupBy performs aggregation with groupBy using Bleve facets.
 // Supports multiple groupBy specs by recursive nesting.
-func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
+func (e *Engine) aggregateWithGroupBy(idx bleve.Index, baseQuery query.Query, req *AggregationRequest, cfg approxConfig) (*AggregationResponse, error) {
 	if len(req.GroupBy) == 0 {
 		return nil, fmt.Errorf("groupBy is empty")
 	}
 
-	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations, req.SubAggregations, req.Accuracy)
+	rows, truncated, err := e.recursiveGroupBy(idx, baseQuery, req.GroupBy, req.Aggregations, req.SubAggregations, req.Accuracy, req, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -471,13 +551,13 @@ func ExpandGroupByCombinations(n int, cube, rollup bool) [][]int {
 // Cube/Rollup. Each subset runs through the same recursive grouping path as a
 // plain request; rows are concatenated into a single flat response with
 // non-grouped dimensions absent from the Group map.
-func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, req *AggregationRequest) (*AggregationResponse, error) {
+func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, req *AggregationRequest, cfg approxConfig) (*AggregationResponse, error) {
 	combos := ExpandGroupByCombinations(len(req.GroupBy), req.Cube, req.Rollup)
 	var allRows []AggregationRow
 	var truncated bool
 	for _, subset := range combos {
 		if len(subset) == 0 {
-			metrics, tr, approx, err := e.computeMetrics(idx, baseQuery, req.Aggregations, req.Accuracy)
+			metrics, tr, approx, err := e.computeMetrics(idx, baseQuery, req.Aggregations, req.Accuracy, cfg)
 			if err != nil {
 				return nil, fmt.Errorf("cube/rollup grand total: %w", err)
 			}
@@ -486,7 +566,7 @@ func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, r
 			}
 			row := AggregationRow{Metrics: metrics}
 			if len(req.SubAggregations) > 0 {
-				subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations, req.Accuracy)
+				subs, subTrunc, err := e.runSubAggregations(idx, baseQuery, req.SubAggregations, req.Accuracy, req)
 				if err != nil {
 					return nil, fmt.Errorf("cube/rollup grand total sub-aggregations: %w", err)
 				}
@@ -502,7 +582,7 @@ func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, r
 		for i, idx := range subset {
 			subsetGBs[i] = req.GroupBy[idx]
 		}
-		rows, tr, err := e.recursiveGroupBy(idx, baseQuery, subsetGBs, req.Aggregations, req.SubAggregations, req.Accuracy)
+		rows, tr, err := e.recursiveGroupBy(idx, baseQuery, subsetGBs, req.Aggregations, req.SubAggregations, req.Accuracy, req, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("cube/rollup subset %v: %w", subset, err)
 		}
@@ -523,8 +603,10 @@ func (e *Engine) aggregateCubeOrRollup(idx bleve.Index, baseQuery query.Query, r
 // Sub-aggregations attach to leaf rows only; intermediate groupBy levels
 // pass them through unchanged. accuracyMode is forwarded to each leaf
 // computeMetrics call so the per-bucket aggregations honour the request-
-// level REQUIRE_ACCURATE / ALLOW_APPROXIMATE toggle.
-func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec, subs []SubAggregationSpec, accuracyMode string) ([]AggregationRow, bool, error) {
+// level REQUIRE_ACCURATE / ALLOW_APPROXIMATE toggle. parentReq + cfg carry
+// the US-465 approx-algorithm defaults so per-bucket leaves inherit the
+// request-wide HLL precision / t-digest compression.
+func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupBys []GroupBySpec, specs []AggregationSpec, subs []SubAggregationSpec, accuracyMode string, parentReq *AggregationRequest, cfg approxConfig) ([]AggregationRow, bool, error) {
 	gb := groupBys[0]
 	remaining := groupBys[1:]
 
@@ -539,7 +621,7 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 	for _, entry := range entries {
 		if len(remaining) > 0 {
 			// Recurse with narrowed scope
-			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs, subs, accuracyMode)
+			subRows, subTrunc, err := e.recursiveGroupBy(idx, entry.scopeQuery, remaining, specs, subs, accuracyMode, parentReq, cfg)
 			if err != nil {
 				return nil, false, err
 			}
@@ -560,7 +642,7 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 			}
 		} else {
 			// Leaf level — compute metrics + run sub-aggregations against bucket scope.
-			metrics, leafTrunc, leafApprox, err := e.computeMetrics(idx, entry.scopeQuery, specs, accuracyMode)
+			metrics, leafTrunc, leafApprox, err := e.computeMetrics(idx, entry.scopeQuery, specs, accuracyMode, cfg)
 			if err != nil {
 				return nil, false, fmt.Errorf("compute metrics for group %v: %w", entry.value, err)
 			}
@@ -572,7 +654,7 @@ func (e *Engine) recursiveGroupBy(idx bleve.Index, baseQuery query.Query, groupB
 				Metrics: metrics,
 			}
 			if len(subs) > 0 {
-				subResults, subTrunc, err := e.runSubAggregations(idx, entry.scopeQuery, subs, accuracyMode)
+				subResults, subTrunc, err := e.runSubAggregations(idx, entry.scopeQuery, subs, accuracyMode, parentReq)
 				if err != nil {
 					return nil, false, fmt.Errorf("sub-aggregations for group %v: %w", entry.value, err)
 				}
@@ -915,7 +997,7 @@ func (e *Engine) groupByExact(idx bleve.Index, baseQuery query.Query, gb GroupBy
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
 
-		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate, resolveApproxConfig(nil))
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for group %q: %w", term.Term, err)
 		}
@@ -985,7 +1067,7 @@ func (e *Engine) groupByFixedWidth(idx bleve.Index, baseQuery query.Query, gb Gr
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, rangeQuery)
 
-		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate, resolveApproxConfig(nil))
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for range %s: %w", nr.Name, err)
 		}
@@ -1055,7 +1137,7 @@ func (e *Engine) groupByRanges(idx bleve.Index, baseQuery query.Query, gb GroupB
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, rangeQuery)
 
-		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate, resolveApproxConfig(nil))
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for range %s: %w", nr.Name, err)
 		}
@@ -1180,7 +1262,7 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		docIDQ := bleve.NewDocIDQuery(docIDs)
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, docIDQ)
 
-		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate, resolveApproxConfig(nil))
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for duration bucket: %w", err)
 		}
@@ -1236,7 +1318,7 @@ func (e *Engine) groupByTopValues(idx bleve.Index, baseQuery query.Query, gb Gro
 
 		scopedQuery := bleve.NewConjunctionQuery(baseQuery, termQuery)
 
-		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate)
+		metrics, _, _, err := e.computeMetrics(idx, scopedQuery, specs, AccuracyAllowApproximate, resolveApproxConfig(nil))
 		if err != nil {
 			return nil, fmt.Errorf("compute metrics for topValues group %q: %w", term.Term, err)
 		}

@@ -2089,6 +2089,17 @@ components:
             HyperLogLog precision for `approximateDistinct` (4..18). Defaults
             to 14 (~0.81% standard error). Higher precision reduces error but
             grows the in-memory sketch: a size-of-sketch ≈ 2^precision bytes.
+            Overrides the request-level hllPrecision when set (US-465).
+        compression:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          description: |
+            t-digest compression for `approximatePercentile`. Defaults to 100
+            (worst-case ≤ 1000 centroids; ≤ 16 KiB heap; p99 error << 1% on
+            smooth distributions). Larger values give finer-grained tails at
+            higher memory cost. Overrides the request-level tdigestCompression
+            when set (US-465). Must be a positive finite number.
     GroupBySpec:
       type: object
       required: [type, field]
@@ -2187,6 +2198,32 @@ components:
             query.
           items:
             type: string
+        hllPrecision:
+          type: integer
+          minimum: 4
+          maximum: 18
+          description: |
+            Request-wide HyperLogLog precision applied to every
+            `approximateDistinct` in this request that does not carry its own
+            spec-level `precision` override (US-465). Default 14. Range 4..18.
+        tdigestCompression:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          description: |
+            Request-wide t-digest compression applied to every
+            `approximatePercentile` in this request that does not carry its
+            own spec-level `compression` override (US-465). Default 100. Must
+            be a positive finite number.
+        approximateScanThreshold:
+          type: integer
+          format: int64
+          description: |
+            Scanned-row count above which the response is force-marked
+            APPROXIMATE even when the scan was not truncated by MaxDocScanSize
+            (US-465). Default 1,000,000. A non-positive value disables the
+            check. Lets callers tighten the cost-of-trust boundary without
+            changing the engine's hard scan ceiling.
     HavingClause:
       type: object
       required: [metric, op, value]
@@ -2380,6 +2417,45 @@ components:
           enum: [ALL, ALL_V2_WITH_DELETIONS, NONE]
           default: ALL
           description: Controls whether edit summaries are returned in the response.
+        expectedVersion:
+          type: integer
+          format: int32
+          description: |
+            US-023 legacy single-target optimistic concurrency token. When set,
+            the first MODIFY/DELETE target of the action is verified against this
+            version count; mismatch surfaces 409 StaleObject. Superseded by
+            expectedVersions for multi-target locks; when both are set
+            expectedVersions takes precedence.
+        expectedVersions:
+          type: array
+          description: |
+            US-471 per-target optimistic concurrency tokens. Each entry locks
+            one (objectType, primaryKey) tuple against the version the caller
+            observed. A single mismatch aborts the publish before NATS is
+            contacted and surfaces 409 StaleObject pointing at the failing ref
+            (deterministic order: first stale ref wins). Refs may target
+            objects the action does not modify — the lock is a snapshot
+            predicate on the caller's read set.
+          items:
+            $ref: "#/components/schemas/ExpectedVersionRef"
+    ExpectedVersionRef:
+      type: object
+      description: US-471 per-target optimistic-lock token.
+      required: [objectType, primaryKey, version]
+      properties:
+        objectType:
+          type: string
+          description: API name of the ObjectType being locked.
+        primaryKey:
+          type: string
+          description: Primary key of the object being locked.
+        version:
+          type: integer
+          format: int32
+          description: |
+            Observed object_history version count. The apply is rejected with
+            409 StaleObject if the live version differs from this value at
+            prepare time.
     BatchApplyOptions:
       type: object
       description: Options for batch action apply (Foundry OSv2).
@@ -2941,7 +3017,11 @@ components:
           description: |
             Present when type is "failed". Known values:
             "ExecutionError" (engine returned an error),
-            "NonSelectQuery" (query was rejected at execution time).
+            "NonSelectQuery" (query was rejected at execution time),
+            "StackedStatement" (more than one statement in the input),
+            "SystemTableAccess" (query references pg_* / information_schema.*),
+            "QueryTimeout" (query exceeded the configured timeout — US-468),
+            "MaxRowsExceeded" (query streamed more than the configured row cap — US-468).
     AdminIndexRebuildRequest:
       type: object
       description: |
@@ -2971,6 +3051,145 @@ components:
           type: integer
           format: int32
           description: Number of documents indexed from the source.
+    AdminFunnelDLQEntry:
+      type: object
+      description: |
+        US-470: a single dead-lettered EditBatch envelope stored in the
+        OBJECT_EDITS_DLQ JetStream stream. `id` is the stream sequence number
+        rendered as a decimal string; it is stable across server restarts so
+        callers can replay or discard by id without race risk.
+      required: [id, subject, message]
+      properties:
+        id:
+          type: string
+          description: Stream sequence number for this DLQ entry.
+        subject:
+          type: string
+          description: "DLQ subject this envelope was published under, e.g. `edits.dlq.employee`."
+        message:
+          $ref: "#/components/schemas/AdminFunnelDLQMessage"
+    AdminFunnelDLQMessage:
+      type: object
+      description: |
+        US-470: the wrapper envelope the consumer writes to the DLQ stream
+        when a message exceeds max deliveries. `originalSubject` is the live
+        edits subject the replay endpoint republishes to; `originalData` is
+        the raw EditBatch payload (already JSON-encoded).
+      required: [originalSubject, originalData, reason, numDelivered, maxDeliveries, terminatedAt, streamSequence, consumerSequence]
+      properties:
+        originalSubject:
+          type: string
+          description: "Live subject the consumer was about to NAK on, e.g. `edits.employee`."
+        originalData:
+          type: string
+          format: byte
+          description: Base64 JSON of the original EditBatch payload.
+        reason:
+          type: string
+          description: Operator-readable explanation of why the message was dead-lettered.
+        numDelivered:
+          type: integer
+          format: int64
+          description: Number of delivery attempts when the message was terminated.
+        maxDeliveries:
+          type: integer
+          format: int64
+          description: Configured max deliveries threshold the consumer hit.
+        terminatedAt:
+          type: string
+          format: date-time
+        streamSequence:
+          type: integer
+          format: int64
+          description: Sequence number on the original OBJECT_EDITS stream.
+        consumerSequence:
+          type: integer
+          format: int64
+          description: Sequence number on the consumer's delivery view.
+    AdminFunnelDLQListResponse:
+      type: object
+      description: US-470 wire shape for `GET /api/admin/funnel/dlq`.
+      required: [entries, size]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminFunnelDLQEntry"
+        size:
+          type: integer
+          format: int64
+          description: |
+            Authoritative count of pending messages in the DLQ stream.
+            May exceed `entries.length` when the page was capped by `limit`.
+    AdminFunnelDLQReplayResponse:
+      type: object
+      description: US-470 wire shape for `POST /api/admin/funnel/dlq/{id}/replay`.
+      required: [id, originalSubject]
+      properties:
+        id:
+          type: string
+          description: Stream sequence id of the replayed entry.
+        originalSubject:
+          type: string
+          description: "Live subject the payload was republished onto, e.g. `edits.employee`."
+    AdminFunnelDLQDiscardResponse:
+      type: object
+      description: US-470 wire shape for `POST /api/admin/funnel/dlq/{id}/discard`.
+      required: [id, dropped]
+      properties:
+        id:
+          type: string
+        dropped:
+          type: boolean
+          description: True when the entry was removed from the DLQ stream.
+    AdminAuthKeysRotateResponse:
+      type: object
+      description: US-490 wire shape for `POST /api/admin/auth/keys/rotate`.
+      required: [activeKeyId, keyIds, rotatedAt]
+      properties:
+        activeKeyId:
+          type: string
+          description: |
+            Kid of the freshly appended key — the one stamped into the JOSE
+            header of every token Sign() issues from now on.
+        keyIds:
+          type: array
+          description: Full keyring, ordered oldest → newest. The last entry equals `activeKeyId`.
+          items:
+            type: string
+        rotatedAt:
+          type: string
+          format: date-time
+          description: Server timestamp at the moment the new key was appended.
+    AdminAuthRevokeRequest:
+      type: object
+      description: |
+        US-491 request body for `POST /api/auth/tokens/{jti}/revoke`. All fields
+        are optional; the JTI in the path is sufficient on its own.
+      properties:
+        userId:
+          type: string
+          description: Optional subject of the token (recorded for audit).
+        reason:
+          type: string
+          description: Free-form operator note (`logout`, `compromised`, etc.).
+        expiresAt:
+          type: string
+          format: date-time
+          description: |
+            Original `exp` claim of the revoked token. When set, the background
+            reaper prunes the row after this timestamp passes; otherwise a
+            default 24h horizon is applied.
+    AdminAuthRevokeResponse:
+      type: object
+      description: US-491 wire shape returned after a successful revoke.
+      required: [jti, revokedAt]
+      properties:
+        jti:
+          type: string
+        revokedAt:
+          type: string
+          format: date-time
     AuditEvent:
       type: object
       description: A single audit log entry.
@@ -5790,7 +6009,27 @@ paths:
                   executionId: { type: string }
                   originalHash: { type: string }
                   replayHash: { type: string }
+                  deterministic:
+                    type: boolean
+                    description: |
+                      US-475 PRD-canonical: true iff the replay output hash
+                      matches the recorded hash. Mirrors `match`; both fields
+                      are emitted so pre-US-475 SDK consumers reading `match`
+                      and US-475+ SDK consumers reading `deterministic` see
+                      the same value.
                   match: { type: boolean }
+                  originalOutput:
+                    description: |
+                      US-475 PRD-canonical: decoded JSON of the captured
+                      execution's historical output. Populated only when the
+                      replay was anchored to an executionId — ad-hoc replays
+                      have no historical output to surface, so the field is
+                      omitted.
+                  replayOutput:
+                    description: |
+                      US-475 PRD-canonical: decoded JSON of the fresh replay
+                      leg. Mirrors `result`; both keys carry the same value
+                      so SDK consumers reading either name agree.
                   result: {}
         "400":
           $ref: "#/components/responses/BadRequestError"
@@ -5798,9 +6037,11 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "409":
           description: |
-            Hash divergence (US-370). The body still includes the fresh
-            `result` plus a `warning.code=WEAVE_FUNCTION_NONDETERMINISTIC`
-            entry referencing the original execution.
+            Hash divergence (US-370 / US-475). The body still includes the
+            fresh `result` / `replayOutput` plus a
+            `warning.code=WEAVE_FUNCTION_NONDETERMINISTIC` entry referencing
+            the original execution, and `deterministic=false` (alongside
+            legacy `match=false`).
           content:
             application/json:
               schema:
@@ -5811,7 +6052,91 @@ paths:
                   executionId: { type: string }
                   originalHash: { type: string }
                   replayHash: { type: string }
+                  deterministic: { type: boolean }
                   match: { type: boolean }
+                  originalOutput: {}
+                  replayOutput: {}
+                  result: {}
+                  warning:
+                    type: object
+                    properties:
+                      code: { type: string }
+                      message: { type: string }
+                  original:
+                    type: object
+                    additionalProperties: true
+  /api/v2/functions/{functionRid}/replay:
+    post:
+      operationId: replayFunctionByRID
+      summary: Replay a Function by RID (US-475 top-level alias)
+      description: |
+        US-475 PRD-literal top-level alias of the ontology-scoped
+        `/api/v2/ontologies/{ontologyApiName}/functions/{functionRid}/replay`
+        endpoint. The functionRid MUST be RID-shaped (`ri.*`); bare-name or
+        `name@version` refs are rejected with 400 InvalidFunctionRef because
+        the URL no longer carries an ontology to disambiguate. Use the
+        ontology-scoped path for those refs.
+
+        The response shape, request body, and 200/400/404/409 semantics are
+        identical to the ontology-scoped endpoint. See that operation for
+        the full contract.
+      tags: [Functions]
+      parameters:
+        - in: path
+          name: functionRid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                executionId: { type: string }
+                version: { type: string }
+                input:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Replay matched the recorded hash.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid: { type: string }
+                  functionVersion: { type: string }
+                  executionId: { type: string }
+                  originalHash: { type: string }
+                  replayHash: { type: string }
+                  deterministic: { type: boolean }
+                  match: { type: boolean }
+                  originalOutput: {}
+                  replayOutput: {}
+                  result: {}
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          description: Hash divergence.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  functionRid: { type: string }
+                  functionVersion: { type: string }
+                  executionId: { type: string }
+                  originalHash: { type: string }
+                  replayHash: { type: string }
+                  deterministic: { type: boolean }
+                  match: { type: boolean }
+                  originalOutput: {}
+                  replayOutput: {}
                   result: {}
                   warning:
                     type: object
@@ -8612,6 +8937,14 @@ paths:
         replays the prior result instead of re-executing, and any compensator
         that itself fails to prepare or commit is enqueued to the dead-letter
         queue (action_saga_dlq) for manual or scheduled retry.
+
+        US-469: clients can choose how the reverse-walk reacts to a broken
+        compensator via `compensationStrategy`: `best-effort` (default —
+        skip the broken compensator and keep running the rest) or
+        `stop-on-first` (halt the walk on the first failure; remaining
+        prepared steps are recorded as skipped). Either way, the structured
+        `failedCompensations` slice tells callers which steps did not
+        compensate cleanly.
       tags: [Actions]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -8629,6 +8962,15 @@ paths:
                     Optional dedupe token. Two requests with the same key
                     return the same SagaResult; the second is marked
                     replayed=true and does not re-execute.
+                compensationStrategy:
+                  type: string
+                  enum: [best-effort, stop-on-first]
+                  description: |
+                    US-469 rollback strategy. `best-effort` (default) keeps
+                    compensating the rest of the prepared steps even when
+                    one compensator fails; `stop-on-first` halts walking on
+                    the first failure. Empty string is accepted and means
+                    best-effort.
                 steps:
                   type: array
                   description: Ordered list of action invocations.
@@ -8675,6 +9017,40 @@ paths:
                     type: array
                     items:
                       type: string
+                  compensationStrategy:
+                    type: string
+                    enum: [best-effort, stop-on-first]
+                    description: |
+                      US-469. Echoes the strategy that drove the rollback walk.
+                  failedCompensations:
+                    type: array
+                    description: |
+                      US-469. Per-step record of compensators that did not
+                      complete cleanly. Each entry identifies the failing
+                      primary step (stepIndex / stepId / actionType /
+                      compensateRid), the phase the failure occurred in
+                      (prepare / commit / skipped), a human-readable reason,
+                      and the action_saga_dlq row id when one was enqueued
+                      (skipped entries under stop-on-first carry no dlqId).
+                    items:
+                      type: object
+                      required: [stepIndex, actionType, phase, reason]
+                      properties:
+                        stepIndex:
+                          type: integer
+                        stepId:
+                          type: string
+                        actionType:
+                          type: string
+                        compensateRid:
+                          type: string
+                        phase:
+                          type: string
+                          enum: [prepare, commit, skipped]
+                        reason:
+                          type: string
+                        dlqId:
+                          type: string
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
@@ -10514,6 +10890,91 @@ paths:
           schema:
             type: string
           description: Filter by resource type (e.g. ObjectType, Property, Session).
+        - name: resourceRid
+          in: query
+          schema:
+            type: string
+          description: |
+            Filter by exact resource RID. Returns every audit event whose
+            `resource_rid` equals this value — useful for "show me
+            everything that ever happened to this ObjectType / Session /
+            Policy". Snake-case alias `resource_rid` is also accepted.
+            Added in US-493.
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only events at or after this RFC 3339 timestamp.
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only events at or before this RFC 3339 timestamp.
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of events per page.
+        - name: pageToken
+          in: query
+          schema:
+            type: string
+          description: Opaque pagination cursor from a previous response.
+      responses:
+        "200":
+          description: Matching audit events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Audit store is not configured (no PostgreSQL pool).
+  /api/admin/audit:
+    get:
+      operationId: listAuditEventsLegacyAlias
+      summary: List audit events (PRD-literal alias, US-493)
+      description: |
+        PRD-literal alias for `/api/v2/admin/auditEvents`. Same handler,
+        same query params, same response shape — exists so the PRD
+        specification's literal path is also routable. Prefer the
+        versioned path in new SDK / CLI integrations.
+      tags: [Admin]
+      parameters:
+        - name: actor
+          in: query
+          schema:
+            type: string
+          description: Filter by actor ID.
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action.
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+          description: Filter by resource type.
+        - name: resourceRid
+          in: query
+          schema:
+            type: string
+          description: |
+            Filter by exact resource RID. Snake-case alias `resource_rid`
+            is also accepted.
         - name: since
           in: query
           schema:
@@ -10899,6 +11360,220 @@ paths:
                 $ref: "#/components/schemas/AdminIndexRebuildResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/index/reindex/{objectType}:
+    post:
+      operationId: adminIndexReindexByPath
+      summary: Rebuild a Bleve index by path-style ObjectType (US-461)
+      description: |
+        REST-shaped sibling of `/api/admin/indexes/rebuild`: the ObjectType
+        API name travels in the URL path and the ontology API name travels in
+        the `ontology` query parameter. Same rebuild machinery, same
+        `{scopedKey, indexedCount}` response, same 503 fallback when no
+        Bleve backend is configured.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: objectType
+          required: true
+          schema:
+            type: string
+          description: ObjectType API name to reindex.
+        - in: query
+          name: ontology
+          required: true
+          schema:
+            type: string
+          description: Ontology API name that owns the ObjectType.
+      responses:
+        "200":
+          description: Rebuild completed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminIndexRebuildResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/funnel/dlq:
+    get:
+      operationId: adminFunnelDLQList
+      summary: List dead-lettered EditBatch envelopes (US-470)
+      description: |
+        Lists pending entries in the `OBJECT_EDITS_DLQ` JetStream stream so
+        operators can inspect what failed and triage replay vs. discard.
+        Returns the per-entry envelope plus the authoritative `size` field
+        (used by `weave_funnel_dlq_size`). Gated behind `user.manage`; 503
+        when NATS isn't configured.
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of entries to return.
+      responses:
+        "200":
+          description: Pending DLQ entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFunnelDLQListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/funnel/dlq/{id}/replay:
+    post:
+      operationId: adminFunnelDLQReplay
+      summary: Replay a dead-lettered EditBatch (US-470)
+      description: |
+        Republishes the DLQ entry's `originalData` onto its
+        `originalSubject` (the live edits subject) and removes the entry
+        from the DLQ stream so dashboards and the
+        `weave_funnel_dlq_size` gauge reflect the drain. Publish failure
+        leaves the entry in place so operators can retry. 503 when the
+        publisher isn't wired.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Stream sequence id returned by the list endpoint.
+      responses:
+        "200":
+          description: Entry replayed and removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFunnelDLQReplayResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/auth/tokens/{jti}/revoke:
+    post:
+      operationId: adminAuthRevokeToken
+      summary: Revoke a JWT access token by jti (US-491)
+      description: |
+        Inserts the supplied jti into the `auth_revoked_tokens` blacklist so
+        subsequent requests carrying that token are rejected with
+        `401 TokenRevoked` even when the token's signature and `exp` claim
+        are still valid. The middleware fronts the table with a 30s TTL
+        cache; the admin handler invalidates the cache for the affected jti
+        so same-process callers observe the revoke on the very next request.
+        Gated behind `user.manage`. Returns 503 when the process boots
+        without a PG-backed RevocationStore (degraded mode).
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: jti
+          required: true
+          schema:
+            type: string
+          description: The JWT ID (`jti` claim) of the access token to revoke.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAuthRevokeRequest"
+      responses:
+        "200":
+          description: Token added to the revocation blacklist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuthRevokeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/auth/keys/rotate:
+    post:
+      operationId: adminAuthKeysRotate
+      summary: Rotate the JWT signing keyring (US-490)
+      description: |
+        Generates a fresh RSA-2048 keypair and appends it to the in-memory
+        JWT signing keyring. The new key becomes the active signing key
+        immediately; tokens previously minted under older keys keep
+        verifying because every kid in the ring participates in `Verify()`
+        until those tokens reach their natural expiration. Gated behind
+        `user.manage`. 503 when the process is running without a configured
+        signer (degraded boot / dev-without-keys).
+      tags: [Admin]
+      responses:
+        "200":
+          description: Rotation completed; the response carries the new active kid plus the full ordered keyring.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuthKeysRotateResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/funnel/dlq/{id}/discard:
+    post:
+      operationId: adminFunnelDLQDiscard
+      summary: Discard a dead-lettered EditBatch without replaying (US-470)
+      description: |
+        Removes the DLQ entry without republishing it; useful when the
+        underlying ObjectType has been retired or the payload is
+        unrecoverable. 404 when the id is unknown.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Stream sequence id returned by the list endpoint.
+      responses:
+        "200":
+          description: Entry removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFunnelDLQDiscardResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "403":

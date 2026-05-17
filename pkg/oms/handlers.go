@@ -35,6 +35,7 @@ type OMSHandler struct {
 	functionRepoStore         FunctionRepoStore
 	commitJobStore            CommitJobStore
 	commitJobRunner           CommitJobRunner
+	indexBootstrapper         IndexBootstrapper
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.

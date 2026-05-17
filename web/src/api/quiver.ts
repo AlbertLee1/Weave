@@ -73,3 +73,45 @@ export function deleteQuiverDashboard(rid: string): Promise<void> {
     `/api/v2/quiver/dashboards/${encodeURIComponent(rid)}`,
   );
 }
+
+// US-483: batch sparkline fetch. One POST returns the points for every
+// series in the saved dashboard's config, replacing the per-series
+// useTimeSeriesPoints fan-out the SPA used to do on dashboard load.
+
+export interface QuiverSparklinePoint {
+  time: string;
+  value: unknown;
+}
+
+export interface QuiverSparklineSeries {
+  id: string;
+  label: string;
+  color: string;
+  objectType: string;
+  primaryKey: string;
+  property: string;
+  branch?: string;
+  points: QuiverSparklinePoint[];
+}
+
+export interface QuiverSparklinesResponse {
+  rid: string;
+  series: QuiverSparklineSeries[];
+}
+
+export interface BatchSparklinesInput {
+  // seriesIds restricts the fan-out to a named subset (in dashboard
+  // order, not request order). Empty / undefined returns every series.
+  seriesIds?: string[];
+}
+
+export function batchQuiverSparklines(
+  rid: string,
+  input: BatchSparklinesInput = {},
+): Promise<QuiverSparklinesResponse> {
+  return request<QuiverSparklinesResponse>(
+    'POST',
+    `/api/v2/quiver/dashboards/${encodeURIComponent(rid)}/sparklines`,
+    input,
+  );
+}

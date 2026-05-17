@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -97,5 +99,62 @@ func (s *PgStore) StreamHistoricValues(ctx context.Context, key SeriesKey) ([]Va
 	return out, nil
 }
 
+// QueryBBoxRange returns rows that match both the bbox AND the time range.
+// The bbox predicate is expressed as a pair of float8 BETWEEN clauses on
+// the longitude/latitude functional indexes added by migration 000208, so
+// the planner can BitmapAnd them with the series-key + ts index instead of
+// scanning every JSONB payload. Time bounds default to "unbounded on this
+// side" when set to the zero time.
+//
+// Results are ordered by ts ASC. An empty match returns an empty (non-nil)
+// slice, never ErrNoValues — that contract is reserved for the LatestValue
+// endpoint where "no row" is a semantically distinct outcome.
+func (s *PgStore) QueryBBoxRange(ctx context.Context, key SeriesKey, bbox BBox, tr TimeRange) ([]Value, error) {
+	var b strings.Builder
+	args := []any{key.Ontology, key.ObjectType, key.PrimaryKey, key.Property,
+		bbox.MinLng, bbox.MaxLng, bbox.MinLat, bbox.MaxLat}
+	b.WriteString(
+		`SELECT ts, position FROM geotemporal_values
+		 WHERE ontology=$1 AND object_type=$2 AND primary_key=$3 AND property=$4
+		   AND (position->'coordinates'->>0)::float8 BETWEEN $5 AND $6
+		   AND (position->'coordinates'->>1)::float8 BETWEEN $7 AND $8`)
+	if !tr.Start.IsZero() {
+		args = append(args, tr.Start)
+		fmt.Fprintf(&b, " AND ts >= $%d", len(args))
+	}
+	if !tr.End.IsZero() {
+		args = append(args, tr.End)
+		fmt.Fprintf(&b, " AND ts <= $%d", len(args))
+	}
+	b.WriteString(" ORDER BY ts ASC")
+
+	rows, err := s.pool.Query(ctx, b.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Value{}
+	for rows.Next() {
+		var v Value
+		var raw []byte
+		if err := rows.Scan(&v.Time, &raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &v.Position); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Compile-time guarantee that *PgStore satisfies the Store interface.
 var _ Store = (*PgStore)(nil)
+
+// Compile-time guarantee that *PgStore also satisfies the spatial+temporal
+// querier capability the US-466 PG-persistence story requires.
+var _ SpatialTemporalQuerier = (*PgStore)(nil)

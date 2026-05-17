@@ -123,6 +123,96 @@ func TestSeed_IdempotentAndComplete(t *testing.T) {
 	}
 }
 
+// TestBDD_SeedSurvivesNonCascadingFKDependents is the DOG-001 regression
+// test: between two Seed() passes, real Weave installs accumulate rows in
+// tables whose FK to ontologies(rid) lacks ON DELETE CASCADE (functions,
+// query_types, ontology_snapshots, automation_rules). Hermes dogfood on
+// 2026-05-17 surfaced a 23503 violation on functions_ontology_rid_fkey
+// during scripts/e2e-setup.sh. The wipe step must clean these dependents
+// itself so a reseed converges instead of aborting halfway.
+//
+// Given an existing northwind ontology with rows in every known
+// non-cascading dependent table,
+// When Seed() runs again,
+// Then it completes without a foreign-key violation and the ontology
+// carries the expected object types + history rows.
+func TestBDD_SeedSurvivesNonCascadingFKDependents(t *testing.T) {
+	ctx := context.Background()
+
+	pg := testutil.StartPGContainer(t)
+	if err := database.RunMigrationsUp(pg.DSN, testutil.MigrationsDir()); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	opts := seed.DefaultOptions()
+	opts.Logger = nil
+
+	first, err := seed.Seed(ctx, pg.Pool, opts)
+	if err != nil {
+		t.Fatalf("first Seed: %v", err)
+	}
+
+	// Insert one row in every known non-cascading dependent of
+	// ontologies(rid). Each row is enough to trigger a FK violation
+	// in the next wipe pass if the seeder does not clean it up first.
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO functions (rid, ontology_rid, name, source_code)
+		 VALUES ($1, $2, $3, $4)`,
+		"ri.function.main.test.fn", first.OntologyRID, "noop", "module.exports = () => null;",
+	); err != nil {
+		t.Fatalf("seed functions row: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO query_types (rid, ontology_rid, api_name, display_name)
+		 VALUES ($1, $2, $3, $4)`,
+		"ri.query-type.main.test.q", first.OntologyRID, "noop", "Noop",
+	); err != nil {
+		t.Fatalf("seed query_types row: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO ontology_snapshots (ontology_rid, version, label, snapshot)
+		 VALUES ($1, $2, $3, '{}'::jsonb)`,
+		first.OntologyRID, 1, "test",
+	); err != nil {
+		t.Fatalf("seed ontology_snapshots row: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO automation_rules (id, ontology_rid, name, status, trigger_type)
+		 VALUES ($1, $2, $3, 'active', 'manual')`,
+		"auto-test", first.OntologyRID, "noop",
+	); err != nil {
+		t.Fatalf("seed automation_rules row: %v", err)
+	}
+
+	// Second pass must converge — wipe() now owns cleanup of every
+	// non-cascading dependent above.
+	second, err := seed.Seed(ctx, pg.Pool, opts)
+	if err != nil {
+		t.Fatalf("second Seed after FK dependents: %v", err)
+	}
+	if len(second.ObjectTypes) == 0 {
+		t.Fatalf("second seed returned no object types")
+	}
+	if second.OntologyRID != first.OntologyRID {
+		t.Fatalf("ontology RID drifted: %q vs %q", second.OntologyRID, first.OntologyRID)
+	}
+
+	// Confirm the dependents are gone — wipe-and-reseed means the
+	// non-cascading rows should not survive into the new ontology
+	// generation.
+	for _, table := range []string{"functions", "query_types", "ontology_snapshots", "automation_rules"} {
+		var n int
+		if err := pg.Pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE ontology_rid = $1",
+			second.OntologyRID).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("%s still has %d rows for ontology %q after reseed", table, n, second.OntologyRID)
+		}
+	}
+}
+
 func historyCountsByType(ctx context.Context, t *testing.T, pg *testutil.PGContainer) map[string]int {
 	t.Helper()
 	rows, err := pg.Pool.Query(ctx, `

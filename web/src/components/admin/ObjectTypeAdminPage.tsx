@@ -5,14 +5,20 @@ import type {
   ObjectType,
   LinkType,
   ActionType,
+  ActionLog,
   Classification,
 } from '../../api/types';
 import { CLASSIFICATION_VALUES } from '../../api/types';
 import {
   listOutgoingLinkTypes,
   listActionTypes,
+  getResolvedObjectType,
+  postObjectTypeEditsHistory,
   type CreateObjectTypeRequest,
   type UpdateObjectTypeRequest,
+  type ResolvedObjectType,
+  type ResolvedProperty,
+  type ResolvedOutgoingLink,
 } from '../../api/ontologies';
 import {
   useCreateObjectType,
@@ -604,9 +610,9 @@ function EditObjectTypeModal({
   onClose: () => void;
 }) {
   const update = useUpdateObjectType(ontologyApiName);
-  const [tab, setTab] = useState<'details' | 'properties' | 'bindings'>(
-    'details',
-  );
+  const [tab, setTab] = useState<
+    'details' | 'properties' | 'bindings' | 'resolved' | 'history'
+  >('details');
   const [form, setForm] = useState<EditFormState>({
     displayName: objectType.displayName,
     pluralDisplayName: objectType.pluralDisplayName ?? '',
@@ -698,6 +704,34 @@ function EditObjectTypeModal({
         >
           Bindings
         </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="object-type-edit-tab-resolved"
+          aria-selected={tab === 'resolved'}
+          onClick={() => setTab('resolved')}
+          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+            tab === 'resolved'
+              ? 'border-accent-cyan text-accent-cyan'
+              : 'border-transparent text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          Resolved
+        </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="object-type-edit-tab-history"
+          aria-selected={tab === 'history'}
+          onClick={() => setTab('history')}
+          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+            tab === 'history'
+              ? 'border-accent-cyan text-accent-cyan'
+              : 'border-transparent text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          History
+        </button>
       </div>
       {tab === 'properties' ? (
         <PropertiesEditor
@@ -706,6 +740,16 @@ function EditObjectTypeModal({
         />
       ) : tab === 'bindings' ? (
         <BindingsEditor
+          ontologyApiName={ontologyApiName}
+          objectType={objectType}
+        />
+      ) : tab === 'resolved' ? (
+        <ResolvedView
+          ontologyApiName={ontologyApiName}
+          objectType={objectType}
+        />
+      ) : tab === 'history' ? (
+        <HistoryView
           ontologyApiName={ontologyApiName}
           objectType={objectType}
         />
@@ -1074,4 +1118,329 @@ function dataTypeReferences(
     return true;
   }
   return false;
+}
+
+// US-499: Resolved view — render properties + outgoing links from the
+// backend `/resolved` endpoint with `inheritedFrom` provenance surfaced
+// on rows that originated in an ancestor ObjectType.
+function ResolvedView({
+  ontologyApiName,
+  objectType,
+}: {
+  ontologyApiName: string;
+  objectType: ObjectType;
+}) {
+  const { data, isLoading, error } = useQuery<ResolvedObjectType>({
+    queryKey: ['objectType', 'resolved', ontologyApiName, objectType.apiName],
+    queryFn: () => getResolvedObjectType(ontologyApiName, objectType.apiName),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <LoadingSpinner size="md" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <p
+        role="alert"
+        data-testid="object-type-resolved-error"
+        className="text-xs text-accent-error"
+      >
+        Failed to load resolved view: {(error as Error).message}
+      </p>
+    );
+  }
+  if (!data) return null;
+
+  const properties = Object.entries(data.properties).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+
+  return (
+    <div
+      data-testid="object-type-resolved-panel"
+      className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto"
+    >
+      {data.extendsChain && data.extendsChain.length > 0 && (
+        <div
+          data-testid="resolved-extends-chain"
+          className="text-[11px] text-text-secondary"
+        >
+          <span className="uppercase tracking-widest">Extends:</span>{' '}
+          <span className="font-mono">{data.extendsChain.join(' → ')}</span>
+        </div>
+      )}
+
+      <section>
+        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">
+          Resolved Properties ({properties.length})
+        </h3>
+        <div
+          className="rounded border overflow-hidden"
+          style={{
+            borderColor: 'rgba(31,41,55,0.5)',
+            background: 'rgba(13,17,23,0.4)',
+          }}
+        >
+          <table className="w-full text-sm">
+            <thead className="text-[10px] uppercase tracking-widest text-text-secondary">
+              <tr
+                className="border-b"
+                style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+              >
+                <th className="text-left px-3 py-2 font-medium">API Name</th>
+                <th className="text-left px-3 py-2 font-medium">Type</th>
+                <th className="text-left px-3 py-2 font-medium">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {properties.map(([apiName, p]) => (
+                <PropertyRow key={apiName} apiName={apiName} property={p} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-[10px] uppercase tracking-widest text-text-secondary mb-2">
+          Resolved Outgoing Links ({data.outgoingLinkTypes.length})
+        </h3>
+        <div
+          className="rounded border overflow-hidden"
+          style={{
+            borderColor: 'rgba(31,41,55,0.5)',
+            background: 'rgba(13,17,23,0.4)',
+          }}
+        >
+          <table className="w-full text-sm">
+            <thead className="text-[10px] uppercase tracking-widest text-text-secondary">
+              <tr
+                className="border-b"
+                style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+              >
+                <th className="text-left px-3 py-2 font-medium">API Name</th>
+                <th className="text-left px-3 py-2 font-medium">Target</th>
+                <th className="text-left px-3 py-2 font-medium">Cardinality</th>
+                <th className="text-left px-3 py-2 font-medium">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.outgoingLinkTypes.map((lt) => (
+                <LinkRow key={lt.rid} link={lt} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PropertyRow({
+  apiName,
+  property,
+}: {
+  apiName: string;
+  property: ResolvedProperty;
+}) {
+  const dt = property.dataType as { type?: string } | undefined;
+  return (
+    <tr
+      data-testid="resolved-property-row"
+      data-property-api-name={apiName}
+      className="border-b last:border-0"
+      style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+    >
+      <td className="px-3 py-2 font-mono text-xs text-text-primary">
+        {apiName}
+      </td>
+      <td className="px-3 py-2 font-mono text-xs text-text-secondary">
+        {dt?.type ?? '—'}
+      </td>
+      <td className="px-3 py-2 text-xs">
+        {property.inheritedFrom ? (
+          <span
+            data-testid="resolved-property-inherited-from"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-cyan/10 text-accent-cyan text-[10px] font-mono"
+            title={property.inheritedFrom}
+          >
+            inherited
+          </span>
+        ) : (
+          <span className="text-text-muted text-[10px]">own</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function LinkRow({ link }: { link: ResolvedOutgoingLink }) {
+  return (
+    <tr
+      data-testid="resolved-link-row"
+      data-link-api-name={link.apiName}
+      className="border-b last:border-0"
+      style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+    >
+      <td className="px-3 py-2 font-mono text-xs text-text-primary">
+        {link.apiName}
+      </td>
+      <td className="px-3 py-2 font-mono text-xs text-text-secondary">
+        {link.linkedObjectTypeApiName}
+      </td>
+      <td className="px-3 py-2 text-xs text-text-secondary">
+        {link.cardinality}
+      </td>
+      <td className="px-3 py-2 text-xs">
+        {link.inheritedFrom ? (
+          <span
+            data-testid="resolved-link-inherited-from"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-cyan/10 text-accent-cyan text-[10px] font-mono"
+            title={link.inheritedFrom}
+          >
+            inherited
+          </span>
+        ) : (
+          <span className="text-text-muted text-[10px]">own</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// US-499: History view — list action_logs for this ObjectType sorted by
+// createdAt descending (most-recent-first). Backend POSTs the rows in
+// repository default order, so the UI applies the time-sort contract
+// here. Failed entries surface an error indicator on the status cell.
+function HistoryView({
+  ontologyApiName,
+  objectType,
+}: {
+  ontologyApiName: string;
+  objectType: ObjectType;
+}) {
+  const { data, isLoading, error } = useQuery<ActionLog[]>({
+    queryKey: [
+      'objectType',
+      'editsHistory',
+      ontologyApiName,
+      objectType.apiName,
+    ],
+    queryFn: () =>
+      postObjectTypeEditsHistory(ontologyApiName, objectType.apiName),
+  });
+
+  const sorted = useMemo(() => {
+    if (!data) return [];
+    return [...data].sort((a, b) => {
+      const at = Date.parse(a.createdAt);
+      const bt = Date.parse(b.createdAt);
+      if (Number.isNaN(at) && Number.isNaN(bt)) return 0;
+      if (Number.isNaN(at)) return 1;
+      if (Number.isNaN(bt)) return -1;
+      return bt - at;
+    });
+  }, [data]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <LoadingSpinner size="md" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <p
+        role="alert"
+        data-testid="object-type-history-error"
+        className="text-xs text-accent-error"
+      >
+        Failed to load edit history: {(error as Error).message}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      data-testid="object-type-history-panel"
+      className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto"
+    >
+      {sorted.length === 0 ? (
+        <p
+          data-testid="object-type-history-empty"
+          className="text-xs text-text-secondary"
+        >
+          No edit history recorded for this ObjectType.
+        </p>
+      ) : (
+        <div
+          className="rounded border overflow-hidden"
+          style={{
+            borderColor: 'rgba(31,41,55,0.5)',
+            background: 'rgba(13,17,23,0.4)',
+          }}
+        >
+          <table className="w-full text-sm">
+            <thead className="text-[10px] uppercase tracking-widest text-text-secondary">
+              <tr
+                className="border-b"
+                style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+              >
+                <th className="text-left px-3 py-2 font-medium">When</th>
+                <th className="text-left px-3 py-2 font-medium">User</th>
+                <th className="text-left px-3 py-2 font-medium">Action</th>
+                <th className="text-left px-3 py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((log) => (
+                <tr
+                  key={log.id}
+                  data-testid="history-row"
+                  data-action-log-id={String(log.id)}
+                  className="border-b last:border-0"
+                  style={{ borderColor: 'rgba(31,41,55,0.5)' }}
+                >
+                  <td className="px-3 py-2 text-xs text-text-secondary font-mono whitespace-nowrap">
+                    {log.createdAt}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-text-primary font-mono">
+                    {log.userId || '—'}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-text-secondary font-mono truncate max-w-xs">
+                    {log.actionTypeRid}
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    <span
+                      data-testid="history-row-status"
+                      className={
+                        log.status === 'FAILED'
+                          ? 'text-accent-error font-semibold'
+                          : 'text-text-primary'
+                      }
+                    >
+                      {log.status}
+                    </span>
+                    {log.status === 'FAILED' && log.errorMessage && (
+                      <span
+                        className="block text-[10px] text-accent-error/80 mt-0.5"
+                        data-testid="history-row-error"
+                      >
+                        {log.errorMessage}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }

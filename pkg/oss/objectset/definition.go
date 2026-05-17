@@ -3,7 +3,26 @@ package objectset
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
+
+// TimeRangeHint is the optional caller-declared time window an ObjectSet
+// query is asking about (US-485). The executor uses it to short-circuit
+// the irrelevant tier when the window falls wholly inside the hot
+// (Bleve) or cold (Parquet) partition. A nil hint disables routing and
+// the executor falls back to the legacy "always merge" behaviour.
+//
+// Both bounds are pointers so either side may be open-ended:
+//   - From == nil ⇒ "since the beginning of time" (cold-side open)
+//   - To   == nil ⇒ "until now"                  (hot-side open)
+//
+// The executor reads the window as inclusive on both ends, matching the
+// way the cold-tier router's `before` cutoff is interpreted by
+// materialize.TierRouter.
+type TimeRangeHint struct {
+	From *time.Time `json:"from,omitempty"`
+	To   *time.Time `json:"to,omitempty"`
+}
 
 // Definition represents a declarative ObjectSet definition.
 // ObjectSets are composable and lazy-evaluated.
@@ -59,6 +78,13 @@ type Definition struct {
 	// distinguishable from the zero seed and a missing Size fails validation.
 	Size *int   `json:"size,omitempty"`
 	Seed *int64 `json:"seed,omitempty"`
+
+	// TimeRange (US-485) declares the wall-clock window the request is
+	// scoped to. The executor uses it on "base" objectSets to route
+	// hot/cold tiers — a hot-only window skips the cold tier round-trip
+	// and a cold-only window skips the Bleve query. nil is the
+	// backwards-compatible "always merge both tiers" path.
+	TimeRange *TimeRangeHint `json:"timeRange,omitempty"`
 }
 
 // PathStep declares one hop in a multi-segment searchAround traversal
