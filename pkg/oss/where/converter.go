@@ -322,10 +322,23 @@ func convertContainsAnyTerm(clause *WhereClause) (query.Query, error) {
 
 // convertContainsAnyTermFuzzy handles "containsAnyTerm" with optional fuzzy matching.
 // Uses a MatchQuery which ORs terms by default.
+//
+// DOG-004: accept either the canonical string form or an array of terms.
+// Earlier frontend builds serialised the value as an array (one element
+// per whitespace token), which produced
+// `containsAnyTerm value must be a string` errors that surfaced in the
+// browser as `INVALID_ARGUMENT: SearchObjectsFailed`. We now coerce the
+// array to a space-joined string so the Bleve MatchQuery analyser
+// tokenises it the same way regardless of the wire shape — older clients
+// keep working while we converge the contract on the typed string form.
 func convertContainsAnyTermFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
 	var strVal string
 	if err := json.Unmarshal(clause.Value, &strVal); err != nil {
-		return nil, fmt.Errorf("containsAnyTerm value must be a string: %w", err)
+		var arrVal []string
+		if arrErr := json.Unmarshal(clause.Value, &arrVal); arrErr != nil {
+			return nil, fmt.Errorf("containsAnyTerm value must be a string or array of strings: %w", err)
+		}
+		strVal = strings.Join(arrVal, " ")
 	}
 
 	q := bleve.NewMatchQuery(strVal)

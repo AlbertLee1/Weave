@@ -33,6 +33,25 @@ Started: 2026-05-17T23:24:00
   - The funnel consumer's `IndexDocument` returns "index not found" but that error path runs after NATS ack — it cannot retroactively turn a 200 ingest into a 4xx. Surface readiness at the HTTP edge.
 ---
 
+## [2026-05-18 00:01] - DOG-004
+- Aligned BrowserPage full-text search contract: `whereBuilder.buildContainsAnyTermClause` and the inline BrowserPage builder both now emit `containsAnyTerm.value` as a single space-joined string (matching the backend Bleve MatchQuery analyser) instead of the array form that surfaced as `INVALID_ARGUMENT: SearchObjectsFailed`.
+- Backend converter `pkg/oss/where/converter.go` now tolerates either string or `[]string`, joining the array form with spaces so older clients converge cleanly. Genuinely malformed (non-string non-array) values still return a clear error.
+- BrowserPage error overlay surfaces `parameters.reason` via a new `formatBrowserError` helper that reads the structured `ApiRequestError`, so the operator sees the backend reason instead of a generic `INVALID_ARGUMENT: SearchObjectsFailed`.
+- Files changed:
+  - web/src/lib/whereBuilder.ts
+  - web/src/lib/__tests__/whereBuilder.test.ts (updated to reflect new contract)
+  - web/src/lib/__tests__/whereBuilder.bdd.test.ts (new — 3 BDD scenarios)
+  - web/src/components/browser/BrowserPage.tsx (string normalisation + structured error overlay)
+  - web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx (new — 3 BDD scenarios via MSW)
+  - pkg/oss/where/converter.go (string-or-array tolerance)
+  - pkg/oss/where/converter_dog004_bdd_test.go (new — 2 BDD scenarios on the real Bleve index)
+- Quality gates: go vet, go test ./pkg/oss/where, full web tests via vitest, make web-build.
+- **Learnings for future iterations:**
+  - The backend `pkg/oss/where` operators are typed: each operator's converter unmarshals `clause.Value` into a specific Go type. Frontend builders MUST match — verify by looking at the converter for the operator you target (containsAnyTerm → string, and → []WhereClause, etc.). Compose the wire shape from the converter's `json.Unmarshal(...)` line, not from intuition.
+  - `ApiRequestError.parameters` carries the structured backend reason (e.g. `{reason: "…"}`); surface it in error UI by reading `err.parameters?.reason` rather than `err.message` alone.
+  - `testing-library queryByText` THROWS when multiple matches exist — use `queryAllByText` / `getAllByText` when the same glyph (✓/✕) may appear in multiple cells of the same row.
+---
+
 ## Dogfood Evidence
 Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md
 Data:

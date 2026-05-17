@@ -25,6 +25,20 @@ import { TimeTravelToolbar } from './TimeTravelToolbar';
 import { useTimeTravelActive } from './useTimeTravel';
 import type { WhereClause, WireObject } from '../../api/types';
 import type { SavedSearchDefinition } from '../../api/savedSearches';
+import { ApiRequestError } from '../../api/client';
+
+// DOG-004: surface the backend `parameters.reason` alongside the
+// `errorCode: errorName` summary so operators see the actual cause
+// (e.g. "containsAnyTerm value must be a string") instead of a generic
+// `INVALID_ARGUMENT: SearchObjectsFailed` that hides the contract issue.
+function formatBrowserError(err: unknown): string {
+  if (err instanceof ApiRequestError) {
+    const reason = err.parameters?.reason;
+    return reason ? `${err.message} — ${reason}` : err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Failed to load objects';
+}
 
 const PAGE_SIZE = 25;
 const MAX_FACET_FIELDS = 5;
@@ -163,17 +177,24 @@ export function BrowserPage() {
     const allFilters: FilterCondition[] = [...filters];
 
     if (searchText.trim()) {
-      // Add a full-text search filter using containsAnyTerm on the title property
+      // Add a full-text search filter using containsAnyTerm on the title property.
+      // DOG-004: backend expects a single string (Bleve MatchQuery tokenises and
+      // ORs on whitespace internally); sending an array yielded
+      // `containsAnyTerm value must be a string` / SearchObjectsFailed.
       const titleProp = objectType?.titleProperty ?? objectType?.primaryKey;
       if (titleProp) {
-        allFilters.push({
-          field: titleProp,
-          op: 'containsAnyTerm',
-          value: searchText
-            .trim()
-            .split(/\s+/)
-            .filter((t) => t.length > 0),
-        });
+        const normalized = searchText
+          .trim()
+          .split(/\s+/)
+          .filter((t) => t.length > 0)
+          .join(' ');
+        if (normalized.length > 0) {
+          allFilters.push({
+            field: titleProp,
+            op: 'containsAnyTerm',
+            value: normalized,
+          });
+        }
       }
     }
 
@@ -596,8 +617,11 @@ export function BrowserPage() {
 
       {/* Error */}
       {error && (
-        <div className="px-4 py-3 border border-accent-error/30 bg-accent-error/5 rounded text-xs font-mono text-accent-error">
-          {error instanceof Error ? error.message : 'Failed to load objects'}
+        <div
+          className="px-4 py-3 border border-accent-error/30 bg-accent-error/5 rounded text-xs font-mono text-accent-error"
+          data-testid="browser-error"
+        >
+          {formatBrowserError(error)}
         </div>
       )}
 
