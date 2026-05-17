@@ -52,6 +52,19 @@ Started: 2026-05-17T23:24:00
   - `testing-library queryByText` THROWS when multiple matches exist — use `queryAllByText` / `getAllByText` when the same glyph (✓/✕) may appear in multiple cells of the same row.
 ---
 
+## [2026-05-18 00:03] - DOG-005
+- Wired `useProperties(ontologyApiName, objectType.rid)` into `ObjectTypeDetail` so the authoritative `isNullable / isSearchable / isSortable` flags from `/objectTypes/byRid/{rid}/properties` reach the table instead of getting silently defaulted to false by the compact `objectType.properties` map.
+- `PropertiesTable` now accepts an optional `detailedProperties: Property[]` and `detailedStatus: 'idle'|'loading'|'error'|'ready'`. When detailed data is available it wins; when the request is still loading the cell renders `…`; when the request failed the cell renders `?` so the operator sees an explicit unknown state instead of a misleading ✕.
+- Files changed:
+  - web/src/components/explorer/PropertiesTable.tsx (new props, FlagValue degradation)
+  - web/src/components/explorer/ObjectTypeDetail.tsx (wires useProperties + derives detailedStatus)
+  - web/src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx (new — 4 BDD scenarios)
+- Quality gates: web vitest (full 2780-test run), make web-build, go test ./..., go vet ./...
+- **Learnings for future iterations:**
+  - The compact `{dataType, rid}` shape returned by /objectTypes endpoints is lossy by design — it carries only what the schema graph needs. Anywhere the UI needs richer property metadata (`isSearchable`/`isSortable`/`isNullable`/typeConfig), fetch the detailed `/objectTypes/byRid/{rid}/properties` payload via `useProperties` and merge on `apiName`.
+  - When fetched data has not yet returned, prefer explicit "unknown" markers (`…` / `?`) over a default-false rendering — the latter quietly lies to operators while the former invites them to refresh or wait.
+---
+
 ## Dogfood Evidence
 Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md
 Data:
