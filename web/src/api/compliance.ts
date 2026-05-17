@@ -52,12 +52,8 @@ export async function generateComplianceReport(
   const filename =
     parseAttachmentFilename(response.headers.get('Content-Disposition')) ??
     DEFAULT_FILENAME[req.format];
-  const blob = await response.blob();
-  // The fetch API generally surfaces the upstream Content-Type. When it
-  // does not (e.g. the test layer sends a plain JSON body), retype the
-  // blob so the saved file opens correctly.
   return {
-    blob: blob.type ? blob : new Blob([blob], { type: MIME_BY_FORMAT[req.format] }),
+    blob: await readAttachmentBlob(response, MIME_BY_FORMAT[req.format]),
     filename,
   };
 }
@@ -76,11 +72,32 @@ export async function generateGDPRExport(
   const filename =
     parseAttachmentFilename(response.headers.get('Content-Disposition')) ??
     `gdpr-export-${sanitiseFilenamePart(userId)}.zip`;
-  const blob = await response.blob();
   return {
-    blob: blob.type ? blob : new Blob([blob], { type: 'application/zip' }),
+    blob: await readAttachmentBlob(response, 'application/zip'),
     filename,
   };
+}
+
+async function readAttachmentBlob(
+  response: Response,
+  fallbackType: string,
+): Promise<Blob> {
+  try {
+    const blob = await response.blob();
+    // The fetch API generally surfaces the upstream Content-Type. When it
+    // does not (e.g. the test layer sends a plain JSON body), retype the
+    // blob so the saved file opens correctly.
+    return blob.type ? blob : new Blob([blob], { type: fallbackType });
+  } catch (err) {
+    try {
+      const buffer = await response.arrayBuffer();
+      return new Blob([buffer], {
+        type: response.headers.get('Content-Type') || fallbackType,
+      });
+    } catch {
+      throw err;
+    }
+  }
 }
 
 function parseAttachmentFilename(header: string | null): string | null {

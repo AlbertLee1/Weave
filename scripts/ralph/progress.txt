@@ -40,3 +40,22 @@ Started: 2026-05-18T00:44:57+08:00
   - Go embed directives are evaluated at compile time and do not care that `make web-build` can generate assets later; every embedded pattern needs at least one checked-in match in a fresh checkout.
   - Keep generated WebUI assets ignored. Embed a tracked parent/fallback and let `webDistFS()` return the existing runtime error when the generated `dist` subtree is absent.
 ---
+
+## [2026-05-18 00:55] - SELF-002
+- Reproduced the CI-class root cause in the US-453 suite by making successful mocked PDF/ZIP responses throw `TypeError: object.stream is not a function` from `response.blob()`. Red run failed as expected: downloads stayed at zero and the inline alert showed `object.stream is not a function`.
+- Added a compliance attachment reader fallback in `web/src/api/compliance.ts`: for already-OK attachment responses, if `response.blob()` fails, it retries through `response.arrayBuffer()` and rehydrates a Blob with the upstream `Content-Type` or endpoint fallback MIME type.
+- Hardened `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx` so SOC2 PDF and GDPR ZIP tests simulate the streamless Blob gap, still assert filename/type/download count, and no longer invoke jsdom's unimplemented anchor navigation path while capturing downloads.
+- Verification evidence:
+  - Red: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` failed before the fix with 2 expected failures, both showing `object.stream is not a function` and zero captured downloads.
+  - Green targeted: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` passed: 1 file, 6 tests.
+  - Build: `make web-build` initially caught the new fixture's `Uint8Array<ArrayBufferLike>` BodyInit type error; after switching the fixture body to a concrete `ArrayBuffer`, `make web-build` passed.
+  - Full web CI gate: `cd web && npx vitest run --coverage` passed: 263 files, 2780 tests, coverage thresholds met.
+- Files changed:
+  - `web/src/api/compliance.ts`
+  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - When web tests mock streamed attachment bodies, prefer concrete byte buffers over Blob-backed `Response` bodies; Node/jsdom Blob implementations can disagree on `Blob.stream()`.
+  - Keep download capture tests from calling the original jsdom anchor click when the assertion only needs the generated blob URL, filename, size, and MIME type.
+---
