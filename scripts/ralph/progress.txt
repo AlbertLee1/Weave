@@ -50,3 +50,29 @@ Story SELF-422 - Make the US-444 App Builder gate reject unwired Apps APIs:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - US-444 upper-layer smoke specs for PG-backed services should fail on reachable-backend 404/503 once the service is wired in full-stack boot; reserve `test.skip` for backend-down portability only.
+
+Story SELF-423 - Make the US-444 Quiver gate reject unwired dashboard APIs:
+- Selected as the highest-priority story with `passes != true`.
+- RED:
+  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/09-quiver.spec.ts` to stay free of `test.skip` / `test.fixme`, to call `/api/v2/quiver/save` and `/api/v2/quiver/dashboards`, and to assert save/list/delete wired endpoint messages.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new Quiver contract found existing `test.skip(...)` guards in `09-quiver.spec.ts`.
+- Root cause investigation:
+  - `09-quiver.spec.ts` skipped when dashboard save returned 404/503 and skipped all other non-OK save responses, so a reachable backend with unwired Quiver dashboard APIs could pass as degraded mode.
+  - `cmd/server/main.go` wires the PG-backed `QuiverStore` for full-stack PG boot and registers `/api/v2/quiver/*` routes when the store is present.
+  - The existing Playwright list check already discovered the Quiver scenario, so the missing signal was endpoint-status assertion rather than test discovery.
+- GREEN implementation:
+  - Updated `web/e2e/us444/09-quiver.spec.ts` to keep only the backend-down portability skip, require save/list/delete to return 2xx, assert the returned RID is non-empty, and fail 404/503 through assertion messages.
+  - Updated the Playwright spec contract test to pin the Quiver spec to mandatory endpoint probes and skip-free discoverability.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 7 tests.
+  - `npm --prefix web exec playwright test -- --list us444/09-quiver.spec.ts` passed: 1 test listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/09-quiver.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
+  - `npm --prefix web test -- --run` passed: 268 files, 2802 tests.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/e2e/us444/09-quiver.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Quiver full-stack E2E coverage should fail on reachable-backend missing store routes now that the PG-backed store is wired; list/delete lifecycle assertions catch partial endpoint regressions after save succeeds.

@@ -5,6 +5,7 @@ import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
 import us444AppBuilderSpecSource from '../../../e2e/us444/08-app-builder.spec.ts?raw';
 import us444BranchSpecSource from '../../../e2e/us444/06-branch.spec.ts?raw';
 import us444MergeSpecSource from '../../../e2e/us444/07-merge.spec.ts?raw';
+import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
@@ -90,5 +91,20 @@ describe('Playwright spec contracts', () => {
     expect(source).not.toContain('apps store not wired');
     expect(source).not.toContain('create.status() === 404');
     expect(source).not.toContain('create.status() === 503');
+  });
+
+  it('keeps the US-444 Quiver gate wired and skip-free', () => {
+    const source = us444QuiverSpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain('/api/v2/quiver/save');
+    expect(source).toContain('/api/v2/quiver/dashboards');
+    expect(source).toContain('quiver save endpoint must be wired');
+    expect(source).toContain('quiver list endpoint must be wired');
+    expect(source).toContain('quiver delete endpoint must be wired');
+    expect(source).not.toContain('quiver store not wired');
+    expect(source).not.toContain('save.status() === 404');
+    expect(source).not.toContain('save.status() === 503');
   });
 });
