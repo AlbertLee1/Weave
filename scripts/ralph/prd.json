@@ -1,103 +1,88 @@
 {
-  "project": "Weave Self-Iteration Main CI Health",
+  "project": "Weave Self-Iteration PR CI Repair",
   "branchName": "ralph/self-iteration-20260518-164046",
-  "description": "Small Ralph self-iteration focused on restoring fresh main/branch CI health for OSv2 service and upper-layer experience work. The latest main CI run after the prior self-iteration merge fails in both Go race coverage and full web Vitest coverage, so this PRD prioritizes deterministic CI blockers before adding capability work.",
+  "description": "Small Ralph self-iteration focused on repairing the current pull-request CI failure for Weave's OSv2 service and upper-layer experience work. GitHub CI run 26026535829 passed the Web job but failed the Go race+coverage test job in three packages, so this PRD stays scoped to those CI blockers.",
   "userStories": [
     {
-      "id": "SELF-301",
-      "name": "Make audit and LDAP schedulers race-clean in Go CI",
-      "phase": "Go CI Health",
+      "id": "SELF-401",
+      "name": "Make materialize scheduler cancellation test deterministic",
+      "phase": "PR CI Repair",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "The fresh main CI Go job fails under `go test ./... -race -coverprofile=coverage.out -covermode=atomic` with data races in the audit root-hash publisher scheduler and LDAP sync scheduler. Fix the scheduler lifecycle synchronization so Stop can safely run while the goroutine is selecting, and keep the immediate-run behavior needed for audit anchoring and identity sync dogfood paths.",
+      "description": "The current PR CI Go job failed `pkg/materialize` because `TestScheduler_RunOnce_RespectsContextCancellation` sometimes releases both the context-cancel path and the success path, allowing the test compute select to return nil. Tighten the BDD cancellation scenario so it only exposes the cancellation path after the job starts.",
       "bdd_acceptance": [
-        "Given the audit root-hash publisher scheduler is running, When Stop is called while the goroutine is selecting for cancellation, Then the race detector reports no concurrent access to scheduler stop state.",
-        "Given the LDAP sync scheduler is running, When Stop is called while the goroutine is selecting for cancellation, Then the race detector reports no concurrent access to scheduler stop state.",
-        "Given the audit scheduler immediate cycle publishes yesterday's root hash, When the test observes the first cycle, Then the observation uses synchronized test state rather than racing with the scheduler goroutine.",
-        "Targeted `-race` tests for `pkg/audit` and `pkg/auth` pass."
+        "Given a materialize scheduler job whose Compute blocks until its context is canceled, When RunOnce is called and the caller cancels the context, Then RunOnce returns a non-nil cancellation error instead of nil.",
+        "Given the cancellation test is running under Go race and coverage instrumentation, When the job start signal has fired, Then the test does not also unblock a competing success path.",
+        "Given the materialize package tests run repeatedly, When the cancellation scenario is exercised, Then it is deterministic and race-clean."
       ],
       "ci_evidence": [
-        "GitHub CI run 26021737712 on 2026-05-18 failed Go / Test (with race + coverage).",
-        "CI log: `TestRootHashPublisher_Scheduler_RunsImmediateCycle` failed with a race between `RootHashPublisher.Stop` writing `stopCh` and `Start.func1` selecting on `p.stopCh`.",
-        "CI log: `TestScheduler_RunsImmediatelyAndStops` failed with a race between `LDAPSyncScheduler.Stop` writing `stopCh` and `Start.func1` selecting on `s.stopCh`.",
-        "Local red on 2026-05-18: `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v` failed with races on `chainStoreStub.calls` and scheduler `stopCh`.",
-        "Local red on 2026-05-18: `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v` failed with a race on scheduler `stopCh`.",
-        "Green on 2026-05-18: `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test -race ./pkg/audit ./pkg/auth -run 'TestRootHashPublisher_Scheduler_RunsImmediateCycle|TestScheduler_RunsImmediatelyAndStops' -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test ./pkg/audit ./pkg/auth -count=1` passed.",
+        "GitHub CI run 26026535829 on 2026-05-18 failed Go / Test (with race + coverage).",
+        "CI log: `pkg/materialize` failed `TestScheduler_RunOnce_RespectsContextCancellation` with `RunOnce returned nil after context cancel; want non-nil`.",
+        "Local targeted probe on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self401-red.out -covermode=atomic ./pkg/materialize -run TestScheduler_RunOnce_RespectsContextCancellation -count=100 -v` passed, indicating timing-sensitive CI behavior rather than a deterministic local production-code failure.",
+        "Green on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self401-materialize.out -covermode=atomic ./pkg/materialize -run TestScheduler_RunOnce_RespectsContextCancellation -count=100 -v` passed.",
+        "Green on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self401-materialize-pkg.out -covermode=atomic ./pkg/materialize -count=1` passed.",
+        "Green on 2026-05-18: `go test ./pkg/materialize -count=1` passed.",
         "Green on 2026-05-18: `git diff --check` passed."
       ],
       "quality_gates": [
-        "`go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v`",
-        "`go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v`",
-        "`go test -race ./pkg/audit ./pkg/auth -run 'TestRootHashPublisher_Scheduler_RunsImmediateCycle|TestScheduler_RunsImmediatelyAndStops' -count=1 -v`",
+        "`go test -race -coverprofile=/tmp/weave-self401-materialize.out -covermode=atomic ./pkg/materialize -run TestScheduler_RunOnce_RespectsContextCancellation -count=100 -v`",
+        "`go test -race -coverprofile=/tmp/weave-self401-materialize-pkg.out -covermode=atomic ./pkg/materialize -count=1`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-302",
-      "name": "Isolate Sidebar dataset admin nav in full Vitest coverage",
-      "phase": "Web CI Health",
+      "id": "SELF-402",
+      "name": "Make ObjectSet seeded sample order stable",
+      "phase": "PR CI Repair",
       "active": true,
       "priority": 2,
-      "passes": true,
-      "dependencies": [],
-      "description": "The fresh main Web CI job fails only in the full `npx vitest run --coverage` suite: `Sidebar.test.tsx` reaches dataset-scoped Query Builder links but cannot find the admin `Object Types` link. Targeted sidebar coverage passes locally, so this story should root-cause full-suite state or MSW isolation and keep dataset rollback admin navigation stable.",
+      "passes": false,
+      "dependencies": [
+        "SELF-401"
+      ],
+      "description": "The same PR CI Go job failed `pkg/oss/objectset` because two executions of a seeded sample returned different primary-key ordering. Repair the sample path so a fixed seed produces stable output regardless of map or repository iteration order.",
       "bdd_acceptance": [
-        "Given `/admin/datasets/:dataset/rollback` is rendered for an admin user, When the sidebar derives the active ontology from `:dataset`, Then Query Builder, Quiver TS, and Object Types links all target that dataset.",
-        "Given the Sidebar spec runs inside the full coverage suite after unrelated auth tests, When `/api/v2/me` is mocked as admin, Then prior tests cannot hide the admin section.",
-        "Given targeted sidebar coverage runs, When only `Sidebar.test.tsx` executes, Then it still passes without weakening the full-suite guard.",
-        "Full web Vitest coverage passes or the isolated full-suite reproduction passes with the fixed ordering."
+        "Given an ObjectSet sample definition with a fixed seed, When Execute runs twice over the same base object set, Then the returned primary-key list is identical in length and order.",
+        "Given the base object set originates from an unordered backing collection, When seeded sampling prepares its candidate universe, Then it canonicalizes the order before applying the PRNG.",
+        "Targeted `pkg/oss/objectset` sample tests pass under race and coverage instrumentation."
       ],
       "ci_evidence": [
-        "GitHub CI run 26021737712 on 2026-05-18 failed Web / Vitest (with coverage).",
-        "CI log: `src/components/layout/__tests__/Sidebar.test.tsx > Sidebar admin section > treats :dataset route param as active ontology on dataset routes` failed with `Unable to find an element with the text: Object Types`.",
-        "CI log summary: 1 failed file, 262 passed files, 1 failed test, 2780 passed tests.",
-        "Local targeted run on 2026-05-18: `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests, so the failure is full-suite or ordering-sensitive.",
-        "Local red on 2026-05-18: after delaying the Sidebar `/api/v2/me` mock by 20ms, `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` failed with `Unable to find an element with the text: Object Types`, matching CI.",
-        "Green on 2026-05-18: `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests with the delayed auth mock and explicit wait for `sidebar-admin-section`.",
-        "Green on 2026-05-18: `cd web && npx vitest run --coverage` passed 263 files and 2781 tests."
+        "GitHub CI run 26026535829 on 2026-05-18 failed `pkg/oss/objectset`.",
+        "CI log: `TestExecute_Sample_SeedDeterministic` failed with `pk[0] diverged: e3 vs e4`."
       ],
       "quality_gates": [
-        "`cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`",
-        "`cd web && npx vitest run --coverage`"
+        "`go test -race -coverprofile=/tmp/weave-self402-objectset.out -covermode=atomic ./pkg/oss/objectset -run TestExecute_Sample_SeedDeterministic -count=50 -v`",
+        "`go test -race -coverprofile=/tmp/weave-self402-objectset-pkg.out -covermode=atomic ./pkg/oss/objectset -count=1`",
+        "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-303",
-      "name": "Make heavyweight Go performance gates CI-safe under race coverage",
-      "phase": "Go CI Health",
+      "id": "SELF-403",
+      "name": "Calibrate RLS performance gate for PR CI hosts",
+      "phase": "PR CI Repair",
       "active": true,
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "dependencies": [
-        "SELF-301"
+        "SELF-401",
+        "SELF-402"
       ],
-      "description": "After the scheduler races, the same fresh Go CI run still shows race/coverage-hostile performance and scale tests timing out or missing tight wall-clock budgets. Keep the OSv2 query, security, aggregation, and export confidence checks valuable while making them safe for CI's `-race -coverprofile` environment.",
+      "description": "The same PR CI Go job still failed the security RLS performance gate because the instrumented cold pass exceeded its one-second budget by a small margin on the GitHub runner. Keep the gate meaningful while accounting for PR-host race+coverage variance.",
       "bdd_acceptance": [
-        "Given CI runs Go tests with `-race -coverprofile`, When aggregation precision and speed checks run, Then they avoid 10-minute package timeouts while still validating approximate distinct accuracy at a meaningful scale.",
-        "Given CI runs Go tests with `-race -coverprofile`, When cell security and RLS performance checks run, Then budget assertions account for race/coverage overhead or move strict budgets to non-race benchmarks.",
-        "Given CI runs Go tests with `-race -coverprofile`, When XLSX streaming large-file coverage runs, Then it validates memory behavior without timing out the package.",
-        "Targeted package tests pass under the same race/coverage flags used by CI."
+        "Given Go tests run with race and coverage instrumentation on a slower CI host, When `TestRLSEvaluator_PerformanceGate` evaluates the instrumented profile, Then the budget allows normal runner variance while still bounding regressions.",
+        "Given standard non-instrumented tests run locally, When the RLS performance gate uses the strict profile, Then the existing tighter budget remains in force.",
+        "Targeted `pkg/security` RLS tests pass under race and coverage instrumentation."
       ],
       "ci_evidence": [
-        "GitHub CI run 26021737712 showed `TestUS376_PerfGate_1000Rows_10Columns_Under50ms` taking 123.820824ms against a 50ms budget under race coverage.",
-        "GitHub CI run 26021737712 showed `TestApproximateDistinct_OneMillion_FasterThanExactByFiveX` speedup 3.01x against a 5x budget and `TestApproximateDistinct_OneMillion_HLL_P99Under2Percent` timing out after 10m.",
-        "GitHub CI run 26021737712 showed `TestRLSEvaluator_PerformanceGate` cold and warm passes exceeding 500ms / 50ms budgets under race coverage.",
-        "GitHub CI run 26021737712 showed `TestWriter_LargeFileMemoryBudget` timing out after 10m in `pkg/xlsxstream`.",
-        "Local red on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self303-red.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` failed in aggregation speed ratio, RLS wall-clock budgets, and XLSX 10m timeout.",
-        "Local non-race baseline on 2026-05-18: strict targeted performance gates passed for `pkg/cellsec`, `pkg/oss/aggregation`, and `pkg/security`.",
-        "Green on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self303-green.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` passed.",
-        "Green on 2026-05-18: `go test ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` passed.",
-        "Green on 2026-05-18: `go test ./internal/testprofile -count=1` passed.",
-        "Green on 2026-05-18: `git diff --check` passed."
+        "GitHub CI run 26026535829 on 2026-05-18 failed `pkg/security`.",
+        "CI log: `TestRLSEvaluator_PerformanceGate` measured cold `1.012523726s` against an instrumented `1s` budget."
       ],
       "quality_gates": [
-        "`go test -race -coverprofile=/tmp/weave-self303.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`",
-        "`go test ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`"
+        "`go test -race -coverprofile=/tmp/weave-self403-security.out -covermode=atomic ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=10 -v`",
+        "`go test ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=1 -v`",
+        "`git diff --check`"
       ]
     }
   ]

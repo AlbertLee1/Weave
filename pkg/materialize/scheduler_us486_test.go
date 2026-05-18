@@ -325,19 +325,14 @@ func TestScheduler_RunOnce_RespectsContextCancellation(t *testing.T) {
 	t.Parallel()
 	s := NewScheduler()
 	started := make(chan struct{})
-	release := make(chan struct{})
 	if err := s.Add(MaterializeJob{
 		Name:        "slow",
 		Interval:    time.Hour,
 		MaxAttempts: 1,
 		Compute: func(ctx context.Context) error {
 			close(started)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-release:
-				return nil
-			}
+			<-ctx.Done()
+			return ctx.Err()
 		},
 	}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -349,7 +344,6 @@ func TestScheduler_RunOnce_RespectsContextCancellation(t *testing.T) {
 	}()
 	<-started
 	cancel()
-	close(release)
 	select {
 	case err := <-errCh:
 		if err == nil {

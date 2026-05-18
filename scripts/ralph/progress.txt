@@ -1,102 +1,41 @@
 # Ralph Progress Log
-Started: Mon May 18 16:40:46 CST 2026
+Started: Mon May 18 18:28:01 CST 2026
 Branch: ralph/self-iteration-20260518-164046
-Archived previous state: scripts/ralph/archive/self-iteration-20260518-164214/
+Archived previous state: scripts/ralph/archive/self-iteration-20260518-182801/
 
 ## Current PRD
-- Created a fresh branch-scoped PRD because the archived PRD belonged to `ralph/self-iteration-20260518-143012` and all archived stories had `passes: true`.
-- Fresh CI evidence from GitHub run 26021737712 on `main` showed both Web Vitest coverage and Go race coverage failures.
-- Local targeted sidebar coverage passed, so SELF-302 is tracked as a full-suite isolation story rather than the first implementation.
+- Created a fresh branch-scoped PRD because the previous PRD's stories were all marked `passes: true`.
+- Latest branch PR CI evidence is GitHub run 26026535829 on 2026-05-18.
+- Web job passed: typecheck, Vitest coverage, build, and Playwright spec discovery were green.
+- Go job failed during `go test ./... -race -coverprofile=coverage.out -covermode=atomic`.
+- New PRD is scoped to the three Go failures from that run: `pkg/materialize`, `pkg/oss/objectset`, and `pkg/security`.
 
 ## Codebase Patterns
 - Scheduler loops expose Start/Stop lifecycle methods and run an immediate first cycle before ticking on an interval.
 - Scheduler goroutines should capture lifecycle channels into locals before entering the select loop; Stop may mutate struct fields under lock while the goroutine is still running.
 - Race-enabled tests that observe goroutine-updated fixture state should use atomic or mutex-protected counters.
+- Tests asserting context cancellation should leave only the cancellation path ready after cancel; unblocking a success path in the same window makes select-based computes nondeterministic.
 - Sidebar tests that assert auth-gated admin links must wait for auth-gated UI state; ontology route links can render before `/api/v2/me` resolves and are not proof that admin identity has loaded.
 - Wall-clock performance tests should detect Go race/coverage instrumentation and either relax budgets or reduce workload while leaving strict budgets in standard runs and benchmarks.
 - Large streaming export tests should use CI-safe row counts that still exercise rollover, disk size growth, and heap ceilings; full-envelope throughput belongs in benchmarks or dedicated performance jobs.
+- Seeded sampling over repository or map-derived objects should canonicalize the candidate universe before applying PRNG selection.
 
-## SELF-301 - Make audit and LDAP schedulers race-clean in Go CI
-- Selected as the first story because the latest Go CI failure includes deterministic race detector reports and local targeted red tests reproduce quickly.
-- Red: `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v` failed with races on `chainStoreStub.calls` and `RootHashPublisher.stopCh`.
-- Red: `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v` failed with a race on `LDAPSyncScheduler.stopCh`.
-- Root cause:
-  - `RootHashPublisher.Start` and `LDAPSyncScheduler.Start` selected on `p.stopCh` / `s.stopCh` by reading the struct field from the goroutine.
-  - `Stop` wrote the same struct field to nil under lock while the goroutine was still reading it, so the lock did not protect the select-side access.
-  - The audit scheduler test also read `chainStoreStub.calls` while the scheduler goroutine incremented it.
+## SELF-401 - Make materialize scheduler cancellation test deterministic
+- Selected first because it is the first failed package in the latest PR Go CI job and has a narrow test-level root cause.
+- CI red: GitHub run 26026535829 failed `pkg/materialize` with `TestScheduler_RunOnce_RespectsContextCancellation`: `RunOnce returned nil after context cancel; want non-nil`.
+- Local probe: `go test -race -coverprofile=/tmp/weave-self401-red.out -covermode=atomic ./pkg/materialize -run TestScheduler_RunOnce_RespectsContextCancellation -count=100 -v` passed, so the failure is timing-sensitive and only observed in CI so far.
+- Root cause hypothesis: the test cancels the context and then closes `release`, so the test Compute's select can legally choose the success branch if it has not selected on `ctx.Done()` yet.
 - Implementation:
-  - Captured each scheduler's `stopCh` and `doneCh` into locals before launching the goroutine.
-  - Updated the goroutines to close/select on the captured channels instead of rereading mutable struct fields.
-  - Changed `chainStoreStub.calls` to `atomic.Int64` so the immediate-cycle assertion is race-clean.
+  - Removed the `release` channel from `TestScheduler_RunOnce_RespectsContextCancellation`.
+  - The test Compute now signals start, blocks only on `ctx.Done()`, and returns `ctx.Err()`.
+  - This keeps the test focused on scheduler cancellation behavior without opening a competing nil-return path.
 - Verification evidence:
-  - `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v`: passed.
-  - `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v`: passed.
-  - `go test -race ./pkg/audit ./pkg/auth -run 'TestRootHashPublisher_Scheduler_RunsImmediateCycle|TestScheduler_RunsImmediatelyAndStops' -count=1 -v`: passed.
-  - `go test ./pkg/audit ./pkg/auth -count=1`: passed.
+  - `go test -race -coverprofile=/tmp/weave-self401-materialize.out -covermode=atomic ./pkg/materialize -run TestScheduler_RunOnce_RespectsContextCancellation -count=100 -v`: passed.
+  - `go test -race -coverprofile=/tmp/weave-self401-materialize-pkg.out -covermode=atomic ./pkg/materialize -count=1`: passed.
+  - `go test ./pkg/materialize -count=1`: passed.
+  - `jq empty scripts/ralph/prd.json`: passed.
   - `git diff --check`: passed.
 - Files changed:
-  - `pkg/audit/roothash.go`
-  - `pkg/audit/roothash_test.go`
-  - `pkg/auth/ldap.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## SELF-302 - Isolate Sidebar dataset admin nav in full Vitest coverage
-- Selected as the next highest-priority incomplete story after SELF-301 because it was the remaining fresh Web CI blocker.
-- Initial evidence:
-  - Targeted baseline `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests.
-  - Local full baseline `cd web && npx vitest run --coverage` passed 263 files / 2781 tests, so the CI failure was timing/order-sensitive rather than a deterministic component regression.
-- Root cause:
-  - The dataset route test waited for `Query Builder`, but that link renders synchronously from the `/admin/datasets/:dataset/rollback` route param.
-  - `Object Types` is auth-gated and appears only after `AuthProvider` finishes `/api/v2/me`.
-  - Under slower full coverage/CI scheduling, the test asserted `Object Types` before the admin identity resolved.
-- Red:
-  - Delayed the Sidebar test's `/api/v2/me` MSW handler by 20ms and kept the old immediate `Object Types` assertion.
-  - `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`: failed with `Unable to find an element with the text: Object Types`, matching CI.
-- Implementation:
-  - Kept the delayed auth handler as a regression guard for slow/full-suite scheduling.
-  - Waited for `sidebar-admin-section` before asserting the `Object Types` link target.
-- Verification evidence:
-  - `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`: passed 10 tests.
-  - `cd web && npx vitest run --coverage`: passed 263 files / 2781 tests.
-- Files changed:
-  - `web/src/components/layout/__tests__/Sidebar.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## SELF-303 - Make heavyweight Go performance gates CI-safe under race coverage
-- Selected as the only remaining incomplete PRD story and the remaining fresh Go CI-health blocker.
-- Red:
-  - `go test -race -coverprofile=/tmp/weave-self303-red.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` failed.
-  - `pkg/oss/aggregation`: `TestApproximateDistinct_OneMillion_FasterThanExactByFiveX` measured speedup 0.60x against a strict 5x wall-clock ratio under race+coverage.
-  - `pkg/security`: `TestRLSEvaluator_PerformanceGate` measured cold 1.296946833s and warm 1.301064167s against 500ms / 50ms budgets under race+coverage.
-  - `pkg/xlsxstream`: `TestWriter_LargeFileMemoryBudget` timed out after 10m while compressing the generated workbook.
-- Non-race baseline:
-  - `go test ./pkg/cellsec -run TestUS376_PerfGate_1000Rows_10Columns_Under50ms -count=1 -v`: passed, 12.90175ms against 50ms.
-  - `go test ./pkg/oss/aggregation -run TestApproximateDistinct_OneMillion_FasterThanExactByFiveX -count=1 -v`: passed, speedup 8.48x.
-  - `go test ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=1 -v`: passed, cold 41.929959ms and warm 42.843625ms.
-- Root cause:
-  - The failing gates asserted strict wall-clock budgets while Go race and coverage instrumentation add enough overhead to invalidate the measurement.
-  - The HLL p99 test used 100 trials of 1M-cardinality input under instrumentation, making the aggregation package slow enough to risk timeout.
-  - The XLSX memory test generated a 1.5M-row workbook and then compressed it in a unit test, which exceeded the package timeout under race+coverage.
-- Implementation:
-  - Added `internal/testprofile` to detect race detector and coverage mode from tests.
-  - Kept strict cell security, RLS, and HLL speed budgets in standard runs while using instrumentation-aware budgets/workloads for race+coverage.
-  - Reduced instrumented HLL p99 and t-digest precision workloads while preserving meaningful accuracy thresholds.
-  - Scaled the XLSX memory test to a CI-safe workload that still validates sheet rollover, minimum on-disk size, and heap delta.
-- Verification evidence:
-  - `go test -race -coverprofile=/tmp/weave-self303-green.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`: passed (`pkg/cellsec` 8.405s, `pkg/oss/aggregation` 104.911s, `pkg/security` 3.267s, `pkg/xlsxstream` 23.429s).
-  - `go test ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`: passed (`pkg/cellsec` 1.295s, `pkg/oss/aggregation` 60.534s, `pkg/security` 1.687s, `pkg/xlsxstream` 4.400s).
-  - `go test ./internal/testprofile -count=1`: passed.
-  - `git diff --check`: passed.
-- Files changed:
-  - `internal/testprofile/instrumentation.go`
-  - `internal/testprofile/race.go`
-  - `internal/testprofile/norace.go`
-  - `pkg/cellsec/us376_cel_engine_test.go`
-  - `pkg/oss/aggregation/us367_accuracy_test.go`
-  - `pkg/oss/aggregation/us465_precision_test.go`
-  - `pkg/security/rls_bench_test.go`
-  - `pkg/xlsxstream/bench_test.go`
+  - `pkg/materialize/scheduler_us486_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
