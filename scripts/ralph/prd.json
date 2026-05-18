@@ -1,69 +1,74 @@
 {
-  "project": "Weave Self-Iteration CI Gate Reliability",
-  "branchName": "ralph/self-iteration-20260519-044235",
-  "description": "Small Ralph self-iteration for the current branch. There is no GitHub PR/check suite for this branch yet (`gh pr status` reported no PR; `gh run list --branch ralph/self-iteration-20260519-044235 --limit 5` returned no runs). Main branch CI for the immediately prior merge completed with a Web job failure after PRD inspection began: `npx vitest run --coverage` failed in `src/vertex/VertexWorkspacePage.test.tsx` because the test asserted the async graph title after waiting only for the always-mounted canvas shell. Local health probes before the failure completed were otherwise clean: `npm --prefix web test -- --run` (268 files, 2798 tests), `npm --prefix web run build`, and `go test $(./scripts/ci/go-packages.sh)`. The highest-priority target is repairing the fresh main CI failure before continuing with OSv2 upper-layer gate-strengthening work.",
+  "project": "Weave Self-Iteration Upper-Layer E2E Gate Hardening",
+  "branchName": "ralph/self-iteration-20260519-055841",
+  "description": "Small Ralph self-iteration for the current branch. The prior PRD belonged to `ralph/self-iteration-20260519-044235` and all stories were passing, so this branch starts a fresh small PRD. No PR exists for this branch and no branch workflow runs exist yet. The latest main CI run is green after PR #22. Local baseline checks for the targeted Web contract surface passed before story work: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`, `npm --prefix web exec playwright test -- --list us444/08-app-builder.spec.ts`, and `git diff --check`. The May 17 dogfood issues DOG-002 through DOG-005 already have current code/tests, and the named fresh-CI risks are not active: committed `cmd/server/web/dist` exists for `cmd/server/embed.go`, and US-453 has streamless binary-response coverage. This PRD focuses on upper-layer US-444 smoke gates that still accept skipped/degraded endpoint coverage even though the full PG stack wires the corresponding OSv2-style services.",
   "userStories": [
     {
-      "id": "SELF-419",
-      "name": "Repair Vertex workspace coverage-mode graph title gate",
-      "phase": "Fresh CI Repair",
+      "id": "SELF-422",
+      "name": "Make the US-444 App Builder gate reject unwired Apps APIs",
+      "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Make the Vertex workspace test deterministic under Vitest coverage instrumentation by waiting for the loaded graph title instead of treating the initially rendered canvas shell as fetch completion.",
+      "description": "Strengthen the App Builder Playwright smoke probe so a reachable full-stack backend must expose `/api/v2/apps` create/get/delete instead of treating 404/503 or create failures as a passing skipped mode.",
       "bdd_acceptance": [
-        "Given `/vertex/{rid}` initially renders the canvas shell while graph metadata is still loading, When the graph fetch later resolves with `name: \"Alpha\"`, Then the test waits until `vertex-topbar-graph-name` contains `Alpha` before asserting.",
-        "Given Vitest coverage instrumentation slows async React state updates, When the Web CI command runs, Then `src/vertex/VertexWorkspacePage.test.tsx` no longer races by asserting the RID fallback as the final graph name.",
-        "Given `/vertex/new` has no graph metadata fetch, When the existing empty-canvas test runs, Then it still asserts the initial shell and passive TopBar controls without waiting for a title that will never load."
+        "Given the US-444 Playwright suite runs against a reachable full-stack backend, When `us444/08-app-builder.spec.ts` creates a Workshop-lite app, Then a 404 or 503 from `POST /api/v2/apps` fails the test instead of calling `test.skip`.",
+        "Given app creation succeeds, When the spec fetches and deletes the created app by RID, Then the get and delete endpoints must return successful statuses and the returned RID must remain non-empty.",
+        "Given Playwright runs in list-only CI discovery, When `us444/08-app-builder.spec.ts` is parsed, Then the scenario remains discoverable and contains no `test.skip` or `test.fixme` guards."
       ],
       "quality_gates": [
-        "`npx vitest run --coverage` from `web/`",
-        "`npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx`",
+        "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
+        "`npm --prefix web exec playwright test -- --list us444/08-app-builder.spec.ts`",
+        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/08-app-builder.spec.ts` must return no matches",
         "`npm --prefix web test -- --run`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-420",
-      "name": "Make the US-444 lineage gate assert wired endpoints",
-      "phase": "Contract E2E Signal",
+      "id": "SELF-423",
+      "name": "Make the US-444 Quiver gate reject unwired dashboard APIs",
+      "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 2,
       "passes": true,
-      "dependencies": [],
-      "description": "Strengthen the US-444 lineage Playwright probe so a full E2E stack fails loudly when property-lineage or dataset-column impact endpoints are unavailable instead of skipping core lineage coverage.",
+      "dependencies": [
+        "SELF-422"
+      ],
+      "description": "Strengthen the Quiver Playwright smoke probe so a reachable full-stack backend must expose save/list/delete dashboard APIs rather than passing through store-unwired skips.",
       "bdd_acceptance": [
-        "Given the Northwind seed exposes customer full metadata, When `us444/13-lineage-view.spec.ts` probes a seeded customer property, Then missing metadata, missing property RID, or an unwired property-lineage route fails the test instead of calling `test.skip`.",
-        "Given dataset-column impact is a wired lineage surface, When the spec calls `/api/v2/lineage/dataset-columns/impact` with a synthetic dataset and column, Then it asserts a structured response with an `impacted` array and rejects 404/5xx responses.",
-        "Given Playwright runs in list-only CI discovery, When `us444/13-lineage-view.spec.ts` is parsed, Then both lineage scenarios remain discoverable and the spec has no `test.skip` or `test.fixme` guards."
+        "Given the US-444 Playwright suite runs against a reachable full-stack backend, When `us444/09-quiver.spec.ts` saves a dashboard, Then 404/503 and other non-OK save responses fail the test instead of skipping.",
+        "Given dashboard save succeeds, When the spec lists and deletes the dashboard by RID, Then list and delete statuses are asserted as wired and successful.",
+        "Given Playwright runs in list-only CI discovery, When `us444/09-quiver.spec.ts` is parsed, Then the scenario remains discoverable and contains no `test.skip` or `test.fixme` guards."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/13-lineage-view.spec.ts`",
-        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/13-lineage-view.spec.ts` must return no matches",
+        "`npm --prefix web exec playwright test -- --list us444/09-quiver.spec.ts`",
+        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/09-quiver.spec.ts` must return no matches",
         "`npm --prefix web test -- --run`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-421",
-      "name": "Make US-444 branch lifecycle gates reject unwired branches",
-      "phase": "Branch E2E Signal",
+      "id": "SELF-424",
+      "name": "Make the US-444 package lifecycle gate reject unwired installer APIs",
+      "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 3,
       "passes": true,
-      "dependencies": [],
-      "description": "Strengthen the branch and merge smoke specs so full-stack US-444 runs fail when branch lifecycle, diff, or merge endpoints are absent rather than accepting 404 as a passing degraded mode.",
+      "dependencies": [
+        "SELF-422"
+      ],
+      "description": "Strengthen the marketplace/package installer smoke probes so the built-in package catalog and install endpoints stay mandatory in full-stack E2E coverage.",
       "bdd_acceptance": [
-        "Given the Northwind ontology branch endpoints are wired, When `us444/06-branch.spec.ts` creates, lists, and closes a branch, Then 404 responses fail the test instead of being skipped.",
-        "Given a quiet branch has no diverged changes, When `us444/07-merge.spec.ts` calls diff and merge, Then diff and merge must return wired endpoint statuses and must not accept 404 as success.",
-        "Given Playwright runs in list-only CI discovery, When the branch and merge specs are parsed, Then both scenarios remain discoverable without permanent skip/fixme guards."
+        "Given the full-stack backend exposes built-in seed packages, When `us444/10-marketplace.spec.ts` requests the catalog, Then an empty compiled-in catalog fails instead of skipping the package assertion.",
+        "Given the built-in `iot-demo` package exists, When `us444/11-pkg-install.spec.ts` runs, Then unavailable catalog or installer responses fail instead of being skipped.",
+        "Given Playwright runs in list-only CI discovery, When the marketplace and package install specs are parsed, Then their core scenarios remain discoverable without permanent `test.skip` or `test.fixme` guards."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/06-branch.spec.ts us444/07-merge.spec.ts`",
-        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/06-branch.spec.ts web/e2e/us444/07-merge.spec.ts` must return no matches",
+        "`npm --prefix web exec playwright test -- --list us444/10-marketplace.spec.ts us444/11-pkg-install.spec.ts`",
+        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/10-marketplace.spec.ts web/e2e/us444/11-pkg-install.spec.ts` must return no matches",
         "`npm --prefix web test -- --run`",
         "`git diff --check`"
       ]
