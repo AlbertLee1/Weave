@@ -30,7 +30,7 @@
       "phase": "Contract E2E Signal",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Strengthen the US-444 lineage Playwright probe so a full E2E stack fails loudly when property-lineage or dataset-column impact endpoints are unavailable instead of skipping core lineage coverage.",
       "bdd_acceptance": [

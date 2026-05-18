@@ -48,3 +48,29 @@ Story SELF-419 - Repair Vertex workspace coverage-mode graph title gate:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - Vertex workspace tests should not use the Sigma canvas as graph-fetch readiness; the canvas is an initial shell. Wait on the loaded UI field or graph state being asserted.
+
+Story SELF-420 - Make the US-444 lineage gate assert wired endpoints:
+- Selected as the highest-priority story with `passes != true`.
+- RED:
+  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/13-lineage-view.spec.ts` to stay free of `test.skip` / `test.fixme`, to call the property-lineage and dataset-column impact endpoints, and to assert the `impacted` response shape.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new lineage contract found existing `test.skip(...)` guards in `13-lineage-view.spec.ts`.
+- Root cause investigation:
+  - The Playwright spec skipped when customer full metadata was unavailable, when no property RID was surfaced, and when the property-lineage or dataset-column impact endpoints returned 404.
+  - `pkg/lineage/handler.go` shows the wired property-lineage response shape is `{ propertyRid, upstream, truncated }` and the dataset-column impact response shape is `{ datasetRid, column, impacted, truncated }`.
+  - `pkg/oms/handlers_v2_objecttype.go` requires `?preview=true` on object type fullMetadata, so the probe needed to request the preview contract before deriving a seeded property RID.
+- GREEN implementation:
+  - Updated `web/e2e/us444/13-lineage-view.spec.ts` to keep only the backend-down portability skip, request customer fullMetadata with `?preview=true`, fail if metadata or property RIDs are missing, require 2xx responses from both lineage endpoints, and assert the structured response bodies.
+  - Updated the Playwright spec contract test to pin the US-444 lineage spec to the mandatory endpoint probes and skip-free discoverability.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 4 tests.
+  - `npm --prefix web exec playwright test -- --list us444/13-lineage-view.spec.ts` passed: 2 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/13-lineage-view.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
+  - `npm --prefix web test -- --run` passed: 268 files, 2799 tests.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/e2e/us444/13-lineage-view.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Full-stack US-444 Playwright specs may skip only for a down backend; once the backend is reachable, expected core OSv2 surfaces should assert wired response shapes so 404/5xx regressions fail loudly.

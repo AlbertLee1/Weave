@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
 import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
+import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
@@ -36,5 +37,17 @@ describe('Playwright spec contracts', () => {
     );
     expect(source).toContain('errorCode');
     expect(source).toContain('errorName');
+  });
+
+  it('keeps the US-444 lineage gate wired to mandatory lineage endpoints', () => {
+    const source = us444LineageSpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain('/objectTypes/customer/fullMetadata');
+    expect(source).toContain('/api/v2/lineage/property/${propRid}');
+    expect(source).toContain('/api/v2/lineage/dataset-columns/impact?dataset=');
+    expect(source).toContain('impacted');
+    expect(source).not.toContain('res.ok() || res.status() === 503');
   });
 });
