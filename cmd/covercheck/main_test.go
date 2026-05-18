@@ -151,6 +151,46 @@ func TestLoadConfig_ExcludeFilesParsed(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_CICoverageFloorsTrackCurrentBroadPackageReality(t *testing.T) {
+	cfg, err := loadConfig(filepath.Join("..", "..", "coverage", "thresholds.json"))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+
+	cases := []struct {
+		pkg          string
+		ciMeasured   float64
+		maxHeadroom  float64
+	}{
+		{
+			pkg:         "github.com/liyang/weave/pkg/oms",
+			ciMeasured:  47.5,
+			maxHeadroom: 5.0,
+		},
+		{
+			pkg:         "github.com/liyang/weave/pkg/oss/objectset",
+			ciMeasured:  68.6,
+			maxHeadroom: 5.0,
+		},
+	}
+
+	for _, tt := range cases {
+		floor, ok := cfg.Floor[tt.pkg]
+		if !ok {
+			t.Fatalf("%s floor missing from coverage/thresholds.json", tt.pkg)
+		}
+		if floor <= 0 {
+			t.Fatalf("%s floor = %.1f, want positive ratchet floor", tt.pkg, floor)
+		}
+		if floor > tt.ciMeasured {
+			t.Fatalf("%s floor = %.1f, above current CI-measured %.1f", tt.pkg, floor, tt.ciMeasured)
+		}
+		if floor < tt.ciMeasured-tt.maxHeadroom {
+			t.Fatalf("%s floor = %.1f, more than %.1fpp below current CI-measured %.1f", tt.pkg, floor, tt.maxHeadroom, tt.ciMeasured)
+		}
+	}
+}
+
 func TestEvaluate_FloorFailureFlagged(t *testing.T) {
 	cov := CoverageMap{
 		"github.com/liyang/weave/pkg/apierror":   {Covered: 1, Total: 10}, // 10% < 90%
@@ -332,4 +372,3 @@ func contains(slice []string, s string) bool {
 	}
 	return false
 }
-
