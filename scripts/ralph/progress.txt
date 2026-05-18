@@ -1,92 +1,39 @@
 # Ralph Progress Log
-Started: Mon May 18 14:31:32 CST 2026
----
+Started: Mon May 18 16:40:46 CST 2026
+Branch: ralph/self-iteration-20260518-164046
+Archived previous state: scripts/ralph/archive/self-iteration-20260518-164214/
+
+## Current PRD
+- Created a fresh branch-scoped PRD because the archived PRD belonged to `ralph/self-iteration-20260518-143012` and all archived stories had `passes: true`.
+- Fresh CI evidence from GitHub run 26021737712 on `main` showed both Web Vitest coverage and Go race coverage failures.
+- Local targeted sidebar coverage passed, so SELF-302 is tracked as a full-suite isolation story rather than the first implementation.
 
 ## Codebase Patterns
-- ObjectSet `searchAround` uses API-name link traversal interfaces; production `links.Resolver` must expose the same optional reverse and target-type methods that ObjectSet mocks use.
-- M2M ObjectSet coverage should wire `links.NewResolverWithEdges` and an EdgeRepository-shaped fixture so the test protects the join-table path, not only mock fanout.
-- Web download tests should not require `payload instanceof Blob` when recording `URL.createObjectURL` inputs; jsdom/undici/iframe boundaries can produce Blob objects from another realm. Store blob-like `{size,type}` payloads instead.
-- Northwind seed wipe must clean non-cascading dependents at both ontology scope and object-type scope. In particular, `datasource_bindings.object_type_rid` lacks ON DELETE CASCADE, so delete bindings before deleting seeded `object_types`.
+- Scheduler loops expose Start/Stop lifecycle methods and run an immediate first cycle before ticking on an interval.
+- Scheduler goroutines should capture lifecycle channels into locals before entering the select loop; Stop may mutate struct fields under lock while the goroutine is still running.
+- Race-enabled tests that observe goroutine-updated fixture state should use atomic or mutex-protected counters.
 
-## [2026-05-18 14:31 CST] - PRD reset
-- Archived stale Ralph state for branch `ralph/self-iteration-20260518-102411` under `scripts/ralph/archive/self-iteration-20260518-143132/`.
-- Confirmed current branch: `ralph/self-iteration-20260518-143012`.
-- Current GitHub CI health: `gh run list --limit 10` shows latest `main` CI run 26017200976 failed.
-- Latest failed CI evidence:
-  - Go job / golangci-lint: CI pinned v2.1.6 and failed before linting with `the Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (1.25.0)`.
-  - Web job / Vitest with coverage: `ComplianceReportsPage.test.tsx:217` expected one JSON download but received zero.
-- Local inspection:
-  - `go.mod` declares `go 1.25.0`.
-  - `.github/workflows/ci.yml` pins `golangci/golangci-lint-action@v8` `version: v2.1.6`.
-  - `cmd/server/embed.go` no longer embeds ignored `web/dist` directly; `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed.
-  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` passed locally.
-  - Dogfood DOG-001 remains a high-value follow-up: Northwind E2E seed wipe fails with `functions_ontology_rid_fkey`, leaving Explorer empty.
-- External source check:
-  - Official golangci-lint FAQ says supported Go versions must be lower than or equal to the Go version used to compile the binary.
-  - Official golangci-lint Go 1.25 issue says support starts at v2.4.0 when compiled with Go 1.25 and official binaries are built with Go 1.25.
-
-## [2026-05-18 14:47 CST] - SELF-201
+## SELF-301 - Make audit and LDAP schedulers race-clean in Go CI
+- Selected as the first story because the latest Go CI failure includes deterministic race detector reports and local targeted red tests reproduce quickly.
+- Red: `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v` failed with races on `chainStoreStub.calls` and `RootHashPublisher.stopCh`.
+- Red: `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v` failed with a race on `LDAPSyncScheduler.stopCh`.
 - Root cause:
-  - GitHub CI was pinned to `golangci-lint` v2.1.6, whose official binary was built with Go 1.24 and refuses to load a Go 1.25 target.
-  - After bumping locally to v2.11.4, `golangci-lint run --timeout=5m` loaded successfully but reported 1220 inherited lint findings. A direct full-lint gate would keep `main` red for historical debt, so CI needs to ratchet on new issues while the backlog is handled separately.
-- Red tests:
-  - `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` failed because CI pinned `golangci-lint` v2.1.6 below the v2.4.0 Go 1.25 support floor.
-  - After extending the guard, `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` failed because the workflow did not set `only-new-issues: true`.
+  - `RootHashPublisher.Start` and `LDAPSyncScheduler.Start` selected on `p.stopCh` / `s.stopCh` by reading the struct field from the goroutine.
+  - `Stop` wrote the same struct field to nil under lock while the goroutine was still reading it, so the lock did not protect the select-side access.
+  - The audit scheduler test also read `chainStoreStub.calls` while the scheduler goroutine incremented it.
 - Implementation:
-  - Added `scripts/ci/ci_workflow_bdd_test.go` to guard the workflow against incompatible golangci-lint pins and missing new-issues ratcheting.
-  - Updated `.github/workflows/ci.yml` to pin `golangci-lint` v2.11.4 and set `only-new-issues: true`.
+  - Captured each scheduler's `stopCh` and `doneCh` into locals before launching the goroutine.
+  - Updated the goroutines to close/select on the captured channels instead of rereading mutable struct fields.
+  - Changed `chainStoreStub.calls` to `atomic.Int64` so the immediate-cycle assertion is race-clean.
 - Verification evidence:
-  - `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v`: passed.
-  - `go test ./scripts/ci ./cmd/server -count=1`: passed.
-  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 version`: printed version 2.11.4.
-  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=HEAD`: passed with `0 issues`.
+  - `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v`: passed.
+  - `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v`: passed.
+  - `go test -race ./pkg/audit ./pkg/auth -run 'TestRootHashPublisher_Scheduler_RunsImmediateCycle|TestScheduler_RunsImmediatelyAndStops' -count=1 -v`: passed.
+  - `go test ./pkg/audit ./pkg/auth -count=1`: passed.
   - `git diff --check`: passed.
 - Files changed:
-  - `.github/workflows/ci.yml`
-  - `scripts/ci/ci_workflow_bdd_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## [2026-05-18 14:57 CST] - SELF-202
-- Root cause:
-  - GitHub CI run 26017200976 failed in the US-453 JSON download assertion with `downloads.length` equal to 0.
-  - The failed DOM snapshot already showed the page success banner for `weave-compliance-report.json`, which means the app generated and triggered the download; the failure was in the test-side recorder.
-  - `captureDownloads` only stored `URL.createObjectURL` payloads when `obj instanceof Blob`. Blob instances can cross jsdom/undici/iframe realms under coverage/full-suite execution, making that same-realm check false even though the payload is a valid blob-like download body.
-- Red test:
-  - Added a SOC2 JSON regression that mocks `Response.blob()` with a Blob from an iframe realm.
-  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t "records Blob bodies" --coverage=false`: failed with `expected +0 to be 1`.
-- Implementation:
-  - Updated `captureDownloads` in `ComplianceReportsPage.test.tsx` to record blob-like payloads by `{ size, type }` instead of requiring same-realm `Blob`.
-  - Kept the new cross-realm JSON download regression so CI protects the prior failure mode.
-- Verification evidence:
-  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t "records Blob bodies" --coverage=false`: passed.
-  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0`: passed 7 tests.
-  - `cd web && npx vitest run --coverage`: passed 263 test files / 2781 tests.
-  - `cd web && npx tsc --noEmit`: passed.
-  - `cd web && npm run build`: passed.
-- Files changed:
-  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## [2026-05-18 15:05 CST] - SELF-203
-- Root cause:
-  - Existing seed wipe coverage already handled the 2026-05-17 DOG-001 ontology-scoped blockers (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`).
-  - A schema scan found a remaining object-type-scoped blocker: `datasource_bindings.object_type_rid` references `object_types(rid)` without ON DELETE CASCADE.
-  - Real Admin/import dogfood can leave datasource bindings attached to Northwind object types, causing a reseed to fail while deleting `object_types` and leaving Explorer with no object types.
-- Red test:
-  - Extended `TestBDD_SeedSurvivesNonCascadingFKDependents` with a seeded Northwind `datasource_bindings` row.
-  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`: failed with `datasource_bindings_object_type_rid_fkey` blocking `DELETE FROM object_types`.
-- Implementation:
-  - Updated `wipe()` in `test/fixtures/seed_northwind/seed.go` to delete `datasource_bindings` for Northwind object types before deleting `object_types`.
-  - Kept the BDD regression asserting datasource bindings are gone after reseed convergence.
-- Verification evidence:
-  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`: passed.
-  - `go test -tags integration ./test/fixtures/seed_northwind -count=1`: passed.
-  - `go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1`: passed.
-  - `git diff --check`: passed.
-- Files changed:
-  - `test/fixtures/seed_northwind/seed.go`
-  - `test/fixtures/seed_northwind/seed_test.go`
+  - `pkg/audit/roothash.go`
+  - `pkg/audit/roothash_test.go`
+  - `pkg/auth/ldap.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`

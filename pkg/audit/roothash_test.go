@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -13,11 +14,11 @@ import (
 // publisher can be tested without a live MemoryStore.
 type chainStoreStub struct {
 	byDay map[string][]AuditEvent
-	calls int
+	calls atomic.Int64
 }
 
 func (s *chainStoreStub) ListChainByDay(_ context.Context, day time.Time) ([]AuditEvent, error) {
-	s.calls++
+	s.calls.Add(1)
 	key := day.UTC().Format("2006-01-02")
 	return s.byDay[key], nil
 }
@@ -166,12 +167,12 @@ func TestRootHashPublisher_Scheduler_RunsImmediateCycle(t *testing.T) {
 	// Wait for the first cycle to publish.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if store.calls > 0 {
+		if store.calls.Load() > 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if store.calls == 0 {
+	if store.calls.Load() == 0 {
 		t.Fatal("expected scheduler to publish on first tick")
 	}
 	b, err := os.ReadFile(path)

@@ -1,107 +1,94 @@
 {
-  "project": "Weave Self-Iteration CI Health",
-  "branchName": "ralph/self-iteration-20260518-143012",
-  "description": "Small Ralph self-iteration focused first on fresh CI health for the current main/branch tip, then two verifiable follow-up repairs from the web CI and dogfood surfaces. The goal is to keep OSv2 service and upper-layer experience work shippable by removing deterministic CI blockers before adding broader capability work.",
+  "project": "Weave Self-Iteration Main CI Health",
+  "branchName": "ralph/self-iteration-20260518-164046",
+  "description": "Small Ralph self-iteration focused on restoring fresh main/branch CI health for OSv2 service and upper-layer experience work. The latest main CI run after the prior self-iteration merge fails in both Go race coverage and full web Vitest coverage, so this PRD prioritizes deterministic CI blockers before adding capability work.",
   "userStories": [
     {
-      "id": "SELF-201",
-      "name": "Make Go lint CI compatible with Go 1.25",
-      "phase": "CI Health",
+      "id": "SELF-301",
+      "name": "Make audit and LDAP schedulers race-clean in Go CI",
+      "phase": "Go CI Health",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "The latest GitHub CI run fails in the Go job before linting because `.github/workflows/ci.yml` pins `golangci-lint-action` to v2.1.6 while `go.mod` targets Go 1.25.0. The downloaded v2.1.6 binary was built with Go 1.24, which golangci-lint rejects for a Go 1.25 target. Pin CI to a golangci-lint release that officially supports Go 1.25, keep lint as a new-issues ratchet while inherited findings remain, and guard the workflow against regressing to an incompatible version.",
+      "description": "The fresh main CI Go job fails under `go test ./... -race -coverprofile=coverage.out -covermode=atomic` with data races in the audit root-hash publisher scheduler and LDAP sync scheduler. Fix the scheduler lifecycle synchronization so Stop can safely run while the goroutine is selecting, and keep the immediate-run behavior needed for audit anchoring and identity sync dogfood paths.",
       "bdd_acceptance": [
-        "Given `go.mod` targets Go 1.25.0, When the CI workflow is checked, Then the golangci-lint action version is at least v2.4.0.",
-        "Given the workflow uses the official golangci-lint action, When maintainers review CI config, Then the action remains pinned to an explicit release instead of a floating tag.",
-        "Given the repository currently has inherited lint findings, When the CI workflow is checked, Then the golangci-lint action runs with `only-new-issues: true` so branch CI gates new lint debt without failing every historical finding.",
-        "Given a future change lowers the action version below the Go 1.25 support floor, When the repository tests run, Then a BDD guard test fails with a message naming the minimum compatible version.",
-        "Targeted Go tests pass."
+        "Given the audit root-hash publisher scheduler is running, When Stop is called while the goroutine is selecting for cancellation, Then the race detector reports no concurrent access to scheduler stop state.",
+        "Given the LDAP sync scheduler is running, When Stop is called while the goroutine is selecting for cancellation, Then the race detector reports no concurrent access to scheduler stop state.",
+        "Given the audit scheduler immediate cycle publishes yesterday's root hash, When the test observes the first cycle, Then the observation uses synchronized test state rather than racing with the scheduler goroutine.",
+        "Targeted `-race` tests for `pkg/audit` and `pkg/auth` pass."
       ],
       "ci_evidence": [
-        "GitHub CI run 26017200976 on 2026-05-18 failed in Go / golangci-lint with: `the Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (1.25.0)`.",
-        "Local inspection: `go.mod` declares `go 1.25.0`.",
-        "Official golangci-lint FAQ says golangci-lint supports Go versions lower than or equal to the Go version used to compile the binary.",
-        "Official golangci-lint Go 1.25 issue says support starts at v2.4.0 when compiled with Go 1.25 and official binaries are built with Go 1.25.",
-        "Red on 2026-05-18: `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` failed because CI pinned v2.1.6.",
-        "Additional root-cause evidence on 2026-05-18: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m` loaded the config but reported 1220 inherited lint findings, so the CI repair needs a new-issues ratchet.",
-        "Red on 2026-05-18: after adding the ratchet guard, `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` failed because `only-new-issues` was absent.",
-        "Green on 2026-05-18: `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test ./scripts/ci ./cmd/server -count=1` passed.",
-        "Green on 2026-05-18: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=HEAD` reported `0 issues`.",
+        "GitHub CI run 26021737712 on 2026-05-18 failed Go / Test (with race + coverage).",
+        "CI log: `TestRootHashPublisher_Scheduler_RunsImmediateCycle` failed with a race between `RootHashPublisher.Stop` writing `stopCh` and `Start.func1` selecting on `p.stopCh`.",
+        "CI log: `TestScheduler_RunsImmediatelyAndStops` failed with a race between `LDAPSyncScheduler.Stop` writing `stopCh` and `Start.func1` selecting on `s.stopCh`.",
+        "Local red on 2026-05-18: `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v` failed with races on `chainStoreStub.calls` and scheduler `stopCh`.",
+        "Local red on 2026-05-18: `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v` failed with a race on scheduler `stopCh`.",
+        "Green on 2026-05-18: `go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test -race ./pkg/audit ./pkg/auth -run 'TestRootHashPublisher_Scheduler_RunsImmediateCycle|TestScheduler_RunsImmediatelyAndStops' -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test ./pkg/audit ./pkg/auth -count=1` passed.",
         "Green on 2026-05-18: `git diff --check` passed."
       ],
       "quality_gates": [
-        "Red BDD guard for CI golangci-lint version compatibility.",
-        "`go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v`",
-        "`go test ./scripts/ci ./cmd/server -count=1`",
-        "`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=HEAD`"
+        "`go test -race ./pkg/audit -run TestRootHashPublisher_Scheduler_RunsImmediateCycle -count=1 -v`",
+        "`go test -race ./pkg/auth -run TestScheduler_RunsImmediatelyAndStops -count=1 -v`",
+        "`go test -race ./pkg/audit ./pkg/auth -run 'TestRootHashPublisher_Scheduler_RunsImmediateCycle|TestScheduler_RunsImmediatelyAndStops' -count=1 -v`",
+        "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-202",
-      "name": "Stabilize US-453 compliance downloads in full Vitest coverage",
+      "id": "SELF-302",
+      "name": "Isolate Sidebar dataset admin nav in full Vitest coverage",
       "phase": "Web CI Health",
       "active": true,
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "dependencies": [],
-      "description": "The latest GitHub web CI still fails during the full `npx vitest run --coverage` job in the US-453 compliance report spec. Local targeted non-coverage execution passes, so the repair should root-cause the full-suite or coverage-only interaction and keep binary/JSON download behavior stable.",
+      "description": "The fresh main Web CI job fails only in the full `npx vitest run --coverage` suite: `Sidebar.test.tsx` reaches dataset-scoped Query Builder links but cannot find the admin `Object Types` link. Targeted sidebar coverage passes locally, so this story should root-cause full-suite state or MSW isolation and keep dataset rollback admin navigation stable.",
       "bdd_acceptance": [
-        "Given the compliance report spec runs under Vitest coverage, When the SOC2 JSON path downloads the response, Then exactly one download record is captured with a `.json` filename.",
-        "Given streamless binary responses in jsdom, When PDF or GDPR ZIP downloads run, Then `object.stream is not a function` is hidden by the fallback attachment reader.",
-        "Given the full web test suite runs with coverage, When US-453 executes after neighboring specs, Then its download mocks remain isolated from prior tests.",
-        "Targeted and full relevant web tests pass."
+        "Given `/admin/datasets/:dataset/rollback` is rendered for an admin user, When the sidebar derives the active ontology from `:dataset`, Then Query Builder, Quiver TS, and Object Types links all target that dataset.",
+        "Given the Sidebar spec runs inside the full coverage suite after unrelated auth tests, When `/api/v2/me` is mocked as admin, Then prior tests cannot hide the admin section.",
+        "Given targeted sidebar coverage runs, When only `Sidebar.test.tsx` executes, Then it still passes without weakening the full-suite guard.",
+        "Full web Vitest coverage passes or the isolated full-suite reproduction passes with the fixed ordering."
       ],
       "ci_evidence": [
-        "GitHub CI run 26017200976 failed in Web / Vitest with coverage at `ComplianceReportsPage.test.tsx:217`, expecting one JSON download but receiving zero.",
-        "Local targeted run without coverage on 2026-05-18 passed: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false`.",
-        "Search confirmed the known `object.stream is not a function` case is modeled in `ComplianceReportsPage.test.tsx` via `streamlessBinaryResponse`.",
-        "Root-cause evidence on 2026-05-18: GitHub failure DOM already showed the success banner for `weave-compliance-report.json`, so the app completed the download path and the test-side recorder missed the Blob.",
-        "Red on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t \"records Blob bodies\" --coverage=false` failed because `captureDownloads` ignored a Blob created in another jsdom realm.",
-        "Green on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t \"records Blob bodies\" --coverage=false` passed.",
-        "Green on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0` passed 7 tests.",
-        "Green on 2026-05-18: `cd web && npx vitest run --coverage` passed 263 files / 2781 tests.",
-        "Green on 2026-05-18: `cd web && npx tsc --noEmit` passed.",
-        "Green on 2026-05-18: `cd web && npm run build` passed."
+        "GitHub CI run 26021737712 on 2026-05-18 failed Web / Vitest (with coverage).",
+        "CI log: `src/components/layout/__tests__/Sidebar.test.tsx > Sidebar admin section > treats :dataset route param as active ontology on dataset routes` failed with `Unable to find an element with the text: Object Types`.",
+        "CI log summary: 1 failed file, 262 passed files, 1 failed test, 2780 passed tests.",
+        "Local targeted run on 2026-05-18: `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests, so the failure is full-suite or ordering-sensitive."
       ],
       "quality_gates": [
-        "Red reproduction for US-453 under coverage or full-suite ordering.",
-        "`cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage`",
+        "`cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`",
         "`cd web && npx vitest run --coverage`"
       ]
     },
     {
-      "id": "SELF-203",
-      "name": "Repair Northwind E2E seed wipe ordering",
-      "phase": "Dogfood Data Health",
+      "id": "SELF-303",
+      "name": "Make heavyweight Go performance gates CI-safe under race coverage",
+      "phase": "Go CI Health",
       "active": true,
       "priority": 3,
-      "passes": true,
-      "dependencies": [],
-      "description": "The 2026-05-17 WebUI dogfood report found that `scripts/e2e-setup.sh` leaves the Northwind explorer empty because the seed wipe hits a `functions_ontology_rid_fkey` foreign-key violation. Fix the seed/reset ordering so the OSv2 browser and Explorer dogfood paths have a populated Northwind ontology.",
+      "passes": false,
+      "dependencies": [
+        "SELF-301"
+      ],
+      "description": "After the scheduler races, the same fresh Go CI run still shows race/coverage-hostile performance and scale tests timing out or missing tight wall-clock budgets. Keep the OSv2 query, security, aggregation, and export confidence checks valuable while making them safe for CI's `-race -coverprofile` environment.",
       "bdd_acceptance": [
-        "Given an existing seeded database with functions attached to an ontology, When `scripts/e2e-setup.sh` resets Northwind data, Then the wipe deletes or detaches dependent rows before ontology rows.",
-        "Given the seed completes, When `/api/v2/ontologies/northwind/objectTypes` is queried, Then it returns expected object types such as Customers, Orders, or Products.",
-        "Given the seed script fails, When it exits, Then the error names the failed seed phase and keeps enough output for CI diagnosis.",
-        "Targeted seed/reset tests or a local e2e seed smoke pass."
+        "Given CI runs Go tests with `-race -coverprofile`, When aggregation precision and speed checks run, Then they avoid 10-minute package timeouts while still validating approximate distinct accuracy at a meaningful scale.",
+        "Given CI runs Go tests with `-race -coverprofile`, When cell security and RLS performance checks run, Then budget assertions account for race/coverage overhead or move strict budgets to non-race benchmarks.",
+        "Given CI runs Go tests with `-race -coverprofile`, When XLSX streaming large-file coverage runs, Then it validates memory behavior without timing out the package.",
+        "Targeted package tests pass under the same race/coverage flags used by CI."
       ],
       "ci_evidence": [
-        "Dogfood report `dogfood-output/weave-webui-dogfood-20260517.md` records DOG-001: `scripts/e2e-setup.sh` fails during seed wipe with `functions_ontology_rid_fkey` and `/explorer/northwind` renders `No object types`.",
-        "The same report records no persistent browser JS errors across sampled routes, making seed data health the blocker for Northwind Explorer confidence.",
-        "Local inspection on 2026-05-18 found the existing DOG-001 guard already covered ontology-scoped non-cascading dependents (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`) but missed object-type-scoped `datasource_bindings`, whose FK to `object_types(rid)` also lacks ON DELETE CASCADE.",
-        "Red on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v` failed with `datasource_bindings_object_type_rid_fkey` blocking `DELETE FROM object_types`.",
-        "Green on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -count=1` passed.",
-        "Green on 2026-05-18: `go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1` passed.",
-        "Green on 2026-05-18: `git diff --check` passed."
+        "GitHub CI run 26021737712 showed `TestUS376_PerfGate_1000Rows_10Columns_Under50ms` taking 123.820824ms against a 50ms budget under race coverage.",
+        "GitHub CI run 26021737712 showed `TestApproximateDistinct_OneMillion_FasterThanExactByFiveX` speedup 3.01x against a 5x budget and `TestApproximateDistinct_OneMillion_HLL_P99Under2Percent` timing out after 10m.",
+        "GitHub CI run 26021737712 showed `TestRLSEvaluator_PerformanceGate` cold and warm passes exceeding 500ms / 50ms budgets under race coverage.",
+        "GitHub CI run 26021737712 showed `TestWriter_LargeFileMemoryBudget` timing out after 10m in `pkg/xlsxstream`."
       ],
       "quality_gates": [
-        "Red seed wipe regression test or reproducible local seed failure.",
-        "`go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`",
-        "`go test -tags integration ./test/fixtures/seed_northwind -count=1`",
-        "`go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1`"
+        "`go test -race -coverprofile=/tmp/weave-self303.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`",
+        "`go test ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`"
       ]
     }
   ]
