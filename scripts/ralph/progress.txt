@@ -1,5 +1,5 @@
 # Ralph Progress Log
-Started: 2026-05-17T23:24:00
+Started: 2026-05-18T00:44:57+08:00
 
 ## Codebase Patterns
 - For Weave browser/UI regressions, Hermes browser verification is final truth; Claude/Playwright self-checks are necessary but not sufficient.
@@ -7,70 +7,55 @@ Started: 2026-05-17T23:24:00
 - Frontend BDD tests conventionally stub `fetch` directly with `vi.stubGlobal('fetch', ...)` and regex URL matching; do not default to MSW for new focused tests unless the local suite already uses it.
 - AI News dogfood fixture lives in `dogfood-output/ainews-records-20260517.json` / `.csv` and contains 103 records over 6 delivery dates.
 - BrowserPage search currently exercises the `WhereClause` path, not the simple backend `query` parameter path; tests should assert the exact request body sent by `searchObjects`/BrowserPage.
-- OMS handlers grow narrow `Set*` hooks (e.g. `SetIndexBootstrapper`) for cross-package wiring; the concrete adapter lives in cmd/server so pkg/oms never imports pkg/index. Mirror this pattern for any future capability that needs index/funnel knowledge.
+- OMS handlers grow narrow `Set*` hooks (e.g., `SetIndexBootstrapper`) for cross-package wiring; the concrete adapter lives in cmd/server so pkg/oms never imports pkg/index. Mirror this pattern for any future capability that needs index/funnel knowledge.
 - Stream ingest must verify the target Bleve index exists BEFORE publishing to NATS; the consumer's "index not found" error fires too late and the 200 response has already gone out.
+- `cmd/server/embed.go` must embed a tracked parent directory such as `all:web`, not ignored generated `web/dist` directly; otherwise fresh GitHub Actions `go build ./...` fails before the WebUI build job can produce dist assets.
+
+## PRD Bootstrap - 2026-05-18T00:44:57+08:00
+- Archived previous completed AI News dogfood PRD/progress to `scripts/ralph/archive/self-iteration-20260518-004457/`.
+- Confirmed branch: `ralph/self-iteration-20260518-004206`.
+- GitHub Actions health: latest main CI run `25996414394` failed in Go build (`cmd/server/embed.go:8:12: pattern all:web/dist: no matching files found`) and Web Vitest (`object.stream is not a function` in US-453 ComplianceReportsPage tests).
+- Local inspection: `.gitignore` ignores `web/dist/` and `cmd/server/web/dist/`, so the current embed directive depends on ignored generated assets that are absent in fresh CI.
+- Selected two small stories, both CI-health repairs before new OSv2 capability work: SELF-001 for Go fresh checkout build, SELF-002 for US-453 web test stability.
 ---
 
-## [2026-05-17 23:48] - DOG-003
-- Added `oms.IndexBootstrapper` interface + `OMSHandler.SetIndexBootstrapper` hook; ImportOntologyV2 and the admin CreateObjectType handler now call `EnsureObjectTypeIndex` synchronously so a freshly created ObjectType has an open Bleve index shell before the response returns.
-- Replace-mode import drops every prior ObjectType's index before recreating so stale rows do not leak into the new schema.
-- Added `oss.IndexReadinessChecker` hook on `StreamIngestHandler`; ingest now fails fast with 409 `IndexNotReady` instead of returning a fake editCount success that the funnel consumer would silently drop.
-- Wired `indexBootstrapAdapter` + `indexReadinessAdapter` in cmd/server/main.go translating oms.Property → index.Property via the existing `index.AnalyzerFromTypeConfig`.
+## [2026-05-18 00:50] - SELF-001
+- Reproduced the CI root cause from GitHub Actions run `25996414394`: the Go package compiled only because local ignored `cmd/server/web/dist` existed; fresh CI had no files matching `//go:embed all:web/dist`.
+- Added `cmd/server/embed_ci_bdd_test.go` to guard against future embed directives that point directly at ignored generated dist output. Red run failed with `embed directive must not point directly at ignored generated dist: //go:embed all:web/dist`.
+- Changed `cmd/server/embed.go` to embed `all:web` and added tracked `cmd/server/web/embed-placeholder.txt`, so the package always has a compile-time embed match while `webDistFS()` still exposes generated `web/dist` when `make web-build` has populated it.
+- Verification evidence:
+  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` failed before the fix for the expected reason.
+  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed after the fix.
+  - Temporarily moved both `cmd/server/web/dist` and `web/dist` out of the worktree, then ran `go build ./cmd/server`: passed.
+  - `go test ./cmd/server -count=1`: passed.
+  - `go vet ./cmd/server`: passed.
+  - Temporarily moved both generated dist directories out of the worktree, then ran exact CI build `go build ./...`: passed.
 - Files changed:
-  - pkg/oms/index_bootstrap.go (new)
-  - pkg/oms/handlers.go (field)
-  - pkg/oms/handlers_import.go (bootstrap on import; drop on replace)
-  - pkg/oms/admin_handlers.go (bootstrap on admin create)
-  - pkg/oms/index_bootstrap_bdd_test.go (new — 3 BDD scenarios)
-  - pkg/oss/stream_ingest.go (readiness hook + 409 fail-fast)
-  - pkg/oss/stream_ingest_dog003_bdd_test.go (new — 2 BDD scenarios)
-  - cmd/server/index_bootstrap_adapter.go (new — bootstrap + readiness adapters)
-  - cmd/server/main.go (wiring)
-- Quality gates: go vet, go test ./pkg/... ./cmd/server/..., make test (full Go suite including testcontainers), make web-build, make web-test.
+  - `cmd/server/embed.go`
+  - `cmd/server/embed_ci_bdd_test.go`
+  - `cmd/server/web/embed-placeholder.txt`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - The index bootstrap path lived in 3 places (import, admin POST, alternative create routes) — covering all of them is what prevents the "creates objectType but ingest fails silently" surface from reappearing. Future ObjectType-creating handlers (proposals, packages) should call `ensureObjectTypeIndex` too.
-  - Use `index.AnalyzerFromTypeConfig` (already exported) when translating oms.Property → index.Property in any adapter — do not reinvent typeclass parsing.
-  - The funnel consumer's `IndexDocument` returns "index not found" but that error path runs after NATS ack — it cannot retroactively turn a 200 ingest into a 4xx. Surface readiness at the HTTP edge.
+  - Go embed directives are evaluated at compile time and do not care that `make web-build` can generate assets later; every embedded pattern needs at least one checked-in match in a fresh checkout.
+  - Keep generated WebUI assets ignored. Embed a tracked parent/fallback and let `webDistFS()` return the existing runtime error when the generated `dist` subtree is absent.
 ---
 
-## [2026-05-18 00:01] - DOG-004
-- Aligned BrowserPage full-text search contract: `whereBuilder.buildContainsAnyTermClause` and the inline BrowserPage builder both now emit `containsAnyTerm.value` as a single space-joined string (matching the backend Bleve MatchQuery analyser) instead of the array form that surfaced as `INVALID_ARGUMENT: SearchObjectsFailed`.
-- Backend converter `pkg/oss/where/converter.go` now tolerates either string or `[]string`, joining the array form with spaces so older clients converge cleanly. Genuinely malformed (non-string non-array) values still return a clear error.
-- BrowserPage error overlay surfaces `parameters.reason` via a new `formatBrowserError` helper that reads the structured `ApiRequestError`, so the operator sees the backend reason instead of a generic `INVALID_ARGUMENT: SearchObjectsFailed`.
+## [2026-05-18 00:55] - SELF-002
+- Reproduced the CI-class root cause in the US-453 suite by making successful mocked PDF/ZIP responses throw `TypeError: object.stream is not a function` from `response.blob()`. Red run failed as expected: downloads stayed at zero and the inline alert showed `object.stream is not a function`.
+- Added a compliance attachment reader fallback in `web/src/api/compliance.ts`: for already-OK attachment responses, if `response.blob()` fails, it retries through `response.arrayBuffer()` and rehydrates a Blob with the upstream `Content-Type` or endpoint fallback MIME type.
+- Hardened `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx` so SOC2 PDF and GDPR ZIP tests simulate the streamless Blob gap, still assert filename/type/download count, and no longer invoke jsdom's unimplemented anchor navigation path while capturing downloads.
+- Verification evidence:
+  - Red: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` failed before the fix with 2 expected failures, both showing `object.stream is not a function` and zero captured downloads.
+  - Green targeted: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` passed: 1 file, 6 tests.
+  - Build: `make web-build` initially caught the new fixture's `Uint8Array<ArrayBufferLike>` BodyInit type error; after switching the fixture body to a concrete `ArrayBuffer`, `make web-build` passed.
+  - Full web CI gate: `cd web && npx vitest run --coverage` passed: 263 files, 2780 tests, coverage thresholds met.
 - Files changed:
-  - web/src/lib/whereBuilder.ts
-  - web/src/lib/__tests__/whereBuilder.test.ts (updated to reflect new contract)
-  - web/src/lib/__tests__/whereBuilder.bdd.test.ts (new — 3 BDD scenarios)
-  - web/src/components/browser/BrowserPage.tsx (string normalisation + structured error overlay)
-  - web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx (new — 3 BDD scenarios via MSW)
-  - pkg/oss/where/converter.go (string-or-array tolerance)
-  - pkg/oss/where/converter_dog004_bdd_test.go (new — 2 BDD scenarios on the real Bleve index)
-- Quality gates: go vet, go test ./pkg/oss/where, full web tests via vitest, make web-build.
+  - `web/src/api/compliance.ts`
+  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - The backend `pkg/oss/where` operators are typed: each operator's converter unmarshals `clause.Value` into a specific Go type. Frontend builders MUST match — verify by looking at the converter for the operator you target (containsAnyTerm → string, and → []WhereClause, etc.). Compose the wire shape from the converter's `json.Unmarshal(...)` line, not from intuition.
-  - `ApiRequestError.parameters` carries the structured backend reason (e.g. `{reason: "…"}`); surface it in error UI by reading `err.parameters?.reason` rather than `err.message` alone.
-  - `testing-library queryByText` THROWS when multiple matches exist — use `queryAllByText` / `getAllByText` when the same glyph (✓/✕) may appear in multiple cells of the same row.
----
-
-## [2026-05-18 00:03] - DOG-005
-- Wired `useProperties(ontologyApiName, objectType.rid)` into `ObjectTypeDetail` so the authoritative `isNullable / isSearchable / isSortable` flags from `/objectTypes/byRid/{rid}/properties` reach the table instead of getting silently defaulted to false by the compact `objectType.properties` map.
-- `PropertiesTable` now accepts an optional `detailedProperties: Property[]` and `detailedStatus: 'idle'|'loading'|'error'|'ready'`. When detailed data is available it wins; when the request is still loading the cell renders `…`; when the request failed the cell renders `?` so the operator sees an explicit unknown state instead of a misleading ✕.
-- Files changed:
-  - web/src/components/explorer/PropertiesTable.tsx (new props, FlagValue degradation)
-  - web/src/components/explorer/ObjectTypeDetail.tsx (wires useProperties + derives detailedStatus)
-  - web/src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx (new — 4 BDD scenarios)
-- Quality gates: web vitest (full 2780-test run), make web-build, go test ./..., go vet ./...
-- **Learnings for future iterations:**
-  - The compact `{dataType, rid}` shape returned by /objectTypes endpoints is lossy by design — it carries only what the schema graph needs. Anywhere the UI needs richer property metadata (`isSearchable`/`isSortable`/`isNullable`/typeConfig), fetch the detailed `/objectTypes/byRid/{rid}/properties` payload via `useProperties` and merge on `apiName`.
-  - When fetched data has not yet returned, prefer explicit "unknown" markers (`…` / `?`) over a default-false rendering — the latter quietly lies to operators while the former invites them to refresh or wait.
----
-
-## Dogfood Evidence
-Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md
-Data:
-- dogfood-output/ainews-records-20260517.json
-- dogfood-output/ainews-records-20260517.csv
-Screenshots:
-- /Users/liyang/.hermes/cache/screenshots/browser_screenshot_d35533c3ab0a4ca8abe04a7e129be2f4.png
-- /Users/liyang/.hermes/cache/screenshots/browser_screenshot_99ec29c831ed4e99be0f8c06f3ae3351.png
+  - When web tests mock streamed attachment bodies, prefer concrete byte buffers over Blob-backed `Response` bodies; Node/jsdom Blob implementations can disagree on `Blob.stream()`.
+  - Keep download capture tests from calling the original jsdom anchor click when the assertion only needs the generated blob URL, filename, size, and MIME type.
 ---

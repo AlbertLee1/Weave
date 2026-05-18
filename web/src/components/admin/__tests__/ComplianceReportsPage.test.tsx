@@ -47,6 +47,26 @@ function installFetch(
   return calls;
 }
 
+function streamlessBinaryResponse(
+  bytes: Uint8Array,
+  contentType: string,
+  disposition: string,
+): Response {
+  const body = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(body).set(bytes);
+  const response = new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': contentType,
+      'Content-Disposition': disposition,
+    },
+  });
+  vi.spyOn(response, 'blob').mockRejectedValueOnce(
+    new TypeError('object.stream is not a function'),
+  );
+  return response;
+}
+
 interface DownloadRecord {
   filename: string;
   size: number;
@@ -78,7 +98,6 @@ function captureDownloads(): DownloadRecord[] {
     const el = origCreate(tag) as HTMLElement;
     if (tag.toLowerCase() === 'a') {
       const a = el as HTMLAnchorElement;
-      const origClick = a.click.bind(a);
       a.click = () => {
         const url = a.href;
         const blob = objectUrls.get(url);
@@ -89,7 +108,6 @@ function captureDownloads(): DownloadRecord[] {
             type: blob.type,
           });
         }
-        origClick();
       };
     }
     return el;
@@ -140,14 +158,11 @@ describe('ComplianceReportsPage (US-453)', () => {
   it('SOC2 PDF: posts the report with format=pdf and downloads the response body', async () => {
     const calls = installFetch(async (call) => {
       if (call.url.endsWith('/api/admin/compliance/report')) {
-        return new Response(new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])]), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/pdf',
-            'Content-Disposition':
-              'attachment; filename="weave-compliance-report.pdf"',
-          },
-        });
+        return streamlessBinaryResponse(
+          new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+          'application/pdf',
+          'attachment; filename="weave-compliance-report.pdf"',
+        );
       }
       return new Response('{}', { status: 200 });
     });
@@ -167,6 +182,7 @@ describe('ComplianceReportsPage (US-453)', () => {
     });
     expect(downloads[0].filename).toMatch(/\.pdf$/);
     expect(downloads[0].type).toBe('application/pdf');
+    expect(screen.queryByText(/object\.stream/i)).not.toBeInTheDocument();
     const reportCall = calls.find((c) =>
       c.url.endsWith('/api/admin/compliance/report'),
     );
@@ -206,14 +222,11 @@ describe('ComplianceReportsPage (US-453)', () => {
   it('GDPR: switching report type to gdpr replaces the time window with a userId input and submits a ZIP request', async () => {
     const calls = installFetch(async (call) => {
       if (call.url.endsWith('/api/admin/gdpr/export')) {
-        return new Response(new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04])]), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/zip',
-            'Content-Disposition':
-              'attachment; filename="gdpr-export-alice.zip"',
-          },
-        });
+        return streamlessBinaryResponse(
+          new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+          'application/zip',
+          'attachment; filename="gdpr-export-alice.zip"',
+        );
       }
       return new Response('{}', { status: 200 });
     });
@@ -238,6 +251,7 @@ describe('ComplianceReportsPage (US-453)', () => {
     });
     expect(downloads[0].filename).toMatch(/\.zip$/);
     expect(downloads[0].type).toBe('application/zip');
+    expect(screen.queryByText(/object\.stream/i)).not.toBeInTheDocument();
     const exportCall = calls.find((c) =>
       c.url.endsWith('/api/admin/gdpr/export'),
     );

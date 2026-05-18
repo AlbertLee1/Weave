@@ -1,100 +1,62 @@
 {
-  "project": "Weave AI News Ontology Dogfood Repair",
-  "branchName": "ralph/ainews-dogfood-20260517",
-  "description": "Focused Ralph repair loop from Hermes dogfood of an AI News ontology E2E scenario. Fix issues found while creating ainews ontology, ingesting one week of AI news, and browsing/searching it in the WebUI. Follow TDD/BDD, add regression tests, run quality gates, commit one story per iteration.",
+  "project": "Weave Self-Iteration CI Health",
+  "branchName": "ralph/self-iteration-20260518-004206",
+  "description": "Small Ralph self-iteration focused on restoring main CI health before adding new OSv2-facing capability work. Evidence comes from GitHub Actions run 25996414394 on main after the AI News dogfood merge plus local repository inspection.",
   "userStories": [
     {
-      "id": "DOG-003",
-      "name": "Ensure imported ontology object indexes exist before accepted stream ingest",
-      "phase": "AI News Dogfood Repair",
+      "id": "SELF-001",
+      "name": "Make Go CI build independent of generated WebUI dist",
+      "phase": "Fresh CI Health",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Hermes dogfood imported ontology `ainews` and immediately streamed 103 AI_News CREATE edits. Ingest returned 200 with edit counts, but list/search/aggregate failed with `index not found for object type \"AI_News\"` or showed zero rows. Manual index rebuild created an empty index (`indexedCount: 0`), and only a second ingest made data visible. Fix root cause so import/create-object-type bootstraps the index before ingest is accepted, or ingest fails fast instead of claiming success. Preferred behavior: import/create path creates the object index automatically and immediate ingest becomes visible without rebuild/reingest.",
+      "description": "The Go CI job runs `go build ./...` immediately after checkout, before the web job has produced `web/dist` or `cmd/server/web/dist`. `cmd/server/embed.go` currently embeds `all:web/dist`, so fresh checkout builds fail with `pattern all:web/dist: no matching files found`. Remove the compile-time dependency on ignored generated assets while preserving SPA embedding when `make web-build` has populated the dist directory.",
       "bdd_acceptance": [
-        "Given a new ontology is imported with object type AI_News, When CREATE edits are immediately posted to /api/v2/ontologies/ainews/streams/AI_News/ingest, Then the accepted records become visible via GET /objects/AI_News without manual index rebuild.",
-        "Given import/create object type succeeds, When POST /api/v2/ontologies/ainews/objects/AI_News/search is called after ingest, Then it does not return IndexNotFound/SearchObjectsFailed for the new object type.",
-        "Given the index cannot be created, When stream ingest is requested, Then the API must fail fast with a non-2xx error and must not return an editCount success that later disappears.",
-        "Given an existing ontology is replaced or re-imported, When indexes are rebuilt/bootstraped, Then stale index state does not leak old rows and new ingests converge idempotently."
+        "Given a fresh checkout with no `web/dist` and no `cmd/server/web/dist`, When `go build ./cmd/server` runs, Then the build succeeds instead of failing on a missing embed pattern.",
+        "Given no generated SPA dist is embedded, When the server starts, Then `webDistFS()` returns an error that the existing bootstrap can log as WebUI unavailable while API routes still boot.",
+        "Given `make web-build` has produced `cmd/server/web/dist`, When the server binary is built, Then the generated SPA assets remain embedded and `webDistFS()` exposes `index.html`.",
+        "Given future edits touch the WebUI embed directive, When targeted tests run, Then they fail if the directive once again points directly at ignored generated `web/dist` output."
       ],
-      "dogfood_evidence": [
-        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-003",
-        "First ingest returned 200 for 50+50+3 edits; list/search then returned `index not found for object type \"AI_News\"`.",
-        "POST /api/admin/indexes/rebuild returned scopedKey ainews__AI_News indexedCount 0; re-ingest after rebuild produced browser totalCount 103."
+      "ci_evidence": [
+        "GitHub Actions run 25996414394, Go job Build step: `cmd/server/embed.go:8:12: pattern all:web/dist: no matching files found`.",
+        "Repository `.gitignore` ignores both `web/dist/` and `cmd/server/web/dist/`; local dist directories exist only as ignored generated artifacts.",
+        "Current `cmd/server/embed.go` uses `//go:embed all:web/dist`, which requires the generated directory to exist at compile time."
       ],
       "quality_gates": [
-        "targeted backend regression test for import/create-object-type + immediate ingest/list/search red->green",
-        "targeted index bootstrap tests for replace/re-import if applicable",
-        "go test ./pkg/... or narrower package tests covering the changed code",
-        "go vet ./...",
-        "make test",
-        "make web-build",
-        "make web-test",
-        "Hermes/browser verification of /browser/ainews/AI_News totalCount 103 after a fresh import+single ingest"
+        "Targeted BDD regression test for the embed directive red -> green",
+        "`go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v`",
+        "Fresh checkout simulation with ignored dist omitted, then `go build ./cmd/server`",
+        "`go test ./cmd/server -count=1`",
+        "`go vet ./cmd/server`"
       ]
     },
     {
-      "id": "DOG-004",
-      "name": "Fix BrowserPage full-text search contract for containsAnyTerm",
-      "phase": "AI News Dogfood Repair",
+      "id": "SELF-002",
+      "name": "Stabilize compliance report downloads in Vitest",
+      "phase": "Fresh CI Health",
       "active": true,
       "priority": 2,
       "passes": true,
       "dependencies": [
-        "DOG-003"
+        "SELF-001"
       ],
-      "description": "On /browser/ainews/AI_News, typing OpenAI into Search objects and pressing Enter renders `INVALID_ARGUMENT: SearchObjectsFailed`. BrowserPage builds where `{type:'containsAnyTerm', field:'title', value:['OpenAI']}`, but the Go backend expects a string value and reports `containsAnyTerm value must be a string`. Align frontend/backend contract so browser search works for normal multi-term text.",
+      "description": "The web CI job reaches Vitest and fails in the US-453 ComplianceReportsPage suite with `object.stream is not a function`, leaving SOC2/GDPR download behavior unverified. Make the download test harness and any necessary client code robust across browser Blob implementations and Node/jsdom Blob gaps without weakening the user-facing download assertions.",
       "bdd_acceptance": [
-        "Given /browser/ainews/AI_News is loaded with 103 rows, When the user searches for OpenAI, Then matching rows are displayed and the UI does not show INVALID_ARGUMENT/SearchObjectsFailed.",
-        "Given BrowserPage submits a full-text search, Then the request body matches the backend where contract (no array/string mismatch).",
-        "Given a multi-word search such as `OpenAI Codex`, When submitted, Then backend semantics are correct and covered by tests (either one string accepted by backend or backend explicitly supports an array of terms).",
-        "Given the search API returns an error, Then the UI error should include the backend reason when available, not just `INVALID_ARGUMENT: SearchObjectsFailed`."
+        "Given the compliance report endpoint returns a PDF Blob, When the operator clicks Generate & Download in the test browser, Then the captured download has the expected PDF filename/type and no inline `object.stream` error is shown.",
+        "Given the GDPR export endpoint returns a ZIP Blob in a Vitest/jsdom environment where Blob streaming is incomplete, When the operator downloads the export, Then the captured ZIP download is recorded once.",
+        "Given the API returns a structured 4xx, When the report request fails, Then the inline error shows the backend reason and no download is triggered.",
+        "Given `npx vitest run --coverage` runs in CI, When the compliance suite executes, Then US-453 tests do not fail because of Blob stream API differences."
       ],
-      "dogfood_evidence": [
-        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-004",
-        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_d35533c3ab0a4ca8abe04a7e129be2f4.png",
-        "Exact failing reason: `containsAnyTerm value must be a string: json: cannot unmarshal array into Go value of type string`."
+      "ci_evidence": [
+        "GitHub Actions run 25996414394, Web job Vitest step: ComplianceReportsPage test rendered `object.stream is not a function` and expected one download but recorded zero.",
+        "The failing suite is `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`, which mocks response bodies and overrides URL/download behavior."
       ],
       "quality_gates": [
-        "frontend BDD/unit regression test for BrowserPage search request shape red->green",
-        "backend where-clause test if backend is changed",
-        "make web-build",
-        "make web-test",
-        "make test",
-        "go vet ./...",
-        "Hermes/browser verification: search OpenAI on /browser/ainews/AI_News returns rows"
-      ]
-    },
-    {
-      "id": "DOG-005",
-      "name": "Render accurate Explorer property metadata flags",
-      "phase": "AI News Dogfood Repair",
-      "active": true,
-      "priority": 3,
-      "passes": true,
-      "dependencies": [
-        "DOG-004"
-      ],
-      "description": "/explorer/ainews/AI_News properties table shows Searchable and Sortable as false for every field. Direct detailed properties API reports true for many fields, including title/category/deliveredDate/source/summary. Fix Explorer object type detail so Nullable/Searchable/Sortable reflect authoritative detailed property metadata rather than lossy objectType.properties map defaults.",
-      "bdd_acceptance": [
-        "Given detailed property metadata marks title as searchable and sortable, When /explorer/ainews/AI_News renders, Then title shows Searchable ✓ and Sortable ✓.",
-        "Given detailed property metadata marks rank sortable but not searchable, When the properties table renders, Then rank shows Sortable ✓ and Searchable ✕.",
-        "Given detailed property metadata marks rawItem searchable but not sortable, When the properties table renders, Then rawItem shows Searchable ✓ and Sortable ✕.",
-        "Given the detailed properties request is loading or fails, Then the UI degrades explicitly (loading/error or unknown) rather than confidently showing all flags as false."
-      ],
-      "dogfood_evidence": [
-        "Report: dogfood-output/weave-ainews-ontology-dogfood-20260517.md#dog-005",
-        "Screenshot: /Users/liyang/.hermes/cache/screenshots/browser_screenshot_99ec29c831ed4e99be0f8c06f3ae3351.png",
-        "API `/objectTypes/byRid/<rid>/properties` reports isSearchable/isSortable true while UI renders all ✕."
-      ],
-      "quality_gates": [
-        "frontend BDD/unit regression test for ObjectType detail property flags red->green",
-        "make web-build",
-        "make web-test",
-        "make test",
-        "go vet ./...",
-        "Hermes/browser verification of /explorer/ainews/AI_News property flags"
+        "Targeted BDD/unit regression for ComplianceReportsPage download capture red -> green",
+        "`cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false`",
+        "`make web-test` or `cd web && npx vitest run --coverage`",
+        "`make web-build`"
       ]
     }
   ]
