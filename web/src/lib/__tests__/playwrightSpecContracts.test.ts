@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
 import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
+import us444AppBuilderSpecSource from '../../../e2e/us444/08-app-builder.spec.ts?raw';
 import us444BranchSpecSource from '../../../e2e/us444/06-branch.spec.ts?raw';
 import us444MergeSpecSource from '../../../e2e/us444/07-merge.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
@@ -75,5 +76,19 @@ describe('Playwright spec contracts', () => {
     expect(us444MergeSpecSource).toMatch(/expectOK\(diff,\s*['"]branch diff endpoint must be wired/);
     expect(us444MergeSpecSource).toContain('merge.status()');
     expect(us444MergeSpecSource).toContain('conflictResolution');
+  });
+
+  it('keeps the US-444 App Builder gate wired and skip-free', () => {
+    const source = us444AppBuilderSpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain('/api/v2/apps');
+    expect(source).toContain('app create endpoint must be wired');
+    expect(source).toContain('app get endpoint must be wired');
+    expect(source).toContain('app delete endpoint must be wired');
+    expect(source).not.toContain('apps store not wired');
+    expect(source).not.toContain('create.status() === 404');
+    expect(source).not.toContain('create.status() === 503');
   });
 });

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIResponse } from '@playwright/test';
 import { API_BASE, skipWhenBackendDown, uniqueName } from './helpers';
 
 /**
@@ -6,8 +6,13 @@ import { API_BASE, skipWhenBackendDown, uniqueName } from './helpers';
  *
  * Exercises the Workshop-lite Apps surface (US-391) with a minimal
  * 1-row Layout DSL. Creates an App, fetches it back, and tears it down.
- * Skips when the AppsStore is not wired (degraded mode).
  */
+async function expectOK(res: APIResponse, context: string): Promise<void> {
+  if (res.ok()) return;
+
+  expect(res.ok(), `${context}: ${res.status()} ${await res.text()}`).toBe(true);
+}
+
 test.describe('US-444 — app builder', () => {
   test('app create → get → delete round-trip', async ({ request }) => {
     await skipWhenBackendDown(request);
@@ -22,20 +27,16 @@ test.describe('US-444 — app builder', () => {
         },
       },
     });
-    test.skip(
-      create.status() === 404 || create.status() === 503,
-      'apps store not wired — `make e2e-up` should boot the full PG stack',
-    );
-    if (!create.ok()) {
-      test.skip(true, `app create failed: ${create.status()} ${await create.text()}`);
-    }
+    await expectOK(create, 'app create endpoint must be wired');
+
     const body = (await create.json()) as { rid?: string; id?: string };
     const rid = body.rid ?? body.id ?? '';
     expect(rid).not.toBe('');
 
     const got = await request.get(`${API_BASE}/api/v2/apps/${rid}`);
-    expect(got.ok()).toBe(true);
+    await expectOK(got, 'app get endpoint must be wired');
 
-    await request.delete(`${API_BASE}/api/v2/apps/${rid}`);
+    const deleted = await request.delete(`${API_BASE}/api/v2/apps/${rid}`);
+    await expectOK(deleted, 'app delete endpoint must be wired');
   });
 });
