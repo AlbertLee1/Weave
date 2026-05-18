@@ -73,18 +73,23 @@ interface DownloadRecord {
   type: string;
 }
 
+interface DownloadPayload {
+  size: number;
+  type: string;
+}
+
 function captureDownloads(): DownloadRecord[] {
   const records: DownloadRecord[] = [];
   // Override URL.createObjectURL/revokeObjectURL — jsdom doesn't implement
   // them. We simultaneously sniff the synthesised <a> click to capture the
   // download filename + body.
   let nextId = 0;
-  const objectUrls = new Map<string, Blob>();
+  const objectUrls = new Map<string, DownloadPayload>();
   vi.spyOn(URL, 'createObjectURL').mockImplementation(
     (obj: Blob | MediaSource) => {
       nextId += 1;
       const url = `blob:test-${nextId}`;
-      if (obj instanceof Blob) {
+      if ('size' in obj && 'type' in obj) {
         objectUrls.set(url, obj);
       }
       return url;
@@ -217,6 +222,43 @@ describe('ComplianceReportsPage (US-453)', () => {
       expect(downloads.length).toBe(1);
     });
     expect(downloads[0].filename).toMatch(/\.json$/);
+  });
+
+  it('SOC2 JSON: records Blob bodies even when fetch returns them from another realm', async () => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    try {
+      const foreignWindow = frame.contentWindow as
+        | (Window & { Blob: typeof Blob })
+        | null;
+      const foreignBlob = new foreignWindow!.Blob(
+        [JSON.stringify({ generatedAt: '2026-04-30T00:00:00Z' })],
+        { type: 'application/json' },
+      );
+      expect(foreignBlob).not.toBeInstanceOf(Blob);
+      installFetch(() => {
+        const response = new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+        vi.spyOn(response, 'blob').mockResolvedValueOnce(foreignBlob);
+        return response;
+      });
+      const downloads = captureDownloads();
+      const user = userEvent.setup();
+      renderPage();
+      await user.selectOptions(screen.getByLabelText(/format/i), 'json');
+      await user.click(
+        screen.getByRole('button', { name: /generate.*download/i }),
+      );
+      await waitFor(() => {
+        expect(downloads.length).toBe(1);
+      });
+      expect(downloads[0].filename).toMatch(/\.json$/);
+      expect(downloads[0].type).toBe('application/json');
+    } finally {
+      frame.remove();
+    }
   });
 
   it('GDPR: switching report type to gdpr replaces the time window with a userId input and submits a ZIP request', async () => {
