@@ -26,6 +26,7 @@ type workflowJob struct {
 type workflowStep struct {
 	Name string         `yaml:"name"`
 	Uses string         `yaml:"uses"`
+	Run  string         `yaml:"run"`
 	With map[string]any `yaml:"with"`
 }
 
@@ -50,6 +51,30 @@ func TestBDD_GolangCILintWorkflowSupportsGo125(t *testing.T) {
 				lintVersion,
 				minGolangCILintForGo125,
 			)
+		}
+	}
+}
+
+func TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope(t *testing.T) {
+	root := repoRoot(t)
+
+	if got, want := readGoPatchVersion(t, filepath.Join(root, "go.mod")), [3]int{1, 26, 3}; compareVersionParts(got, want) < 0 {
+		t.Errorf("go.mod must pin Go at or above %s for current standard-library govulncheck fixes, got %s", formatVersionParts(want), formatVersionParts(got))
+	}
+
+	if run := readGovulncheckWorkflowCommand(t, filepath.Join(root, ".github", "workflows", "ci.yml")); strings.TrimSpace(run) != "make vulncheck" {
+		t.Errorf("CI govulncheck step must use local make vulncheck contract, got %q", run)
+	}
+
+	makefile := readFile(t, filepath.Join(root, "Makefile"))
+	if !strings.Contains(makefile, "./scripts/ci/govulncheck.sh") {
+		t.Error("Makefile vulncheck target must delegate to scripts/ci/govulncheck.sh so local and CI scans share one scope")
+	}
+
+	script := readFile(t, filepath.Join(root, "scripts", "ci", "govulncheck.sh"))
+	for _, required := range []string{"go list ./...", "internal/testutil", "go env GOPATH", "\"$govulncheck_bin\" $packages"} {
+		if !strings.Contains(script, required) {
+			t.Errorf("scripts/ci/govulncheck.sh must contain %q", required)
 		}
 	}
 }
@@ -84,6 +109,27 @@ func readGoVersion(t *testing.T, path string) (int, int) {
 	return major, minor
 }
 
+func readGoPatchVersion(t *testing.T, path string) [3]int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^go\s+([0-9]+)\.([0-9]+)\.([0-9]+)\s*$`).FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatal("go.mod must declare a full major.minor.patch Go version")
+	}
+	var version [3]int
+	for i := range version {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			t.Fatalf("parse Go version component %q: %v", m[i+1], err)
+		}
+		version[i] = n
+	}
+	return version
+}
+
 func readGolangCILintActionConfig(t *testing.T, path string) (string, bool) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -109,6 +155,39 @@ func readGolangCILintActionConfig(t *testing.T, path string) (string, bool) {
 	return "", false
 }
 
+func readGovulncheckWorkflowCommand(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CI workflow: %v", err)
+	}
+	var workflow workflowConfig
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatalf("parse CI workflow YAML: %v", err)
+	}
+	for jobName, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			if strings.EqualFold(strings.TrimSpace(step.Name), "govulncheck") {
+				if strings.TrimSpace(step.Run) == "" {
+					t.Fatalf("job %q govulncheck step must use a run command", jobName)
+				}
+				return strings.TrimSpace(step.Run)
+			}
+		}
+	}
+	t.Fatal("CI workflow does not contain a govulncheck step")
+	return ""
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
 func readBoolInput(v any) bool {
 	switch typed := v.(type) {
 	case bool:
@@ -123,6 +202,10 @@ func readBoolInput(v any) bool {
 func compareVersions(left, right string) int {
 	l := mustParseVersion(left)
 	r := mustParseVersion(right)
+	return compareVersionParts(l, r)
+}
+
+func compareVersionParts(l, r [3]int) int {
 	for i := range l {
 		if l[i] < r[i] {
 			return -1
@@ -132,6 +215,10 @@ func compareVersions(left, right string) int {
 		}
 	}
 	return 0
+}
+
+func formatVersionParts(v [3]int) string {
+	return fmt.Sprintf("%d.%d.%d", v[0], v[1], v[2])
 }
 
 func mustParseVersion(v string) [3]int {
