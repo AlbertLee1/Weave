@@ -3,6 +3,7 @@ package ci_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -72,10 +73,80 @@ func TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope(t *testing.T) {
 	}
 
 	script := readFile(t, filepath.Join(root, "scripts", "ci", "govulncheck.sh"))
-	for _, required := range []string{"go list ./...", "internal/testutil", "go env GOPATH", "\"$govulncheck_bin\" $packages"} {
+	for _, required := range []string{"./scripts/ci/go-packages.sh", "internal/testutil", "go env GOPATH", "\"$govulncheck_bin\" $packages"} {
 		if !strings.Contains(script, required) {
 			t.Errorf("scripts/ci/govulncheck.sh must contain %q", required)
 		}
+	}
+}
+
+func TestBDD_GoPackageListExcludesWebDependencyTrees(t *testing.T) {
+	root := repoRoot(t)
+
+	fixtureRoot := filepath.Join(root, "web", "node_modules", "ralph_go_package_fixture")
+	fixturePkg := filepath.Join(fixtureRoot, "golang", "pkg", "foreign")
+	if err := os.MkdirAll(fixturePkg, 0o755); err != nil {
+		t.Fatalf("create node_modules Go fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(fixtureRoot); err != nil {
+			t.Fatalf("remove node_modules Go fixture: %v", err)
+		}
+	})
+	if err := os.WriteFile(filepath.Join(fixturePkg, "foreign.go"), []byte("package foreign\n"), 0o644); err != nil {
+		t.Fatalf("write node_modules Go fixture: %v", err)
+	}
+
+	helper := filepath.Join(root, "scripts", "ci", "go-packages.sh")
+	helperSource := readFile(t, helper)
+	for _, required := range []string{"go list -e ./...", "node_modules"} {
+		if !strings.Contains(helperSource, required) {
+			t.Errorf("scripts/ci/go-packages.sh must contain %q", required)
+		}
+	}
+
+	cmd := exec.Command(helper)
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run Go package-list helper: %v\n%s", err, output)
+	}
+	packages := string(output)
+	if strings.Contains(packages, "/web/node_modules/") || strings.Contains(packages, "ralph_go_package_fixture") {
+		t.Fatalf("Go package-list helper must exclude web dependency trees, got:\n%s", packages)
+	}
+	if !strings.Contains(packages, "github.com/liyang/weave/cmd/server") {
+		t.Fatalf("Go package-list helper must still include repository packages, got:\n%s", packages)
+	}
+
+	buildCmd := exec.Command(helper, "--build")
+	buildCmd.Dir = root
+	buildOutput, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run buildable Go package-list helper: %v\n%s", err, buildOutput)
+	}
+	buildPackages := string(buildOutput)
+	if strings.Contains(buildPackages, "/web/node_modules/") || strings.Contains(buildPackages, "ralph_go_package_fixture") {
+		t.Fatalf("buildable Go package-list helper must exclude web dependency trees, got:\n%s", buildPackages)
+	}
+	if strings.Contains(buildPackages, "github.com/liyang/weave/scripts/ci") {
+		t.Fatalf("buildable Go package-list helper must exclude test-only packages, got:\n%s", buildPackages)
+	}
+	if !strings.Contains(buildPackages, "github.com/liyang/weave/cmd/server") {
+		t.Fatalf("buildable Go package-list helper must still include buildable repository packages, got:\n%s", buildPackages)
+	}
+
+	makefile := readFile(t, filepath.Join(root, "Makefile"))
+	if !strings.Contains(makefile, "./scripts/ci/go-packages.sh") {
+		t.Error("Makefile Go gates must use scripts/ci/go-packages.sh so local package discovery excludes web dependencies")
+	}
+
+	workflow := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	if strings.Count(workflow, "./scripts/ci/go-packages.sh") < 3 {
+		t.Error("CI build, vet, and test gates must use scripts/ci/go-packages.sh so fresh CI and local gates share package discovery")
+	}
+	if !strings.Contains(workflow, "./scripts/ci/go-packages.sh --build") {
+		t.Error("CI build gate must use scripts/ci/go-packages.sh --build so explicit package arguments do not include test-only packages")
 	}
 }
 

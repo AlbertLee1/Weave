@@ -6,7 +6,7 @@ help: ## Show available targets and clarify build variants
 	@awk 'BEGIN { FS = ":.*##"; print "Available targets:" } /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-24s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 test-unit:
-	go test ./...
+	go test $$(./scripts/ci/go-packages.sh)
 
 test-integration:
 	go test -tags integration ./...

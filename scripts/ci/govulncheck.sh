@@ -11,6 +11,6 @@ fi
 # excluding package-only integration-test helpers that import Docker APIs for
 # local testcontainers setup. Those helpers are not linked into Weave services
 # or CLIs, and current Docker/Moby findings have no fixed module version.
-packages=$(go list ./... | grep -Ev '/internal/testutil$')
+packages=$(./scripts/ci/go-packages.sh | grep -Ev '/internal/testutil$')
 
 "$govulncheck_bin" $packages

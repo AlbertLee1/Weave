@@ -40,10 +40,10 @@ jobs:
         run: go mod download
 
       - name: Build
-        run: go build ./...
+        run: go build $(./scripts/ci/go-packages.sh --build)
 
       - name: Vet
-        run: go vet ./...
+        run: go vet $(./scripts/ci/go-packages.sh)
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
@@ -53,7 +53,7 @@ jobs:
           only-new-issues: true
 
       - name: Test (with race + coverage)
-        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+        run: go test -race -coverprofile=coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1

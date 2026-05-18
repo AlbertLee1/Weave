@@ -7,7 +7,7 @@
 // The actual SW lives at `web/public/sw.js` and ships verbatim through
 // Vite's static copy step. Keep this file framework-agnostic so it can
 // be imported from `main.tsx` without pulling in React.
-import { startAutoReplay } from './offlineRequestQueue';
+import { replayQueue, startAutoReplay } from './offlineRequestQueue';
 import { executeQueuedEntry } from './queuedRequest';
 
 export interface ReplayHintMessage {
@@ -52,9 +52,6 @@ export function attachServiceWorkerReplayBridge(
 let replayInFlight: Promise<void> | null = null;
 async function replayOnce(): Promise<void> {
   if (replayInFlight) return replayInFlight;
-  // Lazy import the queue module so a misconfigured test that only
-  // pulls in serviceWorker.ts does not eagerly evaluate the queue.
-  const { replayQueue } = await import('./offlineRequestQueue');
   replayInFlight = (async () => {
     try {
       await replayQueue(executeQueuedEntry);
