@@ -10,6 +10,8 @@ import us444MarketplaceSpecSource from '../../../e2e/us444/10-marketplace.spec.t
 import us444PackageInstallSpecSource from '../../../e2e/us444/11-pkg-install.spec.ts?raw';
 import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
+import us444ColumnMaskSpecSource from '../../../e2e/us444/16-mask.spec.ts?raw';
+import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw';
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
 import us444FunctionReplaySpecSource from '../../../e2e/us444/19-fn-replay.spec.ts?raw';
 
@@ -174,5 +176,28 @@ describe('Playwright spec contracts', () => {
     expect(us444FunctionReplaySpecSource).not.toContain('execute failed:');
     expect(us444FunctionReplaySpecSource).not.toContain('replay endpoint not wired');
     expect(us444FunctionReplaySpecSource).not.toContain('expect([200, 503]).toContain(replay.status())');
+  });
+
+  it('keeps the US-444 mask admin gates wired and skip-free', () => {
+    const sources = [us444ColumnMaskSpecSource, us444CellMaskSpecSource];
+
+    for (const source of sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).toContain('/api/admin/');
+      expect(source).not.toContain('store not wired');
+      expect(source).not.toContain('res.status() === 404');
+      expect(source).not.toContain('401, 403, 503');
+    }
+
+    expect(us444ColumnMaskSpecSource).toContain('/api/admin/column-masks');
+    expect(us444ColumnMaskSpecSource).toContain('column-mask list endpoint must be wired');
+    expect(us444ColumnMaskSpecSource).toContain('column-mask create endpoint must be wired');
+    expect(us444ColumnMaskSpecSource).toContain('InvalidColumnMask');
+
+    expect(us444CellMaskSpecSource).toContain('/api/admin/cell-masks');
+    expect(us444CellMaskSpecSource).toContain('cell-mask list endpoint must be wired');
+    expect(us444CellMaskSpecSource).toContain('cell-mask create endpoint must be wired');
+    expect(us444CellMaskSpecSource).toContain('InvalidCellMask');
   });
 });

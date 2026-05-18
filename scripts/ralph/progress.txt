@@ -70,3 +70,26 @@ SELF-426 TDD:
   - scripts/ralph/prd.json
   - scripts/ralph/progress.txt
 - Reusable learning: for US-444 smoke probes, `skipWhenBackendDown(request)` is the only portability skip that should remain. Once the backend is reachable, 404/503 endpoint responses should be asserted as failures unless the story explicitly covers degraded-mode behavior.
+
+SELF-427 TDD:
+- RED: add a Playwright spec contract assertion that the column-mask and cell-mask admin specs are skip-free, bind to `/api/admin/column-masks` and `/api/admin/cell-masks`, and keep mandatory wired-endpoint assertion strings.
+- RED result: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `web/e2e/us444/16-mask.spec.ts` still contained `test.skip(...)`.
+- Root cause: the US-444 column-mask and cell-mask smoke specs already skipped only when the backend health check was down, but after backend reachability they still skipped reachable-backend 404s and allowed degraded list responses. That let missing admin masking CRUD wiring pass as a skipped smoke gate.
+- Implementation:
+  - Hardened `web/e2e/us444/16-mask.spec.ts` so column-mask list requires a successful `{ masks: [...] }` envelope and invalid create fails on 404/503 before asserting `InvalidColumnMask`.
+  - Hardened `web/e2e/us444/17-cell-mask.spec.ts` so cell-mask list requires a successful `{ masks: [...] }` envelope and invalid create fails on 404/503 before asserting `InvalidCellMask`.
+  - Both specs now call `loginAdmin(request)` so token-auth full-stack runs exercise the admin CRUD surface rather than drifting into unauthenticated errors.
+  - Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so both mask specs must remain skip-free and keep the mandatory wired-endpoint assertion strings.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` -> 1 file passed, 11 tests passed.
+  - `npm --prefix web exec playwright test -- --list us444/16-mask.spec.ts us444/17-cell-mask.spec.ts` -> 4 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/16-mask.spec.ts web/e2e/us444/17-cell-mask.spec.ts` -> no matches (exit 1).
+  - `go test ./pkg/masking ./pkg/cellsec` -> ok.
+  - `git diff --check` -> clean.
+- Files changed for SELF-427:
+  - web/e2e/us444/16-mask.spec.ts
+  - web/e2e/us444/17-cell-mask.spec.ts
+  - web/src/lib/__tests__/playwrightSpecContracts.test.ts
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Reusable learning: admin US-444 smoke specs should authenticate with `loginAdmin(request)` before asserting route behavior, then treat 404/503 as endpoint wiring failures and verify the structured success/error envelope for the target surface.

@@ -58,7 +58,7 @@
       "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-425"
       ],
