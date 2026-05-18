@@ -158,9 +158,9 @@ func TestLoadConfig_CICoverageFloorsTrackCurrentBroadPackageReality(t *testing.T
 	}
 
 	cases := []struct {
-		pkg          string
-		ciMeasured   float64
-		maxHeadroom  float64
+		pkg         string
+		ciMeasured  float64
+		maxHeadroom float64
 	}{
 		{
 			pkg:         "github.com/liyang/weave/pkg/oms",
