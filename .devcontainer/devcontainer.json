@@ -1,0 +1,57 @@
+{
+  "name": "Weave Dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.25"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "dockerComposeFile": "docker-compose.yml",
+
+  "forwardPorts": [9117, 5173, 5432, 4222],
+
+  "portsAttributes": {
+    "9117": { "label": "Weave API" },
+    "5173": { "label": "Vite Dev" },
+    "5432": { "label": "PostgreSQL" },
+    "4222": { "label": "NATS" }
+  },
+
+  "containerEnv": {
+    "PG_DSN": "postgres://weave:weave@localhost:5432/weave?sslmode=disable",
+    "NATS_URL": "nats://localhost:4222",
+    "AUTH_MODE": "dev"
+  },
+
+  "postCreateCommand": "go mod download && cd web && npm ci",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-vscode.vscode-typescript-next",
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "go.toolsManagement.autoUpdate": true,
+        "go.useLanguageServer": true,
+        "go.lintOnSave": "package",
+        "editor.formatOnSave": true,
+        "[go]": { "editor.defaultFormatter": "golang.go" },
+        "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" }
+      }
+    }
+  }
+}
