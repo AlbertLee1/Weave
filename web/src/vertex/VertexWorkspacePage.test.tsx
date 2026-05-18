@@ -167,7 +167,9 @@ describe('VertexWorkspacePage (VTX-017)', () => {
       expect(screen.getByTestId('vertex-canvas-mock')).toBeInTheDocument();
     });
     expect(screen.getByTestId('vertex-topbar')).toBeInTheDocument();
-    expect(screen.getByTestId('vertex-topbar-graph-name').textContent).toContain('Alpha');
+    await waitFor(() => {
+      expect(screen.getByTestId('vertex-topbar-graph-name').textContent).toContain('Alpha');
+    });
   });
 
   it('snapshot: /vertex/new shell is stable', () => {
