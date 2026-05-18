@@ -53,7 +53,7 @@
       "phase": "Fresh CI Health",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-407"
       ],

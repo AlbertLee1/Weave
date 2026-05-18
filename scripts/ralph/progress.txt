@@ -93,4 +93,31 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260519-001656/
   - `CLAUDE.md`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+
+## 2026-05-19 00:41:13 CST - SELF-409
+- Selected as the only unfinished story after SELF-407 and SELF-408 were already marked passing.
+- Root-cause/context check:
+  - `cmd/server/embed.go` already embeds `all:web` instead of ignored `web/dist`, and `cmd/server/web/embed-placeholder.txt` is the only tracked file under `cmd/server/web`.
+  - `Makefile` already had separate `build`, `web-build`, and `build-with-ui` paths, but local target help did not expose the no-UI versus embedded-UI semantics.
+- TDD red:
+  - Extended `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1` to require `make help` to describe both build paths and to run a subprocess `go build ./cmd/server` with generated `cmd/server/web/dist` temporarily moved aside.
+  - The focused test failed as expected because `make help` did not exist: `make: *** No rule to make target 'help'.  Stop.`
+- Implementation:
+  - Added a `help` target that lists Makefile targets with `##` descriptions.
+  - Documented `build` as the plain Go server build that does not generate embedded WebUI assets.
+  - Documented `web-build` as the WebUI asset build/copy step and `build-with-ui` as the production server build with embedded WebUI assets.
+  - Kept `build-with-ui: web-build build` so production packaging still copies `web/dist` into `cmd/server/web/dist` before the Go binary is built.
+- Verification evidence:
+  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`: passed.
+  - `make build-with-ui`: passed; ran `cd web && npm run build`, `node scripts/check-bundle-budget.mjs`, copied `web/dist` into `cmd/server/web/dist`, then ran `go build -o bin/weave ./cmd/server`.
+  - The only Vite warning during `make build-with-ui` was the pre-existing `offlineRequestQueue.ts` dynamic/static import notice.
+  - `git diff --check`: passed.
+- Codebase Patterns:
+  - Fresh CI embed tests can prove ignored SPA assets are not required by temporarily moving generated `cmd/server/web/dist` aside before invoking a subprocess `go build ./cmd/server`.
+  - Makefile targets with different artifact semantics should expose those semantics through `make help` comments, not only through target names.
+- Files changed:
+  - `Makefile`
+  - `cmd/server/embed_ci_bdd_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
 ---
