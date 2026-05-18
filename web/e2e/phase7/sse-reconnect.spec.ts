@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const API_BASE = 'http://localhost:9117';
 const ONTOLOGY = 'northwind';
@@ -12,13 +12,39 @@ const OBJECT_TYPE = 'customer';
  * comes back online.
  *
  * Flow:
- * 1. Enable realtime mode (opens SSE EventSource)
- * 2. Set browser context offline (EventSource drops → hook backoff reconnect)
+ * 1. Enable realtime mode (opens the live transport)
+ * 2. Set browser context offline (transport drops → hook backoff reconnect)
  * 3. POST 3 createCustomer actions via backend API while browser offline
  * 4. Set browser context online (hook reconnects, SubscribeWithReplay
  *    replays buffered events → queryClient.invalidateQueries → table refetch)
- * 5. Assert all 3 new rows appear in the DataTable
+ * 5. Search by each inserted primary key and assert the rows appear in the DataTable
  */
+async function waitForLiveConnected(page: Page, timeout = 10_000): Promise<void> {
+  const liveStatus = page.getByTestId('live-status');
+  await expect(liveStatus).toHaveText(/Connected/, { timeout });
+  await expect(liveStatus).toHaveAttribute(
+    'aria-label',
+    /Live updates connected over/i,
+  );
+}
+
+async function searchForCustomerById(page: Page, customerId: string): Promise<void> {
+  const searchResponse = page.waitForResponse((response) => {
+    return (
+      response.request().method() === 'POST' &&
+      response.url().includes(
+        `/api/v2/ontologies/${ONTOLOGY}/objects/${OBJECT_TYPE}/search`,
+      ) &&
+      response.ok()
+    );
+  });
+
+  const searchInput = page.getByTestId('search-input');
+  await searchInput.fill(customerId);
+  await searchInput.press('Enter');
+  await searchResponse;
+}
+
 test.describe('SSE reconnect (US-080)', () => {
   test.beforeAll(async ({ request }) => {
     // Preflight: the seed must carry createCustomer action type.
@@ -39,15 +65,7 @@ test.describe('SSE reconnect (US-080)', () => {
     ).toBe(true);
   });
 
-  // FIXME(US-080): the reconnect→buffered-events→table-row assertion
-  // is flaky in full-suite runs because the customer table accumulates
-  // > 1 page of rows from earlier specs, so newly inserted rows land
-  // off the visible page. The single-spec invocation passes; the
-  // multi-spec accumulation does not. Re-enable once the spec either
-  // (a) navigates to the customer-by-PK route or (b) sorts by created_at
-  // descending so freshly inserted rows are guaranteed to be visible
-  // on page 1.
-  test.fixme(
+  test(
     'offline → online → buffered events delivered after reconnect',
     async ({ page, request }) => {
     // 1. Navigate to the Browser page for customers.
@@ -64,9 +82,8 @@ test.describe('SSE reconnect (US-080)', () => {
     await expect(realtimeLabel).toBeVisible();
     await realtimeLabel.click();
 
-    // Wait for the green indicator — confirms EventSource is connected.
-    const indicator = page.getByTestId('realtime-indicator');
-    await expect(indicator).toBeVisible({ timeout: 10_000 });
+    // Wait for the toolbar status — confirms a live transport is connected.
+    await waitForLiveConnected(page);
 
     // 3. Simulate going offline. The EventSource will error out and the
     //    hook enters exponential backoff reconnection.
@@ -109,17 +126,18 @@ test.describe('SSE reconnect (US-080)', () => {
     //    events → onEvent triggers queryClient.invalidateQueries → refetch.
     await page.context().setOffline(false);
 
-    // 6. Assert all 3 new rows appear in the DataTable.
-    //    The reconnect backoff (1s→2s→4s) plus pipeline latency means we
-    //    need a generous timeout.
+    // 6. Assert all 3 new rows appear in the DataTable. Searching by
+    //    primary key keeps this deterministic even when earlier specs have
+    //    pushed the customer table beyond the first page.
     for (const id of ids) {
+      await searchForCustomerById(page, id);
       await expect(
         table.getByRole('cell', { name: id, exact: true }),
       ).toBeVisible({ timeout: 15_000 });
     }
 
-    // Verify the realtime indicator is back (connection restored).
-    await expect(indicator).toBeVisible({ timeout: 10_000 });
+    // Verify the live transport is back after reconnect.
+    await waitForLiveConnected(page);
     },
   );
 });

@@ -1,91 +1,52 @@
 # Ralph Progress Log
-Started: Tue May 19 02:48:45 CST 2026
+Started: Tue May 19 03:49:28 CST 2026
 
-Branch: ralph/self-iteration-20260519-024456
+Branch: ralph/self-iteration-20260519-034928
 
 Initial inspection:
-- Archived prior Ralph state for branch ralph/self-iteration-20260519-012255 to scripts/ralph/archive/self-iteration-20260519-024845/.
-- No PR CI auto-fix context was present in the prior progress file.
-- `gh pr list --head ralph/self-iteration-20260519-024456 --json number,state,statusCheckRollup` returned `[]`; no PR checks exist for this branch.
-- `gh run list --branch ralph/self-iteration-20260519-024456 --limit 5` returned no runs.
+- Archived stale Ralph state for branch `ralph/self-iteration-20260519-024456` to `scripts/ralph/archive/self-iteration-20260519-035412/`.
+- Prior PRD belonged to `ralph/self-iteration-20260519-024456` and all stories had `passes: true`, so this branch required a fresh small PRD.
+- No PR CI auto-fix context was present in the current progress file.
+- `gh pr checks --watch=false` reported no pull request for this branch.
+- `gh run list --branch ralph/self-iteration-20260519-034928 --limit 5` returned no workflow runs.
 - Local health probes before PRD selection:
-  - `npm --prefix web test -- --run` passed: 266 files, 2786 tests.
-  - `npm --prefix web run build` passed; bundle budgets passed.
-  - `go test ./...` passed. Note: direct `go test ./...` still discovers `web/node_modules/flatted/golang/pkg/flatted` as a no-test package, while CI uses `scripts/ci/go-packages.sh` to scope packages.
-
-Durable Codebase Patterns:
-- Browser realtime mode currently owns transport selection in `web/src/components/browser/BrowserPage.tsx`; WebSocket is primary via `useWebSocketSubscription`, and the existing SSE fallback uses `useObjectSetSubscription` with a temporary ObjectSet RID.
-- Browser object refresh should invalidate TanStack Query cache with `queryKey: ['objects']` so list and search result hooks refetch through their canonical paths.
-- Web tests use MSW plus hook-level mocks in `web/src/components/browser/__tests__/BrowserPage.test.tsx`; hook transport behavior is isolated in `web/src/hooks/__tests__/useWebSocketSubscription.test.ts` and `web/src/hooks/__tests__/useObjectSetSubscription.test.ts`.
-
-Story SELF-413 - Make Browser Live fall back to SSE truthfully:
-- Selected as highest-priority story because local CI was clean and Browser Live had an unreachable SSE fallback despite already creating temporary ObjectSets for fallback readiness.
-- RED:
-  - Added BrowserPage BDD tests proving WebSocket `reconnecting` status should enable the ObjectSet SSE subscription and that SSE messages invalidate `queryKey: ['objects']`.
-  - Added WebSocket hook test proving consumers can observe `connecting -> connected -> reconnecting -> connecting` status transitions.
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected: `capturedWsOptions?.onStatusChange` was undefined.
-  - `npm --prefix web test -- --run src/hooks/__tests__/useWebSocketSubscription.test.ts` failed as expected: status callback was never called.
-- GREEN implementation:
-  - `web/src/hooks/useWebSocketSubscription.ts` now accepts optional `onStatusChange` and emits `idle`, `connecting`, `connected`, and `reconnecting`.
-  - `web/src/components/browser/BrowserPage.tsx` now listens for WebSocket `reconnecting`, waits for the temporary ObjectSet RID, then switches `realtimeMode` from `ws` to `sse`; connected WebSocket status keeps SSE disabled to avoid duplicate invalidations.
-- Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx src/hooks/__tests__/useWebSocketSubscription.test.ts` passed: 2 files, 25 tests.
-  - `npm --prefix web test -- --run` passed: 266 files, 2789 tests.
-  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
-  - `git diff --check` passed after removing a trailing blank line from this progress file.
-- Files changed:
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
-  - `web/src/hooks/useWebSocketSubscription.ts`
-  - `web/src/hooks/__tests__/useWebSocketSubscription.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - Browser Live should not start the ObjectSet SSE subscription just because a temporary ObjectSet RID exists; it should switch only after WebSocket reports an abnormal reconnect path.
-
-Story SELF-414 - Add event-driven Browser realtime Playwright gate:
-- Selected as next highest-priority incomplete story after SELF-413.
-- RED:
-  - Added `web/src/lib/browserRealtimeHelpers.test.ts` to define the Browser realtime subscription payload matching contract for WebSocket objectChanged frames and ObjectSet SSE frames.
-  - `npm --prefix web test -- --run src/lib/browserRealtimeHelpers.test.ts` failed as expected because `./browserRealtimeHelpers` did not exist.
-- GREEN implementation:
-  - Added `web/src/lib/browserRealtimeHelpers.ts` with exact-primary-key matching for WebSocket `objectChanged` and ObjectSet SSE payloads.
-  - Reworked `web/e2e/phase7/browser-realtime-mode.spec.ts` so the previously fixme realtime scenario now waits for the WebSocket subscribed frame, posts `createCustomer`, waits for the matching subscription event, and then searches by the inserted primary key before asserting the table row.
-  - The row assertion is now deterministic when previous specs have accumulated more than one page of customers.
-- Verification:
-  - `npm --prefix web test -- --run src/lib/browserRealtimeHelpers.test.ts` passed: 1 file, 3 tests.
-  - `npm --prefix web exec playwright test -- --list phase7/browser-realtime-mode.spec.ts phase7/sse-reconnect.spec.ts` passed: listed 3 tests in 2 files.
-  - `rg -n "test\\.fixme\\(" web/e2e/phase7/browser-realtime-mode.spec.ts` returned no matches.
-  - `npm --prefix web test -- --run` passed: 267 files, 2792 tests.
-  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
-  - `git diff --check` passed before Ralph state updates.
-- Files changed:
-  - `web/e2e/phase7/browser-realtime-mode.spec.ts`
-  - `web/src/lib/browserRealtimeHelpers.ts`
-  - `web/src/lib/browserRealtimeHelpers.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - Browser realtime E2E should observe the subscription stream first, then make the table assertion deterministic with a primary-key query instead of polling the current page for a newly inserted row.
-
-Story SELF-415 - Expose Browser Live reconnect status:
-- Selected as the final incomplete story after SELF-413 and SELF-414 passed. The remaining Browser Live gap was that the toolbar showed a green live indicator for operator intent rather than actual transport health.
-- RED:
-  - Updated `web/src/components/browser/__tests__/BrowserPage.test.tsx` with BDD coverage for WebSocket connected status, WebSocket reconnecting status, SSE fallback connected status, and Time Travel unavailable status.
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected: 5 tests failed because `data-testid="live-status"` did not exist and the existing green indicator appeared immediately after enabling Live.
-- GREEN implementation:
-  - `web/src/components/browser/BrowserPage.tsx` now tracks WebSocket and ObjectSet SSE subscription status callbacks separately and derives one Browser Live toolbar status from the active transport path.
-  - The connected green indicator now renders only when the active transport reports `connected`; reconnecting and connecting states render text status instead.
-  - Time Travel active mode now renders an accessible unavailable status next to the disabled Live toggle.
-- Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` passed: 1 file, 14 tests.
   - `npm --prefix web test -- --run` passed: 267 files, 2795 tests.
   - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- Named fresh-CI risks checked:
+  - `cmd/server/embed.go` embeds `cmd/server/web/dist` via the committed server web tree; `cmd/server/embed_ci_bdd_test.go` covers the placeholder path.
+  - US-453 streamless binary download coverage is present in `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx` and passed in the full web test run.
+- Dogfood issues DOG-002, DOG-003, DOG-004, and DOG-005 have current code/tests, so the new PRD avoids duplicating those fixed gaps.
+
+Durable Codebase Patterns:
+- Browser realtime mode currently owns transport selection in `web/src/components/browser/BrowserPage.tsx`; WebSocket is primary via `useWebSocketSubscription`, and SSE fallback uses `useObjectSetSubscription` with a temporary ObjectSet RID.
+- Browser object refresh should invalidate TanStack Query cache with `queryKey: ['objects']` so list and search result hooks refetch through their canonical paths.
+- Web tests use MSW plus hook-level mocks in `web/src/components/browser/__tests__/BrowserPage.test.tsx`; hook transport behavior is isolated in `web/src/hooks/__tests__/useWebSocketSubscription.test.ts` and `web/src/hooks/__tests__/useObjectSetSubscription.test.ts`.
+- Browser realtime E2E should observe the subscription stream first, then make the table assertion deterministic with a primary-key query instead of polling the current page for a newly inserted row.
+- Browser Live toolbar health should be derived from transport callbacks (`connected`, `connecting`, `reconnecting`) and not from the requested Live toggle state.
+
+Story SELF-416 - Make SSE reconnect Playwright gate deterministic:
+- Selected as the highest-priority incomplete story because local CI was clean and `web/e2e/phase7/sse-reconnect.spec.ts` still hid the reconnect scenario behind `test.fixme`, weakening the realtime recovery signal.
+- RED:
+  - Added `web/src/lib/__tests__/playwrightSpecContracts.test.ts` to assert that the SSE reconnect Playwright spec has no `test.fixme`, performs a primary-key search through the Browser search endpoint, and verifies the current `live-status` toolbar surface rather than a stale selector-only indicator.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the source still matched `test.fixme(`.
+- GREEN implementation:
+  - Re-enabled `web/e2e/phase7/sse-reconnect.spec.ts` by changing `test.fixme(...)` to an active `test(...)`.
+  - Added `waitForLiveConnected` so the scenario waits on `data-testid="live-status"` and its accessible connected label before and after the offline window.
+  - Added `searchForCustomerById` so each inserted customer is searched by primary key before the row assertion, keeping the test deterministic when previous specs have accumulated more than one table page.
+  - Fixed the new contract test to use Vite `?raw` imports after `npm --prefix web run build` exposed that `node:fs`, `node:path`, and `process` are not available in `tsconfig.app.json`.
+- Verification:
+  - RED command: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed for the expected `test.fixme` match.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 1 test.
+  - `npm --prefix web exec playwright test -- --list phase7/sse-reconnect.spec.ts` passed: listed 1 active test.
+  - `rg -n "test\\.fixme\\(" web/e2e/phase7/sse-reconnect.spec.ts` returned no matches (exit 1).
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `npm --prefix web test -- --run` passed: 268 files, 2796 tests.
   - `git diff --check` passed.
 - Files changed:
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+  - `web/e2e/phase7/sse-reconnect.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Reusable learning:
-  - Browser Live toolbar health should be derived from transport callbacks (`connected`, `connecting`, `reconnecting`) and not from the requested Live toggle state.
+  - Web `src` tests are compiled under `tsconfig.app.json`; when a contract test needs source text, prefer Vite `?raw` imports over Node filesystem APIs.
