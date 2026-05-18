@@ -38,7 +38,7 @@
       "phase": "PR CI Repair",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-401"
       ],
@@ -50,7 +50,14 @@
       ],
       "ci_evidence": [
         "GitHub CI run 26026535829 on 2026-05-18 failed `pkg/oss/objectset`.",
-        "CI log: `TestExecute_Sample_SeedDeterministic` failed with `pk[0] diverged: e3 vs e4`."
+        "CI log: `TestExecute_Sample_SeedDeterministic` failed with `pk[0] diverged: e3 vs e4`.",
+        "Local red on 2026-05-18: `go test ./pkg/oss/objectset -run TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse -count=1 -v` failed with `pk[0] diverged after input reorder: e1 vs e4`.",
+        "Green on 2026-05-18: `go test ./pkg/oss/objectset -run TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self402-objectset.out -covermode=atomic ./pkg/oss/objectset -run TestExecute_Sample_SeedDeterministic -count=50 -v` passed.",
+        "Green on 2026-05-18: `go test ./pkg/oss/objectset -run 'TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse|TestExecute_Sample_DifferentSeedsDiffer|TestExecute_Sample_LargerThanUniverse' -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self402-objectset-pkg.out -covermode=atomic ./pkg/oss/objectset -count=1` passed.",
+        "Green on 2026-05-18: `jq empty scripts/ralph/prd.json` passed.",
+        "Green on 2026-05-18: `git diff --check` passed."
       ],
       "quality_gates": [
         "`go test -race -coverprofile=/tmp/weave-self402-objectset.out -covermode=atomic ./pkg/oss/objectset -run TestExecute_Sample_SeedDeterministic -count=50 -v`",

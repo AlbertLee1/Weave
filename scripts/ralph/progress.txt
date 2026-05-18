@@ -39,3 +39,29 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-182801/
   - `pkg/materialize/scheduler_us486_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+
+## SELF-402 - Make ObjectSet seeded sample order stable
+- Selected next because `SELF-401` is complete and this is the next failed package in GitHub CI run 26026535829.
+- CI red: `pkg/oss/objectset` failed `TestExecute_Sample_SeedDeterministic` with `pk[0] diverged: e3 vs e4`.
+- Local probe before changes: `go test -race -coverprofile=/tmp/weave-self402-red-current.out -covermode=atomic ./pkg/oss/objectset -run TestExecute_Sample_SeedDeterministic -count=50 -v` passed, confirming the existing test only exposes the order bug when Bleve returns a different candidate order.
+- Root cause: seeded reservoir sampling fixed the PRNG but consumed `inner.PrimaryKeys` in source order. When the inner ObjectSet comes from Bleve or another unordered backing collection, the same seed can sample different ordered output.
+- Red test:
+  - Added `TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse`, which samples the same static PK universe in forward and reversed order using the same seed.
+  - `go test ./pkg/oss/objectset -run TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse -count=1 -v` failed with `pk[0] diverged after input reorder: e1 vs e4`.
+- Implementation:
+  - `executeSample` now copies and sorts the candidate universe before reservoir sampling when `Seed` is set.
+  - Unseeded sampling continues to use the inner ObjectSet's order, preserving existing non-deterministic sampling behavior.
+- Verification evidence:
+  - `go test ./pkg/oss/objectset -run TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse -count=1 -v`: passed.
+  - `go test -race -coverprofile=/tmp/weave-self402-objectset.out -covermode=atomic ./pkg/oss/objectset -run TestExecute_Sample_SeedDeterministic -count=50 -v`: passed.
+  - `go test ./pkg/oss/objectset -run 'TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse|TestExecute_Sample_DifferentSeedsDiffer|TestExecute_Sample_LargerThanUniverse' -count=1 -v`: passed.
+  - `go test -race -coverprofile=/tmp/weave-self402-objectset-pkg.out -covermode=atomic ./pkg/oss/objectset -count=1`: passed.
+  - `jq empty scripts/ralph/prd.json`: passed.
+  - `git diff --check`: passed.
+- Codebase Patterns:
+  - Seeded random operators must canonicalize unordered candidate universes before applying PRNG selection; seeding only the PRNG is insufficient.
+- Files changed:
+  - `pkg/oss/objectset/executor.go`
+  - `pkg/oss/objectset/sample_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
