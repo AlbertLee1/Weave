@@ -52,7 +52,7 @@
       "phase": "Branch E2E Signal",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Strengthen the branch and merge smoke specs so full-stack US-444 runs fail when branch lifecycle, diff, or merge endpoints are absent rather than accepting 404 as a passing degraded mode.",
       "bdd_acceptance": [

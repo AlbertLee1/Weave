@@ -74,3 +74,31 @@ Story SELF-420 - Make the US-444 lineage gate assert wired endpoints:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - Full-stack US-444 Playwright specs may skip only for a down backend; once the backend is reachable, expected core OSv2 surfaces should assert wired response shapes so 404/5xx regressions fail loudly.
+
+Story SELF-421 - Make US-444 branch lifecycle gates reject unwired branches:
+- Selected as the highest-priority story with `passes != true`.
+- RED:
+  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/06-branch.spec.ts` and `web/e2e/us444/07-merge.spec.ts` to stay free of `test.skip` / `test.fixme`, to reject 404 acceptance, and to keep branch, diff, merge, and close probes discoverable.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new branch lifecycle contract found existing `test.skip(...)` guards in `06-branch.spec.ts`.
+- Root cause investigation:
+  - `06-branch.spec.ts` skipped when branch creation returned 404 and skipped all non-OK creation responses, so a reachable backend with an unwired branch route could pass as degraded mode.
+  - `07-merge.spec.ts` skipped when branch creation returned 404 and explicitly accepted 404 from both branch diff and branch merge, masking unwired US-385 routes.
+  - `cmd/server/routes.go` wires branch create/list/get/close plus GET/POST diff and merge routes, and `pkg/oms/handlers_branch_merge.go` shows a quiet branch POST diff returns structured `added`/`modified`/`deleted` arrays and merge returns 200 with applied/skipped counts.
+- GREEN implementation:
+  - Updated `web/e2e/us444/06-branch.spec.ts` to keep only the backend-down portability skip, require create/list/close to return 2xx, assert the created branch name, and assert the created branch appears in the list.
+  - Updated `web/e2e/us444/07-merge.spec.ts` to require branch creation and POST diff to return 2xx, assert structured empty diff/conflict state for a quiet branch, and require merge to return 200 instead of accepting degraded statuses.
+  - Updated the Playwright spec contract test to pin both branch lifecycle specs to mandatory endpoint probes and skip-free discoverability.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 5 tests.
+  - `npm --prefix web exec playwright test -- --list us444/06-branch.spec.ts us444/07-merge.spec.ts` passed: 2 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/06-branch.spec.ts web/e2e/us444/07-merge.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
+  - `npm --prefix web test -- --run` passed: 268 files, 2800 tests.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/e2e/us444/06-branch.spec.ts`
+  - `web/e2e/us444/07-merge.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - US-444 full-stack branch smoke specs should only skip when the backend is down; once `/health` is reachable, branch, diff, and merge route absence must fail through status/body assertions rather than degraded-mode skips.
