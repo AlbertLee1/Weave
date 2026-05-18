@@ -45,7 +45,7 @@
       "phase": "Web CI Health",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "The latest GitHub web CI still fails during the full `npx vitest run --coverage` job in the US-453 compliance report spec. Local targeted non-coverage execution passes, so the repair should root-cause the full-suite or coverage-only interaction and keep binary/JSON download behavior stable.",
       "bdd_acceptance": [
@@ -57,7 +57,14 @@
       "ci_evidence": [
         "GitHub CI run 26017200976 failed in Web / Vitest with coverage at `ComplianceReportsPage.test.tsx:217`, expecting one JSON download but receiving zero.",
         "Local targeted run without coverage on 2026-05-18 passed: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false`.",
-        "Search confirmed the known `object.stream is not a function` case is modeled in `ComplianceReportsPage.test.tsx` via `streamlessBinaryResponse`."
+        "Search confirmed the known `object.stream is not a function` case is modeled in `ComplianceReportsPage.test.tsx` via `streamlessBinaryResponse`.",
+        "Root-cause evidence on 2026-05-18: GitHub failure DOM already showed the success banner for `weave-compliance-report.json`, so the app completed the download path and the test-side recorder missed the Blob.",
+        "Red on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t \"records Blob bodies\" --coverage=false` failed because `captureDownloads` ignored a Blob created in another jsdom realm.",
+        "Green on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t \"records Blob bodies\" --coverage=false` passed.",
+        "Green on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0` passed 7 tests.",
+        "Green on 2026-05-18: `cd web && npx vitest run --coverage` passed 263 files / 2781 tests.",
+        "Green on 2026-05-18: `cd web && npx tsc --noEmit` passed.",
+        "Green on 2026-05-18: `cd web && npm run build` passed."
       ],
       "quality_gates": [
         "Red reproduction for US-453 under coverage or full-suite ordering.",

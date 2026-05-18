@@ -5,6 +5,7 @@ Started: Mon May 18 14:31:32 CST 2026
 ## Codebase Patterns
 - ObjectSet `searchAround` uses API-name link traversal interfaces; production `links.Resolver` must expose the same optional reverse and target-type methods that ObjectSet mocks use.
 - M2M ObjectSet coverage should wire `links.NewResolverWithEdges` and an EdgeRepository-shaped fixture so the test protects the join-table path, not only mock fanout.
+- Web download tests should not require `payload instanceof Blob` when recording `URL.createObjectURL` inputs; jsdom/undici/iframe boundaries can produce Blob objects from another realm. Store blob-like `{size,type}` payloads instead.
 
 ## [2026-05-18 14:31 CST] - PRD reset
 - Archived stale Ralph state for branch `ralph/self-iteration-20260518-102411` under `scripts/ralph/archive/self-iteration-20260518-143132/`.
@@ -42,5 +43,27 @@ Started: Mon May 18 14:31:32 CST 2026
 - Files changed:
   - `.github/workflows/ci.yml`
   - `scripts/ci/ci_workflow_bdd_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
+## [2026-05-18 14:57 CST] - SELF-202
+- Root cause:
+  - GitHub CI run 26017200976 failed in the US-453 JSON download assertion with `downloads.length` equal to 0.
+  - The failed DOM snapshot already showed the page success banner for `weave-compliance-report.json`, which means the app generated and triggered the download; the failure was in the test-side recorder.
+  - `captureDownloads` only stored `URL.createObjectURL` payloads when `obj instanceof Blob`. Blob instances can cross jsdom/undici/iframe realms under coverage/full-suite execution, making that same-realm check false even though the payload is a valid blob-like download body.
+- Red test:
+  - Added a SOC2 JSON regression that mocks `Response.blob()` with a Blob from an iframe realm.
+  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t "records Blob bodies" --coverage=false`: failed with `expected +0 to be 1`.
+- Implementation:
+  - Updated `captureDownloads` in `ComplianceReportsPage.test.tsx` to record blob-like payloads by `{ size, type }` instead of requiring same-realm `Blob`.
+  - Kept the new cross-realm JSON download regression so CI protects the prior failure mode.
+- Verification evidence:
+  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t "records Blob bodies" --coverage=false`: passed.
+  - `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0`: passed 7 tests.
+  - `cd web && npx vitest run --coverage`: passed 263 test files / 2781 tests.
+  - `cd web && npx tsc --noEmit`: passed.
+  - `cd web && npm run build`: passed.
+- Files changed:
+  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
