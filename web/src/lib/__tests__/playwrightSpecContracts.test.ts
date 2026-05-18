@@ -11,6 +11,7 @@ import us444MarketplaceSpecSource from '../../../e2e/us444/10-marketplace.spec.t
 import us444PackageInstallSpecSource from '../../../e2e/us444/11-pkg-install.spec.ts?raw';
 import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
+import us444PitrSpecSource from '../../../e2e/us444/14-pitr.spec.ts?raw';
 import us444ColumnMaskSpecSource from '../../../e2e/us444/16-mask.spec.ts?raw';
 import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw';
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
@@ -86,6 +87,19 @@ describe('Playwright spec contracts', () => {
     expect(source).toContain('/api/v2/lineage/dataset-columns/impact?dataset=');
     expect(source).toContain('impacted');
     expect(source).not.toContain('res.ok() || res.status() === 503');
+  });
+
+  it('keeps the US-444 PITR gates wired and skip-free', () => {
+    const source = us444PitrSpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain('/api/v2/datasets/us444-unknown/history');
+    expect(source).toContain('/api/v2/datasets/us444-unknown/rollback');
+    expect(source).toContain('dataset history endpoint must be wired');
+    expect(source).toContain('rollback endpoint must validate missing target');
+    expect(source).not.toContain('route unwired');
+    expect(source).not.toContain('res.status() === 404 && (await res.text()).length === 0');
   });
 
   it('keeps the US-444 branch lifecycle gates wired and skip-free', () => {

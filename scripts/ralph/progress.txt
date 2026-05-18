@@ -24,6 +24,22 @@ Started: Tue May 19 07:37:10 CST 2026
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 
+## SELF-429 TDD
+- RED: extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` to import `web/e2e/us444/14-pitr.spec.ts` and require the PITR gate to be skip-free with mandatory `dataset history endpoint must be wired` and `rollback endpoint must validate missing target` assertions.
+- RED result: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `web/e2e/us444/14-pitr.spec.ts` still contained `test.skip(..., 'route unwired')` for empty 404 route misses.
+- Implementation: replaced the PITR unwired-route skips with structured JSON assertions. The history probe now accepts a 200 `{transactions: []}` response or a structured 4xx error envelope, and the rollback probe requires a structured 4xx validation/not-found envelope for the missing `?to=` query.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` -> passed, 1 file / 13 tests.
+  - `npm --prefix web exec playwright test -- --list us444/14-pitr.spec.ts` -> listed 2 PITR scenarios.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/14-pitr.spec.ts` -> no matches (exit 1).
+  - `git diff --check` -> clean.
+- Files changed for SELF-429:
+  - `web/e2e/us444/14-pitr.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
 ## Codebase Patterns
 - US-444 Playwright specs use `skipWhenBackendDown(request)` as the portability guard for developer machines and list-only CI. Once `/health` is reachable, OSv2 service endpoint failures should be normal assertions, not `test.skip` branches.
 - The fast web contract test imports Playwright specs as raw text and is the right regression gate for preventing permanent `test.skip` / `test.fixme` paths in smoke specs.
+- PITR dataset routes use structured JSON envelopes for known degraded or validation states; empty 404 bodies indicate an unwired chi route and should fail the US-444 full-stack probes.
