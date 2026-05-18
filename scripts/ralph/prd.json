@@ -1,47 +1,71 @@
 {
-  "project": "Weave Self-Iteration PR CI Vulncheck Repair",
-  "branchName": "ralph/self-iteration-20260518-164046",
-  "description": "Small Ralph self-iteration focused on repairing the current pull-request Go CI govulncheck failure while keeping the security gate actionable for Weave's OSv2 service and upper-layer experience work. PR CI run 26035571895 failed after the prior gofmt repair because govulncheck found reachable vulnerabilities in the pinned Go toolchain, golang.org/x/net, and test-only Docker client utilities.",
+  "project": "Weave Self-Iteration Web CI Signal",
+  "branchName": "ralph/self-iteration-20260519-001128",
+  "description": "Small Ralph self-iteration for current branch health and OSv2 upper-layer experience confidence. There is no open PR or GitHub Actions run for this branch yet, so scope is based on local CI parity, stale-dogfood verification, and current web test output. Priority is to keep fresh CI failures actionable before adding broader capability work.",
   "userStories": [
     {
-      "id": "SELF-406",
-      "name": "Make PR vulncheck gate actionable",
-      "phase": "PR CI Repair",
+      "id": "SELF-407",
+      "name": "Make web CI browser primitive shims quiet",
+      "phase": "CI Health",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Repair the current PR govulncheck failure by moving CI onto a fixed Go patch/toolchain, updating vulnerable reachable runtime dependencies, and making the vulncheck target exclude package-only testcontainer helpers whose Docker/Moby findings have no fixed version and are not part of the production/service scan. Keep CI and local `make vulncheck` aligned so future findings remain reproducible.",
+      "description": "Remove noisy jsdom not-implemented diagnostics from the web Vitest gate by providing deterministic test-environment shims for browser primitives used by OSv2 upper-layer pages and charts.",
       "bdd_acceptance": [
-        "Given the CI Go job installs Go from go.mod, When the workflow runs on a fresh runner, Then it uses a Go version at or above the fixed patch level for the standard-library findings reported by govulncheck.",
-        "Given the PR CI job reaches the security scan, When it invokes govulncheck, Then it uses the same scripted package scope as local `make vulncheck` instead of an ad hoc raw `govulncheck ./...` command.",
-        "Given package-only testcontainer helpers import Docker/Moby APIs with no fixed version, When the production vulncheck package list is built, Then internal test utility packages are excluded while production server, CLI, SDK, connector, and service packages remain scanned.",
-        "Given golang.org/x/net has reachable HTTP/2 findings in the current scan, When dependencies are resolved, Then the selected module version is at or above the fixed release and `make vulncheck` exits successfully."
-      ],
-      "ci_evidence": [
-        "GitHub PR #16 run 26035571895 on 2026-05-18 failed Go / govulncheck with exit code 3.",
-        "CI log reported reachable standard-library vulnerabilities fixed in later Go patch releases, including `net/mail` fixed in go1.25.2.",
-        "Local reproduction on 2026-05-18 with `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` failed under local go1.26.0 and reported standard-library findings fixed in go1.26.3, `golang.org/x/net@v0.50.0` findings fixed in v0.53.0, and Docker/Moby testcontainer findings with no fixed version.",
-        "Official Go release history lists go1.26.3 as released 2026-05-07 with security fixes for the Go command, pack tool, html/template, net, net/http, net/http/httputil, net/mail, and syscall.",
-        "Red on 2026-05-18: `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v` failed because go.mod pinned 1.25.0, CI ran raw `govulncheck ./...`, the Makefile did not delegate to a shared script, and the script did not exist.",
-        "Green on 2026-05-18: `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v` passed.",
-        "Green on 2026-05-18: `make vulncheck` passed and reported zero reachable vulnerabilities.",
-        "Green on 2026-05-18: `go test ./scripts/ci -count=1` passed.",
-        "Green on 2026-05-18: `go build ./...` passed.",
-        "Green on 2026-05-18: `go vet ./...` passed.",
-        "Green on 2026-05-18: `go test ./...` passed.",
-        "Green on 2026-05-18: `bash -n scripts/ci/govulncheck.sh` passed.",
-        "Green on 2026-05-18: `jq empty scripts/ralph/prd.json` passed.",
-        "Green on 2026-05-18: `git diff --check` passed."
+        "Given Vitest loads the shared jsdom setup, When a component or library requests a 2D canvas context, Then the call returns a deterministic minimal context instead of emitting the jsdom `HTMLCanvasElement's getContext()` not-implemented diagnostic.",
+        "Given Vitest loads the shared jsdom setup, When upper-layer navigation or export code calls `window.open`, Then the call is a harmless no-op and does not emit the jsdom `Window's open()` not-implemented diagnostic.",
+        "Given the web CI coverage gate runs, When `npx vitest run --coverage` completes, Then the test suite passes without the canvas or window.open not-implemented diagnostics obscuring real failures."
       ],
       "quality_gates": [
-        "`go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v`",
-        "`make vulncheck`",
-        "`go test ./scripts/ci -count=1`",
-        "`go build ./...`",
-        "`go vet ./...`",
-        "`go test ./...`",
-        "`jq empty scripts/ralph/prd.json`",
+        "`npm test -- --run src/test/setup.browser-primitives.bdd.test.ts`",
+        "`npx vitest run --coverage`",
+        "`npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-408",
+      "name": "Add a web bundle budget guard",
+      "phase": "Upper-Layer Performance",
+      "active": true,
+      "priority": 2,
+      "passes": false,
+      "dependencies": [
+        "SELF-407"
+      ],
+      "description": "Turn the current oversized production bundle warning into an actionable, versioned guard so the OSv2 web shell does not regress initial-load performance silently.",
+      "bdd_acceptance": [
+        "Given the web production build emits assets, When the bundle budget check runs, Then it fails with a clear message if the main application chunk exceeds the configured compressed or raw budget.",
+        "Given heavy graph, markdown, charting, and spreadsheet dependencies are present, When Vite builds the app, Then vendor chunks are split predictably enough for operators to identify which upper-layer surface owns a large payload.",
+        "Given CI runs the web build, When bundle size drifts above the checked budget, Then the failure points to the chunk name and configured threshold."
+      ],
+      "quality_gates": [
+        "`npm run build`",
+        "`npm test -- --run <new bundle budget test>`",
+        "`npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-409",
+      "name": "Keep embedded WebUI build semantics explicit",
+      "phase": "Fresh CI Health",
+      "active": true,
+      "priority": 3,
+      "passes": false,
+      "dependencies": [
+        "SELF-407"
+      ],
+      "description": "Clarify and test the distinction between a fresh Go build that may omit generated SPA assets and the production build path that embeds the WebUI, so upper-layer serving regressions remain easy to diagnose.",
+      "bdd_acceptance": [
+        "Given a fresh checkout has only the tracked embed placeholder, When `go build ./cmd/server` runs, Then it succeeds without requiring generated SPA assets.",
+        "Given production packaging needs the SPA, When `make build-with-ui` runs, Then the web build output is copied into the server embed tree before the Go binary is built.",
+        "Given a developer inspects the build targets, When they read local command help or tests, Then the no-UI Go build and UI-embedded production build behaviors are explicit."
+      ],
+      "quality_gates": [
+        "`go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`",
+        "`make build-with-ui`",
         "`git diff --check`"
       ]
     }

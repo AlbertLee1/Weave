@@ -1,18 +1,23 @@
 # Ralph Progress Log
-Started: Mon May 18 22:48:01 CST 2026
-Branch: ralph/self-iteration-20260518-164046
-Archived previous state: scripts/ralph/archive/self-iteration-20260518-224801/
+Started: Tue May 19 00:16:56 CST 2026
+Branch: ralph/self-iteration-20260519-001128
+Archived previous state: scripts/ralph/archive/self-iteration-20260519-001656/
 
 ## Current PRD
-- Created a fresh branch-scoped PRD because the previous PRD's only story, SELF-405, was marked `passes: true`.
-- Highest-priority input is the appended PR CI auto-fix context from 2026-05-18T22:42:00+08:00.
-- Current PR: https://github.com/AlbertLee1/Weave/pull/16
-- Current failed HEAD: 3cd0bbc5449d
-- Current failed run: https://github.com/AlbertLee1/Weave/actions/runs/26035571895
-- Failed check: `Go (build, vet, lint, test, vulncheck)`.
-- Failed step: `govulncheck`.
-- Failed log tail reports reachable vulnerabilities and exits with code 3; the visible tail includes standard-library `net/mail` findings fixed in go1.25.2.
-- New PRD is scoped to one CI repair story: `SELF-406`.
+- Created a fresh branch-scoped PRD because the previous PRD belonged to `ralph/self-iteration-20260518-164046` and its only story, SELF-406, was marked `passes: true`.
+- No `PR CI auto-fix context` was present in the archived progress file.
+- GitHub context: `gh pr view` found no open PR for `ralph/self-iteration-20260519-001128`; `gh run list --branch ralph/self-iteration-20260519-001128` returned no runs.
+- Known issue check:
+  - Fresh-style `go build ./...` passed after temporarily removing root `web/dist`.
+  - `npm test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed, covering the US-453 streamless attachment fallback.
+- Dogfood-output check:
+  - DOG-001 through DOG-005 all have current regression tests or implementation references in this checkout.
+  - Targeted dogfood suites passed for DOG-002, DOG-003, DOG-004, and DOG-005.
+- Local CI signal:
+  - `npx tsc --noEmit` passed.
+  - `npm run build` passed but reported a large main chunk warning.
+  - `npx vitest run --coverage` passed with 263 files / 2781 tests, but emitted repeated jsdom `HTMLCanvasElement's getContext()` diagnostics and one `Window's open()` diagnostic before the final green result.
+- New PRD is scoped to three small stories, with SELF-407 selected first because it improves web CI signal without changing product behavior.
 
 ## Codebase Patterns
 - Scheduler loops expose Start/Stop lifecycle methods and run an immediate first cycle before ticking on an interval.
@@ -28,61 +33,34 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-224801/
 - Coverage floor gates should be calibrated against current CI-backed package measurements; aspirational floors belong in a separate coverage-improvement story so PR CI remains actionable.
 - Coverage floor config should have deterministic contract tests for broad-package floor calibration when CI artifacts are the source of truth.
 - CI repair tests added near lint-sensitive Go code should be run through `gofmt` before commit; `git diff --check` does not catch canonical Go formatting drift.
+- CI security gates should call the same Makefile/script entry point used locally; raw workflow-only commands make PR failures harder to reproduce.
+- Scripts that install Go tools with `go install` should resolve `$(go env GOPATH)/bin/<tool>` explicitly when the binary is not already on PATH.
+- Govulncheck package scopes should exclude package-only test helpers that import unfixable tooling dependencies while still scanning production services, CLIs, SDKs, connectors, and source packages.
+- Web Vitest setup belongs in `web/src/test/setup.ts`; shared jsdom primitive shims should live there so component tests do not duplicate environment patches.
 
-## SELF-406 - Make PR vulncheck gate actionable
-- Selected because the active PRD had completed and the appended PR CI auto-fix context explicitly identifies the current failed check.
-- CI red: GitHub PR #16 run 26035571895 failed `Go (build, vet, lint, test, vulncheck)` during `govulncheck`.
-- CI log tail reports reachable vulnerabilities and `Process completed with exit code 3`; the visible entries include standard-library `net/mail` fixed in go1.25.2.
-- Code/docs/tests/dogfood context:
-  - `.github/workflows/ci.yml` installs Go using `actions/setup-go@v5` with `go-version-file: go.mod`, then runs `govulncheck ./...`.
-  - `go.mod` currently declares `go 1.25.0`.
-  - `Makefile` has a local `vulncheck` target, but it also runs raw `govulncheck ./...`.
-  - `scripts/ci/ci_workflow_bdd_test.go` already verifies CI toolchain/lint contracts for Go 1.25 compatibility.
-  - `README.md` documents `make lint` but does not document `make vulncheck`; no docs depend on the current raw govulncheck command.
-  - `dogfood-output` has no vulncheck-specific finding for this failure.
-- Local reproduction:
-  - `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`: failed under local go1.26.0 with exit status 3.
-  - Local output reported standard-library vulnerabilities fixed in go1.26.3, `golang.org/x/net@v0.50.0` findings fixed in v0.53.0, and Docker/Moby findings through testcontainer helper packages with no fixed version.
-- Root cause:
-  - CI reads a patch-pinned `go 1.25.0` from go.mod, so the standard library scan runs on a Go release below the fixed patch levels.
-  - `golang.org/x/net` is pinned below the fixed version for reachable HTTP/2 findings.
-  - The vulncheck package scope is raw `./...`, which includes `internal/testutil`, a package-only integration-test helper that imports testcontainers/Docker APIs. The Docker/Moby findings have no fixed version, so the gate is not actionable unless test-only package helpers are scoped out of the production security scan.
-- Planned TDD red:
-  - Add a CI workflow BDD test proving the vulncheck gate uses a fixed Go patch and an actionable local/CI package scope.
-- Red tests:
-  - `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v`: failed because `go.mod` pinned 1.25.0, CI ran raw `govulncheck ./...`, the Makefile did not delegate to a shared script, and `scripts/ci/govulncheck.sh` did not exist.
-  - After adding the script, `make vulncheck`: failed with `scripts/ci/govulncheck.sh: line 12: govulncheck: command not found`, proving local installs must resolve `$(go env GOPATH)/bin/govulncheck` when GOPATH/bin is not on PATH.
-  - `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v`: failed until the shared script asserted the GOPATH-installed binary fallback.
+## SELF-407 - Make web CI browser primitive shims quiet
+- Selected as the highest-priority incomplete story because the full web coverage gate passes but currently prints repeated jsdom not-implemented diagnostics that can hide real CI failures.
+- TDD red:
+  - `npm test -- --run src/test/setup.browser-primitives.bdd.test.ts` failed as expected: `canvas.getContext('2d')` returned `null` and jsdom printed `Not implemented: HTMLCanvasElement's getContext() method`.
+  - After adding the canvas/window shim, the focused test passed, but `npx vitest run --coverage` failed with two unhandled `ReferenceError: Path2D is not defined` exceptions from `uplot` in `TimeSeriesChart.test.tsx`.
+  - Extended the focused BDD test to require a usable `Path2D`; `npm test -- --run src/test/setup.browser-primitives.bdd.test.ts` then failed as expected because `globalThis.Path2D` was undefined.
 - Implementation:
-  - Updated `go.mod` from `go 1.25.0` to `go 1.26.3`, matching the current Go security patch release used to clear standard-library govulncheck findings.
-  - Updated reachable module dependencies: `golang.org/x/net` to v0.54.0 and related `x/crypto`, `x/sys`, `x/term`, and `x/text` versions selected by `go get`/`go mod tidy`.
-  - Updated `github.com/testcontainers/testcontainers-go` and `github.com/testcontainers/testcontainers-go/modules/postgres` to v0.42.0, moving their Docker client dependency path to current Moby modules while keeping test helper usage intact.
-  - Added `scripts/ci/govulncheck.sh` as the shared local/CI scan entry point. It installs govulncheck when needed, resolves the GOPATH-installed binary when PATH lacks it, and excludes `internal/testutil` from the production/source package scan.
-  - Updated `Makefile` and `.github/workflows/ci.yml` so local `make vulncheck` and PR CI use the same scan scope.
-  - Added `TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope` to lock the fixed Go patch, shared CI command, Makefile delegation, testutil exclusion, and GOPATH binary fallback.
+  - Added a shared jsdom canvas 2D context shim in `web/src/test/setup.ts`, including deterministic text measurement and no-op drawing APIs used by charts and graph-adjacent components.
+  - Added a shared `Path2D` no-op class in `web/src/test/setup.ts` so uPlot can build paths during Vitest runs.
+  - Replaced jsdom's unimplemented `window.open` in `web/src/test/setup.ts` with a harmless no-op.
+  - Added `web/src/test/setup.browser-primitives.bdd.test.ts` to lock the canvas, `Path2D`, and `window.open` setup contract.
 - Verification evidence:
-  - `go version`: `go version go1.26.3 darwin/arm64`.
-  - `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v`: passed.
-  - `bash -n scripts/ci/govulncheck.sh`: passed.
-  - `make vulncheck`: passed; output reported `No vulnerabilities found` and `Your code is affected by 0 vulnerabilities`.
-  - `go test ./scripts/ci -count=1`: passed.
-  - `go build ./...`: passed.
-  - `go vet ./...`: passed.
-  - `go test ./...`: passed.
+  - `npm test -- --run src/test/setup.browser-primitives.bdd.test.ts`: passed, 1 test / 1 file.
+  - `npx vitest run --coverage`: passed, 264 files / 2782 tests, with no `HTMLCanvasElement's getContext()`, `Path2D is not defined`, or `Window's open()` diagnostics in the output.
+  - `npx tsc --noEmit`: passed.
   - `jq empty scripts/ralph/prd.json`: passed.
   - `git diff --check`: passed.
 - Codebase Patterns:
-  - CI security gates should call the same Makefile/script entry point used locally; raw workflow-only commands make PR failures harder to reproduce.
-  - Scripts that install Go tools with `go install` should resolve `$(go env GOPATH)/bin/<tool>` explicitly when the binary is not already on PATH.
-  - Govulncheck package scopes should exclude package-only test helpers that import unfixable tooling dependencies while still scanning production services, CLIs, SDKs, and source packages.
+  - Shared Vitest browser-primitive shims should cover the next primitive reached by real libraries; otherwise fixing one jsdom stub can uncover a later unhandled primitive such as `Path2D`.
 - Files changed:
-  - `.github/workflows/ci.yml`
-  - `Makefile`
-  - `go.mod`
-  - `go.sum`
-  - `scripts/ci/ci_workflow_bdd_test.go`
-  - `scripts/ci/govulncheck.sh`
-  - `scripts/ralph/archive/self-iteration-20260518-224801/prd.json`
-  - `scripts/ralph/archive/self-iteration-20260518-224801/progress.txt`
+  - `web/src/test/setup.ts`
+  - `web/src/test/setup.browser-primitives.bdd.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+  - `scripts/ralph/archive/self-iteration-20260519-001656/prd.json`
+  - `scripts/ralph/archive/self-iteration-20260519-001656/progress.txt`
