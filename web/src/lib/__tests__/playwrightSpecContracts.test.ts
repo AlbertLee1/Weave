@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
+import us444BrowseSpecSource from '../../../e2e/us444/02-browse.spec.ts?raw';
 import us444AggregateSpecSource from '../../../e2e/us444/03-aggregate.spec.ts?raw';
 import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
 import us444AppBuilderSpecSource from '../../../e2e/us444/08-app-builder.spec.ts?raw';
@@ -12,6 +13,7 @@ import us444PackageInstallSpecSource from '../../../e2e/us444/11-pkg-install.spe
 import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
 import us444PitrSpecSource from '../../../e2e/us444/14-pitr.spec.ts?raw';
+import us444RoleMgmtSpecSource from '../../../e2e/us444/15-role-mgmt.spec.ts?raw';
 import us444ColumnMaskSpecSource from '../../../e2e/us444/16-mask.spec.ts?raw';
 import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw';
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
@@ -60,6 +62,25 @@ describe('Playwright spec contracts', () => {
     expect(source).toContain('/objects/customer/aggregate');
     expect(source).toContain('aggregate endpoint must be wired');
     expect(source).not.toContain('aggregate endpoint unavailable');
+  });
+
+  it('keeps the US-444 browse and role-management gates wired and skip-free', () => {
+    const sources = [us444BrowseSpecSource, us444RoleMgmtSpecSource];
+
+    for (const source of sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+    }
+
+    expect(us444BrowseSpecSource).toContain('/objects/customer');
+    expect(us444BrowseSpecSource).toContain('customer objects endpoint must be wired');
+    expect(us444BrowseSpecSource).toContain('northwind seed must include customer rows');
+    expect(us444BrowseSpecSource).not.toContain('objects endpoint unavailable');
+    expect(us444BrowseSpecSource).not.toContain('northwind seed produced 0 customer rows');
+
+    expect(us444RoleMgmtSpecSource).toContain('/api/v2/me');
+    expect(us444RoleMgmtSpecSource).toContain('me endpoint must be wired');
+    expect(us444RoleMgmtSpecSource).not.toContain('me endpoint unavailable');
   });
 
   it('keeps the US-444 saga gate wired and skip-free', () => {
