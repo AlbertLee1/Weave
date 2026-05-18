@@ -1,85 +1,24 @@
 # Ralph Progress Log
-Started: 2026-05-18T10:24:11+08:00
+Started: Mon May 18 12:56:23 CST 2026
+---
 
 ## Codebase Patterns
-- For Weave browser/UI regressions, Hermes browser verification is final truth; Claude/Playwright self-checks are necessary but not sufficient.
-- Dashboard aggregate stats should hoist per-ontology fetches with `useQueries` and share React Query cache keys with per-card hooks.
-- Frontend BDD tests conventionally stub `fetch` directly with `vi.stubGlobal('fetch', ...)` and regex URL matching; do not default to MSW for new focused tests unless the local suite already uses it.
-- AI News dogfood fixture lives in `dogfood-output/ainews-records-20260517.json` / `.csv` and contains 103 records over 6 delivery dates.
-- BrowserPage search currently exercises the `WhereClause` path, not the simple backend `query` parameter path; tests should assert the exact request body sent by `searchObjects`/BrowserPage.
-- OMS handlers grow narrow `Set*` hooks (e.g., `SetIndexBootstrapper`) for cross-package wiring; the concrete adapter lives in cmd/server so pkg/oms never imports pkg/index. Mirror this pattern for any future capability that needs index/funnel knowledge.
-- Stream ingest must verify the target Bleve index exists BEFORE publishing to NATS; the consumer's "index not found" error fires too late and the 200 response has already gone out.
-- `cmd/server/embed.go` must embed a tracked parent directory such as `all:web`, not ignored generated `web/dist` directly; otherwise fresh GitHub Actions `go build ./...` fails before the WebUI build job can produce dist assets.
+- ObjectSet `searchAround` uses API-name link traversal interfaces; production `links.Resolver` must expose the same optional reverse and target-type methods that ObjectSet mocks use.
+- M2M ObjectSet coverage should wire `links.NewResolverWithEdges` and an EdgeRepository-shaped fixture so the test protects the join-table path, not only mock fanout.
 
-## PRD Bootstrap - 2026-05-18T10:24:11+08:00
-- Archived branch-mismatched completed PRD/progress snapshot to `scripts/ralph/archive/self-iteration-20260518-104341/`.
-- Confirmed branch: `ralph/self-iteration-20260518-102411`.
-- Previous `scripts/ralph/prd.json` belonged to `ralph/self-iteration-20260518-004206` and all stories had `passes: true`, so this iteration bootstrapped a fresh small PRD for the current branch.
-- Local code/docs/test inspection covered `.github/workflows/ci.yml`, `Makefile`, `README.md`, `docs/PRD-Weave-OSv2-深度复刻-V2.md`, `dogfood-output/weave-ainews-ontology-dogfood-20260517.md`, and `dogfood-output/weave-webui-dogfood-20260517.md`.
-- Recent commits on `origin/main` already include the prior fixes for DOG-001 through DOG-005 and SELF-001 through SELF-002.
-- Local CI health evidence before story selection:
-  - `go build ./...`: passed.
-  - `go test ./...`: passed.
-  - `go vet ./...`: passed.
-  - `cd web && npx tsc --noEmit`: passed.
-  - `cd web && npx vitest run --coverage=false`: passed, 263 files / 2780 tests, with existing jsdom canvas/window-open warnings.
-  - `cd web && npm run build`: passed with existing chunk-size/dynamic-import warnings.
-  - `cd web && npx playwright test --list us444/`: listed 29 tests.
-- GitHub Actions health lookup was attempted with `gh run list` and GitHub REST API. Both failed from this environment with API connection EOF/SSL errors, so current remote CI health is unavailable in this run.
-- Selected three small stories, prioritizing semantic data quality before broader capability work:
-  - SELF-101: Enforce Admin UI ValueType pattern constraints.
-  - SELF-102: Fail fast stream ingest on schema and ValueType violations.
-  - SELF-103: Verify ObjectSet searchAround over M2M links.
----
-
-## [2026-05-18 10:58] - SELF-101
-- Root cause: `web/src/components/admin/ValueTypeAdminPage.tsx` writes pattern constraints as `{ "pattern": "..." }`, but `pkg/types.ValidateConstraints` only decoded/enforced `{ "regex": "..." }`. Action executor ValueType validation therefore skipped Admin UI-authored pattern constraints.
-- Red tests:
-  - `go test ./pkg/types ./pkg/actions -run 'TestValidateConstraints_Pattern|TestExecutor_ValueTypeConstraint_AdminPattern' -count=1 -v` failed before the fix:
-    - `TestValidateConstraints_PatternAlias_Fail`: expected error for pattern mismatch.
-    - `TestValidateConstraints_PatternTakesPrecedenceOverRegex`: expected pattern to be enforced before legacy regex.
-    - `TestExecutor_ValueTypeConstraint_AdminPattern_Fail`: expected UI-authored pattern constraint violation error.
-- Implementation:
-  - Added `pattern` to `types.Constraints`.
-  - Enforced `pattern` before legacy `regex` when both are present.
-  - Kept legacy `regex` behavior and error wording for existing callers.
-- Verification evidence:
-  - `go test ./pkg/types ./pkg/actions -run 'TestValidateConstraints_Pattern|TestExecutor_ValueTypeConstraint_AdminPattern' -count=1 -v`: passed.
-  - `go test ./pkg/types ./pkg/actions -count=1`: passed.
-  - `go test ./...`: passed, including slow `pkg/oss`, `test/chinook`, and `test/northwind`.
-  - `go vet ./...`: passed.
-- Files changed:
-  - `pkg/types/constraints.go`
-  - `pkg/types/constraints_test.go`
-  - `pkg/actions/actions_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Learnings for future iterations:
-  - Treat frontend-authored JSON contracts as first-class backend contracts; Admin ValueType pattern constraints use `pattern`, not `regex`.
-  - Keep `pattern` precedence deterministic when both `pattern` and legacy `regex` are present so UI-authored constraints cannot be shadowed by stale legacy fields.
----
-
-## [2026-05-18 11:07] - SELF-102
-- Root cause: `pkg/oss/stream_ingest.go` only checked request size, optional policy/rate/index guards, and then published edits. It did not consult OMS ObjectType properties or ValueType constraints before returning a successful ingest response, so malformed rows could be accepted upstream of the funnel consumer.
+## [2026-05-18 13:04 CST] - SELF-103
+- Root cause: lower-level M2M join-table resolution existed in `pkg/links`, but the production `links.Resolver` did not satisfy ObjectSet's optional reverse-by-API-name and direction-aware target-type interfaces. Forward ObjectSet M2M traversal could return linked PKs but lost the target ObjectType, while reverse ObjectSet M2M traversal failed before calling the edge repository.
 - Red test:
-  - `go test ./pkg/oss -run TestBDD_StreamIngest_FailsFastOnSchemaAndValueTypeViolations -count=1 -v` failed before implementation with missing `SetMetadataValidator` and `NewStreamIngestMetadataValidator`, proving the new HTTP BDD scenarios were ahead of the production hook.
+  - `go test ./pkg/oss/objectset -run TestBDD_ObjectSetSearchAround_M2MJoinEdges -count=1 -v` failed before implementation because forward `searchAround` returned `ObjectType == ""` and reverse `searchAround` returned `link resolver does not support reverse searchAround`.
 - Implementation:
-  - Added `IngestMetadataValidator` and `NewStreamIngestMetadataValidator` in `pkg/oss`.
-  - The validator loads the URL ObjectType's declared properties, rejects undeclared CREATE/MODIFY properties with `SchemaViolation` before publish, and enforces `valueTypeApiName` constraints with structured ValueType errors.
-  - Wired the validator into `StreamIngestHandler` and production router setup via `deps.OmsRepo`.
-  - Kept existing behavior for valid ingest: URL objectType coercion, `source=ingest`, and publish response shape remain unchanged.
+  - Added `ResolveLinkedReverseByAPIName`, `ResolveTargetObjectType`, and `ResolveTargetObjectTypeDir` to `pkg/links.Resolver`.
+  - Added a focused BDD test that executes ObjectSet `searchAround` forward and reverse over an M2M LinkType through `links.NewResolverWithEdges`, including duplicate/converging join rows.
 - Verification evidence:
-  - `go test ./pkg/oss -run TestStreamIngest -count=1 -v`: passed.
-  - `go test ./pkg/oss ./pkg/actions -count=1`: passed.
-  - `go test ./cmd/server -run '^$' -count=1`: passed.
+  - `go test ./pkg/oss/objectset -run TestBDD_ObjectSetSearchAround_M2MJoinEdges -count=1 -v`: passed.
+  - `go test ./pkg/oss/objectset -run 'SearchAround.*M2M' -count=1 -v`: passed.
+  - `go test ./pkg/oss/objectset ./pkg/links -count=1`: passed.
 - Files changed:
-  - `cmd/server/main.go`
-  - `pkg/oss/stream_ingest.go`
-  - `pkg/oss/stream_ingest_validation.go`
-  - `pkg/oss/stream_ingest_self102_bdd_test.go`
+  - `pkg/links/resolver.go`
+  - `pkg/oss/objectset/searcharound_m2m_bdd_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- Learnings for future iterations:
-  - Stream ingest now follows the same fail-fast principle as Action writes: validate metadata contracts before publishing edit batches to NATS.
-  - Keep stream ingest metadata hooks narrow (`GetObjectTypeByAPIName`, `ListProperties`, `GetValueTypeByAPIName`) so `pkg/oss` can validate without importing broader server dependencies.
----

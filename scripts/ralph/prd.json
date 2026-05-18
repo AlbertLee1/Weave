@@ -74,7 +74,7 @@
       "phase": "OSv2 Relationship Semantics",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "The OSv2 PRD still calls out M2M searchAround inside ObjectSet execution as a confidence gap. Add focused coverage using the existing M2M link edge repository path so many-to-many relationships are protected at the ObjectSet layer, not only in the lower link resolver.",
       "bdd_acceptance": [
@@ -85,7 +85,11 @@
       ],
       "ci_evidence": [
         "Local inspection: `pkg/links/direction_test.go` covers M2M at the resolver layer.",
-        "Local inspection: `pkg/oss/objectset` has broad searchAround path/cycle tests, but no explicit M2M ObjectSet execution coverage was found."
+        "Local inspection: `pkg/oss/objectset` has broad searchAround path/cycle tests, but no explicit M2M ObjectSet execution coverage was found.",
+        "Red on 2026-05-18: `go test ./pkg/oss/objectset -run TestBDD_ObjectSetSearchAround_M2MJoinEdges -count=1 -v` failed because forward `searchAround` returned an empty ObjectType and reverse `searchAround` reported `link resolver does not support reverse searchAround`.",
+        "Green on 2026-05-18: `go test ./pkg/oss/objectset -run TestBDD_ObjectSetSearchAround_M2MJoinEdges -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test ./pkg/oss/objectset -run 'SearchAround.*M2M' -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test ./pkg/oss/objectset ./pkg/links -count=1` passed."
       ],
       "quality_gates": [
         "Targeted ObjectSet M2M searchAround BDD regression red -> green.",
