@@ -1,0 +1,73 @@
+{
+  "project": "Weave Self-Iteration Browser Live Reliability",
+  "branchName": "ralph/self-iteration-20260519-024456",
+  "description": "Small Ralph self-iteration for the current branch. There is no PR or GitHub Actions run for this branch yet, and no PR CI auto-fix context was appended to progress. Local health probes passed (`go test ./...`, `npm --prefix web test -- --run`, `npm --prefix web run build`). Previously known fresh-CI risks around embedded WebUI assets and US-453 streamless binary downloads are already covered. The highest-value remaining OSv2 upper-layer gap is Browser Live mode reliability: the UI enables WebSocket live updates while the SSE object-set fallback path is effectively unreachable and the live indicator is tied to operator intent rather than transport state.",
+  "userStories": [
+    {
+      "id": "SELF-413",
+      "name": "Make Browser Live fall back to SSE truthfully",
+      "phase": "Upper-Layer Realtime Reliability",
+      "active": true,
+      "priority": 1,
+      "passes": true,
+      "dependencies": [],
+      "description": "Wire Browser Live mode so a failed WebSocket subscription can activate the existing temporary ObjectSet SSE subscription, and ensure the UI/tests distinguish a requested live mode from an actual connected transport path.",
+      "bdd_acceptance": [
+        "Given Browser Live mode is enabled and the WebSocket subscription reports a transport failure, When a temporary ObjectSet RID is available, Then BrowserPage enables the SSE subscription for that RID instead of leaving the fallback unreachable.",
+        "Given Browser Live mode is enabled and WebSocket remains connected, When the temporary ObjectSet RID is created, Then BrowserPage keeps SSE disabled so it does not duplicate invalidations.",
+        "Given the SSE fallback receives an object-set event, When BrowserPage handles the event, Then it invalidates the canonical `objects` TanStack Query cache just like the WebSocket path."
+      ],
+      "quality_gates": [
+        "`npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx src/hooks/__tests__/useWebSocketSubscription.test.ts`",
+        "`npm --prefix web test -- --run`",
+        "`npm --prefix web run build`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-414",
+      "name": "Add event-driven Browser realtime Playwright gate",
+      "phase": "E2E Signal",
+      "active": true,
+      "priority": 2,
+      "passes": true,
+      "dependencies": [
+        "SELF-413"
+      ],
+      "description": "Replace the skipped timing-sensitive Browser realtime Playwright assertion with an event-driven gate that observes the subscription stream and then verifies a deterministic table refresh condition.",
+      "bdd_acceptance": [
+        "Given the Northwind E2E seed exposes the `createCustomer` action, When Browser Live is enabled and the action is applied, Then the test waits on a subscription event rather than polling a row before the event arrives.",
+        "Given the customer table has accumulated more than one page of rows from earlier specs, When the realtime test inserts a fresh customer, Then the assertion navigates or queries deterministically so the new object is visible.",
+        "Given Playwright runs in list-only CI discovery, When the Browser realtime spec is parsed, Then the previously skipped realtime scenario is discoverable without relying on a live backend."
+      ],
+      "quality_gates": [
+        "`npm --prefix web exec playwright test -- --list phase7/browser-realtime-mode.spec.ts phase7/sse-reconnect.spec.ts`",
+        "`npm --prefix web test -- --run`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-415",
+      "name": "Expose Browser Live reconnect status",
+      "phase": "Operator Feedback",
+      "active": true,
+      "priority": 3,
+      "passes": true,
+      "dependencies": [
+        "SELF-413"
+      ],
+      "description": "Surface Browser Live transport status in the page chrome so operators can see whether live updates are connected, reconnecting, or disabled while Time Travel is active.",
+      "bdd_acceptance": [
+        "Given Browser Live is connected over WebSocket or SSE, When the operator views the Browser toolbar, Then the status indicator exposes connected state with accessible text.",
+        "Given the active live transport is reconnecting, When the hook reports reconnecting status, Then the Browser toolbar no longer presents the same connected indicator.",
+        "Given Time Travel is active, When the operator views Browser Live controls, Then the disabled status explains that live updates are unavailable for historical snapshots."
+      ],
+      "quality_gates": [
+        "`npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx`",
+        "`npm --prefix web test -- --run`",
+        "`npm --prefix web run build`",
+        "`git diff --check`"
+      ]
+    }
+  ]
+}

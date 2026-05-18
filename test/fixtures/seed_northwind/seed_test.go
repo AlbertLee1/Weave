@@ -123,6 +123,67 @@ func TestSeed_IdempotentAndComplete(t *testing.T) {
 	}
 }
 
+// TestBDD_SeedObjectHistoryRowsCarryOntologyScope protects the Action
+// Console optimistic-concurrency precondition: seeded object_history rows
+// must carry the same ontology_rid as their object type, so scoped history
+// readers can resolve a concrete object version for ALFKI.
+func TestBDD_SeedObjectHistoryRowsCarryOntologyScope(t *testing.T) {
+	ctx := context.Background()
+
+	pg := testutil.StartPGContainer(t)
+	if err := database.RunMigrationsUp(pg.DSN, testutil.MigrationsDir()); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	opts := seed.DefaultOptions()
+	opts.Logger = nil
+
+	res, err := seed.Seed(ctx, pg.Pool, opts)
+	if err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+
+	rows, err := pg.Pool.Query(ctx, `
+		SELECT ot.api_name, oh.primary_key, COALESCE(oh.ontology_rid, ''), ot.ontology_rid
+		FROM object_history oh
+		JOIN object_types ot ON ot.rid = oh.object_type_rid
+		WHERE ot.ontology_rid = $1
+		ORDER BY ot.api_name, oh.primary_key`, res.OntologyRID)
+	if err != nil {
+		t.Fatalf("query object_history scope: %v", err)
+	}
+	defer rows.Close()
+
+	var sawALFKI bool
+	var checked int
+	for rows.Next() {
+		var objectType, primaryKey, historyScope, objectTypeScope string
+		if err := rows.Scan(&objectType, &primaryKey, &historyScope, &objectTypeScope); err != nil {
+			t.Fatalf("scan object_history scope: %v", err)
+		}
+		checked++
+		if historyScope != objectTypeScope {
+			t.Errorf("object_history %s/%s ontology_rid = %q, want %q",
+				objectType, primaryKey, historyScope, objectTypeScope)
+		}
+		if objectType == "customer" && primaryKey == "ALFKI" {
+			sawALFKI = true
+			if historyScope != res.OntologyRID {
+				t.Errorf("ALFKI history ontology_rid = %q, want %q", historyScope, res.OntologyRID)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate object_history scope: %v", err)
+	}
+	if checked == 0 {
+		t.Fatalf("seed wrote no object_history rows")
+	}
+	if !sawALFKI {
+		t.Fatalf("seed did not write customer/ALFKI history")
+	}
+}
+
 // TestBDD_SeedSurvivesNonCascadingFKDependents is the DOG-001 regression
 // test: between two Seed() passes, real Weave installs accumulate rows in
 // tables whose FK to ontologies(rid) lacks ON DELETE CASCADE (functions,

@@ -65,9 +65,17 @@ describe('ActionConsolePage — optimistic concurrency (US-024)', () => {
   });
 
   it('loads object version and passes expectedVersion in apply options', async () => {
-    vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
-      history: [],
-      totalVersions: 3,
+    vi.spyOn(objectsApi, 'getObjectActivity').mockResolvedValue({
+      data: [
+        {
+          id: 'history-3',
+          objectTypeRid: 'ri.object-type.employee',
+          primaryKey: 'E1',
+          version: 3,
+          editType: 'MODIFY',
+          recordedAt: '2026-05-19T00:00:00Z',
+        },
+      ],
     });
     const applySpy = vi
       .spyOn(actionsApi, 'applyAction')
@@ -106,9 +114,31 @@ describe('ActionConsolePage — optimistic concurrency (US-024)', () => {
 
   it('shows stale-object banner with Reload button on 409', async () => {
     const historySpy = vi
-      .spyOn(objectsApi, 'getObjectHistory')
-      .mockResolvedValueOnce({ history: [], totalVersions: 2 })
-      .mockResolvedValueOnce({ history: [], totalVersions: 9 });
+      .spyOn(objectsApi, 'getObjectActivity')
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'history-2',
+            objectTypeRid: 'ri.object-type.employee',
+            primaryKey: 'E1',
+            version: 2,
+            editType: 'MODIFY',
+            recordedAt: '2026-05-19T00:00:00Z',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'history-9',
+            objectTypeRid: 'ri.object-type.employee',
+            primaryKey: 'E1',
+            version: 9,
+            editType: 'MODIFY',
+            recordedAt: '2026-05-19T00:00:09Z',
+          },
+        ],
+      });
 
     const staleError = new ApiRequestError({
       errorCode: 'CONFLICT',
@@ -164,10 +194,7 @@ describe('ActionConsolePage Undo toast (US-319)', () => {
     vi.restoreAllMocks();
     useToastStore.getState().clear();
     vi.spyOn(ontologiesApi, 'listActionTypes').mockResolvedValue([fakeAction]);
-    vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
-      history: [],
-      totalVersions: 0,
-    });
+    vi.spyOn(objectsApi, 'getObjectActivity').mockResolvedValue({ data: [] });
   });
 
   it('shows an Undo toast carrying actionLogId after a successful apply', async () => {
@@ -243,10 +270,7 @@ describe('ActionConsolePage — dynamic form validation (US-322)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(ontologiesApi, 'listActionTypes').mockResolvedValue([fakeAction]);
-    vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
-      history: [],
-      totalVersions: 0,
-    });
+    vi.spyOn(objectsApi, 'getObjectActivity').mockResolvedValue({ data: [] });
   });
 
   it('blocks Execute and shows a field-level Required error when newName is empty', async () => {

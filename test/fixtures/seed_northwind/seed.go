@@ -282,6 +282,7 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, opts Options) (*Result, error
 				return nil, fmt.Errorf("seed: marshal %q row %d: %w", s.APIName, i, err)
 			}
 			hist := &oms.ObjectHistory{
+				OntologyRID:   ontRID,
 				ObjectTypeRID: otRID,
 				PrimaryKey:    fmt.Sprint(row[s.PrimaryKey]),
 				Version:       1,

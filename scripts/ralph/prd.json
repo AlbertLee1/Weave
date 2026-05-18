@@ -1,71 +1,71 @@
 {
-  "project": "Weave Self-Iteration Browser Live Reliability",
-  "branchName": "ralph/self-iteration-20260519-024456",
-  "description": "Small Ralph self-iteration for the current branch. There is no PR or GitHub Actions run for this branch yet, and no PR CI auto-fix context was appended to progress. Local health probes passed (`go test ./...`, `npm --prefix web test -- --run`, `npm --prefix web run build`). Previously known fresh-CI risks around embedded WebUI assets and US-453 streamless binary downloads are already covered. The highest-value remaining OSv2 upper-layer gap is Browser Live mode reliability: the UI enables WebSocket live updates while the SSE object-set fallback path is effectively unreachable and the live indicator is tied to operator intent rather than transport state.",
+  "project": "Weave Self-Iteration E2E Gate Reliability",
+  "branchName": "ralph/self-iteration-20260519-034928",
+  "description": "Small Ralph self-iteration for the current branch. There is no GitHub PR/check suite for this branch yet (`gh pr checks` reported no PR; `gh run list --branch ralph/self-iteration-20260519-034928 --limit 5` returned no runs). Local health probes before PRD creation passed: `npm --prefix web test -- --run` (267 files, 2795 tests), `npm --prefix web run build`, and `go test $(./scripts/ci/go-packages.sh)`. The previously named fresh-CI risks are covered in current main: `cmd/server/embed.go` embeds `cmd/server/web/dist` through the committed placeholder path, and US-453 streamless binary download tests are present and passing. The highest-value remaining OSv2 upper-layer gaps are skipped or weakened browser E2E gates around realtime recovery and action/version workflows.",
   "userStories": [
     {
-      "id": "SELF-413",
-      "name": "Make Browser Live fall back to SSE truthfully",
-      "phase": "Upper-Layer Realtime Reliability",
+      "id": "SELF-416",
+      "name": "Make SSE reconnect Playwright gate deterministic",
+      "phase": "Realtime E2E Signal",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Wire Browser Live mode so a failed WebSocket subscription can activate the existing temporary ObjectSet SSE subscription, and ensure the UI/tests distinguish a requested live mode from an actual connected transport path.",
+      "description": "Re-enable the Phase 7 SSE reconnect Playwright scenario by making the final row assertion deterministic when earlier specs have added more than one page of Northwind customers.",
       "bdd_acceptance": [
-        "Given Browser Live mode is enabled and the WebSocket subscription reports a transport failure, When a temporary ObjectSet RID is available, Then BrowserPage enables the SSE subscription for that RID instead of leaving the fallback unreachable.",
-        "Given Browser Live mode is enabled and WebSocket remains connected, When the temporary ObjectSet RID is created, Then BrowserPage keeps SSE disabled so it does not duplicate invalidations.",
-        "Given the SSE fallback receives an object-set event, When BrowserPage handles the event, Then it invalidates the canonical `objects` TanStack Query cache just like the WebSocket path."
+        "Given Browser Live reconnects after an offline window and the customer table has more than one page of rows, When the scenario creates unique customers while the page is offline, Then the test searches or navigates by each inserted primary key before asserting that the rows are visible.",
+        "Given Playwright runs in list-only CI discovery, When `phase7/sse-reconnect.spec.ts` is parsed, Then the reconnect scenario is active and no longer hidden behind `test.fixme`.",
+        "Given Browser Live status is now exposed through the toolbar status element, When the reconnect scenario verifies restored transport state, Then it uses the current live-status surface instead of a stale realtime-indicator selector."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx src/hooks/__tests__/useWebSocketSubscription.test.ts`",
+        "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
+        "`npm --prefix web exec playwright test -- --list phase7/sse-reconnect.spec.ts`",
+        "`rg -n \"test\\\\.fixme\\\\(\" web/e2e/phase7/sse-reconnect.spec.ts` must return no matches",
         "`npm --prefix web test -- --run`",
-        "`npm --prefix web run build`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-414",
-      "name": "Add event-driven Browser realtime Playwright gate",
-      "phase": "E2E Signal",
+      "id": "SELF-417",
+      "name": "Restore optimistic concurrency browser gate",
+      "phase": "Action Version E2E Signal",
       "active": true,
       "priority": 2,
       "passes": true,
-      "dependencies": [
-        "SELF-413"
-      ],
-      "description": "Replace the skipped timing-sensitive Browser realtime Playwright assertion with an event-driven gate that observes the subscription stream and then verifies a deterministic table refresh condition.",
+      "dependencies": [],
+      "description": "Fix the Northwind E2E seed/version precondition that keeps the optimistic-concurrency Playwright scenario skipped, so the browser gate can exercise stale-object recovery end to end.",
       "bdd_acceptance": [
-        "Given the Northwind E2E seed exposes the `createCustomer` action, When Browser Live is enabled and the action is applied, Then the test waits on a subscription event rather than polling a row before the event arrives.",
-        "Given the customer table has accumulated more than one page of rows from earlier specs, When the realtime test inserts a fresh customer, Then the assertion navigates or queries deterministically so the new object is visible.",
-        "Given Playwright runs in list-only CI discovery, When the Browser realtime spec is parsed, Then the previously skipped realtime scenario is discoverable without relying on a live backend."
+        "Given `scripts/e2e-setup.sh` seeds Northwind, When object history rows are inserted for seeded objects, Then each row carries the ontology scope required by the edits-history endpoint.",
+        "Given the seeded ALFKI customer has version history, When the Action Console loads `updateCustomerContact`, Then the object-version chip resolves instead of timing out.",
+        "Given Playwright runs in list-only CI discovery, When `phase6/optimistic-concurrency.spec.ts` is parsed, Then the stale-object scenario is active and no longer guarded by a permanent `test.skip`."
       ],
       "quality_gates": [
-        "`npm --prefix web exec playwright test -- --list phase7/browser-realtime-mode.spec.ts phase7/sse-reconnect.spec.ts`",
+        "`go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedObjectHistoryRowsCarryOntologyScope -count=1`",
+        "`go test ./test/fixtures/seed_northwind`",
+        "`npm --prefix web exec playwright test -- --list phase6/optimistic-concurrency.spec.ts`",
         "`npm --prefix web test -- --run`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-415",
-      "name": "Expose Browser Live reconnect status",
-      "phase": "Operator Feedback",
+      "id": "SELF-418",
+      "name": "Make the US-444 action gate assert seeded actions",
+      "phase": "Contract E2E Signal",
       "active": true,
       "priority": 3,
       "passes": true,
       "dependencies": [
-        "SELF-413"
+        "SELF-417"
       ],
-      "description": "Surface Browser Live transport status in the page chrome so operators can see whether live updates are connected, reconnecting, or disabled while Time Travel is active.",
+      "description": "Strengthen the US-444 action Playwright probe so a full E2E stack with an empty Northwind action catalog fails loudly instead of skipping the action dispatcher contract.",
       "bdd_acceptance": [
-        "Given Browser Live is connected over WebSocket or SSE, When the operator views the Browser toolbar, Then the status indicator exposes connected state with accessible text.",
-        "Given the active live transport is reconnecting, When the hook reports reconnecting status, Then the Browser toolbar no longer presents the same connected indicator.",
-        "Given Time Travel is active, When the operator views Browser Live controls, Then the disabled status explains that live updates are unavailable for historical snapshots."
+        "Given the full Northwind E2E seed has run, When `us444/04-action.spec.ts` lists action types, Then it expects a known seeded action such as `createCustomer` or `updateCustomerContact` instead of skipping on an empty list.",
+        "Given the action dispatcher receives deliberately invalid parameters for a known action, When the request is applied, Then the response is a structured 4xx ApiError envelope rather than a 5xx or empty body.",
+        "Given Playwright runs in list-only CI discovery, When the US-444 action spec is parsed, Then the action scenario remains discoverable without requiring a live backend."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx`",
+        "`npm --prefix web exec playwright test -- --list us444/04-action.spec.ts`",
         "`npm --prefix web test -- --run`",
-        "`npm --prefix web run build`",
         "`git diff --check`"
       ]
     }

@@ -2095,11 +2095,11 @@ func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory
 	if !h.RecordedAt.IsZero() {
 		err = r.pool.QueryRow(ctx,
 			`INSERT INTO object_history
-			   (object_type_rid, primary_key, version, prev_state, new_state,
+			   (object_type_rid, ontology_rid, primary_key, version, prev_state, new_state,
 			    edit_type, source, action_log_rid, user_id, recorded_at, valid_from, tx_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12)
 			 RETURNING id, recorded_at`,
-			h.ObjectTypeRID, h.PrimaryKey, h.Version,
+			h.ObjectTypeRID, nilIfEmpty(h.OntologyRID), h.PrimaryKey, h.Version,
 			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
 			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID),
 			h.RecordedAt, nilIfEmpty(h.TxID)).
@@ -2107,11 +2107,11 @@ func (r *PGRepository) InsertObjectHistory(ctx context.Context, h *ObjectHistory
 	} else {
 		err = r.pool.QueryRow(ctx,
 			`INSERT INTO object_history
-			   (object_type_rid, primary_key, version, prev_state, new_state,
+			   (object_type_rid, ontology_rid, primary_key, version, prev_state, new_state,
 			    edit_type, source, action_log_rid, user_id, valid_from, tx_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11)
 			 RETURNING id, recorded_at`,
-			h.ObjectTypeRID, h.PrimaryKey, h.Version,
+			h.ObjectTypeRID, nilIfEmpty(h.OntologyRID), h.PrimaryKey, h.Version,
 			nilIfNoBytes(h.PrevState), nilIfNoBytes(h.NewState),
 			h.EditType, source, nilIfEmpty(h.ActionLogRID), nilIfEmpty(h.UserID),
 			nilIfEmpty(h.TxID)).
@@ -2176,7 +2176,7 @@ func (r *PGRepository) ListObjectHistoryPage(ctx context.Context, objectTypeRID,
 	var err error
 	if beforeVersion > 0 {
 		rows, err = r.pool.Query(ctx,
-			`SELECT id, object_type_rid, primary_key, version,
+			`SELECT id, COALESCE(ontology_rid, ''), object_type_rid, primary_key, version,
 			        prev_state, new_state, edit_type,
 			        COALESCE(source, 'user'),
 			        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
@@ -2188,7 +2188,7 @@ func (r *PGRepository) ListObjectHistoryPage(ctx context.Context, objectTypeRID,
 			objectTypeRID, primaryKey, beforeVersion, limit)
 	} else {
 		rows, err = r.pool.Query(ctx,
-			`SELECT id, object_type_rid, primary_key, version,
+			`SELECT id, COALESCE(ontology_rid, ''), object_type_rid, primary_key, version,
 			        prev_state, new_state, edit_type,
 			        COALESCE(source, 'user'),
 			        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
@@ -2208,7 +2208,7 @@ func (r *PGRepository) ListObjectHistoryPage(ctx context.Context, objectTypeRID,
 	for rows.Next() {
 		var h ObjectHistory
 		var prev, next []byte
-		if err := rows.Scan(&h.ID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
+		if err := rows.Scan(&h.ID, &h.OntologyRID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
 			&prev, &next, &h.EditType, &h.Source,
 			&h.ActionLogRID, &h.UserID, &h.RecordedAt); err != nil {
 			return nil, err
@@ -2231,7 +2231,7 @@ func (r *PGRepository) ListObjectHistory(ctx context.Context, objectTypeRID, pri
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, object_type_rid, primary_key, version,
+		`SELECT id, COALESCE(ontology_rid, ''), object_type_rid, primary_key, version,
 		        prev_state, new_state, edit_type,
 		        COALESCE(source, 'user'),
 		        COALESCE(action_log_rid, ''), COALESCE(user_id, ''),
@@ -2250,7 +2250,7 @@ func (r *PGRepository) ListObjectHistory(ctx context.Context, objectTypeRID, pri
 	for rows.Next() {
 		var h ObjectHistory
 		var prev, next []byte
-		if err := rows.Scan(&h.ID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
+		if err := rows.Scan(&h.ID, &h.OntologyRID, &h.ObjectTypeRID, &h.PrimaryKey, &h.Version,
 			&prev, &next, &h.EditType, &h.Source,
 			&h.ActionLogRID, &h.UserID, &h.RecordedAt); err != nil {
 			return nil, err
