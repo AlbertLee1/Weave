@@ -42,3 +42,28 @@ Story SELF-413 - Make Browser Live fall back to SSE truthfully:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - Browser Live should not start the ObjectSet SSE subscription just because a temporary ObjectSet RID exists; it should switch only after WebSocket reports an abnormal reconnect path.
+
+Story SELF-414 - Add event-driven Browser realtime Playwright gate:
+- Selected as next highest-priority incomplete story after SELF-413.
+- RED:
+  - Added `web/src/lib/browserRealtimeHelpers.test.ts` to define the Browser realtime subscription payload matching contract for WebSocket objectChanged frames and ObjectSet SSE frames.
+  - `npm --prefix web test -- --run src/lib/browserRealtimeHelpers.test.ts` failed as expected because `./browserRealtimeHelpers` did not exist.
+- GREEN implementation:
+  - Added `web/src/lib/browserRealtimeHelpers.ts` with exact-primary-key matching for WebSocket `objectChanged` and ObjectSet SSE payloads.
+  - Reworked `web/e2e/phase7/browser-realtime-mode.spec.ts` so the previously fixme realtime scenario now waits for the WebSocket subscribed frame, posts `createCustomer`, waits for the matching subscription event, and then searches by the inserted primary key before asserting the table row.
+  - The row assertion is now deterministic when previous specs have accumulated more than one page of customers.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/browserRealtimeHelpers.test.ts` passed: 1 file, 3 tests.
+  - `npm --prefix web exec playwright test -- --list phase7/browser-realtime-mode.spec.ts phase7/sse-reconnect.spec.ts` passed: listed 3 tests in 2 files.
+  - `rg -n "test\\.fixme\\(" web/e2e/phase7/browser-realtime-mode.spec.ts` returned no matches.
+  - `npm --prefix web test -- --run` passed: 267 files, 2792 tests.
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `git diff --check` passed before Ralph state updates.
+- Files changed:
+  - `web/e2e/phase7/browser-realtime-mode.spec.ts`
+  - `web/src/lib/browserRealtimeHelpers.ts`
+  - `web/src/lib/browserRealtimeHelpers.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Browser realtime E2E should observe the subscription stream first, then make the table assertion deterministic with a primary-key query instead of polling the current page for a newly inserted row.

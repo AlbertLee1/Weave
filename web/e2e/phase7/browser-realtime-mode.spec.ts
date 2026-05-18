@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type WebSocket as PlaywrightWebSocket } from '@playwright/test';
+import { realtimePayloadMatchesPrimaryKey } from '../../src/lib/browserRealtimeHelpers';
 
 const API_BASE = 'http://localhost:9117';
 const ONTOLOGY = 'northwind';
@@ -7,9 +8,9 @@ const OBJECT_TYPE = 'customer';
 /**
  * US-079: Playwright spec — browser realtime mode.
  *
- * Enables "Realtime Mode" on the Browser page, then POSTs a createCustomer
- * action via the backend API and asserts the DataTable updates within 2 s
- * to include the newly created row.
+ * Enables Browser Live mode, waits for the subscription stream to emit the
+ * inserted object, then queries the Browser table deterministically for that
+ * primary key.
  *
  * Stack dependency: `scripts/e2e-setup.sh` must have run so that
  * 1. bin/weave is up on :9117
@@ -18,9 +19,99 @@ const OBJECT_TYPE = 'customer';
  *    including the `createCustomer` action type
  *    (see test/fixtures/seed_northwind/schemas.go).
  */
+
+function frameText(payload: string | Buffer): string {
+  return typeof payload === 'string' ? payload : payload.toString('utf8');
+}
+
+function waitForWebSocketFrame(
+  page: Page,
+  label: string,
+  predicate: (payload: string | Buffer) => boolean,
+  timeoutMs = 20_000,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const handlers = new Map<
+      PlaywrightWebSocket,
+      (event: { payload: string | Buffer }) => void
+    >();
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      page.off('websocket', handleWebSocket);
+      for (const [socket, handler] of handlers) {
+        socket.off('framereceived', handler);
+      }
+      handlers.clear();
+    };
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    const handleWebSocket = (socket: PlaywrightWebSocket) => {
+      const handleFrame = (event: { payload: string | Buffer }) => {
+        if (predicate(event.payload)) finish();
+      };
+      handlers.set(socket, handleFrame);
+      socket.on('framereceived', handleFrame);
+    };
+
+    const timer = setTimeout(() => {
+      finish(new Error(`Timed out waiting for ${label}`));
+    }, timeoutMs);
+
+    page.on('websocket', handleWebSocket);
+  });
+}
+
+function waitForRealtimeSubscribed(page: Page): Promise<void> {
+  return waitForWebSocketFrame(page, 'Browser Live subscribed frame', (payload) => {
+    try {
+      return JSON.parse(frameText(payload)).type === 'subscribed';
+    } catch {
+      return false;
+    }
+  });
+}
+
+function waitForRealtimeObjectChange(
+  page: Page,
+  primaryKey: string,
+): Promise<void> {
+  return waitForWebSocketFrame(
+    page,
+    `Browser Live objectChanged frame for ${primaryKey}`,
+    (payload) => realtimePayloadMatchesPrimaryKey(payload, primaryKey),
+  );
+}
+
+async function searchForCustomerById(page: Page, customerId: string): Promise<void> {
+  const searchResponse = page.waitForResponse((response) => {
+    return (
+      response.request().method() === 'POST' &&
+      response.url().includes(
+        `/api/v2/ontologies/${ONTOLOGY}/objects/${OBJECT_TYPE}/search`,
+      ) &&
+      response.ok()
+    );
+  });
+
+  const searchInput = page.getByTestId('search-input');
+  await searchInput.fill(customerId);
+  await searchInput.press('Enter');
+  await searchResponse;
+}
+
 test.describe('Browser realtime mode (US-079)', () => {
-  // Generate a unique customer ID per run to avoid collisions.
-  const uniqueId = `RT-${Date.now()}`;
 
   test.beforeAll(async ({ request }) => {
     // Preflight: the seed must already carry createCustomer action type.
@@ -39,18 +130,14 @@ test.describe('Browser realtime mode (US-079)', () => {
     ).toBe(true);
   });
 
-  // FIXME(US-080): the action → NATS → bleve → SSE → invalidate refetch
-  // round-trip exceeds Playwright's per-test budget on local dev stacks
-  // (observed > 20s vs. the 30s test timeout). The "Live" toggle works
-  // end-to-end manually; the second spec in this file already proves
-  // the EventSource connects, so we mark this stricter timing-sensitive
-  // assertion as fixme rather than fail every CI run. Re-enable once
-  // the bleve commit hop has a measurable upper-bound or the spec gets
-  // an event-driven gate (subscribe to the SSE stream + assert event
-  // arrived) instead of polling the rendered table cell.
-  test.fixme(
-    'new object appears in table after backend apply with realtime on',
-    async ({ page, request }) => {
+  test('new object appears in table after backend apply with realtime on', async ({
+    page,
+    request,
+  }) => {
+    const uniqueId = `RT-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+
     // 1. Navigate to the Browser page for customers.
     await page.goto(`/browser/${ONTOLOGY}/${OBJECT_TYPE}`);
     await page.waitForLoadState('domcontentloaded');
@@ -68,17 +155,18 @@ test.describe('Browser realtime mode (US-079)', () => {
     //    accessible way to toggle it).
     const realtimeLabel = page.locator('label').filter({ hasText: 'Live' });
     await expect(realtimeLabel).toBeVisible();
+    const subscriptionReady = waitForRealtimeSubscribed(page);
+    const objectChanged = waitForRealtimeObjectChange(page, uniqueId);
     await realtimeLabel.click();
 
-    // Wait for the green indicator dot — it only renders once the
-    // createTemporary ObjectSet call succeeds and the SSE EventSource
-    // is connected.
+    // Wait for the green indicator dot and the WebSocket subscribed frame.
     const indicator = page.getByTestId('realtime-indicator');
     await expect(indicator).toBeVisible({ timeout: 10_000 });
+    await subscriptionReady;
 
     // 3. POST a createCustomer action via the backend API to insert a
-    //    new customer row. The NATS consumer → Broadcast → SSE pipeline
-    //    should push an event to the browser which triggers a table refetch.
+    //    new customer row. The subscription stream should push an event to
+    //    the browser, which triggers query invalidation and a refetch.
     const applyRes = await request.post(
       `${API_BASE}/api/v2/ontologies/${ONTOLOGY}/actions/createCustomer/apply`,
       {
@@ -96,21 +184,16 @@ test.describe('Browser realtime mode (US-079)', () => {
       true,
     );
 
-    // 4. Assert the new row appears in the DataTable within 5 seconds.
-    //    The SSE event triggers queryClient.invalidateQueries(['objects'])
-    //    which re-fetches and re-renders. We match on the primary key cell
-    //    specifically (exact: true avoids matching the companyName column
-    //    which also embeds the ID).
-    //    The pipeline (action → NATS → Bleve index → Broadcast → SSE →
-    //    query invalidation → refetch) can take a few seconds end-to-end.
-    //    Local dev stacks add latency on the WebSocket / SSE upgrade and
-    //    the bleve index commit, so a 20s ceiling is comfortable without
-    //    making the spec hang on a real regression.
+    // 4. Wait for the realtime event before querying for the row. Searching
+    //    by the primary key keeps the assertion deterministic even when
+    //    earlier specs have pushed the customer table beyond the first page.
+    await objectChanged;
+    await searchForCustomerById(page, uniqueId);
+
     await expect(
       table.getByRole('cell', { name: uniqueId, exact: true }),
-    ).toBeVisible({ timeout: 20_000 });
-    },
-  );
+    ).toBeVisible({ timeout: 10_000 });
+  });
 
   test('realtime indicator disappears when toggled off', async ({ page }) => {
     await page.goto(`/browser/${ONTOLOGY}/${OBJECT_TYPE}`);
