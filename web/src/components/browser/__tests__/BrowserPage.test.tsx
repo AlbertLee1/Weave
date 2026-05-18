@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { BrowserPage } from '../BrowserPage';
+import { useTimeTravelStore } from '../../../stores/timeTravelStore';
 
 // ---------------------------------------------------------------------------
 // Mock EventSource (for SSE fallback path)
@@ -140,6 +141,7 @@ beforeAll(() => {
 afterEach(() => {
   MockEventSource.instances = [];
   capturedWsOptions = null;
+  useTimeTravelStore.setState({ selections: {} });
   server.resetHandlers();
 });
 afterAll(() => {
@@ -188,29 +190,137 @@ describe('BrowserPage realtime mode', () => {
     });
 
     // Toggle should be present with "Live" label
-    expect(screen.getByLabelText(/live/i)).toBeInTheDocument();
+    expect(screen.getByTestId('live-toggle')).toBeInTheDocument();
   });
 
-  it('shows a pulsing green indicator when Live mode is enabled', async () => {
+  it('shows connected status only after WebSocket reports connected', async () => {
     renderBrowserPage();
 
     await waitFor(() => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    const toggle = screen.getByLabelText(/live/i);
+    const toggle = screen.getByTestId('live-toggle');
 
-    // Before toggle — no green dot
+    // Before toggle — no connected transport indicator
     expect(screen.queryByTestId('realtime-indicator')).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
 
-    // After toggle — green dot visible
     await waitFor(() => {
+      expect(screen.getByTestId('live-status')).toHaveTextContent('Connecting');
+    });
+    expect(screen.queryByTestId('realtime-indicator')).not.toBeInTheDocument();
+
+    act(() => {
+      capturedWsOptions!.onStatusChange?.('connected');
+    });
+
+    // After transport opens — connected status and green dot visible
+    await waitFor(() => {
+      expect(screen.getByTestId('live-status')).toHaveTextContent('Connected');
       const indicator = screen.getByTestId('realtime-indicator');
       expect(indicator).toBeInTheDocument();
+      expect(indicator).toHaveAttribute(
+        'aria-label',
+        'Live updates connected over WebSocket',
+      );
       expect(indicator.className).toMatch(/animate-pulse/);
     });
+  });
+
+  it('shows reconnecting status when the active WebSocket transport reconnects', async () => {
+    renderBrowserPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('live-toggle'));
+
+    await waitFor(() => {
+      expect(capturedWsOptions?.enabled).toBe(true);
+      expect(capturedWsOptions?.onStatusChange).toBeDefined();
+    });
+
+    act(() => {
+      capturedWsOptions!.onStatusChange?.('connected');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-status')).toHaveTextContent('Connected');
+    });
+
+    act(() => {
+      capturedWsOptions!.onStatusChange?.('reconnecting');
+    });
+
+    await waitFor(() => {
+      const status = screen.getByTestId('live-status');
+      expect(status).toHaveTextContent('Reconnecting');
+      expect(status).toHaveAttribute(
+        'aria-label',
+        'Live updates reconnecting over WebSocket',
+      );
+    });
+    expect(screen.queryByTestId('realtime-indicator')).not.toBeInTheDocument();
+  });
+
+  it('shows connected status when the SSE fallback opens', async () => {
+    renderBrowserPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('live-toggle'));
+
+    await waitFor(() => {
+      expect(capturedWsOptions?.enabled).toBe(true);
+      expect(capturedWsOptions?.onStatusChange).toBeDefined();
+    });
+
+    act(() => {
+      capturedWsOptions!.onStatusChange?.('reconnecting');
+    });
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockEventSource.instances[0].simulateOpen();
+    });
+
+    await waitFor(() => {
+      const status = screen.getByTestId('live-status');
+      expect(status).toHaveTextContent('Connected');
+      expect(status).toHaveAttribute(
+        'aria-label',
+        'Live updates connected over SSE fallback',
+      );
+      expect(screen.getByTestId('realtime-indicator')).toHaveAttribute(
+        'aria-label',
+        'Live updates connected over SSE fallback',
+      );
+    });
+  });
+
+  it('explains that Live is unavailable while Time Travel is active', async () => {
+    useTimeTravelStore.getState().setAsOf('testOntology', 'tx-abc');
+
+    renderBrowserPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('live-toggle')).toBeDisabled();
+    expect(screen.getByTestId('live-status')).toHaveTextContent('Unavailable');
+    expect(screen.getByTestId('live-status')).toHaveAttribute(
+      'aria-label',
+      'Live updates unavailable while Time Travel is active',
+    );
   });
 
   it('enables WebSocket subscription when toggled on', async () => {
@@ -223,7 +333,7 @@ describe('BrowserPage realtime mode', () => {
     // Before toggle — WS disabled
     expect(capturedWsOptions?.enabled).toBe(false);
 
-    fireEvent.click(screen.getByLabelText(/live/i));
+    fireEvent.click(screen.getByTestId('live-toggle'));
 
     // After toggle — WS enabled with correct objectType
     await waitFor(() => {
@@ -241,7 +351,7 @@ describe('BrowserPage realtime mode', () => {
 
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    fireEvent.click(screen.getByLabelText(/live/i));
+    fireEvent.click(screen.getByTestId('live-toggle'));
 
     await waitFor(() => {
       expect(capturedWsOptions?.enabled).toBe(true);
@@ -271,7 +381,7 @@ describe('BrowserPage realtime mode', () => {
 
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    fireEvent.click(screen.getByLabelText(/live/i));
+    fireEvent.click(screen.getByTestId('live-toggle'));
 
     await waitFor(() => {
       expect(capturedWsOptions?.enabled).toBe(true);
@@ -314,7 +424,7 @@ describe('BrowserPage realtime mode', () => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByLabelText(/live/i));
+    fireEvent.click(screen.getByTestId('live-toggle'));
 
     await waitFor(() => {
       expect(capturedWsOptions?.enabled).toBe(true);
@@ -326,7 +436,7 @@ describe('BrowserPage realtime mode', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('realtime-indicator')).toBeInTheDocument();
+      expect(screen.getByTestId('live-status')).toHaveTextContent('Connected');
     });
     expect(MockEventSource.instances).toHaveLength(0);
   });
@@ -338,7 +448,7 @@ describe('BrowserPage realtime mode', () => {
       expect(screen.getByText('Employees')).toBeInTheDocument();
     });
 
-    const toggle = screen.getByLabelText(/live/i);
+    const toggle = screen.getByTestId('live-toggle');
 
     // Toggle on
     fireEvent.click(toggle);

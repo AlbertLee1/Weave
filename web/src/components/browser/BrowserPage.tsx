@@ -4,7 +4,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useObjectType } from '../../hooks/useObjectTypes';
 import { useListObjects, useSearchObjects } from '../../hooks/useObjects';
 import { useCreateTemporaryObjectSet } from '../../hooks/useObjectSets';
-import { useObjectSetSubscription } from '../../hooks/useObjectSetSubscription';
+import {
+  useObjectSetSubscription,
+  type ObjectSetSubscriptionStatus,
+} from '../../hooks/useObjectSetSubscription';
 import {
   useWebSocketSubscription,
   type WebSocketSubscriptionStatus,
@@ -53,6 +56,13 @@ const FACETABLE_BASE_TYPES = new Set([
   'timestamp',
 ]);
 
+type BrowserLiveStatus = {
+  label: string;
+  ariaLabel: string;
+  tone: 'connected' | 'connecting' | 'reconnecting' | 'disabled';
+  connected: boolean;
+};
+
 export function BrowserPage() {
   const { ontology = '', objectType: objectTypeParam = '' } = useParams<{
     ontology: string;
@@ -98,6 +108,10 @@ export function BrowserPage() {
   const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
   const [webSocketFallbackRequested, setWebSocketFallbackRequested] =
     useState(false);
+  const [webSocketStatus, setWebSocketStatus] =
+    useState<WebSocketSubscriptionStatus>('idle');
+  const [objectSetStatus, setObjectSetStatus] =
+    useState<ObjectSetSubscriptionStatus>('idle');
   const queryClient = useQueryClient();
   const createObjectSet = useCreateTemporaryObjectSet(ontology);
 
@@ -119,6 +133,8 @@ export function BrowserPage() {
       // Use WebSocket as primary; SSE fallback available via setRealtimeMode('sse')
       setRealtimeMode('ws');
       setWebSocketFallbackRequested(false);
+      setWebSocketStatus('connecting');
+      setObjectSetStatus('idle');
       // Also create ObjectSet for SSE fallback readiness
       createObjectSet.mutate(
         { type: 'base', objectType: objectTypeParam },
@@ -133,11 +149,14 @@ export function BrowserPage() {
       setRealtimeMode('off');
       setObjectSetRid(null);
       setWebSocketFallbackRequested(false);
+      setWebSocketStatus('idle');
+      setObjectSetStatus('idle');
     }
   }, [realtimeEnabled, createObjectSet, objectTypeParam]);
 
   const handleWebSocketStatusChange = useCallback(
     (status: WebSocketSubscriptionStatus) => {
+      setWebSocketStatus(status);
       if (status === 'connected') {
         setWebSocketFallbackRequested(false);
         return;
@@ -149,15 +168,91 @@ export function BrowserPage() {
     [],
   );
 
+  const handleObjectSetStatusChange = useCallback(
+    (status: ObjectSetSubscriptionStatus) => {
+      setObjectSetStatus(status);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (
       realtimeMode === 'ws' &&
       webSocketFallbackRequested &&
       objectSetRid
     ) {
+      setObjectSetStatus('connecting');
       setRealtimeMode('sse');
     }
   }, [objectSetRid, realtimeMode, webSocketFallbackRequested]);
+
+  const liveStatus = useMemo<BrowserLiveStatus | null>(() => {
+    if (timeTravelActive) {
+      return {
+        label: 'Unavailable',
+        ariaLabel: 'Live updates unavailable while Time Travel is active',
+        tone: 'disabled',
+        connected: false,
+      };
+    }
+
+    if (realtimeMode === 'off') return null;
+
+    const showingSseConnectingFallback =
+      realtimeMode === 'sse' &&
+      objectSetStatus === 'connecting' &&
+      webSocketStatus === 'reconnecting';
+    const transport =
+      realtimeMode === 'sse' && !showingSseConnectingFallback
+        ? 'SSE fallback'
+        : 'WebSocket';
+    const status =
+      realtimeMode === 'sse' && !showingSseConnectingFallback
+        ? objectSetStatus
+        : webSocketStatus;
+    const effectiveStatus = status === 'idle' ? 'connecting' : status;
+
+    if (effectiveStatus === 'connected') {
+      return {
+        label: 'Connected',
+        ariaLabel: `Live updates connected over ${transport}`,
+        tone: 'connected',
+        connected: true,
+      };
+    }
+
+    if (effectiveStatus === 'reconnecting') {
+      return {
+        label: 'Reconnecting',
+        ariaLabel: `Live updates reconnecting over ${transport}`,
+        tone: 'reconnecting',
+        connected: false,
+      };
+    }
+
+    return {
+      label: 'Connecting',
+      ariaLabel: `Live updates connecting over ${transport}`,
+      tone: 'connecting',
+      connected: false,
+    };
+  }, [objectSetStatus, realtimeMode, timeTravelActive, webSocketStatus]);
+
+  const liveStatusClassName = useMemo(() => {
+    const base = 'text-[10px] font-mono uppercase tracking-wider';
+    switch (liveStatus?.tone) {
+      case 'connected':
+        return `${base} text-green-500`;
+      case 'reconnecting':
+        return `${base} text-accent-amber`;
+      case 'connecting':
+        return `${base} text-text-secondary`;
+      case 'disabled':
+        return `${base} text-accent-amber`;
+      default:
+        return base;
+    }
+  }, [liveStatus]);
 
   // WebSocket subscription (primary)
   useWebSocketSubscription(ontology, {
@@ -175,6 +270,7 @@ export function BrowserPage() {
     onEvent: useCallback(() => {
       invalidateObjects();
     }, [invalidateObjects]),
+    onStatusChange: handleObjectSetStatusChange,
   });
 
   // Compute the set of facet-able fields from the object type's properties.
@@ -595,16 +691,28 @@ export function BrowserPage() {
                 : undefined
             }
           >
-            {realtimeEnabled && (
+            {liveStatus?.connected && (
               <span
                 data-testid="realtime-indicator"
+                aria-label={liveStatus.ariaLabel}
                 className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"
               />
             )}
             <span className="text-xs font-mono text-text-secondary">Live</span>
+            {liveStatus && (
+              <span
+                id="browser-live-status"
+                data-testid="live-status"
+                aria-label={liveStatus.ariaLabel}
+                className={liveStatusClassName}
+              >
+                {liveStatus.label}
+              </span>
+            )}
             <input
               type="checkbox"
               aria-label="Live"
+              aria-describedby={liveStatus ? 'browser-live-status' : undefined}
               data-testid="live-toggle"
               checked={realtimeEnabled}
               onChange={handleRealtimeToggle}

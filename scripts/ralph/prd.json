@@ -52,7 +52,7 @@
       "phase": "Operator Feedback",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-413"
       ],

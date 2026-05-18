@@ -67,3 +67,25 @@ Story SELF-414 - Add event-driven Browser realtime Playwright gate:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - Browser realtime E2E should observe the subscription stream first, then make the table assertion deterministic with a primary-key query instead of polling the current page for a newly inserted row.
+
+Story SELF-415 - Expose Browser Live reconnect status:
+- Selected as the final incomplete story after SELF-413 and SELF-414 passed. The remaining Browser Live gap was that the toolbar showed a green live indicator for operator intent rather than actual transport health.
+- RED:
+  - Updated `web/src/components/browser/__tests__/BrowserPage.test.tsx` with BDD coverage for WebSocket connected status, WebSocket reconnecting status, SSE fallback connected status, and Time Travel unavailable status.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected: 5 tests failed because `data-testid="live-status"` did not exist and the existing green indicator appeared immediately after enabling Live.
+- GREEN implementation:
+  - `web/src/components/browser/BrowserPage.tsx` now tracks WebSocket and ObjectSet SSE subscription status callbacks separately and derives one Browser Live toolbar status from the active transport path.
+  - The connected green indicator now renders only when the active transport reports `connected`; reconnecting and connecting states render text status instead.
+  - Time Travel active mode now renders an accessible unavailable status next to the disabled Live toggle.
+- Verification:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` passed: 1 file, 14 tests.
+  - `npm --prefix web test -- --run` passed: 267 files, 2795 tests.
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Browser Live toolbar health should be derived from transport callbacks (`connected`, `connecting`, `reconnecting`) and not from the requested Live toggle state.
