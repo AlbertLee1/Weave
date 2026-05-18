@@ -326,6 +326,29 @@ describe('useWebSocketSubscription', () => {
     expect(MockWebSocket.instances).toHaveLength(3);
   });
 
+  it('reports transport status changes for consumers that need fallback state', () => {
+    const onStatusChange = vi.fn();
+    renderHook(() =>
+      useWebSocketSubscription('myOntology', {
+        objectType: 'Employee',
+        enabled: true,
+        onEvent: vi.fn(),
+        onStatusChange,
+      }),
+    );
+
+    expect(onStatusChange).toHaveBeenLastCalledWith('connecting');
+
+    MockWebSocket.instances[0].simulateOpen();
+    expect(onStatusChange).toHaveBeenLastCalledWith('connected');
+
+    MockWebSocket.instances[0].simulateClose(1006);
+    expect(onStatusChange).toHaveBeenLastCalledWith('reconnecting');
+
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(onStatusChange).toHaveBeenLastCalledWith('connecting');
+  });
+
   it('does not reconnect on normal close (code 1000)', () => {
     renderHook(() =>
       useWebSocketSubscription('myOntology', {

@@ -5,12 +5,19 @@ export interface WebSocketChangeEvent {
   object: Record<string, unknown>;
 }
 
+export type WebSocketSubscriptionStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting';
+
 export interface UseWebSocketSubscriptionOptions {
   objectType: string;
   where?: unknown;
   select?: string[];
   enabled: boolean;
   onEvent: (event: WebSocketChangeEvent) => void;
+  onStatusChange?: (status: WebSocketSubscriptionStatus) => void;
 }
 
 /**
@@ -29,12 +36,15 @@ export function useWebSocketSubscription(
   ontology: string,
   options: UseWebSocketSubscriptionOptions,
 ): void {
-  const { objectType, where, select, enabled, onEvent } = options;
+  const { objectType, where, select, enabled, onEvent, onStatusChange } = options;
 
   // Keep onEvent in a ref so reconnect logic always calls the latest
   // callback without triggering an effect re-run.
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
 
   // Keep subscription params in refs for re-subscribe after reconnect.
   const objectTypeRef = useRef(objectType);
@@ -54,6 +64,7 @@ export function useWebSocketSubscription(
 
   useEffect(() => {
     if (!enabled || !ontology || !objectType) {
+      onStatusChangeRef.current?.('idle');
       return;
     }
 
@@ -79,11 +90,13 @@ export function useWebSocketSubscription(
       if (disposed) return;
 
       const url = buildUrl();
+      onStatusChangeRef.current?.('connecting');
       ws = new WebSocket(url);
 
       ws.onopen = () => {
         // Reset backoff on successful connection.
         backoffRef.current = 1000;
+        onStatusChangeRef.current?.('connected');
       };
 
       ws.onmessage = (evt: MessageEvent) => {
@@ -111,8 +124,12 @@ export function useWebSocketSubscription(
         if (disposed) return;
 
         // Normal closure (1000) — do not reconnect
-        if (evt.code === 1000) return;
+        if (evt.code === 1000) {
+          onStatusChangeRef.current?.('idle');
+          return;
+        }
 
+        onStatusChangeRef.current?.('reconnecting');
         const delay = backoffRef.current;
         backoffRef.current = Math.min(delay * 2, 30_000);
         reconnectTimer = setTimeout(connect, delay);
@@ -133,6 +150,7 @@ export function useWebSocketSubscription(
       ws?.close();
       // Reset state for next mount cycle.
       backoffRef.current = 1000;
+      onStatusChangeRef.current?.('idle');
     };
   }, [enabled, ontology, objectType, buildUrl]);
 }

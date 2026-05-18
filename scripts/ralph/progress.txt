@@ -1,122 +1,91 @@
 # Ralph Progress Log
-Started: Tue May 19 01:22:55 CST 2026
-Branch: ralph/self-iteration-20260519-012255
-Archived previous state: scripts/ralph/archive/self-iteration-20260519-012441/
+Started: Tue May 19 02:48:45 CST 2026
 
-## Current PRD
-- Created a fresh branch-scoped PRD because the prior `scripts/ralph/prd.json` belonged to `ralph/self-iteration-20260519-001128` and all of its stories were marked `passes: true`.
-- No `PR CI auto-fix context` was present in the archived progress file.
-- GitHub checks: `gh run list --branch ralph/self-iteration-20260519-012255 --limit 5` returned no runs; `gh pr list --head ralph/self-iteration-20260519-012255 --state all --limit 5` returned no PRs.
-- Known CI risks checked before adding new work:
-  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`: passed, so fresh Go build semantics do not currently require generated `web/dist`.
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: passed, so the US-453 `object.stream is not a function` regression is already covered.
-- Dogfood issues checked:
-  - DOG-004 browser search contract: `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` passed.
-  - DOG-005 explorer property flags: `npm --prefix web test -- --run src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx` passed.
-  - DOG-002 dashboard total object type count: `npm --prefix web test -- --run src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx` passed.
-- Local CI health before selecting story:
-  - `go test ./...`: passed.
-  - `npm --prefix web test -- --run`: passed, 265 files / 2785 tests.
-  - `npm --prefix web run build`: passed but emitted a Vite warning that `web/src/lib/offlineRequestQueue.ts` is dynamically imported by `serviceWorker.ts` while also statically imported by `queuedRequest.ts`, `serviceWorker.ts`, and `main.tsx`.
-- Selected highest-priority story: SELF-410, because it removes a deterministic web production-build warning from the CI signal while preserving offline mutation replay behavior.
+Branch: ralph/self-iteration-20260519-024456
 
-## Codebase Patterns
-- No durable Codebase Patterns were present in the archived progress file for this branch.
+Initial inspection:
+- Archived prior Ralph state for branch ralph/self-iteration-20260519-012255 to scripts/ralph/archive/self-iteration-20260519-024845/.
+- No PR CI auto-fix context was present in the prior progress file.
+- `gh pr list --head ralph/self-iteration-20260519-024456 --json number,state,statusCheckRollup` returned `[]`; no PR checks exist for this branch.
+- `gh run list --branch ralph/self-iteration-20260519-024456 --limit 5` returned no runs.
+- Local health probes before PRD selection:
+  - `npm --prefix web test -- --run` passed: 266 files, 2786 tests.
+  - `npm --prefix web run build` passed; bundle budgets passed.
+  - `go test ./...` passed. Note: direct `go test ./...` still discovers `web/node_modules/flatted/golang/pkg/flatted` as a no-test package, while CI uses `scripts/ci/go-packages.sh` to scope packages.
 
-## SELF-410 - Quiet offline replay Web build warning
-- Selected because local CI was green but `npm --prefix web run build` emitted a deterministic Vite warning:
-  - `web/src/lib/offlineRequestQueue.ts is dynamically imported by web/src/lib/serviceWorker.ts but also statically imported by web/src/lib/queuedRequest.ts, web/src/lib/serviceWorker.ts, web/src/main.tsx`.
-- Root cause:
-  - `serviceWorker.ts` statically imported `startAutoReplay` from `offlineRequestQueue.ts` and also lazy-imported `replayQueue` from the same module inside `replayOnce`.
-  - Vite cannot split a module that is already statically in the graph, so the lazy import produced a production-build warning without providing chunking value.
-- TDD red:
-  - Added `web/src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`.
-  - First harness attempt failed for the wrong reason because Vitest's `import.meta.url` was not a file URL; corrected the test to use Vite's `?raw` source import so it works under the web tsconfig.
-  - `npm --prefix web test -- --run src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`: failed for the expected reason, asserting that `serviceWorker.ts` still contained `import('./offlineRequestQueue')`.
-- Implementation:
-  - Updated `web/src/lib/serviceWorker.ts` to import `replayQueue` in the existing static `offlineRequestQueue` import and removed the dynamic import from `replayOnce`.
-  - Kept replay coalescing and `executeQueuedEntry` behavior unchanged.
-- Verification evidence:
-  - `npm --prefix web test -- --run src/lib/__tests__/serviceWorkerReplayBridge.test.ts src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`: passed, 2 files / 5 tests.
-  - `npm --prefix web run build`: passed; the prior duplicate static/dynamic `offlineRequestQueue.ts` warning was absent and `Bundle budgets passed (1 chunk checked)` was reported.
-  - `jq empty scripts/ralph/prd.json`: passed.
-  - `git diff --check`: passed.
-- Codebase Patterns:
-  - Web source-level build-contract tests should use Vite `?raw` imports instead of Node `fs`/`process`, because `tsconfig.app.json` intentionally exposes `vite/client` and `vitest/globals` types but not Node globals.
-  - Avoid lazy-importing a module that is already statically imported by the same entry path; it creates Vite chunking warnings without reducing the loaded graph.
+Durable Codebase Patterns:
+- Browser realtime mode currently owns transport selection in `web/src/components/browser/BrowserPage.tsx`; WebSocket is primary via `useWebSocketSubscription`, and the existing SSE fallback uses `useObjectSetSubscription` with a temporary ObjectSet RID.
+- Browser object refresh should invalidate TanStack Query cache with `queryKey: ['objects']` so list and search result hooks refetch through their canonical paths.
+- Web tests use MSW plus hook-level mocks in `web/src/components/browser/__tests__/BrowserPage.test.tsx`; hook transport behavior is isolated in `web/src/hooks/__tests__/useWebSocketSubscription.test.ts` and `web/src/hooks/__tests__/useObjectSetSubscription.test.ts`.
+
+Story SELF-413 - Make Browser Live fall back to SSE truthfully:
+- Selected as highest-priority story because local CI was clean and Browser Live had an unreachable SSE fallback despite already creating temporary ObjectSets for fallback readiness.
+- RED:
+  - Added BrowserPage BDD tests proving WebSocket `reconnecting` status should enable the ObjectSet SSE subscription and that SSE messages invalidate `queryKey: ['objects']`.
+  - Added WebSocket hook test proving consumers can observe `connecting -> connected -> reconnecting -> connecting` status transitions.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected: `capturedWsOptions?.onStatusChange` was undefined.
+  - `npm --prefix web test -- --run src/hooks/__tests__/useWebSocketSubscription.test.ts` failed as expected: status callback was never called.
+- GREEN implementation:
+  - `web/src/hooks/useWebSocketSubscription.ts` now accepts optional `onStatusChange` and emits `idle`, `connecting`, `connected`, and `reconnecting`.
+  - `web/src/components/browser/BrowserPage.tsx` now listens for WebSocket `reconnecting`, waits for the temporary ObjectSet RID, then switches `realtimeMode` from `ws` to `sse`; connected WebSocket status keeps SSE disabled to avoid duplicate invalidations.
+- Verification:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx src/hooks/__tests__/useWebSocketSubscription.test.ts` passed: 2 files, 25 tests.
+  - `npm --prefix web test -- --run` passed: 266 files, 2789 tests.
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `git diff --check` passed after removing a trailing blank line from this progress file.
 - Files changed:
-  - `scripts/ralph/archive/self-iteration-20260519-012441/prd.json`
-  - `scripts/ralph/archive/self-iteration-20260519-012441/progress.txt`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+  - `web/src/hooks/useWebSocketSubscription.ts`
+  - `web/src/hooks/__tests__/useWebSocketSubscription.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-  - `web/src/lib/serviceWorker.ts`
-  - `web/src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`
+- Reusable learning:
+  - Browser Live should not start the ObjectSet SSE subscription just because a temporary ObjectSet RID exists; it should switch only after WebSocket reports an abnormal reconnect path.
 
-## SELF-411 - Keep local Go package discovery out of web dependencies
-- Selected as the next highest-priority incomplete story after SELF-410.
-- Root cause:
-  - With web dependencies installed, `go list ./... | rg "node_modules|flatted"` emitted `github.com/liyang/weave/web/node_modules/flatted/golang/pkg/flatted`.
-  - The local `Makefile` `test-unit` target and CI Go build/vet/test steps used raw `./...` package patterns, so local package discovery could include installed web dependency trees.
-- TDD red:
-  - Added `TestBDD_GoPackageListExcludesWebDependencyTrees` in `scripts/ci/ci_workflow_bdd_test.go`.
-  - `go test ./scripts/ci -run TestBDD_GoPackageListExcludesWebDependencyTrees -count=1 -v`: failed for the expected reason because `scripts/ci/go-packages.sh` did not exist.
-  - After wiring the first helper into CI build, verification exposed a second issue: an explicit test package list includes test-only packages that `go build` cannot build. Added a red assertion for `scripts/ci/go-packages.sh --build`; it failed because the helper still returned `github.com/liyang/weave/scripts/ci`.
-- Implementation:
-  - Added executable `scripts/ci/go-packages.sh`.
-  - Default mode uses `go list -e ./...` and filters `node_modules` package paths so test/vet package lists stay scoped to Weave packages.
-  - `--build` mode uses Go package metadata to return only packages with buildable non-test Go files, while applying the same `node_modules` filter.
-  - Updated `Makefile` `test-unit`, CI Build/Vet/Test steps, and `scripts/ci/govulncheck.sh` to use the shared helper.
-- Verification evidence:
-  - `go test ./scripts/ci -run TestBDD_GoPackageListExcludesWebDependencyTrees -count=1 -v`: passed.
-  - `go test ./scripts/ci -count=1 -v`: passed, including the existing govulncheck and golangci-lint workflow contract tests.
-  - `if ./scripts/ci/go-packages.sh | rg -q 'node_modules'; then ...; else echo 'no node_modules packages'; fi`: passed and printed `no node_modules packages`.
-  - `go build $(./scripts/ci/go-packages.sh --build)`: passed.
-  - `go vet $(./scripts/ci/go-packages.sh)`: passed.
-  - `make test-unit`: passed using `go test $(./scripts/ci/go-packages.sh)`.
-  - `go test ./...`: passed; raw Go still reports `web/node_modules/flatted/golang/pkg/flatted` if invoked directly, which is why documented local/CI gates now use the helper.
-- Codebase Patterns:
-  - Shared Go all-package gates should call `scripts/ci/go-packages.sh` instead of raw `./...` when local web dependencies may exist.
-  - Use `scripts/ci/go-packages.sh --build` for `go build` because explicit package lists include test-only packages that raw `go build ./...` silently skips.
-  - Do not run multiple full Go package sweeps in parallel when they may share generated example artifacts; the examples TypeScript contract can race on `examples/ts-quickstart/dist`.
+Story SELF-414 - Add event-driven Browser realtime Playwright gate:
+- Selected as next highest-priority incomplete story after SELF-413.
+- RED:
+  - Added `web/src/lib/browserRealtimeHelpers.test.ts` to define the Browser realtime subscription payload matching contract for WebSocket objectChanged frames and ObjectSet SSE frames.
+  - `npm --prefix web test -- --run src/lib/browserRealtimeHelpers.test.ts` failed as expected because `./browserRealtimeHelpers` did not exist.
+- GREEN implementation:
+  - Added `web/src/lib/browserRealtimeHelpers.ts` with exact-primary-key matching for WebSocket `objectChanged` and ObjectSet SSE payloads.
+  - Reworked `web/e2e/phase7/browser-realtime-mode.spec.ts` so the previously fixme realtime scenario now waits for the WebSocket subscribed frame, posts `createCustomer`, waits for the matching subscription event, and then searches by the inserted primary key before asserting the table row.
+  - The row assertion is now deterministic when previous specs have accumulated more than one page of customers.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/browserRealtimeHelpers.test.ts` passed: 1 file, 3 tests.
+  - `npm --prefix web exec playwright test -- --list phase7/browser-realtime-mode.spec.ts phase7/sse-reconnect.spec.ts` passed: listed 3 tests in 2 files.
+  - `rg -n "test\\.fixme\\(" web/e2e/phase7/browser-realtime-mode.spec.ts` returned no matches.
+  - `npm --prefix web test -- --run` passed: 267 files, 2792 tests.
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `git diff --check` passed before Ralph state updates.
 - Files changed:
-  - `.github/workflows/ci.yml`
-  - `Makefile`
-  - `scripts/ci/ci_workflow_bdd_test.go`
-  - `scripts/ci/go-packages.sh`
-  - `scripts/ci/govulncheck.sh`
+  - `web/e2e/phase7/browser-realtime-mode.spec.ts`
+  - `web/src/lib/browserRealtimeHelpers.ts`
+  - `web/src/lib/browserRealtimeHelpers.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Browser realtime E2E should observe the subscription stream first, then make the table assertion deterministic with a primary-key query instead of polling the current page for a newly inserted row.
 
-## SELF-412 - Document saga read endpoints in OpenAPI
-- Selected as the only remaining incomplete story after SELF-410 and SELF-411.
-- Root cause:
-  - The chi router already registered `GET /api/v2/ontologies/{ontologyApiName}/actions/sagas` and `GET /api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}`.
-  - `cmd/server/contract_test.go` still exempted both routes under a US-044 TODO, so route/spec drift did not fail the general contract gate.
-  - `api/openapi.yaml` and the embedded `cmd/server/openapi_spec.yaml` lacked the saga read paths and DTO schemas for saga headers and step timelines.
-- TDD red:
-  - Added `TestOpenAPISpec_DocumentsSagaReadEndpoints` in `cmd/server/openapi_handler_test.go`.
-  - `go test ./cmd/server -run TestOpenAPISpec_DocumentsSagaReadEndpoints -count=1 -v`: failed for the expected reason:
-    - `/api/v2/ontologies/{ontologyApiName}/actions/sagas: missing`
-    - `/api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}: missing`
-    - `Saga: missing`
-- Implementation:
-  - Added `Saga`, `SagaStep`, `ListSagasResponse`, and `GetSagaResponse` schemas to `api/openapi.yaml`.
-  - Added OpenAPI paths for `listActionSagas` and `getActionSaga` with typed 200 responses, status filtering, pagination parameters, and sagaId path parameter.
-  - Synced `cmd/server/openapi_spec.yaml` from the canonical `api/openapi.yaml`.
-  - Removed the stale saga read endpoint allow-list entries from `cmd/server/contract_test.go`.
-- Verification evidence:
-  - `go test ./cmd/server -run TestOpenAPISpec_DocumentsSagaReadEndpoints -count=1 -v`: passed.
-  - `go test ./cmd/server -run TestOpenAPI -count=1 -v`: passed.
-  - `go test ./cmd/server -run TestContract -count=1 -v`: passed.
-  - `jq empty scripts/ralph/prd.json`: passed.
-  - `git diff --check`: passed.
-- Codebase Patterns:
-  - When documenting an existing route, remove its `undocumentedRouteAllowList` exemption in the same story so `TestContract_AllRoutesDocumented` owns future drift.
-  - Keep `api/openapi.yaml` and `cmd/server/openapi_spec.yaml` byte-identical; the embedded-spec contract test enforces this.
+Story SELF-415 - Expose Browser Live reconnect status:
+- Selected as the final incomplete story after SELF-413 and SELF-414 passed. The remaining Browser Live gap was that the toolbar showed a green live indicator for operator intent rather than actual transport health.
+- RED:
+  - Updated `web/src/components/browser/__tests__/BrowserPage.test.tsx` with BDD coverage for WebSocket connected status, WebSocket reconnecting status, SSE fallback connected status, and Time Travel unavailable status.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected: 5 tests failed because `data-testid="live-status"` did not exist and the existing green indicator appeared immediately after enabling Live.
+- GREEN implementation:
+  - `web/src/components/browser/BrowserPage.tsx` now tracks WebSocket and ObjectSet SSE subscription status callbacks separately and derives one Browser Live toolbar status from the active transport path.
+  - The connected green indicator now renders only when the active transport reports `connected`; reconnecting and connecting states render text status instead.
+  - Time Travel active mode now renders an accessible unavailable status next to the disabled Live toggle.
+- Verification:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx` passed: 1 file, 14 tests.
+  - `npm --prefix web test -- --run` passed: 267 files, 2795 tests.
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `git diff --check` passed.
 - Files changed:
-  - `api/openapi.yaml`
-  - `cmd/server/openapi_spec.yaml`
-  - `cmd/server/openapi_handler_test.go`
-  - `cmd/server/contract_test.go`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Browser Live toolbar health should be derived from transport callbacks (`connected`, `connecting`, `reconnecting`) and not from the requested Live toggle state.
