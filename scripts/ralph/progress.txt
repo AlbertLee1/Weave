@@ -17,6 +17,7 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-182801/
 - Tests asserting context cancellation should leave only the cancellation path ready after cancel; unblocking a success path in the same window makes select-based computes nondeterministic.
 - Sidebar tests that assert auth-gated admin links must wait for auth-gated UI state; ontology route links can render before `/api/v2/me` resolves and are not proof that admin identity has loaded.
 - Wall-clock performance tests should detect Go race/coverage instrumentation and either relax budgets or reduce workload while leaving strict budgets in standard runs and benchmarks.
+- Performance-profile contract tests are useful for CI-host timing repairs because they verify the intended profile selection deterministically instead of depending on local wall-clock slowness.
 - Large streaming export tests should use CI-safe row counts that still exercise rollover, disk size growth, and heap ceilings; full-envelope throughput belongs in benchmarks or dedicated performance jobs.
 - Seeded sampling over repository or map-derived objects should canonicalize the candidate universe before applying PRNG selection.
 
@@ -63,5 +64,32 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-182801/
 - Files changed:
   - `pkg/oss/objectset/executor.go`
   - `pkg/oss/objectset/sample_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
+## SELF-403 - Calibrate RLS performance gate for PR CI hosts
+- Selected because `SELF-401` and `SELF-402` were already complete and this was the only remaining failed package from GitHub CI run 26026535829.
+- CI red: `pkg/security` failed `TestRLSEvaluator_PerformanceGate` with cold `1.012523726s` against the instrumented `1s` budget.
+- Local probe before changes: `go test -race -coverprofile=/tmp/weave-self403-security-red-current.out -covermode=atomic ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=10 -v` passed; local instrumented cold/warm passes were around 250ms, so the CI failure is host-variance-sensitive.
+- Root cause: the existing instrumented profile reduced the workload to 200k iterations but left only a 1s cold budget, giving a GitHub runner no meaningful headroom over the observed 1.012s cold pass. The standard profile's 1M iteration 500ms/50ms gate still needs to remain strict.
+- Red test:
+  - Added `TestRLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance`, which locks the standard profile constants and requires the instrumented cold budget to be 1.5s.
+  - `go test -race -coverprofile=/tmp/weave-self403-profile-red.out -covermode=atomic ./pkg/security -run TestRLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance -count=1 -v` failed with `profile.coldBudget = 1s, want 1.5s for GitHub race+coverage variance`.
+- Implementation:
+  - Changed only the instrumented RLS cold budget from `1s` to `1.5s`.
+  - Left instrumented iterations at 200k, instrumented warm budget at `1s`, and standard budgets at 500ms cold / 50ms warm.
+- Verification evidence:
+  - `go test -race -coverprofile=/tmp/weave-self403-profile-green.out -covermode=atomic ./pkg/security -run TestRLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance -count=1 -v`: passed.
+  - `go test ./pkg/security -run TestRLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance -count=1 -v`: passed.
+  - `go test -race -coverprofile=/tmp/weave-self403-security.out -covermode=atomic ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=10 -v`: passed.
+  - `go test ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=1 -v`: passed.
+  - `go test ./pkg/security -count=1`: passed.
+  - `go test -race -coverprofile=/tmp/weave-self403-security-pkg.out -covermode=atomic ./pkg/security -count=1`: passed.
+  - `jq empty scripts/ralph/prd.json`: passed.
+  - `git diff --check`: passed.
+- Codebase Patterns:
+  - For performance CI repairs that cannot be reproduced locally, add deterministic profile-contract tests for the budget/workload selection and keep wall-clock tests as separate gates.
+- Files changed:
+  - `pkg/security/rls_bench_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`

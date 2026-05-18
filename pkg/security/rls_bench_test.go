@@ -42,7 +42,7 @@ func currentRLSPerfProfile() rlsPerfProfile {
 		return rlsPerfProfile{
 			name:       "instrumented",
 			iterations: 200_000,
-			coldBudget: time.Second,
+			coldBudget: 1500 * time.Millisecond,
 			warmBudget: time.Second,
 		}
 	}
@@ -51,6 +51,39 @@ func currentRLSPerfProfile() rlsPerfProfile {
 		iterations: benchIterationsTotal,
 		coldBudget: benchColdBudget,
 		warmBudget: benchWarmBudget,
+	}
+}
+
+func TestRLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance(t *testing.T) {
+	profile := currentRLSPerfProfile()
+
+	if testprofile.Instrumented(testing.CoverMode()) {
+		if profile.name != "instrumented" {
+			t.Fatalf("profile.name = %q, want instrumented", profile.name)
+		}
+		if profile.iterations != 200_000 {
+			t.Fatalf("profile.iterations = %d, want 200000", profile.iterations)
+		}
+		if profile.coldBudget != 1500*time.Millisecond {
+			t.Fatalf("profile.coldBudget = %v, want 1.5s for GitHub race+coverage variance", profile.coldBudget)
+		}
+		if profile.warmBudget != time.Second {
+			t.Fatalf("profile.warmBudget = %v, want 1s", profile.warmBudget)
+		}
+		return
+	}
+
+	if profile.name != "standard" {
+		t.Fatalf("profile.name = %q, want standard", profile.name)
+	}
+	if profile.iterations != benchIterationsTotal {
+		t.Fatalf("profile.iterations = %d, want %d", profile.iterations, benchIterationsTotal)
+	}
+	if profile.coldBudget != benchColdBudget {
+		t.Fatalf("profile.coldBudget = %v, want %v", profile.coldBudget, benchColdBudget)
+	}
+	if profile.warmBudget != benchWarmBudget {
+		t.Fatalf("profile.warmBudget = %v, want %v", profile.warmBudget, benchWarmBudget)
 	}
 }
 
