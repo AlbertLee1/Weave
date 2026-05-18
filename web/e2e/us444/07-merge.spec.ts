@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIResponse } from '@playwright/test';
 import { API_BASE, ONTOLOGY, skipWhenBackendDown, uniqueName } from './helpers';
 
 /**
@@ -10,6 +10,12 @@ import { API_BASE, ONTOLOGY, skipWhenBackendDown, uniqueName } from './helpers';
  * fast-forward merge against a quiet branch is the smallest end-to-end
  * exercise of the merge code path.
  */
+async function expectOK(res: APIResponse, context: string): Promise<void> {
+  if (res.ok()) return;
+
+  expect(res.ok(), `${context}: ${res.status()} ${await res.text()}`).toBe(true);
+}
+
 test.describe('US-444 — merge', () => {
   test('no-op branch merges back into main without conflicts', async ({ request }) => {
     await skipWhenBackendDown(request);
@@ -19,28 +25,37 @@ test.describe('US-444 — merge', () => {
       `${API_BASE}/api/v2/ontologies/${ONTOLOGY}/branches`,
       { data: { name, description: 'us-444 merge smoke' } },
     );
-    test.skip(created.status() === 404, 'branch endpoint not wired');
-    if (!created.ok()) {
-      test.skip(true, `branch create rejected: ${created.status()}`);
-    }
+    await expectOK(created, 'branch create endpoint must be wired for merge smoke');
+
     const body = (await created.json()) as { id?: string; rid?: string; name?: string };
     const branchId = body.id ?? body.rid ?? name;
+    expect(body.name).toBe(name);
 
     const diff = await request.post(
       `${API_BASE}/api/v2/ontologies/${ONTOLOGY}/branches/${encodeURIComponent(branchId)}/diff`,
       { data: {} },
     );
-    expect([200, 404]).toContain(diff.status());
+    await expectOK(diff, 'branch diff endpoint must be wired');
+    const diffBody = (await diff.json()) as {
+      added?: unknown[];
+      modified?: unknown[];
+      deleted?: unknown[];
+      hasConflicts?: boolean;
+    };
+    expect(Array.isArray(diffBody.added)).toBe(true);
+    expect(Array.isArray(diffBody.modified)).toBe(true);
+    expect(Array.isArray(diffBody.deleted)).toBe(true);
+    expect(diffBody.hasConflicts).toBe(false);
 
     const merge = await request.post(
       `${API_BASE}/api/v2/ontologies/${ONTOLOGY}/branches/${encodeURIComponent(branchId)}/merge`,
       { data: { conflictResolution: {} } },
     );
-    // 200/202 = merged, 409 = stale (acceptable), 404 = unwired
-    expect([200, 202, 204, 404, 409]).toContain(merge.status());
+    expect(merge.status(), `branch merge endpoint must be wired: ${await merge.text()}`).toBe(200);
 
-    await request.delete(
+    const closed = await request.delete(
       `${API_BASE}/api/v2/ontologies/${ONTOLOGY}/branches/${encodeURIComponent(branchId)}`,
     );
+    expect([204, 409]).toContain(closed.status());
   });
 });
