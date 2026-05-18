@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getObjectHistory } from '../api/objects';
+import { getObjectActivity } from '../api/objects';
 
 export interface UseObjectVersionParams {
   ontologyApiName: string;
@@ -7,7 +7,7 @@ export interface UseObjectVersionParams {
   primaryKey: string;
 }
 
-// Reads the current object version (totalVersions from object_history) so
+// Reads the current object version from the activity timeline so
 // callers can stamp an `expectedVersion` on action apply requests for
 // optimistic concurrency (US-023/US-024).
 export function useObjectVersion(params: UseObjectVersionParams) {
@@ -17,11 +17,11 @@ export function useObjectVersion(params: UseObjectVersionParams) {
   const query = useQuery({
     queryKey: ['objectVersion', ontologyApiName, objectType, primaryKey],
     queryFn: () =>
-      getObjectHistory({
+      getObjectActivity({
         ontologyApiName,
         objectType,
         primaryKey,
-        limit: 1,
+        pageSize: 1,
       }),
     enabled,
     staleTime: 0,
@@ -29,6 +29,6 @@ export function useObjectVersion(params: UseObjectVersionParams) {
 
   return {
     ...query,
-    version: query.data?.totalVersions,
+    version: query.data?.data[0]?.version,
   };
 }

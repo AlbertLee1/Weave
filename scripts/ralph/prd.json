@@ -31,7 +31,7 @@
       "phase": "Action Version E2E Signal",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Fix the Northwind E2E seed/version precondition that keeps the optimistic-concurrency Playwright scenario skipped, so the browser gate can exercise stale-object recovery end to end.",
       "bdd_acceptance": [
@@ -40,6 +40,7 @@
         "Given Playwright runs in list-only CI discovery, When `phase6/optimistic-concurrency.spec.ts` is parsed, Then the stale-object scenario is active and no longer guarded by a permanent `test.skip`."
       ],
       "quality_gates": [
+        "`go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedObjectHistoryRowsCarryOntologyScope -count=1`",
         "`go test ./test/fixtures/seed_northwind`",
         "`npm --prefix web exec playwright test -- --list phase6/optimistic-concurrency.spec.ts`",
         "`npm --prefix web test -- --run`",

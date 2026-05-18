@@ -18,10 +18,18 @@ describe('useObjectVersion', () => {
     vi.restoreAllMocks();
   });
 
-  it('fetches totalVersions via getObjectHistory when enabled', async () => {
-    const spy = vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
-      history: [],
-      totalVersions: 4,
+  it('fetches the latest version via getObjectActivity when enabled', async () => {
+    const spy = vi.spyOn(objectsApi, 'getObjectActivity').mockResolvedValue({
+      data: [
+        {
+          id: 'history-4',
+          objectTypeRid: 'ri.object-type.employee',
+          primaryKey: '42',
+          version: 4,
+          editType: 'MODIFY',
+          recordedAt: '2026-05-19T00:00:00Z',
+        },
+      ],
     });
 
     const { result } = renderHook(
@@ -40,14 +48,22 @@ describe('useObjectVersion', () => {
       ontologyApiName: 'default',
       objectType: 'Employee',
       primaryKey: '42',
-      limit: 1,
+      pageSize: 1,
     });
   });
 
   it('is disabled when primaryKey is empty', async () => {
-    const spy = vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
-      history: [],
-      totalVersions: 1,
+    const spy = vi.spyOn(objectsApi, 'getObjectActivity').mockResolvedValue({
+      data: [
+        {
+          id: 'history-1',
+          objectTypeRid: 'ri.object-type.employee',
+          primaryKey: '1',
+          version: 1,
+          editType: 'CREATE',
+          recordedAt: '2026-05-19T00:00:00Z',
+        },
+      ],
     });
 
     const { result } = renderHook(
@@ -66,9 +82,17 @@ describe('useObjectVersion', () => {
   });
 
   it('is disabled when objectType is empty', async () => {
-    const spy = vi.spyOn(objectsApi, 'getObjectHistory').mockResolvedValue({
-      history: [],
-      totalVersions: 2,
+    const spy = vi.spyOn(objectsApi, 'getObjectActivity').mockResolvedValue({
+      data: [
+        {
+          id: 'history-2',
+          objectTypeRid: 'ri.object-type.employee',
+          primaryKey: '1',
+          version: 2,
+          editType: 'CREATE',
+          recordedAt: '2026-05-19T00:00:00Z',
+        },
+      ],
     });
 
     const { result } = renderHook(
@@ -87,9 +111,31 @@ describe('useObjectVersion', () => {
 
   it('refetch refreshes the cached version', async () => {
     const spy = vi
-      .spyOn(objectsApi, 'getObjectHistory')
-      .mockResolvedValueOnce({ history: [], totalVersions: 1 })
-      .mockResolvedValueOnce({ history: [], totalVersions: 7 });
+      .spyOn(objectsApi, 'getObjectActivity')
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'history-1',
+            objectTypeRid: 'ri.object-type.employee',
+            primaryKey: 'e1',
+            version: 1,
+            editType: 'CREATE',
+            recordedAt: '2026-05-19T00:00:00Z',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'history-7',
+            objectTypeRid: 'ri.object-type.employee',
+            primaryKey: 'e1',
+            version: 7,
+            editType: 'MODIFY',
+            recordedAt: '2026-05-19T00:00:07Z',
+          },
+        ],
+      });
 
     const { result } = renderHook(
       () =>

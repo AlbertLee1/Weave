@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
+import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
@@ -10,5 +11,14 @@ describe('Playwright spec contracts', () => {
     expect(source).toContain(`/api/v2/ontologies/\${ONTOLOGY}/objects/\${OBJECT_TYPE}/search`);
     expect(source).toContain("getByTestId('live-status')");
     expect(source).not.toContain("getByTestId('realtime-indicator')");
+  });
+
+  it('keeps the Phase 6 optimistic-concurrency scenario active', () => {
+    const source = optimisticConcurrencySpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain("getByTestId('object-version')");
+    expect(source).toContain('StaleObject banner');
   });
 });

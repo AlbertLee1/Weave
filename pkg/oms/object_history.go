@@ -32,6 +32,7 @@ const (
 // prefer user writes over ingest writes (schema column default: 'user').
 type ObjectHistory struct {
 	ID            string          `json:"id"`
+	OntologyRID   string          `json:"ontologyRid,omitempty"`
 	ObjectTypeRID string          `json:"objectTypeRid"`
 	PrimaryKey    string          `json:"primaryKey"`
 	Version       int64           `json:"version"`

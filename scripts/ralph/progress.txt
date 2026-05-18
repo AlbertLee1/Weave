@@ -50,3 +50,52 @@ Story SELF-416 - Make SSE reconnect Playwright gate deterministic:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - Web `src` tests are compiled under `tsconfig.app.json`; when a contract test needs source text, prefer Vite `?raw` imports over Node filesystem APIs.
+
+Story SELF-417 - Restore optimistic concurrency browser gate:
+- Selected as the highest-priority incomplete story because local/remote CI health was already clean and `web/e2e/phase6/optimistic-concurrency.spec.ts` still guarded the stale-object browser recovery flow behind `test.skip`.
+- Root cause investigation:
+  - `object_history.ontology_rid` was added by migration `000017_ontology_isolation_columns.up.sql`, but `oms.ObjectHistory` and `PGRepository.InsertObjectHistory` did not persist that scope.
+  - `test/fixtures/seed_northwind.Seed()` wrote Northwind history through `InsertObjectHistory`, so all seeded rows had an empty `ontology_rid`.
+  - `useObjectVersion()` still called the removed `/objects/{type}/{pk}/history` route; the supported per-object history surface is `/activity`, whose newest row carries the current version.
+- RED:
+  - Added `TestBDD_SeedObjectHistoryRowsCarryOntologyScope` to assert every seeded history row, especially `customer/ALFKI`, carries the same ontology scope as its ObjectType.
+  - Updated `useObjectVersion` tests to expect `getObjectActivity({ pageSize: 1 })` and version derivation from the newest activity row.
+  - Extended `playwrightSpecContracts.test.ts` to reject `test.skip`/`test.fixme` in the optimistic-concurrency Playwright spec.
+  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedObjectHistoryRowsCarryOntologyScope -count=1` failed as expected with empty `object_history ... ontology_rid`.
+  - `npm --prefix web test -- --run src/hooks/__tests__/useObjectVersion.test.ts` failed as expected because the hook still used `getObjectHistory`.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because the spec still contained `test.skip(`.
+- GREEN implementation:
+  - Added `OntologyRID` to `oms.ObjectHistory` and persisted it in both `InsertObjectHistory` paths while keeping empty values nullable for legacy callers.
+  - Returned `ontologyRid` from `ListObjectHistory` and `ListObjectHistoryPage` so activity/history readers preserve scope when it exists.
+  - Stamped the Northwind ontology RID on every seeded object history row.
+  - Switched `useObjectVersion()` to read the newest `/activity` row with `pageSize: 1`.
+  - Removed the permanent skip from `web/e2e/phase6/optimistic-concurrency.spec.ts`.
+- Verification:
+  - RED commands above failed for the expected reasons before implementation.
+  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedObjectHistoryRowsCarryOntologyScope -count=1` passed.
+  - `npm --prefix web test -- --run src/hooks/__tests__/useObjectVersion.test.ts` passed: 1 file, 4 tests.
+  - `npm --prefix web test -- --run src/components/actions/__tests__/ActionConsolePage.test.tsx` passed: 1 file, 7 tests.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 2 tests.
+  - `go test ./test/fixtures/seed_northwind` passed with `[no test files]` under the default non-integration build tag.
+  - `go test ./pkg/oms ./pkg/oss` passed.
+  - `npm --prefix web exec playwright test -- --list phase6/optimistic-concurrency.spec.ts` passed: listed 1 active test.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/phase6/optimistic-concurrency.spec.ts` returned no matches (exit 1).
+  - `npm --prefix web test -- --run` passed: 268 files, 2797 tests.
+  - `npm --prefix web run build` passed; Vite production build completed and bundle budgets passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `pkg/oms/object_history.go`
+  - `pkg/oms/pg_repository.go`
+  - `test/fixtures/seed_northwind/seed.go`
+  - `test/fixtures/seed_northwind/seed_test.go`
+  - `web/e2e/phase6/optimistic-concurrency.spec.ts`
+  - `web/src/components/actions/__tests__/ActionConsolePage.test.tsx`
+  - `web/src/hooks/useObjectVersion.ts`
+  - `web/src/hooks/__tests__/useObjectVersion.test.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - The legacy object-history endpoint is intentionally removed by US-006; Action Console version reads should use the current activity timeline endpoint and derive the version from the newest row.
+  - Seed-package integration tests are behind the `integration` build tag, so `go test ./test/fixtures/seed_northwind` alone only compiles the package and reports `[no test files]`.
