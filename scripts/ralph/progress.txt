@@ -1,123 +1,53 @@
 # Ralph Progress Log
-Started: Tue May 19 00:16:56 CST 2026
-Branch: ralph/self-iteration-20260519-001128
-Archived previous state: scripts/ralph/archive/self-iteration-20260519-001656/
+Started: Tue May 19 01:22:55 CST 2026
+Branch: ralph/self-iteration-20260519-012255
+Archived previous state: scripts/ralph/archive/self-iteration-20260519-012441/
 
 ## Current PRD
-- Created a fresh branch-scoped PRD because the previous PRD belonged to `ralph/self-iteration-20260518-164046` and its only story, SELF-406, was marked `passes: true`.
+- Created a fresh branch-scoped PRD because the prior `scripts/ralph/prd.json` belonged to `ralph/self-iteration-20260519-001128` and all of its stories were marked `passes: true`.
 - No `PR CI auto-fix context` was present in the archived progress file.
-- GitHub context: `gh pr view` found no open PR for `ralph/self-iteration-20260519-001128`; `gh run list --branch ralph/self-iteration-20260519-001128` returned no runs.
-- Known issue check:
-  - Fresh-style `go build ./...` passed after temporarily removing root `web/dist`.
-  - `npm test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed, covering the US-453 streamless attachment fallback.
-- Dogfood-output check:
-  - DOG-001 through DOG-005 all have current regression tests or implementation references in this checkout.
-  - Targeted dogfood suites passed for DOG-002, DOG-003, DOG-004, and DOG-005.
-- Local CI signal:
-  - `npx tsc --noEmit` passed.
-  - `npm run build` passed but reported a large main chunk warning.
-  - `npx vitest run --coverage` passed with 263 files / 2781 tests, but emitted repeated jsdom `HTMLCanvasElement's getContext()` diagnostics and one `Window's open()` diagnostic before the final green result.
-- New PRD is scoped to three small stories, with SELF-407 selected first because it improves web CI signal without changing product behavior.
+- GitHub checks: `gh run list --branch ralph/self-iteration-20260519-012255 --limit 5` returned no runs; `gh pr list --head ralph/self-iteration-20260519-012255 --state all --limit 5` returned no PRs.
+- Known CI risks checked before adding new work:
+  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`: passed, so fresh Go build semantics do not currently require generated `web/dist`.
+  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: passed, so the US-453 `object.stream is not a function` regression is already covered.
+- Dogfood issues checked:
+  - DOG-004 browser search contract: `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` passed.
+  - DOG-005 explorer property flags: `npm --prefix web test -- --run src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx` passed.
+  - DOG-002 dashboard total object type count: `npm --prefix web test -- --run src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx` passed.
+- Local CI health before selecting story:
+  - `go test ./...`: passed.
+  - `npm --prefix web test -- --run`: passed, 265 files / 2785 tests.
+  - `npm --prefix web run build`: passed but emitted a Vite warning that `web/src/lib/offlineRequestQueue.ts` is dynamically imported by `serviceWorker.ts` while also statically imported by `queuedRequest.ts`, `serviceWorker.ts`, and `main.tsx`.
+- Selected highest-priority story: SELF-410, because it removes a deterministic web production-build warning from the CI signal while preserving offline mutation replay behavior.
 
 ## Codebase Patterns
-- Scheduler loops expose Start/Stop lifecycle methods and run an immediate first cycle before ticking on an interval.
-- Scheduler goroutines should capture lifecycle channels into locals before entering the select loop; Stop may mutate struct fields under lock while the goroutine is still running.
-- Race-enabled tests that observe goroutine-updated fixture state should use atomic or mutex-protected counters.
-- Tests asserting context cancellation should leave only the cancellation path ready after cancel; unblocking a success path in the same window makes select-based computes nondeterministic.
-- Sidebar tests that assert auth-gated admin links must wait for auth-gated UI state; ontology route links can render before `/api/v2/me` resolves and are not proof that admin identity has loaded.
-- Wall-clock performance tests should detect Go race/coverage instrumentation and either relax budgets or reduce workload while leaving strict budgets in standard runs and benchmarks.
-- Performance-profile contract tests are useful for CI-host timing repairs because they verify the intended profile selection deterministically instead of depending on local wall-clock slowness.
-- Large streaming export tests should use CI-safe row counts that still exercise rollover, disk size growth, and heap ceilings; full-envelope throughput belongs in benchmarks or dedicated performance jobs.
-- Seeded random operators must canonicalize unordered candidate universes before applying PRNG selection; seeding only the PRNG is insufficient.
-- For performance CI repairs that cannot be reproduced locally, add deterministic profile-contract tests for the budget/workload selection and keep wall-clock tests as separate gates.
-- Coverage floor gates should be calibrated against current CI-backed package measurements; aspirational floors belong in a separate coverage-improvement story so PR CI remains actionable.
-- Coverage floor config should have deterministic contract tests for broad-package floor calibration when CI artifacts are the source of truth.
-- CI repair tests added near lint-sensitive Go code should be run through `gofmt` before commit; `git diff --check` does not catch canonical Go formatting drift.
-- CI security gates should call the same Makefile/script entry point used locally; raw workflow-only commands make PR failures harder to reproduce.
-- Scripts that install Go tools with `go install` should resolve `$(go env GOPATH)/bin/<tool>` explicitly when the binary is not already on PATH.
-- Govulncheck package scopes should exclude package-only test helpers that import unfixable tooling dependencies while still scanning production services, CLIs, SDKs, connectors, and source packages.
-- Web Vitest setup belongs in `web/src/test/setup.ts`; shared jsdom primitive shims should live there so component tests do not duplicate environment patches.
-- Web production bundle budgets are enforced by `web/scripts/check-bundle-budget.mjs` after `vite build`; keep the main app chunk budget aligned with `build.chunkSizeWarningLimit` so CI failures come from the versioned guard.
-- Web Vite vendor ownership lives in `web/src/build/chunking.ts`; classify new heavy dependency families there so large upper-layer payloads do not collapse back into `vendor-misc` or create Rollup circular chunk warnings.
+- No durable Codebase Patterns were present in the archived progress file for this branch.
 
-## SELF-407 - Make web CI browser primitive shims quiet
-- Selected as the highest-priority incomplete story because the full web coverage gate passes but currently prints repeated jsdom not-implemented diagnostics that can hide real CI failures.
+## SELF-410 - Quiet offline replay Web build warning
+- Selected because local CI was green but `npm --prefix web run build` emitted a deterministic Vite warning:
+  - `web/src/lib/offlineRequestQueue.ts is dynamically imported by web/src/lib/serviceWorker.ts but also statically imported by web/src/lib/queuedRequest.ts, web/src/lib/serviceWorker.ts, web/src/main.tsx`.
+- Root cause:
+  - `serviceWorker.ts` statically imported `startAutoReplay` from `offlineRequestQueue.ts` and also lazy-imported `replayQueue` from the same module inside `replayOnce`.
+  - Vite cannot split a module that is already statically in the graph, so the lazy import produced a production-build warning without providing chunking value.
 - TDD red:
-  - `npm test -- --run src/test/setup.browser-primitives.bdd.test.ts` failed as expected: `canvas.getContext('2d')` returned `null` and jsdom printed `Not implemented: HTMLCanvasElement's getContext() method`.
-  - After adding the canvas/window shim, the focused test passed, but `npx vitest run --coverage` failed with two unhandled `ReferenceError: Path2D is not defined` exceptions from `uplot` in `TimeSeriesChart.test.tsx`.
-  - Extended the focused BDD test to require a usable `Path2D`; `npm test -- --run src/test/setup.browser-primitives.bdd.test.ts` then failed as expected because `globalThis.Path2D` was undefined.
+  - Added `web/src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`.
+  - First harness attempt failed for the wrong reason because Vitest's `import.meta.url` was not a file URL; corrected the test to use Vite's `?raw` source import so it works under the web tsconfig.
+  - `npm --prefix web test -- --run src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`: failed for the expected reason, asserting that `serviceWorker.ts` still contained `import('./offlineRequestQueue')`.
 - Implementation:
-  - Added a shared jsdom canvas 2D context shim in `web/src/test/setup.ts`, including deterministic text measurement and no-op drawing APIs used by charts and graph-adjacent components.
-  - Added a shared `Path2D` no-op class in `web/src/test/setup.ts` so uPlot can build paths during Vitest runs.
-  - Replaced jsdom's unimplemented `window.open` in `web/src/test/setup.ts` with a harmless no-op.
-  - Added `web/src/test/setup.browser-primitives.bdd.test.ts` to lock the canvas, `Path2D`, and `window.open` setup contract.
+  - Updated `web/src/lib/serviceWorker.ts` to import `replayQueue` in the existing static `offlineRequestQueue` import and removed the dynamic import from `replayOnce`.
+  - Kept replay coalescing and `executeQueuedEntry` behavior unchanged.
 - Verification evidence:
-  - `npm test -- --run src/test/setup.browser-primitives.bdd.test.ts`: passed, 1 test / 1 file.
-  - `npx vitest run --coverage`: passed, 264 files / 2782 tests, with no `HTMLCanvasElement's getContext()`, `Path2D is not defined`, or `Window's open()` diagnostics in the output.
-  - `npx tsc --noEmit`: passed.
+  - `npm --prefix web test -- --run src/lib/__tests__/serviceWorkerReplayBridge.test.ts src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`: passed, 2 files / 5 tests.
+  - `npm --prefix web run build`: passed; the prior duplicate static/dynamic `offlineRequestQueue.ts` warning was absent and `Bundle budgets passed (1 chunk checked)` was reported.
   - `jq empty scripts/ralph/prd.json`: passed.
   - `git diff --check`: passed.
 - Codebase Patterns:
-  - Shared Vitest browser-primitive shims should cover the next primitive reached by real libraries; otherwise fixing one jsdom stub can uncover a later unhandled primitive such as `Path2D`.
+  - Web source-level build-contract tests should use Vite `?raw` imports instead of Node `fs`/`process`, because `tsconfig.app.json` intentionally exposes `vite/client` and `vitest/globals` types but not Node globals.
+  - Avoid lazy-importing a module that is already statically imported by the same entry path; it creates Vite chunking warnings without reducing the loaded graph.
 - Files changed:
-  - `web/src/test/setup.ts`
-  - `web/src/test/setup.browser-primitives.bdd.test.ts`
+  - `scripts/ralph/archive/self-iteration-20260519-012441/prd.json`
+  - `scripts/ralph/archive/self-iteration-20260519-012441/progress.txt`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-  - `scripts/ralph/archive/self-iteration-20260519-001656/prd.json`
-  - `scripts/ralph/archive/self-iteration-20260519-001656/progress.txt`
-
-## 2026-05-19 00:34:08 CST - SELF-408
-- Selected as the highest-priority unfinished story after SELF-407 was already marked passing.
-- TDD red:
-  - `npm test -- --run src/test/bundle-budget.bdd.test.mjs` failed as expected with three BDD contract failures: the `build` script did not invoke a budget guard, `web/scripts/check-bundle-budget.mjs` was missing, and `web/src/build/chunking.ts` was missing.
-  - An initial test shape imported `vite.config.ts` directly and hit an esbuild/TextEncoder environment invariant under jsdom; the test was corrected before implementation to import a small chunking helper and inspect the Vite config source.
-- Implementation:
-  - Added `web/scripts/check-bundle-budget.mjs`, which reads emitted JS assets, computes raw and gzip sizes, and fails with chunk-specific budget messages. The current main application chunk budget is 1,500,000 B raw / 450,000 B gzip.
-  - Added `web/src/build/chunking.ts` and wired it into `web/vite.config.ts` as `manualChunks` so heavy graph, markdown, charting, spreadsheet, map, diff, data, file, UI, forms, i18n, collaboration, and React package families produce stable vendor chunk names.
-  - Updated `web/package.json` so `npm run build` runs `tsc -b`, `vite build`, and the bundle budget guard.
-  - Set Vite `chunkSizeWarningLimit` to 1500 so generic warnings do not replace the versioned guard for the checked main chunk.
-- Verification evidence:
-  - `npm test -- --run src/test/bundle-budget.bdd.test.mjs`: passed, 3 tests / 1 file.
-  - `npx tsc --noEmit`: passed.
-  - `npm run build`: passed; Vite emitted stable named chunks including `vendor-graph`, `vendor-markdown`, `vendor-charts`, `vendor-spreadsheet`, and `vendor-misc` stayed small at 10.65 kB raw / 3.83 kB gzip. The checked `index` chunk was 1,062.25 kB raw / 233.66 kB gzip, and `Bundle budgets passed (1 chunk checked).`
-  - The only remaining Vite build warning is the pre-existing `offlineRequestQueue.ts` dynamic/static import notice, unrelated to SELF-408.
-  - `jq empty scripts/ralph/prd.json`: passed.
-  - `git diff --check`: passed.
-- Files changed:
-  - `web/package.json`
-  - `web/vite.config.ts`
-  - `web/scripts/check-bundle-budget.mjs`
-  - `web/src/build/chunking.ts`
-  - `web/src/test/bundle-budget.bdd.test.mjs`
-  - `CLAUDE.md`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## 2026-05-19 00:41:13 CST - SELF-409
-- Selected as the only unfinished story after SELF-407 and SELF-408 were already marked passing.
-- Root-cause/context check:
-  - `cmd/server/embed.go` already embeds `all:web` instead of ignored `web/dist`, and `cmd/server/web/embed-placeholder.txt` is the only tracked file under `cmd/server/web`.
-  - `Makefile` already had separate `build`, `web-build`, and `build-with-ui` paths, but local target help did not expose the no-UI versus embedded-UI semantics.
-- TDD red:
-  - Extended `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1` to require `make help` to describe both build paths and to run a subprocess `go build ./cmd/server` with generated `cmd/server/web/dist` temporarily moved aside.
-  - The focused test failed as expected because `make help` did not exist: `make: *** No rule to make target 'help'.  Stop.`
-- Implementation:
-  - Added a `help` target that lists Makefile targets with `##` descriptions.
-  - Documented `build` as the plain Go server build that does not generate embedded WebUI assets.
-  - Documented `web-build` as the WebUI asset build/copy step and `build-with-ui` as the production server build with embedded WebUI assets.
-  - Kept `build-with-ui: web-build build` so production packaging still copies `web/dist` into `cmd/server/web/dist` before the Go binary is built.
-- Verification evidence:
-  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`: passed.
-  - `make build-with-ui`: passed; ran `cd web && npm run build`, `node scripts/check-bundle-budget.mjs`, copied `web/dist` into `cmd/server/web/dist`, then ran `go build -o bin/weave ./cmd/server`.
-  - The only Vite warning during `make build-with-ui` was the pre-existing `offlineRequestQueue.ts` dynamic/static import notice.
-  - `git diff --check`: passed.
-- Codebase Patterns:
-  - Fresh CI embed tests can prove ignored SPA assets are not required by temporarily moving generated `cmd/server/web/dist` aside before invoking a subprocess `go build ./cmd/server`.
-  - Makefile targets with different artifact semantics should expose those semantics through `make help` comments, not only through target names.
-- Files changed:
-  - `Makefile`
-  - `cmd/server/embed_ci_bdd_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
----
+  - `web/src/lib/serviceWorker.ts`
+  - `web/src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`

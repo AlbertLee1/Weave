@@ -1,0 +1,73 @@
+{
+  "project": "Weave Self-Iteration Web CI Signal",
+  "branchName": "ralph/self-iteration-20260519-001128",
+  "description": "Small Ralph self-iteration for current branch health and OSv2 upper-layer experience confidence. There is no open PR or GitHub Actions run for this branch yet, so scope is based on local CI parity, stale-dogfood verification, and current web test output. Priority is to keep fresh CI failures actionable before adding broader capability work.",
+  "userStories": [
+    {
+      "id": "SELF-407",
+      "name": "Make web CI browser primitive shims quiet",
+      "phase": "CI Health",
+      "active": true,
+      "priority": 1,
+      "passes": true,
+      "dependencies": [],
+      "description": "Remove noisy jsdom not-implemented diagnostics from the web Vitest gate by providing deterministic test-environment shims for browser primitives used by OSv2 upper-layer pages and charts.",
+      "bdd_acceptance": [
+        "Given Vitest loads the shared jsdom setup, When a component or library requests a 2D canvas context, Then the call returns a deterministic minimal context instead of emitting the jsdom `HTMLCanvasElement's getContext()` not-implemented diagnostic.",
+        "Given Vitest loads the shared jsdom setup, When upper-layer navigation or export code calls `window.open`, Then the call is a harmless no-op and does not emit the jsdom `Window's open()` not-implemented diagnostic.",
+        "Given the web CI coverage gate runs, When `npx vitest run --coverage` completes, Then the test suite passes without the canvas or window.open not-implemented diagnostics obscuring real failures."
+      ],
+      "quality_gates": [
+        "`npm test -- --run src/test/setup.browser-primitives.bdd.test.ts`",
+        "`npx vitest run --coverage`",
+        "`npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-408",
+      "name": "Add a web bundle budget guard",
+      "phase": "Upper-Layer Performance",
+      "active": true,
+      "priority": 2,
+      "passes": true,
+      "dependencies": [
+        "SELF-407"
+      ],
+      "description": "Turn the current oversized production bundle warning into an actionable, versioned guard so the OSv2 web shell does not regress initial-load performance silently.",
+      "bdd_acceptance": [
+        "Given the web production build emits assets, When the bundle budget check runs, Then it fails with a clear message if the main application chunk exceeds the configured compressed or raw budget.",
+        "Given heavy graph, markdown, charting, and spreadsheet dependencies are present, When Vite builds the app, Then vendor chunks are split predictably enough for operators to identify which upper-layer surface owns a large payload.",
+        "Given CI runs the web build, When bundle size drifts above the checked budget, Then the failure points to the chunk name and configured threshold."
+      ],
+      "quality_gates": [
+        "`npm run build`",
+        "`npm test -- --run <new bundle budget test>`",
+        "`npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-409",
+      "name": "Keep embedded WebUI build semantics explicit",
+      "phase": "Fresh CI Health",
+      "active": true,
+      "priority": 3,
+      "passes": true,
+      "dependencies": [
+        "SELF-407"
+      ],
+      "description": "Clarify and test the distinction between a fresh Go build that may omit generated SPA assets and the production build path that embeds the WebUI, so upper-layer serving regressions remain easy to diagnose.",
+      "bdd_acceptance": [
+        "Given a fresh checkout has only the tracked embed placeholder, When `go build ./cmd/server` runs, Then it succeeds without requiring generated SPA assets.",
+        "Given production packaging needs the SPA, When `make build-with-ui` runs, Then the web build output is copied into the server embed tree before the Go binary is built.",
+        "Given a developer inspects the build targets, When they read local command help or tests, Then the no-UI Go build and UI-embedded production build behaviors are explicit."
+      ],
+      "quality_gates": [
+        "`go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`",
+        "`make build-with-ui`",
+        "`git diff --check`"
+      ]
+    }
+  ]
+}

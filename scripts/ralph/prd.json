@@ -1,71 +1,67 @@
 {
   "project": "Weave Self-Iteration Web CI Signal",
-  "branchName": "ralph/self-iteration-20260519-001128",
-  "description": "Small Ralph self-iteration for current branch health and OSv2 upper-layer experience confidence. There is no open PR or GitHub Actions run for this branch yet, so scope is based on local CI parity, stale-dogfood verification, and current web test output. Priority is to keep fresh CI failures actionable before adding broader capability work.",
+  "branchName": "ralph/self-iteration-20260519-012255",
+  "description": "Small Ralph self-iteration for the current branch. GitHub has no PR or Actions run for this branch yet, so scope is based on local CI health, dogfood reports, and current build/test output. Known fresh-CI risks from the previous loop were checked locally: the WebUI embed fallback and US-453 compliance report download tests are already green. The highest-priority remaining signal is a deterministic Vite production-build warning in the upper-layer offline replay bridge.",
   "userStories": [
     {
-      "id": "SELF-407",
-      "name": "Make web CI browser primitive shims quiet",
-      "phase": "CI Health",
+      "id": "SELF-410",
+      "name": "Quiet offline replay Web build warning",
+      "phase": "Fresh Web CI Health",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Remove noisy jsdom not-implemented diagnostics from the web Vitest gate by providing deterministic test-environment shims for browser primitives used by OSv2 upper-layer pages and charts.",
+      "description": "Remove the deterministic Vite production-build warning caused by `offlineRequestQueue.ts` being both statically and dynamically imported by the service-worker replay bridge, while preserving offline mutation replay behavior for OSv2 upper-layer workflows.",
       "bdd_acceptance": [
-        "Given Vitest loads the shared jsdom setup, When a component or library requests a 2D canvas context, Then the call returns a deterministic minimal context instead of emitting the jsdom `HTMLCanvasElement's getContext()` not-implemented diagnostic.",
-        "Given Vitest loads the shared jsdom setup, When upper-layer navigation or export code calls `window.open`, Then the call is a harmless no-op and does not emit the jsdom `Window's open()` not-implemented diagnostic.",
-        "Given the web CI coverage gate runs, When `npx vitest run --coverage` completes, Then the test suite passes without the canvas or window.open not-implemented diagnostics obscuring real failures."
+        "Given the service-worker replay bridge imports the offline queue for auto replay, When the source is checked, Then it does not also dynamically import the same `offlineRequestQueue` module in a way that triggers Vite's static/dynamic import warning.",
+        "Given a service-worker replay hint arrives, When the page bridge handles the message, Then queued mutations are replayed through the canonical `executeQueuedEntry` path exactly as before.",
+        "Given the web production build runs, When Vite renders chunks, Then the build completes without the `offlineRequestQueue.ts is dynamically imported ... but also statically imported` warning obscuring real CI failures."
       ],
       "quality_gates": [
-        "`npm test -- --run src/test/setup.browser-primitives.bdd.test.ts`",
-        "`npx vitest run --coverage`",
-        "`npx tsc --noEmit`",
+        "`npm --prefix web test -- --run src/lib/__tests__/serviceWorkerReplayBridge.test.ts src/lib/__tests__/serviceWorkerChunking.bdd.test.ts`",
+        "`npm --prefix web run build`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-408",
-      "name": "Add a web bundle budget guard",
-      "phase": "Upper-Layer Performance",
+      "id": "SELF-411",
+      "name": "Keep local Go package discovery out of web dependencies",
+      "phase": "Local CI Health",
       "active": true,
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "dependencies": [
-        "SELF-407"
+        "SELF-410"
       ],
-      "description": "Turn the current oversized production bundle warning into an actionable, versioned guard so the OSv2 web shell does not regress initial-load performance silently.",
+      "description": "Make the local Go all-package test surface match repository code instead of traversing installed web dependency trees such as `web/node_modules/flatted/golang/pkg/flatted` after web tests or builds have installed npm packages.",
       "bdd_acceptance": [
-        "Given the web production build emits assets, When the bundle budget check runs, Then it fails with a clear message if the main application chunk exceeds the configured compressed or raw budget.",
-        "Given heavy graph, markdown, charting, and spreadsheet dependencies are present, When Vite builds the app, Then vendor chunks are split predictably enough for operators to identify which upper-layer surface owns a large payload.",
-        "Given CI runs the web build, When bundle size drifts above the checked budget, Then the failure points to the chunk name and configured threshold."
+        "Given `web/node_modules` exists after web dependency installation, When the local Go package-list helper builds the package set for repository gates, Then packages under `web/node_modules` are excluded.",
+        "Given the CI Go job runs on a fresh checkout, When it uses the same package-list helper, Then Go test output remains scoped to Weave packages rather than accidental third-party source trees.",
+        "Given local developers run the documented Go test gate after web work, When npm dependencies are present, Then the command does not report unrelated web dependency packages."
       ],
       "quality_gates": [
-        "`npm run build`",
-        "`npm test -- --run <new bundle budget test>`",
-        "`npx tsc --noEmit`",
+        "`go test ./scripts/ci -run TestBDD_GoPackageListExcludesWebDependencyTrees -count=1 -v`",
+        "`go test ./...`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-409",
-      "name": "Keep embedded WebUI build semantics explicit",
-      "phase": "Fresh CI Health",
+      "id": "SELF-412",
+      "name": "Document saga read endpoints in OpenAPI",
+      "phase": "Developer Contract",
       "active": true,
       "priority": 3,
-      "passes": true,
-      "dependencies": [
-        "SELF-407"
-      ],
-      "description": "Clarify and test the distinction between a fresh Go build that may omit generated SPA assets and the production build path that embeds the WebUI, so upper-layer serving regressions remain easy to diagnose.",
+      "passes": false,
+      "dependencies": [],
+      "description": "Close the existing contract-test TODO for saga list/get endpoints by adding their OpenAPI paths so SDK and developer-console consumers can discover the action-saga lifecycle surface.",
       "bdd_acceptance": [
-        "Given a fresh checkout has only the tracked embed placeholder, When `go build ./cmd/server` runs, Then it succeeds without requiring generated SPA assets.",
-        "Given production packaging needs the SPA, When `make build-with-ui` runs, Then the web build output is copied into the server embed tree before the Go binary is built.",
-        "Given a developer inspects the build targets, When they read local command help or tests, Then the no-UI Go build and UI-embedded production build behaviors are explicit."
+        "Given the server exposes saga list and get handlers, When the OpenAPI contract is parsed, Then both endpoints are present with stable operation IDs.",
+        "Given generated clients inspect the spec, When they search action saga endpoints, Then response shapes include saga status and step details needed by upper-layer action history experiences.",
+        "Given the contract tests run, When saga paths are removed or renamed, Then the OpenAPI contract gate fails before drift reaches SDK consumers."
       ],
       "quality_gates": [
-        "`go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1`",
-        "`make build-with-ui`",
+        "`go test ./cmd/server -run TestOpenAPI -count=1`",
+        "`go test ./cmd/server -run TestContract -count=1`",
         "`git diff --check`"
       ]
     }
