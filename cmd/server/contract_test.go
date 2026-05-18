@@ -25,9 +25,9 @@ import (
 	"github.com/liyang/weave/pkg/links"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss"
-	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/objectset"
+	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/timeseries"
 	"github.com/liyang/weave/pkg/transactions"
 	"gopkg.in/yaml.v3"
@@ -133,27 +133,21 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "GET", Path: "/api/openapi.yaml"}: true,
 	{Method: "GET", Path: "/swagger/"}:         true,
 	{Method: "GET", Path: "/swagger"}:          true,
-	// TODO(US-044): document Saga list/get endpoints in openapi.yaml. They
-	// power the SagaJobs UI (PC-A08) but the response schema is still
-	// evolving; ship the chi routes now and follow up with the YAML once
-	// the Saga / SagaStep DTOs stabilise.
-	{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/sagas"}:          true,
-	{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}"}: true,
 	// VTX-009: Vertex SystemGraph REST surface. The OpenAPI schemas for graph
 	// payloads (layers, edges, savedSelections, timeSettings, positions) land
 	// alongside the JSON Schema work in VTX-011; until then the chi routes are
 	// the canonical contract.
-	{Method: "POST", Path: "/api/vertex/v1/graphs"}:                              true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}"}:                         true,
-	{Method: "PUT", Path: "/api/vertex/v1/graphs/{rid}"}:                         true,
-	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}:                true,
-	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/duplicate"}:              true,
-	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:       true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:                 true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}:      true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs"}:                         true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}"}:                    true,
+	{Method: "PUT", Path: "/api/vertex/v1/graphs/{rid}"}:                    true,
+	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}:           true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/duplicate"}:         true,
+	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:  true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:            true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}: true,
 	// US-480: RFC 6902 JSON Patch diff between two graph versions.
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}: true,
-	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}:         true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}:            true,
+	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}: true,
 	// VTX-013: Vertex graph share-link surface — owner mints / revokes
 	// opaque tokens; recipients exchange them for masked graph payloads.
 	// OpenAPI entries follow once the wire-format ResponseBody schemas

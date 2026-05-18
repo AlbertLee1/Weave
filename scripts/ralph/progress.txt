@@ -86,3 +86,37 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260519-012441/
   - `scripts/ci/govulncheck.sh`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+
+## SELF-412 - Document saga read endpoints in OpenAPI
+- Selected as the only remaining incomplete story after SELF-410 and SELF-411.
+- Root cause:
+  - The chi router already registered `GET /api/v2/ontologies/{ontologyApiName}/actions/sagas` and `GET /api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}`.
+  - `cmd/server/contract_test.go` still exempted both routes under a US-044 TODO, so route/spec drift did not fail the general contract gate.
+  - `api/openapi.yaml` and the embedded `cmd/server/openapi_spec.yaml` lacked the saga read paths and DTO schemas for saga headers and step timelines.
+- TDD red:
+  - Added `TestOpenAPISpec_DocumentsSagaReadEndpoints` in `cmd/server/openapi_handler_test.go`.
+  - `go test ./cmd/server -run TestOpenAPISpec_DocumentsSagaReadEndpoints -count=1 -v`: failed for the expected reason:
+    - `/api/v2/ontologies/{ontologyApiName}/actions/sagas: missing`
+    - `/api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}: missing`
+    - `Saga: missing`
+- Implementation:
+  - Added `Saga`, `SagaStep`, `ListSagasResponse`, and `GetSagaResponse` schemas to `api/openapi.yaml`.
+  - Added OpenAPI paths for `listActionSagas` and `getActionSaga` with typed 200 responses, status filtering, pagination parameters, and sagaId path parameter.
+  - Synced `cmd/server/openapi_spec.yaml` from the canonical `api/openapi.yaml`.
+  - Removed the stale saga read endpoint allow-list entries from `cmd/server/contract_test.go`.
+- Verification evidence:
+  - `go test ./cmd/server -run TestOpenAPISpec_DocumentsSagaReadEndpoints -count=1 -v`: passed.
+  - `go test ./cmd/server -run TestOpenAPI -count=1 -v`: passed.
+  - `go test ./cmd/server -run TestContract -count=1 -v`: passed.
+  - `jq empty scripts/ralph/prd.json`: passed.
+  - `git diff --check`: passed.
+- Codebase Patterns:
+  - When documenting an existing route, remove its `undocumentedRouteAllowList` exemption in the same story so `TestContract_AllRoutesDocumented` owns future drift.
+  - Keep `api/openapi.yaml` and `cmd/server/openapi_spec.yaml` byte-identical; the embedded-spec contract test enforces this.
+- Files changed:
+  - `api/openapi.yaml`
+  - `cmd/server/openapi_spec.yaml`
+  - `cmd/server/openapi_handler_test.go`
+  - `cmd/server/contract_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`

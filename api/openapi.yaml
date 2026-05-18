@@ -2646,6 +2646,94 @@ components:
         updatedAt:
           type: string
           format: date-time
+    Saga:
+      type: object
+      description: |
+        US-044: durable saga header for a multi-step action workflow. The
+        status field mirrors the action_sagas lifecycle and drives operator
+        monitoring surfaces.
+      required: [sagaId, ontology, status, createdAt, updatedAt]
+      properties:
+        sagaId:
+          type: string
+        idempotencyKey:
+          type: string
+        ontology:
+          type: string
+        status:
+          type: string
+          enum: [RUNNING, SUCCESS, COMPENSATING, COMPENSATED, FAILED]
+        requestedBy:
+          type: string
+        failureMessage:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SagaStep:
+      type: object
+      description: |
+        US-044: one ordered step in a saga timeline. The JSON snapshot fields
+        carry the prepared action parameters, primary edits, and inverse edits
+        when those values have been persisted.
+      required: [stepId, sagaId, stepIndex, actionType, status, createdAt, updatedAt]
+      properties:
+        stepId:
+          type: string
+        sagaId:
+          type: string
+        stepIndex:
+          type: integer
+        actionType:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+          description: JSON parameters submitted for this step.
+        editsJson:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: JSON edits prepared for the primary action.
+        inverseEditsJson:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: JSON edits prepared by the compensating action.
+        status:
+          type: string
+          enum: [PENDING, APPLIED, FAILED, COMPENSATED, COMPENSATION_FAILED]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ListSagasResponse:
+      type: object
+      description: US-044 saga list response ordered by createdAt descending.
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Saga"
+    GetSagaResponse:
+      type: object
+      description: US-044 saga detail response with the ordered step timeline.
+      required: [saga, steps]
+      properties:
+        saga:
+          $ref: "#/components/schemas/Saga"
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/SagaStep"
     ApplyBatchRequest:
       type: object
       description: |
@@ -9055,6 +9143,78 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/sagas:
+    get:
+      operationId: listActionSagas
+      summary: List action sagas (US-044)
+      description: |
+        Returns saga headers for the active ontology ordered by created_at
+        descending. Optional status, limit, and offset filters power the
+        Saga Jobs monitoring list while keeping SDK consumers on the same
+        typed contract.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: query
+          name: status
+          required: false
+          description: Filter by saga lifecycle status.
+          schema:
+            type: string
+            enum: [RUNNING, SUCCESS, COMPENSATING, COMPENSATED, FAILED]
+        - in: query
+          name: limit
+          required: false
+          description: Max rows to return (default 100, max 1000).
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          required: false
+          description: Result offset, >=0.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Saga headers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSagasResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v2/ontologies/{ontologyApiName}/actions/sagas/{sagaId}:
+    get:
+      operationId: getActionSaga
+      summary: Get an action saga (US-044)
+      description: |
+        Returns one saga header plus its ordered step timeline so clients can
+        render the action lifecycle, compensation markers, and persisted
+        per-step edit snapshots.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: sagaId
+          required: true
+          description: Saga ID returned by applySaga.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Saga detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSagaResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/ontologies/{ontologyApiName}/actions/saga/dlq:
     get:
       operationId: listSagaDLQ

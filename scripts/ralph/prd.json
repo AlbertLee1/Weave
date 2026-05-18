@@ -51,7 +51,7 @@
       "phase": "Developer Contract",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Close the existing contract-test TODO for saga list/get endpoints by adding their OpenAPI paths so SDK and developer-console consumers can discover the action-saga lifecycle surface.",
       "bdd_acceptance": [
