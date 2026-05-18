@@ -206,16 +206,17 @@ describe('Sidebar admin section', () => {
       recentlyViewed: [],
     });
     server.use(
-      http.get('/api/v2/me', () =>
-        HttpResponse.json({
+      http.get('/api/v2/me', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return HttpResponse.json({
           id: 'admin',
           email: '',
           name: '',
           roles: ['admin'],
           ontologyRoles: {},
           permissions: ['ontology.write'],
-        }),
-      ),
+        });
+      }),
     );
     render(
       <MemoryRouter initialEntries={['/admin/datasets/iotDemo/rollback']}>
@@ -240,6 +241,9 @@ describe('Sidebar admin section', () => {
       'href',
       '/quiver/iotDemo',
     );
+    await waitFor(() => {
+      expect(screen.getByTestId('sidebar-admin-section')).toBeInTheDocument();
+    });
     expect(screen.getByText('Object Types').closest('a')).toHaveAttribute(
       'href',
       '/admin/iotDemo/objectTypes',

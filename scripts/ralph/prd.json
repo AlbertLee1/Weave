@@ -43,7 +43,7 @@
       "phase": "Web CI Health",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "The fresh main Web CI job fails only in the full `npx vitest run --coverage` suite: `Sidebar.test.tsx` reaches dataset-scoped Query Builder links but cannot find the admin `Object Types` link. Targeted sidebar coverage passes locally, so this story should root-cause full-suite state or MSW isolation and keep dataset rollback admin navigation stable.",
       "bdd_acceptance": [
@@ -56,7 +56,10 @@
         "GitHub CI run 26021737712 on 2026-05-18 failed Web / Vitest (with coverage).",
         "CI log: `src/components/layout/__tests__/Sidebar.test.tsx > Sidebar admin section > treats :dataset route param as active ontology on dataset routes` failed with `Unable to find an element with the text: Object Types`.",
         "CI log summary: 1 failed file, 262 passed files, 1 failed test, 2780 passed tests.",
-        "Local targeted run on 2026-05-18: `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests, so the failure is full-suite or ordering-sensitive."
+        "Local targeted run on 2026-05-18: `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests, so the failure is full-suite or ordering-sensitive.",
+        "Local red on 2026-05-18: after delaying the Sidebar `/api/v2/me` mock by 20ms, `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` failed with `Unable to find an element with the text: Object Types`, matching CI.",
+        "Green on 2026-05-18: `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests with the delayed auth mock and explicit wait for `sidebar-admin-section`.",
+        "Green on 2026-05-18: `cd web && npx vitest run --coverage` passed 263 files and 2781 tests."
       ],
       "quality_gates": [
         "`cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`",

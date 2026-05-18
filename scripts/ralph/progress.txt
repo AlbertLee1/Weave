@@ -12,6 +12,7 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-164214/
 - Scheduler loops expose Start/Stop lifecycle methods and run an immediate first cycle before ticking on an interval.
 - Scheduler goroutines should capture lifecycle channels into locals before entering the select loop; Stop may mutate struct fields under lock while the goroutine is still running.
 - Race-enabled tests that observe goroutine-updated fixture state should use atomic or mutex-protected counters.
+- Sidebar tests that assert auth-gated admin links must wait for auth-gated UI state; ontology route links can render before `/api/v2/me` resolves and are not proof that admin identity has loaded.
 
 ## SELF-301 - Make audit and LDAP schedulers race-clean in Go CI
 - Selected as the first story because the latest Go CI failure includes deterministic race detector reports and local targeted red tests reproduce quickly.
@@ -35,5 +36,28 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-164214/
   - `pkg/audit/roothash.go`
   - `pkg/audit/roothash_test.go`
   - `pkg/auth/ldap.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
+## SELF-302 - Isolate Sidebar dataset admin nav in full Vitest coverage
+- Selected as the next highest-priority incomplete story after SELF-301 because it was the remaining fresh Web CI blocker.
+- Initial evidence:
+  - Targeted baseline `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage` passed 10 tests.
+  - Local full baseline `cd web && npx vitest run --coverage` passed 263 files / 2781 tests, so the CI failure was timing/order-sensitive rather than a deterministic component regression.
+- Root cause:
+  - The dataset route test waited for `Query Builder`, but that link renders synchronously from the `/admin/datasets/:dataset/rollback` route param.
+  - `Object Types` is auth-gated and appears only after `AuthProvider` finishes `/api/v2/me`.
+  - Under slower full coverage/CI scheduling, the test asserted `Object Types` before the admin identity resolved.
+- Red:
+  - Delayed the Sidebar test's `/api/v2/me` MSW handler by 20ms and kept the old immediate `Object Types` assertion.
+  - `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`: failed with `Unable to find an element with the text: Object Types`, matching CI.
+- Implementation:
+  - Kept the delayed auth handler as a regression guard for slow/full-suite scheduling.
+  - Waited for `sidebar-admin-section` before asserting the `Object Types` link target.
+- Verification evidence:
+  - `cd web && npx vitest run src/components/layout/__tests__/Sidebar.test.tsx --coverage`: passed 10 tests.
+  - `cd web && npx vitest run --coverage`: passed 263 files / 2781 tests.
+- Files changed:
+  - `web/src/components/layout/__tests__/Sidebar.test.tsx`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
