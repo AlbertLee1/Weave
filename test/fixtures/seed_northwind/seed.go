@@ -456,10 +456,20 @@ func wipe(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 		// object_types to satisfy the foreign key constraint.
 		if _, err := pool.Exec(ctx,
 			`DELETE FROM security_policies
-			 WHERE object_type_rid IN (
-			   SELECT rid FROM object_types WHERE ontology_rid = $1
-			 )`, ontRID); err != nil {
+				 WHERE object_type_rid IN (
+				   SELECT rid FROM object_types WHERE ontology_rid = $1
+				 )`, ontRID); err != nil {
 			return fmt.Errorf("delete security_policies: %w", err)
+		}
+		// Datasource bindings also FK to object_types without cascade.
+		// Admin/import dogfood can leave bindings on Northwind types; wipe
+		// them before deleting the object type rows they reference.
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM datasource_bindings
+				 WHERE object_type_rid IN (
+				   SELECT rid FROM object_types WHERE ontology_rid = $1
+				 )`, ontRID); err != nil {
+			return fmt.Errorf("delete datasource_bindings: %w", err)
 		}
 		// Object types — properties cascade via ON DELETE CASCADE (see
 		// migration 000001_initial_schema.up.sql L33).

@@ -78,7 +78,7 @@
       "phase": "Dogfood Data Health",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "The 2026-05-17 WebUI dogfood report found that `scripts/e2e-setup.sh` leaves the Northwind explorer empty because the seed wipe hits a `functions_ontology_rid_fkey` foreign-key violation. Fix the seed/reset ordering so the OSv2 browser and Explorer dogfood paths have a populated Northwind ontology.",
       "bdd_acceptance": [
@@ -89,11 +89,19 @@
       ],
       "ci_evidence": [
         "Dogfood report `dogfood-output/weave-webui-dogfood-20260517.md` records DOG-001: `scripts/e2e-setup.sh` fails during seed wipe with `functions_ontology_rid_fkey` and `/explorer/northwind` renders `No object types`.",
-        "The same report records no persistent browser JS errors across sampled routes, making seed data health the blocker for Northwind Explorer confidence."
+        "The same report records no persistent browser JS errors across sampled routes, making seed data health the blocker for Northwind Explorer confidence.",
+        "Local inspection on 2026-05-18 found the existing DOG-001 guard already covered ontology-scoped non-cascading dependents (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`) but missed object-type-scoped `datasource_bindings`, whose FK to `object_types(rid)` also lacks ON DELETE CASCADE.",
+        "Red on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v` failed with `datasource_bindings_object_type_rid_fkey` blocking `DELETE FROM object_types`.",
+        "Green on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v` passed.",
+        "Green on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -count=1` passed.",
+        "Green on 2026-05-18: `go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1` passed.",
+        "Green on 2026-05-18: `git diff --check` passed."
       ],
       "quality_gates": [
         "Red seed wipe regression test or reproducible local seed failure.",
-        "Targeted seed/reset test or smoke command selected during implementation."
+        "`go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`",
+        "`go test -tags integration ./test/fixtures/seed_northwind -count=1`",
+        "`go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1`"
       ]
     }
   ]

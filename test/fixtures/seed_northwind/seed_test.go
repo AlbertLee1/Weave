@@ -153,8 +153,10 @@ func TestBDD_SeedSurvivesNonCascadingFKDependents(t *testing.T) {
 	}
 
 	// Insert one row in every known non-cascading dependent of
-	// ontologies(rid). Each row is enough to trigger a FK violation
-	// in the next wipe pass if the seeder does not clean it up first.
+	// ontologies(rid), plus an object-type scoped datasource binding that
+	// also lacks ON DELETE CASCADE. Each row is enough to trigger a FK
+	// violation in the next wipe pass if the seeder does not clean it up
+	// first.
 	if _, err := pg.Pool.Exec(ctx,
 		`INSERT INTO functions (rid, ontology_rid, name, source_code)
 		 VALUES ($1, $2, $3, $4)`,
@@ -183,6 +185,14 @@ func TestBDD_SeedSurvivesNonCascadingFKDependents(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed automation_rules row: %v", err)
 	}
+	customerRID := objectTypeRID(ctx, t, pg, first.OntologyRID, "customer")
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO datasource_bindings (rid, object_type_rid, dataset_rid, column_mapping)
+		 VALUES ($1, $2, $3, '{}'::jsonb)`,
+		"ri.datasource-binding.main.test.customer", customerRID, "ri.dataset.main.dataset.northwind-customers",
+	); err != nil {
+		t.Fatalf("seed datasource_bindings row: %v", err)
+	}
 
 	// Second pass must converge — wipe() now owns cleanup of every
 	// non-cascading dependent above.
@@ -210,6 +220,17 @@ func TestBDD_SeedSurvivesNonCascadingFKDependents(t *testing.T) {
 		if n != 0 {
 			t.Errorf("%s still has %d rows for ontology %q after reseed", table, n, second.OntologyRID)
 		}
+	}
+	var bindings int
+	if err := pg.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM datasource_bindings db
+		JOIN object_types ot ON ot.rid = db.object_type_rid
+		WHERE ot.ontology_rid = $1`, second.OntologyRID).Scan(&bindings); err != nil {
+		t.Fatalf("count datasource_bindings: %v", err)
+	}
+	if bindings != 0 {
+		t.Errorf("datasource_bindings still has %d rows for ontology %q after reseed", bindings, second.OntologyRID)
 	}
 }
 
@@ -245,4 +266,15 @@ func countObjectTypesForOntology(ctx context.Context, t *testing.T, pg *testutil
 		t.Fatalf("count object_types: %v", err)
 	}
 	return n
+}
+
+func objectTypeRID(ctx context.Context, t *testing.T, pg *testutil.PGContainer, ontologyRID, apiName string) string {
+	t.Helper()
+	var rid string
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT rid FROM object_types WHERE ontology_rid = $1 AND api_name = $2`,
+		ontologyRID, apiName).Scan(&rid); err != nil {
+		t.Fatalf("lookup object type %q: %v", apiName, err)
+	}
+	return rid
 }

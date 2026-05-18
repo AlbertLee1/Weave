@@ -6,6 +6,7 @@ Started: Mon May 18 14:31:32 CST 2026
 - ObjectSet `searchAround` uses API-name link traversal interfaces; production `links.Resolver` must expose the same optional reverse and target-type methods that ObjectSet mocks use.
 - M2M ObjectSet coverage should wire `links.NewResolverWithEdges` and an EdgeRepository-shaped fixture so the test protects the join-table path, not only mock fanout.
 - Web download tests should not require `payload instanceof Blob` when recording `URL.createObjectURL` inputs; jsdom/undici/iframe boundaries can produce Blob objects from another realm. Store blob-like `{size,type}` payloads instead.
+- Northwind seed wipe must clean non-cascading dependents at both ontology scope and object-type scope. In particular, `datasource_bindings.object_type_rid` lacks ON DELETE CASCADE, so delete bindings before deleting seeded `object_types`.
 
 ## [2026-05-18 14:31 CST] - PRD reset
 - Archived stale Ralph state for branch `ralph/self-iteration-20260518-102411` under `scripts/ralph/archive/self-iteration-20260518-143132/`.
@@ -65,5 +66,27 @@ Started: Mon May 18 14:31:32 CST 2026
   - `cd web && npm run build`: passed.
 - Files changed:
   - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
+## [2026-05-18 15:05 CST] - SELF-203
+- Root cause:
+  - Existing seed wipe coverage already handled the 2026-05-17 DOG-001 ontology-scoped blockers (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`).
+  - A schema scan found a remaining object-type-scoped blocker: `datasource_bindings.object_type_rid` references `object_types(rid)` without ON DELETE CASCADE.
+  - Real Admin/import dogfood can leave datasource bindings attached to Northwind object types, causing a reseed to fail while deleting `object_types` and leaving Explorer with no object types.
+- Red test:
+  - Extended `TestBDD_SeedSurvivesNonCascadingFKDependents` with a seeded Northwind `datasource_bindings` row.
+  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`: failed with `datasource_bindings_object_type_rid_fkey` blocking `DELETE FROM object_types`.
+- Implementation:
+  - Updated `wipe()` in `test/fixtures/seed_northwind/seed.go` to delete `datasource_bindings` for Northwind object types before deleting `object_types`.
+  - Kept the BDD regression asserting datasource bindings are gone after reseed convergence.
+- Verification evidence:
+  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`: passed.
+  - `go test -tags integration ./test/fixtures/seed_northwind -count=1`: passed.
+  - `go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1`: passed.
+  - `git diff --check`: passed.
+- Files changed:
+  - `test/fixtures/seed_northwind/seed.go`
+  - `test/fixtures/seed_northwind/seed_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
