@@ -5,6 +5,7 @@ import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
 import us444AppBuilderSpecSource from '../../../e2e/us444/08-app-builder.spec.ts?raw';
 import us444BranchSpecSource from '../../../e2e/us444/06-branch.spec.ts?raw';
 import us444MergeSpecSource from '../../../e2e/us444/07-merge.spec.ts?raw';
+import us444SagaSpecSource from '../../../e2e/us444/05-saga.spec.ts?raw';
 import us444MarketplaceSpecSource from '../../../e2e/us444/10-marketplace.spec.ts?raw';
 import us444PackageInstallSpecSource from '../../../e2e/us444/11-pkg-install.spec.ts?raw';
 import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
@@ -45,6 +46,21 @@ describe('Playwright spec contracts', () => {
     );
     expect(source).toContain('errorCode');
     expect(source).toContain('errorName');
+  });
+
+  it('keeps the US-444 saga gate wired and skip-free', () => {
+    const source = us444SagaSpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain('/api/v2/ontologies/${ONTOLOGY}/actions/applySaga');
+    expect(source).toContain('/api/v2/ontologies/${ONTOLOGY}/actions/saga/dlq');
+    expect(source).toContain('saga apply endpoint must be wired');
+    expect(source).toContain('saga DLQ endpoint must be wired');
+    expect(source).not.toContain('saga endpoint not wired');
+    expect(source).not.toContain('saga DLQ endpoint not wired');
+    expect(source).not.toContain('res.ok() || res.status() === 503');
+    expect(source).not.toContain('res.status() === 404');
   });
 
   it('keeps the US-444 lineage gate wired to mandatory lineage endpoints', () => {

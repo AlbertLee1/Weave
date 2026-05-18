@@ -49,3 +49,24 @@ SELF-425 TDD:
   - scripts/ralph/prd.json
   - scripts/ralph/progress.txt
 - Reusable learning: if a Playwright smoke spec skips on 503 after backend reachability, check whether the route is merely mounted or whether the standard server bootstrap wires the backing runtime/store. The right fix may be production wiring, not only stricter assertions.
+
+SELF-426 TDD:
+- RED: add a Playwright spec contract assertion that the saga spec is skip-free and contains mandatory applySaga / saga DLQ endpoint-wired assertions.
+- RED result: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `web/e2e/us444/05-saga.spec.ts` still contained `test.skip(...)`.
+- Root cause: the US-444 saga smoke spec already used `skipWhenBackendDown(request)` for unreachable local backends, but it still skipped reachable-backend 404s and accepted a 503 from the DLQ list endpoint. That let an unwired saga route/store pass the full-stack smoke gate.
+- Implementation:
+  - Hardened `web/e2e/us444/05-saga.spec.ts` so applySaga fails on 404/503 before asserting a structured 4xx validation error for empty steps.
+  - Hardened the saga DLQ probe so it requires a successful structured response with an `entries` array instead of accepting 404 skip paths or 503 degraded responses.
+  - Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so the saga spec must remain skip-free and must keep the mandatory wired-endpoint assertion strings.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` -> 1 file passed, 10 tests passed.
+  - `npm --prefix web exec playwright test -- --list us444/05-saga.spec.ts` -> 2 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/05-saga.spec.ts` -> no matches (exit 1).
+  - `go test ./pkg/actions -run Saga` -> ok.
+  - `git diff --check` -> clean.
+- Files changed for SELF-426:
+  - web/e2e/us444/05-saga.spec.ts
+  - web/src/lib/__tests__/playwrightSpecContracts.test.ts
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Reusable learning: for US-444 smoke probes, `skipWhenBackendDown(request)` is the only portability skip that should remain. Once the backend is reachable, 404/503 endpoint responses should be asserted as failures unless the story explicitly covers degraded-mode behavior.
