@@ -99,3 +99,26 @@ Story SELF-417 - Restore optimistic concurrency browser gate:
 - Reusable learning:
   - The legacy object-history endpoint is intentionally removed by US-006; Action Console version reads should use the current activity timeline endpoint and derive the version from the newest row.
   - Seed-package integration tests are behind the `integration` build tag, so `go test ./test/fixtures/seed_northwind` alone only compiles the package and reports `[no test files]`.
+
+Story SELF-418 - Make the US-444 action gate assert seeded actions:
+- Selected as the only remaining incomplete story because SELF-416 and SELF-417 were already passing, and the US-444 action Playwright probe still skipped the dispatcher contract when the Northwind action catalog was empty.
+- RED:
+  - Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` to assert that `web/e2e/us444/04-action.spec.ts` has no `test.skip`/`test.fixme`, does not dispatch `types[0].apiName`, requires the known `createCustomer` seed action, and posts to the named action dispatcher path.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because the source still matched `test.skip(`.
+- GREEN implementation:
+  - Changed `web/e2e/us444/04-action.spec.ts` to require `createCustomer` in the seeded Northwind action catalog instead of skipping on an empty list.
+  - Posted deliberately invalid parameters to `/actions/createCustomer/apply` and asserted a structured 4xx ApiError envelope with `errorCode` or `errorName`.
+- Verification:
+  - RED command above failed for the expected `test.skip(` match before implementation.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 3 tests.
+  - `npm --prefix web exec playwright test -- --list us444/04-action.spec.ts` passed: listed 1 active test.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/04-action.spec.ts` returned no matches (exit 1).
+  - `npm --prefix web test -- --run` passed: 268 files, 2798 tests.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/e2e/us444/04-action.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - US-444 action gate coverage should bind to a known Northwind seed action, not the first listed action, so an empty or malformed action catalog fails before the dispatcher contract can be skipped.
