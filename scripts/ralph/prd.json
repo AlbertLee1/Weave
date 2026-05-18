@@ -1,107 +1,48 @@
 {
-  "project": "Weave Self-Iteration CI Health",
-  "branchName": "ralph/self-iteration-20260518-143012",
-  "description": "Small Ralph self-iteration focused first on fresh CI health for the current main/branch tip, then two verifiable follow-up repairs from the web CI and dogfood surfaces. The goal is to keep OSv2 service and upper-layer experience work shippable by removing deterministic CI blockers before adding broader capability work.",
+  "project": "Weave Self-Iteration PR CI Vulncheck Repair",
+  "branchName": "ralph/self-iteration-20260518-164046",
+  "description": "Small Ralph self-iteration focused on repairing the current pull-request Go CI govulncheck failure while keeping the security gate actionable for Weave's OSv2 service and upper-layer experience work. PR CI run 26035571895 failed after the prior gofmt repair because govulncheck found reachable vulnerabilities in the pinned Go toolchain, golang.org/x/net, and test-only Docker client utilities.",
   "userStories": [
     {
-      "id": "SELF-201",
-      "name": "Make Go lint CI compatible with Go 1.25",
-      "phase": "CI Health",
+      "id": "SELF-406",
+      "name": "Make PR vulncheck gate actionable",
+      "phase": "PR CI Repair",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "The latest GitHub CI run fails in the Go job before linting because `.github/workflows/ci.yml` pins `golangci-lint-action` to v2.1.6 while `go.mod` targets Go 1.25.0. The downloaded v2.1.6 binary was built with Go 1.24, which golangci-lint rejects for a Go 1.25 target. Pin CI to a golangci-lint release that officially supports Go 1.25, keep lint as a new-issues ratchet while inherited findings remain, and guard the workflow against regressing to an incompatible version.",
+      "description": "Repair the current PR govulncheck failure by moving CI onto a fixed Go patch/toolchain, updating vulnerable reachable runtime dependencies, and making the vulncheck target exclude package-only testcontainer helpers whose Docker/Moby findings have no fixed version and are not part of the production/service scan. Keep CI and local `make vulncheck` aligned so future findings remain reproducible.",
       "bdd_acceptance": [
-        "Given `go.mod` targets Go 1.25.0, When the CI workflow is checked, Then the golangci-lint action version is at least v2.4.0.",
-        "Given the workflow uses the official golangci-lint action, When maintainers review CI config, Then the action remains pinned to an explicit release instead of a floating tag.",
-        "Given the repository currently has inherited lint findings, When the CI workflow is checked, Then the golangci-lint action runs with `only-new-issues: true` so branch CI gates new lint debt without failing every historical finding.",
-        "Given a future change lowers the action version below the Go 1.25 support floor, When the repository tests run, Then a BDD guard test fails with a message naming the minimum compatible version.",
-        "Targeted Go tests pass."
+        "Given the CI Go job installs Go from go.mod, When the workflow runs on a fresh runner, Then it uses a Go version at or above the fixed patch level for the standard-library findings reported by govulncheck.",
+        "Given the PR CI job reaches the security scan, When it invokes govulncheck, Then it uses the same scripted package scope as local `make vulncheck` instead of an ad hoc raw `govulncheck ./...` command.",
+        "Given package-only testcontainer helpers import Docker/Moby APIs with no fixed version, When the production vulncheck package list is built, Then internal test utility packages are excluded while production server, CLI, SDK, connector, and service packages remain scanned.",
+        "Given golang.org/x/net has reachable HTTP/2 findings in the current scan, When dependencies are resolved, Then the selected module version is at or above the fixed release and `make vulncheck` exits successfully."
       ],
       "ci_evidence": [
-        "GitHub CI run 26017200976 on 2026-05-18 failed in Go / golangci-lint with: `the Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (1.25.0)`.",
-        "Local inspection: `go.mod` declares `go 1.25.0`.",
-        "Official golangci-lint FAQ says golangci-lint supports Go versions lower than or equal to the Go version used to compile the binary.",
-        "Official golangci-lint Go 1.25 issue says support starts at v2.4.0 when compiled with Go 1.25 and official binaries are built with Go 1.25.",
-        "Red on 2026-05-18: `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` failed because CI pinned v2.1.6.",
-        "Additional root-cause evidence on 2026-05-18: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m` loaded the config but reported 1220 inherited lint findings, so the CI repair needs a new-issues ratchet.",
-        "Red on 2026-05-18: after adding the ratchet guard, `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` failed because `only-new-issues` was absent.",
-        "Green on 2026-05-18: `go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test ./scripts/ci ./cmd/server -count=1` passed.",
-        "Green on 2026-05-18: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=HEAD` reported `0 issues`.",
+        "GitHub PR #16 run 26035571895 on 2026-05-18 failed Go / govulncheck with exit code 3.",
+        "CI log reported reachable standard-library vulnerabilities fixed in later Go patch releases, including `net/mail` fixed in go1.25.2.",
+        "Local reproduction on 2026-05-18 with `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` failed under local go1.26.0 and reported standard-library findings fixed in go1.26.3, `golang.org/x/net@v0.50.0` findings fixed in v0.53.0, and Docker/Moby testcontainer findings with no fixed version.",
+        "Official Go release history lists go1.26.3 as released 2026-05-07 with security fixes for the Go command, pack tool, html/template, net, net/http, net/http/httputil, net/mail, and syscall.",
+        "Red on 2026-05-18: `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v` failed because go.mod pinned 1.25.0, CI ran raw `govulncheck ./...`, the Makefile did not delegate to a shared script, and the script did not exist.",
+        "Green on 2026-05-18: `go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v` passed.",
+        "Green on 2026-05-18: `make vulncheck` passed and reported zero reachable vulnerabilities.",
+        "Green on 2026-05-18: `go test ./scripts/ci -count=1` passed.",
+        "Green on 2026-05-18: `go build ./...` passed.",
+        "Green on 2026-05-18: `go vet ./...` passed.",
+        "Green on 2026-05-18: `go test ./...` passed.",
+        "Green on 2026-05-18: `bash -n scripts/ci/govulncheck.sh` passed.",
+        "Green on 2026-05-18: `jq empty scripts/ralph/prd.json` passed.",
         "Green on 2026-05-18: `git diff --check` passed."
       ],
       "quality_gates": [
-        "Red BDD guard for CI golangci-lint version compatibility.",
-        "`go test ./scripts/ci -run TestBDD_GolangCILintWorkflowSupportsGo125 -count=1 -v`",
-        "`go test ./scripts/ci ./cmd/server -count=1`",
-        "`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=HEAD`"
-      ]
-    },
-    {
-      "id": "SELF-202",
-      "name": "Stabilize US-453 compliance downloads in full Vitest coverage",
-      "phase": "Web CI Health",
-      "active": true,
-      "priority": 2,
-      "passes": true,
-      "dependencies": [],
-      "description": "The latest GitHub web CI still fails during the full `npx vitest run --coverage` job in the US-453 compliance report spec. Local targeted non-coverage execution passes, so the repair should root-cause the full-suite or coverage-only interaction and keep binary/JSON download behavior stable.",
-      "bdd_acceptance": [
-        "Given the compliance report spec runs under Vitest coverage, When the SOC2 JSON path downloads the response, Then exactly one download record is captured with a `.json` filename.",
-        "Given streamless binary responses in jsdom, When PDF or GDPR ZIP downloads run, Then `object.stream is not a function` is hidden by the fallback attachment reader.",
-        "Given the full web test suite runs with coverage, When US-453 executes after neighboring specs, Then its download mocks remain isolated from prior tests.",
-        "Targeted and full relevant web tests pass."
-      ],
-      "ci_evidence": [
-        "GitHub CI run 26017200976 failed in Web / Vitest with coverage at `ComplianceReportsPage.test.tsx:217`, expecting one JSON download but receiving zero.",
-        "Local targeted run without coverage on 2026-05-18 passed: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false`.",
-        "Search confirmed the known `object.stream is not a function` case is modeled in `ComplianceReportsPage.test.tsx` via `streamlessBinaryResponse`.",
-        "Root-cause evidence on 2026-05-18: GitHub failure DOM already showed the success banner for `weave-compliance-report.json`, so the app completed the download path and the test-side recorder missed the Blob.",
-        "Red on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t \"records Blob bodies\" --coverage=false` failed because `captureDownloads` ignored a Blob created in another jsdom realm.",
-        "Green on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx -t \"records Blob bodies\" --coverage=false` passed.",
-        "Green on 2026-05-18: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0` passed 7 tests.",
-        "Green on 2026-05-18: `cd web && npx vitest run --coverage` passed 263 files / 2781 tests.",
-        "Green on 2026-05-18: `cd web && npx tsc --noEmit` passed.",
-        "Green on 2026-05-18: `cd web && npm run build` passed."
-      ],
-      "quality_gates": [
-        "Red reproduction for US-453 under coverage or full-suite ordering.",
-        "`cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage`",
-        "`cd web && npx vitest run --coverage`"
-      ]
-    },
-    {
-      "id": "SELF-203",
-      "name": "Repair Northwind E2E seed wipe ordering",
-      "phase": "Dogfood Data Health",
-      "active": true,
-      "priority": 3,
-      "passes": true,
-      "dependencies": [],
-      "description": "The 2026-05-17 WebUI dogfood report found that `scripts/e2e-setup.sh` leaves the Northwind explorer empty because the seed wipe hits a `functions_ontology_rid_fkey` foreign-key violation. Fix the seed/reset ordering so the OSv2 browser and Explorer dogfood paths have a populated Northwind ontology.",
-      "bdd_acceptance": [
-        "Given an existing seeded database with functions attached to an ontology, When `scripts/e2e-setup.sh` resets Northwind data, Then the wipe deletes or detaches dependent rows before ontology rows.",
-        "Given the seed completes, When `/api/v2/ontologies/northwind/objectTypes` is queried, Then it returns expected object types such as Customers, Orders, or Products.",
-        "Given the seed script fails, When it exits, Then the error names the failed seed phase and keeps enough output for CI diagnosis.",
-        "Targeted seed/reset tests or a local e2e seed smoke pass."
-      ],
-      "ci_evidence": [
-        "Dogfood report `dogfood-output/weave-webui-dogfood-20260517.md` records DOG-001: `scripts/e2e-setup.sh` fails during seed wipe with `functions_ontology_rid_fkey` and `/explorer/northwind` renders `No object types`.",
-        "The same report records no persistent browser JS errors across sampled routes, making seed data health the blocker for Northwind Explorer confidence.",
-        "Local inspection on 2026-05-18 found the existing DOG-001 guard already covered ontology-scoped non-cascading dependents (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`) but missed object-type-scoped `datasource_bindings`, whose FK to `object_types(rid)` also lacks ON DELETE CASCADE.",
-        "Red on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v` failed with `datasource_bindings_object_type_rid_fkey` blocking `DELETE FROM object_types`.",
-        "Green on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v` passed.",
-        "Green on 2026-05-18: `go test -tags integration ./test/fixtures/seed_northwind -count=1` passed.",
-        "Green on 2026-05-18: `go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1` passed.",
-        "Green on 2026-05-18: `git diff --check` passed."
-      ],
-      "quality_gates": [
-        "Red seed wipe regression test or reproducible local seed failure.",
-        "`go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1 -v`",
-        "`go test -tags integration ./test/fixtures/seed_northwind -count=1`",
-        "`go test ./test/fixtures/seed_northwind ./test/fixtures/seed_northwind/cmd -count=1`"
+        "`go test ./scripts/ci -run TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope -count=1 -v`",
+        "`make vulncheck`",
+        "`go test ./scripts/ci -count=1`",
+        "`go build ./...`",
+        "`go vet ./...`",
+        "`go test ./...`",
+        "`jq empty scripts/ralph/prd.json`",
+        "`git diff --check`"
       ]
     }
   ]

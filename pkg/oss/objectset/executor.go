@@ -1349,7 +1349,12 @@ func (e *Executor) executeSample(ctx context.Context, def *Definition) (*Result,
 	}
 	rng := rand.New(src)
 
-	sampled := reservoirSample(inner.PrimaryKeys, size, rng)
+	candidates := inner.PrimaryKeys
+	if def.Seed != nil {
+		candidates = append([]string(nil), inner.PrimaryKeys...)
+		sort.Strings(candidates)
+	}
+	sampled := reservoirSample(candidates, size, rng)
 
 	return &Result{
 		ObjectType:  inner.ObjectType,

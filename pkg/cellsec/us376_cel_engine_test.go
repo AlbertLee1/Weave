@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liyang/weave/internal/testprofile"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/masking"
 )
@@ -364,10 +365,14 @@ func TestUS376_PerfGate_1000Rows_10Columns_Under50ms(t *testing.T) {
 		masking.ApplyStrategyTransforms(rowsData[r], transforms)
 	}
 	elapsed := time.Since(start)
-	if elapsed > 50*time.Millisecond {
-		t.Fatalf("PRD perf gate failed: %d rows × %d cols took %v (>50ms)", rows, cols, elapsed)
+	budget := 50 * time.Millisecond
+	if testprofile.Instrumented(testing.CoverMode()) {
+		budget = 250 * time.Millisecond
 	}
-	t.Logf("PRD perf gate: 1000 rows × 10 cols in %v", elapsed)
+	if elapsed > budget {
+		t.Fatalf("PRD perf gate failed: %d rows × %d cols took %v (>%v)", rows, cols, elapsed, budget)
+	}
+	t.Logf("PRD perf gate: 1000 rows × 10 cols in %v (budget %v)", elapsed, budget)
 }
 
 // itoa is a tiny base-10 conversion helper to avoid pulling strconv into the

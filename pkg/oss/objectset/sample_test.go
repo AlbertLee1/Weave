@@ -196,6 +196,52 @@ func TestExecute_Sample_SeedDeterministic(t *testing.T) {
 	}
 }
 
+func TestBDD_ExecuteSample_SeedCanonicalizesUnorderedUniverse(t *testing.T) {
+	executor := objectset.NewExecutor(nil, nil, nil)
+	ctx := context.Background()
+
+	size := 3
+	seed := int64(123)
+	forward := &objectset.Definition{
+		Type: "sample",
+		ObjectSet: &objectset.Definition{
+			Type:        "static",
+			ObjectType:  "employee",
+			PrimaryKeys: []string{"e1", "e2", "e3", "e4"},
+		},
+		Size: &size,
+		Seed: &seed,
+	}
+	reversed := &objectset.Definition{
+		Type: "sample",
+		ObjectSet: &objectset.Definition{
+			Type:        "static",
+			ObjectType:  "employee",
+			PrimaryKeys: []string{"e4", "e3", "e2", "e1"},
+		},
+		Size: &size,
+		Seed: &seed,
+	}
+
+	a, err := executor.Execute(ctx, forward)
+	if err != nil {
+		t.Fatalf("Execute forward: %v", err)
+	}
+	b, err := executor.Execute(ctx, reversed)
+	if err != nil {
+		t.Fatalf("Execute reversed: %v", err)
+	}
+
+	if len(a.PrimaryKeys) != len(b.PrimaryKeys) {
+		t.Fatalf("expected same length, got %d vs %d", len(a.PrimaryKeys), len(b.PrimaryKeys))
+	}
+	for i := range a.PrimaryKeys {
+		if a.PrimaryKeys[i] != b.PrimaryKeys[i] {
+			t.Fatalf("pk[%d] diverged after input reorder: %s vs %s (forward=%v reversed=%v)", i, a.PrimaryKeys[i], b.PrimaryKeys[i], a.PrimaryKeys, b.PrimaryKeys)
+		}
+	}
+}
+
 // TestExecute_Sample_DifferentSeedsDiffer verifies that different seeds
 // produce at least one differing ordering over a universe large enough to
 // make a pure-chance match statistically unlikely.

@@ -114,12 +114,14 @@ func (p *RootHashPublisher) Start(ctx context.Context) {
 		p.mu.Unlock()
 		return
 	}
-	p.stopCh = make(chan struct{})
-	p.doneCh = make(chan struct{})
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	p.stopCh = stopCh
+	p.doneCh = doneCh
 	p.mu.Unlock()
 
 	go func() {
-		defer close(p.doneCh)
+		defer close(doneCh)
 		p.runOnce(ctx)
 		t := time.NewTicker(p.interval)
 		defer t.Stop()
@@ -127,7 +129,7 @@ func (p *RootHashPublisher) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-p.stopCh:
+			case <-stopCh:
 				return
 			case <-t.C:
 				p.runOnce(ctx)

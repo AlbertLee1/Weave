@@ -41,19 +41,19 @@ type LDAPSyncConfig struct {
 	DialTimeout  time.Duration // Per-connection dial timeout (default DefaultLDAPDialTimeout)
 
 	// User search.
-	UserBaseDN          string
-	UserFilter          string // Defaults to "(objectClass=person)"
-	UserEmailAttribute  string // Defaults to "mail"
-	UserNameAttribute   string // Defaults to "displayName"
-	UserLoginAttribute  string // Optional; used as the email fallback when the directory only carries sAMAccountName
-	UserMemberOfAttr    string // Optional; if set, group memberships are derived from the user's memberOf attribute instead of group.member traversal
+	UserBaseDN         string
+	UserFilter         string // Defaults to "(objectClass=person)"
+	UserEmailAttribute string // Defaults to "mail"
+	UserNameAttribute  string // Defaults to "displayName"
+	UserLoginAttribute string // Optional; used as the email fallback when the directory only carries sAMAccountName
+	UserMemberOfAttr   string // Optional; if set, group memberships are derived from the user's memberOf attribute instead of group.member traversal
 
 	// Group search.
-	GroupBaseDN            string
-	GroupFilter            string // Defaults to "(objectClass=groupOfNames)"
-	GroupNameAttribute     string // Defaults to "cn"
-	GroupMemberAttribute   string // Defaults to "member"
-	GroupDescriptionAttr   string // Defaults to "description"
+	GroupBaseDN          string
+	GroupFilter          string // Defaults to "(objectClass=groupOfNames)"
+	GroupNameAttribute   string // Defaults to "cn"
+	GroupMemberAttribute string // Defaults to "member"
+	GroupDescriptionAttr string // Defaults to "description"
 }
 
 // withDefaults returns a copy of cfg with empty fields populated by the
@@ -527,12 +527,14 @@ func (s *LDAPSyncScheduler) Start(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	s.stopCh = make(chan struct{})
-	s.doneCh = make(chan struct{})
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	s.stopCh = stopCh
+	s.doneCh = doneCh
 	s.mu.Unlock()
 
 	go func() {
-		defer close(s.doneCh)
+		defer close(doneCh)
 		// Initial run immediately so operators see ldap state on boot.
 		s.runOnce(ctx)
 		t := time.NewTicker(s.interval)
@@ -541,7 +543,7 @@ func (s *LDAPSyncScheduler) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-s.stopCh:
+			case <-stopCh:
 				return
 			case <-t.C:
 				s.runOnce(ctx)

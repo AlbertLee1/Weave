@@ -91,8 +91,7 @@ test-cover-update: ## US-056: re-record coverage/baseline.json from the current 
 	@echo "baseline updated; review coverage/baseline.json before committing"
 
 vulncheck:
-	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
-	govulncheck ./...
+	@./scripts/ci/govulncheck.sh
 
 lint-fix:
 	golangci-lint run --fix ./...

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/liyang/weave/internal/testprofile"
 	"github.com/liyang/weave/pkg/auth"
 )
 
@@ -21,18 +22,76 @@ import (
 // suite via the standard `go test ./...` invocation.
 
 const (
-	benchPoliciesCount    = 10
-	benchUserCardinality  = 50
-	benchRowCardinality   = 50
-	benchIterationsTotal  = 1_000_000
-	benchColdBudget       = 500 * time.Millisecond
-	benchWarmBudget       = 50 * time.Millisecond
+	benchPoliciesCount   = 10
+	benchUserCardinality = 50
+	benchRowCardinality  = 50
+	benchIterationsTotal = 1_000_000
+	benchColdBudget      = 500 * time.Millisecond
+	benchWarmBudget      = 50 * time.Millisecond
 )
+
+type rlsPerfProfile struct {
+	name       string
+	iterations int
+	coldBudget time.Duration
+	warmBudget time.Duration
+}
+
+func currentRLSPerfProfile() rlsPerfProfile {
+	if testprofile.Instrumented(testing.CoverMode()) {
+		return rlsPerfProfile{
+			name:       "instrumented",
+			iterations: 200_000,
+			coldBudget: 1500 * time.Millisecond,
+			warmBudget: time.Second,
+		}
+	}
+	return rlsPerfProfile{
+		name:       "standard",
+		iterations: benchIterationsTotal,
+		coldBudget: benchColdBudget,
+		warmBudget: benchWarmBudget,
+	}
+}
+
+func TestRLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance(t *testing.T) {
+	profile := currentRLSPerfProfile()
+
+	if testprofile.Instrumented(testing.CoverMode()) {
+		if profile.name != "instrumented" {
+			t.Fatalf("profile.name = %q, want instrumented", profile.name)
+		}
+		if profile.iterations != 200_000 {
+			t.Fatalf("profile.iterations = %d, want 200000", profile.iterations)
+		}
+		if profile.coldBudget != 1500*time.Millisecond {
+			t.Fatalf("profile.coldBudget = %v, want 1.5s for GitHub race+coverage variance", profile.coldBudget)
+		}
+		if profile.warmBudget != time.Second {
+			t.Fatalf("profile.warmBudget = %v, want 1s", profile.warmBudget)
+		}
+		return
+	}
+
+	if profile.name != "standard" {
+		t.Fatalf("profile.name = %q, want standard", profile.name)
+	}
+	if profile.iterations != benchIterationsTotal {
+		t.Fatalf("profile.iterations = %d, want %d", profile.iterations, benchIterationsTotal)
+	}
+	if profile.coldBudget != benchColdBudget {
+		t.Fatalf("profile.coldBudget = %v, want %v", profile.coldBudget, benchColdBudget)
+	}
+	if profile.warmBudget != benchWarmBudget {
+		t.Fatalf("profile.warmBudget = %v, want %v", profile.warmBudget, benchWarmBudget)
+	}
+}
 
 func TestRLSEvaluator_PerformanceGate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("performance gate; -short skips")
 	}
+	profile := currentRLSPerfProfile()
 
 	eval, rules, users, rows, rowKeys := buildRLSWorkload(t)
 	set, err := eval.BuildRuleSet(rules)
@@ -43,7 +102,7 @@ func TestRLSEvaluator_PerformanceGate(t *testing.T) {
 	pass := func() time.Duration {
 		ctx := context.Background()
 		start := time.Now()
-		for i := 0; i < benchIterationsTotal; i++ {
+		for i := 0; i < profile.iterations; i++ {
 			u := users[i%benchUserCardinality]
 			ridx := i % benchRowCardinality
 			allow, err := eval.EvaluateRuleSet(ctx, u, set, rowKeys[ridx], rows[ridx])
@@ -63,15 +122,15 @@ func TestRLSEvaluator_PerformanceGate(t *testing.T) {
 	dc := eval.DecisionCache()
 	dcStats := dc.Stats()
 	hits, misses := eval.CompileStats()
-	t.Logf("cold=%v warm=%v decisionCache=%+v compileHits=%d compileMisses=%d",
-		coldDur, warmDur, dcStats, hits, misses)
+	t.Logf("profile=%s iterations=%d cold=%v warm=%v decisionCache=%+v compileHits=%d compileMisses=%d",
+		profile.name, profile.iterations, coldDur, warmDur, dcStats, hits, misses)
 
-	if coldDur > benchColdBudget {
-		t.Errorf("cold pass %v exceeded budget %v (1M iterations × %d policies, %d unique decisions)",
-			coldDur, benchColdBudget, benchPoliciesCount, benchUserCardinality*benchRowCardinality)
+	if coldDur > profile.coldBudget {
+		t.Errorf("cold pass %v exceeded budget %v (%d iterations × %d policies, %d unique decisions)",
+			coldDur, profile.coldBudget, profile.iterations, benchPoliciesCount, benchUserCardinality*benchRowCardinality)
 	}
-	if warmDur > benchWarmBudget {
-		t.Errorf("warm pass %v exceeded budget %v (1M cache hits)", warmDur, benchWarmBudget)
+	if warmDur > profile.warmBudget {
+		t.Errorf("warm pass %v exceeded budget %v (%d cache-hit iterations)", warmDur, profile.warmBudget, profile.iterations)
 	}
 }
 

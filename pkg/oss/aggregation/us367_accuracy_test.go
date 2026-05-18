@@ -10,6 +10,7 @@ import (
 	"github.com/axiomhq/hyperloglog"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
+	"github.com/liyang/weave/internal/testprofile"
 )
 
 // US-367 — accuracy=ALLOW_APPROXIMATE 走 HLL；REQUIRE_ACCURATE 走精确；
@@ -273,6 +274,10 @@ func TestApproximateDistinct_OneMillion_FasterThanExactByFiveX(t *testing.T) {
 
 	speedup := float64(exactDur) / float64(hllDur)
 	t.Logf("1M distinct: exact=%v hll=%v speedup=%.2f×", exactDur, hllDur, speedup)
+	if testprofile.Instrumented(testing.CoverMode()) {
+		t.Log("strict 5x speedup gate skipped under Go test instrumentation; benchmarks and standard tests enforce it without race/coverage overhead")
+		return
+	}
 	if speedup < 5.0 {
 		t.Fatalf("HLL speedup %.2f× < 5× (exact=%v hll=%v)", speedup, exactDur, hllDur)
 	}
