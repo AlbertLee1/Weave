@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
+import us444AggregateSpecSource from '../../../e2e/us444/03-aggregate.spec.ts?raw';
 import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
 import us444AppBuilderSpecSource from '../../../e2e/us444/08-app-builder.spec.ts?raw';
 import us444BranchSpecSource from '../../../e2e/us444/06-branch.spec.ts?raw';
@@ -48,6 +49,16 @@ describe('Playwright spec contracts', () => {
     );
     expect(source).toContain('errorCode');
     expect(source).toContain('errorName');
+  });
+
+  it('keeps the US-444 aggregate gate wired and skip-free', () => {
+    const source = us444AggregateSpecSource;
+
+    expect(source).not.toMatch(/test\.skip\s*\(/);
+    expect(source).not.toMatch(/test\.fixme\s*\(/);
+    expect(source).toContain('/objects/customer/aggregate');
+    expect(source).toContain('aggregate endpoint must be wired');
+    expect(source).not.toContain('aggregate endpoint unavailable');
   });
 
   it('keeps the US-444 saga gate wired and skip-free', () => {

@@ -22,7 +22,8 @@ test.describe('US-444 — aggregate', () => {
         },
       },
     );
-    test.skip(!res.ok(), `aggregate endpoint unavailable: ${res.status()}`);
+    const failureBody = res.ok() ? '' : await res.text();
+    expect(res.ok(), `aggregate endpoint must be wired: ${res.status()} ${failureBody}`).toBe(true);
 
     // The live aggregate endpoint returns metrics as `data[].metrics[]`
     // where each entry is a `{name, value}` pair. Older drafts of this
