@@ -1,62 +1,92 @@
 {
-  "project": "Weave Self-Iteration CI Health",
-  "branchName": "ralph/self-iteration-20260518-004206",
-  "description": "Small Ralph self-iteration focused on restoring main CI health before adding new OSv2-facing capability work. Evidence comes from GitHub Actions run 25996414394 on main after the AI News dogfood merge plus local repository inspection.",
+  "project": "Weave Self-Iteration ValueType Data Quality",
+  "branchName": "ralph/self-iteration-20260518-102411",
+  "description": "Small Ralph self-iteration after fresh local CI health passed. Current focus is OSv2 semantic data quality and relationship confidence: fix a ValueType constraint contract mismatch discovered by code inspection, then leave two small follow-up stories for stream ingest/schema validation and M2M ObjectSet searchAround coverage.",
   "userStories": [
     {
-      "id": "SELF-001",
-      "name": "Make Go CI build independent of generated WebUI dist",
-      "phase": "Fresh CI Health",
+      "id": "SELF-101",
+      "name": "Enforce Admin UI ValueType pattern constraints",
+      "phase": "OSv2 Semantic Types",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "The Go CI job runs `go build ./...` immediately after checkout, before the web job has produced `web/dist` or `cmd/server/web/dist`. `cmd/server/embed.go` currently embeds `all:web/dist`, so fresh checkout builds fail with `pattern all:web/dist: no matching files found`. Remove the compile-time dependency on ignored generated assets while preserving SPA embedding when `make web-build` has populated the dist directory.",
+      "description": "The ValueType admin UI stores regex constraints as `{ \"pattern\": \"...\" }`, while backend constraint enforcement only checks `{ \"regex\": \"...\" }`. Action writes that rely on UI-authored ValueType pattern constraints can silently accept invalid values. Support the UI contract without regressing the existing legacy `regex` contract.",
       "bdd_acceptance": [
-        "Given a fresh checkout with no `web/dist` and no `cmd/server/web/dist`, When `go build ./cmd/server` runs, Then the build succeeds instead of failing on a missing embed pattern.",
-        "Given no generated SPA dist is embedded, When the server starts, Then `webDistFS()` returns an error that the existing bootstrap can log as WebUI unavailable while API routes still boot.",
-        "Given `make web-build` has produced `cmd/server/web/dist`, When the server binary is built, Then the generated SPA assets remain embedded and `webDistFS()` exposes `index.html`.",
-        "Given future edits touch the WebUI embed directive, When targeted tests run, Then they fail if the directive once again points directly at ignored generated `web/dist` output."
+        "Given a ValueType constraint body `{ \"pattern\": \"^[A-Z]{3}$\" }`, When `types.ValidateConstraints` receives `ab1`, Then validation fails and the error names the pattern constraint.",
+        "Given an Action writes a property whose `typeConfig.valueTypeApiName` points at a ValueType with a `pattern` constraint, When the parameter violates the pattern, Then `Executor.Prepare` fails before edits are accepted and the error identifies the property.",
+        "Given a legacy ValueType constraint body `{ \"regex\": \"^[A-Z]{3}$\" }`, When invalid input is validated, Then the existing regex failure behavior remains unchanged.",
+        "Given both `pattern` and `regex` appear on the same constraint body, When validation runs, Then the explicit `pattern` contract is enforced deterministically.",
+        "Targeted Go tests pass."
       ],
       "ci_evidence": [
-        "GitHub Actions run 25996414394, Go job Build step: `cmd/server/embed.go:8:12: pattern all:web/dist: no matching files found`.",
-        "Repository `.gitignore` ignores both `web/dist/` and `cmd/server/web/dist/`; local dist directories exist only as ignored generated artifacts.",
-        "Current `cmd/server/embed.go` uses `//go:embed all:web/dist`, which requires the generated directory to exist at compile time."
+        "Local health on 2026-05-18: `go build ./...` passed.",
+        "Local health on 2026-05-18: `go test ./...` passed.",
+        "Local health on 2026-05-18: `go vet ./...` passed.",
+        "Local health on 2026-05-18: `cd web && npx tsc --noEmit` passed.",
+        "Local health on 2026-05-18: `cd web && npx vitest run --coverage=false` passed: 263 files, 2780 tests, with existing jsdom canvas/window-open warnings.",
+        "Local health on 2026-05-18: `cd web && npm run build` passed with existing chunk-size/dynamic-import warnings.",
+        "Local health on 2026-05-18: `cd web && npx playwright test --list us444/` discovered 29 tests.",
+        "GitHub Actions lookup attempted with `gh run list` and GitHub REST API, but both failed from this environment with API connection EOF/SSL errors."
       ],
       "quality_gates": [
-        "Targeted BDD regression test for the embed directive red -> green",
-        "`go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v`",
-        "Fresh checkout simulation with ignored dist omitted, then `go build ./cmd/server`",
-        "`go test ./cmd/server -count=1`",
-        "`go vet ./cmd/server`"
+        "Red targeted test for `pattern` in `pkg/types` and Action executor path.",
+        "`go test ./pkg/types ./pkg/actions -run 'TestValidateConstraints_Pattern|TestExecutor_ValueTypeConstraint_AdminPattern' -count=1 -v`",
+        "`go test ./pkg/types ./pkg/actions -count=1`",
+        "`go test ./...`",
+        "`go vet ./...`"
       ]
     },
     {
-      "id": "SELF-002",
-      "name": "Stabilize compliance report downloads in Vitest",
-      "phase": "Fresh CI Health",
+      "id": "SELF-102",
+      "name": "Fail fast stream ingest on schema and ValueType violations",
+      "phase": "OSv2 Stream Ingest Data Quality",
       "active": true,
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "dependencies": [
-        "SELF-001"
+        "SELF-101"
       ],
-      "description": "The web CI job reaches Vitest and fails in the US-453 ComplianceReportsPage suite with `object.stream is not a function`, leaving SOC2/GDPR download behavior unverified. Make the download test harness and any necessary client code robust across browser Blob implementations and Node/jsdom Blob gaps without weakening the user-facing download assertions.",
+      "description": "The stream ingest endpoint now fails fast for missing indexes, but it still accepts arbitrary property payloads before the funnel consumer applies edits. Add a small schema/value validation hook before publish so ingest does not report success for rows that violate ObjectType property definitions or ValueType constraints.",
       "bdd_acceptance": [
-        "Given the compliance report endpoint returns a PDF Blob, When the operator clicks Generate & Download in the test browser, Then the captured download has the expected PDF filename/type and no inline `object.stream` error is shown.",
-        "Given the GDPR export endpoint returns a ZIP Blob in a Vitest/jsdom environment where Blob streaming is incomplete, When the operator downloads the export, Then the captured ZIP download is recorded once.",
-        "Given the API returns a structured 4xx, When the report request fails, Then the inline error shows the backend reason and no download is triggered.",
-        "Given `npx vitest run --coverage` runs in CI, When the compliance suite executes, Then US-453 tests do not fail because of Blob stream API differences."
+        "Given a stream ingest edit contains a property not declared on the target ObjectType, When the handler runs, Then it returns a structured 400/422 and does not publish.",
+        "Given a stream ingest edit violates a ValueType enum or pattern constraint, When the handler runs, Then it returns a structured validation error and does not publish.",
+        "Given valid ingest edits, When the handler runs, Then the existing source tagging, objectType coercion, and publish response remain unchanged.",
+        "Targeted Go tests pass."
       ],
       "ci_evidence": [
-        "GitHub Actions run 25996414394, Web job Vitest step: ComplianceReportsPage test rendered `object.stream is not a function` and expected one download but recorded zero.",
-        "The failing suite is `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`, which mocks response bodies and overrides URL/download behavior."
+        "Local inspection: `pkg/oss/stream_ingest.go` validates request size and index readiness but does not validate properties against OMS schema before publish.",
+        "Local inspection: action writes already have `validateCollapsedEditsAgainstSchema` and `validateValueTypeConstraints`; ingest should gain a similarly narrow fail-fast path."
       ],
       "quality_gates": [
-        "Targeted BDD/unit regression for ComplianceReportsPage download capture red -> green",
-        "`cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false`",
-        "`make web-test` or `cd web && npx vitest run --coverage`",
-        "`make web-build`"
+        "Targeted BDD/unit regression for stream ingest schema rejection red -> green.",
+        "`go test ./pkg/oss -run TestStreamIngest -count=1 -v`",
+        "`go test ./pkg/oss ./pkg/actions -count=1`"
+      ]
+    },
+    {
+      "id": "SELF-103",
+      "name": "Verify ObjectSet searchAround over M2M links",
+      "phase": "OSv2 Relationship Semantics",
+      "active": true,
+      "priority": 3,
+      "passes": false,
+      "dependencies": [],
+      "description": "The OSv2 PRD still calls out M2M searchAround inside ObjectSet execution as a confidence gap. Add focused coverage using the existing M2M link edge repository path so many-to-many relationships are protected at the ObjectSet layer, not only in the lower link resolver.",
+      "bdd_acceptance": [
+        "Given an ObjectSet base set and an M2M LinkType backed by join-table edges, When `searchAround` executes forward, Then the target objects are returned once with the expected objectType.",
+        "Given the same M2M LinkType, When `searchAround` executes reverse, Then the source objects are returned once with the expected objectType.",
+        "Given duplicate join rows or converging edges, When `searchAround` executes, Then duplicate primary keys are suppressed.",
+        "Targeted Go tests pass."
+      ],
+      "ci_evidence": [
+        "Local inspection: `pkg/links/direction_test.go` covers M2M at the resolver layer.",
+        "Local inspection: `pkg/oss/objectset` has broad searchAround path/cycle tests, but no explicit M2M ObjectSet execution coverage was found."
+      ],
+      "quality_gates": [
+        "Targeted ObjectSet M2M searchAround BDD regression red -> green.",
+        "`go test ./pkg/oss/objectset -run 'SearchAround.*M2M' -count=1 -v`",
+        "`go test ./pkg/oss/objectset ./pkg/links -count=1`"
       ]
     }
   ]

@@ -23,6 +23,7 @@ func (e *EnumViolationError) Error() string {
 // property values. All fields are optional; only non-zero fields are enforced.
 type Constraints struct {
 	Regex     string        `json:"regex,omitempty"`
+	Pattern   string        `json:"pattern,omitempty"`
 	MinLength *int          `json:"minLength,omitempty"`
 	MaxLength *int          `json:"maxLength,omitempty"`
 	Min       *float64      `json:"min,omitempty"`
@@ -46,15 +47,19 @@ func ValidateConstraints(value interface{}, constraints json.RawMessage) error {
 		return fmt.Errorf("invalid constraints JSON: %w", err)
 	}
 
-	if c.Regex != "" {
+	pattern, label := c.Regex, "regex"
+	if c.Pattern != "" {
+		pattern, label = c.Pattern, "pattern"
+	}
+	if pattern != "" {
 		s, ok := value.(string)
 		if ok {
-			re, err := regexp.Compile(c.Regex)
+			re, err := regexp.Compile(pattern)
 			if err != nil {
-				return fmt.Errorf("invalid regex constraint %q: %w", c.Regex, err)
+				return fmt.Errorf("invalid %s constraint %q: %w", label, pattern, err)
 			}
 			if !re.MatchString(s) {
-				return fmt.Errorf("regex: value %q does not match pattern %q", s, c.Regex)
+				return fmt.Errorf("%s: value %q does not match pattern %q", label, s, pattern)
 			}
 		}
 	}

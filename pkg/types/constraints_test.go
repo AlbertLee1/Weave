@@ -42,6 +42,33 @@ func TestValidateConstraints_Regex_Fail(t *testing.T) {
 	}
 }
 
+func TestValidateConstraints_PatternAlias_Fail(t *testing.T) {
+	c := constraintsJSON(map[string]interface{}{
+		"pattern": `^[A-Z]{3}$`,
+	})
+	err := ValidateConstraints("ab1", c)
+	if err == nil {
+		t.Fatal("expected error for pattern mismatch")
+	}
+	if !strings.Contains(err.Error(), "pattern") {
+		t.Fatalf("error should mention pattern, got: %v", err)
+	}
+}
+
+func TestValidateConstraints_PatternTakesPrecedenceOverRegex(t *testing.T) {
+	c := constraintsJSON(map[string]interface{}{
+		"pattern": `^ok$`,
+		"regex":   `^legacy$`,
+	})
+	err := ValidateConstraints("legacy", c)
+	if err == nil {
+		t.Fatal("expected pattern to be enforced before legacy regex")
+	}
+	if !strings.Contains(err.Error(), "pattern") {
+		t.Fatalf("error should mention pattern, got: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // MinLength / MaxLength constraints
 // ---------------------------------------------------------------------------

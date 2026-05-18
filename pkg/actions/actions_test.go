@@ -2835,8 +2835,8 @@ func TestExecutor_PrevEdits_LinkEditsHaveNullEntry(t *testing.T) {
 // interfaceAwareMockRepo extends mockOmsRepo with interface resolution.
 type interfaceAwareMockRepo struct {
 	mockOmsRepo
-	interfaces           map[string]*oms.Interface         // apiName → Interface
-	objectTypesByName    map[string]*oms.ObjectType        // apiName → ObjectType
+	interfaces           map[string]*oms.Interface            // apiName → Interface
+	objectTypesByName    map[string]*oms.ObjectType           // apiName → ObjectType
 	objectTypeInterfaces map[string][]oms.ObjectTypeInterface // objectTypeRID → interfaces
 }
 
@@ -3297,9 +3297,9 @@ func TestRevertHandler_NotFound_404(t *testing.T) {
 // valueTypeAwareMockRepo extends mockOmsRepo with property + value type resolution.
 type valueTypeAwareMockRepo struct {
 	mockOmsRepo
-	properties     map[string][]oms.Property  // objectType apiName → properties
-	valueTypes     map[string]*oms.ValueType  // apiName → ValueType
-	objectTypes    map[string]*oms.ObjectType // apiName → ObjectType
+	properties  map[string][]oms.Property  // objectType apiName → properties
+	valueTypes  map[string]*oms.ValueType  // apiName → ValueType
+	objectTypes map[string]*oms.ObjectType // apiName → ObjectType
 }
 
 func (m *valueTypeAwareMockRepo) GetObjectTypeByAPIName(_ context.Context, _, apiName string) (*oms.ObjectType, error) {
@@ -3434,6 +3434,63 @@ func TestExecutor_ValueTypeConstraint_CreateObject_Fail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "regex") {
 		t.Fatalf("error should mention constraint type, got: %v", err)
+	}
+}
+
+func TestExecutor_ValueTypeConstraint_AdminPattern_Fail(t *testing.T) {
+	repo := &valueTypeAwareMockRepo{
+		mockOmsRepo: mockOmsRepo{
+			actionTypes: []oms.ActionType{
+				newTestActionType("createEmployee", []ParameterDef{
+					{ID: "name", Type: "string", Required: true},
+					{ID: "email", Type: "string", Required: true},
+				}, []Rule{
+					{Type: "createObject", ObjectType: "Employee", PropertyBindings: map[string]PropertyBinding{
+						"name":  {Type: "parameter", Value: "name"},
+						"email": {Type: "parameter", Value: "email"},
+					}},
+				}),
+			},
+		},
+		objectTypes: map[string]*oms.ObjectType{
+			"Employee": {RID: "ri.ontology.main.object-type.employee", APIName: "Employee"},
+		},
+		properties: map[string][]oms.Property{
+			"Employee": {
+				{APIName: "name", BaseType: "string"},
+				{APIName: "email", BaseType: "string", TypeConfig: mustJSON(map[string]interface{}{
+					"valueTypeApiName": "emailAddress",
+				})},
+			},
+		},
+		valueTypes: map[string]*oms.ValueType{
+			"emailAddress": {
+				RID:      "ri.ontology.main.value-type.email",
+				APIName:  "emailAddress",
+				BaseType: "string",
+				Constraints: mustJSON(map[string]interface{}{
+					"pattern": `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`,
+				}),
+			},
+		},
+	}
+
+	exec := NewExecutor(repo, nil)
+	_, err := exec.Prepare(context.Background(), "test-ontology", &ApplyRequest{
+		ActionType: "createEmployee",
+		Parameters: map[string]interface{}{
+			"name":  "Alice",
+			"email": "not-an-email",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected UI-authored pattern constraint violation error")
+	}
+	if !strings.Contains(err.Error(), "email") {
+		t.Fatalf("error should mention field name 'email', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "pattern") {
+		t.Fatalf("error should mention pattern constraint, got: %v", err)
 	}
 }
 

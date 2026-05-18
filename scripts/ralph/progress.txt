@@ -1,5 +1,5 @@
 # Ralph Progress Log
-Started: 2026-05-18T00:44:57+08:00
+Started: 2026-05-18T10:24:11+08:00
 
 ## Codebase Patterns
 - For Weave browser/UI regressions, Hermes browser verification is final truth; Claude/Playwright self-checks are necessary but not sufficient.
@@ -11,51 +11,50 @@ Started: 2026-05-18T00:44:57+08:00
 - Stream ingest must verify the target Bleve index exists BEFORE publishing to NATS; the consumer's "index not found" error fires too late and the 200 response has already gone out.
 - `cmd/server/embed.go` must embed a tracked parent directory such as `all:web`, not ignored generated `web/dist` directly; otherwise fresh GitHub Actions `go build ./...` fails before the WebUI build job can produce dist assets.
 
-## PRD Bootstrap - 2026-05-18T00:44:57+08:00
-- Archived previous completed AI News dogfood PRD/progress to `scripts/ralph/archive/self-iteration-20260518-004457/`.
-- Confirmed branch: `ralph/self-iteration-20260518-004206`.
-- GitHub Actions health: latest main CI run `25996414394` failed in Go build (`cmd/server/embed.go:8:12: pattern all:web/dist: no matching files found`) and Web Vitest (`object.stream is not a function` in US-453 ComplianceReportsPage tests).
-- Local inspection: `.gitignore` ignores `web/dist/` and `cmd/server/web/dist/`, so the current embed directive depends on ignored generated assets that are absent in fresh CI.
-- Selected two small stories, both CI-health repairs before new OSv2 capability work: SELF-001 for Go fresh checkout build, SELF-002 for US-453 web test stability.
+## PRD Bootstrap - 2026-05-18T10:24:11+08:00
+- Archived branch-mismatched completed PRD/progress snapshot to `scripts/ralph/archive/self-iteration-20260518-104341/`.
+- Confirmed branch: `ralph/self-iteration-20260518-102411`.
+- Previous `scripts/ralph/prd.json` belonged to `ralph/self-iteration-20260518-004206` and all stories had `passes: true`, so this iteration bootstrapped a fresh small PRD for the current branch.
+- Local code/docs/test inspection covered `.github/workflows/ci.yml`, `Makefile`, `README.md`, `docs/PRD-Weave-OSv2-深度复刻-V2.md`, `dogfood-output/weave-ainews-ontology-dogfood-20260517.md`, and `dogfood-output/weave-webui-dogfood-20260517.md`.
+- Recent commits on `origin/main` already include the prior fixes for DOG-001 through DOG-005 and SELF-001 through SELF-002.
+- Local CI health evidence before story selection:
+  - `go build ./...`: passed.
+  - `go test ./...`: passed.
+  - `go vet ./...`: passed.
+  - `cd web && npx tsc --noEmit`: passed.
+  - `cd web && npx vitest run --coverage=false`: passed, 263 files / 2780 tests, with existing jsdom canvas/window-open warnings.
+  - `cd web && npm run build`: passed with existing chunk-size/dynamic-import warnings.
+  - `cd web && npx playwright test --list us444/`: listed 29 tests.
+- GitHub Actions health lookup was attempted with `gh run list` and GitHub REST API. Both failed from this environment with API connection EOF/SSL errors, so current remote CI health is unavailable in this run.
+- Selected three small stories, prioritizing semantic data quality before broader capability work:
+  - SELF-101: Enforce Admin UI ValueType pattern constraints.
+  - SELF-102: Fail fast stream ingest on schema and ValueType violations.
+  - SELF-103: Verify ObjectSet searchAround over M2M links.
 ---
 
-## [2026-05-18 00:50] - SELF-001
-- Reproduced the CI root cause from GitHub Actions run `25996414394`: the Go package compiled only because local ignored `cmd/server/web/dist` existed; fresh CI had no files matching `//go:embed all:web/dist`.
-- Added `cmd/server/embed_ci_bdd_test.go` to guard against future embed directives that point directly at ignored generated dist output. Red run failed with `embed directive must not point directly at ignored generated dist: //go:embed all:web/dist`.
-- Changed `cmd/server/embed.go` to embed `all:web` and added tracked `cmd/server/web/embed-placeholder.txt`, so the package always has a compile-time embed match while `webDistFS()` still exposes generated `web/dist` when `make web-build` has populated it.
+## [2026-05-18 10:58] - SELF-101
+- Root cause: `web/src/components/admin/ValueTypeAdminPage.tsx` writes pattern constraints as `{ "pattern": "..." }`, but `pkg/types.ValidateConstraints` only decoded/enforced `{ "regex": "..." }`. Action executor ValueType validation therefore skipped Admin UI-authored pattern constraints.
+- Red tests:
+  - `go test ./pkg/types ./pkg/actions -run 'TestValidateConstraints_Pattern|TestExecutor_ValueTypeConstraint_AdminPattern' -count=1 -v` failed before the fix:
+    - `TestValidateConstraints_PatternAlias_Fail`: expected error for pattern mismatch.
+    - `TestValidateConstraints_PatternTakesPrecedenceOverRegex`: expected pattern to be enforced before legacy regex.
+    - `TestExecutor_ValueTypeConstraint_AdminPattern_Fail`: expected UI-authored pattern constraint violation error.
+- Implementation:
+  - Added `pattern` to `types.Constraints`.
+  - Enforced `pattern` before legacy `regex` when both are present.
+  - Kept legacy `regex` behavior and error wording for existing callers.
 - Verification evidence:
-  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` failed before the fix for the expected reason.
-  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed after the fix.
-  - Temporarily moved both `cmd/server/web/dist` and `web/dist` out of the worktree, then ran `go build ./cmd/server`: passed.
-  - `go test ./cmd/server -count=1`: passed.
-  - `go vet ./cmd/server`: passed.
-  - Temporarily moved both generated dist directories out of the worktree, then ran exact CI build `go build ./...`: passed.
+  - `go test ./pkg/types ./pkg/actions -run 'TestValidateConstraints_Pattern|TestExecutor_ValueTypeConstraint_AdminPattern' -count=1 -v`: passed.
+  - `go test ./pkg/types ./pkg/actions -count=1`: passed.
+  - `go test ./...`: passed, including slow `pkg/oss`, `test/chinook`, and `test/northwind`.
+  - `go vet ./...`: passed.
 - Files changed:
-  - `cmd/server/embed.go`
-  - `cmd/server/embed_ci_bdd_test.go`
-  - `cmd/server/web/embed-placeholder.txt`
+  - `pkg/types/constraints.go`
+  - `pkg/types/constraints_test.go`
+  - `pkg/actions/actions_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Go embed directives are evaluated at compile time and do not care that `make web-build` can generate assets later; every embedded pattern needs at least one checked-in match in a fresh checkout.
-  - Keep generated WebUI assets ignored. Embed a tracked parent/fallback and let `webDistFS()` return the existing runtime error when the generated `dist` subtree is absent.
----
-
-## [2026-05-18 00:55] - SELF-002
-- Reproduced the CI-class root cause in the US-453 suite by making successful mocked PDF/ZIP responses throw `TypeError: object.stream is not a function` from `response.blob()`. Red run failed as expected: downloads stayed at zero and the inline alert showed `object.stream is not a function`.
-- Added a compliance attachment reader fallback in `web/src/api/compliance.ts`: for already-OK attachment responses, if `response.blob()` fails, it retries through `response.arrayBuffer()` and rehydrates a Blob with the upstream `Content-Type` or endpoint fallback MIME type.
-- Hardened `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx` so SOC2 PDF and GDPR ZIP tests simulate the streamless Blob gap, still assert filename/type/download count, and no longer invoke jsdom's unimplemented anchor navigation path while capturing downloads.
-- Verification evidence:
-  - Red: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` failed before the fix with 2 expected failures, both showing `object.stream is not a function` and zero captured downloads.
-  - Green targeted: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` passed: 1 file, 6 tests.
-  - Build: `make web-build` initially caught the new fixture's `Uint8Array<ArrayBufferLike>` BodyInit type error; after switching the fixture body to a concrete `ArrayBuffer`, `make web-build` passed.
-  - Full web CI gate: `cd web && npx vitest run --coverage` passed: 263 files, 2780 tests, coverage thresholds met.
-- Files changed:
-  - `web/src/api/compliance.ts`
-  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - When web tests mock streamed attachment bodies, prefer concrete byte buffers over Blob-backed `Response` bodies; Node/jsdom Blob implementations can disagree on `Blob.stream()`.
-  - Keep download capture tests from calling the original jsdom anchor click when the assertion only needs the generated blob URL, filename, size, and MIME type.
+- Learnings for future iterations:
+  - Treat frontend-authored JSON contracts as first-class backend contracts; Admin ValueType pattern constraints use `pattern`, not `regex`.
+  - Keep `pattern` precedence deterministic when both `pattern` and legacy `regex` are present so UI-authored constraints cannot be shadowed by stale legacy fields.
 ---
