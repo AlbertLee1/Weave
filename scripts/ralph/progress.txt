@@ -58,3 +58,28 @@ Started: 2026-05-18T10:24:11+08:00
   - Treat frontend-authored JSON contracts as first-class backend contracts; Admin ValueType pattern constraints use `pattern`, not `regex`.
   - Keep `pattern` precedence deterministic when both `pattern` and legacy `regex` are present so UI-authored constraints cannot be shadowed by stale legacy fields.
 ---
+
+## [2026-05-18 11:07] - SELF-102
+- Root cause: `pkg/oss/stream_ingest.go` only checked request size, optional policy/rate/index guards, and then published edits. It did not consult OMS ObjectType properties or ValueType constraints before returning a successful ingest response, so malformed rows could be accepted upstream of the funnel consumer.
+- Red test:
+  - `go test ./pkg/oss -run TestBDD_StreamIngest_FailsFastOnSchemaAndValueTypeViolations -count=1 -v` failed before implementation with missing `SetMetadataValidator` and `NewStreamIngestMetadataValidator`, proving the new HTTP BDD scenarios were ahead of the production hook.
+- Implementation:
+  - Added `IngestMetadataValidator` and `NewStreamIngestMetadataValidator` in `pkg/oss`.
+  - The validator loads the URL ObjectType's declared properties, rejects undeclared CREATE/MODIFY properties with `SchemaViolation` before publish, and enforces `valueTypeApiName` constraints with structured ValueType errors.
+  - Wired the validator into `StreamIngestHandler` and production router setup via `deps.OmsRepo`.
+  - Kept existing behavior for valid ingest: URL objectType coercion, `source=ingest`, and publish response shape remain unchanged.
+- Verification evidence:
+  - `go test ./pkg/oss -run TestStreamIngest -count=1 -v`: passed.
+  - `go test ./pkg/oss ./pkg/actions -count=1`: passed.
+  - `go test ./cmd/server -run '^$' -count=1`: passed.
+- Files changed:
+  - `cmd/server/main.go`
+  - `pkg/oss/stream_ingest.go`
+  - `pkg/oss/stream_ingest_validation.go`
+  - `pkg/oss/stream_ingest_self102_bdd_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Learnings for future iterations:
+  - Stream ingest now follows the same fail-fast principle as Action writes: validate metadata contracts before publishing edit batches to NATS.
+  - Keep stream ingest metadata hooks narrow (`GetObjectTypeByAPIName`, `ListProperties`, `GetValueTypeByAPIName`) so `pkg/oss` can validate without importing broader server dependencies.
+---

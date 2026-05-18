@@ -89,10 +89,11 @@ func (l *PerOntologyRateLimiter) Allow(ontology string) bool {
 // StreamIngestHandler handles POST .../streams/{objectType}/ingest requests
 // for bulk-importing edits that bypass Action rules.
 type StreamIngestHandler struct {
-	publisher       IngestPublisher
-	policyChecker   IngestPolicyChecker
-	rateLimiter     IngestRateLimiter
-	indexReadiness  IndexReadinessChecker
+	publisher         IngestPublisher
+	policyChecker     IngestPolicyChecker
+	rateLimiter       IngestRateLimiter
+	indexReadiness    IndexReadinessChecker
+	metadataValidator IngestMetadataValidator
 }
 
 // NewStreamIngestHandler creates a new stream ingest handler.
@@ -121,6 +122,13 @@ func (h *StreamIngestHandler) SetRateLimiter(l IngestRateLimiter) {
 // captured. A nil checker disables the guard (pre-DOG-003 behaviour).
 func (h *StreamIngestHandler) SetIndexReadinessChecker(c IndexReadinessChecker) {
 	h.indexReadiness = c
+}
+
+// SetMetadataValidator wires the SELF-102 fail-fast schema/ValueType guard.
+// When set, ServeHTTP validates CREATE/MODIFY property payloads against OMS
+// ObjectType metadata before publishing to the funnel.
+func (h *StreamIngestHandler) SetMetadataValidator(v IngestMetadataValidator) {
+	h.metadataValidator = v
 }
 
 // streamIngestRequest is the JSON request body for the ingest endpoint.
@@ -208,6 +216,13 @@ func (h *StreamIngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	for i := range req.Edits {
 		req.Edits[i].Source = funnel.EditSourceIngest
 		req.Edits[i].ObjectType = objectType
+	}
+
+	if h.metadataValidator != nil {
+		if apiErr := h.metadataValidator.ValidateIngestEdits(r.Context(), ontology, objectType, req.Edits); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
 	}
 
 	batch := &funnel.EditBatch{

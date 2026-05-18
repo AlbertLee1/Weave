@@ -43,7 +43,7 @@
       "phase": "OSv2 Stream Ingest Data Quality",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-101"
       ],
@@ -56,7 +56,11 @@
       ],
       "ci_evidence": [
         "Local inspection: `pkg/oss/stream_ingest.go` validates request size and index readiness but does not validate properties against OMS schema before publish.",
-        "Local inspection: action writes already have `validateCollapsedEditsAgainstSchema` and `validateValueTypeConstraints`; ingest should gain a similarly narrow fail-fast path."
+        "Local inspection: action writes already have `validateCollapsedEditsAgainstSchema` and `validateValueTypeConstraints`; ingest should gain a similarly narrow fail-fast path.",
+        "Red on 2026-05-18: `go test ./pkg/oss -run TestBDD_StreamIngest_FailsFastOnSchemaAndValueTypeViolations -count=1 -v` failed because `SetMetadataValidator` and `NewStreamIngestMetadataValidator` were missing.",
+        "Green on 2026-05-18: `go test ./pkg/oss -run TestStreamIngest -count=1 -v` passed, including SELF-102 schema, ValueType pattern, and valid-ingest scenarios.",
+        "Green on 2026-05-18: `go test ./pkg/oss ./pkg/actions -count=1` passed.",
+        "Green on 2026-05-18: `go test ./cmd/server -run '^$' -count=1` passed."
       ],
       "quality_gates": [
         "Targeted BDD/unit regression for stream ingest schema rejection red -> green.",
