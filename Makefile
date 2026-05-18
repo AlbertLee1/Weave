@@ -1,6 +1,9 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-cover-check test-cover-update test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list
+.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-cover-check test-cover-update test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list help
 
 test: test-unit
+
+help: ## Show available targets and clarify build variants
+	@awk 'BEGIN { FS = ":.*##"; print "Available targets:" } /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-24s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 test-unit:
 	go test ./...
@@ -99,7 +102,7 @@ lint-fix:
 web-test-cover:
 	cd web && npx vitest run --coverage
 
-build:
+build: ## Build Go server without generating embedded WebUI assets
 	go build -o bin/weave ./cmd/server
 
 run: build
@@ -120,7 +123,7 @@ web-install:
 web-dev:
 	cd web && npm run dev
 
-web-build:
+web-build: ## Build WebUI assets and copy them into the server embed tree
 	cd web && npm run build
 	rm -rf cmd/server/web/dist
 	mkdir -p cmd/server/web
@@ -148,7 +151,7 @@ test-parity: ## Run the Foundry parity runner (starts the E2E stack if not alrea
 	fi
 	@go run ./test/foundry_parity -v
 
-build-with-ui: web-build build
+build-with-ui: web-build build ## Build production server with embedded WebUI assets
 
 dev: ## Start all services (Docker + Go API + Vite HMR)
 	@./scripts/dev.sh
