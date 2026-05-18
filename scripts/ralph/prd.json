@@ -1,75 +1,78 @@
 {
-  "project": "Weave Self-Iteration Upper-Layer E2E Gate Hardening",
-  "branchName": "ralph/self-iteration-20260519-055841",
-  "description": "Small Ralph self-iteration for the current branch. The prior PRD belonged to `ralph/self-iteration-20260519-044235` and all stories were passing, so this branch starts a fresh small PRD. No PR exists for this branch and no branch workflow runs exist yet. The latest main CI run is green after PR #22. Local baseline checks for the targeted Web contract surface passed before story work: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`, `npm --prefix web exec playwright test -- --list us444/08-app-builder.spec.ts`, and `git diff --check`. The May 17 dogfood issues DOG-002 through DOG-005 already have current code/tests, and the named fresh-CI risks are not active: committed `cmd/server/web/dist` exists for `cmd/server/embed.go`, and US-453 has streamless binary-response coverage. This PRD focuses on upper-layer US-444 smoke gates that still accept skipped/degraded endpoint coverage even though the full PG stack wires the corresponding OSv2-style services.",
+  "project": "Weave Self-Iteration US-444 Gate Hardening",
+  "branchName": "ralph/self-iteration-20260519-064313",
+  "description": "Small Ralph self-iteration for the current branch. The previous PRD belonged to `ralph/self-iteration-20260519-055841` and all stories were passing, so it was archived under `scripts/ralph/archive/self-iteration-20260519-064552/`. No PR CI auto-fix context was present. GitHub CI health at kickoff: latest main CI run 26064673112 was still in progress, previous PR #23 CI was green, and previous main CI after PR #22 was green. Local kickoff checks passed for the current Playwright contract test and US-444 list discovery. The known fresh-CI embed risk is covered by `cmd/server/embed_ci_bdd_test.go` and the tracked `cmd/server/web/embed-placeholder.txt`; the US-453 streamless binary response risk has coverage in `ComplianceReportsPage.test.tsx`. The dogfood issues DOG-001 through DOG-005 have current code/tests. This PRD focuses on remaining US-444 full-stack smoke gates that still treat wired OSv2 service regressions as skips.",
   "userStories": [
     {
-      "id": "SELF-422",
-      "name": "Make the US-444 App Builder gate reject unwired Apps APIs",
+      "id": "SELF-425",
+      "name": "Make US-444 function publish and replay gates reject unwired Functions APIs",
       "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Strengthen the App Builder Playwright smoke probe so a reachable full-stack backend must expose `/api/v2/apps` create/get/delete instead of treating 404/503 or create failures as a passing skipped mode.",
+      "description": "Strengthen the function publish and replay Playwright probes so a reachable full-stack backend must expose the Functions create, version-list, execute, replay, and delete endpoints instead of passing through skip paths.",
       "bdd_acceptance": [
-        "Given the US-444 Playwright suite runs against a reachable full-stack backend, When `us444/08-app-builder.spec.ts` creates a Workshop-lite app, Then a 404 or 503 from `POST /api/v2/apps` fails the test instead of calling `test.skip`.",
-        "Given app creation succeeds, When the spec fetches and deletes the created app by RID, Then the get and delete endpoints must return successful statuses and the returned RID must remain non-empty.",
-        "Given Playwright runs in list-only CI discovery, When `us444/08-app-builder.spec.ts` is parsed, Then the scenario remains discoverable and contains no `test.skip` or `test.fixme` guards."
+        "Given the US-444 suite runs against a reachable full-stack backend, When `us444/18-fn-publish.spec.ts` creates a Function, Then 404, 503, and other non-OK create responses fail the test instead of calling `test.skip`.",
+        "Given function creation succeeds, When the publish spec lists versions and deletes the Function, Then both endpoints are asserted successful and the version list contains `1.0.0`.",
+        "Given `us444/19-fn-replay.spec.ts` publishes a deterministic Function, When it executes and replays the Function, Then execute and replay must return successful statuses and replay output must not contain `WEAVE_FUNCTION_NONDETERMINISTIC`.",
+        "Given Playwright runs in list-only CI discovery, When the function publish and replay specs are parsed, Then both scenarios remain discoverable and contain no `test.skip` or `test.fixme` guards."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/08-app-builder.spec.ts`",
-        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/08-app-builder.spec.ts` must return no matches",
-        "`npm --prefix web test -- --run`",
+        "`npm --prefix web exec playwright test -- --list us444/18-fn-publish.spec.ts us444/19-fn-replay.spec.ts`",
+        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/18-fn-publish.spec.ts web/e2e/us444/19-fn-replay.spec.ts` must return no matches",
+        "`go test ./cmd/server -run TestGojaFunctionExecutorExecutesStoredSourceWithParameters`",
+        "`go test ./pkg/oms -run 'Test.*Function'`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-423",
-      "name": "Make the US-444 Quiver gate reject unwired dashboard APIs",
+      "id": "SELF-426",
+      "name": "Make US-444 saga gates reject unwired saga APIs",
       "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 2,
       "passes": true,
       "dependencies": [
-        "SELF-422"
+        "SELF-425"
       ],
-      "description": "Strengthen the Quiver Playwright smoke probe so a reachable full-stack backend must expose save/list/delete dashboard APIs rather than passing through store-unwired skips.",
+      "description": "Strengthen the saga Playwright smoke probe so the full-stack backend must expose applySaga and saga DLQ endpoints rather than skipping when the route or store is unavailable.",
       "bdd_acceptance": [
-        "Given the US-444 Playwright suite runs against a reachable full-stack backend, When `us444/09-quiver.spec.ts` saves a dashboard, Then 404/503 and other non-OK save responses fail the test instead of skipping.",
-        "Given dashboard save succeeds, When the spec lists and deletes the dashboard by RID, Then list and delete statuses are asserted as wired and successful.",
-        "Given Playwright runs in list-only CI discovery, When `us444/09-quiver.spec.ts` is parsed, Then the scenario remains discoverable and contains no `test.skip` or `test.fixme` guards."
+        "Given the US-444 suite runs against a reachable full-stack backend, When `us444/05-saga.spec.ts` posts an empty saga, Then a missing route fails the test instead of being skipped.",
+        "Given the empty saga request is invalid, When the response is decoded, Then it must be a structured 4xx with a non-empty `errorCode` or `errorName`.",
+        "Given the saga DLQ list endpoint is requested, When the full-stack backend is reachable, Then the endpoint must return a successful structured response rather than 404 or 503.",
+        "Given Playwright runs in list-only CI discovery, When the saga spec is parsed, Then its scenarios remain discoverable and contain no `test.skip` or `test.fixme` guards."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/09-quiver.spec.ts`",
-        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/09-quiver.spec.ts` must return no matches",
-        "`npm --prefix web test -- --run`",
+        "`npm --prefix web exec playwright test -- --list us444/05-saga.spec.ts`",
+        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/05-saga.spec.ts` must return no matches",
+        "`go test ./pkg/actions -run Saga`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-424",
-      "name": "Make the US-444 package lifecycle gate reject unwired installer APIs",
+      "id": "SELF-427",
+      "name": "Make US-444 masking gates reject unwired admin mask APIs",
       "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 3,
       "passes": true,
       "dependencies": [
-        "SELF-422"
+        "SELF-425"
       ],
-      "description": "Strengthen the marketplace/package installer smoke probes so the built-in package catalog and install endpoints stay mandatory in full-stack E2E coverage.",
+      "description": "Strengthen the column-mask and cell-mask Playwright probes so the full-stack backend must expose the admin masking CRUD surfaces rather than accepting 404 store-unwired skips.",
       "bdd_acceptance": [
-        "Given the full-stack backend exposes built-in seed packages, When `us444/10-marketplace.spec.ts` requests the catalog, Then an empty compiled-in catalog fails instead of skipping the package assertion.",
-        "Given the built-in `iot-demo` package exists, When `us444/11-pkg-install.spec.ts` runs, Then unavailable catalog or installer responses fail instead of being skipped.",
-        "Given Playwright runs in list-only CI discovery, When the marketplace and package install specs are parsed, Then their core scenarios remain discoverable without permanent `test.skip` or `test.fixme` guards."
+        "Given the US-444 suite runs against a reachable full-stack backend, When `us444/16-mask.spec.ts` requests column-mask list and invalid create, Then 404 responses fail and successful/structured validation responses are asserted.",
+        "Given the US-444 suite runs against a reachable full-stack backend, When `us444/17-cell-mask.spec.ts` requests cell-mask list and invalid create, Then 404 responses fail and successful/structured validation responses are asserted.",
+        "Given Playwright runs in list-only CI discovery, When the mask specs are parsed, Then their scenarios remain discoverable and contain no `test.skip` or `test.fixme` guards."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/10-marketplace.spec.ts us444/11-pkg-install.spec.ts`",
-        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/10-marketplace.spec.ts web/e2e/us444/11-pkg-install.spec.ts` must return no matches",
-        "`npm --prefix web test -- --run`",
+        "`npm --prefix web exec playwright test -- --list us444/16-mask.spec.ts us444/17-cell-mask.spec.ts`",
+        "`rg -n \"test\\\\.(skip|fixme)\\\\(\" web/e2e/us444/16-mask.spec.ts web/e2e/us444/17-cell-mask.spec.ts` must return no matches",
+        "`go test ./pkg/masking ./pkg/cellsec`",
         "`git diff --check`"
       ]
     }

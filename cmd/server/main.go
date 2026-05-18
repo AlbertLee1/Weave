@@ -154,6 +154,10 @@ type ServerDeps struct {
 	// FunctionRepoNotConfigured when this is nil so degraded-mode test
 	// routers without a writable data dir still boot cleanly.
 	FunctionRepoStore oms.FunctionRepoStore
+	// US-216 / US-370: Function execution runtime. Wired unconditionally
+	// to the embedded Goja executor in the standard server so full-stack
+	// publish, execute, and replay probes exercise a real runtime.
+	FunctionExecutor oms.FunctionExecutor
 	// US-417: durable commit_jobs registry consumed by the Function CI
 	// hook. Wired only when PG is available; nil in degraded mode leaves
 	// the POST /commits handler operational (no CI row written) and the
@@ -821,6 +825,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// OMS routes
 		if deps.OmsRepo != nil {
 			omsHandler := oms.NewOMSHandler(deps.OmsRepo)
+			if deps.FunctionExecutor != nil {
+				omsHandler.SetFunctionExecutor(deps.FunctionExecutor)
+			}
 			if deps.LinkPropertyStore != nil {
 				omsHandler.SetLinkPropertyStore(deps.LinkPropertyStore)
 			}
@@ -1781,7 +1788,8 @@ func main() {
 	}()
 
 	deps := &ServerDeps{
-		CORSOrigins: cfg.CORSOrigins,
+		CORSOrigins:      cfg.CORSOrigins,
+		FunctionExecutor: newGojaFunctionExecutor(),
 	}
 
 	// 1. PostgreSQL
@@ -2082,7 +2090,7 @@ func main() {
 		// with no FunctionExecutor wired surface a clean
 		// AIPToolHandlerNotConfigured at execute-time.
 		deps.AIPToolCatalog = newPGAIPToolCatalog(pool)
-		deps.AIPToolInvoker = newAIPFunctionInvoker(deps.OmsRepo, nil)
+		deps.AIPToolInvoker = newAIPFunctionInvoker(deps.OmsRepo, deps.FunctionExecutor)
 		if err := aip.LoadCatalogIntoRegistry(ctx, deps.AIPTools, deps.AIPToolCatalog, deps.AIPToolInvoker); err != nil {
 			log.Printf("warning: failed to load AIP tool catalog: %v", err)
 		}

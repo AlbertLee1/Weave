@@ -1,105 +1,95 @@
 # Ralph Progress Log
-Started: Tue May 19 05:58:41 CST 2026
+Started: Tue May 19 06:45:52 CST 2026
+Branch: ralph/self-iteration-20260519-064313
+Archived stale state: scripts/ralph/archive/self-iteration-20260519-064552/
 
-Branch: ralph/self-iteration-20260519-055841
+Kickoff context:
+- Previous PRD branchName was ralph/self-iteration-20260519-055841 and all stories had passes=true, so a fresh PRD was required for this branch.
+- PR CI auto-fix context: none present in the archived progress file.
+- GitHub CI: latest main CI run 26064673112 was in_progress at kickoff; PR #23 CI run 26064227041 was completed/success; previous main CI after PR #22 was completed/success.
+- Local kickoff checks passed:
+  - npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts
+  - npm --prefix web exec playwright test -- --list us444/18-fn-publish.spec.ts us444/19-fn-replay.spec.ts us444/05-saga.spec.ts us444/16-mask.spec.ts us444/17-cell-mask.spec.ts us444/20-subscribe.spec.ts
+- Known risk scan:
+  - cmd/server/embed.go embeds all:web and cmd/server/web/embed-placeholder.txt is tracked; cmd/server/embed_ci_bdd_test.go covers fresh-CI fallback/build-copy behavior.
+  - US-453 streamless binary response has test coverage in web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx.
+  - DOG-001 through DOG-005 have current regression code/tests; no new PRD story was needed for those reports.
 
-Initial inspection:
-- Archived stale Ralph state for branch `ralph/self-iteration-20260519-044235` to `scripts/ralph/archive/self-iteration-20260519-060220/`.
-- Prior PRD belonged to `ralph/self-iteration-20260519-044235` and all stories had `passes: true`, so this branch required a fresh small PRD.
-- No PR CI auto-fix context was present in the current progress file.
-- `gh pr status` reported no pull request for this branch.
-- `gh run list --branch ralph/self-iteration-20260519-055841 --limit 5` returned no workflow runs.
-- `gh run list --branch main --limit 5` showed the latest main `CI` run completed successfully for PR #22; the previous main CI failure from PR #21 was repaired by the prior branch.
-- Local baseline checks before PRD selection:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 5 tests.
-  - `npm --prefix web exec playwright test -- --list us444/08-app-builder.spec.ts` passed: 1 test listed.
-  - `git diff --check` passed.
-- Named fresh-CI risks checked:
-  - `cmd/server/embed.go` embeds `cmd/server/web/dist`, and the committed `cmd/server/web/dist` tree is present in this checkout.
-  - US-453 streamless binary download coverage is present in `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx` and the component uses `generateComplianceReport` / `triggerBlobDownload`.
-- Dogfood issues DOG-002 through DOG-005 have current code/tests, so the new PRD avoids duplicating those fixed gaps.
+Codebase Patterns:
+- US-444 Playwright specs begin with skipWhenBackendDown(request) so list-only CI and developer machines without :9117 stay portable; once the backend is reachable, mandatory full-stack endpoints should fail loudly rather than skip.
+- The lightweight web contract test imports Playwright specs as raw text and is the right fast gate for preventing permanent test.skip/test.fixme regressions in smoke specs.
+- Backend route existence can be cross-checked through cmd/server/routes.go and package-level Go handler tests before tightening an E2E smoke gate.
 
-Durable Codebase Patterns:
-- Web `src` tests are compiled under `tsconfig.app.json`; when a contract test needs source text, prefer Vite `?raw` imports over Node filesystem APIs.
-- US-444 Playwright smoke specs use `skipWhenBackendDown(request)` for missing backend only; full-stack core endpoint absence should be asserted as a failure when the route is now expected to be wired.
-- Seed-package integration tests are behind the `integration` build tag, so `go test ./test/fixtures/seed_northwind` alone only compiles the package and reports `[no test files]`.
-- Browser realtime E2E should observe the subscription stream first, then make table assertions deterministic with primary-key lookup/search rather than relying on the current page.
-
-Story SELF-422 - Make the US-444 App Builder gate reject unwired Apps APIs:
-- Selected as the highest-priority story with `passes != true`.
-- RED:
-  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/08-app-builder.spec.ts` to stay free of `test.skip` / `test.fixme`, to call `/api/v2/apps`, and to assert create/get/delete wired endpoint messages.
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new App Builder contract found existing `test.skip(...)` guards in `08-app-builder.spec.ts`.
-- Root cause investigation:
-  - `08-app-builder.spec.ts` skipped when app creation returned 404/503 and skipped all other non-OK create responses, so a reachable backend with unwired Apps APIs could pass as degraded mode.
-  - `pkg/apps/handlers.go` defines create/get/delete routes under `/api/v2/apps`, and `cmd/server/main.go` wires the PG-backed Apps store during full-stack PG boot.
-  - The existing Playwright list check already discovered the App Builder scenario, so the missing signal was endpoint-status assertion rather than test discovery.
-- GREEN implementation:
-  - Updated `web/e2e/us444/08-app-builder.spec.ts` to keep only the backend-down portability skip, require create/get/delete to return 2xx, assert the returned RID is non-empty, and fail 404/503 through assertion messages.
-  - Updated the Playwright spec contract test to pin the App Builder spec to mandatory endpoint probes and skip-free discoverability.
+SELF-425 TDD:
+- RED: add a Playwright spec contract assertion that the function publish/replay specs are skip-free and contain mandatory endpoint-wired assertions.
+- RED result: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `web/e2e/us444/18-fn-publish.spec.ts` still contained `test.skip(...)`.
+- RED result: `go test ./cmd/server -run TestGojaFunctionExecutorExecutesStoredSourceWithParameters` failed as expected with `undefined: newGojaFunctionExecutor`.
+- Root cause: the US-444 replay spec was hiding more than route presence. `cmd/server` did not wire any production `oms.FunctionExecutor`, while integration tests had a local Goja adapter for replay coverage.
+- Implementation:
+  - Added `cmd/server/function_executor.go` as the production Goja-backed `oms.FunctionExecutor`.
+  - Wired `ServerDeps.FunctionExecutor` into `omsHandler.SetFunctionExecutor(...)`.
+  - Passed the same executor into the AIP custom-tool function invoker instead of nil.
+  - Hardened `web/e2e/us444/18-fn-publish.spec.ts` and `web/e2e/us444/19-fn-replay.spec.ts` to assert create/version/execute/replay/delete endpoints rather than skipping reachable-backend failures.
+  - Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so function publish/replay specs must stay skip-free.
 - Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 6 tests.
-  - `npm --prefix web exec playwright test -- --list us444/08-app-builder.spec.ts` passed: 1 test listed.
-  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/08-app-builder.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
-  - `npm --prefix web test -- --run` passed: 268 files, 2801 tests.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/e2e/us444/08-app-builder.spec.ts`
-  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - US-444 upper-layer smoke specs for PG-backed services should fail on reachable-backend 404/503 once the service is wired in full-stack boot; reserve `test.skip` for backend-down portability only.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` -> 1 file passed, 9 tests passed.
+  - `npm --prefix web exec playwright test -- --list us444/18-fn-publish.spec.ts us444/19-fn-replay.spec.ts` -> 2 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/18-fn-publish.spec.ts web/e2e/us444/19-fn-replay.spec.ts` -> no matches (exit 1).
+  - `go test ./cmd/server -run TestGojaFunctionExecutorExecutesStoredSourceWithParameters` -> ok.
+  - `go test ./pkg/oms -run 'Test.*Function'` -> ok.
+  - `git diff --check` -> clean.
+  - Follow-up CI health check: main CI run 26064673112 completed successfully after kickoff.
+- Files changed for SELF-425:
+  - cmd/server/function_executor.go
+  - cmd/server/function_executor_test.go
+  - cmd/server/main.go
+  - web/e2e/us444/18-fn-publish.spec.ts
+  - web/e2e/us444/19-fn-replay.spec.ts
+  - web/src/lib/__tests__/playwrightSpecContracts.test.ts
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Reusable learning: if a Playwright smoke spec skips on 503 after backend reachability, check whether the route is merely mounted or whether the standard server bootstrap wires the backing runtime/store. The right fix may be production wiring, not only stricter assertions.
 
-Story SELF-423 - Make the US-444 Quiver gate reject unwired dashboard APIs:
-- Selected as the highest-priority story with `passes != true`.
-- RED:
-  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/09-quiver.spec.ts` to stay free of `test.skip` / `test.fixme`, to call `/api/v2/quiver/save` and `/api/v2/quiver/dashboards`, and to assert save/list/delete wired endpoint messages.
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new Quiver contract found existing `test.skip(...)` guards in `09-quiver.spec.ts`.
-- Root cause investigation:
-  - `09-quiver.spec.ts` skipped when dashboard save returned 404/503 and skipped all other non-OK save responses, so a reachable backend with unwired Quiver dashboard APIs could pass as degraded mode.
-  - `cmd/server/main.go` wires the PG-backed `QuiverStore` for full-stack PG boot and registers `/api/v2/quiver/*` routes when the store is present.
-  - The existing Playwright list check already discovered the Quiver scenario, so the missing signal was endpoint-status assertion rather than test discovery.
-- GREEN implementation:
-  - Updated `web/e2e/us444/09-quiver.spec.ts` to keep only the backend-down portability skip, require save/list/delete to return 2xx, assert the returned RID is non-empty, and fail 404/503 through assertion messages.
-  - Updated the Playwright spec contract test to pin the Quiver spec to mandatory endpoint probes and skip-free discoverability.
+SELF-426 TDD:
+- RED: add a Playwright spec contract assertion that the saga spec is skip-free and contains mandatory applySaga / saga DLQ endpoint-wired assertions.
+- RED result: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `web/e2e/us444/05-saga.spec.ts` still contained `test.skip(...)`.
+- Root cause: the US-444 saga smoke spec already used `skipWhenBackendDown(request)` for unreachable local backends, but it still skipped reachable-backend 404s and accepted a 503 from the DLQ list endpoint. That let an unwired saga route/store pass the full-stack smoke gate.
+- Implementation:
+  - Hardened `web/e2e/us444/05-saga.spec.ts` so applySaga fails on 404/503 before asserting a structured 4xx validation error for empty steps.
+  - Hardened the saga DLQ probe so it requires a successful structured response with an `entries` array instead of accepting 404 skip paths or 503 degraded responses.
+  - Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so the saga spec must remain skip-free and must keep the mandatory wired-endpoint assertion strings.
 - Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 7 tests.
-  - `npm --prefix web exec playwright test -- --list us444/09-quiver.spec.ts` passed: 1 test listed.
-  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/09-quiver.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
-  - `npm --prefix web test -- --run` passed: 268 files, 2802 tests.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/e2e/us444/09-quiver.spec.ts`
-  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - Quiver full-stack E2E coverage should fail on reachable-backend missing store routes now that the PG-backed store is wired; list/delete lifecycle assertions catch partial endpoint regressions after save succeeds.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` -> 1 file passed, 10 tests passed.
+  - `npm --prefix web exec playwright test -- --list us444/05-saga.spec.ts` -> 2 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/05-saga.spec.ts` -> no matches (exit 1).
+  - `go test ./pkg/actions -run Saga` -> ok.
+  - `git diff --check` -> clean.
+- Files changed for SELF-426:
+  - web/e2e/us444/05-saga.spec.ts
+  - web/src/lib/__tests__/playwrightSpecContracts.test.ts
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Reusable learning: for US-444 smoke probes, `skipWhenBackendDown(request)` is the only portability skip that should remain. Once the backend is reachable, 404/503 endpoint responses should be asserted as failures unless the story explicitly covers degraded-mode behavior.
 
-Story SELF-424 - Make the US-444 package lifecycle gate reject unwired installer APIs:
-- Selected as the highest-priority story with `passes != true`.
-- RED:
-  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/10-marketplace.spec.ts` and `web/e2e/us444/11-pkg-install.spec.ts` to stay free of `test.skip` / `test.fixme`, to call the package catalog/install endpoints, and to assert wired endpoint messages.
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new package lifecycle contract found existing `test.skip(...)` guards in `10-marketplace.spec.ts`.
-- Root cause investigation:
-  - `10-marketplace.spec.ts` skipped when the built-in catalog was empty and accepted 404 from `GET /api/v2/pkg`, so a reachable backend without the package registry could pass.
-  - `11-pkg-install.spec.ts` skipped when the built-in catalog endpoint, `iot-demo` entry, or installer endpoint was unavailable, so the package install smoke path could degrade silently.
-  - `cmd/server/main.go` wires `InstalledPackageStore` from PG and the embedded built-in package provider during full-stack boot, and `cmd/server/routes.go` mounts `/api/v2/pkg`, `/api/v2/pkg/builtin`, and `/api/v2/pkg/builtin/{slug}/install` unconditionally.
-- GREEN implementation:
-  - Updated `web/e2e/us444/10-marketplace.spec.ts` to require the built-in catalog endpoint, assert the canonical `northwind` / `chinook` / `iot-demo` package slugs, and require the installed-packages list endpoint to return a JSON `data` array.
-  - Updated `web/e2e/us444/11-pkg-install.spec.ts` to require the built-in catalog endpoint, assert `iot-demo` is present, and require the `iot-demo` built-in install endpoint to return 2xx.
-  - Updated the Playwright spec contract test to pin both package lifecycle specs to mandatory endpoint probes and skip-free discoverability.
+SELF-427 TDD:
+- RED: add a Playwright spec contract assertion that the column-mask and cell-mask admin specs are skip-free, bind to `/api/admin/column-masks` and `/api/admin/cell-masks`, and keep mandatory wired-endpoint assertion strings.
+- RED result: `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `web/e2e/us444/16-mask.spec.ts` still contained `test.skip(...)`.
+- Root cause: the US-444 column-mask and cell-mask smoke specs already skipped only when the backend health check was down, but after backend reachability they still skipped reachable-backend 404s and allowed degraded list responses. That let missing admin masking CRUD wiring pass as a skipped smoke gate.
+- Implementation:
+  - Hardened `web/e2e/us444/16-mask.spec.ts` so column-mask list requires a successful `{ masks: [...] }` envelope and invalid create fails on 404/503 before asserting `InvalidColumnMask`.
+  - Hardened `web/e2e/us444/17-cell-mask.spec.ts` so cell-mask list requires a successful `{ masks: [...] }` envelope and invalid create fails on 404/503 before asserting `InvalidCellMask`.
+  - Both specs now call `loginAdmin(request)` so token-auth full-stack runs exercise the admin CRUD surface rather than drifting into unauthenticated errors.
+  - Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so both mask specs must remain skip-free and keep the mandatory wired-endpoint assertion strings.
 - Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 8 tests.
-  - `npm --prefix web exec playwright test -- --list us444/10-marketplace.spec.ts us444/11-pkg-install.spec.ts` passed: 3 tests listed across 2 files.
-  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/10-marketplace.spec.ts web/e2e/us444/11-pkg-install.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
-  - `npm --prefix web test -- --run` passed: 268 files, 2803 tests.
-- Files changed:
-  - `web/e2e/us444/10-marketplace.spec.ts`
-  - `web/e2e/us444/11-pkg-install.spec.ts`
-  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - Package lifecycle US-444 smoke specs should allow backend-down portability only; once `/health` is reachable, the embedded catalog and installer routes are mandatory full-stack surfaces.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` -> 1 file passed, 11 tests passed.
+  - `npm --prefix web exec playwright test -- --list us444/16-mask.spec.ts us444/17-cell-mask.spec.ts` -> 4 tests listed.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/16-mask.spec.ts web/e2e/us444/17-cell-mask.spec.ts` -> no matches (exit 1).
+  - `go test ./pkg/masking ./pkg/cellsec` -> ok.
+  - `git diff --check` -> clean.
+- Files changed for SELF-427:
+  - web/e2e/us444/16-mask.spec.ts
+  - web/e2e/us444/17-cell-mask.spec.ts
+  - web/src/lib/__tests__/playwrightSpecContracts.test.ts
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Reusable learning: admin US-444 smoke specs should authenticate with `loginAdmin(request)` before asserting route behavior, then treat 404/503 as endpoint wiring failures and verify the structured success/error envelope for the target surface.
