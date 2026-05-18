@@ -9,6 +9,8 @@ import us444MarketplaceSpecSource from '../../../e2e/us444/10-marketplace.spec.t
 import us444PackageInstallSpecSource from '../../../e2e/us444/11-pkg-install.spec.ts?raw';
 import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
+import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
+import us444FunctionReplaySpecSource from '../../../e2e/us444/19-fn-replay.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
@@ -132,5 +134,29 @@ describe('Playwright spec contracts', () => {
     expect(us444PackageInstallSpecSource).toContain('package installer endpoint must be wired');
     expect(us444PackageInstallSpecSource).not.toContain('built-in catalog endpoint unavailable');
     expect(us444PackageInstallSpecSource).not.toContain('package installer not wired');
+  });
+
+  it('keeps the US-444 function publish and replay gates wired and skip-free', () => {
+    const sources = [us444FunctionPublishSpecSource, us444FunctionReplaySpecSource];
+
+    for (const source of sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).toContain(`/api/v2/ontologies/\${ONTOLOGY}/functions`);
+      expect(source).not.toContain('functions endpoint unwired');
+      expect(source).not.toContain('function create failed');
+    }
+
+    expect(us444FunctionPublishSpecSource).toContain('function create endpoint must be wired');
+    expect(us444FunctionPublishSpecSource).toContain('function versions endpoint must be wired');
+    expect(us444FunctionPublishSpecSource).toContain('function delete endpoint must be wired');
+
+    expect(us444FunctionReplaySpecSource).toContain('function create endpoint must be wired');
+    expect(us444FunctionReplaySpecSource).toContain('function execute endpoint must be wired');
+    expect(us444FunctionReplaySpecSource).toContain('function replay endpoint must be wired');
+    expect(us444FunctionReplaySpecSource).toContain('function delete endpoint must be wired');
+    expect(us444FunctionReplaySpecSource).not.toContain('execute failed:');
+    expect(us444FunctionReplaySpecSource).not.toContain('replay endpoint not wired');
+    expect(us444FunctionReplaySpecSource).not.toContain('expect([200, 503]).toContain(replay.status())');
   });
 });
