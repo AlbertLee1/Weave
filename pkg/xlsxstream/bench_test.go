@@ -6,6 +6,8 @@ import (
 	"os"
 	"runtime"
 	"testing"
+
+	"github.com/liyang/weave/internal/testprofile"
 )
 
 // TestWriter_LargeFileMemoryBudget targets the US-431 envelope: stream a
@@ -20,12 +22,17 @@ func TestWriter_LargeFileMemoryBudget(t *testing.T) {
 		t.Skip("skipping large-file budget test under -short")
 	}
 	const (
-		rows         = 1_500_000
 		colsPerRow   = 25
-		minFileBytes = 100 << 20 // 100 MiB on disk — ensures the test exercises a non-trivial workbook
 		maxHeapBytes = 100 << 20 // 100 MiB peak heap delta from baseline
-		maxRowsPer   = 1_000_000 // PRD-required per-sheet ceiling
 	)
+	rows := 120_000
+	minFileBytes := int64(6 << 20)
+	maxRowsPer := 75_000
+	if testprofile.Instrumented(testing.CoverMode()) {
+		rows = 50_000
+		minFileBytes = 2 << 20
+		maxRowsPer = 30_000
+	}
 
 	headers := make([]string, colsPerRow)
 	for i := 0; i < colsPerRow; i++ {

@@ -13,6 +13,8 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-164214/
 - Scheduler goroutines should capture lifecycle channels into locals before entering the select loop; Stop may mutate struct fields under lock while the goroutine is still running.
 - Race-enabled tests that observe goroutine-updated fixture state should use atomic or mutex-protected counters.
 - Sidebar tests that assert auth-gated admin links must wait for auth-gated UI state; ontology route links can render before `/api/v2/me` resolves and are not proof that admin identity has loaded.
+- Wall-clock performance tests should detect Go race/coverage instrumentation and either relax budgets or reduce workload while leaving strict budgets in standard runs and benchmarks.
+- Large streaming export tests should use CI-safe row counts that still exercise rollover, disk size growth, and heap ceilings; full-envelope throughput belongs in benchmarks or dedicated performance jobs.
 
 ## SELF-301 - Make audit and LDAP schedulers race-clean in Go CI
 - Selected as the first story because the latest Go CI failure includes deterministic race detector reports and local targeted red tests reproduce quickly.
@@ -59,5 +61,42 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260518-164214/
   - `cd web && npx vitest run --coverage`: passed 263 files / 2781 tests.
 - Files changed:
   - `web/src/components/layout/__tests__/Sidebar.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
+## SELF-303 - Make heavyweight Go performance gates CI-safe under race coverage
+- Selected as the only remaining incomplete PRD story and the remaining fresh Go CI-health blocker.
+- Red:
+  - `go test -race -coverprofile=/tmp/weave-self303-red.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` failed.
+  - `pkg/oss/aggregation`: `TestApproximateDistinct_OneMillion_FasterThanExactByFiveX` measured speedup 0.60x against a strict 5x wall-clock ratio under race+coverage.
+  - `pkg/security`: `TestRLSEvaluator_PerformanceGate` measured cold 1.296946833s and warm 1.301064167s against 500ms / 50ms budgets under race+coverage.
+  - `pkg/xlsxstream`: `TestWriter_LargeFileMemoryBudget` timed out after 10m while compressing the generated workbook.
+- Non-race baseline:
+  - `go test ./pkg/cellsec -run TestUS376_PerfGate_1000Rows_10Columns_Under50ms -count=1 -v`: passed, 12.90175ms against 50ms.
+  - `go test ./pkg/oss/aggregation -run TestApproximateDistinct_OneMillion_FasterThanExactByFiveX -count=1 -v`: passed, speedup 8.48x.
+  - `go test ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=1 -v`: passed, cold 41.929959ms and warm 42.843625ms.
+- Root cause:
+  - The failing gates asserted strict wall-clock budgets while Go race and coverage instrumentation add enough overhead to invalidate the measurement.
+  - The HLL p99 test used 100 trials of 1M-cardinality input under instrumentation, making the aggregation package slow enough to risk timeout.
+  - The XLSX memory test generated a 1.5M-row workbook and then compressed it in a unit test, which exceeded the package timeout under race+coverage.
+- Implementation:
+  - Added `internal/testprofile` to detect race detector and coverage mode from tests.
+  - Kept strict cell security, RLS, and HLL speed budgets in standard runs while using instrumentation-aware budgets/workloads for race+coverage.
+  - Reduced instrumented HLL p99 and t-digest precision workloads while preserving meaningful accuracy thresholds.
+  - Scaled the XLSX memory test to a CI-safe workload that still validates sheet rollover, minimum on-disk size, and heap delta.
+- Verification evidence:
+  - `go test -race -coverprofile=/tmp/weave-self303-green.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`: passed (`pkg/cellsec` 8.405s, `pkg/oss/aggregation` 104.911s, `pkg/security` 3.267s, `pkg/xlsxstream` 23.429s).
+  - `go test ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`: passed (`pkg/cellsec` 1.295s, `pkg/oss/aggregation` 60.534s, `pkg/security` 1.687s, `pkg/xlsxstream` 4.400s).
+  - `go test ./internal/testprofile -count=1`: passed.
+  - `git diff --check`: passed.
+- Files changed:
+  - `internal/testprofile/instrumentation.go`
+  - `internal/testprofile/race.go`
+  - `internal/testprofile/norace.go`
+  - `pkg/cellsec/us376_cel_engine_test.go`
+  - `pkg/oss/aggregation/us367_accuracy_test.go`
+  - `pkg/oss/aggregation/us465_precision_test.go`
+  - `pkg/security/rls_bench_test.go`
+  - `pkg/xlsxstream/bench_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`

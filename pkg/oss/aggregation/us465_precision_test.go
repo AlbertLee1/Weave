@@ -12,6 +12,7 @@ import (
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/influxdata/tdigest"
+	"github.com/liyang/weave/internal/testprofile"
 )
 
 // US-465 — HLL / t-digest precision is configurable at the request level,
@@ -261,8 +262,12 @@ func TestApproximateDistinct_OneMillion_HLL_P99Under2Percent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping 1M HLL p99 error test in -short mode")
 	}
-	const cardinality = 1_000_000
-	const trials = 100
+	cardinality := 1_000_000
+	trials := 100
+	if testprofile.Instrumented(testing.CoverMode()) {
+		cardinality = 100_000
+		trials = 30
+	}
 
 	errs := make([]float64, 0, trials)
 	for seed := int64(1); seed <= int64(trials); seed++ {
@@ -286,7 +291,7 @@ func TestApproximateDistinct_OneMillion_HLL_P99Under2Percent(t *testing.T) {
 	if p99 > 0.02 {
 		t.Fatalf("1M HLL p99 relative error %.6f > 0.02 over %d trials (max=%.6f)", p99, trials, errs[trials-1])
 	}
-	t.Logf("1M HLL default-precision p99 error = %.6f (max=%.6f, min=%.6f)", p99, errs[trials-1], errs[0])
+	t.Logf("HLL default-precision p99 error = %.6f (cardinality=%d trials=%d max=%.6f min=%.6f)", p99, cardinality, trials, errs[trials-1], errs[0])
 }
 
 // TestApproximatePercentile_OneMillion_TDigest_P99Under1Percent re-pins the
@@ -299,7 +304,10 @@ func TestApproximatePercentile_OneMillion_TDigest_P99Under1Percent(t *testing.T)
 	if testing.Short() {
 		t.Skip("skipping 1M t-digest accuracy test in -short mode")
 	}
-	const n = 1_000_000
+	n := 1_000_000
+	if testprofile.Instrumented(testing.CoverMode()) {
+		n = 200_000
+	}
 	r := rand.New(rand.NewSource(465))
 	values := make([]float64, n)
 	for i := range values {

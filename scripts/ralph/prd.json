@@ -72,7 +72,7 @@
       "phase": "Go CI Health",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-301"
       ],
@@ -87,7 +87,13 @@
         "GitHub CI run 26021737712 showed `TestUS376_PerfGate_1000Rows_10Columns_Under50ms` taking 123.820824ms against a 50ms budget under race coverage.",
         "GitHub CI run 26021737712 showed `TestApproximateDistinct_OneMillion_FasterThanExactByFiveX` speedup 3.01x against a 5x budget and `TestApproximateDistinct_OneMillion_HLL_P99Under2Percent` timing out after 10m.",
         "GitHub CI run 26021737712 showed `TestRLSEvaluator_PerformanceGate` cold and warm passes exceeding 500ms / 50ms budgets under race coverage.",
-        "GitHub CI run 26021737712 showed `TestWriter_LargeFileMemoryBudget` timing out after 10m in `pkg/xlsxstream`."
+        "GitHub CI run 26021737712 showed `TestWriter_LargeFileMemoryBudget` timing out after 10m in `pkg/xlsxstream`.",
+        "Local red on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self303-red.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` failed in aggregation speed ratio, RLS wall-clock budgets, and XLSX 10m timeout.",
+        "Local non-race baseline on 2026-05-18: strict targeted performance gates passed for `pkg/cellsec`, `pkg/oss/aggregation`, and `pkg/security`.",
+        "Green on 2026-05-18: `go test -race -coverprofile=/tmp/weave-self303-green.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` passed.",
+        "Green on 2026-05-18: `go test ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1` passed.",
+        "Green on 2026-05-18: `go test ./internal/testprofile -count=1` passed.",
+        "Green on 2026-05-18: `git diff --check` passed."
       ],
       "quality_gates": [
         "`go test -race -coverprofile=/tmp/weave-self303.out -covermode=atomic ./pkg/cellsec ./pkg/oss/aggregation ./pkg/security ./pkg/xlsxstream -count=1`",
