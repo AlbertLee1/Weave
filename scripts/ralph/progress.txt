@@ -1,61 +1,24 @@
 # Ralph Progress Log
-Started: 2026-05-18T00:44:57+08:00
+Started: Mon May 18 12:56:23 CST 2026
+---
 
 ## Codebase Patterns
-- For Weave browser/UI regressions, Hermes browser verification is final truth; Claude/Playwright self-checks are necessary but not sufficient.
-- Dashboard aggregate stats should hoist per-ontology fetches with `useQueries` and share React Query cache keys with per-card hooks.
-- Frontend BDD tests conventionally stub `fetch` directly with `vi.stubGlobal('fetch', ...)` and regex URL matching; do not default to MSW for new focused tests unless the local suite already uses it.
-- AI News dogfood fixture lives in `dogfood-output/ainews-records-20260517.json` / `.csv` and contains 103 records over 6 delivery dates.
-- BrowserPage search currently exercises the `WhereClause` path, not the simple backend `query` parameter path; tests should assert the exact request body sent by `searchObjects`/BrowserPage.
-- OMS handlers grow narrow `Set*` hooks (e.g., `SetIndexBootstrapper`) for cross-package wiring; the concrete adapter lives in cmd/server so pkg/oms never imports pkg/index. Mirror this pattern for any future capability that needs index/funnel knowledge.
-- Stream ingest must verify the target Bleve index exists BEFORE publishing to NATS; the consumer's "index not found" error fires too late and the 200 response has already gone out.
-- `cmd/server/embed.go` must embed a tracked parent directory such as `all:web`, not ignored generated `web/dist` directly; otherwise fresh GitHub Actions `go build ./...` fails before the WebUI build job can produce dist assets.
+- ObjectSet `searchAround` uses API-name link traversal interfaces; production `links.Resolver` must expose the same optional reverse and target-type methods that ObjectSet mocks use.
+- M2M ObjectSet coverage should wire `links.NewResolverWithEdges` and an EdgeRepository-shaped fixture so the test protects the join-table path, not only mock fanout.
 
-## PRD Bootstrap - 2026-05-18T00:44:57+08:00
-- Archived previous completed AI News dogfood PRD/progress to `scripts/ralph/archive/self-iteration-20260518-004457/`.
-- Confirmed branch: `ralph/self-iteration-20260518-004206`.
-- GitHub Actions health: latest main CI run `25996414394` failed in Go build (`cmd/server/embed.go:8:12: pattern all:web/dist: no matching files found`) and Web Vitest (`object.stream is not a function` in US-453 ComplianceReportsPage tests).
-- Local inspection: `.gitignore` ignores `web/dist/` and `cmd/server/web/dist/`, so the current embed directive depends on ignored generated assets that are absent in fresh CI.
-- Selected two small stories, both CI-health repairs before new OSv2 capability work: SELF-001 for Go fresh checkout build, SELF-002 for US-453 web test stability.
----
-
-## [2026-05-18 00:50] - SELF-001
-- Reproduced the CI root cause from GitHub Actions run `25996414394`: the Go package compiled only because local ignored `cmd/server/web/dist` existed; fresh CI had no files matching `//go:embed all:web/dist`.
-- Added `cmd/server/embed_ci_bdd_test.go` to guard against future embed directives that point directly at ignored generated dist output. Red run failed with `embed directive must not point directly at ignored generated dist: //go:embed all:web/dist`.
-- Changed `cmd/server/embed.go` to embed `all:web` and added tracked `cmd/server/web/embed-placeholder.txt`, so the package always has a compile-time embed match while `webDistFS()` still exposes generated `web/dist` when `make web-build` has populated it.
+## [2026-05-18 13:04 CST] - SELF-103
+- Root cause: lower-level M2M join-table resolution existed in `pkg/links`, but the production `links.Resolver` did not satisfy ObjectSet's optional reverse-by-API-name and direction-aware target-type interfaces. Forward ObjectSet M2M traversal could return linked PKs but lost the target ObjectType, while reverse ObjectSet M2M traversal failed before calling the edge repository.
+- Red test:
+  - `go test ./pkg/oss/objectset -run TestBDD_ObjectSetSearchAround_M2MJoinEdges -count=1 -v` failed before implementation because forward `searchAround` returned `ObjectType == ""` and reverse `searchAround` returned `link resolver does not support reverse searchAround`.
+- Implementation:
+  - Added `ResolveLinkedReverseByAPIName`, `ResolveTargetObjectType`, and `ResolveTargetObjectTypeDir` to `pkg/links.Resolver`.
+  - Added a focused BDD test that executes ObjectSet `searchAround` forward and reverse over an M2M LinkType through `links.NewResolverWithEdges`, including duplicate/converging join rows.
 - Verification evidence:
-  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` failed before the fix for the expected reason.
-  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed after the fix.
-  - Temporarily moved both `cmd/server/web/dist` and `web/dist` out of the worktree, then ran `go build ./cmd/server`: passed.
-  - `go test ./cmd/server -count=1`: passed.
-  - `go vet ./cmd/server`: passed.
-  - Temporarily moved both generated dist directories out of the worktree, then ran exact CI build `go build ./...`: passed.
+  - `go test ./pkg/oss/objectset -run TestBDD_ObjectSetSearchAround_M2MJoinEdges -count=1 -v`: passed.
+  - `go test ./pkg/oss/objectset -run 'SearchAround.*M2M' -count=1 -v`: passed.
+  - `go test ./pkg/oss/objectset ./pkg/links -count=1`: passed.
 - Files changed:
-  - `cmd/server/embed.go`
-  - `cmd/server/embed_ci_bdd_test.go`
-  - `cmd/server/web/embed-placeholder.txt`
+  - `pkg/links/resolver.go`
+  - `pkg/oss/objectset/searcharound_m2m_bdd_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Go embed directives are evaluated at compile time and do not care that `make web-build` can generate assets later; every embedded pattern needs at least one checked-in match in a fresh checkout.
-  - Keep generated WebUI assets ignored. Embed a tracked parent/fallback and let `webDistFS()` return the existing runtime error when the generated `dist` subtree is absent.
----
-
-## [2026-05-18 00:55] - SELF-002
-- Reproduced the CI-class root cause in the US-453 suite by making successful mocked PDF/ZIP responses throw `TypeError: object.stream is not a function` from `response.blob()`. Red run failed as expected: downloads stayed at zero and the inline alert showed `object.stream is not a function`.
-- Added a compliance attachment reader fallback in `web/src/api/compliance.ts`: for already-OK attachment responses, if `response.blob()` fails, it retries through `response.arrayBuffer()` and rehydrates a Blob with the upstream `Content-Type` or endpoint fallback MIME type.
-- Hardened `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx` so SOC2 PDF and GDPR ZIP tests simulate the streamless Blob gap, still assert filename/type/download count, and no longer invoke jsdom's unimplemented anchor navigation path while capturing downloads.
-- Verification evidence:
-  - Red: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` failed before the fix with 2 expected failures, both showing `object.stream is not a function` and zero captured downloads.
-  - Green targeted: `cd web && npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx --coverage=false` passed: 1 file, 6 tests.
-  - Build: `make web-build` initially caught the new fixture's `Uint8Array<ArrayBufferLike>` BodyInit type error; after switching the fixture body to a concrete `ArrayBuffer`, `make web-build` passed.
-  - Full web CI gate: `cd web && npx vitest run --coverage` passed: 263 files, 2780 tests, coverage thresholds met.
-- Files changed:
-  - `web/src/api/compliance.ts`
-  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - When web tests mock streamed attachment bodies, prefer concrete byte buffers over Blob-backed `Response` bodies; Node/jsdom Blob implementations can disagree on `Blob.stream()`.
-  - Keep download capture tests from calling the original jsdom anchor click when the assertion only needs the generated blob URL, filename, size, and MIME type.
----

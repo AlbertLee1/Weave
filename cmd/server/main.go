@@ -236,8 +236,8 @@ type ServerDeps struct {
 	// pre-US-491 no-revocation behaviour.
 	RevocationStore   auth.RevocationStore
 	RevocationChecker *auth.CachedRevocationChecker
-	IngestRateLimiter     oss.IngestRateLimiter      // US-063: per-ontology token-bucket (nil = no limit)
-	WebSocketHub          *subscriptions.Hub         // US-132: WebSocket subscription hub (nil = endpoint not mounted)
+	IngestRateLimiter oss.IngestRateLimiter // US-063: per-ontology token-bucket (nil = no limit)
+	WebSocketHub      *subscriptions.Hub    // US-132: WebSocket subscription hub (nil = endpoint not mounted)
 	// US-141: Developer Console application registry. When nil the
 	// /api/v2/developer/applications routes are not registered.
 	ApplicationRepo developer.ApplicationRepository
@@ -1023,6 +1023,9 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// success that the funnel consumer would then silently drop.
 			if deps.IndexMgr != nil {
 				ingestHandler.SetIndexReadinessChecker(newIndexReadinessAdapter(deps.IndexMgr))
+			}
+			if deps.OmsRepo != nil {
+				ingestHandler.SetMetadataValidator(oss.NewStreamIngestMetadataValidator(deps.OmsRepo))
 			}
 			api.With(auth.RequirePermission(auth.PermStreamIngest)).
 				Method(http.MethodPost,

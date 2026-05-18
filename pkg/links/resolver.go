@@ -157,6 +157,73 @@ func (r *Resolver) ResolveLinkedObjectsByAPIName(ctx context.Context, sourceIden
 	return nil, fmt.Errorf("link type %q not found for source %q", linkTypeAPIName, sourceIdent)
 }
 
+// ResolveLinkedReverseByAPIName resolves a link by API name in reverse. The
+// caller object type is the link's declared target; results are source-side PKs.
+func (r *Resolver) ResolveLinkedReverseByAPIName(ctx context.Context, callerIdent, linkTypeAPIName string, callerPKs []string) ([]string, error) {
+	callerRID, err := r.resolveSourceObjectTypeRID(ctx, callerIdent)
+	if err != nil {
+		return nil, err
+	}
+	linkTypes, err := r.repo.ListIncomingLinkTypes(ctx, callerRID)
+	if err != nil {
+		return nil, fmt.Errorf("list incoming link types: %w", err)
+	}
+
+	for _, lt := range linkTypes {
+		if lt.APIName == linkTypeAPIName {
+			return r.dispatch(ctx, &lt, callerPKs, DirectionReverse)
+		}
+	}
+
+	return nil, fmt.Errorf("link type %q not found for target %q", linkTypeAPIName, callerIdent)
+}
+
+// ResolveTargetObjectType returns the target ObjectType API name for a forward
+// link walk by API name.
+func (r *Resolver) ResolveTargetObjectType(ctx context.Context, sourceIdent, linkTypeAPIName string) (string, error) {
+	sourceRID, err := r.resolveSourceObjectTypeRID(ctx, sourceIdent)
+	if err != nil {
+		return "", err
+	}
+	linkTypes, err := r.listOutgoingLinkTypes(ctx, sourceRID)
+	if err != nil {
+		return "", fmt.Errorf("list link types: %w", err)
+	}
+
+	for _, lt := range linkTypes {
+		if lt.APIName == linkTypeAPIName {
+			return r.resolveObjectTypeAPIName(ctx, lt.TargetObjectType)
+		}
+	}
+
+	return "", fmt.Errorf("link type %q not found for source %q", linkTypeAPIName, sourceIdent)
+}
+
+// ResolveTargetObjectTypeDir returns the ObjectType API name on the other end
+// of a link walk in the requested direction.
+func (r *Resolver) ResolveTargetObjectTypeDir(ctx context.Context, callerIdent, linkTypeAPIName string, dir Direction) (string, error) {
+	if dir == DirectionForward {
+		return r.ResolveTargetObjectType(ctx, callerIdent, linkTypeAPIName)
+	}
+
+	callerRID, err := r.resolveSourceObjectTypeRID(ctx, callerIdent)
+	if err != nil {
+		return "", err
+	}
+	linkTypes, err := r.repo.ListIncomingLinkTypes(ctx, callerRID)
+	if err != nil {
+		return "", fmt.Errorf("list incoming link types: %w", err)
+	}
+
+	for _, lt := range linkTypes {
+		if lt.APIName == linkTypeAPIName {
+			return r.resolveObjectTypeAPIName(ctx, lt.SourceObjectType)
+		}
+	}
+
+	return "", fmt.Errorf("link type %q not found for target %q", linkTypeAPIName, callerIdent)
+}
+
 // resolveSourceObjectTypeRID normalises an object-type identifier that may be
 // either an RID (starts with "ri.") or an APIName. API names are translated
 // via the ontology scope on ctx: GetOntology(scope) → GetObjectTypeByAPIName.
@@ -182,6 +249,17 @@ func (r *Resolver) resolveSourceObjectTypeRID(ctx context.Context, sourceIdent s
 		return sourceIdent, nil
 	}
 	return ot.RID, nil
+}
+
+func (r *Resolver) resolveObjectTypeAPIName(ctx context.Context, objectTypeIdent string) (string, error) {
+	if objectTypeIdent == "" || !strings.HasPrefix(objectTypeIdent, "ri.") {
+		return objectTypeIdent, nil
+	}
+	ot, err := r.repo.GetObjectType(ctx, objectTypeIdent)
+	if err != nil {
+		return "", fmt.Errorf("get object type %q: %w", objectTypeIdent, err)
+	}
+	return ot.APIName, nil
 }
 
 // ResolveLinked is the direction-aware overload.
