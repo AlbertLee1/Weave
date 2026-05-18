@@ -30,7 +30,7 @@
       "phase": "Upper-Layer Performance",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-407"
       ],

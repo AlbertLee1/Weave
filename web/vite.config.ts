@@ -2,6 +2,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { chunkNameForModule } from './src/build/chunking'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -34,6 +35,16 @@ export default defineConfig({
       '^/metrics(/|$)': 'http://localhost:9117',
       '^/swagger(/|$)': 'http://localhost:9117',
       '^/mcp(/|$)': 'http://localhost:9117',
+    },
+  },
+  build: {
+    // SELF-408: the checked bundle budget below this floor lives in
+    // scripts/check-bundle-budget.mjs and fails CI with chunk-specific limits.
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: chunkNameForModule,
+      },
     },
   },
   test: {

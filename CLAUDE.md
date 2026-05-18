@@ -106,6 +106,8 @@ Pages: Dashboard (`/`), Explorer (`/explorer/:ontology`), Browser (`/browser/:on
 
 **Vite dep prebundling for lazy chunks**: any third-party ESM package that imports `react` and lives behind a `React.lazy` boundary must be pinned in `web/vite.config.ts` `optimizeDeps.include`. Otherwise Vite discovers it on first navigation, triggers a mid-flight re-optimize, and serves a chunk whose `react` reference differs from the one already mounted in the app shell — producing `Invalid hook call` / `useRef returning null` on the first visit while a refresh works fine. Pair with `resolve.dedupe: ['react', 'react-dom']` so nested `node_modules` can't ever resolve two React instances. Current pinned entries: `@react-sigma/core`, `sigma`, `graphology` (Vertex workspace).
 
+**Web bundle budget guard**: `npm run build` runs `web/scripts/check-bundle-budget.mjs` after `vite build`; keep checked thresholds there and keep Vite's `chunkSizeWarningLimit` aligned so CI failures point to the versioned budget message. Vendor chunk ownership is centralized in `web/src/build/chunking.ts`; when adding heavy upper-layer dependencies, classify their package family there so payloads stay in named chunks instead of `vendor-misc` and Rollup does not emit circular manual-chunk warnings.
+
 ## Development Process: TDD (MANDATORY)
 
 **This project follows strict Test-Driven Development. This is a hard constraint, not a suggestion.**

@@ -37,6 +37,8 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260519-001656/
 - Scripts that install Go tools with `go install` should resolve `$(go env GOPATH)/bin/<tool>` explicitly when the binary is not already on PATH.
 - Govulncheck package scopes should exclude package-only test helpers that import unfixable tooling dependencies while still scanning production services, CLIs, SDKs, connectors, and source packages.
 - Web Vitest setup belongs in `web/src/test/setup.ts`; shared jsdom primitive shims should live there so component tests do not duplicate environment patches.
+- Web production bundle budgets are enforced by `web/scripts/check-bundle-budget.mjs` after `vite build`; keep the main app chunk budget aligned with `build.chunkSizeWarningLimit` so CI failures come from the versioned guard.
+- Web Vite vendor ownership lives in `web/src/build/chunking.ts`; classify new heavy dependency families there so large upper-layer payloads do not collapse back into `vendor-misc` or create Rollup circular chunk warnings.
 
 ## SELF-407 - Make web CI browser primitive shims quiet
 - Selected as the highest-priority incomplete story because the full web coverage gate passes but currently prints repeated jsdom not-implemented diagnostics that can hide real CI failures.
@@ -64,3 +66,31 @@ Archived previous state: scripts/ralph/archive/self-iteration-20260519-001656/
   - `scripts/ralph/progress.txt`
   - `scripts/ralph/archive/self-iteration-20260519-001656/prd.json`
   - `scripts/ralph/archive/self-iteration-20260519-001656/progress.txt`
+
+## 2026-05-19 00:34:08 CST - SELF-408
+- Selected as the highest-priority unfinished story after SELF-407 was already marked passing.
+- TDD red:
+  - `npm test -- --run src/test/bundle-budget.bdd.test.mjs` failed as expected with three BDD contract failures: the `build` script did not invoke a budget guard, `web/scripts/check-bundle-budget.mjs` was missing, and `web/src/build/chunking.ts` was missing.
+  - An initial test shape imported `vite.config.ts` directly and hit an esbuild/TextEncoder environment invariant under jsdom; the test was corrected before implementation to import a small chunking helper and inspect the Vite config source.
+- Implementation:
+  - Added `web/scripts/check-bundle-budget.mjs`, which reads emitted JS assets, computes raw and gzip sizes, and fails with chunk-specific budget messages. The current main application chunk budget is 1,500,000 B raw / 450,000 B gzip.
+  - Added `web/src/build/chunking.ts` and wired it into `web/vite.config.ts` as `manualChunks` so heavy graph, markdown, charting, spreadsheet, map, diff, data, file, UI, forms, i18n, collaboration, and React package families produce stable vendor chunk names.
+  - Updated `web/package.json` so `npm run build` runs `tsc -b`, `vite build`, and the bundle budget guard.
+  - Set Vite `chunkSizeWarningLimit` to 1500 so generic warnings do not replace the versioned guard for the checked main chunk.
+- Verification evidence:
+  - `npm test -- --run src/test/bundle-budget.bdd.test.mjs`: passed, 3 tests / 1 file.
+  - `npx tsc --noEmit`: passed.
+  - `npm run build`: passed; Vite emitted stable named chunks including `vendor-graph`, `vendor-markdown`, `vendor-charts`, `vendor-spreadsheet`, and `vendor-misc` stayed small at 10.65 kB raw / 3.83 kB gzip. The checked `index` chunk was 1,062.25 kB raw / 233.66 kB gzip, and `Bundle budgets passed (1 chunk checked).`
+  - The only remaining Vite build warning is the pre-existing `offlineRequestQueue.ts` dynamic/static import notice, unrelated to SELF-408.
+  - `jq empty scripts/ralph/prd.json`: passed.
+  - `git diff --check`: passed.
+- Files changed:
+  - `web/package.json`
+  - `web/vite.config.ts`
+  - `web/scripts/check-bundle-budget.mjs`
+  - `web/src/build/chunking.ts`
+  - `web/src/test/bundle-budget.bdd.test.mjs`
+  - `CLAUDE.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+---
