@@ -76,3 +76,30 @@ Story SELF-423 - Make the US-444 Quiver gate reject unwired dashboard APIs:
   - `scripts/ralph/progress.txt`
 - Reusable learning:
   - Quiver full-stack E2E coverage should fail on reachable-backend missing store routes now that the PG-backed store is wired; list/delete lifecycle assertions catch partial endpoint regressions after save succeeds.
+
+Story SELF-424 - Make the US-444 package lifecycle gate reject unwired installer APIs:
+- Selected as the highest-priority story with `passes != true`.
+- RED:
+  - Added a raw-source contract check to `web/src/lib/__tests__/playwrightSpecContracts.test.ts` requiring `web/e2e/us444/10-marketplace.spec.ts` and `web/e2e/us444/11-pkg-install.spec.ts` to stay free of `test.skip` / `test.fixme`, to call the package catalog/install endpoints, and to assert wired endpoint messages.
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected: the new package lifecycle contract found existing `test.skip(...)` guards in `10-marketplace.spec.ts`.
+- Root cause investigation:
+  - `10-marketplace.spec.ts` skipped when the built-in catalog was empty and accepted 404 from `GET /api/v2/pkg`, so a reachable backend without the package registry could pass.
+  - `11-pkg-install.spec.ts` skipped when the built-in catalog endpoint, `iot-demo` entry, or installer endpoint was unavailable, so the package install smoke path could degrade silently.
+  - `cmd/server/main.go` wires `InstalledPackageStore` from PG and the embedded built-in package provider during full-stack boot, and `cmd/server/routes.go` mounts `/api/v2/pkg`, `/api/v2/pkg/builtin`, and `/api/v2/pkg/builtin/{slug}/install` unconditionally.
+- GREEN implementation:
+  - Updated `web/e2e/us444/10-marketplace.spec.ts` to require the built-in catalog endpoint, assert the canonical `northwind` / `chinook` / `iot-demo` package slugs, and require the installed-packages list endpoint to return a JSON `data` array.
+  - Updated `web/e2e/us444/11-pkg-install.spec.ts` to require the built-in catalog endpoint, assert `iot-demo` is present, and require the `iot-demo` built-in install endpoint to return 2xx.
+  - Updated the Playwright spec contract test to pin both package lifecycle specs to mandatory endpoint probes and skip-free discoverability.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 8 tests.
+  - `npm --prefix web exec playwright test -- --list us444/10-marketplace.spec.ts us444/11-pkg-install.spec.ts` passed: 3 tests listed across 2 files.
+  - `rg -n "test\\.(skip|fixme)\\(" web/e2e/us444/10-marketplace.spec.ts web/e2e/us444/11-pkg-install.spec.ts` returned no matches (exit 1 as expected for the no-match gate).
+  - `npm --prefix web test -- --run` passed: 268 files, 2803 tests.
+- Files changed:
+  - `web/e2e/us444/10-marketplace.spec.ts`
+  - `web/e2e/us444/11-pkg-install.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Package lifecycle US-444 smoke specs should allow backend-down portability only; once `/health` is reachable, the embedded catalog and installer routes are mandatory full-stack surfaces.

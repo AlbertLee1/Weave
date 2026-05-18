@@ -5,6 +5,8 @@ import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
 import us444AppBuilderSpecSource from '../../../e2e/us444/08-app-builder.spec.ts?raw';
 import us444BranchSpecSource from '../../../e2e/us444/06-branch.spec.ts?raw';
 import us444MergeSpecSource from '../../../e2e/us444/07-merge.spec.ts?raw';
+import us444MarketplaceSpecSource from '../../../e2e/us444/10-marketplace.spec.ts?raw';
+import us444PackageInstallSpecSource from '../../../e2e/us444/11-pkg-install.spec.ts?raw';
 import us444QuiverSpecSource from '../../../e2e/us444/09-quiver.spec.ts?raw';
 import us444LineageSpecSource from '../../../e2e/us444/13-lineage-view.spec.ts?raw';
 
@@ -106,5 +108,29 @@ describe('Playwright spec contracts', () => {
     expect(source).not.toContain('quiver store not wired');
     expect(source).not.toContain('save.status() === 404');
     expect(source).not.toContain('save.status() === 503');
+  });
+
+  it('keeps the US-444 package lifecycle gates wired and skip-free', () => {
+    const sources = [us444MarketplaceSpecSource, us444PackageInstallSpecSource];
+
+    for (const source of sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).toContain('/api/v2/pkg/builtin');
+    }
+
+    expect(us444MarketplaceSpecSource).toContain('/api/v2/pkg');
+    expect(us444MarketplaceSpecSource).toContain('built-in catalog endpoint must be wired');
+    expect(us444MarketplaceSpecSource).toContain('built-in catalog must include seeded packages');
+    expect(us444MarketplaceSpecSource).toContain('installed packages list endpoint must be wired');
+    expect(us444MarketplaceSpecSource).not.toContain('no built-in packages compiled into this binary');
+    expect(us444MarketplaceSpecSource).not.toContain('toContain(res.status())');
+
+    expect(us444PackageInstallSpecSource).toContain('/api/v2/pkg/builtin/iot-demo/install');
+    expect(us444PackageInstallSpecSource).toContain('built-in catalog endpoint must be wired');
+    expect(us444PackageInstallSpecSource).toContain('iot-demo must be present in the built-in catalog');
+    expect(us444PackageInstallSpecSource).toContain('package installer endpoint must be wired');
+    expect(us444PackageInstallSpecSource).not.toContain('built-in catalog endpoint unavailable');
+    expect(us444PackageInstallSpecSource).not.toContain('package installer not wired');
   });
 });

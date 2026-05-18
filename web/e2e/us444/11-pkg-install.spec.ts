@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIResponse } from '@playwright/test';
 import { API_BASE, skipWhenBackendDown } from './helpers';
 
 /**
@@ -9,25 +9,27 @@ import { API_BASE, skipWhenBackendDown } from './helpers';
  * against an already-seeded northwind ontology. Verifies the response
  * carries an `installed` summary block.
  */
+async function expectOK(res: APIResponse, context: string): Promise<void> {
+  if (res.ok()) return;
+
+  expect(res.ok(), `${context}: ${res.status()} ${await res.text()}`).toBe(true);
+}
+
 test.describe('US-444 — pkg install', () => {
   test('iot-demo install via skip-on-conflict succeeds', async ({ request }) => {
     await skipWhenBackendDown(request);
 
     const list = await request.get(`${API_BASE}/api/v2/pkg/builtin`);
-    test.skip(!list.ok(), 'built-in catalog endpoint unavailable');
+    await expectOK(list, 'built-in catalog endpoint must be wired');
     const body = (await list.json()) as { data?: { slug: string }[] };
     const has = (body.data ?? []).some((p) => p.slug === 'iot-demo');
-    test.skip(!has, 'iot-demo not in built-in catalog');
+    expect(has, 'iot-demo must be present in the built-in catalog').toBe(true);
 
     const res = await request.post(
       `${API_BASE}/api/v2/pkg/builtin/iot-demo/install`,
       { data: { onConflict: 'skip' } },
     );
-    test.skip(
-      res.status() === 404 || res.status() === 503,
-      'package installer not wired',
-    );
-    expect(res.ok(), `install failed: ${res.status()} ${await res.text()}`).toBe(true);
+    await expectOK(res, 'package installer endpoint must be wired');
 
     const out = (await res.json()) as Record<string, unknown>;
     // The handler always returns at least one of these summary fields.
