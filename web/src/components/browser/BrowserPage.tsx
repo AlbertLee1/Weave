@@ -1,11 +1,14 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useObjectType } from '../../hooks/useObjectTypes';
 import { useListObjects, useSearchObjects } from '../../hooks/useObjects';
 import { useCreateTemporaryObjectSet } from '../../hooks/useObjectSets';
 import { useObjectSetSubscription } from '../../hooks/useObjectSetSubscription';
-import { useWebSocketSubscription } from '../../hooks/useWebSocketSubscription';
+import {
+  useWebSocketSubscription,
+  type WebSocketSubscriptionStatus,
+} from '../../hooks/useWebSocketSubscription';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 import { SearchBar } from './SearchBar';
 import { FilterBuilder } from './FilterBuilder';
@@ -93,6 +96,8 @@ export function BrowserPage() {
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
   const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
+  const [webSocketFallbackRequested, setWebSocketFallbackRequested] =
+    useState(false);
   const queryClient = useQueryClient();
   const createObjectSet = useCreateTemporaryObjectSet(ontology);
 
@@ -113,6 +118,7 @@ export function BrowserPage() {
     if (!realtimeEnabled) {
       // Use WebSocket as primary; SSE fallback available via setRealtimeMode('sse')
       setRealtimeMode('ws');
+      setWebSocketFallbackRequested(false);
       // Also create ObjectSet for SSE fallback readiness
       createObjectSet.mutate(
         { type: 'base', objectType: objectTypeParam },
@@ -126,8 +132,32 @@ export function BrowserPage() {
       // Turning off
       setRealtimeMode('off');
       setObjectSetRid(null);
+      setWebSocketFallbackRequested(false);
     }
   }, [realtimeEnabled, createObjectSet, objectTypeParam]);
+
+  const handleWebSocketStatusChange = useCallback(
+    (status: WebSocketSubscriptionStatus) => {
+      if (status === 'connected') {
+        setWebSocketFallbackRequested(false);
+        return;
+      }
+      if (status === 'reconnecting') {
+        setWebSocketFallbackRequested(true);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (
+      realtimeMode === 'ws' &&
+      webSocketFallbackRequested &&
+      objectSetRid
+    ) {
+      setRealtimeMode('sse');
+    }
+  }, [objectSetRid, realtimeMode, webSocketFallbackRequested]);
 
   // WebSocket subscription (primary)
   useWebSocketSubscription(ontology, {
@@ -136,6 +166,7 @@ export function BrowserPage() {
     onEvent: useCallback(() => {
       invalidateObjects();
     }, [invalidateObjects]),
+    onStatusChange: handleWebSocketStatusChange,
   });
 
   // SSE subscription (fallback when WebSocket is unavailable)

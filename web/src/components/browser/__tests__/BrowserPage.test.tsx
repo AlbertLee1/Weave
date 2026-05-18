@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -61,6 +61,7 @@ let capturedWsOptions: {
   objectType: string;
   enabled: boolean;
   onEvent: (evt: unknown) => void;
+  onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'reconnecting') => void;
 } | null = null;
 
 vi.mock('../../../hooks/useWebSocketSubscription', () => ({
@@ -68,6 +69,7 @@ vi.mock('../../../hooks/useWebSocketSubscription', () => ({
     objectType: string;
     enabled: boolean;
     onEvent: (evt: unknown) => void;
+    onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'reconnecting') => void;
   }) => {
     capturedWsOptions = options;
   },
@@ -258,6 +260,75 @@ describe('BrowserPage realtime mode', () => {
     });
 
     invalidateSpy.mockRestore();
+  });
+
+  it('falls back to ObjectSet SSE when the WebSocket transport is reconnecting', async () => {
+    const { queryClient } = renderBrowserPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    fireEvent.click(screen.getByLabelText(/live/i));
+
+    await waitFor(() => {
+      expect(capturedWsOptions?.enabled).toBe(true);
+      expect(capturedWsOptions?.onStatusChange).toBeDefined();
+    });
+    expect(MockEventSource.instances).toHaveLength(0);
+
+    act(() => {
+      capturedWsOptions!.onStatusChange?.('reconnecting');
+    });
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+    expect(MockEventSource.instances[0].url).toBe(
+      '/api/v2/ontologies/testOntology/objectSets/ri.objectset.main.test-rid/subscribe',
+    );
+
+    MockEventSource.instances[0].simulateMessage(
+      JSON.stringify({
+        eventType: 'ADDED_OR_UPDATED',
+        object: { __primaryKey: '3', __apiName: 'Employee', id: '3' },
+      }),
+      '7',
+    );
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['objects'] }),
+      );
+    });
+
+    invalidateSpy.mockRestore();
+  });
+
+  it('keeps ObjectSet SSE disabled while the WebSocket transport is connected', async () => {
+    renderBrowserPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText(/live/i));
+
+    await waitFor(() => {
+      expect(capturedWsOptions?.enabled).toBe(true);
+      expect(capturedWsOptions?.onStatusChange).toBeDefined();
+    });
+
+    act(() => {
+      capturedWsOptions!.onStatusChange?.('connected');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('realtime-indicator')).toBeInTheDocument();
+    });
+    expect(MockEventSource.instances).toHaveLength(0);
   });
 
   it('disables WebSocket subscription when toggled off', async () => {
