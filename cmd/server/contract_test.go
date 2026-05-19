@@ -148,19 +148,6 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	// US-480: RFC 6902 JSON Patch diff between two graph versions.
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}:            true,
 	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}: true,
-	// VTX-013: Vertex graph share-link surface — owner mints / revokes
-	// opaque tokens; recipients exchange them for masked graph payloads.
-	// OpenAPI entries follow once the wire-format ResponseBody schemas
-	// stabilise alongside the rest of the VTX-009 schemas.
-	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/share-links"}: true,
-	{Method: "DELETE", Path: "/api/vertex/v1/share-links/{token}"}:    true,
-	{Method: "GET", Path: "/api/vertex/v1/share-links/{token}/graph"}: true,
-	// VTX-014: Workshop-embedded vertex_graph widget surface. GET returns a
-	// compact payload (no savedSelections / history); POST persists with an
-	// optional overrideGraphRid target. Same OpenAPI cycle as the rest of
-	// the VTX-009 routes.
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/widget"}:       true,
-	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/widget/save"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the
@@ -209,6 +196,101 @@ func TestBDD_VertexControlPanelOpenAPIContract(t *testing.T) {
 	}
 }
 
+func TestBDD_VertexShareLinksAndWidgetOpenAPIContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	specOps := extractSpecOperations(t, doc)
+	expectedOps := []struct {
+		op          specOperationKey
+		operationID string
+	}{
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/share-links"},
+			operationID: "createVertexShareLink",
+		},
+		{
+			op:          specOperationKey{Method: "DELETE", Path: "/api/vertex/v1/share-links/{token}"},
+			operationID: "revokeVertexShareLink",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/share-links/{token}/graph"},
+			operationID: "getVertexGraphViaShareLink",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/widget"},
+			operationID: "getVertexGraphWidget",
+		},
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/widget/save"},
+			operationID: "saveVertexGraphWidget",
+		},
+	}
+
+	allPresent := true
+	for _, want := range expectedOps {
+		if undocumentedRouteAllowList[want.op] {
+			t.Errorf("%s %s must be documented in OpenAPI, not allow-listed as undocumented", want.op.Method, want.op.Path)
+		}
+		if !specOps[want.op] {
+			t.Errorf("api/openapi.yaml must document %s %s", want.op.Method, want.op.Path)
+			allPresent = false
+		}
+	}
+	if !allPresent {
+		return
+	}
+
+	for _, want := range expectedOps {
+		operation := openAPIPathOperation(t, doc, want.op.Path, want.op.Method)
+		if got, _ := operation["operationId"].(string); got != want.operationID {
+			t.Errorf("%s %s operationId = %q, want %q", want.op.Method, want.op.Path, got, want.operationID)
+		}
+	}
+
+	shareCreate := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}/share-links", "POST")
+	if got := openAPIJSONResponseSchemaRef(t, shareCreate, "201"); got != "#/components/schemas/VertexShareLinkCreateResponse" {
+		t.Errorf("share-link create 201 schema = %q, want VertexShareLinkCreateResponse", got)
+	}
+	revoke := openAPIPathOperation(t, doc, "/api/vertex/v1/share-links/{token}", "DELETE")
+	if !openAPIResponseStatusExists(t, revoke, "204") {
+		t.Errorf("share-link revoke must document 204 No Content")
+	}
+	shareGraph := openAPIPathOperation(t, doc, "/api/vertex/v1/share-links/{token}/graph", "GET")
+	if got := openAPIJSONResponseSchemaRef(t, shareGraph, "200"); got != "#/components/schemas/VertexGraph" {
+		t.Errorf("share-link graph 200 schema = %q, want VertexGraph", got)
+	}
+	widgetGet := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}/widget", "GET")
+	if got := openAPIJSONResponseSchemaRef(t, widgetGet, "200"); got != "#/components/schemas/VertexGraph" {
+		t.Errorf("widget GET 200 schema = %q, want VertexGraph", got)
+	}
+	widgetSave := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}/widget/save", "POST")
+	if got := openAPIRequestBodySchemaRef(t, widgetSave); got != "#/components/schemas/VertexWidgetSaveRequest" {
+		t.Errorf("widget save request schema = %q, want VertexWidgetSaveRequest", got)
+	}
+	if got := openAPIJSONResponseSchemaRef(t, widgetSave, "200"); got != "#/components/schemas/VertexGraph" {
+		t.Errorf("widget save 200 schema = %q, want VertexGraph", got)
+	}
+
+	schemas := openAPISchemas(t, doc)
+	graph := openAPIProperties(t, schemas, "VertexGraph")
+	for _, field := range []string{"rid", "ontologyRid", "name", "version", "versioned", "payload", "createdBy", "createdAt", "updatedAt"} {
+		if _, ok := graph[field]; !ok {
+			t.Errorf("VertexGraph must expose %s", field)
+		}
+	}
+	shareResponse := openAPIProperties(t, schemas, "VertexShareLinkCreateResponse")
+	for _, field := range []string{"token", "graphRid", "createdBy", "createdAt"} {
+		if _, ok := shareResponse[field]; !ok {
+			t.Errorf("VertexShareLinkCreateResponse must expose %s", field)
+		}
+	}
+	widgetRequest := openAPIProperties(t, schemas, "VertexWidgetSaveRequest")
+	for _, field := range []string{"payload", "overrideGraphRid"} {
+		if _, ok := widgetRequest[field]; !ok {
+			t.Errorf("VertexWidgetSaveRequest must expose %s", field)
+		}
+	}
+}
+
 func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	components, ok := doc["components"].(map[string]any)
@@ -233,6 +315,81 @@ func openAPIProperties(t *testing.T, schemas map[string]any, name string) map[st
 		t.Fatalf("components.schemas.%s.properties: expected map, got %T", name, schema["properties"])
 	}
 	return props
+}
+
+func openAPIPathOperation(t *testing.T, doc map[string]any, path string, method string) map[string]any {
+	t.Helper()
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("paths: expected map, got %T", doc["paths"])
+	}
+	pathItem, ok := paths[path].(map[string]any)
+	if !ok {
+		t.Fatalf("paths.%s: expected map, got %T", path, paths[path])
+	}
+	operation, ok := pathItem[strings.ToLower(method)].(map[string]any)
+	if !ok {
+		t.Fatalf("paths.%s.%s: expected map, got %T", path, strings.ToLower(method), pathItem[strings.ToLower(method)])
+	}
+	return operation
+}
+
+func openAPIResponseStatusExists(t *testing.T, operation map[string]any, status string) bool {
+	t.Helper()
+	responses, ok := operation["responses"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.responses: expected map, got %T", operation["responses"])
+	}
+	_, ok = responses[status]
+	return ok
+}
+
+func openAPIJSONResponseSchemaRef(t *testing.T, operation map[string]any, status string) string {
+	t.Helper()
+	responses, ok := operation["responses"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.responses: expected map, got %T", operation["responses"])
+	}
+	response, ok := responses[status].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.responses.%s: expected map, got %T", status, responses[status])
+	}
+	content, ok := response["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.responses.%s.content: expected map, got %T", status, response["content"])
+	}
+	jsonContent, ok := content["application/json"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.responses.%s.content.application/json: expected map, got %T", status, content["application/json"])
+	}
+	schema, ok := jsonContent["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.responses.%s.content.application/json.schema: expected map, got %T", status, jsonContent["schema"])
+	}
+	ref, _ := schema["$ref"].(string)
+	return ref
+}
+
+func openAPIRequestBodySchemaRef(t *testing.T, operation map[string]any) string {
+	t.Helper()
+	requestBody, ok := operation["requestBody"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.requestBody: expected map, got %T", operation["requestBody"])
+	}
+	content, ok := requestBody["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.requestBody.content: expected map, got %T", requestBody["content"])
+	}
+	jsonContent, ok := content["application/json"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.requestBody.content.application/json: expected map, got %T", content["application/json"])
+	}
+	schema, ok := jsonContent["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation.requestBody.content.application/json.schema: expected map, got %T", jsonContent["schema"])
+	}
+	ref, _ := schema["$ref"].(string)
+	return ref
 }
 
 func newContractTestRouter(t *testing.T) *chi.Mux {
