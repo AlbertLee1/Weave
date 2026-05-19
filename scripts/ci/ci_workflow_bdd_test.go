@@ -387,6 +387,143 @@ func TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends(t *testing.T) {
 	}
 }
 
+func TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	vertexRoutes := readFile(t, filepath.Join(root, "pkg", "vertex", "graphsvc", "handler.go"))
+	vertexWorkspace := readFile(t, filepath.Join(root, "web", "src", "vertex", "VertexWorkspacePage.tsx"))
+	vertexScenariosMigration := readFile(t, filepath.Join(root, "migrations", "000105_vertex_scenarios.up.sql"))
+	vertexRunsMigration := readFile(t, filepath.Join(root, "migrations", "000109_vertex_scenario_runs.up.sql"))
+	quiverRoutes := readFile(t, filepath.Join(root, "pkg", "quiver", "handlers.go"))
+	quiverDataRoutes := readFile(t, filepath.Join(root, "pkg", "quiver", "handlers_data.go"))
+	quiverPage := readFile(t, filepath.Join(root, "web", "src", "components", "quiver", "QuiverPage.tsx"))
+	dashboardRoutes := readFile(t, filepath.Join(root, "pkg", "dashboards", "handlers.go"))
+	notificationFanout := readFile(t, filepath.Join(root, "pkg", "notifications", "fanout.go"))
+	reactionRoutes := readFile(t, filepath.Join(root, "pkg", "reactions", "handlers.go"))
+	permissionRequestsRoutes := readFile(t, filepath.Join(root, "pkg", "permissionrequests", "handlers.go"))
+	appRoutes := readFile(t, filepath.Join(root, "web", "src", "App.tsx"))
+	sidebar := readFile(t, filepath.Join(root, "web", "src", "components", "layout", "Sidebar.tsx"))
+
+	for _, claim := range []string{
+		"**非目标**：替代 Foundry 的多租户、大集群、AIP Logic 全套、Workshop/Slate/Vertex 等应用层。",
+		"不做 Workshop / Slate / Quiver / Vertex 等应用层",
+		"企业/多租户/AIP/Workshop/Slate/etc.",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale upper-layer experience claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`web/src/vertex`",
+		"`pkg/vertex/graphsvc`",
+		"`pkg/vertex/scenarioruns`",
+		"`migrations/000105_vertex_scenarios.up.sql`",
+		"`migrations/000109_vertex_scenario_runs.up.sql`",
+		"`/api/vertex/v1/graphs`",
+		"`/vertex/:rid`",
+		"`web/src/components/quiver`",
+		"`pkg/quiver`",
+		"`/api/v2/quiver/dashboards/{rid}/data`",
+		"`/quiver/:ontology`",
+		"`pkg/dashboards`",
+		"`/api/v2/dashboards`",
+		"`pkg/notifications`",
+		"`pkg/reactions`",
+		"`pkg/permissionrequests`",
+		"`/api/v2/notifications`",
+		"`/api/v2/reactions`",
+		"`/api/v2/permission-requests`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live upper-layer experience fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"graphsvc.NewHandler",
+		"controlpanel.NewHandler",
+		"dashboards.NewHandler",
+		"quiver.NewHandler",
+		"reactions.NewHandler",
+		"permissionrequests.NewHandler",
+		"/api/v2/notifications",
+	} {
+		if !strings.Contains(serverMain, required) {
+			t.Errorf("cmd/server must wire upper-layer fragment %q", required)
+		}
+	}
+	for _, required := range []string{
+		`/api/vertex/v1/graphs`,
+		`/api/vertex/v1/graphs/{rid}/share-links`,
+		`/api/vertex/v1/graphs/{rid}/widget`,
+	} {
+		if !strings.Contains(vertexRoutes, required) {
+			t.Errorf("Vertex graph handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"VertexWorkspacePage", "VertexAddObjectsDialog", "vertex-workspace"} {
+		if !strings.Contains(vertexWorkspace, required) {
+			t.Errorf("Vertex workspace must expose %q", required)
+		}
+	}
+	for _, required := range []string{"case_studies", "scenarios", "scenario_edits", "scenario_overrides"} {
+		if !strings.Contains(vertexScenariosMigration, required) {
+			t.Errorf("Vertex scenarios migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"scenario_runs", "status IN ('pending', 'running', 'succeeded', 'failed', 'canceled')"} {
+		if !strings.Contains(vertexRunsMigration, required) {
+			t.Errorf("Vertex scenario-runs migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"/api/v2/quiver/save", "/api/v2/quiver/dashboards/{rid}/view", "/api/v2/quiver/dashboards/{rid}/data", "/api/v2/quiver/dashboards/{rid}/sparklines"} {
+		if !strings.Contains(quiverRoutes, required) {
+			t.Errorf("Quiver handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"TimeSeriesReader", "DataResponse", "dashboardSeriesConfig"} {
+		if !strings.Contains(quiverDataRoutes, required) {
+			t.Errorf("Quiver data handler must expose %q", required)
+		}
+	}
+	if !strings.Contains(quiverPage, "QuiverWorkbenchView") {
+		t.Error("Quiver page must render the workbench surface")
+	}
+	for _, required := range []string{"/api/v2/dashboards", "IsPublic", "Dashboard"} {
+		if !strings.Contains(dashboardRoutes, required) {
+			t.Errorf("Dashboard handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"CreateNotificationForUser", "HandleActivity"} {
+		if !strings.Contains(notificationFanout, required) {
+			t.Errorf("notification fanout must expose %q", required)
+		}
+	}
+	for _, required := range []string{"/api/v2/reactions", "ReactionBar", "Aggregate"} {
+		if !strings.Contains(reactionRoutes, required) {
+			t.Errorf("reaction handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"/api/v2/permission-requests", "NotifyApproversNewRequest", "NotifyRequesterDecision"} {
+		if !strings.Contains(permissionRequestsRoutes, required) {
+			t.Errorf("permission request handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{`path="vertex/:rid"`, `path="quiver/:ontology"`, `path="dashboards"`, `path="permission-requests"`, `path="notifications"`} {
+		if !strings.Contains(appRoutes, required) {
+			t.Errorf("SPA routes must expose %q", required)
+		}
+	}
+	for _, required := range []string{"Quiver TS", "Permission Requests", "Notifications"} {
+		if !strings.Contains(sidebar, required) {
+			t.Errorf("Sidebar must expose %q", required)
+		}
+	}
+}
+
 func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
 	root := repoRoot(t)
 	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))

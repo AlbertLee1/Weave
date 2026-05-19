@@ -16,7 +16,7 @@
 
 ## 0. 执行摘要
 
-**一句话结论**：Weave 已完成了 Foundry OSv2 的 **REST API 表面形状对齐**（68/68 路由，47 个 US 全量落地），但**语义深度仍有系统性差距**——多处存在"端点已开通、底层是内存/MVP、语义未完整"的情形。本 PRD 的核心任务是把项目从 "API 已就位" 推到 "可作为单机 OSv2 参考实现部署并产出正确结果"。
+**一句话结论**：Weave 已完成了 OSv2 的 **REST API 表面形状对齐**（68/68 路由，47 个 US 全量落地），但**语义深度仍有系统性差距**——多处存在"端点已开通、底层是内存/MVP、语义未完整"的情形。本 PRD 的核心任务是把项目从 "API 已就位" 推到 "可作为单机 OSv2 参考实现部署并产出正确结果"。
 
 **三个关键判断**：
 
@@ -46,13 +46,13 @@
 
 ### 1.1 项目定位
 
-Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目标读者有三类：
+Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，目标读者有三类：
 
 - **学习者**：想在本地跑一个 "小号 Foundry" 来理解 Ontology、ObjectSet、Action、Funnel 这些概念。
 - **评估者**：想用 Foundry 同形状的 API 来做架构决策、前后端隔离实验，不希望被 SaaS 绑架。
 - **小规模生产**：在单机/单团队场景下，以 Weave 作为 Ontology 层运行真实业务。
 
-**非目标**：替代 Foundry 的多租户、大集群、AIP Logic 全套、Workshop/Slate/Vertex 等应用层。
+**非目标**：替代企业级多租户、大集群、完整 AIP Logic、Workshop/Slate 全套产品面；Vertex、Quiver、Dashboard、通知/协作等上层体验已经作为本地 OSv2 工作流的一部分落地，但仍按 MVP 深度管理。
 
 ### 1.2 技术栈（已锁定）
 
@@ -130,6 +130,9 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | 前端 | 页面（Dashboard/Explorer/Browser/ObjectSet/Action/Aggregation/Login） | 🟢 | n/a | 🟡 | **70%** | 主流程可用；**测试覆盖率偏低（22 test 对 40+ component）** |
 | 前端 | 实时 & 订阅 | 🟢 | n/a | 🟡 | **65%** | `web/src/hooks/useObjectSetSubscription.ts`、`web/src/components/browser/BrowserPage.tsx` realtime mode、`web/src/components/objectsets/ObjectSetLivePage.tsx` 已接 SSE/WS；剩余是大规模断线恢复和可观测性 polish |
 | 前端 | AIP 助手 | 🟡 | n/a | 🟡 | **40%** | semantic search + MCP 工具在后端；前端未暴露交互 |
+| 上层体验 | Vertex graph/scenario workspace | 🟢 | 🟢 PG + memory fallback | 🟡 | **70%** | `web/src/vertex` 提供 `/vertex/:rid` workspace；`pkg/vertex/graphsvc` 提供 `/api/vertex/v1/graphs`、share-links 与 widget surface；`pkg/vertex/scenarioruns` + `migrations/000105_vertex_scenarios.up.sql` / `migrations/000109_vertex_scenario_runs.up.sql` 覆盖 scenarios 与 scenario_runs；remaining depth gaps 是 scenario-run server wiring breadth、diagramming/ops polish 与大图性能 |
+| 上层体验 | Quiver time-series workbench | 🟢 | 🟢 PG | 🟡 | **72%** | `web/src/components/quiver` 提供 `/quiver/:ontology` 与分享视图；`pkg/quiver` 提供 dashboard CRUD、`/api/v2/quiver/dashboards/{rid}/data` 与 `/sparklines`，由 `cmd/server/quiver_timeseries_adapter.go` 接 TimeSeries store；remaining depth gaps 是跨 dashboard 模板、告警联动与大规模多序列缓存 |
+| 上层体验 | Dashboards / notifications / reactions / permission requests | 🟢 | 🟢 PG | 🟡 | **68%** | `pkg/dashboards` 提供 `/api/v2/dashboards`；`pkg/notifications` + OMS `/api/v2/notifications` 支持通知中心与 fan-out；`pkg/reactions` 提供 `/api/v2/reactions` 给 ObjectDetail ReactionBar；`pkg/permissionrequests` 提供 `/api/v2/permission-requests` request-access workflow；remaining depth gaps 是审计串联、批量治理体验与通知渠道生产化 |
 | SDK (Python) | 核心 CRUD + Action | 🟢 | n/a | 🟢 | **80%** | 核心齐全、iter_all 支持 |
 | SDK (Python) | ObjectSet 组合 DSL | 🟡 | n/a | 🔴 | **40%** | 仅 raw dict，无 Pythonic builder |
 | SDK (Python) | Aggregation | 🔴 | n/a | 🔴 | **10%** | 未暴露 |
@@ -184,7 +187,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | SHOULD 8 | Streaming ingest (NATS subject 上做 ingest) | 🟡 | **NATS ingest 端点 + subject 规范** (新 US) |
 | SHOULD 9 | 行/列/Marking 过滤 | 🔴 | **Granular policy 执行引擎** (新 US) |
 | SHOULD 10 | Ontology 只读分支 + semver | 🔴 | **branch + version 挂到 RID** (新 US) |
-| MAY 1-10 | 企业/多租户/AIP/Workshop/Slate/etc. | 🔴 | 明确排除或单独立项 |
+| MAY 1-10 | 企业级多租户 / 完整 AIP Logic / Workshop / Slate 全套产品面 | 🔴 | 明确排除或单独立项；Vertex/Quiver/Dashboard/协作通知已作为本地上层体验 MVP 纳入现状矩阵 |
 
 ---
 
@@ -200,7 +203,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 
 ### 3.2 明确的非目标
 
-1. ❌ 不做 Workshop / Slate / Quiver / Vertex 等应用层。
+1. ❌ 不做 Workshop / Slate 全套产品面；Vertex / Quiver / Dashboard / 通知协作已作为本地上层体验 MVP 落地，本阶段只补状态文档与语义深度，不扩成全套产品线。
 2. ❌ 不做企业级多租户 / 组织层级 / Project / Restricted View。
 3. ❌ 不追求 AIP Logic 完整块图；AIP 能力保持"通过 MCP + nearestNeighbors 提供 AI 调用入口"即可。
 4. ❌ 不引入 Kubernetes 依赖；单机 / docker-compose 为一等公民。

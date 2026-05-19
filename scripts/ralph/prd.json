@@ -29,7 +29,7 @@
       "phase": "OSv2 Upper-Layer Experience",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Update the OSv2 status document so upper-layer experience scope reflects shipped Vertex, Quiver, dashboards, notifications, reactions, and permission-request surfaces instead of treating them as excluded or absent.",
       "bdd_acceptance": [

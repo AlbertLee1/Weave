@@ -34,3 +34,22 @@ Branch: ralph/self-iteration-20260519-192439
   - `pkg/timeseries/pg_store.go` uses `timeseries_cagg_5min` plus `RunCAGGRefreshLoop`; `pkg/timeseries/vm_store.go` pushes large numeric series down to VictoriaMetrics `/api/v1/query_range`.
   - Remaining TimeSeries work is no longer basic downsample availability; it is production semantics like calendar-aware buckets, retention policy, multi-resolution materialization, and operational tuning.
 ---
+
+## Tue May 19 19:38:42 CST 2026 - SELF-457
+- Implemented a BDD status-doc contract for upper-layer OSv2 experience coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it no longer excludes Quiver/Vertex/application layers as non-goals while live code ships those MVP surfaces.
+- RED evidence: `go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1` failed because the status doc still said Workshop/Slate/Quiver/Vertex application layers were excluded and lacked live Vertex, Quiver, dashboard, notification, reaction, and permission-request fragments.
+- GREEN evidence:
+  - `go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1` => passed.
+  - `npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx src/components/quiver` => passed, 5 files / 56 tests.
+  - `git diff --check` => passed.
+  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
+- Files changed:
+  - `scripts/ci/ci_workflow_bdd_test.go`
+  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Vertex upper-layer coverage spans `web/src/vertex`, `pkg/vertex/graphsvc`, `/api/vertex/v1/graphs`, `/vertex/:rid`, and scenario persistence/execution structures in `migrations/000105_vertex_scenarios.up.sql`, `migrations/000109_vertex_scenario_runs.up.sql`, and `pkg/vertex/scenarioruns`.
+  - Quiver is no longer just a planned visualization: `web/src/components/quiver`, `pkg/quiver`, `/api/v2/quiver/dashboards/{rid}/data`, `/sparklines`, and `cmd/server/quiver_timeseries_adapter.go` connect saved workbenches to TimeSeries.
+  - Collaboration/governance UX surfaces include `/api/v2/dashboards`, `/api/v2/notifications`, `/api/v2/reactions`, and `/api/v2/permission-requests`; remaining gaps are depth, production hardening, and governance wiring, not absence.
+---
