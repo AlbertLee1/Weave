@@ -207,7 +207,7 @@ function WhereEditor({
         onChange={(e) => onChange({ ...where, type: e.target.value })}
         aria-label="where type"
       >
-        {['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'isNull', 'containsAnyTerm'].map(
+        {['eq', 'gt', 'gte', 'lt', 'lte', 'isNull', 'containsAnyTerm'].map(
           (t) => (
             <option key={t} value={t}>
               {t}

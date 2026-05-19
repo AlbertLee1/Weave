@@ -1,6 +1,6 @@
 # Ralph Progress Log
-Started: Tue May 19 12:27:26 CST 2026
-Branch: ralph/self-iteration-20260519-122726
+Started: Tue May 19 13:26:47 CST 2026
+Branch: ralph/self-iteration-20260519-132647
 ---
 
 ## Codebase Patterns
@@ -10,111 +10,50 @@ Branch: ralph/self-iteration-20260519-122726
 - Phase 6 upper-layer probes should remain skip-free and should assert concrete OSv2 response shape before using seeded fixtures: `objectTypes`, `actionTypes`, `interfaceTypes`, metadata `linkTypes`, and `loadObjectsOrInterfaces` page payloads should fail loudly on missing arrays or missing `totalCount` instead of falling through shallow route reachability.
 - Phase 7 upper-layer probes should remain skip-free and should assert concrete seeded identity, policy, audit, actionTypes, and realtime subscription behavior; optional empty audit checks or missing `data` array checks let reachable service regressions look like passing probes.
 - ObjectSet composer support for a new backend variant usually needs both `web/src/components/objectsets/ObjectSetBuilder.tsx` controls/defaults and `web/src/lib/objectSetBuilder.ts` node validation/round-trip updates.
+- ObjectSet composer filter operators must align with `pkg/oss/where/converter.go`; UI-only pseudo-operators should either be normalized to backend wire format or rejected before Execute.
 - Run Web TypeScript checks from `web/` with `npx tsc --noEmit` (or `npm --prefix web run build`); `npm --prefix web exec tsc -- --noEmit` does not pass the flag correctly in this environment.
 
 ## Kickoff
-- Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-122726`.
-- Previous active PRD belonged to `ralph/self-iteration-20260519-090653` and all stories had `passes: true`; archived old `scripts/ralph/prd.json` and `scripts/ralph/progress.txt` to `scripts/ralph/archive/self-iteration-20260519-123148/`.
+- Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-132647`.
+- Previous active PRD belonged to `ralph/self-iteration-20260519-122726` and all stories had `passes: true`; archived active `scripts/ralph/prd.json` and `scripts/ralph/progress.txt` to `scripts/ralph/archive/self-iteration-20260519-133057/`.
 - Root symlinks verified before refresh: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
 - No `PR CI auto-fix context` was present in the active progress file.
-- GitHub CI at kickoff: latest main CI runs 26076080948, 26069761127, and 26068337937 completed success.
-- Local health sampled:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts` passed: 16 tests.
-  - `go test ./pkg/oss/objectset ./cmd/server -run 'TestExecuteNearestNeighbors|TestBuildEmbeddingProvider|TestDefinition_ValidateNearestNeighbors'` passed.
-- Known-risk inspection:
-  - Fresh-CI `cmd/server/embed.go` risk is covered by existing embed tests/placeholders.
-  - US-453 streamless binary-response risk is covered by `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
-  - Dogfood DOG-001 through DOG-005 have committed-looking implementation and regression coverage in this checkout.
-- New PRD created with three focused ObjectSet composer stories, prioritizing the stale UI block on backend-supported `nearestNeighbors`.
+- GitHub CI at kickoff: latest main CI run 26077819348 completed success; Codespaces prebuild 26077819155 was still in progress.
+- Local known-risk checks:
+  - `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA'` passed.
+  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 1 file, 7 tests.
+- Dogfood inspection:
+  - DOG-002 dashboard object type totals, DOG-003 index bootstrap/stream ingest, DOG-004 containsAnyTerm browser search, and DOG-005 explorer property flags have committed regression coverage in this checkout.
+  - The next small stale surface is ObjectSet composer filter validation: it still exposes `neq`, which `pkg/oss/where/converter.go` does not support directly, and it treats blank field/value filters as executable.
+- New PRD created with three focused ObjectSet filter stories. SELF-440 is the only story selected for this Codex execution.
 
 ## Selected Story
-- Selected SELF-437 because it is the highest-priority incomplete story and the backend/server already support `nearestNeighbors`, while the Web composer still rejects it as unsupported.
+- Selected SELF-440 because it is the highest-priority incomplete story and prevents the composer from sending backend-rejected WhereClause filters before broader logical/text filter work.
 ---
 
-## Tue May 19 12:37:00 CST 2026 - SELF-437
+## Tue May 19 13:33:53 CST 2026 - SELF-440
 - What was implemented:
-  - Enabled `nearestNeighbors` in the ObjectSet composer type selector.
-  - Added composer controls for embedding property, neighbor count, and query text.
-  - Updated ObjectSet builder validation so complete nearestNeighbors definitions are executable and incomplete ones report specific missing fields.
-  - Added BDD coverage for switching to nearestNeighbors and rendering a saved nearestNeighbors definition.
-  - Added ObjectSet builder unit coverage for nearestNeighbors validation and wire-format round-trip.
+  - Added source-level ObjectSet filter WhereClause validation for supported backend operators, missing fields, missing comparison values, logical `and`/`or` children, and `not` child clauses.
+  - Kept `isNull` executable with a field and no comparison value.
+  - Removed the unsupported `neq` pseudo-operator from the composer filter operator menu so new filters cannot select a backend-rejected operator.
+  - Added BDD coverage for blank `eq`, unsupported `neq`, and valid `isNull` filter clauses.
 - TDD red:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx` failed as expected before implementation:
-    - `validateNode` returned `nearestNeighbors is not yet supported by the backend`.
-    - Switching the builder type to `nearestNeighbors` made zero `onChange` calls.
-    - The composer rendered the unsupported validation instead of editable controls.
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetComposer.filterValidation.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx` failed as expected before implementation:
+    - `validateNode` returned `[]` for a blank `eq` filter.
+    - ObjectSetComposer left Execute enabled for blank `eq` and unsupported `neq` filters.
 - Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` passed: 3 files, 25 tests.
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetComposer.filterValidation.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx` passed: 3 files, 33 tests.
   - From `web/`: `npx tsc --noEmit` passed.
   - `git diff --check` passed.
 - Files changed:
   - `web/src/components/objectsets/ObjectSetBuilder.tsx`
-  - `web/src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx`
+  - `web/src/components/objectsets/__tests__/ObjectSetComposer.filterValidation.bdd.test.tsx`
   - `web/src/lib/objectSetBuilder.ts`
   - `web/src/lib/__tests__/objectSetBuilder.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - ObjectSet composer support for a new variant has two surfaces: `web/src/components/objectsets/ObjectSetBuilder.tsx` for controls/defaults, and `web/src/lib/objectSetBuilder.ts` for `ObjectSetNode` validation/round-trip.
-  - `npm --prefix web exec tsc -- --noEmit` does not pass arguments as intended in this environment; run TypeScript checks from `web/` with `npx tsc --noEmit` or use the project build script.
-- Result: SELF-437 marked `passes: true`; SELF-438 and SELF-439 remain open for later Ralph iterations.
----
-
-## Tue May 19 12:42:36 CST 2026 - SELF-438
-- What was implemented:
-  - Added editable `static` ObjectSet support to the Web ObjectSet builder type selector.
-  - Added static object type and primary-key list controls, normalizing the wire `primaryKeys` array by trimming entries and removing blanks.
-  - Added static ObjectSet node conversion and validation so saved/shared static definitions render instead of throwing as unsupported.
-  - Added regression coverage for static definition round-trip, static validation, builder editing, and composer execute enablement.
-- TDD red:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` failed as expected before implementation:
-    - `definitionToNode` threw `objectSet type "static" is not yet supported in the composer UI`.
-    - Static validation returned no missing-object-type error.
-    - The builder selector rendered the stale `base` fallback instead of `static`.
-    - The composer crashed while rendering a valid static ObjectSet.
-- Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` passed: 3 files, 33 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/src/components/objectsets/ObjectSetBuilder.tsx`
-  - `web/src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx`
-  - `web/src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`
-  - `web/src/lib/objectSetBuilder.ts`
-  - `web/src/lib/__tests__/objectSetBuilder.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Static ObjectSets are backend-supported with only `objectType` required; empty `primaryKeys` is valid and returns an empty exact set.
-  - Composer support for a backend-supported root variant must include `OBJECT_SET_TYPES`, default wire shape, source-level `ObjectSetNode` conversion, and composer validation.
-- Result: SELF-438 marked `passes: true`; SELF-439 remains open for a later Ralph iteration.
----
-
-## Tue May 19 12:48:01 CST 2026 - SELF-439
-- What was implemented:
-  - Added a source-level ObjectSet composer support matrix covering every `ObjectSetDefinition['type']` as either editable or intentionally read-only unsupported.
-  - Changed backend-only variants (`asType`, `asBaseObjectTypes`, `interfaceBase`, `interfaceLinkSearchAround`, and `methodInput`) to convert into preserved read-only unsupported nodes instead of throwing during `definitionToNode`.
-  - Added validation that disables Execute with a specific message naming the backend-only variant.
-  - Rendered backend-only definitions in a read-only composer panel, including definitions loaded from shared `?def=` URLs.
-  - Prevented shared URL auto-execution when the restored definition fails composer validation.
-- TDD red:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetPage.test.tsx` failed as expected before implementation:
-    - `definitionToNode` threw `objectSet type "asType" is not yet supported in the composer UI`.
-    - ObjectSetPage crashed while rendering shared `asType`, `interfaceBase`, `interfaceLinkSearchAround`, and `methodInput` definitions.
-- Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetPage.test.tsx` passed: 2 files, 32 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/src/components/objectsets/ObjectSetBuilder.tsx`
-  - `web/src/components/objectsets/ObjectSetPage.tsx`
-  - `web/src/components/objectsets/__tests__/ObjectSetPage.test.tsx`
-  - `web/src/lib/objectSetBuilder.ts`
-  - `web/src/lib/__tests__/objectSetBuilder.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Backend-only ObjectSet variants should be preserved in node form and validated as read-only unsupported so shared links fail gracefully without losing the original wire definition.
-  - Shared ObjectSet URL auto-execution should be gated by composer validation; restoring a definition and executing it are separate states.
-- Result: SELF-439 marked `passes: true`; all stories in the current PRD are now marked passing.
+  - Keep the ObjectSet composer filter allow-list synchronized with `pkg/oss/where/converter.go`; when adding UI aliases such as not-equals, normalize them to backend-supported `not` clauses instead of sending pseudo-operators.
+  - `isNull` is the current exception to the field/value rule: it requires a field but intentionally does not require a comparison value.
+- Result: SELF-440 marked `passes: true`; SELF-441 and SELF-442 remain open for later Ralph iterations.
 ---
