@@ -1,32 +1,46 @@
 # Ralph Progress Log
-Started: Tue May 19 20:19:09 CST 2026
-Reset: Tue May 19 20:22:41 CST 2026
-Branch: ralph/self-iteration-20260519-201909
+Started: Tue May 19 21:58:25 CST 2026
+Reset: Tue May 19 21:59:44 CST 2026
+Branch: ralph/self-iteration-20260519-215825
 
 ## Codebase Patterns
 - Status-doc drift stories should pin both sides of the contract: forbidden stale wording in `docs/PRD-Weave-OSv2-深度复刻-V2.md` plus required live code fragments from route registration, backend implementation files, and regression tests.
 - Vertex legacy/deep-link routes should resolve through explicit redirect components in `App.tsx`; keep stale placeholder copy out of `web/src/vertex` once the live workspace route exists.
 - Frontend typecheck is exposed as `npm --prefix web run typecheck`, backed by `tsc -b`.
+- OpenAPI drift work should remove specific `cmd/server/contract_test.go` undocumented-route allow-list entries, add focused BDD assertions for operation IDs and schemas, and copy `api/openapi.yaml` to `cmd/server/openapi_spec.yaml` so `TestContract_EmbeddedSpecMatchesCanonical` stays green.
 
 ## Kickoff Inspection
-- Archived stale branch PRD/progress from ralph/self-iteration-20260519-192439 to `scripts/ralph/archive/self-iteration-20260519-202241/`.
-- No `PR CI auto-fix context` was present in the active progress file.
-- GitHub main health: latest CI run `26096351095` completed success on commit `5c51315`; Codespaces prebuild `26096359892` was still in progress.
-- Known local risk checks:
+- Archived stale branch PRD/progress from `ralph/self-iteration-20260519-201909` to `scripts/ralph/archive/self-iteration-20260519-215944/`.
+- Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-215825`.
+- Root symlinks remain intact:
+  - `prd.json -> scripts/ralph/prd.json`
+  - `progress.txt -> scripts/ralph/progress.txt`
+- No `PR CI auto-fix context` was present in the archived progress file.
+- GitHub main health from `gh run list --branch main --limit 8`:
+  - Latest CI run `26098563689` completed success on commit `b3eec04`.
+  - Latest Codespaces prebuild `26098562686` completed success.
+  - Latest Dependabot update run `26098635511` completed success.
+- Known local fresh-CI risk checks:
   - `go test ./scripts/ci -count=1` => passed.
   - `go test ./cmd/server -run 'TestBDD_CIEmbedPackageSurvivesFreshCheckoutWithoutGeneratedWebDist|TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` => passed.
   - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` => passed, 1 file / 8 tests.
-- Dogfood issues DOG-002 through DOG-005 are already covered by live tests/code on this branch (`DashboardPage.totalObjectTypes`, `pkg/oms/index_bootstrap_bdd_test.go`, `pkg/oss/where/converter_dog004_bdd_test.go`, `PropertiesTable.dog005.bdd.test.tsx`).
-- New PRD created for three narrow OSv2 upper-layer contract gaps. SELF-459 is first because `pkg/vertex/controlpanel/handler.go` registers GET/PUT `/api/vertex/v1/admin/control-panel`, but `cmd/server/contract_test.go` still allow-lists those routes as undocumented, leaving API Playground/OpenAPI clients blind to live Vertex operator knobs.
+- Dogfood scan:
+  - DOG-001 already has seeder cleanup and `TestBDD_SeedSurvivesNonCascadingFKDependents` in `test/fixtures/seed_northwind/seed_test.go`.
+  - DOG-002 through DOG-005 remain covered by the prior live tests/code noted in the archived progress file.
+- New PRD created for three small Vertex SystemGraph OpenAPI contract gaps. `SELF-462` is first because POST/GET/PUT `/api/vertex/v1/graphs` routes are live in `pkg/vertex/graphsvc/handler.go`, but still explicitly allow-listed as undocumented in `cmd/server/contract_test.go`, leaving the primary graph lifecycle hidden from API Playground and SDK generation.
 ---
 
-## Tue May 19 20:27:30 CST 2026 - SELF-459
-- Implemented a BDD OpenAPI contract for the live Vertex control-panel routes and published GET/PUT `/api/vertex/v1/admin/control-panel` in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
-- RED evidence: `go test ./cmd/server -run TestBDD_VertexControlPanelOpenAPIContract -count=1` failed because GET/PUT `/api/vertex/v1/admin/control-panel` were still allow-listed as undocumented, absent from `api/openapi.yaml`, and `VertexControlPanelConfig` was missing from components schemas.
+## Tue May 19 22:05:53 CST 2026 - SELF-462
+- Implemented a BDD OpenAPI contract for the live Vertex graph create/read/update routes, removed POST `/api/vertex/v1/graphs`, GET `/api/vertex/v1/graphs/{rid}`, and PUT `/api/vertex/v1/graphs/{rid}` from `undocumentedRouteAllowList`, and published those operations in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
+- Added OpenAPI schemas for:
+  - `VertexGraphCreateRequest`, including `ontologyRid`, `name`, optional `versioned`, optional `payload`, and optional `createdBy`.
+  - `VertexGraphUpdateRequest`, including required `payload`.
+- RED evidence:
+  - `go test ./cmd/server -run TestBDD_VertexGraphCRUDOpenAPIContract -count=1` => failed because POST/GET/PUT graph routes were still allow-listed as undocumented and absent from `api/openapi.yaml`.
 - GREEN evidence:
-  - `go test ./cmd/server -run TestBDD_VertexControlPanelOpenAPIContract -count=1` => passed.
-  - `go test ./cmd/server -run 'TestBDD_VertexControlPanelOpenAPIContract|TestContract_' -count=1` => passed.
-  - `go test ./pkg/vertex/controlpanel -count=1` => passed.
+  - `go test ./cmd/server -run TestBDD_VertexGraphCRUDOpenAPIContract -count=1` => passed.
+  - `go test ./cmd/server -run 'TestBDD_VertexGraphCRUDOpenAPIContract|TestContract_' -count=1` => passed.
+  - `go test ./pkg/vertex/graphsvc -run 'Test.*create|Test.*update|Test.*Graph' -count=1` => passed.
   - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
   - `git diff --check` => passed.
 - Files changed:
@@ -36,22 +50,32 @@ Branch: ralph/self-iteration-20260519-201909
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - `cmd/server/contract_test.go` has an explicit undocumented-route allow-list for live chi routes that are not yet in OpenAPI. Removing an entry plus adding canonical and embedded spec paths is the smallest way to convert a live route into a documented API contract.
-  - The running server serves `cmd/server/openapi_spec.yaml`; `TestContract_EmbeddedSpecMatchesCanonical` requires it to be byte-identical to `api/openapi.yaml`.
-  - Vertex control-panel behavior already lives in `pkg/vertex/controlpanel`; this story only changed discoverability and contract coverage, not runtime semantics.
+  - `VertexGraph` already existed for share-link/widget responses, so graph CRUD contract work only needed request schemas plus path operations.
+  - Keep the remaining graph layout/history/template/diff allow-list entries split by workflow; the OpenAPI additions stay small and reviewable when each story owns a focused route cluster.
 ---
 
-## Tue May 19 20:32:37 CST 2026 - SELF-460
-- Implemented a BDD OpenAPI contract for the live Vertex share-link and Workshop widget routes, removed those five routes from `undocumentedRouteAllowList`, and published their path operations in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
+## Tue May 19 22:11:58 CST 2026 - SELF-463
+- Implemented a BDD OpenAPI contract for the live Vertex graph duplicate, save-as-template, history, version read, and template instantiate routes.
+- Removed these routes from `undocumentedRouteAllowList`:
+  - POST `/api/vertex/v1/graphs/{rid}/duplicate`
+  - POST `/api/vertex/v1/graphs/{rid}/save-as-template`
+  - GET `/api/vertex/v1/graphs/{rid}/history`
+  - GET `/api/vertex/v1/graphs/{rid}/versions/{version}`
+  - POST `/api/vertex/v1/templates/{rid}/instantiate`
+- Published those operations in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
 - Added OpenAPI schemas for:
-  - `VertexGraph`, including the shared graph/widget response shape and payload semantics.
-  - `VertexShareLinkCreateResponse`, including `token`, `graphRid`, `createdBy`, and `createdAt`.
-  - `VertexWidgetSaveRequest`, including `payload` and optional `overrideGraphRid`.
-- RED evidence: `go test ./cmd/server -run TestBDD_VertexShareLinksAndWidgetOpenAPIContract -count=1` failed because POST/DELETE/GET share-link routes and GET/POST widget routes were still allow-listed as undocumented and absent from `api/openapi.yaml`.
+  - `VertexGraphTemplateSaveRequest`
+  - `VertexGraphTemplateSaveResponse`
+  - `VertexGraphHistoryEntry`
+  - `VertexGraphHistoryResponse`
+  - `VertexGraphTemplateInstantiateRequest`
+  - `VertexGraphTemplateInstantiateResponse`
+- RED evidence:
+  - `go test ./cmd/server -run TestBDD_VertexGraphHistoryTemplateOpenAPIContract -count=1` => failed because the five SELF-463 routes were still allow-listed as undocumented and absent from `api/openapi.yaml`.
 - GREEN evidence:
-  - `go test ./cmd/server -run TestBDD_VertexShareLinksAndWidgetOpenAPIContract -count=1` => passed.
-  - `go test ./cmd/server -run 'TestContract_|TestGraphShare|TestGraphWidget' -count=1` => passed.
-  - `go test ./pkg/vertex/graphsvc -run 'Test.*Share|Test.*Widget' -count=1` => passed.
+  - `go test ./cmd/server -run TestBDD_VertexGraphHistoryTemplateOpenAPIContract -count=1` => passed.
+  - `go test ./cmd/server -run 'TestBDD_VertexGraphHistoryTemplateOpenAPIContract|TestContract_' -count=1` => passed.
+  - `go test ./pkg/vertex/graphsvc -run 'Test.*Duplicate|Test.*Template|Test.*History|Test.*Version' -count=1` => passed.
   - `git diff --check` => passed.
 - Files changed:
   - `api/openapi.yaml`
@@ -60,35 +84,35 @@ Branch: ralph/self-iteration-20260519-201909
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - Share-link and widget runtime behavior was already covered in `pkg/vertex/graphsvc`; this story only promoted the live routes into the discoverable API contract.
-  - For OpenAPI drift work, add a focused BDD contract test that asserts both removal from `undocumentedRouteAllowList` and schema refs on the documented operations.
-  - Copy `api/openapi.yaml` to `cmd/server/openapi_spec.yaml` after spec edits; the embedded-spec contract test treats byte drift as a server failure.
+  - Template instantiate returns an instantiated payload but does not create a graph row; document it with a dedicated response schema instead of reusing `VertexGraph`.
+  - The only Vertex graph routes still intentionally undocumented after SELF-463 are layout patch and graph diff, which are scoped to SELF-464.
 ---
 
-## Tue May 19 20:39:39 CST 2026 - SELF-461
-- Replaced the stale Vertex diagramming placeholder with an explicit redirect from `/vertex/{rid}/diagramming` to `/vertex/{rid}`, wired the redirect into `App.tsx`, and removed the retired `vertex.diagramming.*` i18n placeholder keys from both locales.
-- Added `web/package.json` `typecheck` script so the PRD quality gate runs `tsc -b` directly.
+## Tue May 19 22:18:17 CST 2026 - SELF-464
+- Implemented a BDD OpenAPI contract for the live Vertex graph layout patch and RFC 6902 graph diff routes.
+- Removed these routes from `undocumentedRouteAllowList`:
+  - PATCH `/api/vertex/v1/graphs/{rid}/layout`
+  - GET `/api/vertex/v1/graphs/{rid}/diff`
+- Published those operations in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
+- Added OpenAPI schemas for:
+  - `VertexGraphLayoutPatchRequest`
+  - `VertexGraphLayoutPatchResponse`
+  - `VertexGraphDiffOp`
+  - `VertexGraphDiffResponse`
 - RED evidence:
-  - `npm --prefix web test -- --run src/vertex/DiagrammingStubPage.test.tsx src/vertex/vertexI18n.test.tsx` => failed because `DiagrammingStubPage` still rendered `Diagramming · Coming soon` instead of redirecting, and both locale resource trees still contained `diagramming.*` keys.
-  - `npm --prefix web run typecheck` => failed with `Missing script: "typecheck"`.
+  - `go test ./cmd/server -run TestBDD_VertexGraphLayoutDiffOpenAPIContract -count=1` => failed because the two SELF-464 routes were still allow-listed as undocumented and absent from `api/openapi.yaml`.
 - GREEN evidence:
-  - `npm --prefix web test -- --run src/vertex/DiagrammingStubPage.test.tsx src/vertex/vertexI18n.test.tsx` => passed, 2 files / 20 tests.
-  - `npm --prefix web test -- --run src/vertex/DiagrammingStubPage.test.tsx src/vertex/vertexI18n.test.tsx src/vertex/VertexWorkspacePage.test.tsx` => passed, 3 files / 56 tests.
-  - `npm --prefix web run typecheck` => passed.
+  - `go test ./cmd/server -run TestBDD_VertexGraphLayoutDiffOpenAPIContract -count=1` => passed.
+  - `go test ./cmd/server -run 'TestBDD_VertexGraphLayoutDiffOpenAPIContract|TestContract_' -count=1` => passed.
+  - `go test ./pkg/vertex/graphsvc -run 'Test.*Layout|Test.*Diff' -count=1` => passed.
   - `git diff --check` => passed.
 - Files changed:
-  - `web/package.json`
-  - `web/src/App.tsx`
-  - `web/src/i18n/resources/en.ts`
-  - `web/src/i18n/resources/zh-CN.ts`
-  - `web/src/vertex/DiagrammingStubPage.test.tsx`
-  - `web/src/vertex/DiagrammingStubPage.tsx`
-  - `web/src/vertex/VertexDiagrammingRedirect.tsx`
-  - `web/src/vertex/vertexI18n.test.tsx`
+  - `api/openapi.yaml`
+  - `cmd/server/openapi_spec.yaml`
+  - `cmd/server/contract_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - React Router paths like `vertex/:rid` do not match deeper URLs such as `/vertex/{rid}/diagramming`; add an explicit redirect route before the wildcard to keep deep links out of `NotFoundPage`.
-  - Retiring a placeholder page needs both route/test updates and i18n resource cleanup; `vertexI18n.test.tsx` now guards against reintroducing stale `vertex.diagramming.*` keys.
-  - The `web` package did not previously expose the PRD's typecheck command; `npm --prefix web run typecheck` now maps to `tsc -b`.
+  - Layout patch returns only `{ "rid": ... }` and intentionally does not bump graph history, so keep its OpenAPI response separate from `VertexGraph`.
+  - The graph diff endpoint returns the newer RFC 6902 `ops` contract rather than the older `GraphDiff` struct in `diff.go`; document the HTTP handler shape from `handler.go`.
 ---

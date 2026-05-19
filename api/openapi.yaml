@@ -3318,6 +3318,174 @@ components:
         nextPageToken:
           type: string
           description: Opaque cursor for the next page. Empty when no more pages remain.
+    VertexGraphCreateRequest:
+      type: object
+      description: Request body for creating a Vertex SystemGraph.
+      required: [ontologyRid, name]
+      additionalProperties: false
+      properties:
+        ontologyRid:
+          type: string
+          description: Ontology RID the graph belongs to.
+        name:
+          type: string
+          minLength: 1
+          description: Human-readable graph name.
+        versioned:
+          type: boolean
+          default: true
+          description: Whether full graph saves should create version-history rows.
+        payload:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Optional serialized graph workspace payload.
+        createdBy:
+          type: string
+          description: Optional creator user ID recorded with the graph.
+    VertexGraphUpdateRequest:
+      type: object
+      description: Request body for a full Vertex SystemGraph save.
+      required: [payload]
+      additionalProperties: false
+      properties:
+        payload:
+          type: object
+          additionalProperties: true
+          description: Serialized graph workspace payload to persist.
+    VertexGraphLayoutPatchRequest:
+      type: object
+      description: Request body for patching saved Vertex graph node positions.
+      required: [positions]
+      additionalProperties: false
+      properties:
+        positions:
+          type: object
+          additionalProperties: true
+          description: Node position map merged into the graph payload's positions field.
+    VertexGraphLayoutPatchResponse:
+      type: object
+      description: Confirmation returned after a Vertex graph layout patch.
+      required: [rid]
+      properties:
+        rid:
+          type: string
+          description: Vertex graph RID whose layout was patched.
+    VertexGraphDiffOp:
+      type: object
+      description: One RFC 6902 JSON Patch operation between two graph versions.
+      required: [op, path]
+      properties:
+        op:
+          type: string
+          enum: [add, remove, replace]
+          description: JSON Patch operation.
+        path:
+          type: string
+          description: RFC 6901 JSON Pointer path within the graph payload.
+        value:
+          nullable: true
+          description: Replacement or inserted JSON value. Omitted for remove operations.
+    VertexGraphDiffResponse:
+      type: object
+      description: RFC 6902 patch that transforms one graph version payload into another.
+      required: [rid, from, to, ops]
+      properties:
+        rid:
+          type: string
+          description: Vertex graph RID.
+        from:
+          type: integer
+          minimum: 1
+          description: Source graph version number.
+        to:
+          type: integer
+          minimum: 1
+          description: Target graph version number.
+        ops:
+          type: array
+          items:
+            $ref: "#/components/schemas/VertexGraphDiffOp"
+    VertexGraphTemplateSaveRequest:
+      type: object
+      description: Request body for saving a Vertex graph as a reusable template.
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: Optional template name. Blank values default to the source graph name with a template suffix.
+        parameterizedFields:
+          type: array
+          description: JSON pointer paths that can be substituted when the template is instantiated.
+          items:
+            type: string
+    VertexGraphTemplateSaveResponse:
+      type: object
+      description: Template metadata returned after saving a Vertex graph as a template.
+      required: [rid, sourceGraphRid, name, parameterizedFields]
+      properties:
+        rid:
+          type: string
+          description: Resource identifier of the saved graph template.
+        sourceGraphRid:
+          type: string
+          description: Graph RID used as the template source.
+        name:
+          type: string
+        parameterizedFields:
+          type: array
+          items:
+            type: string
+    VertexGraphHistoryEntry:
+      type: object
+      description: One persisted version row for a Vertex graph.
+      required: [version, createdAt]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+    VertexGraphHistoryResponse:
+      type: object
+      description: Ordered version history for a Vertex graph.
+      required: [rid, versions]
+      properties:
+        rid:
+          type: string
+          description: Vertex graph RID.
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/VertexGraphHistoryEntry"
+    VertexGraphTemplateInstantiateRequest:
+      type: object
+      description: Optional substitution values for a parameterized Vertex graph template.
+      additionalProperties: false
+      properties:
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Map of parameterized JSON pointer paths to replacement JSON values.
+    VertexGraphTemplateInstantiateResponse:
+      type: object
+      description: Instantiated Vertex graph template payload.
+      required: [sourceTemplateRid, sourceGraphRid, name, payload]
+      properties:
+        sourceTemplateRid:
+          type: string
+          description: Template RID that was instantiated.
+        sourceGraphRid:
+          type: string
+          description: Source graph RID captured by the template.
+        name:
+          type: string
+        payload:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Serialized graph payload with template parameters substituted.
     VertexGraph:
       type: object
       description: |
@@ -11070,6 +11238,314 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/vertex/v1/graphs:
+    post:
+      operationId: createVertexGraph
+      summary: Create a Vertex graph
+      description: |
+        Creates a Vertex SystemGraph workspace for an ontology. The optional
+        payload carries the initial serialized graph state; when omitted, the
+        server creates an empty graph payload.
+      tags: [Vertex]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphCreateRequest"
+      responses:
+        "201":
+          description: Vertex graph created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}:
+    get:
+      operationId: getVertexGraph
+      summary: Get a Vertex graph
+      description: |
+        Returns the current persisted Vertex SystemGraph payload and metadata
+        for the graph identified by `{rid}`.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current Vertex graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      operationId: updateVertexGraph
+      summary: Update a Vertex graph
+      description: |
+        Performs a full graph save by replacing the serialized payload. For
+        versioned graphs, the save bumps the graph version and records a
+        history row.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphUpdateRequest"
+      responses:
+        "200":
+          description: Updated Vertex graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/layout:
+    patch:
+      operationId: patchVertexGraphLayout
+      summary: Patch Vertex graph layout
+      description: |
+        Merges drag-driven node positions into the graph payload's `positions`
+        field without creating a new graph version.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphLayoutPatchRequest"
+      responses:
+        "200":
+          description: Vertex graph layout patched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphLayoutPatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/diff:
+    get:
+      operationId: diffVertexGraphVersions
+      summary: Diff Vertex graph versions
+      description: |
+        Returns an RFC 6902 JSON Patch that transforms the `from` version's
+        graph payload into the `to` version's graph payload.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+        - in: query
+          name: from
+          required: true
+          description: Source graph version number.
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: to
+          required: true
+          description: Target graph version number.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Vertex graph version diff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphDiffResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/duplicate:
+    post:
+      operationId: duplicateVertexGraph
+      summary: Duplicate a Vertex graph
+      description: |
+        Creates a new graph RID with a deep-copied payload from the source
+        graph. The duplicate starts at version 1 with independent history.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Source Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Duplicated Vertex graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/save-as-template:
+    post:
+      operationId: saveVertexGraphAsTemplate
+      summary: Save a Vertex graph as a template
+      description: |
+        Snapshots the current graph payload into a reusable template. Optional
+        parameterized fields identify JSON pointer paths callers can replace
+        during template instantiation.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Source Vertex graph RID.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphTemplateSaveRequest"
+      responses:
+        "201":
+          description: Vertex graph template saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphTemplateSaveResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/history:
+    get:
+      operationId: listVertexGraphHistory
+      summary: List Vertex graph history
+      description: |
+        Lists persisted version rows for a graph in ascending version order.
+        Unversioned graphs return an empty versions array.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Vertex graph version history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphHistoryResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/versions/{version}:
+    get:
+      operationId: getVertexGraphVersion
+      summary: Get a Vertex graph version
+      description: Returns a historical graph snapshot for the requested version number.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+        - in: path
+          name: version
+          required: true
+          description: Positive graph version number.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Historical Vertex graph snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/vertex/v1/graphs/{rid}/share-links:
     post:
       operationId: createVertexShareLink
@@ -11230,6 +11706,42 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "403":
           $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/templates/{rid}/instantiate:
+    post:
+      operationId: instantiateVertexGraphTemplate
+      summary: Instantiate a Vertex graph template
+      description: |
+        Applies optional parameter values to a saved graph template and returns
+        the resulting graph payload without creating a new graph row.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph template RID.
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphTemplateInstantiateRequest"
+      responses:
+        "200":
+          description: Instantiated Vertex graph template payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphTemplateInstantiateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
         "500":
