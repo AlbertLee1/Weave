@@ -20,6 +20,8 @@ vi.mock('../../api/objects', () => ({
 
 import { listObjects, searchObjects } from '../../api/objects';
 
+const EXPECTED_EXPORT_HARD_CAP = 100_000;
+
 describe('escapeCsvField', () => {
   it('returns empty string for null/undefined', () => {
     expect(escapeCsvField(null)).toBe('');
@@ -160,6 +162,47 @@ describe('fetchAllForExport', () => {
     expect(searchObjects).toHaveBeenCalledTimes(1);
     expect(listObjects).not.toHaveBeenCalled();
   });
+
+  it('fails fast when the server total count exceeds the export hard cap', async () => {
+    vi.mocked(listObjects).mockResolvedValueOnce({
+      data: [{ __rid: 'r1', __primaryKey: '1', __apiName: 'Employee' }],
+      totalCount: String(EXPECTED_EXPORT_HARD_CAP + 1),
+    });
+
+    await expect(
+      fetchAllForExport({
+        ontologyApiName: 'ont',
+        objectType: 'Employee',
+        select: ['id'],
+        hasActiveSearch: false,
+      }),
+    ).rejects.toThrow(
+      `exceeds the ${EXPECTED_EXPORT_HARD_CAP} row export limit`,
+    );
+    expect(listObjects).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails when pagination reaches the hard cap and more rows remain', async () => {
+    vi.mocked(listObjects).mockResolvedValueOnce({
+      data: Array.from({ length: EXPECTED_EXPORT_HARD_CAP }, (_, i) => ({
+        __rid: `r${i}`,
+        __primaryKey: String(i),
+        __apiName: 'Employee',
+      })),
+      nextPageToken: 'still-more',
+    });
+
+    await expect(
+      fetchAllForExport({
+        ontologyApiName: 'ont',
+        objectType: 'Employee',
+        select: ['id'],
+        hasActiveSearch: false,
+      }),
+    ).rejects.toThrow(
+      `exceeds the ${EXPECTED_EXPORT_HARD_CAP} row export limit`,
+    );
+  });
 });
 
 describe('exportObjects (integration)', () => {
@@ -182,6 +225,8 @@ describe('exportObjects (integration)', () => {
     anchors = [];
     createdUrls = [];
     (createdObjectUrl as unknown as { blobs: Blob[] }).blobs = [];
+    createdObjectUrl.mockClear();
+    revokeObjectUrl.mockClear();
 
     vi.stubGlobal('URL', {
       createObjectURL: createdObjectUrl,
@@ -273,6 +318,33 @@ describe('exportObjects (integration)', () => {
     expect(parsed.metadata.objectType).toBe('Employee');
     expect(parsed.metadata.count).toBe(1);
     expect(typeof parsed.metadata.exportedAt).toBe('string');
+  });
+
+  it('does not download a partial file when export exceeds the hard cap', async () => {
+    vi.mocked(listObjects).mockResolvedValueOnce({
+      data: [
+        { __rid: 'r1', __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice' },
+      ],
+      totalCount: String(EXPECTED_EXPORT_HARD_CAP + 1),
+    });
+
+    await expect(
+      exportObjects(
+        'csv',
+        {
+          ontologyApiName: 'ont',
+          objectType: 'Employee',
+          select: ['id', 'name'],
+          hasActiveSearch: false,
+        },
+        objectType,
+      ),
+    ).rejects.toThrow(
+      `exceeds the ${EXPECTED_EXPORT_HARD_CAP} row export limit`,
+    );
+
+    expect(anchors).toHaveLength(0);
+    expect(createdObjectUrl).not.toHaveBeenCalled();
   });
 });
 
