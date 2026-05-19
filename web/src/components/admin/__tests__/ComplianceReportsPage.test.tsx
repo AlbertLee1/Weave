@@ -166,7 +166,7 @@ describe('ComplianceReportsPage (US-453)', () => {
         return streamlessBinaryResponse(
           new Uint8Array([0x25, 0x50, 0x44, 0x46]),
           'application/pdf',
-          'attachment; filename="weave-compliance-report.pdf"',
+          "attachment; filename*=UTF-8''control%20evidence.pdf",
         );
       }
       return new Response('{}', { status: 200 });
@@ -185,7 +185,7 @@ describe('ComplianceReportsPage (US-453)', () => {
     await waitFor(() => {
       expect(downloads.length).toBe(1);
     });
-    expect(downloads[0].filename).toMatch(/\.pdf$/);
+    expect(downloads[0].filename).toBe('control evidence.pdf');
     expect(downloads[0].type).toBe('application/pdf');
     expect(screen.queryByText(/object\.stream/i)).not.toBeInTheDocument();
     const reportCall = calls.find((c) =>
@@ -222,6 +222,30 @@ describe('ComplianceReportsPage (US-453)', () => {
       expect(downloads.length).toBe(1);
     });
     expect(downloads[0].filename).toMatch(/\.json$/);
+  });
+
+  it('SOC2 JSON: falls back to the deterministic filename when the attachment header is malformed', async () => {
+    installFetch(
+      () =>
+        new Response(JSON.stringify({ generatedAt: '2026-04-30T00:00:00Z' }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Disposition': "attachment; filename*=UTF-8''%E0%A4%A",
+          },
+        }),
+    );
+    const downloads = captureDownloads();
+    const user = userEvent.setup();
+    renderPage();
+    await user.selectOptions(screen.getByLabelText(/format/i), 'json');
+    await user.click(
+      screen.getByRole('button', { name: /generate.*download/i }),
+    );
+    await waitFor(() => {
+      expect(downloads.length).toBe(1);
+    });
+    expect(downloads[0].filename).toBe('weave-compliance-report.json');
   });
 
   it('SOC2 JSON: records Blob bodies even when fetch returns them from another realm', async () => {
@@ -291,7 +315,7 @@ describe('ComplianceReportsPage (US-453)', () => {
     await waitFor(() => {
       expect(downloads.length).toBe(1);
     });
-    expect(downloads[0].filename).toMatch(/\.zip$/);
+    expect(downloads[0].filename).toBe('gdpr-export-alice.zip');
     expect(downloads[0].type).toBe('application/zip');
     expect(screen.queryByText(/object\.stream/i)).not.toBeInTheDocument();
     const exportCall = calls.find((c) =>

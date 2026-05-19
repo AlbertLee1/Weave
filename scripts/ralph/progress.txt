@@ -72,3 +72,26 @@ Started: Tue May 19 16:04:30 CST 2026
   - Time Travel history rows already carry rollback audit fields through the web API type; upper-layer controls should surface those fields anywhere a historical checkpoint can be selected or shown as active.
 - Result: SELF-447 marked `passes: true`; SELF-448 remains open for a later Ralph iteration.
 ---
+
+## Tue May 19 16:23:36 CST 2026 - SELF-448
+- What was implemented:
+  - Added component BDD coverage that a standards-compliant `filename*=UTF-8''control%20evidence.pdf` compliance report header saves as `control evidence.pdf`.
+  - Added API coverage for RFC 5987 compliance filenames, existing quoted GDPR filenames, and malformed filename fallback behavior.
+  - Replaced the attachment filename regex with Content-Disposition parameter parsing that prefers valid UTF-8 RFC 5987 `filename*`, preserves quoted `filename`, and falls back to deterministic names when extended values are malformed.
+  - Corrected the SELF-448 API test quality-gate path to run from the `web/` project root.
+- TDD red:
+  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/api/__tests__/compliance.test.ts` failed as expected before implementation: encoded filenames were returned as `UTF-8''control%20evidence.pdf`, and malformed values were returned as `UTF-8''%E0%A4%A` instead of falling back.
+- Verification:
+  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/api/__tests__/compliance.test.ts` passed: 2 files, 11 tests.
+  - From `web/`: `npx tsc --noEmit` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/src/api/compliance.ts`
+  - `web/src/api/__tests__/compliance.test.ts`
+  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Learnings for future iterations:
+  - Download helpers should parse `Content-Disposition` as parameters, not with a single filename regex; extended `filename*` values need decode-and-validate semantics before falling back to regular filenames or deterministic defaults.
+- Result: SELF-448 marked `passes: true`; all stories in the active PRD now pass pending final clean-worktree verification.
+---

@@ -52,7 +52,7 @@
       "phase": "Admin Compliance Experience",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Parse RFC 5987 `Content-Disposition` filenames for compliance and GDPR downloads so operator-supplied report names survive standards-compliant server headers.",
       "bdd_acceptance": [
@@ -61,7 +61,7 @@
         "Given the attachment filename header is malformed, When the report downloads, Then the UI falls back to the deterministic default filename."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx web/src/api/__tests__/compliance.test.ts`",
+        "`npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/api/__tests__/compliance.test.ts`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
