@@ -51,7 +51,7 @@
       "phase": "OSv2 Vertex Collaboration API",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-462"
       ],

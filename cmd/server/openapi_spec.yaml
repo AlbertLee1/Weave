@@ -3353,6 +3353,59 @@ components:
           type: object
           additionalProperties: true
           description: Serialized graph workspace payload to persist.
+    VertexGraphLayoutPatchRequest:
+      type: object
+      description: Request body for patching saved Vertex graph node positions.
+      required: [positions]
+      additionalProperties: false
+      properties:
+        positions:
+          type: object
+          additionalProperties: true
+          description: Node position map merged into the graph payload's positions field.
+    VertexGraphLayoutPatchResponse:
+      type: object
+      description: Confirmation returned after a Vertex graph layout patch.
+      required: [rid]
+      properties:
+        rid:
+          type: string
+          description: Vertex graph RID whose layout was patched.
+    VertexGraphDiffOp:
+      type: object
+      description: One RFC 6902 JSON Patch operation between two graph versions.
+      required: [op, path]
+      properties:
+        op:
+          type: string
+          enum: [add, remove, replace]
+          description: JSON Patch operation.
+        path:
+          type: string
+          description: RFC 6901 JSON Pointer path within the graph payload.
+        value:
+          nullable: true
+          description: Replacement or inserted JSON value. Omitted for remove operations.
+    VertexGraphDiffResponse:
+      type: object
+      description: RFC 6902 patch that transforms one graph version payload into another.
+      required: [rid, from, to, ops]
+      properties:
+        rid:
+          type: string
+          description: Vertex graph RID.
+        from:
+          type: integer
+          minimum: 1
+          description: Source graph version number.
+        to:
+          type: integer
+          minimum: 1
+          description: Target graph version number.
+        ops:
+          type: array
+          items:
+            $ref: "#/components/schemas/VertexGraphDiffOp"
     VertexGraphTemplateSaveRequest:
       type: object
       description: Request body for saving a Vertex graph as a reusable template.
@@ -11281,6 +11334,88 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/layout:
+    patch:
+      operationId: patchVertexGraphLayout
+      summary: Patch Vertex graph layout
+      description: |
+        Merges drag-driven node positions into the graph payload's `positions`
+        field without creating a new graph version.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphLayoutPatchRequest"
+      responses:
+        "200":
+          description: Vertex graph layout patched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphLayoutPatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/diff:
+    get:
+      operationId: diffVertexGraphVersions
+      summary: Diff Vertex graph versions
+      description: |
+        Returns an RFC 6902 JSON Patch that transforms the `from` version's
+        graph payload into the `to` version's graph payload.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+        - in: query
+          name: from
+          required: true
+          description: Source graph version number.
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: to
+          required: true
+          description: Target graph version number.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Vertex graph version diff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraphDiffResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/vertex/v1/graphs/{rid}/duplicate:

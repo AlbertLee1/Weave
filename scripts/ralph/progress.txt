@@ -87,3 +87,32 @@ Branch: ralph/self-iteration-20260519-215825
   - Template instantiate returns an instantiated payload but does not create a graph row; document it with a dedicated response schema instead of reusing `VertexGraph`.
   - The only Vertex graph routes still intentionally undocumented after SELF-463 are layout patch and graph diff, which are scoped to SELF-464.
 ---
+
+## Tue May 19 22:18:17 CST 2026 - SELF-464
+- Implemented a BDD OpenAPI contract for the live Vertex graph layout patch and RFC 6902 graph diff routes.
+- Removed these routes from `undocumentedRouteAllowList`:
+  - PATCH `/api/vertex/v1/graphs/{rid}/layout`
+  - GET `/api/vertex/v1/graphs/{rid}/diff`
+- Published those operations in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
+- Added OpenAPI schemas for:
+  - `VertexGraphLayoutPatchRequest`
+  - `VertexGraphLayoutPatchResponse`
+  - `VertexGraphDiffOp`
+  - `VertexGraphDiffResponse`
+- RED evidence:
+  - `go test ./cmd/server -run TestBDD_VertexGraphLayoutDiffOpenAPIContract -count=1` => failed because the two SELF-464 routes were still allow-listed as undocumented and absent from `api/openapi.yaml`.
+- GREEN evidence:
+  - `go test ./cmd/server -run TestBDD_VertexGraphLayoutDiffOpenAPIContract -count=1` => passed.
+  - `go test ./cmd/server -run 'TestBDD_VertexGraphLayoutDiffOpenAPIContract|TestContract_' -count=1` => passed.
+  - `go test ./pkg/vertex/graphsvc -run 'Test.*Layout|Test.*Diff' -count=1` => passed.
+  - `git diff --check` => passed.
+- Files changed:
+  - `api/openapi.yaml`
+  - `cmd/server/openapi_spec.yaml`
+  - `cmd/server/contract_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Layout patch returns only `{ "rid": ... }` and intentionally does not bump graph history, so keep its OpenAPI response separate from `VertexGraph`.
+  - The graph diff endpoint returns the newer RFC 6902 `ops` contract rather than the older `GraphDiff` struct in `diff.go`; document the HTTP handler shape from `handler.go`.
+---

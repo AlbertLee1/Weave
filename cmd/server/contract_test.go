@@ -133,9 +133,6 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "GET", Path: "/api/openapi.yaml"}: true,
 	{Method: "GET", Path: "/swagger/"}:         true,
 	{Method: "GET", Path: "/swagger"}:          true,
-	// Remaining Vertex graph collaboration routes are tracked by SELF-464.
-	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}: true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}:     true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the
@@ -471,6 +468,107 @@ func TestBDD_VertexGraphHistoryTemplateOpenAPIContract(t *testing.T) {
 	}
 }
 
+func TestBDD_VertexGraphLayoutDiffOpenAPIContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	specOps := extractSpecOperations(t, doc)
+	expectedOps := []struct {
+		op          specOperationKey
+		operationID string
+		status      string
+		responseRef string
+	}{
+		{
+			op:          specOperationKey{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"},
+			operationID: "patchVertexGraphLayout",
+			status:      "200",
+			responseRef: "#/components/schemas/VertexGraphLayoutPatchResponse",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"},
+			operationID: "diffVertexGraphVersions",
+			status:      "200",
+			responseRef: "#/components/schemas/VertexGraphDiffResponse",
+		},
+	}
+
+	allPresent := true
+	for _, want := range expectedOps {
+		if undocumentedRouteAllowList[want.op] {
+			t.Errorf("%s %s must be documented in OpenAPI, not allow-listed as undocumented", want.op.Method, want.op.Path)
+		}
+		if !specOps[want.op] {
+			t.Errorf("api/openapi.yaml must document %s %s", want.op.Method, want.op.Path)
+			allPresent = false
+		}
+	}
+	if !allPresent {
+		return
+	}
+
+	for _, want := range expectedOps {
+		operation := openAPIPathOperation(t, doc, want.op.Path, want.op.Method)
+		if got, _ := operation["operationId"].(string); got != want.operationID {
+			t.Errorf("%s %s operationId = %q, want %q", want.op.Method, want.op.Path, got, want.operationID)
+		}
+		if got := openAPIJSONResponseSchemaRef(t, operation, want.status); got != want.responseRef {
+			t.Errorf("%s %s %s schema = %q, want %s", want.op.Method, want.op.Path, want.status, got, want.responseRef)
+		}
+	}
+
+	layout := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}/layout", "PATCH")
+	if got := openAPIRequestBodySchemaRef(t, layout); got != "#/components/schemas/VertexGraphLayoutPatchRequest" {
+		t.Errorf("graph layout patch request schema = %q, want VertexGraphLayoutPatchRequest", got)
+	}
+	diff := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}/diff", "GET")
+	for _, name := range []string{"from", "to"} {
+		param := openAPIParameter(t, diff, "query", name)
+		if required, _ := param["required"].(bool); !required {
+			t.Errorf("diff query parameter %s must be required", name)
+		}
+		schema, ok := param["schema"].(map[string]any)
+		if !ok {
+			t.Fatalf("diff query parameter %s schema: expected map, got %T", name, param["schema"])
+		}
+		if got, _ := schema["type"].(string); got != "integer" {
+			t.Errorf("diff query parameter %s type = %q, want integer", name, got)
+		}
+		if got := fmt.Sprint(schema["minimum"]); got != "1" {
+			t.Errorf("diff query parameter %s minimum = %s, want 1", name, got)
+		}
+	}
+
+	schemas := openAPISchemas(t, doc)
+	layoutReqProps := openAPIProperties(t, schemas, "VertexGraphLayoutPatchRequest")
+	if _, ok := layoutReqProps["positions"]; !ok {
+		t.Errorf("VertexGraphLayoutPatchRequest must expose positions")
+	}
+	if !openAPIRequiredSet(t, schemas, "VertexGraphLayoutPatchRequest")["positions"] {
+		t.Errorf("VertexGraphLayoutPatchRequest must require positions")
+	}
+	layoutRespProps := openAPIProperties(t, schemas, "VertexGraphLayoutPatchResponse")
+	if _, ok := layoutRespProps["rid"]; !ok {
+		t.Errorf("VertexGraphLayoutPatchResponse must expose rid")
+	}
+	diffRespProps := openAPIProperties(t, schemas, "VertexGraphDiffResponse")
+	for _, field := range []string{"rid", "from", "to", "ops"} {
+		if _, ok := diffRespProps[field]; !ok {
+			t.Errorf("VertexGraphDiffResponse must expose %s", field)
+		}
+	}
+	diffOpProps := openAPIProperties(t, schemas, "VertexGraphDiffOp")
+	for _, field := range []string{"op", "path", "value"} {
+		if _, ok := diffOpProps[field]; !ok {
+			t.Errorf("VertexGraphDiffOp must expose %s", field)
+		}
+	}
+	diffOpRequired := openAPIRequiredSet(t, schemas, "VertexGraphDiffOp")
+	for _, field := range []string{"op", "path"} {
+		if !diffOpRequired[field] {
+			t.Errorf("VertexGraphDiffOp must require %s", field)
+		}
+	}
+}
+
 func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	components, ok := doc["components"].(map[string]any)
@@ -533,6 +631,27 @@ func openAPIPathOperation(t *testing.T, doc map[string]any, path string, method 
 		t.Fatalf("paths.%s.%s: expected map, got %T", path, strings.ToLower(method), pathItem[strings.ToLower(method)])
 	}
 	return operation
+}
+
+func openAPIParameter(t *testing.T, operation map[string]any, in string, name string) map[string]any {
+	t.Helper()
+	parameters, ok := operation["parameters"].([]any)
+	if !ok {
+		t.Fatalf("operation.parameters: expected list, got %T", operation["parameters"])
+	}
+	for _, raw := range parameters {
+		param, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("operation.parameters item: expected map, got %T", raw)
+		}
+		gotIn, _ := param["in"].(string)
+		gotName, _ := param["name"].(string)
+		if gotIn == in && gotName == name {
+			return param
+		}
+	}
+	t.Fatalf("operation.parameters missing %s parameter %q", in, name)
+	return nil
 }
 
 func openAPIResponseStatusExists(t *testing.T, operation map[string]any, status string) bool {
