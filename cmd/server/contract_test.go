@@ -161,18 +161,79 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	// the VTX-009 routes.
 	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/widget"}:       true,
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/widget/save"}: true,
-	// VTX-015: Vertex Control Panel — admin-tunable runtime knobs (default
-	// window, polling interval, search-around limits, missing-data warning
-	// threshold). OpenAPI entries follow alongside the rest of the VTX-009
-	// schemas; same allow-list mode as the other VTX-* admin endpoints.
-	{Method: "GET", Path: "/api/vertex/v1/admin/control-panel"}: true,
-	{Method: "PUT", Path: "/api/vertex/v1/admin/control-panel"}: true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the
 // OpenAPI spec that have no chi route in this server. This list is empty by
 // design: every documented path SHOULD map to a registered route.
 var orphanSpecPathAllowList = map[specOperationKey]bool{}
+
+func TestBDD_VertexControlPanelOpenAPIContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	specOps := extractSpecOperations(t, doc)
+	controlPanelOps := []specOperationKey{
+		{Method: "GET", Path: "/api/vertex/v1/admin/control-panel"},
+		{Method: "PUT", Path: "/api/vertex/v1/admin/control-panel"},
+	}
+	for _, op := range controlPanelOps {
+		if undocumentedRouteAllowList[op] {
+			t.Errorf("%s %s must be documented in OpenAPI, not allow-listed as undocumented", op.Method, op.Path)
+		}
+		if !specOps[op] {
+			t.Errorf("api/openapi.yaml must document %s %s", op.Method, op.Path)
+		}
+	}
+
+	schemas := openAPISchemas(t, doc)
+	config := openAPIProperties(t, schemas, "VertexControlPanelConfig")
+	update := openAPIProperties(t, schemas, "VertexControlPanelUpdateRequest")
+	expectedDefaults := map[string]string{
+		"defaultWindowDays":       "30",
+		"pollingIntervalSec":      "5",
+		"searchAroundMaxNodes":    "200",
+		"searchAroundMaxDepth":    "3",
+		"missingDataWarningHours": "24",
+	}
+	for field, wantDefault := range expectedDefaults {
+		prop, ok := config[field].(map[string]any)
+		if !ok {
+			t.Errorf("VertexControlPanelConfig must expose %s", field)
+			continue
+		}
+		if got := fmt.Sprint(prop["default"]); got != wantDefault {
+			t.Errorf("VertexControlPanelConfig.%s default = %s, want %s", field, got, wantDefault)
+		}
+		if _, ok := update[field]; !ok {
+			t.Errorf("VertexControlPanelUpdateRequest must expose sparse update field %s", field)
+		}
+	}
+}
+
+func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	components, ok := doc["components"].(map[string]any)
+	if !ok {
+		t.Fatalf("components: expected map, got %T", doc["components"])
+	}
+	schemas, ok := components["schemas"].(map[string]any)
+	if !ok {
+		t.Fatalf("components.schemas: expected map, got %T", components["schemas"])
+	}
+	return schemas
+}
+
+func openAPIProperties(t *testing.T, schemas map[string]any, name string) map[string]any {
+	t.Helper()
+	schema, ok := schemas[name].(map[string]any)
+	if !ok {
+		t.Fatalf("components.schemas.%s: expected map, got %T", name, schemas[name])
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("components.schemas.%s.properties: expected map, got %T", name, schema["properties"])
+	}
+	return props
+}
 
 func newContractTestRouter(t *testing.T) *chi.Mux {
 	t.Helper()

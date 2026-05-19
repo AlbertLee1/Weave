@@ -1,74 +1,40 @@
 # Ralph Progress Log
-Started: Tue May 19 19:24:39 CST 2026
-Reset: Tue May 19 19:27:34 CST 2026
-Branch: ralph/self-iteration-20260519-192439
+Started: Tue May 19 20:19:09 CST 2026
+Reset: Tue May 19 20:22:41 CST 2026
+Branch: ralph/self-iteration-20260519-201909
 
 ## Codebase Patterns
 - Status-doc drift stories should pin both sides of the contract: forbidden stale wording in `docs/PRD-Weave-OSv2-深度复刻-V2.md` plus required live code fragments from route registration, backend implementation files, and regression tests.
 
 ## Kickoff Inspection
-- Archived stale branch PRD/progress from ralph/self-iteration-20260519-184146 to scripts/ralph/archive/self-iteration-20260519-192734/.
+- Archived stale branch PRD/progress from ralph/self-iteration-20260519-192439 to `scripts/ralph/archive/self-iteration-20260519-202241/`.
 - No `PR CI auto-fix context` was present in the active progress file.
-- GitHub main health: latest CI run 26093754173 completed success on commit 3d51032; Codespaces prebuild 26093753526 was still in progress.
+- GitHub main health: latest CI run `26096351095` completed success on commit `5c51315`; Codespaces prebuild `26096359892` was still in progress.
 - Known local risk checks:
+  - `go test ./scripts/ci -count=1` => passed.
   - `go test ./cmd/server -run 'TestBDD_CIEmbedPackageSurvivesFreshCheckoutWithoutGeneratedWebDist|TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` => passed.
   - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` => passed, 1 file / 8 tests.
-- New PRD created for three narrow OSv2 status-document contract drift stories. SELF-456 is first because the status document still says TimeSeries has no bucket aggregation/downsample path while live code has transform/downsample/CAGG/VM/Vertex coverage.
+- Dogfood issues DOG-002 through DOG-005 are already covered by live tests/code on this branch (`DashboardPage.totalObjectTypes`, `pkg/oms/index_bootstrap_bdd_test.go`, `pkg/oss/where/converter_dog004_bdd_test.go`, `PropertiesTable.dog005.bdd.test.tsx`).
+- New PRD created for three narrow OSv2 upper-layer contract gaps. SELF-459 is first because `pkg/vertex/controlpanel/handler.go` registers GET/PUT `/api/vertex/v1/admin/control-panel`, but `cmd/server/contract_test.go` still allow-lists those routes as undocumented, leaving API Playground/OpenAPI clients blind to live Vertex operator knobs.
 ---
 
-## Tue May 19 19:31:00 CST 2026 - SELF-456
-- Implemented a BDD status-doc contract for TimeSeries coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it reflects live transform/downsample/CAGG/VM/Vertex paths instead of claiming bucket aggregation/downsample is absent.
-- RED evidence: `go test ./scripts/ci -run TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends -count=1` failed because the status doc still contained stale `无时间分桶 / 聚合查询` and `无 downsample` claims and lacked live route/backend fragments.
+## Tue May 19 20:27:30 CST 2026 - SELF-459
+- Implemented a BDD OpenAPI contract for the live Vertex control-panel routes and published GET/PUT `/api/vertex/v1/admin/control-panel` in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
+- RED evidence: `go test ./cmd/server -run TestBDD_VertexControlPanelOpenAPIContract -count=1` failed because GET/PUT `/api/vertex/v1/admin/control-panel` were still allow-listed as undocumented, absent from `api/openapi.yaml`, and `VertexControlPanelConfig` was missing from components schemas.
 - GREEN evidence:
-  - `go test ./scripts/ci -run TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends -count=1` => passed.
-  - `go test ./pkg/timeseries ./pkg/oss -run 'Test.*TimeSeries|Test.*Downsample|Test.*CAGG|Test.*VertexTimeSeries' -count=1` => passed for both packages.
-  - `git diff --check` => passed.
+  - `go test ./cmd/server -run TestBDD_VertexControlPanelOpenAPIContract -count=1` => passed.
+  - `go test ./cmd/server -run 'TestBDD_VertexControlPanelOpenAPIContract|TestContract_' -count=1` => passed.
+  - `go test ./pkg/vertex/controlpanel -count=1` => passed.
   - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
+  - `git diff --check` => passed.
 - Files changed:
-  - `scripts/ci/ci_workflow_bdd_test.go`
-  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
+  - `api/openapi.yaml`
+  - `cmd/server/openapi_spec.yaml`
+  - `cmd/server/contract_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - **Learnings for future iterations:**
-  - TimeSeries now has more than the original first/last/stream surface: `pkg/oss/handlers.go` wires object-level TimeSeries routes plus `/timeseries/transform`; `pkg/oss/handlers_timeseries_transform.go` pushes single-step `resample` into `DownsamplePoints`.
-  - `pkg/timeseries/pg_store.go` uses `timeseries_cagg_5min` plus `RunCAGGRefreshLoop`; `pkg/timeseries/vm_store.go` pushes large numeric series down to VictoriaMetrics `/api/v1/query_range`.
-  - Remaining TimeSeries work is no longer basic downsample availability; it is production semantics like calendar-aware buckets, retention policy, multi-resolution materialization, and operational tuning.
----
-
-## Tue May 19 19:38:42 CST 2026 - SELF-457
-- Implemented a BDD status-doc contract for upper-layer OSv2 experience coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it no longer excludes Quiver/Vertex/application layers as non-goals while live code ships those MVP surfaces.
-- RED evidence: `go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1` failed because the status doc still said Workshop/Slate/Quiver/Vertex application layers were excluded and lacked live Vertex, Quiver, dashboard, notification, reaction, and permission-request fragments.
-- GREEN evidence:
-  - `go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1` => passed.
-  - `npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx src/components/quiver` => passed, 5 files / 56 tests.
-  - `git diff --check` => passed.
-  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
-- Files changed:
-  - `scripts/ci/ci_workflow_bdd_test.go`
-  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Vertex upper-layer coverage spans `web/src/vertex`, `pkg/vertex/graphsvc`, `/api/vertex/v1/graphs`, `/vertex/:rid`, and scenario persistence/execution structures in `migrations/000105_vertex_scenarios.up.sql`, `migrations/000109_vertex_scenario_runs.up.sql`, and `pkg/vertex/scenarioruns`.
-  - Quiver is no longer just a planned visualization: `web/src/components/quiver`, `pkg/quiver`, `/api/v2/quiver/dashboards/{rid}/data`, `/sparklines`, and `cmd/server/quiver_timeseries_adapter.go` connect saved workbenches to TimeSeries.
-  - Collaboration/governance UX surfaces include `/api/v2/dashboards`, `/api/v2/notifications`, `/api/v2/reactions`, and `/api/v2/permission-requests`; remaining gaps are depth, production hardening, and governance wiring, not absence.
----
-
-## Tue May 19 19:47:38 CST 2026 - SELF-458
-- Implemented a BDD status-doc contract for audit/governance coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it reflects the live `audit_events` store, admin audit endpoints, hash-chain verifier, OMS metadata audit wrapper, data-access audit hooks, and auth audit events instead of saying audit is limited to action logs.
-- RED evidence: `go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1` failed because the status doc still contained stale `action_logs`-only, metadata/permission/auth-missing, Gap-S4, and US-063 future-work claims and lacked live audit/governance fragments.
-- GREEN evidence:
-  - `go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1` => passed.
-  - `go test ./pkg/audit ./pkg/oms ./pkg/oss ./cmd/server ./cmd/weave-audit-verify -run 'Test.*Audit|Test.*audit' -count=1` => passed for all listed packages.
-  - `git diff --check` => passed.
-  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
-- Files changed:
-  - `scripts/ci/ci_workflow_bdd_test.go`
-  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Audit status should treat `pkg/audit`, `migrations/000020_audit_events.up.sql`, `migrations/000062_audit_hash_chain.up.sql`, `cmd/server/admin_audit.go`, and `cmd/weave-audit-verify` as the core audit contract, not `action_logs`.
-  - OMS metadata audit is already wired through `oms.NewAuditedRepository`; auth audit covers `login_failed`, `token_refresh`, and API key events; OSS read audit uses `AuditDataAccess` plus `data.access`.
-  - Remaining audit work is breadth and operations hardening: policy-change taxonomy, SIEM/retention evidence, root-hash runbooks, and aggregate UX.
+  - `cmd/server/contract_test.go` has an explicit undocumented-route allow-list for live chi routes that are not yet in OpenAPI. Removing an entry plus adding canonical and embedded spec paths is the smallest way to convert a live route into a documented API contract.
+  - The running server serves `cmd/server/openapi_spec.yaml`; `TestContract_EmbeddedSpecMatchesCanonical` requires it to be byte-identical to `api/openapi.yaml`.
+  - Vertex control-panel behavior already lives in `pkg/vertex/controlpanel`; this story only changed discoverability and contract coverage, not runtime semantics.
 ---
