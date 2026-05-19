@@ -133,18 +133,9 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	{Method: "GET", Path: "/api/openapi.yaml"}: true,
 	{Method: "GET", Path: "/swagger/"}:         true,
 	{Method: "GET", Path: "/swagger"}:          true,
-	// VTX-009: Vertex SystemGraph REST surface. The OpenAPI schemas for graph
-	// payloads (layers, edges, savedSelections, timeSettings, positions) land
-	// alongside the JSON Schema work in VTX-011; until then the chi routes are
-	// the canonical contract.
-	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}:           true,
-	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/duplicate"}:         true,
-	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:  true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"}:            true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"}: true,
-	// US-480: RFC 6902 JSON Patch diff between two graph versions.
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}:            true,
-	{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"}: true,
+	// Remaining Vertex graph collaboration routes are tracked by SELF-464.
+	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}: true,
+	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/diff"}:     true,
 }
 
 // orphanSpecPathAllowList is the set of (method, path) pairs declared in the
@@ -366,6 +357,117 @@ func TestBDD_VertexGraphCRUDOpenAPIContract(t *testing.T) {
 	}
 	if !openAPIRequiredSet(t, schemas, "VertexGraphUpdateRequest")["payload"] {
 		t.Errorf("VertexGraphUpdateRequest must require payload")
+	}
+}
+
+func TestBDD_VertexGraphHistoryTemplateOpenAPIContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	specOps := extractSpecOperations(t, doc)
+	expectedOps := []struct {
+		op          specOperationKey
+		operationID string
+		status      string
+		responseRef string
+	}{
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/duplicate"},
+			operationID: "duplicateVertexGraph",
+			status:      "201",
+			responseRef: "#/components/schemas/VertexGraph",
+		},
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"},
+			operationID: "saveVertexGraphAsTemplate",
+			status:      "201",
+			responseRef: "#/components/schemas/VertexGraphTemplateSaveResponse",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/history"},
+			operationID: "listVertexGraphHistory",
+			status:      "200",
+			responseRef: "#/components/schemas/VertexGraphHistoryResponse",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}/versions/{version}"},
+			operationID: "getVertexGraphVersion",
+			status:      "200",
+			responseRef: "#/components/schemas/VertexGraph",
+		},
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/templates/{rid}/instantiate"},
+			operationID: "instantiateVertexGraphTemplate",
+			status:      "200",
+			responseRef: "#/components/schemas/VertexGraphTemplateInstantiateResponse",
+		},
+	}
+
+	allPresent := true
+	for _, want := range expectedOps {
+		if undocumentedRouteAllowList[want.op] {
+			t.Errorf("%s %s must be documented in OpenAPI, not allow-listed as undocumented", want.op.Method, want.op.Path)
+		}
+		if !specOps[want.op] {
+			t.Errorf("api/openapi.yaml must document %s %s", want.op.Method, want.op.Path)
+			allPresent = false
+		}
+	}
+	if !allPresent {
+		return
+	}
+
+	for _, want := range expectedOps {
+		operation := openAPIPathOperation(t, doc, want.op.Path, want.op.Method)
+		if got, _ := operation["operationId"].(string); got != want.operationID {
+			t.Errorf("%s %s operationId = %q, want %q", want.op.Method, want.op.Path, got, want.operationID)
+		}
+		if got := openAPIJSONResponseSchemaRef(t, operation, want.status); got != want.responseRef {
+			t.Errorf("%s %s %s schema = %q, want %s", want.op.Method, want.op.Path, want.status, got, want.responseRef)
+		}
+	}
+
+	saveTemplate := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}/save-as-template", "POST")
+	if got := openAPIRequestBodySchemaRef(t, saveTemplate); got != "#/components/schemas/VertexGraphTemplateSaveRequest" {
+		t.Errorf("graph save-as-template request schema = %q, want VertexGraphTemplateSaveRequest", got)
+	}
+	instantiate := openAPIPathOperation(t, doc, "/api/vertex/v1/templates/{rid}/instantiate", "POST")
+	if got := openAPIRequestBodySchemaRef(t, instantiate); got != "#/components/schemas/VertexGraphTemplateInstantiateRequest" {
+		t.Errorf("template instantiate request schema = %q, want VertexGraphTemplateInstantiateRequest", got)
+	}
+
+	schemas := openAPISchemas(t, doc)
+	saveReqProps := openAPIProperties(t, schemas, "VertexGraphTemplateSaveRequest")
+	for _, field := range []string{"name", "parameterizedFields"} {
+		if _, ok := saveReqProps[field]; !ok {
+			t.Errorf("VertexGraphTemplateSaveRequest must expose %s", field)
+		}
+	}
+	saveRespProps := openAPIProperties(t, schemas, "VertexGraphTemplateSaveResponse")
+	for _, field := range []string{"rid", "sourceGraphRid", "name", "parameterizedFields"} {
+		if _, ok := saveRespProps[field]; !ok {
+			t.Errorf("VertexGraphTemplateSaveResponse must expose %s", field)
+		}
+	}
+	historyRespProps := openAPIProperties(t, schemas, "VertexGraphHistoryResponse")
+	for _, field := range []string{"rid", "versions"} {
+		if _, ok := historyRespProps[field]; !ok {
+			t.Errorf("VertexGraphHistoryResponse must expose %s", field)
+		}
+	}
+	historyEntryProps := openAPIProperties(t, schemas, "VertexGraphHistoryEntry")
+	for _, field := range []string{"version", "createdAt"} {
+		if _, ok := historyEntryProps[field]; !ok {
+			t.Errorf("VertexGraphHistoryEntry must expose %s", field)
+		}
+	}
+	instantiateReqProps := openAPIProperties(t, schemas, "VertexGraphTemplateInstantiateRequest")
+	if _, ok := instantiateReqProps["parameters"]; !ok {
+		t.Errorf("VertexGraphTemplateInstantiateRequest must expose parameters")
+	}
+	instantiateRespProps := openAPIProperties(t, schemas, "VertexGraphTemplateInstantiateResponse")
+	for _, field := range []string{"sourceTemplateRid", "sourceGraphRid", "name", "payload"} {
+		if _, ok := instantiateRespProps[field]; !ok {
+			t.Errorf("VertexGraphTemplateInstantiateResponse must expose %s", field)
+		}
 	}
 }
 

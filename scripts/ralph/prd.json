@@ -29,7 +29,7 @@
       "phase": "OSv2 Vertex Versioning API",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-462"
       ],

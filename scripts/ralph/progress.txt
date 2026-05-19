@@ -53,3 +53,37 @@ Branch: ralph/self-iteration-20260519-215825
   - `VertexGraph` already existed for share-link/widget responses, so graph CRUD contract work only needed request schemas plus path operations.
   - Keep the remaining graph layout/history/template/diff allow-list entries split by workflow; the OpenAPI additions stay small and reviewable when each story owns a focused route cluster.
 ---
+
+## Tue May 19 22:11:58 CST 2026 - SELF-463
+- Implemented a BDD OpenAPI contract for the live Vertex graph duplicate, save-as-template, history, version read, and template instantiate routes.
+- Removed these routes from `undocumentedRouteAllowList`:
+  - POST `/api/vertex/v1/graphs/{rid}/duplicate`
+  - POST `/api/vertex/v1/graphs/{rid}/save-as-template`
+  - GET `/api/vertex/v1/graphs/{rid}/history`
+  - GET `/api/vertex/v1/graphs/{rid}/versions/{version}`
+  - POST `/api/vertex/v1/templates/{rid}/instantiate`
+- Published those operations in both `api/openapi.yaml` and `cmd/server/openapi_spec.yaml`.
+- Added OpenAPI schemas for:
+  - `VertexGraphTemplateSaveRequest`
+  - `VertexGraphTemplateSaveResponse`
+  - `VertexGraphHistoryEntry`
+  - `VertexGraphHistoryResponse`
+  - `VertexGraphTemplateInstantiateRequest`
+  - `VertexGraphTemplateInstantiateResponse`
+- RED evidence:
+  - `go test ./cmd/server -run TestBDD_VertexGraphHistoryTemplateOpenAPIContract -count=1` => failed because the five SELF-463 routes were still allow-listed as undocumented and absent from `api/openapi.yaml`.
+- GREEN evidence:
+  - `go test ./cmd/server -run TestBDD_VertexGraphHistoryTemplateOpenAPIContract -count=1` => passed.
+  - `go test ./cmd/server -run 'TestBDD_VertexGraphHistoryTemplateOpenAPIContract|TestContract_' -count=1` => passed.
+  - `go test ./pkg/vertex/graphsvc -run 'Test.*Duplicate|Test.*Template|Test.*History|Test.*Version' -count=1` => passed.
+  - `git diff --check` => passed.
+- Files changed:
+  - `api/openapi.yaml`
+  - `cmd/server/openapi_spec.yaml`
+  - `cmd/server/contract_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Template instantiate returns an instantiated payload but does not create a graph row; document it with a dedicated response schema instead of reusing `VertexGraph`.
+  - The only Vertex graph routes still intentionally undocumented after SELF-463 are layout patch and graph diff, which are scoped to SELF-464.
+---
