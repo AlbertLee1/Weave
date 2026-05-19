@@ -524,6 +524,199 @@ func TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces(t *testing.T) {
 	}
 }
 
+func TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	adminAudit := readFile(t, filepath.Join(root, "cmd", "server", "admin_audit.go"))
+	verifyCommand := readFile(t, filepath.Join(root, "cmd", "weave-audit-verify", "main.go"))
+	auditStore := readFile(t, filepath.Join(root, "pkg", "audit", "audit.go"))
+	auditPGStore := readFile(t, filepath.Join(root, "pkg", "audit", "pg_store.go"))
+	auditChain := readFile(t, filepath.Join(root, "pkg", "audit", "chain.go"))
+	auditVerify := readFile(t, filepath.Join(root, "pkg", "audit", "verify.go"))
+	auditRedaction := readFile(t, filepath.Join(root, "pkg", "audit", "redaction.go"))
+	auditedRepository := readFile(t, filepath.Join(root, "pkg", "oms", "audited_repository.go"))
+	dataAccessAuditor := readFile(t, filepath.Join(root, "pkg", "oss", "data_access_audit.go"))
+	dataAccessAdapter := readFile(t, filepath.Join(root, "cmd", "server", "data_access_audit_adapter.go"))
+	loginHandler := readFile(t, filepath.Join(root, "pkg", "auth", "login_handler.go"))
+	refreshHandler := readFile(t, filepath.Join(root, "pkg", "auth", "refresh_handler.go"))
+	apiKeyHandler := readFile(t, filepath.Join(root, "pkg", "auth", "api_key_handlers.go"))
+	migration20 := readFile(t, filepath.Join(root, "migrations", "000020_audit_events.up.sql"))
+	migration61 := readFile(t, filepath.Join(root, "migrations", "000061_object_type_data_access_audit.up.sql"))
+	migration62 := readFile(t, filepath.Join(root, "migrations", "000062_audit_hash_chain.up.sql"))
+	adminAuditTests := readFile(t, filepath.Join(root, "cmd", "server", "admin_audit_us493_test.go"))
+	auditedRepositoryTests := readFile(t, filepath.Join(root, "pkg", "oms", "audited_repository_test.go"))
+	dataAccessTests := readFile(t, filepath.Join(root, "pkg", "oss", "data_access_audit_test.go"))
+	authAuditTests := readFile(t, filepath.Join(root, "pkg", "auth", "audit_test.go"))
+	chainTests := readFile(t, filepath.Join(root, "pkg", "audit", "chain_test.go"))
+	rootVerifyTests := readFile(t, filepath.Join(root, "pkg", "audit", "verify_test.go"))
+	verifyCommandTests := readFile(t, filepath.Join(root, "cmd", "weave-audit-verify", "main_test.go"))
+
+	for _, claim := range []string{
+		"🟢 action_logs",
+		"只记录 Action；**元数据变更/权限变更/登录失败 未记录**",
+		"**Gap-S4 — 元数据/权限变更审计**",
+		"现状：只有 action_logs。",
+		"建议：新增 `audit_events` 表 + trigger 在 OMS 更新路径上记录 who/when/what diff。",
+		"US-063（audit_events 表 + OMS trigger）",
+		"### US-063 — Audit events table + OMS triggers",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale audit/governance claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`pkg/audit`",
+		"`migrations/000020_audit_events.up.sql`",
+		"`migrations/000061_object_type_data_access_audit.up.sql`",
+		"`migrations/000062_audit_hash_chain.up.sql`",
+		"`cmd/server/admin_audit.go`",
+		"`cmd/weave-audit-verify`",
+		"`pkg/oms/audited_repository.go`",
+		"`cmd/server/data_access_audit_adapter.go`",
+		"`pkg/oss/data_access_audit.go`",
+		"`pkg/auth/login_handler.go`",
+		"`pkg/auth/refresh_handler.go`",
+		"`pkg/auth/api_key_handlers.go`",
+		"`/api/v2/admin/auditEvents`",
+		"`/api/admin/audit`",
+		"`audit_events`",
+		"`AuditEvent`",
+		"`NewPGStore`",
+		"`NewAuditedRepository`",
+		"`NewDataAccessAuditor`",
+		"`data.access`",
+		"`login_failed`",
+		"`token_refresh`",
+		"`api_key_create`",
+		"`VerifyChain`",
+		"`RootHashPublisher`",
+		"`RedactingStore`",
+		"`resourceRid`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live audit/governance fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"NewAdminAuditEventsHandler",
+		`/api/v2/admin/auditEvents`,
+		`/api/admin/audit`,
+		"audit.NewPGStore",
+		"audit.NewRootHashPublisher",
+		"audit.NewRedactingStore",
+		"startAuditRetention",
+		"oms.NewAuditedRepository",
+		"oss.NewDataAccessAuditor",
+	} {
+		if !strings.Contains(serverMain, required) {
+			t.Errorf("cmd/server must wire audit/governance fragment %q", required)
+		}
+	}
+	for _, required := range []string{"NewAdminAuditEventsHandler", "audit.ListFilter", "resourceRid", "pageToken"} {
+		if !strings.Contains(adminAudit, required) {
+			t.Errorf("admin audit handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"audit.NewPGStore", "VerifyChain", "VerifyRootFile", "root-file"} {
+		if !strings.Contains(verifyCommand, required) {
+			t.Errorf("audit verify command must expose %q", required)
+		}
+	}
+	for _, required := range []string{"type AuditEvent", "type ListFilter", "type Store interface", "func Record", "type MemoryStore"} {
+		if !strings.Contains(auditStore, required) {
+			t.Errorf("pkg/audit store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewPGStore", "func (s *PGStore) ListChain", "func (s *PGStore) ListBefore", "func (s *PGStore) DeleteBefore"} {
+		if !strings.Contains(auditPGStore, required) {
+			t.Errorf("PG audit store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func HashEvent", "func ComputeRootHash", "func VerifyChain"} {
+		if !strings.Contains(auditChain, required) {
+			t.Errorf("audit hash chain must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func ParseRootFile", "func VerifyRootFile", "func GroupEventsByUTCDay"} {
+		if !strings.Contains(auditVerify, required) {
+			t.Errorf("audit root verifier must expose %q", required)
+		}
+	}
+	for _, required := range []string{"type RedactingStore", "func NewRedactingStore"} {
+		if !strings.Contains(auditRedaction, required) {
+			t.Errorf("audit redaction store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewAuditedRepository", "audit.Record", "CreateOntology", "UpdateObjectType", "DeleteActionType", "CreateSecurityPolicy"} {
+		if !strings.Contains(auditedRepository, required) {
+			t.Errorf("OMS audited repository must expose %q", required)
+		}
+	}
+	for _, required := range []string{"DataAccessAction", `"data.access"`, "NewDataAccessAuditor", "AuditDataAccess", "audit.Record"} {
+		if !strings.Contains(dataAccessAuditor, required) {
+			t.Errorf("data-access auditor must expose %q", required)
+		}
+	}
+	for _, required := range []string{"newLoadObjectSetAuditAdapter", "RecordLoadObjectSet", "AuditDataAccess", "DataAccessAuditor.Record"} {
+		if !strings.Contains(dataAccessAdapter, required) {
+			t.Errorf("loadObjectSet audit adapter must expose %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"loginHandler", loginHandler, []string{"login_failed", "login_success", "audit.Record"}},
+		{"refreshHandler", refreshHandler, []string{"token_refresh", "audit.Record"}},
+		{"apiKeyHandler", apiKeyHandler, []string{"api_key_create", "api_key_revoke", "api_key_rotate", "audit.Record"}},
+	} {
+		for _, required := range source.want {
+			if !strings.Contains(source.text, required) {
+				t.Errorf("%s must expose auth audit fragment %q", source.name, required)
+			}
+		}
+	}
+	for _, required := range []string{"CREATE TABLE IF NOT EXISTS audit_events", "actor_id", "resource_type", "resource_rid", "diff_json"} {
+		if !strings.Contains(migration20, required) {
+			t.Errorf("audit_events migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"audit_data_access", "action = 'data.access'"} {
+		if !strings.Contains(migration61, required) {
+			t.Errorf("data-access audit migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"chain_seq", "prev_hash", "entry_hash", "idx_audit_events_chain_seq"} {
+		if !strings.Contains(migration62, required) {
+			t.Errorf("audit hash-chain migration must contain %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"adminAuditTests", adminAuditTests, []string{"TestUS493_AuditEndpoint_FilterByResourceRid_CamelCase", "resourceRid"}},
+		{"auditedRepositoryTests", auditedRepositoryTests, []string{"TestOMSAuditTrail", "NewAuditedRepository"}},
+		{"dataAccessTests", dataAccessTests, []string{"NewDataAccessAuditor", "oss.DataAccessAction"}},
+		{"authAuditTests", authAuditTests, []string{"TestAuthAuditTrail_LoginFailed", "TestAuthAuditTrail_TokenRefresh", "TestAuthAuditTrail_APIKeyCreate"}},
+		{"chainTests", chainTests, []string{"TestVerifyChain_HappyPath", "VerifyChain", "ComputeRootHash"}},
+		{"rootVerifyTests", rootVerifyTests, []string{"TestVerifyRootFile_HappyPath", "VerifyRootFile", "ParseRootFile"}},
+		{"verifyCommandTests", verifyCommandTests, []string{"TestRun_RequiresDSN", "-dsn is required"}},
+	} {
+		for _, required := range source.want {
+			if !strings.Contains(source.text, required) {
+				t.Errorf("%s must cover live audit/governance fragment %q", source.name, required)
+			}
+		}
+	}
+}
+
 func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
 	root := repoRoot(t)
 	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))

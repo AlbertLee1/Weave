@@ -49,7 +49,7 @@
       "phase": "OSv2 Governance Experience",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Update the OSv2 status document so audit and governance coverage reflects the live audit_events store, admin audit endpoints, hash-chain verification, OMS audit adapter, data-access audit hooks, and auth audit coverage instead of saying audit is limited to action_logs.",
       "bdd_acceptance": [

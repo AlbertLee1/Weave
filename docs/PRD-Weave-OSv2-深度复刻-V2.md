@@ -124,7 +124,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | Special | SQL Query | 🟢 | 🟢 | 🟡 | **60%** | execute 端点；**无查询沙箱、无资源限制、无 read-only guard** |
 | Observability | Prometheus metrics | 🟢 | 🟢 | 🟡 | **65%** | 基础 metric；**无业务指标 dashboard** |
 | Observability | OpenTelemetry | 🟡 | 🟡 | 🔴 | **30%** | 有导出口；无 trace 传播与 span 命名规范 |
-| Observability | Audit log | 🟢 action_logs | 🟢 | 🟡 | **60%** | 只记录 Action；**元数据变更/权限变更/登录失败 未记录** |
+| Observability | Audit log | 🟢 `audit_events` | 🟢 PG + hash chain | 🟡 | **78%** | `pkg/audit` 的 `AuditEvent` / `NewPGStore` 对应 `migrations/000020_audit_events.up.sql`；`migrations/000062_audit_hash_chain.up.sql` 加 `chain_seq` / `prev_hash` / `entry_hash`，`VerifyChain` 与 `cmd/weave-audit-verify` 校验链路，`RootHashPublisher` 可锚定 root hash，`RedactingStore` 处理 GDPR redaction；`cmd/server/admin_audit.go` 暴露 `/api/v2/admin/auditEvents` 与 `/api/admin/audit`，支持 `resourceRid`；`pkg/oms/audited_repository.go` 的 `NewAuditedRepository` 记录 OMS metadata create/update/delete；`migrations/000061_object_type_data_access_audit.up.sql` + `pkg/oss/data_access_audit.go` / `cmd/server/data_access_audit_adapter.go` 的 `NewDataAccessAuditor` 记录 `data.access`；`pkg/auth/login_handler.go`、`pkg/auth/refresh_handler.go`、`pkg/auth/api_key_handlers.go` 覆盖 `login_failed` / `token_refresh` / `api_key_create`；remaining depth gaps 是 policy-change breadth、SIEM/retention deployment hardening 与 audit UX aggregation |
 | DevOps | Docker + compose | 🟢 | 🟢 | 🟢 | **90%** | 多阶段 Dockerfile、weave service、health probes |
 | DevOps | 迁移 / 回滚 | 🟢 | 🟢 | 🟡 | **70%** | 17 个迁移；**回滚脚本覆盖率未评估** |
 | 前端 | 页面（Dashboard/Explorer/Browser/ObjectSet/Action/Aggregation/Login） | 🟢 | n/a | 🟡 | **70%** | 主流程可用；**测试覆盖率偏低（22 test 对 40+ component）** |
@@ -290,9 +290,9 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 现状：`marking_filter.go` 文件存在，不在主链路。
 - 建议：把 Marking 作为 OSP 的一个输入，合并到 Gap-S1 的 policy_engine。
 
-**Gap-S4 — 元数据/权限变更审计**
-- 现状：只有 action_logs。
-- 建议：新增 `audit_events` 表 + trigger 在 OMS 更新路径上记录 who/when/what diff。
+**Gap-S4 — Audit policy breadth 与运行硬化**
+- 现状：`pkg/audit`、`audit_events`、`pkg/oms/audited_repository.go`、auth audit、data-access audit、hash-chain verification、admin audit query、retention/export/redaction hooks 已就位。
+- 建议：把 row/column/marking/security policy 修改全部纳入统一 audit taxonomy，补 SIEM delivery health、retention evidence dashboard、批量审计 UX 与部署级 root-hash 操作手册。
 
 **Gap-S5 — SQL Query 沙箱与资源限制**
 - 现状：执行真实 SQL（通过 DuckDB 或 PG?）无超时/read-only guard。
@@ -428,7 +428,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - US-062（Stream ingest 端点）
 
 **W4 — Audit log + 元数据审计**
-- US-063（audit_events 表 + OMS trigger）
+- US-063（audit policy breadth + operations hardening）
 - US-064（Security header / rate limit 细化）
 - 退出评审：row+column+marking 集成测试 ≥ 15；前端 subscribe demo 可复现。
 
@@ -593,13 +593,13 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 限速（默认 1000 rps/ontology）；
 - 测试：Northwind 批量灌入 1000 条，Bleve 索引正确更新。
 
-### US-063 — Audit events table + OMS triggers
+### US-063 — Audit policy breadth + operations hardening
 
 **Acceptance Criteria**
-- 新表 `audit_events(id, actor_id, action, resource_rid, diff, ts)`；
-- OMS create/update/delete 路径调用 `audit.Record(...)`；
-- 登录失败 + token refresh + api key 创建 均记录；
-- API `/api/v2/admin/auditEvents` 查看（仅 admin）。
+- `audit_events` / OMS metadata audit / auth audit / data-access audit / admin audit query 保持现有回归测试绿；
+- row policy、column mask、cell marking、security policy 与 permission workflow 变更写入统一 action taxonomy；
+- `cmd/weave-audit-verify` 的 hash-chain/root-file 检查纳入运维 runbook；
+- retention/export/redaction 路径提供可面向审计员的 evidence dashboard。
 
 ### US-064 — Security header / rate limit refinement
 

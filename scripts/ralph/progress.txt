@@ -53,3 +53,22 @@ Branch: ralph/self-iteration-20260519-192439
   - Quiver is no longer just a planned visualization: `web/src/components/quiver`, `pkg/quiver`, `/api/v2/quiver/dashboards/{rid}/data`, `/sparklines`, and `cmd/server/quiver_timeseries_adapter.go` connect saved workbenches to TimeSeries.
   - Collaboration/governance UX surfaces include `/api/v2/dashboards`, `/api/v2/notifications`, `/api/v2/reactions`, and `/api/v2/permission-requests`; remaining gaps are depth, production hardening, and governance wiring, not absence.
 ---
+
+## Tue May 19 19:47:38 CST 2026 - SELF-458
+- Implemented a BDD status-doc contract for audit/governance coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it reflects the live `audit_events` store, admin audit endpoints, hash-chain verifier, OMS metadata audit wrapper, data-access audit hooks, and auth audit events instead of saying audit is limited to action logs.
+- RED evidence: `go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1` failed because the status doc still contained stale `action_logs`-only, metadata/permission/auth-missing, Gap-S4, and US-063 future-work claims and lacked live audit/governance fragments.
+- GREEN evidence:
+  - `go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1` => passed.
+  - `go test ./pkg/audit ./pkg/oms ./pkg/oss ./cmd/server ./cmd/weave-audit-verify -run 'Test.*Audit|Test.*audit' -count=1` => passed for all listed packages.
+  - `git diff --check` => passed.
+  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
+- Files changed:
+  - `scripts/ci/ci_workflow_bdd_test.go`
+  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Audit status should treat `pkg/audit`, `migrations/000020_audit_events.up.sql`, `migrations/000062_audit_hash_chain.up.sql`, `cmd/server/admin_audit.go`, and `cmd/weave-audit-verify` as the core audit contract, not `action_logs`.
+  - OMS metadata audit is already wired through `oms.NewAuditedRepository`; auth audit covers `login_failed`, `token_refresh`, and API key events; OSS read audit uses `AuditDataAccess` plus `data.access`.
+  - Remaining audit work is breadth and operations hardening: policy-change taxonomy, SIEM/retention evidence, root-hash runbooks, and aggregate UX.
+---
