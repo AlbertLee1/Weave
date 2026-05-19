@@ -1,66 +1,67 @@
 {
-  "project": "Weave Self-Iteration Browser Where Contract Tightening",
-  "branchName": "ralph/self-iteration-20260519-143531",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-143531. The previous active PRD belonged to ralph/self-iteration-20260519-132647 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-143836/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26080216394 completed green on commit 1aa796d while Codespaces prebuild 26080216161 was still in progress; local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI'` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. DOG-003 through DOG-005 have committed regression coverage, but code inspection found the Browser structured filter builder still emitting a UI-only array shape for `containsAnyTerm` even though the canonical WhereClause contract is string-based. This PRD focuses on tightening the Browser object exploration WhereClause surface used by upper-layer ObjectSet experiences.",
+  "project": "Weave Self-Iteration Time Travel Contract Tightening",
+  "branchName": "ralph/self-iteration-20260519-160430",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-160430. The previous active PRD belonged to ralph/self-iteration-20260519-143531 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-160821/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26084194923 completed green on commit 1db8055 while Codespaces prebuild 26084194762 was still in progress; local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI'` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. The earlier dogfood findings for Northwind seeding and Dashboard object type totals already have current regression coverage, so this PRD focuses on current OSv2 Time Travel and admin download contract gaps found during inspection.",
   "userStories": [
     {
-      "id": "SELF-443",
-      "name": "Canonicalize Browser containsAnyTerm filters",
-      "phase": "Upper-Layer Browser Experience",
+      "id": "SELF-446",
+      "name": "Signal truncated Time Travel history",
+      "phase": "Upper-Layer Time Travel Experience",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Make the Browser structured filter builder emit the canonical backend WhereClause shape for `containsAnyTerm` instead of preserving a UI-only array of terms.",
+      "description": "Make the dataset history API and Time Travel toolbar explicitly signal when the transaction chain is capped, so operators do not mistake the newest 1000 rows for the complete audit timeline.",
       "bdd_acceptance": [
-        "Given the Browser filter builder is set to `contains any term`, When the user enters `OpenAI   Codex` and adds the filter, Then the saved filter value is the string `OpenAI Codex` rather than an array.",
-        "Given multiple Browser filters include a `containsAnyTerm` clause, When `buildWhereClause` serializes the request body, Then the clause keeps `value` as a string inside the `and` group.",
-        "Given the filter chip renders a canonical `containsAnyTerm` string, When the user reviews the active filter, Then the visible chip value remains readable as `OpenAI Codex`."
+        "Given a dataset has more than 1000 transactions, When the operator or SDK requests `/api/v2/datasets/{rid}/history`, Then the response contains the newest 1000 rows and `truncated: true`.",
+        "Given a dataset has 1000 or fewer transactions, When history is requested, Then the response contains all available rows and `truncated: false`.",
+        "Given the Browser Time Travel toolbar receives a truncated history response, When it renders the picker, Then it shows a concise hint that only the latest 1000 transactions are available."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx src/lib/__tests__/whereBuilder.test.ts`",
+        "`go test ./cmd/server -run TestDatasetHistory -count=1`",
+        "`npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx src/api/__tests__/datasets.test.ts`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-444",
-      "name": "Expose range and prefix Where operators in Browser filters",
-      "phase": "Upper-Layer Browser Experience",
+      "id": "SELF-447",
+      "name": "Show rollback status in Time Travel picker",
+      "phase": "Upper-Layer Time Travel Experience",
       "active": true,
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "dependencies": [
-        "SELF-443"
+        "SELF-446"
       ],
-      "description": "Expand the Browser structured filter controls beyond `eq`, `gt`, `lt`, and text contains so analysts can build backend-supported range and prefix clauses without leaving the object browser.",
+      "description": "Use the existing rollback audit fields on dataset transactions to label rolled-back checkpoints in the Browser Time Travel picker and active historical badge.",
       "bdd_acceptance": [
-        "Given the user selects `gte` or `lte` in the Browser filter builder, When they enter a numeric value, Then the generated WhereClause uses the selected operator with a numeric value.",
-        "Given the user selects `startsWith`, When they enter a prefix, Then the generated WhereClause uses `type: \"startsWith\"` with a string value.",
-        "Given a saved search reloads a Browser filter using one of these supported operators, When the filter chip renders, Then it shows the operator label instead of falling back to an unsupported raw token."
+        "Given a history row includes `rolledBackAt`, When the Time Travel picker renders, Then the option is labeled as rolled back without hiding the transaction.",
+        "Given a rolled-back transaction points to `rolledBackToTxId`, When the option renders, Then the label includes the rollback target short id.",
+        "Given a rolled-back transaction is currently active, When the toolbar renders, Then the active badge warns that the selected checkpoint was rolled back."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx`",
+        "`npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-445",
-      "name": "Guard Browser sort requests with property metadata",
-      "phase": "Upper-Layer Browser Experience",
+      "id": "SELF-448",
+      "name": "Decode standards-compliant admin download filenames",
+      "phase": "Admin Compliance Experience",
       "active": true,
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "dependencies": [],
-      "description": "Prevent the Browser table from sending server-side sort requests for properties that are not declared sortable, avoiding avoidable backend rejections in object exploration flows.",
+      "description": "Parse RFC 5987 `Content-Disposition` filenames for compliance and GDPR downloads so operator-supplied report names survive standards-compliant server headers.",
       "bdd_acceptance": [
-        "Given detailed property metadata marks `summary` as not sortable, When the Browser table renders, Then the `summary` column is not exposed as a sortable header.",
-        "Given detailed property metadata marks `deliveredDate` as sortable, When the user sorts that column, Then the Browser request includes `orderBy` for `deliveredDate`.",
-        "Given detailed property metadata is still loading or unavailable, When the table renders, Then only the primary key sort affordance remains enabled rather than assuming every property is sortable."
+        "Given the compliance report response includes `filename*=UTF-8''control%20evidence.pdf`, When the browser downloads the report, Then the saved filename is `control evidence.pdf`.",
+        "Given the GDPR export response includes a quoted fallback filename, When the browser downloads the ZIP, Then the existing quoted filename behavior still works.",
+        "Given the attachment filename header is malformed, When the report downloads, Then the UI falls back to the deterministic default filename."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx`",
+        "`npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx web/src/api/__tests__/compliance.test.ts`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]

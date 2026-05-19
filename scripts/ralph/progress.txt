@@ -1,5 +1,5 @@
 # Ralph Progress Log
-Started: Tue May 19 14:35:31 CST 2026
+Started: Tue May 19 16:04:30 CST 2026
 
 ## Codebase Patterns
 - US-444 full-stack probes should only use `test.skip` for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
@@ -12,79 +12,42 @@ Started: Tue May 19 14:35:31 CST 2026
 - Run Web TypeScript checks from `web/` with `npx tsc --noEmit` (or `npm --prefix web run build`); `npm --prefix web exec tsc -- --noEmit` does not pass the flag correctly in this environment.
 - Browser structured filters should emit canonical WhereClause wire values directly; do not depend on backend tolerance for old UI-only shapes such as `containsAnyTerm.value` arrays.
 
-## Kickoff - 2026-05-19 14:38 CST
-- Current branch verified: `ralph/self-iteration-20260519-143531`.
-- Archived stale PRD/progress for branch `ralph/self-iteration-20260519-132647` under `scripts/ralph/archive/self-iteration-20260519-143836/`.
+## Kickoff - 2026-05-19 16:08 CST
+- Current branch verified: `ralph/self-iteration-20260519-160430`.
+- Archived stale PRD/progress for branch `ralph/self-iteration-20260519-143531` under `scripts/ralph/archive/self-iteration-20260519-160821/`.
 - No `PR CI auto-fix context` was present in the active progress file.
-- GitHub health: latest main CI run `26080216394` completed green on commit `1aa796d`; Codespaces prebuild `26080216161` was still in progress at kickoff.
+- GitHub health: latest main CI run `26084194923` completed green on commit `1db8055`; Codespaces prebuild `26084194762` was still in progress at kickoff.
 - Local fresh-CI risk checks passed:
   - `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI'`
   - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
-- Selected highest-priority story for this execution: `SELF-443` Canonicalize Browser containsAnyTerm filters.
+- Dogfood inspection: DOG-001 Northwind seeding and DOG-002 Dashboard object type totals already have current regression coverage in `test/fixtures/seed_northwind/seed_test.go` and `web/src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx`.
+- Selected highest-priority story for this execution: `SELF-446` Signal truncated Time Travel history.
 ---
 
-## Tue May 19 14:41:20 CST 2026 - SELF-443
+## Tue May 19 16:13:24 CST 2026 - SELF-446
 - What was implemented:
-  - Added BDD coverage for Browser `containsAnyTerm` filter normalization, WhereClause serialization, and readable active-filter chip rendering.
-  - Changed `FilterBuilder` so `containsAnyTerm` stores a whitespace-normalized string (`OpenAI Codex`) instead of a term array.
+  - Added backend BDD coverage that `/api/v2/datasets/{rid}/history` fetches one extra row, returns only the newest 1000 transactions, and reports `truncated: true` when older history exists.
+  - Added web API and Time Travel toolbar coverage for the `truncated` response flag.
+  - Updated the dataset history handler to fetch `historyCap + 1`, trim the response window, and include `truncated` on every success response.
+  - Updated the Browser Time Travel toolbar to show `Showing latest 1000 transactions only` when the history response is capped.
 - TDD red:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx` failed as expected before implementation: the first test received `value: ["OpenAI", "Codex"]` instead of `value: "OpenAI Codex"`.
+  - `go test ./cmd/server -run TestDatasetHistory_CappedResponseReportsTruncated -count=1` failed as expected before implementation: `truncated = false, want true`.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx src/api/__tests__/datasets.test.ts` failed as expected before implementation: the rendered toolbar had no `time-travel-hint` after the capped transaction loaded.
 - Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx src/lib/__tests__/whereBuilder.test.ts` passed: 2 files, 10 tests.
+  - `go test ./cmd/server -run TestDatasetHistory -count=1` passed.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx src/api/__tests__/datasets.test.ts` passed: 2 files, 3 tests.
   - From `web/`: `npx tsc --noEmit` passed.
   - `git diff --check` passed.
 - Files changed:
-  - `web/src/components/browser/FilterBuilder.tsx`
-  - `web/src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx`
+  - `cmd/server/dataset_transaction_handler.go`
+  - `cmd/server/dataset_transaction_handler_test.go`
+  - `web/src/api/datasets.ts`
+  - `web/src/api/__tests__/datasets.test.ts`
+  - `web/src/components/browser/TimeTravelToolbar.tsx`
+  - `web/src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - The Browser search bar already normalizes `containsAnyTerm` to a string; structured filters need the same canonical shape so saved searches and ad hoc filters do not diverge.
-- Result: SELF-443 marked `passes: true`; SELF-444 and SELF-445 remain open for later Ralph iterations.
----
-
-## Tue May 19 14:46:18 CST 2026 - SELF-444
-- What was implemented:
-  - Added BDD coverage for Browser structured `gte`, `lte`, and `startsWith` filter operators.
-  - Added a BrowserPage saved-search reload regression that verifies a persisted `startsWith` filter renders as a readable chip label and forwards the saved WhereClause.
-  - Updated `FilterBuilder` to expose `>=`, `<=`, and `starts with`, and to parse `gte`/`lte` values as numbers with the existing range operators.
-- TDD red:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: the new FilterBuilder tests could not find `>=`, `<=`, or `starts with` options, and the BrowserPage saved-search test rendered the raw `startsWith` token instead of `starts with`.
-- Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 18 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/src/components/browser/FilterBuilder.tsx`
-  - `web/src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Browser structured filters can safely expose backend-supported WhereClause operators when the visible operator label, filter state, saved-search round trip, and request body are covered together.
-- Result: SELF-444 marked `passes: true`; SELF-445 remains open for later Ralph iterations.
----
-
-## Tue May 19 14:54:23 CST 2026 - SELF-445
-- What was implemented:
-  - Added BDD coverage for Browser table sortability using detailed property metadata.
-  - Updated `ObjectTable` so declared properties are sortable only when `sortablePropertyKeys` includes the property; the primary key remains sortable even while detailed metadata is unavailable.
-  - Updated `BrowserPage` to fetch detailed properties with `useProperties`, derive sortable property names from `isSortable`, pass them to the table, and suppress list/search/export `orderBy` whenever the active sort field is not metadata-approved.
-- TDD red:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: `summary` emitted `onSort("summary", "asc")`, unavailable metadata still allowed `summary` sorting, and BrowserPage captured an invalid `summary:asc` request.
-- Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 19 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/src/components/browser/ObjectTable.tsx`
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- **Learnings for future iterations:**
-  - Browser sort affordances should be driven by `/objectTypes/byRid/{rid}/properties` detailed metadata, because the compact `objectType.properties` map carries only data type and RID, not `isSortable`.
-  - Request builders should guard with the same effective sort field as the UI so stale saved-search or local sort state cannot send unsupported `orderBy` values.
-- Result: SELF-445 marked `passes: true`; all active stories in this PRD now pass.
+- Learnings for future iterations:
+  - Capped history/list endpoints should fetch `limit + 1` and return an explicit partial-response marker; otherwise upper-layer Time Travel and audit UIs silently present a bounded window as complete history.
+- Result: SELF-446 marked `passes: true`; SELF-447 and SELF-448 remain open for later Ralph iterations.
 ---

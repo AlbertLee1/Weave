@@ -17,13 +17,14 @@ export interface DatasetTransaction {
 
 export interface DatasetHistoryResponse {
   transactions: DatasetTransaction[];
+  truncated: boolean;
 }
 
 // listDatasetHistory fetches the committed-at-DESC transaction chain for
 // the given ontology (accepts either an apiName or a RID — the server
-// resolves through GetOntology). The response cap is 1000 rows; we do
-// not paginate yet because single-machine deployments rarely exceed
-// that horizon (the server-side TODO is to add ?pageToken= when needed).
+// resolves through GetOntology). The response cap is 1000 rows; truncated
+// tells the Browser Time Travel picker whether older rows exist beyond
+// that returned latest window.
 export function listDatasetHistory(
   ontologyRidOrApiName: string,
 ): Promise<DatasetHistoryResponse> {

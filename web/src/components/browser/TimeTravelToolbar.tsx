@@ -52,6 +52,7 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
     () => data?.transactions ?? [],
     [data],
   );
+  const historyTruncated = data?.truncated ?? false;
 
   // Draft state: user picks a tx from the dropdown before flipping the
   // toggle. Defaults to the most-recent tx so a "blank-then-toggle" UX
@@ -101,8 +102,9 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
     if (isLoading) return 'Loading transactions…';
     if (transactions.length === 0)
       return 'No dataset transactions recorded yet';
+    if (historyTruncated) return 'Showing latest 1000 transactions only';
     return null;
-  }, [error, isLoading, transactions]);
+  }, [error, historyTruncated, isLoading, transactions]);
 
   const activeTx = useMemo(
     () => transactions.find((t) => t.txId === persisted),
