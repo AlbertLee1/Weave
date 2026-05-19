@@ -1,125 +1,39 @@
 # Ralph Progress Log
-Started: Wed May 20 00:22:29 CST 2026
-Branch: ralph/self-iteration-20260520-002052
+Started: Wed May 20 01:36:45 CST 2026
 
-## Cycle Setup
-- Archived stale PRD/progress from branch `ralph/self-iteration-20260519-230504` to `scripts/ralph/archive/self-iteration-20260520-002229/` because it belonged to another branch and all stories were marked `passes: true`.
-- No `PR CI auto-fix context` was present in the archived active progress file.
-- GitHub health inspected with `gh run list --limit 10 --json ...`: main CI run `26109104836` on `d1cde91` completed success; main Codespaces prebuild `26109104180` completed success; previous branch PR CI `26108516337` completed success.
-- Local known-risk checks passed:
-  - `go test ./cmd/server -run 'TestBDD_WebEmbedDoesNotRequireGeneratedDist|TestContract_' -count=1`
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx`
-  - `go test ./pkg/oss ./pkg/oms -run 'TestBDD_StreamIngest|TestBDD_ImportOntology|TestBDD_CreateObjectType|Test.*DOG|Test.*dog' -count=1`
-- Inspection notes:
-  - `api/openapi.yaml`, `cmd/server/openapi_spec.yaml`, `pkg/vertex/scenarioruns/handler.go`, and `cmd/server/contract_test.go` agree on the mounted canonical route family: `POST /api/vertex/v1/scenarios/{scenarioRid}/runs`, `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`, and `POST /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel`.
-  - `web/src/features/vertex/scenarioPane/scenarioRun.ts`, `web/src/features/vertex/scenarioPane/scenarioRunAsync.ts`, `sdk/typescript/src/vertex.ts`, `sdk/python/weave_client/vertex.py`, `sdk/go/vertex.go`, and `docs/cookbook/vertex-quickstart.md` still referenced the stale singular `/run` route.
+Archived previous passing PRD:
+- scripts/ralph/archive/self-iteration-20260520-013645/prd.json
+- scripts/ralph/archive/self-iteration-20260520-013645/progress.txt
 
-## Selected Story
-- `SELF-468` — Align Vertex scenario-run clients with mounted routes.
+Fresh health evidence:
+- main: `gh run list --branch main --limit 5` showed latest CI run 26109104836 success and latest Codespaces prebuild 26109104180 success.
+- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 5` showed pull_request CI run 26113686224 failure.
+- failed check: `gh run view 26113686224 --log-failed` showed Go golangci-lint failures:
+  - `sdk/go/vertex.go:138:2: importShadow: shadow of imported package 'url' (gocritic)`
+  - `sdk/go/vertex.go:276:14: httpNoBody: http.NoBody should be preferred to the nil request body (gocritic)`
 
-## SELF-468 Evidence
-- Root cause: the server and OpenAPI contract now expose plural Vertex scenario-run routes, but web helpers and SDK clients still had stale singular `/run` paths; the async web helpers also needed to preserve the server's `runRid` accepted-response field.
-- RED:
-  - `npm --prefix web test -- --run src/features/vertex/scenarioPane/scenarioRunRouteContract.bdd.test.ts src/features/vertex/scenarioPane/scenarioRun.test.ts src/features/vertex/scenarioPane/scenarioRunAsync.test.ts src/vertex/SdkVertexClient.test.ts` failed as expected with 5 stale-path assertions: sync route builder and TypeScript SDK received `/run` instead of `/runs`.
-  - `go test ./sdk/go -run TestScenariosRun -count=1` failed as expected because the Go SDK hit `/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/run`.
-  - `PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py` failed as expected because the Python SDK hit `/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/run`.
-- GREEN:
-- Updated web scenario-run builders/tests to use `/runs`, preserve canonical `runRid`, and keep stream/cancel/final-state helpers on `/runs/{runRid}`.
-- Updated TypeScript, Python, and Go SDK Vertex clients/tests to start runs through `/api/vertex/v1/scenarios/{scenarioRid}/runs`.
-- Updated `docs/cookbook/vertex-quickstart.md` to show the mounted start/read route family instead of the stale singular run route.
-- Verification:
-  - `npm --prefix web test -- --run src/features/vertex/scenarioPane/scenarioRunRouteContract.bdd.test.ts src/features/vertex/scenarioPane/scenarioRun.test.ts src/features/vertex/scenarioPane/scenarioRunAsync.test.ts src/vertex/SdkVertexClient.test.ts src/vertex/scenarioRunStream.test.ts` passed with 5 test files and 147 tests.
-  - `go test ./sdk/go -run TestScenariosRun -count=1` passed.
-  - `PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py` passed with 7 tests.
-  - `npm --prefix web run typecheck` passed.
-  - `go test ./cmd/server ./pkg/vertex/scenarioruns -run 'TestBDD_VertexScenarioRun|TestContract_' -count=1` passed.
-  - `jq empty scripts/ralph/prd.json` passed.
-  - `git diff --check` passed.
-  - `rg -n "scenarios/\\$?\\{?SCENARIO_RID\\}?/run|scenarios/.*/run(\\b|/)|jobId" docs/cookbook/vertex-quickstart.md web/src/features/vertex/scenarioPane web/src/vertex/scenarioRunStream.ts web/src/vertex/scenarioRunStream.test.ts sdk/typescript/src/vertex.ts sdk/python/weave_client/vertex.py sdk/go/vertex.go` returned no matches.
-- Files changed:
-  - `docs/cookbook/vertex-quickstart.md`
-  - `sdk/go/vertex.go`
-  - `sdk/go/vertex_test.go`
-  - `sdk/python/weave_client/vertex.py`
-  - `sdk/python/tests/test_vertex.py`
-  - `sdk/typescript/src/vertex.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRun.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRun.test.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.test.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunRouteContract.bdd.test.ts`
-  - `web/src/vertex/SdkVertexClient.test.ts`
-  - `web/src/vertex/scenarioRunStream.ts`
-  - `web/src/vertex/scenarioRunStream.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning: client route constants and docs must be audited immediately after a server contract route family changes; the OpenAPI/server contract can be green while SDKs and upper-layer helpers still point at a dead predecessor route.
+RED evidence:
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go`
+- Result: failed with the same two gocritic issues listed above.
+
+Codebase Patterns:
+- CI pins golangci-lint in `.github/workflows/ci.yml` and uses `only-new-issues: true`; local reproductions should use the same pinned version when the binary is not installed.
+- Go SDK Vertex scenario-run routes are covered in `sdk/go/vertex_test.go` and should stay aligned with `/api/vertex/v1/scenarios/{scenarioRid}/runs`.
 
 ## Selected Story
-- `SELF-469` — Expose Vertex scenario-run polling helpers.
+- `SELF-471` — Clear Go SDK Vertex lint regressions.
 
-## SELF-469 Evidence
-- Root cause: the server already exposes `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}` with terminal `succeeded` / `failed` / `canceled` records, checkpoint attempts, and error details, but web helpers and SDK clients did not provide a reusable way to poll that record after `POST /runs` returns `{runRid,status:"pending"}`.
-- RED:
-  - `npm --prefix web test -- --run src/features/vertex/scenarioPane/scenarioRunPolling.bdd.test.ts src/vertex/SdkVertexClient.test.ts` failed as expected with missing `pollScenarioRunUntilTerminal` and missing `client.scenarios.waitForRun`.
-  - `go test ./sdk/go -run TestScenariosWaitRun -count=1` failed as expected because `WaitRun` and `WaitRunOptions` were undefined.
-  - `PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py` failed as expected because `ScenariosAPI.wait_for_run` was undefined.
+## SELF-471 Evidence
+- Root cause: `sdk/go/vertex.go` imported `net/url` for path escaping, then introduced a local variable named `url` in `ScenariosService.Run`; the same file also used `nil` for a GET request body. The CI-pinned gocritic rules flag both as new issues on this branch.
 - GREEN:
-  - Added web scenario-run GET route construction plus `pollScenarioRunUntilTerminal`, preserving terminal failure/cancel records and clearing timeout/abort timers.
-  - Added TypeScript SDK `scenarios.getRun` and `scenarios.waitForRun` with timeout and abort errors.
-  - Added Python SDK `get_run` and `wait_for_run` with injectable sleep/clock for deterministic timeout tests.
-  - Added Go SDK `GetRun` and `WaitRun`, using context cancellation/timeout and returning checkpoint/error details.
+  - Renamed the local scenario-run request URL variable to `runURL`, preserving the existing `/api/vertex/v1/scenarios/{scenarioRid}/runs` route.
+  - Changed `Client.getJSON` to pass `http.NoBody` to `http.NewRequestWithContext` for GET requests.
 - Verification:
-  - `npm --prefix web test -- --run src/features/vertex/scenarioPane src/vertex/SdkVertexClient.test.ts` passed with 16 test files and 676 tests.
+  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go` passed with `0 issues.`
   - `go test ./sdk/go -run TestScenarios -count=1` passed.
-  - `PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py` passed with 10 tests.
-  - `npm --prefix web run typecheck` passed.
   - `git diff --check` passed.
 - Files changed:
   - `sdk/go/vertex.go`
-  - `sdk/go/vertex_test.go`
-  - `sdk/python/weave_client/vertex.py`
-  - `sdk/python/tests/test_vertex.py`
-  - `sdk/typescript/src/vertex.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.test.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunPolling.bdd.test.ts`
-  - `web/src/vertex/SdkVertexClient.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- Reusable learning: until a dedicated scenario-run SSE stream is mounted everywhere, SDK and web clients should treat the run record GET route as the durable completion contract and return terminal failed/canceled records intact rather than reducing polling to success-only completion.
-
-## Codebase Patterns
-- Vertex workspace tests mock `@react-sigma/core` in `web/src/vertex/VertexWorkspacePage.test.tsx` and fire captured Sigma handlers directly for selection/context-menu behavior.
-- Vertex Add Objects dialog result rows come from OSS search `WireObject` rows; `__primaryKey` is already selected from the backend and should be carried through page state when downstream tabs need fresh OSS calls.
-- For transient Vertex objects added outside the saved graph payload, keep `VertexObjectSummary` metadata complete enough for existing sidebar hooks (`useGetObject`, `useObjectActivity`, `useTimeSeriesPoints`) to work exactly like payload-resident nodes.
-- Vertex overlay virtualization happens before React card rows mount; keeping `useTimeSeriesPoints` inside rendered time-series rows naturally limits stream-point requests to onscreen cards.
-- Vertex time-series extended-label property names are currently encoded in `ExtendedLabel.key` as `timeSeries:<property>:<index>`; both sidebar and overlay can resolve stream-point requests from that key until the label type grows an explicit property field.
-- Vertex scenario-run server contracts should assert both sides of reachability: chi route registration in `NewFullRouter` and matching OpenAPI operations/schemas. Degraded route mounting can use dependency-unavailable implementations when the contract must remain discoverable before durable production execution is wired.
-- Vertex scenario-run client paths should be checked against `pkg/vertex/scenarioruns/handler.go` and the OpenAPI copies before updating SDKs or docs; as of this branch the canonical route family is plural `/runs`.
-
-## Selected Story
-- `SELF-470` — Gate stale Vertex scenario-run debug route.
-
-## SELF-470 Evidence
-- Root cause: `web/src/vertex/ScenarioDebugDrawer.tsx` still used an unmounted private `/api/vertex/v1/scenario-runs/{rid}/debug` default fetch path. The mounted and documented server route is `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`.
-- RED:
-  - `npm --prefix web test -- --run src/vertex/ScenarioDebugDrawer.test.tsx src/vertex/vertexI18n.test.tsx` failed as expected: the new BDD assertion observed `/api/vertex/v1/scenario-runs/ri.vertex.main.scenario-run.abc/debug` instead of `/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.abc`, and 404s rendered `Error: debug fetch failed: 404` instead of a typed not-found state.
-- GREEN:
-  - Added `scenarioRid` to the drawer's default fetch contract and moved the default fetcher to the documented run-record endpoint.
-  - Adapted the public `VertexScenarioRun` record into the existing drawer sections by showing the run record as the input snapshot, checkpoint attempts/error details as log lines, and an explicit empty partial-edit row when the public record has no partial edits.
-  - Converted 404s into a typed `ScenarioRunDebugNotFoundError` so the drawer renders `Scenario run not found` without an unhandled promise rejection.
-- Verification:
-  - `npm --prefix web test -- --run src/vertex/ScenarioDebugDrawer.test.tsx src/vertex/vertexI18n.test.tsx` passed with 2 test files and 25 tests.
-  - `go test ./cmd/server -run 'TestContract_|TestBDD_VertexScenarioRun' -count=1` passed.
-  - `npm --prefix web run typecheck` passed.
-  - `git diff --check` passed.
-  - `rg -n "scenario-runs/.*/debug|scenario-runs/\\$\\{|/api/vertex/v1/scenario-runs" web/src api cmd pkg docs sdk -g '!web/src/**/*.map'` returned no matches.
-- Files changed:
-  - `web/src/vertex/ScenarioDebugDrawer.tsx`
-  - `web/src/vertex/ScenarioDebugDrawer.test.tsx`
-  - `web/src/i18n/resources/en.ts`
-  - `web/src/i18n/resources/zh-CN.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning: debug surfaces should prefer the same mounted public run-record contract as SDK polling helpers; if a richer debug payload is needed later, it should be mounted and documented before any client path points at it.
+- Reusable learning: when CI uses `only-new-issues`, local package-scoped lint with the pinned version is the fastest reliable reproduction for branch-only lint failures.

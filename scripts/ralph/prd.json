@@ -1,69 +1,25 @@
 {
-  "project": "Weave Self-Iteration Vertex Scenario Run Contract Refresh",
+  "project": "Weave Self-Iteration CI Repair",
   "branchName": "ralph/self-iteration-20260520-002052",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD belonged to ralph/self-iteration-20260519-230504 and all of its stories already passed, so it was archived under scripts/ralph/archive/self-iteration-20260520-002229/. No PR CI auto-fix context was present in the archived progress file. Fresh GitHub health at 2026-05-20 00:22 CST: latest main CI run 26109104836 on d1cde91 completed success, latest main Codespaces prebuild 26109104180 completed success, and previous branch PR CI run 26108516337 completed success. Local known-risk checks for fresh CI and dogfood regressions passed via `go test ./cmd/server -run 'TestBDD_WebEmbedDoesNotRequireGeneratedDist|TestContract_' -count=1`, `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx`, and `go test ./pkg/oss ./pkg/oms -run 'TestBDD_StreamIngest|TestBDD_ImportOntology|TestBDD_CreateObjectType|Test.*DOG|Test.*dog' -count=1`. This PRD targets narrow OSv2 Vertex scenario-run contract drift that became visible after the server routes were mounted and documented.",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-013645/. Fresh GitHub health at 2026-05-20 01:35 CST: latest main CI run 26109104836 completed success and latest main Codespaces prebuild 26109104180 completed success. The latest branch pull_request CI run 26113686224 completed failure in the Go golangci-lint step. Local reproduction with the CI-pinned linter version failed on the same two new gocritic issues in sdk/go/vertex.go, so this PRD stays focused on repairing branch CI before adding new OSv2 capability work.",
   "userStories": [
     {
-      "id": "SELF-468",
-      "name": "Align Vertex scenario-run clients with mounted routes",
-      "phase": "OSv2 Vertex Scenario Execution API",
+      "id": "SELF-471",
+      "name": "Clear Go SDK Vertex lint regressions",
+      "phase": "Fresh CI Health",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "When web helpers, SDKs, and cookbook snippets start or cancel a Vertex scenario run, use the mounted `/api/vertex/v1/scenarios/{scenarioRid}/runs` route family and the server's `runRid` accepted response instead of the stale singular `/run` client contract.",
+      "description": "Repair the branch PR CI failure by clearing the new gocritic findings in the Go Vertex SDK while preserving the mounted scenario-run route behavior added by the previous stories.",
       "bdd_acceptance": [
-        "Given the frontend scenario-run request builders receive a scenario RID, When they build start, stream, and cancel paths, Then the paths use `/runs` and encode the scenario/run IDs consistently with the server contract.",
-        "Given TypeScript, Python, and Go SDK clients start a scenario run, When their tests record the outgoing request, Then the request targets `/api/vertex/v1/scenarios/{scenarioRid}/runs` rather than the stale `/run` path.",
-        "Given the Vertex quickstart documents scenario execution, When readers follow the curl path, Then it matches the mounted `/runs` route family and no longer advertises the removed singular run route."
+        "Given CI runs golangci-lint v2.11.4 with gocritic enabled, When it scans the Go SDK package, Then sdk/go/vertex.go has no import shadow finding for the URL package.",
+        "Given the Go SDK performs a JSON GET request, When the request has no body, Then it uses the standard http.NoBody sentinel expected by the lint contract.",
+        "Given Vertex scenario-run SDK route tests run, When the lint-only repair is applied, Then the scenario run, polling, and route contract behavior remains unchanged."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/features/vertex/scenarioPane/scenarioRunRouteContract.bdd.test.ts src/features/vertex/scenarioPane/scenarioRun.test.ts src/features/vertex/scenarioPane/scenarioRunAsync.test.ts src/vertex/SdkVertexClient.test.ts`",
-        "`go test ./sdk/go -run TestScenariosRun -count=1`",
-        "`PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py`",
-        "`git diff --check`"
-      ]
-    },
-    {
-      "id": "SELF-469",
-      "name": "Expose Vertex scenario-run polling helpers",
-      "phase": "OSv2 Vertex Scenario Execution API",
-      "active": true,
-      "priority": 2,
-      "passes": true,
-      "dependencies": [
-        "SELF-468"
-      ],
-      "description": "Add small SDK/web helpers that poll `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}` until terminal state so upper-layer clients can observe run completion before a dedicated SSE run stream is mounted.",
-      "bdd_acceptance": [
-        "Given a run start returns `runRid` and `pending`, When a polling helper is invoked, Then it calls the documented GET run route until the run is terminal.",
-        "Given the run transitions to failed or canceled, When polling completes, Then the helper returns the terminal status and error/checkpoint details instead of assuming success.",
-        "Given polling exceeds a caller-supplied timeout or abort signal, When the helper exits, Then it reports a cancellation/timeout without leaking timers."
-      ],
-      "quality_gates": [
-        "`npm --prefix web test -- --run src/features/vertex/scenarioPane src/vertex/SdkVertexClient.test.ts`",
+        "`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go`",
         "`go test ./sdk/go -run TestScenarios -count=1`",
-        "`PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py`",
-        "`git diff --check`"
-      ]
-    },
-    {
-      "id": "SELF-470",
-      "name": "Gate stale Vertex scenario-run debug route",
-      "phase": "OSv2 Vertex Scenario Execution API",
-      "active": true,
-      "priority": 3,
-      "passes": true,
-      "dependencies": [],
-      "description": "Audit the Vertex scenario debug drawer's `/api/vertex/v1/scenario-runs/{rid}/debug` fetch path against mounted server routes and either wire/document the route or replace it with the public scenario-run record endpoint.",
-      "bdd_acceptance": [
-        "Given the debug drawer fetches a scenario run, When the server route table is inspected, Then the requested route is mounted and documented or the drawer uses the documented run record endpoint.",
-        "Given a run is missing, When the drawer fetch fails, Then the UI presents the typed not-found state without an unhandled promise rejection.",
-        "Given the route remains intentionally unavailable, When the contract test runs, Then it fails with a precise non-mounted-route decision rather than leaving an unreachable client path."
-      ],
-      "quality_gates": [
-        "`npm --prefix web test -- --run src/vertex/ScenarioDebugDrawer.test.tsx src/vertex/vertexI18n.test.tsx`",
-        "`go test ./cmd/server -run 'TestContract_|TestBDD_VertexScenarioRun' -count=1`",
         "`git diff --check`"
       ]
     }

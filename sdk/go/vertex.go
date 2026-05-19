@@ -135,8 +135,8 @@ func (s *ScenariosService) Run(ctx context.Context, scenarioRID string, opts *Ru
 	if opts != nil && opts.BufferSize > 0 {
 		bufSize = opts.BufferSize
 	}
-	url := s.client.BaseURL + "/api/vertex/v1/scenarios/" + scenarioRID + "/runs"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
+	runURL := s.client.BaseURL + "/api/vertex/v1/scenarios/" + scenarioRID + "/runs"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, runURL, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body any, out any) e
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, http.NoBody)
 	if err != nil {
 		return err
 	}
