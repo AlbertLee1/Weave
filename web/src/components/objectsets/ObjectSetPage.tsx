@@ -6,7 +6,10 @@ import {
   useSavedObjectSets,
 } from '../../hooks/useObjectSets';
 import type { ObjectSetDefinition } from '../../api/types';
-import type { SavedObjectSet } from '../../lib/objectSetBuilder';
+import {
+  validateDefinition,
+  type SavedObjectSet,
+} from '../../lib/objectSetBuilder';
 import {
   OBJECT_SET_URL_PARAM,
   encodeDefinitionToParam,
@@ -36,6 +39,13 @@ function writeDefinitionToLocation(def: ObjectSetDefinition): void {
 export function ObjectSetPage() {
   const { ontology } = useParams<{ ontology: string }>();
   const ontologyApiName = ontology ?? '';
+  const initialDefinition = useMemo(() => readDefinitionFromLocation(), []);
+  const shouldAutoExecuteInitialDefinition = useMemo(
+    () =>
+      initialDefinition !== null &&
+      validateDefinition(initialDefinition).length === 0,
+    [initialDefinition],
+  );
 
   const { data: objectTypes, isLoading: typesLoading } = useObjectTypes(ontologyApiName);
   const objectTypeNames = useMemo(
@@ -46,7 +56,7 @@ export function ObjectSetPage() {
   // Tree state mirrors the wire definition. Restore from `?def=` on first
   // mount so a shared URL reproduces the composer state.
   const [def, setDef] = useState<ObjectSetDefinition>(
-    () => readDefinitionFromLocation() ?? { type: 'base', objectType: '' },
+    () => initialDefinition ?? { type: 'base', objectType: '' },
   );
 
   // Initialise base object type once available.
@@ -63,10 +73,10 @@ export function ObjectSetPage() {
   // executeKey forces the results pane to refetch on Execute click.
   // If we restored from a URL, auto-execute once on mount.
   const [executeKey, setExecuteKey] = useState(() =>
-    readDefinitionFromLocation() ? 1 : 0,
+    shouldAutoExecuteInitialDefinition ? 1 : 0,
   );
   const [executingDef, setExecutingDef] = useState<ObjectSetDefinition | null>(
-    () => readDefinitionFromLocation(),
+    () => (shouldAutoExecuteInitialDefinition ? initialDefinition : null),
   );
 
   // Saved object sets

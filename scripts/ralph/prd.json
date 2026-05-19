@@ -1,72 +1,69 @@
 {
-  "project": "Weave Self-Iteration Upper-Layer E2E CI Signal",
-  "branchName": "ralph/self-iteration-20260519-090653",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-090653. The previous active PRD belonged to ralph/self-iteration-20260519-082247 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-091157/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest completed PR CI run 26069425768 was green; latest completed main CI run 26068337937 was green; fresh main CI run 26069761127 was still in progress with Web green and Go running race/coverage. Local health sampled green with go test ./... and npm --prefix web test -- --run. Dogfood DOG-001 through DOG-005 have committed-looking regression coverage, and known fresh-CI risks around cmd/server/embed.go and US-453 streamless binary responses are already covered. This PRD focuses on keeping upper-layer Playwright probes discoverable in CI so OSv2 service and experience regressions cannot hide behind unlisted specs.",
+  "project": "Weave Self-Iteration ObjectSet Composer Semantic Search",
+  "branchName": "ralph/self-iteration-20260519-122726",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-122726. The previous active PRD belonged to ralph/self-iteration-20260519-090653 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-123148/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest main CI runs 26076080948, 26069761127, and 26068337937 completed green; local sampled checks `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts` and `go test ./pkg/oss/objectset ./cmd/server -run 'TestExecuteNearestNeighbors|TestBuildEmbeddingProvider|TestDefinition_ValidateNearestNeighbors'` passed. Dogfood DOG-001 through DOG-005 have committed regression coverage, and known fresh-CI risks around cmd/server/embed.go and US-453 streamless binary responses are covered. This PRD focuses on removing stale ObjectSet composer limitations so upper-layer users can exercise backend-supported OSv2 semantic search and exact-set definitions through the Web experience.",
   "userStories": [
     {
-      "id": "SELF-434",
-      "name": "Expand CI Playwright discovery beyond US-444",
-      "phase": "Fresh CI Signal",
+      "id": "SELF-437",
+      "name": "Enable nearestNeighbors in ObjectSet composer",
+      "phase": "Upper-Layer ObjectSet Experience",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Strengthen the GitHub CI Web job so list-only Playwright discovery parses every checked-in upper-layer E2E probe group, not only web/e2e/us444/.",
+      "description": "Update the Web ObjectSet composer so users can select and configure the backend-supported nearestNeighbors ObjectSet variant instead of seeing a stale unsupported validation error.",
       "bdd_acceptance": [
-        "Given the CI workflow is parsed by a source-level contract test, When the Web job's Playwright discovery step is inspected, Then the command includes the US-444, Phase 6, Phase 7, VTX-099, dogfood, and standalone upper-layer spec paths.",
-        "Given a future contributor adds a syntax or import regression in a non-US-444 E2E probe, When GitHub CI runs list-only Playwright discovery, Then the Web job fails before merge instead of silently ignoring the spec.",
-        "Given local Playwright list-only discovery is run over the same path set, When the command completes, Then all targeted specs remain discoverable without requiring a live backend."
+        "Given the ObjectSet composer is open for an ontology with object types, When the user switches the root node to nearestNeighbors, Then the composer creates an inner base ObjectSet, exposes controls for embedding property, neighbor count, and query text, and keeps the Execute button disabled only until required nearestNeighbors fields are filled.",
+        "Given a user configures nearestNeighbors with property `embedding`, K=3, and text query `find similar incidents`, When the composer updates its definition, Then the wire ObjectSet contains `propertyIdentifier.property.apiName`, `numNeighbors`, and `query.text.value` in the shape accepted by the backend executor.",
+        "Given a saved or shared nearestNeighbors definition is loaded, When it is converted to the editable node tree and back to wire format, Then the definition round-trips without throwing and validation no longer reports nearestNeighbors as unsupported."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts`",
-        "`rg -n \"Playwright spec discovery\" .github/workflows/ci.yml` shows the expanded discovery gate",
+        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`",
+        "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-435",
-      "name": "Source-contract Phase 6 E2E gates against degraded skips",
-      "phase": "Upper-Layer E2E Signal",
+      "id": "SELF-438",
+      "name": "Round-trip static ObjectSets in composer",
+      "phase": "Upper-Layer ObjectSet Experience",
       "active": true,
       "priority": 2,
       "passes": true,
       "dependencies": [
-        "SELF-434"
+        "SELF-437"
       ],
-      "description": "Add source-level contracts for Phase 6 Playwright probes so withProperties, multi-groupBy aggregation, optimistic concurrency, and interface paging stay active and fail reachable-but-unwired OSv2 service behavior.",
+      "description": "Allow saved and shared static ObjectSet definitions to render and round-trip in the composer instead of throwing as unsupported.",
       "bdd_acceptance": [
-        "Given Phase 6 specs are parsed by the contract test, When skip or fixme guards are introduced for reachable service failures, Then the contract test fails.",
-        "Given the Phase 6 probes call OSv2 service endpoints, When their source is inspected, Then each probe asserts concrete response shape or rendered data rather than shallow route reachability.",
-        "Given Playwright list-only discovery runs for phase6/, When CI parses the specs, Then every Phase 6 scenario remains discoverable."
+        "Given a static ObjectSet definition with object type and primary keys is loaded from a saved query or URL, When the composer renders, Then it shows editable object type and primary key controls instead of crashing.",
+        "Given the user edits the static primary-key list, When the definition updates, Then the wire ObjectSet preserves a stable `primaryKeys` array with blank entries removed.",
+        "Given a static ObjectSet is valid, When validation runs, Then Execute is enabled and no unsupported-type error is shown."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list phase6/`",
-        "`rg -n \"test\\\\.skip|test\\\\.fixme|not yet wired|unavailable\" web/e2e/phase6` returns no degraded-service skip wording after implementation",
+        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`",
+        "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-436",
-      "name": "Source-contract Phase 7 security and realtime E2E gates",
-      "phase": "Upper-Layer E2E Signal",
+      "id": "SELF-439",
+      "name": "Protect composer against backend ObjectSet variant crashes",
+      "phase": "Upper-Layer ObjectSet Experience",
       "active": true,
       "priority": 3,
       "passes": true,
       "dependencies": [
-        "SELF-434"
+        "SELF-437"
       ],
-      "description": "Add source-level contracts for Phase 7 security, audit, SSE reconnect, and Browser realtime probes so seeded identity, policy, and subscription failures remain hard assertions.",
+      "description": "Add source-level and UI coverage so shared ObjectSet definitions using backend-only variants degrade to explicit read-only validation states instead of throwing during definitionToNode.",
       "bdd_acceptance": [
-        "Given Phase 7 specs are parsed by the contract test, When a reachable backend skip or optional-service status allowance is introduced, Then the contract test fails.",
-        "Given policy and audit probes run against seeded users, When their source is inspected, Then they assert expected allow/deny semantics for concrete users and object types.",
-        "Given realtime probes run in list-only discovery, When CI parses phase7/, Then SSE and Browser Live scenarios remain discoverable."
+        "Given a shared ObjectSet URL contains an asType, interfaceBase, interfaceLinkSearchAround, or methodInput definition, When ObjectSetPage parses it, Then the page renders a clear unsupported-editing validation state instead of throwing an uncaught error.",
+        "Given a backend-only variant is displayed read-only, When validation runs, Then Execute remains disabled with a specific message naming the variant.",
+        "Given future ObjectSetDefinition union members are added, When the source contract runs, Then the composer contract fails unless the variant is either editable or intentionally degraded."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list phase7/`",
-        "`rg -n \"test\\\\.skip|test\\\\.fixme|not yet wired|unavailable|503|404\" web/e2e/phase7` allows only intentional backend-down portability wording after implementation",
+        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetPage.test.tsx`",
+        "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     }

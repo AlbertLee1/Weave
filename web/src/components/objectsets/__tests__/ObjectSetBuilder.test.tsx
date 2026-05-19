@@ -92,4 +92,32 @@ describe('ObjectSetBuilder', () => {
     const newVal = onChange.mock.calls[0][0] as ObjectSetDefinition;
     expect(newVal.type).toBe('filter');
   });
+
+  it('renders static primary keys and removes blank entries when edited', () => {
+    const onChange = vi.fn();
+    render(
+      <ObjectSetBuilder
+        objectTypes={objectTypes}
+        value={{
+          type: 'static',
+          objectType: 'Employee',
+          primaryKeys: ['emp-1', 'emp-2'],
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    expect(screen.getByRole('combobox', { name: /objectset type/i })).toHaveValue('static');
+    expect(screen.getByRole('combobox', { name: /object type/i })).toHaveValue('Employee');
+
+    fireEvent.change(screen.getByLabelText(/primary keys/i), {
+      target: { value: 'emp-3\n\n emp-4 \n  ' },
+    });
+
+    expect(onChange).toHaveBeenCalledWith({
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['emp-3', 'emp-4'],
+    });
+  });
 });

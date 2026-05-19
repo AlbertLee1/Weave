@@ -134,6 +134,158 @@ describe('nodeToDefinition / definitionToNode round-trip', () => {
     });
   });
 
+  it('round-trips a nearestNeighbors node', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'nearestNeighbors',
+      objectSet: emptyBase('Incident'),
+      propertyIdentifier: { property: { apiName: 'embedding' } },
+      numNeighbors: 3,
+      query: { text: { value: 'find similar incidents' } },
+    };
+
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({
+      type: 'nearestNeighbors',
+      objectSet: { type: 'base', objectType: 'Incident' },
+      propertyIdentifier: { property: { apiName: 'embedding' } },
+      numNeighbors: 3,
+      query: { text: { value: 'find similar incidents' } },
+    });
+
+    const back = definitionToNode(def);
+    expect(back.type).toBe('nearestNeighbors');
+    if (back.type === 'nearestNeighbors') {
+      expect(back.propertyIdentifier?.property.apiName).toBe('embedding');
+      expect(back.numNeighbors).toBe(3);
+      expect(back.query?.text?.value).toBe('find similar incidents');
+    }
+  });
+
+  it('round-trips a static node and removes blank primary keys', () => {
+    const def: ObjectSetDefinition = {
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['e1', '', ' e2 ', '   '],
+    };
+
+    const node = definitionToNode(def);
+    expect(node.type).toBe('static');
+    if (node.type === 'static') {
+      expect(node.objectType).toBe('Employee');
+      expect(node.primaryKeys).toEqual(['e1', '', ' e2 ', '   ']);
+    }
+
+    expect(nodeToDefinition(node)).toEqual({
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['e1', 'e2'],
+    });
+  });
+
+  it('degrades backend-only variants into read-only unsupported nodes', () => {
+    const defs = [
+      {
+        type: 'asType',
+        objectType: 'Employee',
+        objectSet: { type: 'base', objectType: 'Person' },
+      },
+      {
+        type: 'asBaseObjectTypes',
+        objectSet: { type: 'base', objectType: 'Person' },
+      },
+      { type: 'interfaceBase', interfaceType: 'PersonInterface' },
+      {
+        type: 'interfaceLinkSearchAround',
+        objectSet: { type: 'base', objectType: 'Person' },
+        interfaceLink: 'assignedTo',
+      },
+      { type: 'methodInput', input: 'selectedObjects' },
+    ] satisfies ObjectSetDefinition[];
+
+    for (const def of defs) {
+      const node = definitionToNode(def);
+      expect(node.type).toBe('unsupported');
+      if (node.type === 'unsupported') {
+        expect(node.objectSetType).toBe(def.type);
+        expect(nodeToDefinition(node)).toEqual(def);
+      }
+      expect(validateNode(node)).toContain(
+        `${def.type} ObjectSet is supported by the backend but is read-only in the composer`,
+      );
+    }
+  });
+
+  it('contracts every ObjectSetDefinition variant as editable or read-only unsupported', () => {
+    const examples = {
+      base: { type: 'base', objectType: 'Employee' },
+      static: { type: 'static', objectType: 'Employee', primaryKeys: [] },
+      filter: {
+        type: 'filter',
+        objectSet: { type: 'base', objectType: 'Employee' },
+        where: { type: 'eq', field: 'name', value: 'Ada' },
+      },
+      union: {
+        type: 'union',
+        objectSets: [
+          { type: 'base', objectType: 'Employee' },
+          { type: 'base', objectType: 'Manager' },
+        ],
+      },
+      intersect: {
+        type: 'intersect',
+        objectSets: [
+          { type: 'base', objectType: 'Employee' },
+          { type: 'base', objectType: 'Manager' },
+        ],
+      },
+      subtract: {
+        type: 'subtract',
+        objectSets: [
+          { type: 'base', objectType: 'Employee' },
+          { type: 'base', objectType: 'Manager' },
+        ],
+      },
+      searchAround: {
+        type: 'searchAround',
+        objectSet: { type: 'base', objectType: 'Employee' },
+        link: 'reportsTo',
+      },
+      reference: { type: 'reference', reference: 'ri.objectSet.saved.1' },
+      withProperties: {
+        type: 'withProperties',
+        objectSet: { type: 'base', objectType: 'Employee' },
+      },
+      nearestNeighbors: {
+        type: 'nearestNeighbors',
+        objectSet: { type: 'base', objectType: 'Employee' },
+        propertyIdentifier: { property: { apiName: 'embedding' } },
+        numNeighbors: 5,
+        query: { text: { value: 'similar employees' } },
+      },
+      asType: {
+        type: 'asType',
+        objectType: 'Employee',
+        objectSet: { type: 'base', objectType: 'Person' },
+      },
+      asBaseObjectTypes: {
+        type: 'asBaseObjectTypes',
+        objectSet: { type: 'base', objectType: 'Person' },
+      },
+      interfaceBase: { type: 'interfaceBase', interfaceType: 'PersonInterface' },
+      interfaceLinkSearchAround: {
+        type: 'interfaceLinkSearchAround',
+        objectSet: { type: 'base', objectType: 'Person' },
+        interfaceLink: 'assignedTo',
+      },
+      methodInput: { type: 'methodInput', input: 'selectedObjects' },
+    } satisfies Record<ObjectSetDefinition['type'], ObjectSetDefinition>;
+
+    for (const def of Object.values(examples)) {
+      expect(() => definitionToNode(def)).not.toThrow();
+    }
+  });
+
   it('omits ids in the produced definition', () => {
     const node: ObjectSetNode = {
       id: 'root-id',
@@ -196,14 +348,36 @@ describe('validateNode', () => {
     expect(errs.length).toBeGreaterThan(0);
   });
 
-  it('flags nearestNeighbors as not yet supported', () => {
+  it('accepts a complete nearestNeighbors node', () => {
     const errs = validateNode({
       id: '1',
       type: 'nearestNeighbors',
       objectSet: emptyBase('Employee'),
+      propertyIdentifier: { property: { apiName: 'embedding' } },
+      numNeighbors: 5,
+      query: { text: { value: 'find similar employees' } },
     });
-    expect(errs.length).toBeGreaterThan(0);
-    expect(errs.join(' ')).toMatch(/not yet supported|not supported/i);
+    expect(errs).toEqual([]);
+  });
+
+  it('accepts a static node with object type and primary keys', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['e1'],
+    });
+    expect(errs).toEqual([]);
+  });
+
+  it('flags static node missing objectType', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'static',
+      objectType: '',
+      primaryKeys: ['e1'],
+    });
+    expect(errs).toContain('static node requires an object type');
   });
 });
 

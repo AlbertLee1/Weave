@@ -9,6 +9,7 @@ import type {
 // definition.
 export type ObjectSetNode =
   | BaseNode
+  | StaticNode
   | FilterNode
   | UnionNode
   | IntersectNode
@@ -16,7 +17,8 @@ export type ObjectSetNode =
   | SearchAroundNode
   | ReferenceNode
   | WithPropertiesNode
-  | NearestNeighborsNode;
+  | NearestNeighborsNode
+  | UnsupportedObjectSetNode;
 
 interface NodeBase {
   id: string;
@@ -25,6 +27,12 @@ interface NodeBase {
 export interface BaseNode extends NodeBase {
   type: 'base';
   objectType: string;
+}
+
+export interface StaticNode extends NodeBase {
+  type: 'static';
+  objectType: string;
+  primaryKeys: string[];
 }
 
 export interface FilterNode extends NodeBase {
@@ -79,6 +87,52 @@ export interface NearestNeighborsNode extends NodeBase {
   };
 }
 
+export type ObjectSetComposerVariantSupport =
+  | 'editable'
+  | 'readOnlyUnsupported';
+
+export const OBJECT_SET_COMPOSER_VARIANT_SUPPORT = {
+  base: 'editable',
+  static: 'editable',
+  filter: 'editable',
+  union: 'editable',
+  intersect: 'editable',
+  subtract: 'editable',
+  searchAround: 'editable',
+  reference: 'editable',
+  withProperties: 'editable',
+  nearestNeighbors: 'editable',
+  asType: 'readOnlyUnsupported',
+  asBaseObjectTypes: 'readOnlyUnsupported',
+  interfaceBase: 'readOnlyUnsupported',
+  interfaceLinkSearchAround: 'readOnlyUnsupported',
+  methodInput: 'readOnlyUnsupported',
+} satisfies Record<ObjectSetDefinition['type'], ObjectSetComposerVariantSupport>;
+
+export type EditableObjectSetType = {
+  [Type in ObjectSetDefinition['type']]: (typeof OBJECT_SET_COMPOSER_VARIANT_SUPPORT)[Type] extends 'editable'
+    ? Type
+    : never;
+}[ObjectSetDefinition['type']];
+
+export interface UnsupportedObjectSetNode extends NodeBase {
+  type: 'unsupported';
+  objectSetType: ObjectSetDefinition['type'];
+  def: ObjectSetDefinition;
+}
+
+export function isEditableObjectSetType(
+  type: ObjectSetDefinition['type'],
+): type is EditableObjectSetType {
+  return OBJECT_SET_COMPOSER_VARIANT_SUPPORT[type] === 'editable';
+}
+
+export function unsupportedObjectSetMessage(
+  type: ObjectSetDefinition['type'],
+): string {
+  return `${type} ObjectSet is supported by the backend but is read-only in the composer`;
+}
+
 // US-332: each saved ObjectSet carries a list of named/timestamped versions
 // so users can iterate on a query without losing earlier shapes. The legacy
 // shape (`def` + `createdAt` only) is still accepted by readSaved and lifted
@@ -129,6 +183,14 @@ export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
   switch (node.type) {
     case 'base':
       return { type: 'base', objectType: node.objectType };
+    case 'static':
+      return {
+        type: 'static',
+        objectType: node.objectType,
+        primaryKeys: node.primaryKeys
+          .map((pk) => pk.trim())
+          .filter((pk) => pk.length > 0),
+      };
     case 'filter':
       return {
         type: 'filter',
@@ -185,6 +247,8 @@ export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
         similarityThreshold: node.similarityThreshold,
         query: node.query,
       };
+    case 'unsupported':
+      return node.def;
   }
 }
 
@@ -193,6 +257,13 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
   switch (def.type) {
     case 'base':
       return { id: newId(), type: 'base', objectType: def.objectType };
+    case 'static':
+      return {
+        id: newId(),
+        type: 'static',
+        objectType: def.objectType,
+        primaryKeys: def.primaryKeys,
+      };
     case 'filter':
       return {
         id: newId(),
@@ -246,15 +317,17 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
         similarityThreshold: def.similarityThreshold,
         query: def.query,
       };
-    case 'static':
     case 'asType':
     case 'asBaseObjectTypes':
     case 'interfaceBase':
     case 'interfaceLinkSearchAround':
     case 'methodInput':
-      throw new Error(
-        `objectSet type "${def.type}" is not yet supported in the composer UI`,
-      );
+      return {
+        id: newId(),
+        type: 'unsupported',
+        objectSetType: def.type,
+        def,
+      };
   }
 }
 
@@ -266,10 +339,17 @@ export function validateNode(node: ObjectSetNode): string[] {
   return errors;
 }
 
+export function validateDefinition(def: ObjectSetDefinition): string[] {
+  return validateNode(definitionToNode(def));
+}
+
 function walk(node: ObjectSetNode, errors: string[]): void {
   switch (node.type) {
     case 'base':
       if (!node.objectType) errors.push('base node requires an object type');
+      break;
+    case 'static':
+      if (!node.objectType) errors.push('static node requires an object type');
       break;
     case 'filter':
       if (!node.where || !(node.where as WhereClause).type) {
@@ -296,8 +376,22 @@ function walk(node: ObjectSetNode, errors: string[]): void {
       walk(node.objectSet, errors);
       break;
     case 'nearestNeighbors':
-      errors.push('nearestNeighbors is not yet supported by the backend');
+      if (!node.propertyIdentifier?.property.apiName) {
+        errors.push('nearestNeighbors node requires an embedding property');
+      }
+      if (node.numNeighbors !== undefined && node.numNeighbors <= 0) {
+        errors.push('nearestNeighbors node requires neighbors > 0');
+      }
+      if (
+        !node.query?.text?.value &&
+        (!node.query?.vector?.value || node.query.vector.value.length === 0)
+      ) {
+        errors.push('nearestNeighbors node requires query text or vector');
+      }
       walk(node.objectSet, errors);
+      break;
+    case 'unsupported':
+      errors.push(unsupportedObjectSetMessage(node.objectSetType));
       break;
   }
 }
