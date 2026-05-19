@@ -51,7 +51,7 @@
       "phase": "Upper-Layer Browser Experience",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Prevent the Browser table from sending server-side sort requests for properties that are not declared sortable, avoiding avoidable backend rejections in object exploration flows.",
       "bdd_acceptance": [

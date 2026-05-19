@@ -64,3 +64,27 @@ Started: Tue May 19 14:35:31 CST 2026
   - Browser structured filters can safely expose backend-supported WhereClause operators when the visible operator label, filter state, saved-search round trip, and request body are covered together.
 - Result: SELF-444 marked `passes: true`; SELF-445 remains open for later Ralph iterations.
 ---
+
+## Tue May 19 14:54:23 CST 2026 - SELF-445
+- What was implemented:
+  - Added BDD coverage for Browser table sortability using detailed property metadata.
+  - Updated `ObjectTable` so declared properties are sortable only when `sortablePropertyKeys` includes the property; the primary key remains sortable even while detailed metadata is unavailable.
+  - Updated `BrowserPage` to fetch detailed properties with `useProperties`, derive sortable property names from `isSortable`, pass them to the table, and suppress list/search/export `orderBy` whenever the active sort field is not metadata-approved.
+- TDD red:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: `summary` emitted `onSort("summary", "asc")`, unavailable metadata still allowed `summary` sorting, and BrowserPage captured an invalid `summary:asc` request.
+- Verification:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 19 tests.
+  - From `web/`: `npx tsc --noEmit` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/src/components/browser/ObjectTable.tsx`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Browser sort affordances should be driven by `/objectTypes/byRid/{rid}/properties` detailed metadata, because the compact `objectType.properties` map carries only data type and RID, not `isSortable`.
+  - Request builders should guard with the same effective sort field as the UI so stale saved-search or local sort state cannot send unsupported `orderBy` values.
+- Result: SELF-445 marked `passes: true`; all active stories in this PRD now pass.
+---

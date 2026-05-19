@@ -84,7 +84,7 @@ vi.mock('../../../hooks/useObjectTypes', () => ({
   useObjectType: (_ontology: string, apiName: string) => ({
     data: apiName
       ? {
-          rid: 'ri.ot.test',
+          rid: apiName === 'Delivery' ? 'ri.ot.delivery' : 'ri.ot.test',
           apiName,
           displayName: apiName,
           pluralDisplayName: `${apiName}s`,
@@ -92,10 +92,20 @@ vi.mock('../../../hooks/useObjectTypes', () => ({
           status: 'ACTIVE',
           visibility: 'NORMAL',
           titleProperty: 'name',
-          properties: {
-            id: { dataType: { type: 'string' }, rid: 'ri.p.id' },
-            name: { dataType: { type: 'string' }, rid: 'ri.p.name' },
-          },
+          properties:
+            apiName === 'Delivery'
+              ? {
+                  id: { dataType: { type: 'string' }, rid: 'ri.p.id' },
+                  summary: { dataType: { type: 'string' }, rid: 'ri.p.summary' },
+                  deliveredDate: {
+                    dataType: { type: 'date' },
+                    rid: 'ri.p.deliveredDate',
+                  },
+                }
+              : {
+                  id: { dataType: { type: 'string' }, rid: 'ri.p.id' },
+                  name: { dataType: { type: 'string' }, rid: 'ri.p.name' },
+                },
         }
       : undefined,
     isLoading: false,
@@ -108,6 +118,66 @@ vi.mock('../../../hooks/useObjectTypes', () => ({
 // ---------------------------------------------------------------------------
 
 const server = setupServer(
+  http.get(
+    '/api/v2/ontologies/:ontology/objectTypes/byRid/:objectTypeRid/properties',
+    ({ params }) => {
+      if (params.objectTypeRid === 'ri.ot.delivery') {
+        return HttpResponse.json({
+          data: [
+            {
+              rid: 'ri.p.id',
+              apiName: 'id',
+              baseType: 'string',
+              isArray: false,
+              isNullable: false,
+              isSearchable: true,
+              isSortable: true,
+            },
+            {
+              rid: 'ri.p.summary',
+              apiName: 'summary',
+              baseType: 'string',
+              isArray: false,
+              isNullable: true,
+              isSearchable: true,
+              isSortable: false,
+            },
+            {
+              rid: 'ri.p.deliveredDate',
+              apiName: 'deliveredDate',
+              baseType: 'date',
+              isArray: false,
+              isNullable: true,
+              isSearchable: false,
+              isSortable: true,
+            },
+          ],
+        });
+      }
+      return HttpResponse.json({
+        data: [
+          {
+            rid: 'ri.p.id',
+            apiName: 'id',
+            baseType: 'string',
+            isArray: false,
+            isNullable: false,
+            isSearchable: true,
+            isSortable: true,
+          },
+          {
+            rid: 'ri.p.name',
+            apiName: 'name',
+            baseType: 'string',
+            isArray: false,
+            isNullable: true,
+            isSearchable: true,
+            isSortable: true,
+          },
+        ],
+      });
+    },
+  ),
   // List objects
   http.get('/api/v2/ontologies/:ontology/objects/:objectType', () =>
     HttpResponse.json({
@@ -131,6 +201,12 @@ const server = setupServer(
   http.post(
     '/api/v2/ontologies/:ontology/objectSets/createTemporary',
     () => HttpResponse.json({ objectSetRid: 'ri.objectset.main.test-rid' }),
+  ),
+  http.get('/api/v2/datasets/:ontology/history', () =>
+    HttpResponse.json({ data: [] }),
+  ),
+  http.get('/api/v2/ontologies/:ontology/actionTypes', () =>
+    HttpResponse.json({ data: [] }),
   ),
 );
 
@@ -614,6 +690,50 @@ describe('BrowserPage saved searches', () => {
           where: { type: 'startsWith', field: 'name', value: 'Al' },
         }),
       );
+    });
+  });
+});
+
+describe('BrowserPage sortability', () => {
+  it('uses detailed property metadata before sending Browser orderBy requests', async () => {
+    const orderByValues: Array<string | null> = [];
+    server.use(
+      http.get(
+        '/api/v2/ontologies/:ontology/objects/:objectType',
+        ({ request }) => {
+          orderByValues.push(new URL(request.url).searchParams.get('orderBy'));
+          return HttpResponse.json({
+            data: [
+              {
+                __primaryKey: 'delivery-1',
+                __apiName: 'Delivery',
+                id: 'delivery-1',
+                summary: 'Dock received',
+                deliveredDate: '2026-05-19',
+              },
+            ],
+            totalCount: '1',
+          });
+        },
+      ),
+    );
+
+    renderBrowserPage('testOntology', 'Delivery');
+
+    await waitFor(() => {
+      expect(screen.getByText('Deliverys')).toBeInTheDocument();
+    });
+    await screen.findByText('summary');
+
+    fireEvent.click(screen.getByText('summary'));
+    await waitFor(() => {
+      expect(orderByValues).toContain(null);
+    });
+    expect(orderByValues).not.toContain('summary:asc');
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('deliveredDate'));
+      expect(orderByValues).toContain('deliveredDate:asc');
     });
   });
 });
