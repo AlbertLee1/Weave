@@ -281,6 +281,442 @@ func TestBDD_GeoTemporalDocsReflectPGStoreDefault(t *testing.T) {
 	}
 }
 
+func TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	routes := readFile(t, filepath.Join(root, "pkg", "oss", "handlers.go"))
+	transformHandler := readFile(t, filepath.Join(root, "pkg", "oss", "handlers_timeseries_transform.go"))
+	vertexHandler := readFile(t, filepath.Join(root, "pkg", "oss", "handlers_vertex_timeseries.go"))
+	downsample := readFile(t, filepath.Join(root, "pkg", "timeseries", "downsample.go"))
+	pgStore := readFile(t, filepath.Join(root, "pkg", "timeseries", "pg_store.go"))
+	vmStore := readFile(t, filepath.Join(root, "pkg", "timeseries", "vm_store.go"))
+	pushdownTests := readFile(t, filepath.Join(root, "pkg", "oss", "handlers_timeseries_transform_us435_test.go"))
+	caggTests := readFile(t, filepath.Join(root, "pkg", "timeseries", "us467_pg_downsample_test.go"))
+	vmTests := readFile(t, filepath.Join(root, "pkg", "timeseries", "vm_store_test.go"))
+
+	for _, claim := range []string{
+		"**无时间分桶聚合、无 downsample**",
+		"无时间分桶 / 聚合查询",
+		"US-071（TimeSeries 分桶聚合：downsample / aggregate by duration）",
+		"### US-071 — TimeSeries downsample / bucket aggregation",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale TimeSeries claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`/api/v2/ontologies/{ontologyApiName}/timeseries/transform`",
+		"`/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}`",
+		"`/firstPoint`",
+		"`/lastPoint`",
+		"`/streamPoints`",
+		"`/points`",
+		"`pkg/oss/handlers_timeseries_transform.go`",
+		"`pkg/oss/handlers_vertex_timeseries.go`",
+		"`pkg/timeseries/downsample.go`",
+		"`pkg/timeseries/pg_store.go`",
+		"`pkg/timeseries/vm_store.go`",
+		"`DownsampleSpec`",
+		"`DownsamplePoints`",
+		"`timeseries_cagg_5min`",
+		"`RunCAGGRefreshLoop`",
+		"`NewVMStore`",
+		"`query_range`",
+		"`avg/sum/min/max/count/first/last`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live TimeSeries contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		`timeseries/{property}`,
+		`timeseries/{property}/firstPoint`,
+		`timeseries/{property}/lastPoint`,
+		`timeseries/{property}/streamPoints`,
+		`timeseries/{property}/points`,
+		`timeseries/transform`,
+		`GetVertexTimeSeries`,
+		`TransformTimeSeries`,
+	} {
+		if !strings.Contains(routes, required) {
+			t.Errorf("pkg/oss route registration must expose TimeSeries fragment %q", required)
+		}
+	}
+	for _, required := range []string{"pushDownDownsample", "DownsamplePoints", "OpResample", "NormalizeAggregation"} {
+		if !strings.Contains(transformHandler, required) {
+			t.Errorf("TimeSeries transform handler must expose downsample pushdown fragment %q", required)
+		}
+	}
+	for _, required := range []string{"VertexTimeSeriesQuerier", "SetVertexTimeSeriesQuerier", "GetVertexTimeSeries", "AggAvg"} {
+		if !strings.Contains(vertexHandler, required) {
+			t.Errorf("Vertex TimeSeries handler must expose window aggregation fragment %q", required)
+		}
+	}
+	for _, required := range []string{"type DownsampleSpec", "type Downsampler interface", "DownsampleFirst", "DownsampleLast"} {
+		if !strings.Contains(downsample, required) {
+			t.Errorf("downsample.go must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewPGStore", "func (s *PGStore) DownsamplePoints", "timeseries_cagg_5min", "func RunCAGGRefreshLoop"} {
+		if !strings.Contains(pgStore, required) {
+			t.Errorf("PG TimeSeries store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewVMStore", "func (s *VMStore) DownsamplePoints", "/api/v1/query_range", "buildDownsamplePromQL"} {
+		if !strings.Contains(vmStore, required) {
+			t.Errorf("VictoriaMetrics TimeSeries store must expose %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"pushdownTests", pushdownTests, []string{"TestTransform_PushdownFiresForResampleOnDownsampler", "DownsamplePoints"}},
+		{"caggTests", caggTests, []string{"timeseries_cagg_5min", "DownsamplePoints"}},
+		{"vmTests", vmTests, []string{"TestVMStore_DownsamplePoints_AllAggregations", "query_range"}},
+	} {
+		for _, required := range source.want {
+			if !strings.Contains(source.text, required) {
+				t.Errorf("%s must cover live TimeSeries fragment %q", source.name, required)
+			}
+		}
+	}
+}
+
+func TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	vertexRoutes := readFile(t, filepath.Join(root, "pkg", "vertex", "graphsvc", "handler.go"))
+	vertexWorkspace := readFile(t, filepath.Join(root, "web", "src", "vertex", "VertexWorkspacePage.tsx"))
+	vertexScenariosMigration := readFile(t, filepath.Join(root, "migrations", "000105_vertex_scenarios.up.sql"))
+	vertexRunsMigration := readFile(t, filepath.Join(root, "migrations", "000109_vertex_scenario_runs.up.sql"))
+	quiverRoutes := readFile(t, filepath.Join(root, "pkg", "quiver", "handlers.go"))
+	quiverDataRoutes := readFile(t, filepath.Join(root, "pkg", "quiver", "handlers_data.go"))
+	quiverPage := readFile(t, filepath.Join(root, "web", "src", "components", "quiver", "QuiverPage.tsx"))
+	dashboardRoutes := readFile(t, filepath.Join(root, "pkg", "dashboards", "handlers.go"))
+	notificationFanout := readFile(t, filepath.Join(root, "pkg", "notifications", "fanout.go"))
+	reactionRoutes := readFile(t, filepath.Join(root, "pkg", "reactions", "handlers.go"))
+	permissionRequestsRoutes := readFile(t, filepath.Join(root, "pkg", "permissionrequests", "handlers.go"))
+	appRoutes := readFile(t, filepath.Join(root, "web", "src", "App.tsx"))
+	sidebar := readFile(t, filepath.Join(root, "web", "src", "components", "layout", "Sidebar.tsx"))
+
+	for _, claim := range []string{
+		"**非目标**：替代 Foundry 的多租户、大集群、AIP Logic 全套、Workshop/Slate/Vertex 等应用层。",
+		"不做 Workshop / Slate / Quiver / Vertex 等应用层",
+		"企业/多租户/AIP/Workshop/Slate/etc.",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale upper-layer experience claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`web/src/vertex`",
+		"`pkg/vertex/graphsvc`",
+		"`pkg/vertex/scenarioruns`",
+		"`migrations/000105_vertex_scenarios.up.sql`",
+		"`migrations/000109_vertex_scenario_runs.up.sql`",
+		"`/api/vertex/v1/graphs`",
+		"`/vertex/:rid`",
+		"`web/src/components/quiver`",
+		"`pkg/quiver`",
+		"`/api/v2/quiver/dashboards/{rid}/data`",
+		"`/quiver/:ontology`",
+		"`pkg/dashboards`",
+		"`/api/v2/dashboards`",
+		"`pkg/notifications`",
+		"`pkg/reactions`",
+		"`pkg/permissionrequests`",
+		"`/api/v2/notifications`",
+		"`/api/v2/reactions`",
+		"`/api/v2/permission-requests`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live upper-layer experience fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"graphsvc.NewHandler",
+		"controlpanel.NewHandler",
+		"dashboards.NewHandler",
+		"quiver.NewHandler",
+		"reactions.NewHandler",
+		"permissionrequests.NewHandler",
+		"/api/v2/notifications",
+	} {
+		if !strings.Contains(serverMain, required) {
+			t.Errorf("cmd/server must wire upper-layer fragment %q", required)
+		}
+	}
+	for _, required := range []string{
+		`/api/vertex/v1/graphs`,
+		`/api/vertex/v1/graphs/{rid}/share-links`,
+		`/api/vertex/v1/graphs/{rid}/widget`,
+	} {
+		if !strings.Contains(vertexRoutes, required) {
+			t.Errorf("Vertex graph handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"VertexWorkspacePage", "VertexAddObjectsDialog", "vertex-workspace"} {
+		if !strings.Contains(vertexWorkspace, required) {
+			t.Errorf("Vertex workspace must expose %q", required)
+		}
+	}
+	for _, required := range []string{"case_studies", "scenarios", "scenario_edits", "scenario_overrides"} {
+		if !strings.Contains(vertexScenariosMigration, required) {
+			t.Errorf("Vertex scenarios migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"scenario_runs", "status IN ('pending', 'running', 'succeeded', 'failed', 'canceled')"} {
+		if !strings.Contains(vertexRunsMigration, required) {
+			t.Errorf("Vertex scenario-runs migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"/api/v2/quiver/save", "/api/v2/quiver/dashboards/{rid}/view", "/api/v2/quiver/dashboards/{rid}/data", "/api/v2/quiver/dashboards/{rid}/sparklines"} {
+		if !strings.Contains(quiverRoutes, required) {
+			t.Errorf("Quiver handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"TimeSeriesReader", "DataResponse", "dashboardSeriesConfig"} {
+		if !strings.Contains(quiverDataRoutes, required) {
+			t.Errorf("Quiver data handler must expose %q", required)
+		}
+	}
+	if !strings.Contains(quiverPage, "QuiverWorkbenchView") {
+		t.Error("Quiver page must render the workbench surface")
+	}
+	for _, required := range []string{"/api/v2/dashboards", "IsPublic", "Dashboard"} {
+		if !strings.Contains(dashboardRoutes, required) {
+			t.Errorf("Dashboard handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"CreateNotificationForUser", "HandleActivity"} {
+		if !strings.Contains(notificationFanout, required) {
+			t.Errorf("notification fanout must expose %q", required)
+		}
+	}
+	for _, required := range []string{"/api/v2/reactions", "ReactionBar", "Aggregate"} {
+		if !strings.Contains(reactionRoutes, required) {
+			t.Errorf("reaction handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"/api/v2/permission-requests", "NotifyApproversNewRequest", "NotifyRequesterDecision"} {
+		if !strings.Contains(permissionRequestsRoutes, required) {
+			t.Errorf("permission request handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{`path="vertex/:rid"`, `path="quiver/:ontology"`, `path="dashboards"`, `path="permission-requests"`, `path="notifications"`} {
+		if !strings.Contains(appRoutes, required) {
+			t.Errorf("SPA routes must expose %q", required)
+		}
+	}
+	for _, required := range []string{"Quiver TS", "Permission Requests", "Notifications"} {
+		if !strings.Contains(sidebar, required) {
+			t.Errorf("Sidebar must expose %q", required)
+		}
+	}
+}
+
+func TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	adminAudit := readFile(t, filepath.Join(root, "cmd", "server", "admin_audit.go"))
+	verifyCommand := readFile(t, filepath.Join(root, "cmd", "weave-audit-verify", "main.go"))
+	auditStore := readFile(t, filepath.Join(root, "pkg", "audit", "audit.go"))
+	auditPGStore := readFile(t, filepath.Join(root, "pkg", "audit", "pg_store.go"))
+	auditChain := readFile(t, filepath.Join(root, "pkg", "audit", "chain.go"))
+	auditVerify := readFile(t, filepath.Join(root, "pkg", "audit", "verify.go"))
+	auditRedaction := readFile(t, filepath.Join(root, "pkg", "audit", "redaction.go"))
+	auditedRepository := readFile(t, filepath.Join(root, "pkg", "oms", "audited_repository.go"))
+	dataAccessAuditor := readFile(t, filepath.Join(root, "pkg", "oss", "data_access_audit.go"))
+	dataAccessAdapter := readFile(t, filepath.Join(root, "cmd", "server", "data_access_audit_adapter.go"))
+	loginHandler := readFile(t, filepath.Join(root, "pkg", "auth", "login_handler.go"))
+	refreshHandler := readFile(t, filepath.Join(root, "pkg", "auth", "refresh_handler.go"))
+	apiKeyHandler := readFile(t, filepath.Join(root, "pkg", "auth", "api_key_handlers.go"))
+	migration20 := readFile(t, filepath.Join(root, "migrations", "000020_audit_events.up.sql"))
+	migration61 := readFile(t, filepath.Join(root, "migrations", "000061_object_type_data_access_audit.up.sql"))
+	migration62 := readFile(t, filepath.Join(root, "migrations", "000062_audit_hash_chain.up.sql"))
+	adminAuditTests := readFile(t, filepath.Join(root, "cmd", "server", "admin_audit_us493_test.go"))
+	auditedRepositoryTests := readFile(t, filepath.Join(root, "pkg", "oms", "audited_repository_test.go"))
+	dataAccessTests := readFile(t, filepath.Join(root, "pkg", "oss", "data_access_audit_test.go"))
+	authAuditTests := readFile(t, filepath.Join(root, "pkg", "auth", "audit_test.go"))
+	chainTests := readFile(t, filepath.Join(root, "pkg", "audit", "chain_test.go"))
+	rootVerifyTests := readFile(t, filepath.Join(root, "pkg", "audit", "verify_test.go"))
+	verifyCommandTests := readFile(t, filepath.Join(root, "cmd", "weave-audit-verify", "main_test.go"))
+
+	for _, claim := range []string{
+		"🟢 action_logs",
+		"只记录 Action；**元数据变更/权限变更/登录失败 未记录**",
+		"**Gap-S4 — 元数据/权限变更审计**",
+		"现状：只有 action_logs。",
+		"建议：新增 `audit_events` 表 + trigger 在 OMS 更新路径上记录 who/when/what diff。",
+		"US-063（audit_events 表 + OMS trigger）",
+		"### US-063 — Audit events table + OMS triggers",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale audit/governance claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`pkg/audit`",
+		"`migrations/000020_audit_events.up.sql`",
+		"`migrations/000061_object_type_data_access_audit.up.sql`",
+		"`migrations/000062_audit_hash_chain.up.sql`",
+		"`cmd/server/admin_audit.go`",
+		"`cmd/weave-audit-verify`",
+		"`pkg/oms/audited_repository.go`",
+		"`cmd/server/data_access_audit_adapter.go`",
+		"`pkg/oss/data_access_audit.go`",
+		"`pkg/auth/login_handler.go`",
+		"`pkg/auth/refresh_handler.go`",
+		"`pkg/auth/api_key_handlers.go`",
+		"`/api/v2/admin/auditEvents`",
+		"`/api/admin/audit`",
+		"`audit_events`",
+		"`AuditEvent`",
+		"`NewPGStore`",
+		"`NewAuditedRepository`",
+		"`NewDataAccessAuditor`",
+		"`data.access`",
+		"`login_failed`",
+		"`token_refresh`",
+		"`api_key_create`",
+		"`VerifyChain`",
+		"`RootHashPublisher`",
+		"`RedactingStore`",
+		"`resourceRid`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live audit/governance fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"NewAdminAuditEventsHandler",
+		`/api/v2/admin/auditEvents`,
+		`/api/admin/audit`,
+		"audit.NewPGStore",
+		"audit.NewRootHashPublisher",
+		"audit.NewRedactingStore",
+		"startAuditRetention",
+		"oms.NewAuditedRepository",
+		"oss.NewDataAccessAuditor",
+	} {
+		if !strings.Contains(serverMain, required) {
+			t.Errorf("cmd/server must wire audit/governance fragment %q", required)
+		}
+	}
+	for _, required := range []string{"NewAdminAuditEventsHandler", "audit.ListFilter", "resourceRid", "pageToken"} {
+		if !strings.Contains(adminAudit, required) {
+			t.Errorf("admin audit handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"audit.NewPGStore", "VerifyChain", "VerifyRootFile", "root-file"} {
+		if !strings.Contains(verifyCommand, required) {
+			t.Errorf("audit verify command must expose %q", required)
+		}
+	}
+	for _, required := range []string{"type AuditEvent", "type ListFilter", "type Store interface", "func Record", "type MemoryStore"} {
+		if !strings.Contains(auditStore, required) {
+			t.Errorf("pkg/audit store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewPGStore", "func (s *PGStore) ListChain", "func (s *PGStore) ListBefore", "func (s *PGStore) DeleteBefore"} {
+		if !strings.Contains(auditPGStore, required) {
+			t.Errorf("PG audit store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func HashEvent", "func ComputeRootHash", "func VerifyChain"} {
+		if !strings.Contains(auditChain, required) {
+			t.Errorf("audit hash chain must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func ParseRootFile", "func VerifyRootFile", "func GroupEventsByUTCDay"} {
+		if !strings.Contains(auditVerify, required) {
+			t.Errorf("audit root verifier must expose %q", required)
+		}
+	}
+	for _, required := range []string{"type RedactingStore", "func NewRedactingStore"} {
+		if !strings.Contains(auditRedaction, required) {
+			t.Errorf("audit redaction store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewAuditedRepository", "audit.Record", "CreateOntology", "UpdateObjectType", "DeleteActionType", "CreateSecurityPolicy"} {
+		if !strings.Contains(auditedRepository, required) {
+			t.Errorf("OMS audited repository must expose %q", required)
+		}
+	}
+	for _, required := range []string{"DataAccessAction", `"data.access"`, "NewDataAccessAuditor", "AuditDataAccess", "audit.Record"} {
+		if !strings.Contains(dataAccessAuditor, required) {
+			t.Errorf("data-access auditor must expose %q", required)
+		}
+	}
+	for _, required := range []string{"newLoadObjectSetAuditAdapter", "RecordLoadObjectSet", "AuditDataAccess", "DataAccessAuditor.Record"} {
+		if !strings.Contains(dataAccessAdapter, required) {
+			t.Errorf("loadObjectSet audit adapter must expose %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"loginHandler", loginHandler, []string{"login_failed", "login_success", "audit.Record"}},
+		{"refreshHandler", refreshHandler, []string{"token_refresh", "audit.Record"}},
+		{"apiKeyHandler", apiKeyHandler, []string{"api_key_create", "api_key_revoke", "api_key_rotate", "audit.Record"}},
+	} {
+		for _, required := range source.want {
+			if !strings.Contains(source.text, required) {
+				t.Errorf("%s must expose auth audit fragment %q", source.name, required)
+			}
+		}
+	}
+	for _, required := range []string{"CREATE TABLE IF NOT EXISTS audit_events", "actor_id", "resource_type", "resource_rid", "diff_json"} {
+		if !strings.Contains(migration20, required) {
+			t.Errorf("audit_events migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"audit_data_access", "action = 'data.access'"} {
+		if !strings.Contains(migration61, required) {
+			t.Errorf("data-access audit migration must contain %q", required)
+		}
+	}
+	for _, required := range []string{"chain_seq", "prev_hash", "entry_hash", "idx_audit_events_chain_seq"} {
+		if !strings.Contains(migration62, required) {
+			t.Errorf("audit hash-chain migration must contain %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"adminAuditTests", adminAuditTests, []string{"TestUS493_AuditEndpoint_FilterByResourceRid_CamelCase", "resourceRid"}},
+		{"auditedRepositoryTests", auditedRepositoryTests, []string{"TestOMSAuditTrail", "NewAuditedRepository"}},
+		{"dataAccessTests", dataAccessTests, []string{"NewDataAccessAuditor", "oss.DataAccessAction"}},
+		{"authAuditTests", authAuditTests, []string{"TestAuthAuditTrail_LoginFailed", "TestAuthAuditTrail_TokenRefresh", "TestAuthAuditTrail_APIKeyCreate"}},
+		{"chainTests", chainTests, []string{"TestVerifyChain_HappyPath", "VerifyChain", "ComputeRootHash"}},
+		{"rootVerifyTests", rootVerifyTests, []string{"TestVerifyRootFile_HappyPath", "VerifyRootFile", "ParseRootFile"}},
+		{"verifyCommandTests", verifyCommandTests, []string{"TestRun_RequiresDSN", "-dsn is required"}},
+	} {
+		for _, required := range source.want {
+			if !strings.Contains(source.text, required) {
+				t.Errorf("%s must cover live audit/governance fragment %q", source.name, required)
+			}
+		}
+	}
+}
+
 func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
 	root := repoRoot(t)
 	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))

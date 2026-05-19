@@ -1,103 +1,74 @@
 # Ralph Progress Log
-Started: Tue May 19 18:41:46 CST 2026
-Branch: ralph/self-iteration-20260519-184146
-State reset: Tue May 19 18:44:46 CST 2026
+Started: Tue May 19 19:24:39 CST 2026
+Reset: Tue May 19 19:27:34 CST 2026
+Branch: ralph/self-iteration-20260519-192439
 
-Archived previous state:
-- scripts/ralph/archive/self-iteration-20260519-184446/prd.json
-- scripts/ralph/archive/self-iteration-20260519-184446/progress.txt
+## Codebase Patterns
+- Status-doc drift stories should pin both sides of the contract: forbidden stale wording in `docs/PRD-Weave-OSv2-深度复刻-V2.md` plus required live code fragments from route registration, backend implementation files, and regression tests.
 
-Kickoff evidence:
-- Branch verified: ralph/self-iteration-20260519-184146.
-- Previous PRD branchName was ralph/self-iteration-20260519-175415 and all stories had `passes: true`, so a new PRD was required.
-- No PR CI auto-fix context was present in the current progress file.
-- GitHub CI: main CI run 26091603985 completed success for f3d8f70; Codespaces prebuild 26091603375 was in progress.
-- Known fresh-CI risk check passed: go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1.
-- Known US-453 streamless response check passed: npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx.
-- Dogfood DOG-002 through DOG-005 are already represented by current BDD tests and implementation, so this PRD did not repeat them.
+## Kickoff Inspection
+- Archived stale branch PRD/progress from ralph/self-iteration-20260519-184146 to scripts/ralph/archive/self-iteration-20260519-192734/.
+- No `PR CI auto-fix context` was present in the active progress file.
+- GitHub main health: latest CI run 26093754173 completed success on commit 3d51032; Codespaces prebuild 26093753526 was still in progress.
+- Known local risk checks:
+  - `go test ./cmd/server -run 'TestBDD_CIEmbedPackageSurvivesFreshCheckoutWithoutGeneratedWebDist|TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` => passed.
+  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` => passed, 1 file / 8 tests.
+- New PRD created for three narrow OSv2 status-document contract drift stories. SELF-456 is first because the status document still says TimeSeries has no bucket aggregation/downsample path while live code has transform/downsample/CAGG/VM/Vertex coverage.
+---
 
-Current stories:
-- SELF-453 Correct realtime subscription status documentation: passes.
-- SELF-454 Correct CLI capability status documentation: passes.
-- SELF-455 Correct MCP status matrix stub claims: passes.
-
-Codebase Patterns:
-- OSv2 operator docs with live protocol claims can be guarded from scripts/ci BDD tests that read docs and reject stale stub language while requiring the implemented contract fragments.
-- US-444 full-stack probes should only use test.skip for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
-- VTX-099 full-stack probes should only skip when the shared backend health check is down. With a reachable backend, missing System Graph records, empty graph payloads, and failed render surfaces should be assertions guarded by a source-level contract test.
-- US-444 helper and README guidance is source-contracted too: docs may describe skipWhenBackendDown as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
-- Phase 6 upper-layer probes should remain skip-free and should assert concrete OSv2 response shape before using seeded fixtures: objectTypes, actionTypes, interfaceTypes, metadata linkTypes, and loadObjectsOrInterfaces page payloads should fail loudly on missing arrays or missing totalCount instead of falling through shallow route reachability.
-- Phase 7 upper-layer probes should remain skip-free and should assert concrete seeded identity, policy, audit, actionTypes, and realtime subscription behavior; optional empty audit checks or missing data array checks let reachable service regressions look like passing probes.
-- ObjectSet composer support for a new backend variant usually needs both web/src/components/objectsets/ObjectSetBuilder.tsx controls/defaults and web/src/lib/objectSetBuilder.ts node validation/round-trip updates.
-- ObjectSet composer filter operators must align with pkg/oss/where/converter.go; UI-only pseudo-operators should either be normalized to backend wire format or rejected before Execute.
-- Run Web TypeScript checks from web/ with npx tsc --noEmit or npm --prefix web run build; npm --prefix web exec tsc -- --noEmit does not pass the flag correctly in this environment.
-- Browser structured filters should emit canonical WhereClause wire values directly; do not depend on backend tolerance for old UI-only shapes such as containsAnyTerm.value arrays.
-- Capped history/list endpoints should fetch limit + 1 and return an explicit partial-response marker; otherwise upper-layer Time Travel and audit UIs silently present a bounded window as complete history.
-- Time Travel history rows already carry rollback audit fields through the web API type; upper-layer controls should surface those fields anywhere a historical checkpoint can be selected or shown as active.
-- Download helpers should parse Content-Disposition as parameters, not with a single filename regex; extended filename* values need decode-and-validate semantics before falling back to regular filenames or deterministic defaults.
-- Browser export uses web/src/lib/exportObjects.ts to page through listObjects/searchObjects at EXPORT_PAGE_SIZE=200 with a client hard cap of 100000 rows.
-- ExportButton catches exportObjects errors and surfaces them through its role=alert banner.
-- Browser API calls use request(), which injects active branch and Time Travel asOf query params for ontology-scoped paths.
-
-## Tue May 19 18:48:23 CST 2026 - SELF-453
-- What was implemented:
-  - Added a `scripts/ci` BDD docs-contract test that rejects stale realtime subscription absence claims in `docs/PRD-Weave-OSv2-深度复刻-V2.md`.
-  - Updated the OSv2 status document so realtime subscription rows and gap notes describe the live SSE ObjectSet subscribe endpoint, WebSocket subscription endpoint, funnel broadcast hub, replay behavior, per-user connection guard, Browser realtime mode, and ObjectSet Live page.
-- TDD red:
-  - `go test ./scripts/ci -run TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces -count=1` failed before the doc update because the status doc still said no client subscription endpoint, no WebSocket/SSE endpoint, no subscribe UI, and no exposed broadcast path.
-- Verification:
-  - `go test ./scripts/ci -run TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces -count=1` passed.
-  - `go test ./pkg/oss ./pkg/funnel ./pkg/subscriptions ./cmd/server -run 'Test.*Subscribe|Test.*Subscription|Test.*Broadcast|TestUS006|Test.*WebSocket' -count=1` passed.
-  - `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 20 tests.
-  - `git diff --check` passed.
+## Tue May 19 19:31:00 CST 2026 - SELF-456
+- Implemented a BDD status-doc contract for TimeSeries coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it reflects live transform/downsample/CAGG/VM/Vertex paths instead of claiming bucket aggregation/downsample is absent.
+- RED evidence: `go test ./scripts/ci -run TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends -count=1` failed because the status doc still contained stale `无时间分桶 / 聚合查询` and `无 downsample` claims and lacked live route/backend fragments.
+- GREEN evidence:
+  - `go test ./scripts/ci -run TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends -count=1` => passed.
+  - `go test ./pkg/timeseries ./pkg/oss -run 'Test.*TimeSeries|Test.*Downsample|Test.*CAGG|Test.*VertexTimeSeries' -count=1` => passed for both packages.
+  - `git diff --check` => passed.
+  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
 - Files changed:
-  - docs/PRD-Weave-OSv2-深度复刻-V2.md
-  - scripts/ci/ci_workflow_bdd_test.go
-  - scripts/ralph/prd.json
-  - scripts/ralph/progress.txt
-- Learnings for future iterations:
-  - Realtime status docs should name both shipped client subscription surfaces: SSE `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` and WebSocket `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`.
-  - The SSE client path is anchored by `web/src/hooks/useObjectSetSubscription.ts`; Browser realtime mode and ObjectSet Live are separate UI surfaces that should be documented together.
-- Result: SELF-453 marked `passes: true`; SELF-454 and SELF-455 remain open for later Ralph iterations.
+  - `scripts/ci/ci_workflow_bdd_test.go`
+  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - TimeSeries now has more than the original first/last/stream surface: `pkg/oss/handlers.go` wires object-level TimeSeries routes plus `/timeseries/transform`; `pkg/oss/handlers_timeseries_transform.go` pushes single-step `resample` into `DownsamplePoints`.
+  - `pkg/timeseries/pg_store.go` uses `timeseries_cagg_5min` plus `RunCAGGRefreshLoop`; `pkg/timeseries/vm_store.go` pushes large numeric series down to VictoriaMetrics `/api/v1/query_range`.
+  - Remaining TimeSeries work is no longer basic downsample availability; it is production semantics like calendar-aware buckets, retention policy, multi-resolution materialization, and operational tuning.
+---
 
-## Tue May 19 18:52:55 CST 2026 - SELF-454
-- What was implemented:
-  - Added a `scripts/ci` BDD docs-contract test that rejects stale CLI absence claims in `docs/PRD-Weave-OSv2-深度复刻-V2.md`.
-  - Updated the OSv2 status document so action, aggregate, and ObjectSet CLI rows describe the shipped `weave action apply`, `weave aggregate`, `weave objectset load`, and `weave objectset create-temporary` surfaces.
-  - Reframed Gap-D3 and US-079 as remaining depth gaps for docs, body templates, aliases, and output polish rather than missing command entry points.
-- TDD red:
-  - `go test ./scripts/ci -run TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands -count=1` failed before the doc update because the status doc still said action/aggregate/objectset CLI was not exposed and still referenced `weave objectset run`.
-- Verification:
-  - `go test ./scripts/ci -run TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands -count=1` passed.
-  - `go test ./cmd/weave-cli -count=1` passed.
-  - `git diff --check` passed.
+## Tue May 19 19:38:42 CST 2026 - SELF-457
+- Implemented a BDD status-doc contract for upper-layer OSv2 experience coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it no longer excludes Quiver/Vertex/application layers as non-goals while live code ships those MVP surfaces.
+- RED evidence: `go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1` failed because the status doc still said Workshop/Slate/Quiver/Vertex application layers were excluded and lacked live Vertex, Quiver, dashboard, notification, reaction, and permission-request fragments.
+- GREEN evidence:
+  - `go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1` => passed.
+  - `npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx src/components/quiver` => passed, 5 files / 56 tests.
+  - `git diff --check` => passed.
+  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
 - Files changed:
-  - docs/PRD-Weave-OSv2-深度复刻-V2.md
-  - scripts/ci/ci_workflow_bdd_test.go
-  - scripts/ralph/prd.json
-  - scripts/ralph/progress.txt
-- Learnings for future iterations:
-  - CLI status docs should treat `cmd/weave-cli/cli_us304_test.go` as the command-contract anchor for action/aggregate/objectset coverage.
-  - The shipped ObjectSet CLI commands are `load` and `create-temporary`; `objectset run` is at most a future convenience alias, not the current contract.
-- Result: SELF-454 marked `passes: true`; SELF-455 remains open for later Ralph iterations.
+  - `scripts/ci/ci_workflow_bdd_test.go`
+  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Vertex upper-layer coverage spans `web/src/vertex`, `pkg/vertex/graphsvc`, `/api/vertex/v1/graphs`, `/vertex/:rid`, and scenario persistence/execution structures in `migrations/000105_vertex_scenarios.up.sql`, `migrations/000109_vertex_scenario_runs.up.sql`, and `pkg/vertex/scenarioruns`.
+  - Quiver is no longer just a planned visualization: `web/src/components/quiver`, `pkg/quiver`, `/api/v2/quiver/dashboards/{rid}/data`, `/sparklines`, and `cmd/server/quiver_timeseries_adapter.go` connect saved workbenches to TimeSeries.
+  - Collaboration/governance UX surfaces include `/api/v2/dashboards`, `/api/v2/notifications`, `/api/v2/reactions`, and `/api/v2/permission-requests`; remaining gaps are depth, production hardening, and governance wiring, not absence.
+---
 
-## Tue May 19 18:57:26 CST 2026 - SELF-455
-- What was implemented:
-  - Added a `scripts/ci` BDD docs-contract test that rejects stale MCP stub claims in `docs/PRD-Weave-OSv2-深度复刻-V2.md`.
-  - Updated the OSv2 status document so MCP rows and gap notes describe live `prompts/list`, `prompts/get`, `resources/list`, `resources/read`, and the `weave-mcp` stdio HTTP bridge.
-  - Reframed Gap-D4/D5 and US-080 around remaining sampling/resource-subscribe, production auth/deploy polish, and local-standalone bootstrapping gaps instead of missing prompts/resources/stdio bridge entry points.
-- TDD red:
-  - `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` failed before the doc update because the status doc still said `prompts/resources` were stubs, called `weave-mcp` a stub, and lacked the live MCP contract fragments from `docs/mcp.md`, `pkg/mcp/prompts.go`, `pkg/mcp/resources.go`, and `cmd/weave-mcp/http_bridge.go`.
-- Verification:
-  - `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` passed.
-  - `go test ./pkg/mcp ./cmd/weave-mcp -count=1` passed.
-  - `git diff --check` passed.
+## Tue May 19 19:47:38 CST 2026 - SELF-458
+- Implemented a BDD status-doc contract for audit/governance coverage and corrected `docs/PRD-Weave-OSv2-深度复刻-V2.md` so it reflects the live `audit_events` store, admin audit endpoints, hash-chain verifier, OMS metadata audit wrapper, data-access audit hooks, and auth audit events instead of saying audit is limited to action logs.
+- RED evidence: `go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1` failed because the status doc still contained stale `action_logs`-only, metadata/permission/auth-missing, Gap-S4, and US-063 future-work claims and lacked live audit/governance fragments.
+- GREEN evidence:
+  - `go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1` => passed.
+  - `go test ./pkg/audit ./pkg/oms ./pkg/oss ./cmd/server ./cmd/weave-audit-verify -run 'Test.*Audit|Test.*audit' -count=1` => passed for all listed packages.
+  - `git diff --check` => passed.
+  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
 - Files changed:
-  - docs/PRD-Weave-OSv2-深度复刻-V2.md
-  - scripts/ci/ci_workflow_bdd_test.go
-  - scripts/ralph/prd.json
-  - scripts/ralph/progress.txt
-- Learnings for future iterations:
-  - MCP status docs should point to `docs/mcp.md` as the external contract and to `pkg/mcp/prompts.go` / `pkg/mcp/resources.go` for the live prompts/resources implementation.
-  - `cmd/weave-mcp` should be described as a `WEAVE_MCP_URL` stdio HTTP bridge today; the remaining gap is local standalone dependency bootstrapping, not stdio usability.
-- Result: SELF-455 marked `passes: true`; all stories in the current PRD are now passing.
+  - `scripts/ci/ci_workflow_bdd_test.go`
+  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Audit status should treat `pkg/audit`, `migrations/000020_audit_events.up.sql`, `migrations/000062_audit_hash_chain.up.sql`, `cmd/server/admin_audit.go`, and `cmd/weave-audit-verify` as the core audit contract, not `action_logs`.
+  - OMS metadata audit is already wired through `oms.NewAuditedRepository`; auth audit covers `login_failed`, `token_refresh`, and API key events; OSS read audit uses `AuditDataAccess` plus `data.access`.
+  - Remaining audit work is breadth and operations hardening: policy-change taxonomy, SIEM/retention evidence, root-hash runbooks, and aggregate UX.
+---
