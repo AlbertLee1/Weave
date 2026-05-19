@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import ciWorkflowSource from '../../../../.github/workflows/ci.yml?raw';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
+import phase6AggregationSpecSource from '../../../e2e/phase6/aggregation-multi-groupby.spec.ts?raw';
+import phase6InterfacePagingSpecSource from '../../../e2e/phase6/interface-multitype-paging.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
+import phase6WithPropertiesSpecSource from '../../../e2e/phase6/withproperties-derived.spec.ts?raw';
 import us444BrowseSpecSource from '../../../e2e/us444/02-browse.spec.ts?raw';
 import us444AggregateSpecSource from '../../../e2e/us444/03-aggregate.spec.ts?raw';
 import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
@@ -58,6 +61,58 @@ describe('Playwright spec contracts', () => {
     expect(source).toContain(`/api/v2/ontologies/\${ONTOLOGY}/objects/\${OBJECT_TYPE}/search`);
     expect(source).toContain("getByTestId('live-status')");
     expect(source).not.toContain("getByTestId('realtime-indicator')");
+  });
+
+  it('keeps all Phase 6 probes active against reachable service failures', () => {
+    const phase6Sources = [
+      phase6AggregationSpecSource,
+      phase6InterfacePagingSpecSource,
+      optimisticConcurrencySpecSource,
+      phase6WithPropertiesSpecSource,
+    ];
+
+    for (const source of phase6Sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).not.toMatch(/not yet wired|unavailable/i);
+      expect(source).not.toContain('res.ok() ||');
+      expect(source).not.toMatch(/status\(\)\s*===\s*(404|503)/);
+      expect(source).not.toContain('toContain(res.status())');
+    }
+  });
+
+  it('keeps Phase 6 probes asserting concrete OSv2 service response shape and rendered data', () => {
+    expect(phase6WithPropertiesSpecSource).toContain('Array.isArray(otBody.data)');
+    expect(phase6WithPropertiesSpecSource).toContain('Array.isArray(ltBody.linkTypes)');
+    expect(phase6WithPropertiesSpecSource).toContain("getByTestId('derived-property-row')");
+    expect(phase6WithPropertiesSpecSource).toContain('data-derived-column="${DERIVED_NAME}"');
+    expect(phase6WithPropertiesSpecSource).toContain('Number.isFinite(n)');
+
+    expect(phase6AggregationSpecSource).toContain('Array.isArray(body.data)');
+    expect(phase6AggregationSpecSource).toContain("getByTestId('aggregation-bucket-tree')");
+    expect(phase6AggregationSpecSource).toContain(
+      "toHaveAttribute('data-groupby-depth', '3')",
+    );
+    expect(phase6AggregationSpecSource).toContain("getByTestId('aggregation-accuracy-badge')");
+    expect(phase6AggregationSpecSource).toContain('bodyRows.count()');
+
+    expect(optimisticConcurrencySpecSource).toContain('Array.isArray(body.data)');
+    expect(optimisticConcurrencySpecSource).toContain(
+      "const ACTION_API_NAME = 'updateCustomerContact'",
+    );
+    expect(optimisticConcurrencySpecSource).toContain("getByTestId('object-version')");
+    expect(optimisticConcurrencySpecSource).toContain('toBe(startingVersionB)');
+    expect(optimisticConcurrencySpecSource).toContain('This object was updated elsewhere');
+
+    expect(phase6InterfacePagingSpecSource).toContain('Array.isArray(body.data)');
+    expect(phase6InterfacePagingSpecSource).toContain('Array.isArray(page.data)');
+    expect(phase6InterfacePagingSpecSource).toContain(
+      'loadObjectsOrInterfaces must return data rows',
+    );
+    expect(phase6InterfacePagingSpecSource).toContain(
+      'server must report totalCount on every page',
+    );
+    expect(phase6InterfacePagingSpecSource).toContain('duplicate row ${compositeKey}');
   });
 
   it('keeps the Phase 6 optimistic-concurrency scenario active', () => {

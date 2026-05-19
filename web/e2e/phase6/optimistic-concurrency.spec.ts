@@ -72,6 +72,10 @@ test.describe('Phase 6 gate — optimistic concurrency (US-038)', () => {
     );
     expect(res.ok(), 'northwind ontology must be seeded (run scripts/e2e-setup.sh)').toBe(true);
     const body = (await res.json()) as { data?: Array<{ apiName: string }> };
+    expect(
+      Array.isArray(body.data),
+      'actionTypes response must include a data array',
+    ).toBe(true);
     const hasAction = (body.data ?? []).some((a) => a.apiName === ACTION_API_NAME);
     expect(
       hasAction,

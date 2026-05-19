@@ -39,6 +39,10 @@ test.describe('Phase 6 gate — withProperties derived column (US-040)', () => {
     const otBody = (await otRes.json()) as {
       data?: Array<{ apiName: string }>;
     };
+    expect(
+      Array.isArray(otBody.data),
+      'objectTypes response must include a data array',
+    ).toBe(true);
     const hasCustomer = (otBody.data ?? []).some(
       (ot) => ot.apiName === BASE_OBJECT_TYPE,
     );
@@ -55,6 +59,10 @@ test.describe('Phase 6 gate — withProperties derived column (US-040)', () => {
     const ltBody = (await ltRes.json()) as {
       linkTypes?: Array<{ apiName: string; foreignKeyConfig?: unknown }>;
     };
+    expect(
+      Array.isArray(ltBody.linkTypes),
+      'metadata response must include a linkTypes array',
+    ).toBe(true);
     const link = (ltBody.linkTypes ?? []).find(
       (lt) => lt.apiName === LINK_API_NAME,
     );

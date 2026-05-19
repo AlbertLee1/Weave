@@ -47,6 +47,10 @@ test.describe('Phase 6 gate — aggregation multi-groupBy (US-039)', () => {
     );
     expect(res.ok(), 'northwind ontology must be seeded (run scripts/e2e-setup.sh)').toBe(true);
     const body = (await res.json()) as { data?: Array<{ apiName: string }> };
+    expect(
+      Array.isArray(body.data),
+      'objectTypes response must include a data array',
+    ).toBe(true);
     const hasOrder = (body.data ?? []).some((ot) => ot.apiName === OBJECT_TYPE);
     expect(
       hasOrder,

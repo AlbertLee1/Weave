@@ -80,7 +80,16 @@ async function fetchPage(
     res.ok(),
     `loadObjectsOrInterfaces must succeed (status ${res.status()}: ${await res.text()})`,
   ).toBe(true);
-  return (await res.json()) as InterfacePageResponse;
+  const page = (await res.json()) as InterfacePageResponse;
+  expect(
+    Array.isArray(page.data),
+    'loadObjectsOrInterfaces must return data rows',
+  ).toBe(true);
+  expect(
+    typeof page.totalCount === 'string',
+    'loadObjectsOrInterfaces must return totalCount as a string',
+  ).toBe(true);
+  return page;
 }
 
 test.describe('Phase 6 gate — interface multi-type paging (US-041)', () => {
@@ -96,6 +105,10 @@ test.describe('Phase 6 gate — interface multi-type paging (US-041)', () => {
     const body = (await res.json()) as {
       data?: Array<{ apiName: string }>;
     };
+    expect(
+      Array.isArray(body.data),
+      'interfaceTypes response must include a data array',
+    ).toBe(true);
     const hasInterface = (body.data ?? []).some(
       (iface) => iface.apiName === INTERFACE_API_NAME,
     );

@@ -7,6 +7,7 @@ Branch: ralph/self-iteration-20260519-090653
 - US-444 full-stack probes should only use `test.skip` for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
 - VTX-099 full-stack probes should only skip when the shared backend health check is down. With a reachable backend, missing System Graph records, empty graph payloads, and failed render surfaces should be assertions guarded by a source-level contract test.
 - US-444 helper and README guidance is now source-contracted too: docs may describe `skipWhenBackendDown` as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
+- Phase 6 upper-layer probes should remain skip-free and should assert concrete OSv2 response shape before using seeded fixtures: `objectTypes`, `actionTypes`, `interfaceTypes`, metadata `linkTypes`, and `loadObjectsOrInterfaces` page payloads should fail loudly on missing arrays or missing `totalCount` instead of falling through shallow route reachability.
 
 ## Kickoff
 - Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-090653`.
@@ -48,3 +49,34 @@ Branch: ralph/self-iteration-20260519-090653
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Result: SELF-434 marked `passes: true`; SELF-435 and SELF-436 remain open for later Ralph iterations.
+
+## Selected Story - SELF-435
+- Selected SELF-435 because SELF-434 was already committed and passing, and SELF-435 was the highest-priority remaining story with `passes != true`.
+
+## SELF-435 - Source-contract Phase 6 E2E gates against degraded skips
+- TDD red:
+  - Added raw imports for all four Phase 6 Playwright probes to `web/src/lib/__tests__/playwrightSpecContracts.test.ts`.
+  - Added a Phase 6 source contract requiring each probe to stay free of `test.skip`, `test.fixme`, optional 404/503/service-unavailable allowances, and degraded-service wording.
+  - Added a Phase 6 source contract requiring concrete response-shape and rendered-data assertions for withProperties, multi-groupBy aggregation, optimistic concurrency, and interface paging.
+  - Ran `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`.
+  - Expected failure observed: the new contract rejected missing `Array.isArray(otBody.data)` in `web/e2e/phase6/withproperties-derived.spec.ts`.
+- Implementation:
+  - Added explicit objectTypes `data` array assertions to the Phase 6 withProperties and aggregation preflights.
+  - Added explicit actionTypes `data` array assertion to the optimistic-concurrency preflight.
+  - Added explicit interfaceTypes `data` array assertion to the interface-paging preflight.
+  - Added explicit `loadObjectsOrInterfaces` page payload assertions for `data` array and string `totalCount` before cursor validation.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 20 tests.
+  - `npm --prefix web exec playwright test -- --list phase6/` passed and listed 4 tests in 4 files.
+  - `rg -n "test\\.skip|test\\.fixme|not yet wired|unavailable" web/e2e/phase6` returned no matches (exit 1 from `rg` because the forbidden patterns were absent).
+  - `git diff --check` passed.
+  - `npm --prefix web run build` passed, including `tsc -b`, Vite build, and bundle budget check.
+- Files changed:
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `web/e2e/phase6/withproperties-derived.spec.ts`
+  - `web/e2e/phase6/aggregation-multi-groupby.spec.ts`
+  - `web/e2e/phase6/optimistic-concurrency.spec.ts`
+  - `web/e2e/phase6/interface-multitype-paging.spec.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Result: SELF-435 marked `passes: true`; SELF-436 remains open for a later Ralph iteration.
