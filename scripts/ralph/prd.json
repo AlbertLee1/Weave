@@ -53,7 +53,7 @@
       "phase": "OSv2 Vertex Scenario Execution API",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Audit the Vertex scenario debug drawer's `/api/vertex/v1/scenario-runs/{rid}/debug` fetch path against mounted server routes and either wire/document the route or replace it with the public scenario-run record endpoint.",
       "bdd_acceptance": [

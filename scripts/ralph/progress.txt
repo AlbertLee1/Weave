@@ -97,3 +97,29 @@ Branch: ralph/self-iteration-20260520-002052
 - Vertex time-series extended-label property names are currently encoded in `ExtendedLabel.key` as `timeSeries:<property>:<index>`; both sidebar and overlay can resolve stream-point requests from that key until the label type grows an explicit property field.
 - Vertex scenario-run server contracts should assert both sides of reachability: chi route registration in `NewFullRouter` and matching OpenAPI operations/schemas. Degraded route mounting can use dependency-unavailable implementations when the contract must remain discoverable before durable production execution is wired.
 - Vertex scenario-run client paths should be checked against `pkg/vertex/scenarioruns/handler.go` and the OpenAPI copies before updating SDKs or docs; as of this branch the canonical route family is plural `/runs`.
+
+## Selected Story
+- `SELF-470` — Gate stale Vertex scenario-run debug route.
+
+## SELF-470 Evidence
+- Root cause: `web/src/vertex/ScenarioDebugDrawer.tsx` still used an unmounted private `/api/vertex/v1/scenario-runs/{rid}/debug` default fetch path. The mounted and documented server route is `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`.
+- RED:
+  - `npm --prefix web test -- --run src/vertex/ScenarioDebugDrawer.test.tsx src/vertex/vertexI18n.test.tsx` failed as expected: the new BDD assertion observed `/api/vertex/v1/scenario-runs/ri.vertex.main.scenario-run.abc/debug` instead of `/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.abc`, and 404s rendered `Error: debug fetch failed: 404` instead of a typed not-found state.
+- GREEN:
+  - Added `scenarioRid` to the drawer's default fetch contract and moved the default fetcher to the documented run-record endpoint.
+  - Adapted the public `VertexScenarioRun` record into the existing drawer sections by showing the run record as the input snapshot, checkpoint attempts/error details as log lines, and an explicit empty partial-edit row when the public record has no partial edits.
+  - Converted 404s into a typed `ScenarioRunDebugNotFoundError` so the drawer renders `Scenario run not found` without an unhandled promise rejection.
+- Verification:
+  - `npm --prefix web test -- --run src/vertex/ScenarioDebugDrawer.test.tsx src/vertex/vertexI18n.test.tsx` passed with 2 test files and 25 tests.
+  - `go test ./cmd/server -run 'TestContract_|TestBDD_VertexScenarioRun' -count=1` passed.
+  - `npm --prefix web run typecheck` passed.
+  - `git diff --check` passed.
+  - `rg -n "scenario-runs/.*/debug|scenario-runs/\\$\\{|/api/vertex/v1/scenario-runs" web/src api cmd pkg docs sdk -g '!web/src/**/*.map'` returned no matches.
+- Files changed:
+  - `web/src/vertex/ScenarioDebugDrawer.tsx`
+  - `web/src/vertex/ScenarioDebugDrawer.test.tsx`
+  - `web/src/i18n/resources/en.ts`
+  - `web/src/i18n/resources/zh-CN.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning: debug surfaces should prefer the same mounted public run-record contract as SDK polling helpers; if a richer debug payload is needed later, it should be mounted and documented before any client path points at it.

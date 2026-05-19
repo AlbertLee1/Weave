@@ -201,6 +201,7 @@ const en = {
       inputSnapshot: 'Input snapshot',
       functionLogs: 'Function logs ({{count}})',
       partialEdits: 'Partial edits ({{count}})',
+      noPartialEdits: 'No partial edits in run record',
     },
     scenarioPane: {
       run: 'Run',
