@@ -281,6 +281,83 @@ func TestBDD_GeoTemporalDocsReflectPGStoreDefault(t *testing.T) {
 	}
 }
 
+func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	sseHandler := readFile(t, filepath.Join(root, "pkg", "oss", "subscribe_sse.go"))
+	broadcastHub := readFile(t, filepath.Join(root, "pkg", "funnel", "broadcast.go"))
+	browserPage := readFile(t, filepath.Join(root, "web", "src", "components", "browser", "BrowserPage.tsx"))
+	objectSetLivePage := readFile(t, filepath.Join(root, "web", "src", "components", "objectsets", "ObjectSetLivePage.tsx"))
+	subscriptionHook := readFile(t, filepath.Join(root, "web", "src", "hooks", "useObjectSetSubscription.ts"))
+
+	for _, claim := range []string{
+		"**无客户端订阅端点**",
+		"**无 /stream / WebSocket / SSE 端点**",
+		"无 subscribe UI；依赖后端 subscribe 端点缺失",
+		"**广播不暴露给客户端**",
+		"Funnel 内部有 broadcaster，没有 HTTP 暴露",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale realtime subscription claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`",
+		"`/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`",
+		"`pkg/funnel/broadcast.go`",
+		"`pkg/oss/subscribe_sse.go`",
+		"`pkg/subscriptions`",
+		"`web/src/hooks/useObjectSetSubscription.ts`",
+		"`web/src/components/browser/BrowserPage.tsx`",
+		"`web/src/components/objectsets/ObjectSetLivePage.tsx`",
+		"`Last-Event-ID`",
+		"`since` query parameter",
+		"per-user connection guard",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live realtime subscription contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`,
+		`/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`,
+		"subscriptions.NewHandler",
+		"oss.NewSubscribeSSEHandler",
+	} {
+		if !strings.Contains(serverMain, required) {
+			t.Errorf("cmd/server must wire live subscription fragment %q", required)
+		}
+	}
+	for _, required := range []string{"Last-Event-ID", "since", "maxPerUser"} {
+		if !strings.Contains(sseHandler, required) {
+			t.Errorf("SSE subscribe handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"SubscribeWithReplay", "Publish"} {
+		if !strings.Contains(broadcastHub, required) {
+			t.Errorf("funnel broadcast hub must expose %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+	}{
+		{"BrowserPage", browserPage},
+		{"ObjectSetLivePage", objectSetLivePage},
+		{"useObjectSetSubscription", subscriptionHook},
+	} {
+		if !strings.Contains(source.text, "useObjectSetSubscription") && source.name != "useObjectSetSubscription" {
+			t.Errorf("%s must use the ObjectSet subscription hook", source.name)
+		}
+	}
+	if !strings.Contains(subscriptionHook, "EventSource") {
+		t.Error("useObjectSetSubscription must use EventSource for the SSE client path")
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

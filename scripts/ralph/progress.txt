@@ -1,24 +1,25 @@
 # Ralph Progress Log
-Started: Tue May 19 17:54:15 CST 2026
-Branch: ralph/self-iteration-20260519-175415
-State reset: Tue May 19 17:58:17 CST 2026
+Started: Tue May 19 18:41:46 CST 2026
+Branch: ralph/self-iteration-20260519-184146
+State reset: Tue May 19 18:44:46 CST 2026
 
 Archived previous state:
-- scripts/ralph/archive/self-iteration-20260519-175817/prd.json
-- scripts/ralph/archive/self-iteration-20260519-175817/progress.txt
+- scripts/ralph/archive/self-iteration-20260519-184446/prd.json
+- scripts/ralph/archive/self-iteration-20260519-184446/progress.txt
 
 Kickoff evidence:
-- Branch verified: ralph/self-iteration-20260519-175415.
-- Previous PRD branchName was ralph/self-iteration-20260519-170927, so a new PRD was required.
+- Branch verified: ralph/self-iteration-20260519-184146.
+- Previous PRD branchName was ralph/self-iteration-20260519-175415 and all stories had `passes: true`, so a new PRD was required.
 - No PR CI auto-fix context was present in the current progress file.
-- GitHub CI: main CI run 26089447836 completed success for f637cd4; Codespaces prebuild 26089447094 was in progress.
+- GitHub CI: main CI run 26091603985 completed success for f3d8f70; Codespaces prebuild 26091603375 was in progress.
 - Known fresh-CI risk check passed: go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1.
 - Known US-453 streamless response check passed: npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx.
-- Dogfood DOG-001 through DOG-005 are already represented by current BDD tests and implementation, so this PRD did not repeat them.
+- Dogfood DOG-002 through DOG-005 are already represented by current BDD tests and implementation, so this PRD did not repeat them.
 
 Current stories:
-- SELF-451 Align MCP operator docs with live bridge contract: passes.
-- SELF-452 Correct GeoTemporal PG-store documentation drift: passes.
+- SELF-453 Correct realtime subscription status documentation: passes.
+- SELF-454 Correct CLI capability status documentation: pending.
+- SELF-455 Correct MCP status matrix stub claims: pending.
 
 Codebase Patterns:
 - OSv2 operator docs with live protocol claims can be guarded from scripts/ci BDD tests that read docs and reject stale stub language while requiring the implemented contract fragments.
@@ -38,48 +39,23 @@ Codebase Patterns:
 - ExportButton catches exportObjects errors and surfaces them through its role=alert banner.
 - Browser API calls use request(), which injects active branch and Time Travel asOf query params for ontology-scoped paths.
 
-## Tue May 19 18:01:11 CST 2026 - SELF-451
+## Tue May 19 18:48:23 CST 2026 - SELF-453
 - What was implemented:
-  - Added a scripts/ci BDD docs-contract test that rejects stale MCP stub claims and requires the live prompts/resources/stdio bridge fragments in docs/mcp.md.
-  - Updated docs/mcp.md to describe cmd/weave-mcp as a stdio HTTP bridge when WEAVE_MCP_URL is set, including WEAVE_MCP_TOKEN, WEAVE_MCP_BEARER, and WEAVE_MCP_API_KEY forwarding.
-  - Updated the MCP methods/resources docs for prompts/list, prompts/get, ontology resources, objecttype resources, and temporary ObjectSet resources.
+  - Added a `scripts/ci` BDD docs-contract test that rejects stale realtime subscription absence claims in `docs/PRD-Weave-OSv2-深度复刻-V2.md`.
+  - Updated the OSv2 status document so realtime subscription rows and gap notes describe the live SSE ObjectSet subscribe endpoint, WebSocket subscription endpoint, funnel broadcast hub, replay behavior, per-user connection guard, Browser realtime mode, and ObjectSet Live page.
 - TDD red:
-  - `go test ./scripts/ci -run TestBDD_MCPDocsReflectLivePromptsResourcesBridge -count=1` failed as expected before doc updates because docs/mcp.md still described weave-mcp and prompts/list as stubs and omitted the live prompts/resources fragments.
+  - `go test ./scripts/ci -run TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces -count=1` failed before the doc update because the status doc still said no client subscription endpoint, no WebSocket/SSE endpoint, no subscribe UI, and no exposed broadcast path.
 - Verification:
-  - `go test ./scripts/ci -run TestBDD_MCPDocsReflectLivePromptsResourcesBridge -count=1` passed.
-  - `go test ./pkg/mcp ./cmd/weave-mcp -count=1` passed.
-  - `go test ./scripts/ci -count=1` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - docs/mcp.md
-  - scripts/ci/ci_workflow_bdd_test.go
-  - scripts/ralph/prd.json
-  - scripts/ralph/progress.txt
-- Learnings for future iterations:
-  - MCP resource kind names are lowercase in URIs; the ObjectType resource is `weave://objecttype/<ontologyApiName>/<objectTypeApiName>`.
-  - cmd/weave-mcp does not bootstrap Weave dependencies; the production local-client path is stdio framing bridged to an already running `/mcp` endpoint.
-- Result: SELF-451 marked `passes: true`; SELF-452 remains open for the next Ralph iteration.
-
-## Tue May 19 18:07:30 CST 2026 - SELF-452
-- What was implemented:
-  - Added a scripts/ci BDD docs-contract test that rejects stale GeoTemporal memory-only claims and requires the live PG-backed `PgStore`, server wiring, migrations, and spatial-temporal query capability fragments.
-  - Updated `docs/PRD-Weave-OSv2-深度复刻-V2.md` so the status matrix, gap table, US-072 notes, and component map describe `pkg/geotemporal/pg_store.go`, `geotemporal_values`, `cmd/server/main.go`, and degraded memory fallback accurately.
-  - Updated `pkg/geotemporal` package comments so `MemoryStore` is documented as degraded mode while durable server boots use `PgStore`.
-- TDD red:
-  - `go test ./scripts/ci -run TestBDD_GeoTemporalDocsReflectPGStoreDefault -count=1` failed as expected before doc/comment updates because stale memory-only claims remained and required PG-store contract fragments were missing.
-- Verification:
-  - `go test ./scripts/ci -run TestBDD_GeoTemporalDocsReflectPGStoreDefault -count=1` passed.
-  - `go test ./pkg/geotemporal ./cmd/server -run 'Test.*Geotemporal|TestHealth|TestContract' -count=1` passed.
-  - `go test ./scripts/ci -count=1` passed.
+  - `go test ./scripts/ci -run TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces -count=1` passed.
+  - `go test ./pkg/oss ./pkg/funnel ./pkg/subscriptions ./cmd/server -run 'Test.*Subscribe|Test.*Subscription|Test.*Broadcast|TestUS006|Test.*WebSocket' -count=1` passed.
+  - `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 20 tests.
   - `git diff --check` passed.
 - Files changed:
   - docs/PRD-Weave-OSv2-深度复刻-V2.md
-  - pkg/geotemporal/memory_store.go
-  - pkg/geotemporal/store.go
   - scripts/ci/ci_workflow_bdd_test.go
   - scripts/ralph/prd.json
   - scripts/ralph/progress.txt
 - Learnings for future iterations:
-  - GeoTemporal durable default is selected in `cmd/server/main.go` when `PGPool` exists; memory is a degraded-mode fallback for no-PG boots and tests.
-  - GeoTemporal docs should mention both migrations: `000205_geotemporal_values` for persistence and `000208_geotemporal_spatial_indexes` for bbox/time query support.
-- Result: SELF-452 marked `passes: true`; all current PRD stories now pass.
+  - Realtime status docs should name both shipped client subscription surfaces: SSE `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` and WebSocket `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`.
+  - The SSE client path is anchored by `web/src/hooks/useObjectSetSubscription.ts`; Browser realtime mode and ObjectSet Live are separate UI surfaces that should be documented together.
+- Result: SELF-453 marked `passes: true`; SELF-454 and SELF-455 remain open for later Ralph iterations.
