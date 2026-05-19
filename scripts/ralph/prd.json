@@ -1,71 +1,72 @@
 {
-  "project": "Weave Self-Iteration US-444 Subscription Gate Hardening",
-  "branchName": "ralph/self-iteration-20260519-082247",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-082247. The previous PRD belonged to ralph/self-iteration-20260519-073710 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-082749/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest completed PR CI run 26067989274 was green; latest completed main CI run 26066339689 was green; fresh main CI run 26068337937 was still in progress with Web job green and Go job in race/coverage tests. Local health sampled green with go test ./... and npm --prefix web test -- --run. Known fresh-CI web embed and US-453 streamless binary-response risks are already covered by committed BDD tests. Dogfood DOG-001 through DOG-005 are also covered in this checkout, so this PRD focuses on remaining upper-layer E2E probes that can still hide wired-service regressions behind skips or shallow checks.",
+  "project": "Weave Self-Iteration Upper-Layer E2E CI Signal",
+  "branchName": "ralph/self-iteration-20260519-090653",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-090653. The previous active PRD belonged to ralph/self-iteration-20260519-082247 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-091157/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest completed PR CI run 26069425768 was green; latest completed main CI run 26068337937 was green; fresh main CI run 26069761127 was still in progress with Web green and Go running race/coverage. Local health sampled green with go test ./... and npm --prefix web test -- --run. Dogfood DOG-001 through DOG-005 have committed-looking regression coverage, and known fresh-CI risks around cmd/server/embed.go and US-453 streamless binary responses are already covered. This PRD focuses on keeping upper-layer Playwright probes discoverable in CI so OSv2 service and experience regressions cannot hide behind unlisted specs.",
   "userStories": [
     {
-      "id": "SELF-431",
-      "name": "Make US-444 subscribe gate require the WebSocket subscribe handshake",
-      "phase": "Upper-Layer E2E Signal",
+      "id": "SELF-434",
+      "name": "Expand CI Playwright discovery beyond US-444",
+      "phase": "Fresh CI Signal",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Strengthen the US-444 subscribe Playwright probe so a reachable backend must emit the WebSocket welcome frame and accept an explicit object subscription instead of treating a quiet or unwired subscription surface as a skip.",
+      "description": "Strengthen the GitHub CI Web job so list-only Playwright discovery parses every checked-in upper-layer E2E probe group, not only web/e2e/us444/.",
       "bdd_acceptance": [
-        "Given the US-444 suite runs against a reachable full-stack backend, When us444/20-subscribe.spec.ts opens /api/v2/ontologies/northwind/subscriptions/ws, Then absence of the welcome frame fails the test instead of calling test.skip.",
-        "Given the welcome frame is received, When the spec sends a subscribe envelope for the seeded customer ObjectType, Then the next server frame must be a subscribed acknowledgement with a non-empty subscriptionId.",
-        "Given Playwright runs in list-only CI discovery, When the subscribe spec is parsed, Then the scenario remains discoverable and contains no skip guard for quiet or unwired subscription endpoints."
+        "Given the CI workflow is parsed by a source-level contract test, When the Web job's Playwright discovery step is inspected, Then the command includes the US-444, Phase 6, Phase 7, VTX-099, dogfood, and standalone upper-layer spec paths.",
+        "Given a future contributor adds a syntax or import regression in a non-US-444 E2E probe, When GitHub CI runs list-only Playwright discovery, Then the Web job fails before merge instead of silently ignoring the spec.",
+        "Given local Playwright list-only discovery is run over the same path set, When the command completes, Then all targeted specs remain discoverable without requiring a live backend."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list us444/20-subscribe.spec.ts`",
-        "`rg -n \"no welcome frame|endpoint unwired or quiet|test\\\\.skip\\\\(firstMessage\" web/e2e/us444/20-subscribe.spec.ts` must return no matches",
+        "`npm --prefix web exec playwright test -- --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts`",
+        "`rg -n \"Playwright spec discovery\" .github/workflows/ci.yml` shows the expanded discovery gate",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-432",
-      "name": "Make VTX-099 system graph gate reject unwired graph pages",
-      "phase": "Vertex Upper-Layer E2E Signal",
+      "id": "SELF-435",
+      "name": "Source-contract Phase 6 E2E gates against degraded skips",
+      "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 2,
       "passes": true,
       "dependencies": [
-        "SELF-431"
+        "SELF-434"
       ],
-      "description": "Strengthen the VTX-099 Playwright probe so a reachable backend must expose the system graph page and render graph content rather than skipping when the page appears unwired.",
+      "description": "Add source-level contracts for Phase 6 Playwright probes so withProperties, multi-groupBy aggregation, optimistic concurrency, and interface paging stay active and fail reachable-but-unwired OSv2 service behavior.",
       "bdd_acceptance": [
-        "Given the backend health endpoint is reachable, When vtx-099-system-graph-render.spec.ts opens the system graph page, Then a missing or empty graph page fails instead of being skipped.",
-        "Given graph data renders, When the probe inspects the page, Then it asserts a non-empty system graph signal rather than only page reachability.",
-        "Given Playwright runs in list-only CI discovery, When the VTX-099 spec is parsed, Then its scenarios remain discoverable and contain no systemGraphReachable test.skip guard."
+        "Given Phase 6 specs are parsed by the contract test, When skip or fixme guards are introduced for reachable service failures, Then the contract test fails.",
+        "Given the Phase 6 probes call OSv2 service endpoints, When their source is inspected, Then each probe asserts concrete response shape or rendered data rather than shallow route reachability.",
+        "Given Playwright list-only discovery runs for phase6/, When CI parses the specs, Then every Phase 6 scenario remains discoverable."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`npm --prefix web exec playwright test -- --list vtx-099-system-graph-render.spec.ts`",
-        "`rg -n \"systemGraphReachable|test\\\\.skip\" web/e2e/vtx-099-system-graph-render.spec.ts` should only allow the shared backend-down guard after the story is implemented",
+        "`npm --prefix web exec playwright test -- --list phase6/`",
+        "`rg -n \"test\\\\.skip|test\\\\.fixme|not yet wired|unavailable\" web/e2e/phase6` returns no degraded-service skip wording after implementation",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-433",
-      "name": "Align US-444 helper docs with mandatory wired-service gates",
+      "id": "SELF-436",
+      "name": "Source-contract Phase 7 security and realtime E2E gates",
       "phase": "Upper-Layer E2E Signal",
       "active": true,
       "priority": 3,
       "passes": true,
       "dependencies": [
-        "SELF-431"
+        "SELF-434"
       ],
-      "description": "Remove stale US-444 helper and README guidance that tells future probes to skip optional 404/503 feature endpoints, keeping only the backend-down portability guard as the accepted skip path.",
+      "description": "Add source-level contracts for Phase 7 security, audit, SSE reconnect, and Browser realtime probes so seeded identity, policy, and subscription failures remain hard assertions.",
       "bdd_acceptance": [
-        "Given a future contributor reads web/e2e/us444/helpers.ts, When they follow the helper comments, Then they see that backend-down is the portability skip and wired service failures should be assertions.",
-        "Given a future contributor reads web/e2e/us444/README.md, When they add a US-444 probe, Then the documentation directs them to fail reachable-but-unwired endpoints rather than skip 404/503 responses.",
-        "Given Playwright spec contract tests run, When the helper and README sources are inspected, Then stale optional-feature skip wording is rejected."
+        "Given Phase 7 specs are parsed by the contract test, When a reachable backend skip or optional-service status allowance is introduced, Then the contract test fails.",
+        "Given policy and audit probes run against seeded users, When their source is inspected, Then they assert expected allow/deny semantics for concrete users and object types.",
+        "Given realtime probes run in list-only discovery, When CI parses phase7/, Then SSE and Browser Live scenarios remain discoverable."
       ],
       "quality_gates": [
         "`npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`",
-        "`rg -n \"optional feature|404.*503.*skip|feature surface returns 503/404|endpoint unavailable\" web/e2e/us444/README.md web/e2e/us444/helpers.ts` must return no stale optional-skip guidance after the story is implemented",
+        "`npm --prefix web exec playwright test -- --list phase7/`",
+        "`rg -n \"test\\\\.skip|test\\\\.fixme|not yet wired|unavailable|503|404\" web/e2e/phase7` allows only intentional backend-down portability wording after implementation",
         "`git diff --check`"
       ]
     }

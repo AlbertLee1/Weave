@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import ciWorkflowSource from '../../../../.github/workflows/ci.yml?raw';
+import auditLogAdminSpecSource from '../../../e2e/phase7/audit-log-admin.spec.ts?raw';
+import browserRealtimeModeSpecSource from '../../../e2e/phase7/browser-realtime-mode.spec.ts?raw';
+import policyColumnHidingSpecSource from '../../../e2e/phase7/policy-column-hiding.spec.ts?raw';
+import policyRowFilterSpecSource from '../../../e2e/phase7/policy-row-filter.spec.ts?raw';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
+import phase6AggregationSpecSource from '../../../e2e/phase6/aggregation-multi-groupby.spec.ts?raw';
+import phase6InterfacePagingSpecSource from '../../../e2e/phase6/interface-multitype-paging.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
+import phase6WithPropertiesSpecSource from '../../../e2e/phase6/withproperties-derived.spec.ts?raw';
 import us444BrowseSpecSource from '../../../e2e/us444/02-browse.spec.ts?raw';
 import us444AggregateSpecSource from '../../../e2e/us444/03-aggregate.spec.ts?raw';
 import us444ActionSpecSource from '../../../e2e/us444/04-action.spec.ts?raw';
@@ -24,6 +32,31 @@ import us444ReadmeSource from '../../../e2e/us444/README.md?raw';
 import vtx099SystemGraphSpecSource from '../../../e2e/vtx-099-system-graph-render.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
+  it('keeps CI Playwright discovery aligned with every upper-layer E2E probe group', () => {
+    const stepStart = ciWorkflowSource.indexOf('- name: Playwright spec discovery');
+    expect(stepStart).toBeGreaterThanOrEqual(0);
+
+    const discoveryStep = ciWorkflowSource.slice(stepStart);
+    const requiredTargets = [
+      'us444/',
+      'phase6/',
+      'phase7/',
+      'vtx-099-system-graph-render.spec.ts',
+      'dogfood-verify.spec.ts',
+      'dogfood-diagnose.spec.ts',
+      'dogfood-empty-states.spec.ts',
+      'us-456-perf-dashboard.spec.ts',
+      'us-457-timeseries-tab.spec.ts',
+      'us-458-hotkey-help.spec.ts',
+      'zzz-login-rate-limit.spec.ts',
+    ];
+
+    expect(discoveryStep).toContain('npx playwright test --list');
+    for (const target of requiredTargets) {
+      expect(discoveryStep).toContain(target);
+    }
+  });
+
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
     const source = sseReconnectSpecSource;
 
@@ -32,6 +65,151 @@ describe('Playwright spec contracts', () => {
     expect(source).toContain(`/api/v2/ontologies/\${ONTOLOGY}/objects/\${OBJECT_TYPE}/search`);
     expect(source).toContain("getByTestId('live-status')");
     expect(source).not.toContain("getByTestId('realtime-indicator')");
+  });
+
+  it('keeps all Phase 7 probes active against reachable service failures', () => {
+    const phase7Sources = [
+      auditLogAdminSpecSource,
+      browserRealtimeModeSpecSource,
+      policyColumnHidingSpecSource,
+      policyRowFilterSpecSource,
+      sseReconnectSpecSource,
+    ];
+
+    for (const source of phase7Sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).not.toMatch(/not yet wired|unavailable/i);
+      expect(source).not.toContain('res.ok() ||');
+      expect(source).not.toMatch(/status\(\)\s*===\s*(404|503)/);
+      expect(source).not.toContain('toContain(res.status())');
+    }
+  });
+
+  it('keeps Phase 7 policy and audit probes asserting seeded identity semantics', () => {
+    expect(policyColumnHidingSpecSource).toContain("email: 'manager@test'");
+    expect(policyColumnHidingSpecSource).toContain("email: 'peer@test'");
+    expect(policyColumnHidingSpecSource).toContain('/objects/${OBJECT_TYPE}');
+    expect(policyColumnHidingSpecSource).toContain('Array.isArray(mgrBody.data)');
+    expect(policyColumnHidingSpecSource).toContain('Array.isArray(peerBody.data)');
+    expect(policyColumnHidingSpecSource).toContain(
+      "expect(obj).toHaveProperty('salary')",
+    );
+    expect(policyColumnHidingSpecSource).toContain(
+      "expect(obj).not.toHaveProperty('salary')",
+    );
+    expect(policyColumnHidingSpecSource).toContain(
+      "getByRole('cell', { name: '120000' })",
+    );
+    expect(policyColumnHidingSpecSource).toContain(
+      "getByRole('cell', { name: 'Alice Chen' })",
+    );
+
+    expect(policyRowFilterSpecSource).toContain("email: 'acme@test'");
+    expect(policyRowFilterSpecSource).toContain("email: 'acme2@test'");
+    expect(policyRowFilterSpecSource).toContain('Array.isArray(acmeBody.data)');
+    expect(policyRowFilterSpecSource).toContain('Array.isArray(acme2Body.data)');
+    expect(policyRowFilterSpecSource).toContain(
+      "expect(acmeIDs.sort()).toEqual(['ALFKI', 'BERGS', 'CHOPS'])",
+    );
+    expect(policyRowFilterSpecSource).toContain(
+      "expect(acme2IDs.sort()).toEqual(['BLONP', 'CACTU'])",
+    );
+    expect(policyRowFilterSpecSource).toContain(
+      "getByRole('cell', { name: 'Alfreds Futterkiste' })",
+    );
+    expect(policyRowFilterSpecSource).toContain(
+      "getByRole('cell', { name: 'Cactus Comidas para llevar' })",
+    );
+
+    expect(auditLogAdminSpecSource).toContain("email: 'admin@test'");
+    expect(auditLogAdminSpecSource).toContain("email: 'peer@test'");
+    expect(auditLogAdminSpecSource).toContain('/api/v2/admin/auditEvents');
+    expect(auditLogAdminSpecSource).toContain('Array.isArray(body.data)');
+    expect(auditLogAdminSpecSource).toContain(
+      'expect(body.data.length).toBeGreaterThan(0)',
+    );
+    expect(auditLogAdminSpecSource).toContain(
+      "expect(entry.action).toBe('login_success')",
+    );
+    expect(auditLogAdminSpecSource).toContain('expect(auditRes.status()).toBe(403)');
+    expect(auditLogAdminSpecSource).not.toContain('if (body.data.length > 0)');
+  });
+
+  it('keeps Phase 7 realtime probes tied to seeded actions and live streams', () => {
+    const realtimeSources = [browserRealtimeModeSpecSource, sseReconnectSpecSource];
+
+    for (const source of realtimeSources) {
+      expect(source).toContain('/actionTypes');
+      expect(source).toContain('Array.isArray(body.data)');
+      expect(source).toContain("a.apiName === 'createCustomer'");
+      expect(source).toContain('/actions/createCustomer/apply');
+      expect(source).toContain("getByTestId('search-input')");
+      expect(source).toContain(
+        `/api/v2/ontologies/\${ONTOLOGY}/objects/\${OBJECT_TYPE}/search`,
+      );
+    }
+
+    expect(browserRealtimeModeSpecSource).toContain('waitForRealtimeSubscribed');
+    expect(browserRealtimeModeSpecSource).toContain('waitForRealtimeObjectChange');
+    expect(browserRealtimeModeSpecSource).toContain('realtimePayloadMatchesPrimaryKey');
+    expect(browserRealtimeModeSpecSource).toContain("getByTestId('realtime-indicator')");
+
+    expect(sseReconnectSpecSource).toContain('page.context().setOffline(true)');
+    expect(sseReconnectSpecSource).toContain('page.context().setOffline(false)');
+    expect(sseReconnectSpecSource).toContain("getByTestId('live-status')");
+  });
+
+  it('keeps all Phase 6 probes active against reachable service failures', () => {
+    const phase6Sources = [
+      phase6AggregationSpecSource,
+      phase6InterfacePagingSpecSource,
+      optimisticConcurrencySpecSource,
+      phase6WithPropertiesSpecSource,
+    ];
+
+    for (const source of phase6Sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).not.toMatch(/not yet wired|unavailable/i);
+      expect(source).not.toContain('res.ok() ||');
+      expect(source).not.toMatch(/status\(\)\s*===\s*(404|503)/);
+      expect(source).not.toContain('toContain(res.status())');
+    }
+  });
+
+  it('keeps Phase 6 probes asserting concrete OSv2 service response shape and rendered data', () => {
+    expect(phase6WithPropertiesSpecSource).toContain('Array.isArray(otBody.data)');
+    expect(phase6WithPropertiesSpecSource).toContain('Array.isArray(ltBody.linkTypes)');
+    expect(phase6WithPropertiesSpecSource).toContain("getByTestId('derived-property-row')");
+    expect(phase6WithPropertiesSpecSource).toContain('data-derived-column="${DERIVED_NAME}"');
+    expect(phase6WithPropertiesSpecSource).toContain('Number.isFinite(n)');
+
+    expect(phase6AggregationSpecSource).toContain('Array.isArray(body.data)');
+    expect(phase6AggregationSpecSource).toContain("getByTestId('aggregation-bucket-tree')");
+    expect(phase6AggregationSpecSource).toContain(
+      "toHaveAttribute('data-groupby-depth', '3')",
+    );
+    expect(phase6AggregationSpecSource).toContain("getByTestId('aggregation-accuracy-badge')");
+    expect(phase6AggregationSpecSource).toContain('bodyRows.count()');
+
+    expect(optimisticConcurrencySpecSource).toContain('Array.isArray(body.data)');
+    expect(optimisticConcurrencySpecSource).toContain(
+      "const ACTION_API_NAME = 'updateCustomerContact'",
+    );
+    expect(optimisticConcurrencySpecSource).toContain("getByTestId('object-version')");
+    expect(optimisticConcurrencySpecSource).toContain('toBe(startingVersionB)');
+    expect(optimisticConcurrencySpecSource).toContain('This object was updated elsewhere');
+
+    expect(phase6InterfacePagingSpecSource).toContain('Array.isArray(body.data)');
+    expect(phase6InterfacePagingSpecSource).toContain('Array.isArray(page.data)');
+    expect(phase6InterfacePagingSpecSource).toContain(
+      'loadObjectsOrInterfaces must return data rows',
+    );
+    expect(phase6InterfacePagingSpecSource).toContain(
+      'server must report totalCount on every page',
+    );
+    expect(phase6InterfacePagingSpecSource).toContain('duplicate row ${compositeKey}');
   });
 
   it('keeps the Phase 6 optimistic-concurrency scenario active', () => {

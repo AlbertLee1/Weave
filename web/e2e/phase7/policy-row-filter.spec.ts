@@ -48,6 +48,10 @@ test.describe('Policy row-filter (US-082)', () => {
     const acmeBody = (await acmeRes.json()) as {
       data: Record<string, unknown>[];
     };
+    expect(
+      Array.isArray(acmeBody.data),
+      'ACME customer list must return data rows',
+    ).toBe(true);
 
     // ACME user should see exactly 3 customers: ALFKI, BERGS, CHOPS.
     const acmeIDs = acmeBody.data.map((obj) => obj['customerID']);
@@ -80,6 +84,10 @@ test.describe('Policy row-filter (US-082)', () => {
     const acme2Body = (await acme2Res.json()) as {
       data: Record<string, unknown>[];
     };
+    expect(
+      Array.isArray(acme2Body.data),
+      'ACME2 customer list must return data rows',
+    ).toBe(true);
 
     // ACME2 user should see exactly 2 customers: BLONP, CACTU.
     const acme2IDs = acme2Body.data.map((obj) => obj['customerID']);

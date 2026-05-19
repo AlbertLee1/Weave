@@ -56,7 +56,12 @@ test.describe('SSE reconnect (US-080)', () => {
       'northwind ontology must be seeded (run scripts/e2e-setup.sh)',
     ).toBe(true);
     const body = (await res.json()) as { data?: Array<{ apiName: string }> };
-    const hasAction = (body.data ?? []).some(
+    expect(
+      Array.isArray(body.data),
+      'actionTypes response must include data array',
+    ).toBe(true);
+    const actionTypes = body.data ?? [];
+    const hasAction = actionTypes.some(
       (a) => a.apiName === 'createCustomer',
     );
     expect(
