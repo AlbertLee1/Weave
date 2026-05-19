@@ -569,6 +569,127 @@ func TestBDD_VertexGraphLayoutDiffOpenAPIContract(t *testing.T) {
 	}
 }
 
+func TestBDD_VertexScenarioRunOpenAPIContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	specOps := extractSpecOperations(t, doc)
+	chiRoutes := extractChiRoutes(t, newContractTestRouter(t))
+	expectedOps := []struct {
+		op          specOperationKey
+		operationID string
+		status      string
+		responseRef string
+	}{
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/scenarios/{scenarioRid}/runs"},
+			operationID: "startVertexScenarioRun",
+			status:      "202",
+			responseRef: "#/components/schemas/VertexScenarioRunStartResponse",
+		},
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel"},
+			operationID: "cancelVertexScenarioRun",
+			status:      "202",
+			responseRef: "#/components/schemas/VertexScenarioRunCancelResponse",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}"},
+			operationID: "getVertexScenarioRun",
+			status:      "200",
+			responseRef: "#/components/schemas/VertexScenarioRun",
+		},
+	}
+
+	allPresent := true
+	for _, want := range expectedOps {
+		if !chiRoutes[want.op] {
+			t.Errorf("%s %s must be mounted by NewFullRouter; pkg/vertex/scenarioruns exposes the handler, so wire scenarioruns.NewHandler(...).RegisterRoutes(api) or add an explicit non-mounted contract decision",
+				want.op.Method, want.op.Path)
+			allPresent = false
+		}
+		if undocumentedRouteAllowList[want.op] {
+			t.Errorf("%s %s must be documented in OpenAPI, not allow-listed as undocumented", want.op.Method, want.op.Path)
+		}
+		if !specOps[want.op] {
+			t.Errorf("api/openapi.yaml must document %s %s", want.op.Method, want.op.Path)
+			allPresent = false
+		}
+	}
+	if !allPresent {
+		return
+	}
+
+	for _, want := range expectedOps {
+		operation := openAPIPathOperation(t, doc, want.op.Path, want.op.Method)
+		if got, _ := operation["operationId"].(string); got != want.operationID {
+			t.Errorf("%s %s operationId = %q, want %q", want.op.Method, want.op.Path, got, want.operationID)
+		}
+		if got := openAPIJSONResponseSchemaRef(t, operation, want.status); got != want.responseRef {
+			t.Errorf("%s %s %s schema = %q, want %s", want.op.Method, want.op.Path, want.status, got, want.responseRef)
+		}
+		if !openAPIPathParamNames(t, operation)["scenarioRid"] {
+			t.Errorf("%s %s must document path parameter scenarioRid", want.op.Method, want.op.Path)
+		}
+		if strings.Contains(want.op.Path, "{runRid}") && !openAPIPathParamNames(t, operation)["runRid"] {
+			t.Errorf("%s %s must document path parameter runRid", want.op.Method, want.op.Path)
+		}
+	}
+
+	schemas := openAPISchemas(t, doc)
+	runProps := openAPIProperties(t, schemas, "VertexScenarioRun")
+	for _, field := range []string{"rid", "scenarioRid", "status", "checkpoint", "startedAt", "createdAt"} {
+		if _, ok := runProps[field]; !ok {
+			t.Errorf("VertexScenarioRun must expose %s", field)
+		}
+	}
+	checkpoint, ok := runProps["checkpoint"].(map[string]any)
+	if !ok {
+		t.Fatalf("VertexScenarioRun.checkpoint: expected map, got %T", runProps["checkpoint"])
+	}
+	if got, _ := checkpoint["$ref"].(string); got != "#/components/schemas/VertexScenarioRunCheckpoint" {
+		t.Errorf("VertexScenarioRun.checkpoint ref = %q, want VertexScenarioRunCheckpoint", got)
+	}
+	status, ok := runProps["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("VertexScenarioRun.status: expected map, got %T", runProps["status"])
+	}
+	mustOpenAPIEnum(t, status, []string{"pending", "running", "succeeded", "failed", "canceled"})
+
+	checkpointProps := openAPIProperties(t, schemas, "VertexScenarioRunCheckpoint")
+	for _, field := range []string{"runRid", "scenarioRid", "status", "completed", "lastActivity", "attemptsById", "error", "updatedAt"} {
+		if _, ok := checkpointProps[field]; !ok {
+			t.Errorf("VertexScenarioRunCheckpoint must expose %s", field)
+		}
+	}
+	attempts, ok := checkpointProps["attemptsById"].(map[string]any)
+	if !ok {
+		t.Fatalf("VertexScenarioRunCheckpoint.attemptsById: expected map, got %T", checkpointProps["attemptsById"])
+	}
+	if got, _ := attempts["type"].(string); got != "object" {
+		t.Errorf("VertexScenarioRunCheckpoint.attemptsById type = %q, want object", got)
+	}
+	if _, ok := attempts["additionalProperties"].(map[string]any); !ok {
+		t.Errorf("VertexScenarioRunCheckpoint.attemptsById must describe integer attempts per activity")
+	}
+
+	startProps := openAPIProperties(t, schemas, "VertexScenarioRunStartResponse")
+	for _, field := range []string{"runRid", "status"} {
+		if _, ok := startProps[field]; !ok {
+			t.Errorf("VertexScenarioRunStartResponse must expose %s", field)
+		}
+	}
+	cancelProps := openAPIProperties(t, schemas, "VertexScenarioRunCancelResponse")
+	for _, field := range []string{"runRid", "status"} {
+		if _, ok := cancelProps[field]; !ok {
+			t.Errorf("VertexScenarioRunCancelResponse must expose %s", field)
+		}
+	}
+	cancelStatus, ok := cancelProps["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("VertexScenarioRunCancelResponse.status: expected map, got %T", cancelProps["status"])
+	}
+	mustOpenAPIEnum(t, cancelStatus, []string{"canceling"})
+}
+
 func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	components, ok := doc["components"].(map[string]any)
@@ -652,6 +773,27 @@ func openAPIParameter(t *testing.T, operation map[string]any, in string, name st
 	}
 	t.Fatalf("operation.parameters missing %s parameter %q", in, name)
 	return nil
+}
+
+func openAPIPathParamNames(t *testing.T, operation map[string]any) map[string]bool {
+	t.Helper()
+	parameters, ok := operation["parameters"].([]any)
+	if !ok {
+		t.Fatalf("operation.parameters: expected list, got %T", operation["parameters"])
+	}
+	out := map[string]bool{}
+	for _, raw := range parameters {
+		param, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("operation.parameters item: expected map, got %T", raw)
+		}
+		gotIn, _ := param["in"].(string)
+		gotName, _ := param["name"].(string)
+		if gotIn == "path" && gotName != "" {
+			out[gotName] = true
+		}
+	}
+	return out
 }
 
 func openAPIResponseStatusExists(t *testing.T, operation map[string]any, status string) bool {

@@ -49,7 +49,7 @@
       "phase": "OSv2 Vertex Scenario Execution API",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Audit the existing Vertex scenario-run package against server wiring and OpenAPI so the scenario execution lifecycle is either mounted and documented or explicitly gated by a focused contract test.",
       "bdd_acceptance": [

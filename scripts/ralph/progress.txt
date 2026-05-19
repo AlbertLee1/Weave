@@ -14,6 +14,7 @@ Branch: ralph/self-iteration-20260519-230504
 ## Selected Story
 - `SELF-465` — Preserve Vertex added-object primary keys.
 - `SELF-466` — Resolve Vertex overlay time-series sparklines.
+- `SELF-467` — Surface Vertex scenario run routes in server contract.
 
 ## SELF-465 Evidence
 - RED: `npm --prefix web test -- --run src/vertex/VertexAddObjectsDialog.test.tsx src/vertex/VertexWorkspacePage.test.tsx` failed as expected before implementation.
@@ -45,9 +46,31 @@ Branch: ralph/self-iteration-20260519-230504
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 
+## SELF-467 Evidence
+- Root cause: `pkg/vertex/scenarioruns` already exposed chi handlers for start, cancel, and get, but `cmd/server.NewFullRouter` never mounted them and `api/openapi.yaml` had no scenario-run operations or schemas.
+- RED: `go test ./cmd/server -run TestBDD_VertexScenarioRunOpenAPIContract -count=1` failed as expected.
+  - Missing chi routes: `POST /api/vertex/v1/scenarios/{scenarioRid}/runs`, `POST /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel`, and `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`.
+  - Missing OpenAPI operations for the same three routes.
+- GREEN: after adding the focused server contract, mounting `scenarioruns.NewHandler(buildScenarioRunService(deps)).RegisterRoutes(api)`, adding `scenarioruns.NewMemoryRepo`, and documenting scenario-run routes/schemas in both OpenAPI copies, the same focused test passed.
+- Verification:
+  - `go test ./cmd/server ./pkg/vertex/scenarioruns -run 'TestBDD_VertexScenarioRun|TestContract_' -count=1` passed.
+  - `go test ./pkg/vertex/scenarioruns -count=1` passed.
+  - `go test ./cmd/server -run 'TestOpenAPISpec_|TestContract_' -count=1` passed.
+  - `jq empty scripts/ralph/prd.json` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `api/openapi.yaml`
+  - `cmd/server/contract_test.go`
+  - `cmd/server/main.go`
+  - `cmd/server/openapi_spec.yaml`
+  - `pkg/vertex/scenarioruns/mem_repo.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+
 ## Codebase Patterns
 - Vertex workspace tests mock `@react-sigma/core` in `web/src/vertex/VertexWorkspacePage.test.tsx` and fire captured Sigma handlers directly for selection/context-menu behavior.
 - Vertex Add Objects dialog result rows come from OSS search `WireObject` rows; `__primaryKey` is already selected from the backend and should be carried through page state when downstream tabs need fresh OSS calls.
 - For transient Vertex objects added outside the saved graph payload, keep `VertexObjectSummary` metadata complete enough for existing sidebar hooks (`useGetObject`, `useObjectActivity`, `useTimeSeriesPoints`) to work exactly like payload-resident nodes.
 - Vertex overlay virtualization happens before React card rows mount; keeping `useTimeSeriesPoints` inside rendered time-series rows naturally limits stream-point requests to onscreen cards.
 - Vertex time-series extended-label property names are currently encoded in `ExtendedLabel.key` as `timeSeries:<property>:<index>`; both sidebar and overlay can resolve stream-point requests from that key until the label type grows an explicit property field.
+- Vertex scenario-run server contracts should assert both sides of reachability: chi route registration in `NewFullRouter` and matching OpenAPI operations/schemas. Degraded route mounting can use dependency-unavailable implementations when the contract must remain discoverable before durable production execution is wired.

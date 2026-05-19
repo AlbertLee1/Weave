@@ -78,6 +78,7 @@ import (
 	"github.com/liyang/weave/pkg/userprefs"
 	"github.com/liyang/weave/pkg/vertex/controlpanel"
 	"github.com/liyang/weave/pkg/vertex/graphsvc"
+	"github.com/liyang/weave/pkg/vertex/scenarioruns"
 	"github.com/liyang/weave/pkg/watches"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -473,7 +474,16 @@ type ServerDeps struct {
 	// so the routes stay unmounted; the SPA falls back to localStorage
 	// defaults when the GET endpoint 404s.
 	UserPreferencesStore userprefs.Store
-	CORSOrigins          []string // Allowed CORS origins (empty = disabled)
+	// SELF-467: Vertex Scenario Run lifecycle. A production deployment can
+	// inject the real service or its durable repo/reader/executor pieces.
+	// When omitted, NewFullRouter still mounts the public routes with an
+	// in-memory repo and dependency-unavailable reader/executor so contract
+	// tests and SDK probes see an honest, documented API surface.
+	ScenarioRunService  *scenarioruns.Service
+	ScenarioRunRepo     scenarioruns.Repo
+	ScenarioRunReader   scenarioruns.ScenarioReader
+	ScenarioRunExecutor scenarioruns.ActivityExecutor
+	CORSOrigins         []string // Allowed CORS origins (empty = disabled)
 	// Raw handles stashed for health probes. May be nil in degraded mode.
 	PGPool   *pgxpool.Pool
 	NATSConn *nats.Conn
@@ -517,6 +527,35 @@ func (d *ServerDeps) ProbeBleve() error {
 		return ErrProbeUnconfigured
 	}
 	return nil
+}
+
+func buildScenarioRunService(deps *ServerDeps) *scenarioruns.Service {
+	if deps.ScenarioRunService != nil {
+		return deps.ScenarioRunService
+	}
+	repo := deps.ScenarioRunRepo
+	if repo == nil {
+		repo = scenarioruns.NewMemoryRepo()
+	}
+	reader := deps.ScenarioRunReader
+	if reader == nil {
+		reader = unavailableScenarioRunReader{}
+	}
+	executor := deps.ScenarioRunExecutor
+	if executor == nil {
+		executor = unavailableScenarioRunExecutor
+	}
+	return scenarioruns.NewService(repo, reader, executor, scenarioruns.ServiceOptions{})
+}
+
+type unavailableScenarioRunReader struct{}
+
+func (unavailableScenarioRunReader) ListActivities(_ context.Context, scenarioRID string) ([]scenarioruns.Activity, error) {
+	return nil, fmt.Errorf("scenario run dependencies are not configured for scenario %s", scenarioRID)
+}
+
+func unavailableScenarioRunExecutor(_ context.Context, activity scenarioruns.Activity) error {
+	return fmt.Errorf("scenario run executor is not configured for activity %s", activity.ID)
 }
 
 func NewRouter() *chi.Mux {
@@ -1102,6 +1141,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		}
 		graphHandler.SetShareLinkStore(shareLinks)
 		graphHandler.RegisterRoutes(api)
+
+		// SELF-467: mount the Scenario Run lifecycle beside the rest of
+		// Vertex so the package cannot drift as unreachable code. Degraded
+		// boots use an in-memory repo plus dependency-unavailable activity
+		// resolver/executor; real deployments can inject ScenarioRunService
+		// or its repo/reader/executor pieces through ServerDeps.
+		scenarioruns.NewHandler(buildScenarioRunService(deps)).RegisterRoutes(api)
 
 		// VTX-015: Vertex Control Panel — admin-tunable runtime knobs
 		// (default window, polling interval, search-around limits, missing-
