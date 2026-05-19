@@ -319,6 +319,58 @@ describe('validateNode', () => {
     expect(errs.length).toBeGreaterThan(0);
   });
 
+  it('flags filter clauses with missing field, missing value, or unsupported operator', () => {
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: { type: 'eq', field: '', value: '' },
+      }),
+    ).toEqual([
+      'filter where clause eq requires a field',
+      'filter where clause eq requires a value',
+    ]);
+
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: { type: 'neq', field: 'status', value: 'archived' },
+      }),
+    ).toContain('filter where clause uses unsupported operator "neq"');
+  });
+
+  it('accepts isNull filter clauses without a comparison value', () => {
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: { type: 'isNull', field: 'archivedAt', value: '' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('accepts backend text-search filter clauses with string values', () => {
+    for (const type of [
+      'contains',
+      'containsAllTerms',
+      'containsAllTermsInOrder',
+      'startsWith',
+    ]) {
+      expect(
+        validateNode({
+          id: '1',
+          type: 'filter',
+          objectSet: emptyBase('Employee'),
+          where: { type, field: 'description', value: 'critical outage' },
+        }),
+      ).toEqual([]);
+    }
+  });
+
   it('flags union with fewer than 2 children', () => {
     const errs = validateNode({
       id: '1',

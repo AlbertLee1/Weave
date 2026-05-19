@@ -343,6 +343,98 @@ export function validateDefinition(def: ObjectSetDefinition): string[] {
   return validateNode(definitionToNode(def));
 }
 
+const SUPPORTED_WHERE_OPERATORS = new Set([
+  'eq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'isNull',
+  'contains',
+  'fuzzy',
+  'phrase',
+  'regex',
+  'containsAllTerms',
+  'containsAnyTerm',
+  'containsAllTermsInOrder',
+  'containsAllTermsInOrderPrefixLastTerm',
+  'startsWith',
+  'wildcard',
+  'and',
+  'or',
+  'not',
+  'withinBoundingBox',
+  'intersectsBoundingBox',
+  'withinPolygon',
+  'intersectsPolygon',
+  'doesNotIntersectPolygon',
+  'doesNotIntersectBoundingBox',
+  'withinDistanceOf',
+]);
+
+const VALUE_OPTIONAL_WHERE_OPERATORS = new Set(['isNull']);
+
+function isWhereClauseLike(value: unknown): value is WhereClause {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    typeof (value as { type?: unknown }).type === 'string'
+  );
+}
+
+function valueIsBlank(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && value.trim().length === 0)
+  );
+}
+
+function validateWhereClause(where: WhereClause, errors: string[]): void {
+  const type = typeof where.type === 'string' ? where.type.trim() : '';
+  if (!type) {
+    errors.push('filter node requires a where clause');
+    return;
+  }
+  if (!SUPPORTED_WHERE_OPERATORS.has(type)) {
+    errors.push(`filter where clause uses unsupported operator "${type}"`);
+    return;
+  }
+
+  if (type === 'and' || type === 'or') {
+    if (!Array.isArray(where.value) || where.value.length === 0) {
+      errors.push(`filter where clause ${type} requires child clauses`);
+      return;
+    }
+    for (const child of where.value) {
+      if (!isWhereClauseLike(child)) {
+        errors.push(`filter where clause ${type} requires child clauses`);
+        continue;
+      }
+      validateWhereClause(child, errors);
+    }
+    return;
+  }
+
+  if (type === 'not') {
+    const child = Array.isArray(where.value) ? where.value[0] : where.value;
+    if (!isWhereClauseLike(child)) {
+      errors.push('filter where clause not requires a child clause');
+      return;
+    }
+    validateWhereClause(child, errors);
+    return;
+  }
+
+  if (!where.field || where.field.trim().length === 0) {
+    errors.push(`filter where clause ${type} requires a field`);
+  }
+  if (!VALUE_OPTIONAL_WHERE_OPERATORS.has(type) && valueIsBlank(where.value)) {
+    errors.push(`filter where clause ${type} requires a value`);
+  }
+}
+
 function walk(node: ObjectSetNode, errors: string[]): void {
   switch (node.type) {
     case 'base':
@@ -354,6 +446,8 @@ function walk(node: ObjectSetNode, errors: string[]): void {
     case 'filter':
       if (!node.where || !(node.where as WhereClause).type) {
         errors.push('filter node requires a where clause');
+      } else {
+        validateWhereClause(node.where, errors);
       }
       walk(node.objectSet, errors);
       break;

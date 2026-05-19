@@ -192,6 +192,96 @@ function DerivedPropertyEditor({
   );
 }
 
+const SIMPLE_WHERE_OPERATORS = [
+  'eq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'isNull',
+  'contains',
+  'containsAllTerms',
+  'containsAnyTerm',
+  'containsAllTermsInOrder',
+  'startsWith',
+] as const;
+
+const LOGICAL_WHERE_OPERATORS = ['and', 'or', 'not'] as const;
+const WHERE_OPERATORS = [
+  ...SIMPLE_WHERE_OPERATORS,
+  ...LOGICAL_WHERE_OPERATORS,
+] as const;
+
+type LogicalWhereOperator = (typeof LOGICAL_WHERE_OPERATORS)[number];
+type WhereOperator = (typeof WHERE_OPERATORS)[number];
+
+function isWhereOperator(value: string): value is WhereOperator {
+  return (WHERE_OPERATORS as readonly string[]).includes(value);
+}
+
+function isLogicalWhereOperator(value: string): value is LogicalWhereOperator {
+  return (LOGICAL_WHERE_OPERATORS as readonly string[]).includes(value);
+}
+
+function isWhereClauseLike(value: unknown): value is WhereClause {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    typeof (value as { type?: unknown }).type === 'string'
+  );
+}
+
+function defaultComparisonClause(): WhereClause {
+  return { type: 'eq', field: '', value: '' };
+}
+
+function scalarValueFrom(where: WhereClause): unknown {
+  if (Array.isArray(where.value) || isWhereClauseLike(where.value)) {
+    return '';
+  }
+  return where.value ?? '';
+}
+
+function defaultWhereForOperator(
+  type: WhereOperator,
+  previous: WhereClause,
+): WhereClause {
+  switch (type) {
+    case 'and':
+    case 'or':
+      return {
+        type,
+        value: [defaultComparisonClause(), defaultComparisonClause()],
+      };
+    case 'not':
+      return { type, value: defaultComparisonClause() };
+    default:
+      return {
+        type,
+        field: previous.field ?? '',
+        value: scalarValueFrom(previous),
+      };
+  }
+}
+
+function logicalChildren(where: WhereClause): WhereClause[] {
+  if (!Array.isArray(where.value)) {
+    return [defaultComparisonClause(), defaultComparisonClause()];
+  }
+  const children = where.value.filter(isWhereClauseLike);
+  return children.length > 0
+    ? children
+    : [defaultComparisonClause(), defaultComparisonClause()];
+}
+
+function notChild(where: WhereClause): WhereClause {
+  if (Array.isArray(where.value)) {
+    return where.value.find(isWhereClauseLike) ?? defaultComparisonClause();
+  }
+  return isWhereClauseLike(where.value) ? where.value : defaultComparisonClause();
+}
+
 function WhereEditor({
   where,
   onChange,
@@ -199,36 +289,103 @@ function WhereEditor({
   where: WhereClause;
   onChange: (w: WhereClause) => void;
 }) {
+  const whereType = typeof where.type === 'string' ? where.type : '';
+  const isLogical = isLogicalWhereOperator(whereType);
+
   return (
-    <div className="flex gap-2 items-center mt-1">
-      <select
-        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary"
-        value={where.type}
-        onChange={(e) => onChange({ ...where, type: e.target.value })}
-        aria-label="where type"
-      >
-        {['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'isNull', 'containsAnyTerm'].map(
-          (t) => (
+    <div className="flex flex-col gap-1 mt-1" data-testid="where-editor">
+      <div className="flex gap-2 items-center">
+        <select
+          className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary"
+          value={isWhereOperator(whereType) ? whereType : ''}
+          onChange={(e) => {
+            const nextType = e.target.value;
+            if (isWhereOperator(nextType)) {
+              onChange(defaultWhereForOperator(nextType, where));
+            }
+          }}
+          aria-label="where type"
+        >
+          {!isWhereOperator(whereType) && (
+            <option value="" disabled>
+              unsupported
+            </option>
+          )}
+          {WHERE_OPERATORS.map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
-          ),
+          ))}
+        </select>
+        {!isLogical && (
+          <>
+            <input
+              className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-24"
+              placeholder="field"
+              value={where.field ?? ''}
+              onChange={(e) => onChange({ ...where, field: e.target.value })}
+              aria-label="where field"
+            />
+            <input
+              className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-24"
+              placeholder="value"
+              value={String(where.value ?? '')}
+              onChange={(e) => onChange({ ...where, value: e.target.value })}
+              aria-label="where value"
+            />
+          </>
         )}
-      </select>
-      <input
-        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-24"
-        placeholder="field"
-        value={where.field ?? ''}
-        onChange={(e) => onChange({ ...where, field: e.target.value })}
-        aria-label="where field"
-      />
-      <input
-        className="text-xs font-mono bg-bg-secondary border border-border rounded px-1 py-0.5 text-text-primary w-24"
-        placeholder="value"
-        value={String(where.value ?? '')}
-        onChange={(e) => onChange({ ...where, value: e.target.value })}
-        aria-label="where value"
-      />
+      </div>
+      {(whereType === 'and' || whereType === 'or') && (
+        <div className="flex flex-col gap-1 pl-3 border-l border-border">
+          {logicalChildren(where).map((child, i, children) => (
+            <div key={i} className="flex items-start gap-2">
+              <WhereEditor
+                where={child}
+                onChange={(next) => {
+                  const updated = [...children];
+                  updated[i] = next;
+                  onChange({ type: whereType, value: updated });
+                }}
+              />
+              {children.length > 1 && (
+                <button
+                  type="button"
+                  className="text-xs font-mono text-accent-error hover:text-accent-error/70 mt-1"
+                  onClick={() => {
+                    const updated = [...children];
+                    updated.splice(i, 1);
+                    onChange({ type: whereType, value: updated });
+                  }}
+                  aria-label={`remove ${whereType} clause ${i + 1}`}
+                >
+                  x
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            className="text-xs font-mono text-accent-cyan hover:text-accent-cyan/70 self-start mt-1"
+            onClick={() =>
+              onChange({
+                type: whereType,
+                value: [...logicalChildren(where), defaultComparisonClause()],
+              })
+            }
+          >
+            + add clause
+          </button>
+        </div>
+      )}
+      {whereType === 'not' && (
+        <div className="pl-3 border-l border-border">
+          <WhereEditor
+            where={notChild(where)}
+            onChange={(next) => onChange({ type: 'not', value: next })}
+          />
+        </div>
+      )}
     </div>
   );
 }
