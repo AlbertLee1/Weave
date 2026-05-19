@@ -31,6 +31,12 @@ function shortTxId(txId: string): string {
   return `${txId.slice(0, 11)}…`;
 }
 
+function rollbackLabel(tx: DatasetTransaction): string | null {
+  if (!tx.rolledBackAt) return null;
+  if (tx.rolledBackToTxId) return `Rolled back to ${shortTxId(tx.rolledBackToTxId)}`;
+  return 'Rolled back';
+}
+
 // TimeTravelToolbar is the Browser-page topbar control for US-048. It
 // holds two pieces of state: (a) an "enabled" toggle the user clicks to
 // switch the page into historical mode, (b) the active asOf value the
@@ -110,6 +116,7 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
     () => transactions.find((t) => t.txId === persisted),
     [transactions, persisted],
   );
+  const activeRollbackLabel = activeTx ? rollbackLabel(activeTx) : null;
 
   return (
     <div
@@ -162,12 +169,20 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
             ? '— no transactions — apply an action to create one'
             : 'Latest (live)'}
         </option>
-        {transactions.map((tx) => (
-          <option key={tx.txId} value={tx.txId} data-testid="time-travel-option">
-            {shortTxId(tx.txId)} · {formatCommittedAt(tx.committedAt)} ·{' '}
-            {tx.editsCount} edit{tx.editsCount === 1 ? '' : 's'}
-          </option>
-        ))}
+        {transactions.map((tx) => {
+          const txRollbackLabel = rollbackLabel(tx);
+          return (
+            <option
+              key={tx.txId}
+              value={tx.txId}
+              data-testid="time-travel-option"
+            >
+              {shortTxId(tx.txId)} · {formatCommittedAt(tx.committedAt)} ·{' '}
+              {tx.editsCount} edit{tx.editsCount === 1 ? '' : 's'}
+              {txRollbackLabel ? ` · ${txRollbackLabel}` : ''}
+            </option>
+          );
+        })}
       </select>
       {transactions.length === 0 && !isLoading && !error && (
         <p
@@ -186,6 +201,7 @@ export function TimeTravelToolbar({ ontologyApiName }: TimeTravelToolbarProps) {
         >
           Historical
           {activeTx ? ` · ${formatCommittedAt(activeTx.committedAt)}` : ''}
+          {activeRollbackLabel ? ` · ${activeRollbackLabel}` : ''}
         </span>
       )}
 

@@ -30,7 +30,7 @@
       "phase": "Upper-Layer Time Travel Experience",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-446"
       ],
