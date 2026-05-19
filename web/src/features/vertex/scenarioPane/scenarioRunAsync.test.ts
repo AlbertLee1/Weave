@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ScenarioRef } from './scenarioPane';
 import {
@@ -6,6 +6,7 @@ import {
   applyScenarioRunSseEvent,
   buildAsyncRunScenarioRequest,
   buildCancelScenarioRunRequest,
+  buildGetScenarioRunRequest,
   buildScenarioRunStreamUrl,
   createScenarioRunJobMap,
   createScenarioRunJobState,
@@ -17,6 +18,8 @@ import {
   isScenarioRunJobActive,
   parseAcceptedScenarioRunResponse,
   parseScenarioRunSseEvent,
+  pollScenarioRunUntilTerminal,
+  ScenarioRunPollingAbortedError,
   setScenarioRunJobState,
   shouldRunAsync,
 } from './scenarioRunAsync';
@@ -28,6 +31,26 @@ import type {
 const scenarioRid = 'ri.vertex.main.scenario.s-1';
 const otherRid = 'ri.vertex.main.scenario.s-2';
 const runRid = 'run-abc-123';
+
+function scenarioRunRecord(status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled') {
+  return {
+    rid: runRid,
+    scenarioRid,
+    status,
+    error: status === 'failed' ? 'model failed' : undefined,
+    checkpoint: {
+      runRid,
+      scenarioRid,
+      status,
+      completed: status === 'succeeded' ? ['model-A'] : [],
+      attemptsById: { 'model-A': status === 'failed' ? 3 : 1 },
+      error: status === 'failed' ? 'model failed' : undefined,
+      updatedAt: '2026-05-20T00:00:01Z',
+    },
+    startedAt: '2026-05-20T00:00:00Z',
+    createdAt: '2026-05-20T00:00:00Z',
+  };
+}
 
 function mutableScenario(rid = scenarioRid): ScenarioRef {
   return { rid, name: 'Scenario A', immutable: false };
@@ -151,6 +174,94 @@ describe('VTX-044 cancel request builder', () => {
     const specialRun = 'run with space';
     const req = buildCancelScenarioRunRequest({ scenarioRid, runRid: specialRun });
     expect(req.path).toContain(encodeURIComponent(specialRun));
+  });
+});
+
+describe('SELF-469 scenario run polling helper', () => {
+  it('Given a scenario and run RID, When building a GET request, Then it uses the mounted run record route', () => {
+    const req = buildGetScenarioRunRequest({ scenarioRid, runRid });
+    expect(req).toEqual({
+      method: 'GET',
+      path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
+    });
+  });
+
+  it('Given a pending run, When polling until terminal, Then it returns failed checkpoint details without assuming success', async () => {
+    const replies = [
+      scenarioRunRecord('pending'),
+      scenarioRunRecord('running'),
+      scenarioRunRecord('failed'),
+    ];
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify(replies.shift()), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const result = await pollScenarioRunUntilTerminal({
+      scenarioRid,
+      runRid,
+      intervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.error).toBe('model failed');
+    expect(result.checkpoint.attemptsById['model-A']).toBe(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
+    ]);
+  });
+
+  it('Given polling exceeds the timeout, When the run is still pending, Then it rejects with a timeout error', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify(scenarioRunRecord('pending')), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    await expect(
+      pollScenarioRunUntilTerminal({
+        scenarioRid,
+        runRid,
+        intervalMs: 10,
+        timeoutMs: 0,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ name: 'ScenarioRunPollingTimeoutError' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('Given polling is aborted during sleep, When timers advance, Then no extra GET is issued', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify(scenarioRunRecord('pending')), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const promise = pollScenarioRunUntilTerminal({
+      scenarioRid,
+      runRid,
+      intervalMs: 1000,
+      signal: controller.signal,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await Promise.resolve();
+    const abortedExpectation = expect(promise).rejects.toBeInstanceOf(ScenarioRunPollingAbortedError);
+    controller.abort();
+
+    await abortedExpectation;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });
 

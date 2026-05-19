@@ -33,6 +33,12 @@ export interface ScenarioRunOptions {
   streaming?: boolean;
 }
 
+export interface ScenarioRunPollOptions {
+  intervalMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 export type RunEvent =
   | { kind: 'progress'; percent: number }
   | { kind: 'log'; line: string }
@@ -41,9 +47,33 @@ export type RunEvent =
   | { kind: 'failed'; scenarioRunRid: string; error: string };
 
 export interface ScenarioRun {
-  scenarioRunRid: string;
-  status: 'succeeded' | 'failed' | 'canceled';
-  durationMs: number;
+  scenarioRunRid?: string;
+  runRid?: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  durationMs?: number;
+  error?: string;
+}
+
+export interface ScenarioRunCheckpoint {
+  runRid: string;
+  scenarioRid: string;
+  status: ScenarioRun['status'];
+  completed?: string[];
+  lastActivity?: string;
+  attemptsById?: Record<string, number>;
+  error?: string;
+  updatedAt?: string;
+}
+
+export interface ScenarioRunRecord {
+  rid: string;
+  scenarioRid: string;
+  status: ScenarioRun['status'];
+  error?: string;
+  checkpoint?: ScenarioRunCheckpoint;
+  startedAt?: string;
+  completedAt?: string | null;
+  createdAt?: string;
 }
 
 export interface ApplyToMainInput {
@@ -58,6 +88,20 @@ export class VertexHttpError extends Error {
     super(`Vertex SDK: ${status} on ${path}: ${body}`);
     this.status = status;
     this.path = path;
+  }
+}
+
+export class VertexScenarioRunPollingTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Vertex SDK: scenario run polling timed out after ${timeoutMs} ms`);
+    this.name = 'VertexScenarioRunPollingTimeoutError';
+  }
+}
+
+export class VertexScenarioRunPollingAbortedError extends Error {
+  constructor() {
+    super('Vertex SDK: scenario run polling was aborted');
+    this.name = 'VertexScenarioRunPollingAbortedError';
   }
 }
 
@@ -79,6 +123,13 @@ export class VertexClient {
       ): O extends { streaming: true }
         ? Promise<AsyncIterable<RunEvent>>
         : Promise<ScenarioRun> => this.scenarioRun(rid, opts) as never,
+      getRun: (scenarioRid: string, runRid: string): Promise<ScenarioRunRecord> =>
+        this.scenarioGetRun(scenarioRid, runRid),
+      waitForRun: (
+        scenarioRid: string,
+        runRid: string,
+        opts?: ScenarioRunPollOptions,
+      ): Promise<ScenarioRunRecord> => this.scenarioWaitForRun(scenarioRid, runRid, opts),
       applyToMain: (input: ApplyToMainInput) => this.scenarioApplyToMain(input),
     };
   }
@@ -111,6 +162,52 @@ export class VertexClient {
     return sseAsyncIterable(res.body);
   }
 
+  private async scenarioGetRun(scenarioRid: string, runRid: string): Promise<ScenarioRunRecord> {
+    return this.getJSON<ScenarioRunRecord>(this.scenarioRunRecordPath(scenarioRid, runRid));
+  }
+
+  private async scenarioWaitForRun(
+    scenarioRid: string,
+    runRid: string,
+    opts: ScenarioRunPollOptions = {},
+  ): Promise<ScenarioRunRecord> {
+    const intervalMs = Math.max(0, opts.intervalMs ?? 1000);
+    const timeoutMs = Math.max(0, opts.timeoutMs ?? 60_000);
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      throwIfPollingAborted(opts.signal);
+      if (Date.now() >= deadline) {
+        throw new VertexScenarioRunPollingTimeoutError(timeoutMs);
+      }
+      const run = await this.scenarioGetRunWithSignal(scenarioRid, runRid, opts.signal);
+      if (isTerminalScenarioRunStatus(run.status)) {
+        return run;
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new VertexScenarioRunPollingTimeoutError(timeoutMs);
+      }
+      await waitForPollDelay(Math.min(intervalMs, remainingMs), opts.signal);
+    }
+  }
+
+  private async scenarioGetRunWithSignal(
+    scenarioRid: string,
+    runRid: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioRunRecord> {
+    return this.getJSON<ScenarioRunRecord>(this.scenarioRunRecordPath(scenarioRid, runRid), signal);
+  }
+
+  private scenarioRunRecordPath(scenarioRid: string, runRid: string): string {
+    return (
+      '/api/vertex/v1/scenarios/' +
+      encodeURIComponent(scenarioRid) +
+      '/runs/' +
+      encodeURIComponent(runRid)
+    );
+  }
+
   private async postJSON<T>(path: string, body: unknown): Promise<T> {
     const res = await this.fetchImpl(this.baseUrl + path, {
       method: 'POST',
@@ -121,6 +218,58 @@ export class VertexClient {
     if (!res.ok) throw new VertexHttpError(res.status, path, text);
     return JSON.parse(text) as T;
   }
+
+  private async getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.baseUrl + path, {
+        method: 'GET',
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted) {
+        throw new VertexScenarioRunPollingAbortedError();
+      }
+      throw err;
+    }
+    const text = await res.text();
+    if (!res.ok) throw new VertexHttpError(res.status, path, text);
+    return JSON.parse(text) as T;
+  }
+}
+
+function isTerminalScenarioRunStatus(status: ScenarioRun['status']): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'canceled';
+}
+
+function throwIfPollingAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new VertexScenarioRunPollingAbortedError();
+  }
+}
+
+function waitForPollDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfPollingAborted(signal);
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new VertexScenarioRunPollingAbortedError());
+    };
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // sseAsyncIterable parses an SSE response body into a stream of RunEvent.

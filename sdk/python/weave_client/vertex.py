@@ -12,9 +12,11 @@ the moment the server side ships.
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any, Dict, Generator, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, Generator, Iterable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:  # avoid runtime circular import
     from .client import Client
@@ -70,6 +72,45 @@ class ScenariosAPI:
             return self._client._request("POST", path, json_body={}) or {}
         return _sse_generator(self._client.base_url + path, headers=self._client._headers())
 
+    def get_run(self, scenario_rid: str, run_rid: str) -> Dict[str, Any]:
+        """Fetch a persisted scenario-run record."""
+        path = _scenario_run_record_path(scenario_rid, run_rid)
+        return self._client._request("GET", path, json_body=None) or {}
+
+    def wait_for_run(
+        self,
+        scenario_rid: str,
+        run_rid: str,
+        *,
+        poll_interval: float = 1.0,
+        timeout: Optional[float] = 60.0,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> Dict[str, Any]:
+        """Poll a scenario run until it reaches a terminal status.
+
+        Returns failed and canceled terminal records as-is so callers can inspect
+        ``error`` and ``checkpoint`` details instead of treating completion as
+        success-only.
+        """
+        deadline = None if timeout is None else monotonic() + max(0.0, timeout)
+        interval = max(0.0, poll_interval)
+        while True:
+            if deadline is not None and monotonic() >= deadline:
+                raise TimeoutError(f"vertex.scenarios.wait_for_run timed out after {timeout} seconds")
+            run = self.get_run(scenario_rid, run_rid)
+            if _is_terminal_run_status(str(run.get("status", ""))):
+                return run
+            if deadline is not None:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"vertex.scenarios.wait_for_run timed out after {timeout} seconds")
+                delay = min(interval, remaining)
+            else:
+                delay = interval
+            if delay > 0:
+                sleep(delay)
+
 
 def _sse_generator(url: str, *, headers: Dict[str, str]) -> Generator[Dict[str, Any], None, None]:
     """Open url, POST empty body, parse SSE event blocks into dicts.
@@ -110,6 +151,19 @@ def _sse_generator(url: str, *, headers: Dict[str, str]) -> Generator[Dict[str, 
                     continue
     finally:
         resp.close()
+
+
+def _scenario_run_record_path(scenario_rid: str, run_rid: str) -> str:
+    return (
+        "/api/vertex/v1/scenarios/"
+        + urllib.parse.quote(scenario_rid, safe="")
+        + "/runs/"
+        + urllib.parse.quote(run_rid, safe="")
+    )
+
+
+def _is_terminal_run_status(status: str) -> bool:
+    return status in {"succeeded", "failed", "canceled"}
 
 
 # ---------------------------------------------------------------------------

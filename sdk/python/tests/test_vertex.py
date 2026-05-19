@@ -15,18 +15,22 @@ class _StubTransport:
 
     def __init__(self, reply: Any):
         self.reply = reply
+        self.replies = list(reply) if isinstance(reply, list) else None
         self.last_method = ""
         self.last_url = ""
         self.last_headers: dict = {}
         self.last_body: Any = None
+        self.requests: list[dict[str, Any]] = []
 
     def request(self, method, url, *, headers, json_body):
         self.last_method = method
         self.last_url = url
         self.last_headers = dict(headers)
         self.last_body = json_body
+        self.requests.append({"method": method, "url": url, "headers": dict(headers), "body": json_body})
+        reply = self.replies.pop(0) if self.replies is not None else self.reply
         import json as _json
-        return HTTPResponse(200, _json.dumps(self.reply), {})
+        return HTTPResponse(200, _json.dumps(reply), {})
 
 
 def _make_client(reply: Any) -> tuple[Client, _StubTransport]:
@@ -65,6 +69,105 @@ def test_vertex_scenarios_run_streaming_false_returns_terminal_record():
     assert isinstance(res, dict)
     assert res["status"] == "succeeded"
     assert t.last_url.endswith("/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs")
+
+
+def test_vertex_scenarios_wait_for_run_polls_get_route_until_failed_terminal_record():
+    c, t = _make_client(
+        [
+            {
+                "rid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "pending",
+            },
+            {
+                "rid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "failed",
+                "error": "scoring failed",
+                "checkpoint": {
+                    "runRid": "ri.vertex.main.scenario-run.r1",
+                    "scenarioRid": "ri.vertex.main.scenario.s1",
+                    "status": "failed",
+                    "attemptsById": {"score": 3},
+                    "error": "scoring failed",
+                    "updatedAt": "2026-05-20T00:00:00Z",
+                },
+            },
+        ]
+    )
+    sleeps: list[float] = []
+
+    res = c.vertex.scenarios.wait_for_run(
+        "ri.vertex.main.scenario.s1",
+        "ri.vertex.main.scenario-run.r1",
+        poll_interval=0.25,
+        timeout=10.0,
+        sleep=sleeps.append,
+    )
+
+    assert [r["method"] for r in t.requests] == ["GET", "GET"]
+    assert all(
+        r["url"].endswith(
+            "/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.r1"
+        )
+        for r in t.requests
+    )
+    assert sleeps == [0.25]
+    assert res["status"] == "failed"
+    assert res["error"] == "scoring failed"
+    assert res["checkpoint"]["attemptsById"]["score"] == 3
+
+
+def test_vertex_scenarios_wait_for_run_returns_canceled_record():
+    c, _ = _make_client(
+        {
+            "rid": "ri.vertex.main.scenario-run.r1",
+            "scenarioRid": "ri.vertex.main.scenario.s1",
+            "status": "canceled",
+            "error": "operator canceled",
+            "checkpoint": {
+                "runRid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "canceled",
+                "attemptsById": {},
+                "error": "operator canceled",
+                "updatedAt": "2026-05-20T00:00:00Z",
+            },
+        }
+    )
+
+    res = c.vertex.scenarios.wait_for_run("ri.vertex.main.scenario.s1", "ri.vertex.main.scenario-run.r1")
+
+    assert res["status"] == "canceled"
+    assert res["error"] == "operator canceled"
+
+
+def test_vertex_scenarios_wait_for_run_reports_timeout_without_real_sleep():
+    c, _ = _make_client(
+        [
+            {
+                "rid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "running",
+            },
+            {
+                "rid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "running",
+            },
+        ]
+    )
+    ticks = iter([0.0, 0.1, 0.1])
+
+    with pytest.raises(TimeoutError):
+        c.vertex.scenarios.wait_for_run(
+            "ri.vertex.main.scenario.s1",
+            "ri.vertex.main.scenario-run.r1",
+            poll_interval=1.0,
+            timeout=0.1,
+            sleep=lambda _: None,
+            monotonic=lambda: next(ticks),
+        )
 
 
 def test_objects_get_with_scenario_id_sets_x_scenario_id_header():

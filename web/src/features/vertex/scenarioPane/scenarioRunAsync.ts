@@ -74,6 +74,11 @@ export interface BuildCancelScenarioRunRequestInput {
   runRid: string;
 }
 
+export interface BuildScenarioRunStatusRequestInput {
+  scenarioRid: string;
+  runRid: string;
+}
+
 export interface AcceptedScenarioRunResponse {
   status: 'pending' | 'running';
   runRid: string;
@@ -96,7 +101,64 @@ export interface CancelScenarioRunApiRequest {
   body: Record<string, never>;
 }
 
+export interface ScenarioRunStatusApiRequest {
+  method: 'GET';
+  path: string;
+}
+
 export type ScenarioRunJobStatusIcon = '—' | 'spinner' | '✓' | '×' | '⊘';
+
+export type ScenarioRunLifecycleStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'canceled';
+
+export interface ScenarioRunCheckpoint {
+  runRid: string;
+  scenarioRid: string;
+  status: ScenarioRunLifecycleStatus;
+  completed?: string[];
+  lastActivity?: string;
+  attemptsById: Record<string, number>;
+  error?: string;
+  updatedAt: string;
+}
+
+export interface ScenarioRunRecord {
+  rid: string;
+  scenarioRid: string;
+  status: ScenarioRunLifecycleStatus;
+  error?: string;
+  checkpoint: ScenarioRunCheckpoint;
+  startedAt: string;
+  completedAt?: string | null;
+  createdAt: string;
+}
+
+export interface PollScenarioRunUntilTerminalInput {
+  scenarioRid: string;
+  runRid: string;
+  fetchImpl?: typeof fetch;
+  intervalMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export class ScenarioRunPollingTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Scenario run polling timed out after ${timeoutMs} ms`);
+    this.name = 'ScenarioRunPollingTimeoutError';
+  }
+}
+
+export class ScenarioRunPollingAbortedError extends Error {
+  constructor() {
+    super('Scenario run polling was aborted');
+    this.name = 'ScenarioRunPollingAbortedError';
+  }
+}
 
 const SCENARIO_RUN_FALLBACK_MESSAGE = 'Scenario run failed';
 
@@ -145,6 +207,23 @@ export function buildCancelScenarioRunRequest(
   };
 }
 
+export function buildScenarioRunStatusRequest(
+  input: BuildScenarioRunStatusRequestInput,
+): ScenarioRunStatusApiRequest {
+  const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
+  const runRid = requireNonBlank(input.runRid, 'runRid');
+  return {
+    method: 'GET',
+    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
+  };
+}
+
+export function buildGetScenarioRunRequest(
+  input: BuildScenarioRunStatusRequestInput,
+): ScenarioRunStatusApiRequest {
+  return buildScenarioRunStatusRequest(input);
+}
+
 export function parseAcceptedScenarioRunResponse(
   response: AcceptedScenarioRunResponse,
 ): ParsedAcceptedScenarioRunResponse {
@@ -156,6 +235,79 @@ export function parseAcceptedScenarioRunResponse(
     throw new Error('runRid is required');
   }
   return { runRid, status: response.status };
+}
+
+function isScenarioRunTerminalStatus(status: ScenarioRunLifecycleStatus): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'canceled';
+}
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new ScenarioRunPollingAbortedError();
+  }
+}
+
+function waitForScenarioRunPollDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  assertNotAborted(signal);
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new ScenarioRunPollingAbortedError());
+    };
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export async function pollScenarioRunUntilTerminal(
+  input: PollScenarioRunUntilTerminalInput,
+): Promise<ScenarioRunRecord> {
+  const request = buildScenarioRunStatusRequest(input);
+  const fetchImpl = input.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const intervalMs = Math.max(0, input.intervalMs ?? 1000);
+  const timeoutMs = Math.max(0, input.timeoutMs ?? 60_000);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    assertNotAborted(input.signal);
+    let response: Response;
+    try {
+      response = await fetchImpl(request.path, {
+        method: request.method,
+        signal: input.signal,
+      });
+    } catch (err) {
+      if (input.signal?.aborted) {
+        throw new ScenarioRunPollingAbortedError();
+      }
+      throw err;
+    }
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Scenario run polling failed: ${response.status} ${body}`);
+    }
+    const record = (await response.json()) as ScenarioRunRecord;
+    if (isScenarioRunTerminalStatus(record.status)) {
+      return record;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new ScenarioRunPollingTimeoutError(timeoutMs);
+    }
+    await waitForScenarioRunPollDelay(Math.min(intervalMs, remainingMs), input.signal);
+  }
 }
 
 function clampPct(value: number): number {

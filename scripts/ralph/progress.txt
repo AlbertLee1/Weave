@@ -55,6 +55,40 @@ Branch: ralph/self-iteration-20260520-002052
   - `scripts/ralph/progress.txt`
 - Reusable learning: client route constants and docs must be audited immediately after a server contract route family changes; the OpenAPI/server contract can be green while SDKs and upper-layer helpers still point at a dead predecessor route.
 
+## Selected Story
+- `SELF-469` — Expose Vertex scenario-run polling helpers.
+
+## SELF-469 Evidence
+- Root cause: the server already exposes `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}` with terminal `succeeded` / `failed` / `canceled` records, checkpoint attempts, and error details, but web helpers and SDK clients did not provide a reusable way to poll that record after `POST /runs` returns `{runRid,status:"pending"}`.
+- RED:
+  - `npm --prefix web test -- --run src/features/vertex/scenarioPane/scenarioRunPolling.bdd.test.ts src/vertex/SdkVertexClient.test.ts` failed as expected with missing `pollScenarioRunUntilTerminal` and missing `client.scenarios.waitForRun`.
+  - `go test ./sdk/go -run TestScenariosWaitRun -count=1` failed as expected because `WaitRun` and `WaitRunOptions` were undefined.
+  - `PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py` failed as expected because `ScenariosAPI.wait_for_run` was undefined.
+- GREEN:
+  - Added web scenario-run GET route construction plus `pollScenarioRunUntilTerminal`, preserving terminal failure/cancel records and clearing timeout/abort timers.
+  - Added TypeScript SDK `scenarios.getRun` and `scenarios.waitForRun` with timeout and abort errors.
+  - Added Python SDK `get_run` and `wait_for_run` with injectable sleep/clock for deterministic timeout tests.
+  - Added Go SDK `GetRun` and `WaitRun`, using context cancellation/timeout and returning checkpoint/error details.
+- Verification:
+  - `npm --prefix web test -- --run src/features/vertex/scenarioPane src/vertex/SdkVertexClient.test.ts` passed with 16 test files and 676 tests.
+  - `go test ./sdk/go -run TestScenarios -count=1` passed.
+  - `PYTHONPATH=sdk/python pytest -q sdk/python/tests/test_vertex.py` passed with 10 tests.
+  - `npm --prefix web run typecheck` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `sdk/go/vertex.go`
+  - `sdk/go/vertex_test.go`
+  - `sdk/python/weave_client/vertex.py`
+  - `sdk/python/tests/test_vertex.py`
+  - `sdk/typescript/src/vertex.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.test.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRunPolling.bdd.test.ts`
+  - `web/src/vertex/SdkVertexClient.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning: until a dedicated scenario-run SSE stream is mounted everywhere, SDK and web clients should treat the run record GET route as the durable completion contract and return terminal failed/canceled records intact rather than reducing polling to success-only completion.
+
 ## Codebase Patterns
 - Vertex workspace tests mock `@react-sigma/core` in `web/src/vertex/VertexWorkspacePage.test.tsx` and fire captured Sigma handlers directly for selection/context-menu behavior.
 - Vertex Add Objects dialog result rows come from OSS search `WireObject` rows; `__primaryKey` is already selected from the backend and should be carried through page state when downstream tabs need fresh OSS calls.
