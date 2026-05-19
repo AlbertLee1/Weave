@@ -30,7 +30,7 @@
       "phase": "OSv2 CLI Operator Experience",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Update the OSv2 status document so CLI coverage reflects the shipped action, aggregate, and ObjectSet command files and tests instead of treating those commands as missing.",
       "bdd_acceptance": [

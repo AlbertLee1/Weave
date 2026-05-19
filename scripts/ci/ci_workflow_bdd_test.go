@@ -358,6 +358,76 @@ func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
 	}
 }
 
+func TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	mainCLI := readFile(t, filepath.Join(root, "cmd", "weave-cli", "main.go"))
+	actionCmd := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cmd_action.go"))
+	aggregateCmd := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cmd_aggregate.go"))
+	objectSetCmd := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cmd_objectset.go"))
+	cliTests := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cli_us304_test.go"))
+
+	for _, claim := range []string{
+		"| CLI | action / aggregate / objectset | 🟡 | n/a | 🔴 | **30%** | 未暴露 |",
+		"**Gap-D3 — CLI action / aggregate 子命令**\n- 现状：未暴露。",
+		"`weave objectset run`",
+		"CLI `action apply` / `aggregate` / `objectset run`",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale CLI claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`cmd/weave-cli/cmd_action.go`",
+		"`cmd/weave-cli/cmd_aggregate.go`",
+		"`cmd/weave-cli/cmd_objectset.go`",
+		"`cmd/weave-cli/cli_us304_test.go`",
+		"`weave action apply`",
+		"`weave aggregate`",
+		"`weave objectset load`",
+		"`weave objectset create-temporary`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live CLI contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{`case "action":`, `case "aggregate":`, `case "objectset":`} {
+		if !strings.Contains(mainCLI, required) {
+			t.Errorf("cmd/weave-cli/main.go must dispatch %q", required)
+		}
+	}
+	for _, required := range []string{"func runAction", `case "apply":`, "ApplyAction"} {
+		if !strings.Contains(actionCmd, required) {
+			t.Errorf("cmd_action.go must expose action apply fragment %q", required)
+		}
+	}
+	for _, required := range []string{"func runAggregate", "AggregateObjects"} {
+		if !strings.Contains(aggregateCmd, required) {
+			t.Errorf("cmd_aggregate.go must expose aggregate fragment %q", required)
+		}
+	}
+	for _, required := range []string{"func runObjectSet", `case "load":`, `"create-temporary"`, "CreateTemporaryObjectSetRaw"} {
+		if !strings.Contains(objectSetCmd, required) {
+			t.Errorf("cmd_objectset.go must expose objectset fragment %q", required)
+		}
+	}
+	for _, required := range []string{
+		"TestDispatch_KnownTopLevelCommands_US304",
+		"TestRootUsage_ListsNewCommands_US304",
+		"TestActionApply_GivenParamsKVAndReturnEdits_When_Apply_Then_RequestBodyMatchesAndOutputContainsValid_US304",
+		"TestAggregate_GivenBodyFileAndTableOutput_When_Aggregate_Then_RequestForwardsBodyAndTableRendered_US304",
+		"TestObjectSet_CreateTemporary_GivenBodyFile_When_Run_Then_ReturnsRid_US304",
+		"TestObjectSet_Load_GivenBodyFile_When_Run_Then_ForwardsAndReturnsData_US304",
+	} {
+		if !strings.Contains(cliTests, required) {
+			t.Errorf("cmd/weave-cli CLI contract tests must include %q", required)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

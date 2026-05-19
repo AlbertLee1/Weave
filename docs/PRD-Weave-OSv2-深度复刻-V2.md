@@ -134,7 +134,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | SDK (Python) | ObjectSet 组合 DSL | 🟡 | n/a | 🔴 | **40%** | 仅 raw dict，无 Pythonic builder |
 | SDK (Python) | Aggregation | 🔴 | n/a | 🔴 | **10%** | 未暴露 |
 | CLI | auth / ontology / object | 🟢 | n/a | 🟢 | **80%** | 基础齐全、JSON/表格输出 |
-| CLI | action / aggregate / objectset | 🟡 | n/a | 🔴 | **30%** | 未暴露 |
+| CLI | action / aggregate / objectset | 🟢 | n/a | 🟡 | **65%** | `cmd/weave-cli/cmd_action.go` 暴露 `weave action apply`；`cmd_aggregate.go` 暴露 `weave aggregate`；`cmd_objectset.go` 暴露 `weave objectset load` / `weave objectset create-temporary`；`cmd/weave-cli/cli_us304_test.go` 覆盖命令契约；remaining depth gaps 是更高阶 helper、别名、发现文档和输出 polish |
 | MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **75%** | initialize/tools 齐全；prompts/resources 为 stub |
 | MCP stdio 独立二进制 | 🟡 | — | 🔴 | **35%** | `weave-mcp` 是存根，不引导 PG/NATS |
 
@@ -363,9 +363,9 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - 现状：未暴露。
 - 建议：按 US-046 类似模式补齐。
 
-**Gap-D3 — CLI action / aggregate 子命令**
-- 现状：未暴露。
-- 建议：`weave action apply`、`weave aggregate`、`weave objectset run`。
+**Gap-D3 — CLI action / aggregate / objectset 深度**
+- 现状：已暴露 `weave action apply`、`weave aggregate`、`weave objectset load`、`weave objectset create-temporary`，入口分别在 `cmd/weave-cli/cmd_action.go`、`cmd/weave-cli/cmd_aggregate.go`、`cmd/weave-cli/cmd_objectset.go`，并由 `cmd/weave-cli/cli_us304_test.go` 覆盖。
+- 建议：补 `docs/cli.md` 的 action/aggregate/objectset 命令参考、常用 body 模板、可能的 `objectset run` 便捷别名，以及更丰富的 table 输出；这些属于 remaining depth gaps，不是缺失入口。
 
 **Gap-D4 — MCP prompts / resources / sampling**
 - 现状：stub。
@@ -685,7 +685,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - **US-076**：`make bench` 性能基准（Northwind 1M 对象 baseline）；
 - **US-077**：OpenTelemetry 全链路 trace；
 - **US-078**：Python SDK ObjectSet builder + Aggregation + TimeSeries + Attachment；
-- **US-079**：CLI `action apply` / `aggregate` / `objectset run`；
+- **US-079**：CLI action/aggregate/objectset 深度：`action apply`、`aggregate`、`objectset load/create-temporary` 已存在；后续补命令参考、body 模板、便捷别名和输出 polish；
 - **US-080**：`weave-mcp` 独立 stdio 模式（启动本地服务嵌入 PG + NATS in-memory）；
 - **US-081**：文档：operating-guide / upgrade-guide / troubleshooting。
 

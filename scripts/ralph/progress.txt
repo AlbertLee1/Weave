@@ -59,3 +59,24 @@ Codebase Patterns:
   - Realtime status docs should name both shipped client subscription surfaces: SSE `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` and WebSocket `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`.
   - The SSE client path is anchored by `web/src/hooks/useObjectSetSubscription.ts`; Browser realtime mode and ObjectSet Live are separate UI surfaces that should be documented together.
 - Result: SELF-453 marked `passes: true`; SELF-454 and SELF-455 remain open for later Ralph iterations.
+
+## Tue May 19 18:52:55 CST 2026 - SELF-454
+- What was implemented:
+  - Added a `scripts/ci` BDD docs-contract test that rejects stale CLI absence claims in `docs/PRD-Weave-OSv2-深度复刻-V2.md`.
+  - Updated the OSv2 status document so action, aggregate, and ObjectSet CLI rows describe the shipped `weave action apply`, `weave aggregate`, `weave objectset load`, and `weave objectset create-temporary` surfaces.
+  - Reframed Gap-D3 and US-079 as remaining depth gaps for docs, body templates, aliases, and output polish rather than missing command entry points.
+- TDD red:
+  - `go test ./scripts/ci -run TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands -count=1` failed before the doc update because the status doc still said action/aggregate/objectset CLI was not exposed and still referenced `weave objectset run`.
+- Verification:
+  - `go test ./scripts/ci -run TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands -count=1` passed.
+  - `go test ./cmd/weave-cli -count=1` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - docs/PRD-Weave-OSv2-深度复刻-V2.md
+  - scripts/ci/ci_workflow_bdd_test.go
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Learnings for future iterations:
+  - CLI status docs should treat `cmd/weave-cli/cli_us304_test.go` as the command-contract anchor for action/aggregate/objectset coverage.
+  - The shipped ObjectSet CLI commands are `load` and `create-temporary`; `objectset run` is at most a future convenience alias, not the current contract.
+- Result: SELF-454 marked `passes: true`; SELF-455 remains open for later Ralph iterations.
