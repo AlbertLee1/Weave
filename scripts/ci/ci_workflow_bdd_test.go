@@ -281,6 +281,241 @@ func TestBDD_GeoTemporalDocsReflectPGStoreDefault(t *testing.T) {
 	}
 }
 
+func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	sseHandler := readFile(t, filepath.Join(root, "pkg", "oss", "subscribe_sse.go"))
+	broadcastHub := readFile(t, filepath.Join(root, "pkg", "funnel", "broadcast.go"))
+	browserPage := readFile(t, filepath.Join(root, "web", "src", "components", "browser", "BrowserPage.tsx"))
+	objectSetLivePage := readFile(t, filepath.Join(root, "web", "src", "components", "objectsets", "ObjectSetLivePage.tsx"))
+	subscriptionHook := readFile(t, filepath.Join(root, "web", "src", "hooks", "useObjectSetSubscription.ts"))
+
+	for _, claim := range []string{
+		"**无客户端订阅端点**",
+		"**无 /stream / WebSocket / SSE 端点**",
+		"无 subscribe UI；依赖后端 subscribe 端点缺失",
+		"**广播不暴露给客户端**",
+		"Funnel 内部有 broadcaster，没有 HTTP 暴露",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale realtime subscription claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`",
+		"`/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`",
+		"`pkg/funnel/broadcast.go`",
+		"`pkg/oss/subscribe_sse.go`",
+		"`pkg/subscriptions`",
+		"`web/src/hooks/useObjectSetSubscription.ts`",
+		"`web/src/components/browser/BrowserPage.tsx`",
+		"`web/src/components/objectsets/ObjectSetLivePage.tsx`",
+		"`Last-Event-ID`",
+		"`since` query parameter",
+		"per-user connection guard",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live realtime subscription contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws`,
+		`/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`,
+		"subscriptions.NewHandler",
+		"oss.NewSubscribeSSEHandler",
+	} {
+		if !strings.Contains(serverMain, required) {
+			t.Errorf("cmd/server must wire live subscription fragment %q", required)
+		}
+	}
+	for _, required := range []string{"Last-Event-ID", "since", "maxPerUser"} {
+		if !strings.Contains(sseHandler, required) {
+			t.Errorf("SSE subscribe handler must expose %q", required)
+		}
+	}
+	for _, required := range []string{"SubscribeWithReplay", "Publish"} {
+		if !strings.Contains(broadcastHub, required) {
+			t.Errorf("funnel broadcast hub must expose %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+	}{
+		{"BrowserPage", browserPage},
+		{"ObjectSetLivePage", objectSetLivePage},
+		{"useObjectSetSubscription", subscriptionHook},
+	} {
+		if !strings.Contains(source.text, "useObjectSetSubscription") && source.name != "useObjectSetSubscription" {
+			t.Errorf("%s must use the ObjectSet subscription hook", source.name)
+		}
+	}
+	if !strings.Contains(subscriptionHook, "EventSource") {
+		t.Error("useObjectSetSubscription must use EventSource for the SSE client path")
+	}
+}
+
+func TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	mainCLI := readFile(t, filepath.Join(root, "cmd", "weave-cli", "main.go"))
+	actionCmd := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cmd_action.go"))
+	aggregateCmd := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cmd_aggregate.go"))
+	objectSetCmd := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cmd_objectset.go"))
+	cliTests := readFile(t, filepath.Join(root, "cmd", "weave-cli", "cli_us304_test.go"))
+
+	for _, claim := range []string{
+		"| CLI | action / aggregate / objectset | 🟡 | n/a | 🔴 | **30%** | 未暴露 |",
+		"**Gap-D3 — CLI action / aggregate 子命令**\n- 现状：未暴露。",
+		"`weave objectset run`",
+		"CLI `action apply` / `aggregate` / `objectset run`",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale CLI claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`cmd/weave-cli/cmd_action.go`",
+		"`cmd/weave-cli/cmd_aggregate.go`",
+		"`cmd/weave-cli/cmd_objectset.go`",
+		"`cmd/weave-cli/cli_us304_test.go`",
+		"`weave action apply`",
+		"`weave aggregate`",
+		"`weave objectset load`",
+		"`weave objectset create-temporary`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live CLI contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{`case "action":`, `case "aggregate":`, `case "objectset":`} {
+		if !strings.Contains(mainCLI, required) {
+			t.Errorf("cmd/weave-cli/main.go must dispatch %q", required)
+		}
+	}
+	for _, required := range []string{"func runAction", `case "apply":`, "ApplyAction"} {
+		if !strings.Contains(actionCmd, required) {
+			t.Errorf("cmd_action.go must expose action apply fragment %q", required)
+		}
+	}
+	for _, required := range []string{"func runAggregate", "AggregateObjects"} {
+		if !strings.Contains(aggregateCmd, required) {
+			t.Errorf("cmd_aggregate.go must expose aggregate fragment %q", required)
+		}
+	}
+	for _, required := range []string{"func runObjectSet", `case "load":`, `"create-temporary"`, "CreateTemporaryObjectSetRaw"} {
+		if !strings.Contains(objectSetCmd, required) {
+			t.Errorf("cmd_objectset.go must expose objectset fragment %q", required)
+		}
+	}
+	for _, required := range []string{
+		"TestDispatch_KnownTopLevelCommands_US304",
+		"TestRootUsage_ListsNewCommands_US304",
+		"TestActionApply_GivenParamsKVAndReturnEdits_When_Apply_Then_RequestBodyMatchesAndOutputContainsValid_US304",
+		"TestAggregate_GivenBodyFileAndTableOutput_When_Aggregate_Then_RequestForwardsBodyAndTableRendered_US304",
+		"TestObjectSet_CreateTemporary_GivenBodyFile_When_Run_Then_ReturnsRid_US304",
+		"TestObjectSet_Load_GivenBodyFile_When_Run_Then_ForwardsAndReturnsData_US304",
+	} {
+		if !strings.Contains(cliTests, required) {
+			t.Errorf("cmd/weave-cli CLI contract tests must include %q", required)
+		}
+	}
+}
+
+func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	mcpDocs := readFile(t, filepath.Join(root, "docs", "mcp.md"))
+	mcpServer := readFile(t, filepath.Join(root, "pkg", "mcp", "server.go"))
+	prompts := readFile(t, filepath.Join(root, "pkg", "mcp", "prompts.go"))
+	resources := readFile(t, filepath.Join(root, "pkg", "mcp", "resources.go"))
+	bridgeMain := readFile(t, filepath.Join(root, "cmd", "weave-mcp", "main.go"))
+	httpBridge := readFile(t, filepath.Join(root, "cmd", "weave-mcp", "http_bridge.go"))
+
+	for _, claim := range []string{
+		"prompts/resources 为 stub",
+		"`weave-mcp` 是存根",
+		"**Gap-D4 — MCP prompts / resources / sampling**\n- 现状：stub。",
+		"**Gap-D5 — weave-mcp stdio 真可用**\n- 现状：stub，不接 DB。",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale MCP claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`docs/mcp.md`",
+		"`pkg/mcp/prompts.go`",
+		"`pkg/mcp/resources.go`",
+		"`cmd/weave-mcp/http_bridge.go`",
+		"`WEAVE_MCP_URL`",
+		"`prompts/list`",
+		"`prompts/get`",
+		"`resources/list`",
+		"`resources/read`",
+		"`weave://objecttype/<ontology>/<objectType>`",
+		"stdio HTTP bridge",
+		"remaining local-standalone gap",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live MCP contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"`cmd/weave-mcp` binary (stdio HTTP bridge)",
+		"`WEAVE_MCP_URL`",
+		"`prompts/list` | List prompts synthesized from OMS ActionType metadata",
+		"`prompts/get` | Render one ActionType prompt with supplied arguments",
+		"`resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources",
+		"`resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition",
+		"`weave://objecttype/<ontology>/<objectType>`",
+	} {
+		if !strings.Contains(mcpDocs, required) {
+			t.Errorf("docs/mcp.md must describe live MCP contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		`case "prompts/list":`,
+		`case "prompts/get":`,
+		`case "resources/list":`,
+		`case "resources/read":`,
+		`"resources": map[string]any{"listChanged": false, "subscribe": false}`,
+		`"prompts":   map[string]any{"listChanged": false}`,
+	} {
+		if !strings.Contains(mcpServer, required) {
+			t.Errorf("pkg/mcp/server.go must dispatch or advertise MCP fragment %q", required)
+		}
+	}
+	for _, required := range []string{"handlePromptsList", "handlePromptsGet", "ListActionTypes", "GetActionTypeByAPIName"} {
+		if !strings.Contains(prompts, required) {
+			t.Errorf("pkg/mcp/prompts.go must expose prompts fragment %q", required)
+		}
+	}
+	for _, required := range []string{"handleResourcesList", "handleResourcesRead", "ListOntologies", "ListObjectTypes", "weave://objecttype"} {
+		if !strings.Contains(resources, required) {
+			t.Errorf("pkg/mcp/resources.go must expose resources fragment %q", required)
+		}
+	}
+	for _, required := range []string{"WEAVE_MCP_URL", "RunHTTPBridge", "bridgeAuthOptionsFromEnv"} {
+		if !strings.Contains(bridgeMain, required) {
+			t.Errorf("cmd/weave-mcp/main.go must wire bridge fragment %q", required)
+		}
+	}
+	for _, required := range []string{"RunHTTPBridge", `http.MethodPost`, "Authorization", "X-Weave-API-Key"} {
+		if !strings.Contains(httpBridge, required) {
+			t.Errorf("cmd/weave-mcp/http_bridge.go must expose bridge fragment %q", required)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

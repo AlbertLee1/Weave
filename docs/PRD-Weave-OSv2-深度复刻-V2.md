@@ -32,7 +32,7 @@
 | ObjectSet 定义变体 | 15/15 | 15/15 路由，但 `interfaceLinkSearchAround`/`asBaseObjectTypes` 深度未验证 | 语义差距 |
 | 聚合算子 | 全覆盖 | 12 种 metric + 5 种 groupBy | 精度/近似分位数待校对 |
 | 安全模型 | RBAC Phase 1 完成 | 仅 Ontology-scoped RBAC，**无行级 / 列级 / Marking 评估链路** | 语义缺 |
-| 实时订阅 | WebSocket 订阅列入路线 | **无客户端订阅端点**（仅 Funnel 内部广播） | 缺失 |
+| 实时订阅 | WebSocket/SSE 订阅列入路线 | 已有 WebSocket `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` + SSE `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`；Funnel broadcast 已暴露到客户端 | 深度完善 |
 | TimeSeries | 3 端点 + PG 存储 | PG 存储有，但无时间分桶 / 聚合查询 | 深度缺 |
 | GeoTemporal | 2 端点 + 存储 | PG `geotemporal_values` 持久化，缺聚合/订阅深度 | 深度缺 |
 | Function backed action | Tier 3.2 声称完成 | HTTP dispatcher 存在，**无内嵌运行时**（Goja/Wasm） | 深度缺 |
@@ -103,7 +103,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | Actions | Function-backed | 🟢 HTTP dispatcher | — | 🔴 | **35%** | 可通过 HTTP 转发至外部 function server；**无内嵌 Goja/Wasm 运行时** |
 | Actions | Side effects | 🟢 | 🟢 | 🟡 | **60%** | 结构体存在；**webhook 通知未验证**，无重试 |
 | Funnel | Publisher / Consumer | 🟢 | 🟢 JetStream | 🟢 | **90%** | per-ontology subject、DLQ、offset、broadcast |
-| Funnel | 实时客户端订阅 | 🔴 | — | 🔴 | **0%** | **无 /stream / WebSocket / SSE 端点** — `pkg/funnel/broadcast.go` 的广播没有暴露出来 |
+| Funnel | 实时客户端订阅 | 🟢 | 🟢 replay tail | 🟡 | **70%** | `pkg/funnel/broadcast.go` 经 `pkg/oss/subscribe_sse.go` 暴露 SSE ObjectSet 订阅；`pkg/subscriptions` 提供 WebSocket 订阅；剩余深度在跨节点 fan-out 与更完整断线恢复矩阵 |
 | Indexing | per-ObjectType Bleve | 🟢 | 🟢 filesystem | 🟢 | **90%** | 增量更新 OK；**Phase 6 Gate**: TypeClass (analyzer.not_analyzed / keyword / english) 驱动 Bleve field mapping 全端到端 (US-001, US-012)；not_analyzed 路径由 US-040 FK-link resolver 闭环 |
 | Indexing | Funnel ↔ Index 一致性 | 🟢 | 🟢 | 🟡 | **75%** | Consumer 同步更新 Bleve；**rehydrate 路径存在但无 offset 回放测试矩阵** |
 | Indexing | Parquet 冷存 | 🔴 | — | 🔴 | **5%** | 技术架构文档计划有，当前未落地（没有 pkg/dataset/parquet_writer 真实链路） |
@@ -128,21 +128,21 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | DevOps | Docker + compose | 🟢 | 🟢 | 🟢 | **90%** | 多阶段 Dockerfile、weave service、health probes |
 | DevOps | 迁移 / 回滚 | 🟢 | 🟢 | 🟡 | **70%** | 17 个迁移；**回滚脚本覆盖率未评估** |
 | 前端 | 页面（Dashboard/Explorer/Browser/ObjectSet/Action/Aggregation/Login） | 🟢 | n/a | 🟡 | **70%** | 主流程可用；**测试覆盖率偏低（22 test 对 40+ component）** |
-| 前端 | 实时 & 订阅 | 🔴 | — | 🔴 | **0%** | 无 subscribe UI；依赖后端 subscribe 端点缺失 |
+| 前端 | 实时 & 订阅 | 🟢 | n/a | 🟡 | **65%** | `web/src/hooks/useObjectSetSubscription.ts`、`web/src/components/browser/BrowserPage.tsx` realtime mode、`web/src/components/objectsets/ObjectSetLivePage.tsx` 已接 SSE/WS；剩余是大规模断线恢复和可观测性 polish |
 | 前端 | AIP 助手 | 🟡 | n/a | 🟡 | **40%** | semantic search + MCP 工具在后端；前端未暴露交互 |
 | SDK (Python) | 核心 CRUD + Action | 🟢 | n/a | 🟢 | **80%** | 核心齐全、iter_all 支持 |
 | SDK (Python) | ObjectSet 组合 DSL | 🟡 | n/a | 🔴 | **40%** | 仅 raw dict，无 Pythonic builder |
 | SDK (Python) | Aggregation | 🔴 | n/a | 🔴 | **10%** | 未暴露 |
 | CLI | auth / ontology / object | 🟢 | n/a | 🟢 | **80%** | 基础齐全、JSON/表格输出 |
-| CLI | action / aggregate / objectset | 🟡 | n/a | 🔴 | **30%** | 未暴露 |
-| MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **75%** | initialize/tools 齐全；prompts/resources 为 stub |
-| MCP stdio 独立二进制 | 🟡 | — | 🔴 | **35%** | `weave-mcp` 是存根，不引导 PG/NATS |
+| CLI | action / aggregate / objectset | 🟢 | n/a | 🟡 | **65%** | `cmd/weave-cli/cmd_action.go` 暴露 `weave action apply`；`cmd_aggregate.go` 暴露 `weave aggregate`；`cmd_objectset.go` 暴露 `weave objectset load` / `weave objectset create-temporary`；`cmd/weave-cli/cli_us304_test.go` 覆盖命令契约；remaining depth gaps 是更高阶 helper、别名、发现文档和输出 polish |
+| MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **82%** | `docs/mcp.md` 记录 HTTP `/mcp`、`prompts/list` / `prompts/get`、`resources/list` / `resources/read`；实现位于 `pkg/mcp/prompts.go` 与 `pkg/mcp/resources.go`，资源 URI 包含 `weave://objecttype/<ontology>/<objectType>`；剩余是 sampling、resource subscribe 与部署认证 polish |
+| MCP stdio 独立二进制 | 🟢 bridge | — | 🟡 | **60%** | `cmd/weave-mcp/http_bridge.go` 在 `WEAVE_MCP_URL` 存在时提供 stdio HTTP bridge，转发到运行中的 `/mcp` 并复用 tools/prompts/resources；remaining local-standalone gap 是不自启 PG/NATS/Bleve |
 
 **总评（加权）**：**Weave 整体完成度 ≈ 72%**。其中：
 
 - **已达到 Foundry 同形状** 的模块：**OMS / Auth / Funnel 后端 / Attachment / CipherText / 前端主页面**（85%+）
 - **语义未完全对齐** 的模块：**OSS 高级 ObjectSet / Aggregation / Interface 多态 / Security 应用 / Action 冲突策略 / TypeClass / TimeSeries/GeoTemporal 持久与聚合 / SQL Query 沙箱**（50~75%）
-- **缺失或存根** 的模块：**实时客户端订阅 / 分支与版本 / Parquet 冷存 / Function 运行时 / Derived property 真正计算 / 行列级安全应用**（0~35%）
+- **缺失或存根** 的模块：**分支与版本 / Parquet 冷存 / Function 运行时 / Derived property 真正计算 / 行列级安全应用**（0~35%）
 
 ### 2.2 "声称 vs 真实"差异清单（需要在 v2 诚实面对）
 
@@ -153,7 +153,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | "nearestNeighbors + MCP AI tools 交付" | 单字段 KNN + 4 MCP tool；**无混合检索 / 无 reranking / 无跨 ObjectType** | `pkg/oss/objectset/nn.go` 仅 PropertyIdentifier |
 | "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store；GeoTemporal 也有 `pkg/geotemporal/pg_store.go` | GeoTemporal 使用 `migrations/000205_geotemporal_values.up.sql` 持久化，并由 `migrations/000208_geotemporal_spatial_indexes.up.sql` 加强 bbox + 时间过滤索引 |
 | "Function-backed Actions" | HTTP dispatcher 可用；**无内嵌运行时**，依赖外部 function server | `pkg/actions/function_dispatcher.go` + `http_dispatcher.go` |
-| "Edit → NATS → Bleve → Broadcast" | 后端管线通；**广播不暴露给客户端** | 无 SSE/WS 路由 |
+| "Edit → NATS → Bleve → Broadcast" | 后端管线通，并已通过 SSE/WS 暴露给客户端；深度风险在多实例广播、replay window 和断线恢复矩阵 | `pkg/funnel/broadcast.go`、`pkg/oss/subscribe_sse.go`、`pkg/subscriptions` |
 | "Interface 完整" | 元数据 CRUD + 多态查询端点；**跨子类型排序 + 分页稳定性未测试** | 无集成测试覆盖"多 ObjectType 实现同一 interface 的 load + sort"路径 |
 
 **这份差异不是给项目打分的，是告诉我们下一阶段的真正战线在哪里**。
@@ -177,7 +177,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | SHOULD 1 | Interface + shared property 映射 + 多态 Load | 🟡 | **多态稳定性** (新 US) |
 | SHOULD 2 | Derived property / withProperties (≥1 hop 聚合) | 🔴 | **真正实现 withProperties 计算** (新 US) |
 | SHOULD 3 | Semantic search nearestNeighbors | 🟡 | **多字段 / 混合检索** (新 US) |
-| SHOULD 4 | Change subscription (WebSocket/SSE) | 🔴 | **客户端订阅端点** (新 US) |
+| SHOULD 4 | Change subscription (WebSocket/SSE) | 🟡 | 已有客户端订阅端点；补跨节点 fan-out、恢复矩阵与运维指标 |
 | SHOULD 5 | TypeClass (analyzer / hubble / hierarchy) | 🔴 | **落地 type class 行为** (新 US) |
 | SHOULD 6 | Action log (持久审计) | 🟢 | 扩展到元数据/权限变更 |
 | SHOULD 7 | Query functions (executeQuery) | 🟡 | **Goja/Wasm runtime** (新 US) |
@@ -195,7 +195,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 1. **把语义深度从 ≈ 72% 推到 ≈ 90%**，其中 MUST 层 100%、SHOULD 层 ≥ 70%。
 2. **建立"Foundry 等价行为测试套件"**：选定一套代表性输入，对每个已对齐端点运行"Weave vs 期望输出"的对照测试（期望来自公开 SDK 示例、Palantir docs 例子）。
 3. **把安全模型做成可演示的端到端链路**：从 JWT → role → marking → policy → 查询过滤，至少一条路径可见、可测。
-4. **补齐实时订阅**：让前端能从一个 URL 订阅 ObjectSet 变更事件。
+4. **深化实时订阅**：已能从 Browser/ObjectSet Live 订阅 ObjectSet 变更事件；下一步补跨节点 fan-out、断线恢复矩阵与运维指标。
 5. **把 Function-backed action 做成"可本机嵌入 + 可 HTTP 外挂"**，不要只有 HTTP dispatch。
 
 ### 3.2 明确的非目标
@@ -212,7 +212,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - `make test && make test-integration && make web-test && pytest sdk/python` 全绿；
 - 新增 `make test-contract` 命令运行 "Foundry 行为等价矩阵" ≥ 100 个样例；
 - 新增 `pkg/security/policy_engine.go` 完整 policy evaluation 链，**至少 10 个端到端集成测试覆盖 row/column filter**；
-- 新增 `/api/v2/ontologies/{ontology}/objectSets/subscribe` SSE 端点，前端有对应 hook；
+- 已有 `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` SSE 端点、`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` WebSocket 端点，前端有 Browser realtime mode 与 ObjectSet Live 页；
 - `pkg/geotemporal/pg_store.go` + `pkg/timeseries` 时间分桶聚合，`make bench` 基准存在；
 - `pkg/functions/` 新包内嵌 Goja，可执行 TS-like 函数；
 - `docs/CHANGES-v2.md` 记录 v2 所有改动与 breaking changes。
@@ -297,10 +297,10 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 
 ### 4.4 实时与事件层
 
-**Gap-R1 — 客户端订阅端点**
-- 现状：Funnel 内部有 broadcaster，没有 HTTP 暴露。
-- 建议：新增 `GET /api/v2/ontologies/{ontology}/objectSets/subscribe?objectSet={rid}` SSE 端点（Foundry 用 WebSocket，SSE 更简单且够用），payload `{type: "ADDED_OR_UPDATED"|"DELETED", primaryKey, objectType, ...properties}`。
-- 前端：对应 `useObjectSetSubscription(rid)` hook + 在 Browser 页面演示。
+**Gap-R1 — 客户端订阅深度**
+- 现状：`pkg/funnel/broadcast.go` 的 applied-edit broadcast 已通过 `pkg/oss/subscribe_sse.go` 暴露为 `GET /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`，同时 `pkg/subscriptions` 挂载 `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` WebSocket 订阅。SSE 支持 `Last-Event-ID` 与 `since` query parameter replay，并带 per-user connection guard。
+- 前端：`web/src/hooks/useObjectSetSubscription.ts` 基于 EventSource；`web/src/components/browser/BrowserPage.tsx` 提供 realtime mode；`web/src/components/objectsets/ObjectSetLivePage.tsx` 提供 ObjectSet Live 页。
+- 剩余：多实例 fan-out、replay window 运维指标、断线恢复矩阵与端到端压测仍需补齐。
 
 **Gap-R2 — 数据摄入 stream**
 - 现状：只能通过 Action 写入。
@@ -363,17 +363,17 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - 现状：未暴露。
 - 建议：按 US-046 类似模式补齐。
 
-**Gap-D3 — CLI action / aggregate 子命令**
-- 现状：未暴露。
-- 建议：`weave action apply`、`weave aggregate`、`weave objectset run`。
+**Gap-D3 — CLI action / aggregate / objectset 深度**
+- 现状：已暴露 `weave action apply`、`weave aggregate`、`weave objectset load`、`weave objectset create-temporary`，入口分别在 `cmd/weave-cli/cmd_action.go`、`cmd/weave-cli/cmd_aggregate.go`、`cmd/weave-cli/cmd_objectset.go`，并由 `cmd/weave-cli/cli_us304_test.go` 覆盖。
+- 建议：补 `docs/cli.md` 的 action/aggregate/objectset 命令参考、常用 body 模板、可能的 `objectset run` 便捷别名，以及更丰富的 table 输出；这些属于 remaining depth gaps，不是缺失入口。
 
 **Gap-D4 — MCP prompts / resources / sampling**
-- 现状：stub。
-- 建议：至少实现 `resources/list` 返回可用的 ontology/objectType 列表。
+- 现状：`pkg/mcp/prompts.go` 已实现 `prompts/list` / `prompts/get`，从 OMS ActionType 元数据合成 prompt；`pkg/mcp/resources.go` 已实现 `resources/list` / `resources/read`，能列出 ontology、ObjectType 与临时 ObjectSet 资源，ObjectType URI 形如 `weave://objecttype/<ontology>/<objectType>`；对外契约见 `docs/mcp.md`。
+- 建议：下一步补 MCP sampling、resource subscribe 以及生产认证/部署说明；prompts/resources 不再是缺失入口。
 
 **Gap-D5 — weave-mcp stdio 真可用**
-- 现状：stub，不接 DB。
-- 建议：让它复用 main server 的依赖注入，成为 "本地模式" 的独立入口。
+- 现状：`weave-mcp` 已有 bridge 模式：设置 `WEAVE_MCP_URL` 后，`cmd/weave-mcp/http_bridge.go` 会把本地 stdio JSON-RPC 转发到运行中的 `/mcp`，并复用同一套 tools/prompts/resources；也会透传 `WEAVE_MCP_TOKEN` / `WEAVE_MCP_API_KEY`。
+- 建议：remaining local-standalone gap 是独立启动本地服务并嵌入 PG/NATS/Bleve 的模式；bridge 模式已经可供本地 AI 客户端使用。
 
 ---
 
@@ -567,17 +567,19 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 ### US-060 — SSE ObjectSet subscription
 
 **Acceptance Criteria**
-- 新端点 `GET /api/v2/ontologies/{ontology}/objectSets/subscribe?objectSet={rid}`；
+- 端点 `GET /api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` 已挂载；
 - SSE 事件流，event data 为 `{eventType: ADDED_OR_UPDATED|DELETED, object: WireObject}`；
-- 从 Funnel broadcaster 订阅对应 objectType，在服务端做 Where 过滤；
-- 支持 `Last-Event-ID` 断点续传 via NATS sequence；
-- 测试：订阅 + 应用 5 个 action，客户端收到 5 个事件且顺序正确。
+- 从 `pkg/funnel/broadcast.go` 订阅对应 objectType，在 `pkg/oss/subscribe_sse.go` 做 Where 过滤；
+- 支持 `Last-Event-ID` 与 `since` query parameter 断点续传；
+- 服务端具备 per-user connection guard，避免单用户长连接耗尽 worker；
+- 测试：订阅 + 应用 action，客户端收到事件且顺序正确。
 
 ### US-061 — Frontend `useObjectSetSubscription` hook
 
 **Acceptance Criteria**
 - `web/src/hooks/useObjectSetSubscription.ts` 基于 `EventSource`；
-- Browser 页面"实时模式"切换开关；
+- `web/src/components/browser/BrowserPage.tsx` Browser 页面"实时模式"切换开关；
+- `web/src/components/objectsets/ObjectSetLivePage.tsx` ObjectSet Live 页；
 - Vitest 测试 mock EventSource。
 
 ### US-062 — Stream ingest endpoint
@@ -683,8 +685,8 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - **US-076**：`make bench` 性能基准（Northwind 1M 对象 baseline）；
 - **US-077**：OpenTelemetry 全链路 trace；
 - **US-078**：Python SDK ObjectSet builder + Aggregation + TimeSeries + Attachment；
-- **US-079**：CLI `action apply` / `aggregate` / `objectset run`；
-- **US-080**：`weave-mcp` 独立 stdio 模式（启动本地服务嵌入 PG + NATS in-memory）；
+- **US-079**：CLI action/aggregate/objectset 深度：`action apply`、`aggregate`、`objectset load/create-temporary` 已存在；后续补命令参考、body 模板、便捷别名和输出 polish；
+- **US-080**：`weave-mcp` stdio HTTP bridge 已可通过 `WEAVE_MCP_URL` 复用运行中 `/mcp`；后续补独立本地模式（启动本地服务嵌入 PG + NATS in-memory）；
 - **US-081**：文档：operating-guide / upgrade-guide / troubleshooting。
 
 ---
@@ -822,6 +824,9 @@ v2 允许有限的 breaking changes，需在 `CHANGES-v2.md` 显式标注：
 | Actions executor | `pkg/actions/executor.go` |
 | Funnel publisher/consumer | `pkg/funnel/publisher.go`, `consumer.go` |
 | Broadcast (后端) | `pkg/funnel/broadcast.go` |
+| ObjectSet SSE subscribe | `pkg/oss/subscribe_sse.go`, `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` |
+| WebSocket subscriptions | `pkg/subscriptions`, `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` |
+| Realtime UI | `web/src/hooks/useObjectSetSubscription.ts`, `web/src/components/browser/BrowserPage.tsx`, `web/src/components/objectsets/ObjectSetLivePage.tsx` |
 | Links resolver | `pkg/links/resolver.go`, `fk_resolver.go`, `join_table_resolver.go` |
 | Auth JWT / API Key | `pkg/auth/jwt_signer.go`, `api_key.go` |
 | Policy filter (未接入主链路) | `pkg/oss/policy_filter.go`, `marking_filter.go` |
