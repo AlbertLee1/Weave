@@ -33,7 +33,7 @@
 | 聚合算子 | 全覆盖 | 12 种 metric + 5 种 groupBy | 精度/近似分位数待校对 |
 | 安全模型 | RBAC Phase 1 完成 | 仅 Ontology-scoped RBAC，**无行级 / 列级 / Marking 评估链路** | 语义缺 |
 | 实时订阅 | WebSocket/SSE 订阅列入路线 | 已有 WebSocket `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` + SSE `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`；Funnel broadcast 已暴露到客户端 | 深度完善 |
-| TimeSeries | 3 端点 + PG 存储 | PG 存储有，但无时间分桶 / 聚合查询 | 深度缺 |
+| TimeSeries | 7 端点 + PG/VM 存储 | PG 存储、VictoriaMetrics 存储、transform/resample 下推、Timescale CAGG 与 Vertex window aggregation 已有；深度缺口在 calendar-aware bucket、retention policy、multi-resolution materialization | 深度完善 |
 | GeoTemporal | 2 端点 + 存储 | PG `geotemporal_values` 持久化，缺聚合/订阅深度 | 深度缺 |
 | Function backed action | Tier 3.2 声称完成 | HTTP dispatcher 存在，**无内嵌运行时**（Goja/Wasm） | 深度缺 |
 | Type classes | 语法支持 | **不驱动 Bleve 索引映射**（analyzer.not_analyzed 等未生效） | 行为缺 |
@@ -117,7 +117,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | Types | TypeClass | 🟢 存储 | 🟢 `properties.type_config` | 🟢 | **85%** | **Phase 6 Gate**: type_config analyzer hints (not_analyzed / keyword / english) 通过 `pkg/index/mapping_builder.go` 注入 Bleve FieldMapping；FK link resolver 依赖此路径 (US-001, US-012, US-040) |
 | Special | Attachment Blob | 🟢 | 🟢 本地 | 🟢 | **85%** | 4 全局端点 + 4 property 端点；无 S3/minio 后端 |
 | Special | MediaReference | 🟢 | 🟢 | 🟢 | **80%** | 3 端点就位 |
-| Special | TimeSeries | 🟢 3 端点 | 🟢 PG `timeseries_points` | 🟡 | **55%** | Append/FirstPoint/LastPoint/StreamPoints；**无时间分桶聚合、无 downsample** |
+| Special | TimeSeries | 🟢 7 端点 | 🟢 PG `timeseries_points` + optional VM | 🟡 | **72%** | `/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}` 提供 Vertex window aggregation；`/firstPoint`、`/lastPoint`、`/streamPoints`、`/points` 提供基础读写；`/api/v2/ontologies/{ontologyApiName}/timeseries/transform` 支持链式 transform + `resample`；`pkg/oss/handlers_timeseries_transform.go` 会把单步 resample 下推到 `pkg/timeseries/downsample.go` 的 `DownsampleSpec` / `DownsamplePoints`；`pkg/timeseries/pg_store.go` 使用 `timeseries_cagg_5min` + `RunCAGGRefreshLoop`，`pkg/timeseries/vm_store.go` 的 `NewVMStore` 走 VictoriaMetrics `query_range`；支持 `avg/sum/min/max/count/first/last`，remaining depth gaps 是 calendar alignment、retention policy、multi-resolution materialization 与生产调优 |
 | Special | GeoTemporal | 🟢 2 端点 | 🟢 PG `geotemporal_values` | 🟡 | **60%** | latestValue / streamHistoricValues 由 `cmd/server/main.go` 在 PG 可用时接入 PG-backed `PgStore`；无 PG 时使用 in-process MemoryStore as degraded mode |
 | Special | CipherText (AES-GCM) | 🟢 | 🟢 | 🟢 | **80%** | decrypt 端点 + 信封加密 |
 | Special | Transaction (preview) | 🟢 | 🟡 | 🟡 | **55%** | `/transactions/{id}/edits` 端点就位；**事务边界语义浅**，未与 Action 集成 |
@@ -151,7 +151,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | "Phase 4 gate: **100% Foundry 对齐** 68/68" | 路由 68/68 就位；**端点语义与 Foundry 不等价**的至少 10+ 个 | 上表黄红部分 |
 | "Phase 5: RBAC 完成" | Ontology 作用域 + role-permission 矩阵完成；**行/列/Marking 未纳入查询过滤** | `pkg/oss/policy_filter.go` / `marking_filter.go` 存在但未接主链路 |
 | "nearestNeighbors + MCP AI tools 交付" | 单字段 KNN + 4 MCP tool；**无混合检索 / 无 reranking / 无跨 ObjectType** | `pkg/oss/objectset/nn.go` 仅 PropertyIdentifier |
-| "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store；GeoTemporal 也有 `pkg/geotemporal/pg_store.go` | GeoTemporal 使用 `migrations/000205_geotemporal_values.up.sql` 持久化，并由 `migrations/000208_geotemporal_spatial_indexes.up.sql` 加强 bbox + 时间过滤索引 |
+| "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store、VictoriaMetrics store、transform/downsample pushdown 与 Vertex window aggregation；GeoTemporal 也有 `pkg/geotemporal/pg_store.go` | TimeSeries 基础读写路由、`/timeseries/transform`、`DownsamplePoints`、`timeseries_cagg_5min`、VM `query_range` 已落地；GeoTemporal 使用 `migrations/000205_geotemporal_values.up.sql` 持久化，并由 `migrations/000208_geotemporal_spatial_indexes.up.sql` 加强 bbox + 时间过滤索引 |
 | "Function-backed Actions" | HTTP dispatcher 可用；**无内嵌运行时**，依赖外部 function server | `pkg/actions/function_dispatcher.go` + `http_dispatcher.go` |
 | "Edit → NATS → Bleve → Broadcast" | 后端管线通，并已通过 SSE/WS 暴露给客户端；深度风险在多实例广播、replay window 和断线恢复矩阵 | `pkg/funnel/broadcast.go`、`pkg/oss/subscribe_sse.go`、`pkg/subscriptions` |
 | "Interface 完整" | 元数据 CRUD + 多态查询端点；**跨子类型排序 + 分页稳定性未测试** | 无集成测试覆盖"多 ObjectType 实现同一 interface 的 load + sort"路径 |
@@ -213,7 +213,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - 新增 `make test-contract` 命令运行 "Foundry 行为等价矩阵" ≥ 100 个样例；
 - 新增 `pkg/security/policy_engine.go` 完整 policy evaluation 链，**至少 10 个端到端集成测试覆盖 row/column filter**；
 - 已有 `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` SSE 端点、`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` WebSocket 端点，前端有 Browser realtime mode 与 ObjectSet Live 页；
-- `pkg/geotemporal/pg_store.go` + `pkg/timeseries` 时间分桶聚合，`make bench` 基准存在；
+- `pkg/geotemporal/pg_store.go` + `pkg/timeseries` 时间分桶聚合，`/timeseries/transform` 下推到 PG/VM downsampler，`make bench` 基准存在；
 - `pkg/functions/` 新包内嵌 Goja，可执行 TS-like 函数；
 - `docs/CHANGES-v2.md` 记录 v2 所有改动与 breaking changes。
 
@@ -442,7 +442,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - US-070（RID version suffix 解析）
 
 **W3 — TimeSeries / GeoTemporal**
-- US-071（TimeSeries 分桶聚合：downsample / aggregate by duration）
+- US-071（TimeSeries calendar alignment / retention / multi-resolution materialization）
 - US-072（GeoTemporal PG 持久化 + PostGIS 可选）
 
 **W4 — withProperties 二阶 + Aggregation on ObjectSet**
@@ -650,13 +650,14 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - Snapshot load 按 version 返回历史元数据；
 - 测试：v1 时 ObjectType 有 3 属性，v2 有 4 属性，分别按 version 取到正确 shape。
 
-### US-071 — TimeSeries downsample / bucket aggregation
+### US-071 — TimeSeries production semantics after downsample
 
 **Acceptance Criteria**
-- 新端点 `POST /api/v2/ontologies/{o}/objects/{ot}/{pk}/timeSeries/{prop}/aggregate`；
-- 支持 `bucketSize: P1H|P1D|P1W`；
-- Metric: avg/min/max/sum/count；
-- 测试：生成 10 万个点 + 按天聚合结果正确。
+- 现有路径保持绿色：`/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}`、`/firstPoint`、`/lastPoint`、`/streamPoints`、`/points`、`/api/v2/ontologies/{ontologyApiName}/timeseries/transform`；
+- `pkg/oss/handlers_timeseries_transform.go` 对单步 `resample` 保持 `DownsamplePoints` 下推；`pkg/timeseries/downsample.go` 的 `DownsampleSpec` 继续覆盖 `avg/sum/min/max/count/first/last`；
+- `pkg/timeseries/pg_store.go` 继续通过 `timeseries_cagg_5min` + `RunCAGGRefreshLoop` 服务 PG/TimescaleDB 聚合，`pkg/timeseries/vm_store.go` 的 `NewVMStore` 继续通过 VictoriaMetrics `query_range` 服务大序列；
+- 新增工作聚焦 remaining depth gaps：calendar-aware bucket（P1H/P1D/P1W 与时区）、retention/downsample policy、multi-resolution materialization、生产级压测预算；
+- 测试：保留 `pkg/oss/handlers_timeseries_transform_us435_test.go`、`pkg/timeseries/us467_*`、`pkg/timeseries/vm_store_test.go` 现有 pushdown/CAGG/VM 覆盖，并新增 calendar/retention 语义用例。
 
 ### US-072 — GeoTemporal PG store 已落地 + 可选 PostGIS 索引
 
@@ -830,7 +831,7 @@ v2 允许有限的 breaking changes，需在 `CHANGES-v2.md` 显式标注：
 | Links resolver | `pkg/links/resolver.go`, `fk_resolver.go`, `join_table_resolver.go` |
 | Auth JWT / API Key | `pkg/auth/jwt_signer.go`, `api_key.go` |
 | Policy filter (未接入主链路) | `pkg/oss/policy_filter.go`, `marking_filter.go` |
-| TimeSeries | `pkg/timeseries/pg_store.go` |
+| TimeSeries | `pkg/oss/handlers_timeseries_transform.go`, `pkg/oss/handlers_vertex_timeseries.go`, `pkg/timeseries/downsample.go`, `pkg/timeseries/pg_store.go`, `pkg/timeseries/vm_store.go` |
 | GeoTemporal | `pkg/geotemporal/pg_store.go`, `pkg/geotemporal/memory_store.go` |
 | Cipher | `pkg/cipher/` |
 | MCP | `pkg/mcp/`, `cmd/weave-mcp/` |

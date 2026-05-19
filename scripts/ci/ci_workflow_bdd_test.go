@@ -281,6 +281,112 @@ func TestBDD_GeoTemporalDocsReflectPGStoreDefault(t *testing.T) {
 	}
 }
 
+func TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	routes := readFile(t, filepath.Join(root, "pkg", "oss", "handlers.go"))
+	transformHandler := readFile(t, filepath.Join(root, "pkg", "oss", "handlers_timeseries_transform.go"))
+	vertexHandler := readFile(t, filepath.Join(root, "pkg", "oss", "handlers_vertex_timeseries.go"))
+	downsample := readFile(t, filepath.Join(root, "pkg", "timeseries", "downsample.go"))
+	pgStore := readFile(t, filepath.Join(root, "pkg", "timeseries", "pg_store.go"))
+	vmStore := readFile(t, filepath.Join(root, "pkg", "timeseries", "vm_store.go"))
+	pushdownTests := readFile(t, filepath.Join(root, "pkg", "oss", "handlers_timeseries_transform_us435_test.go"))
+	caggTests := readFile(t, filepath.Join(root, "pkg", "timeseries", "us467_pg_downsample_test.go"))
+	vmTests := readFile(t, filepath.Join(root, "pkg", "timeseries", "vm_store_test.go"))
+
+	for _, claim := range []string{
+		"**无时间分桶聚合、无 downsample**",
+		"无时间分桶 / 聚合查询",
+		"US-071（TimeSeries 分桶聚合：downsample / aggregate by duration）",
+		"### US-071 — TimeSeries downsample / bucket aggregation",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale TimeSeries claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`/api/v2/ontologies/{ontologyApiName}/timeseries/transform`",
+		"`/api/v2/ontologies/{ontologyApiName}/objects/{objectType}/{primaryKey}/timeseries/{property}`",
+		"`/firstPoint`",
+		"`/lastPoint`",
+		"`/streamPoints`",
+		"`/points`",
+		"`pkg/oss/handlers_timeseries_transform.go`",
+		"`pkg/oss/handlers_vertex_timeseries.go`",
+		"`pkg/timeseries/downsample.go`",
+		"`pkg/timeseries/pg_store.go`",
+		"`pkg/timeseries/vm_store.go`",
+		"`DownsampleSpec`",
+		"`DownsamplePoints`",
+		"`timeseries_cagg_5min`",
+		"`RunCAGGRefreshLoop`",
+		"`NewVMStore`",
+		"`query_range`",
+		"`avg/sum/min/max/count/first/last`",
+		"remaining depth gaps",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live TimeSeries contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		`timeseries/{property}`,
+		`timeseries/{property}/firstPoint`,
+		`timeseries/{property}/lastPoint`,
+		`timeseries/{property}/streamPoints`,
+		`timeseries/{property}/points`,
+		`timeseries/transform`,
+		`GetVertexTimeSeries`,
+		`TransformTimeSeries`,
+	} {
+		if !strings.Contains(routes, required) {
+			t.Errorf("pkg/oss route registration must expose TimeSeries fragment %q", required)
+		}
+	}
+	for _, required := range []string{"pushDownDownsample", "DownsamplePoints", "OpResample", "NormalizeAggregation"} {
+		if !strings.Contains(transformHandler, required) {
+			t.Errorf("TimeSeries transform handler must expose downsample pushdown fragment %q", required)
+		}
+	}
+	for _, required := range []string{"VertexTimeSeriesQuerier", "SetVertexTimeSeriesQuerier", "GetVertexTimeSeries", "AggAvg"} {
+		if !strings.Contains(vertexHandler, required) {
+			t.Errorf("Vertex TimeSeries handler must expose window aggregation fragment %q", required)
+		}
+	}
+	for _, required := range []string{"type DownsampleSpec", "type Downsampler interface", "DownsampleFirst", "DownsampleLast"} {
+		if !strings.Contains(downsample, required) {
+			t.Errorf("downsample.go must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewPGStore", "func (s *PGStore) DownsamplePoints", "timeseries_cagg_5min", "func RunCAGGRefreshLoop"} {
+		if !strings.Contains(pgStore, required) {
+			t.Errorf("PG TimeSeries store must expose %q", required)
+		}
+	}
+	for _, required := range []string{"func NewVMStore", "func (s *VMStore) DownsamplePoints", "/api/v1/query_range", "buildDownsamplePromQL"} {
+		if !strings.Contains(vmStore, required) {
+			t.Errorf("VictoriaMetrics TimeSeries store must expose %q", required)
+		}
+	}
+	for _, source := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"pushdownTests", pushdownTests, []string{"TestTransform_PushdownFiresForResampleOnDownsampler", "DownsamplePoints"}},
+		{"caggTests", caggTests, []string{"timeseries_cagg_5min", "DownsamplePoints"}},
+		{"vmTests", vmTests, []string{"TestVMStore_DownsamplePoints_AllAggregations", "query_range"}},
+	} {
+		for _, required := range source.want {
+			if !strings.Contains(source.text, required) {
+				t.Errorf("%s must cover live TimeSeries fragment %q", source.name, required)
+			}
+		}
+	}
+}
+
 func TestBDD_RealtimeSubscriptionStatusDocReflectsLiveSurfaces(t *testing.T) {
 	root := repoRoot(t)
 	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
