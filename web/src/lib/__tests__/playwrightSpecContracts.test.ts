@@ -18,6 +18,7 @@ import us444ColumnMaskSpecSource from '../../../e2e/us444/16-mask.spec.ts?raw';
 import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw';
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
 import us444FunctionReplaySpecSource from '../../../e2e/us444/19-fn-replay.spec.ts?raw';
+import us444SubscribeSpecSource from '../../../e2e/us444/20-subscribe.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
@@ -245,5 +246,17 @@ describe('Playwright spec contracts', () => {
     expect(us444CellMaskSpecSource).toContain('cell-mask list endpoint must be wired');
     expect(us444CellMaskSpecSource).toContain('cell-mask create endpoint must be wired');
     expect(us444CellMaskSpecSource).toContain('InvalidCellMask');
+  });
+
+  it('keeps the US-444 subscribe gate tied to the WebSocket subscribe handshake', () => {
+    const source = us444SubscribeSpecSource;
+
+    expect(source).not.toContain('no welcome frame within 3s');
+    expect(source).not.toContain('endpoint unwired or quiet');
+    expect(source).not.toContain('test.skip(firstMessage === null');
+    expect(source).toMatch(/type:\s*['"]subscribe['"]/);
+    expect(source).toMatch(/objectType:\s*['"]customer['"]/);
+    expect(source).toContain("toBe('subscribed')");
+    expect(source).toContain('subscriptionId');
   });
 });
