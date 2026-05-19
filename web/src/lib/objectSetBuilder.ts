@@ -296,7 +296,18 @@ function walk(node: ObjectSetNode, errors: string[]): void {
       walk(node.objectSet, errors);
       break;
     case 'nearestNeighbors':
-      errors.push('nearestNeighbors is not yet supported by the backend');
+      if (!node.propertyIdentifier?.property.apiName) {
+        errors.push('nearestNeighbors node requires an embedding property');
+      }
+      if (node.numNeighbors !== undefined && node.numNeighbors <= 0) {
+        errors.push('nearestNeighbors node requires neighbors > 0');
+      }
+      if (
+        !node.query?.text?.value &&
+        (!node.query?.vector?.value || node.query.vector.value.length === 0)
+      ) {
+        errors.push('nearestNeighbors node requires query text or vector');
+      }
       walk(node.objectSet, errors);
       break;
   }

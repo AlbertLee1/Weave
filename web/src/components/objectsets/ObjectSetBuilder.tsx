@@ -1,5 +1,6 @@
 import type {
   DerivedPropertyDef,
+  NearestNeighborsObjectSet,
   ObjectSetDefinition,
   WhereClause,
 } from '../../api/types';
@@ -12,6 +13,7 @@ const OBJECT_SET_TYPES = [
   'subtract',
   'searchAround',
   'withProperties',
+  'nearestNeighbors',
 ] as const;
 
 type SupportedType = (typeof OBJECT_SET_TYPES)[number];
@@ -80,6 +82,14 @@ function defaultForType(
             metric: 'count',
           },
         ],
+      };
+    case 'nearestNeighbors':
+      return {
+        type: 'nearestNeighbors',
+        objectSet: { type: 'base', objectType: firstType },
+        propertyIdentifier: { property: { apiName: '' } },
+        numNeighbors: 10,
+        query: { text: { value: '' } },
       };
   }
 }
@@ -215,6 +225,13 @@ function WhereEditor({
   );
 }
 
+function updateNearest(
+  value: NearestNeighborsObjectSet,
+  patch: Partial<NearestNeighborsObjectSet>,
+): NearestNeighborsObjectSet {
+  return { ...value, ...patch };
+}
+
 export function ObjectSetBuilder({
   objectTypes,
   value,
@@ -295,6 +312,48 @@ export function ObjectSetBuilder({
             </select>
           </>
         )}
+
+        {/* NearestNeighbors: property + K + text query */}
+        {value.type === 'nearestNeighbors' && (
+          <>
+            <input
+              className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-32"
+              placeholder="embedding field"
+              value={value.propertyIdentifier?.property.apiName ?? ''}
+              onChange={(e) =>
+                onChange(updateNearest(value, {
+                  propertyIdentifier: {
+                    property: { apiName: e.target.value },
+                  },
+                }))
+              }
+              aria-label="embedding property"
+            />
+            <input
+              className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-20"
+              type="number"
+              min={1}
+              value={value.numNeighbors ?? 10}
+              onChange={(e) =>
+                onChange(updateNearest(value, {
+                  numNeighbors: Number(e.target.value),
+                }))
+              }
+              aria-label="neighbors"
+            />
+            <input
+              className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary min-w-48 flex-1"
+              placeholder="query text"
+              value={value.query?.text?.value ?? ''}
+              onChange={(e) =>
+                onChange(updateNearest(value, {
+                  query: { text: { value: e.target.value } },
+                }))
+              }
+              aria-label="query text"
+            />
+          </>
+        )}
       </div>
 
       {/* Filter: nested objectSet + where */}
@@ -315,6 +374,18 @@ export function ObjectSetBuilder({
 
       {/* SearchAround: nested objectSet */}
       {value.type === 'searchAround' && (
+        <div className="pl-2 border-l border-border">
+          <ObjectSetBuilder
+            objectTypes={objectTypes}
+            value={value.objectSet}
+            onChange={(nested) => onChange({ ...value, objectSet: nested })}
+            depth={depth + 1}
+          />
+        </div>
+      )}
+
+      {/* NearestNeighbors: nested candidate ObjectSet */}
+      {value.type === 'nearestNeighbors' && (
         <div className="pl-2 border-l border-border">
           <ObjectSetBuilder
             objectTypes={objectTypes}

@@ -1,6 +1,6 @@
 # Ralph Progress Log
-Started: Tue May 19 09:06:53 CST 2026
-Branch: ralph/self-iteration-20260519-090653
+Started: Tue May 19 12:27:26 CST 2026
+Branch: ralph/self-iteration-20260519-122726
 ---
 
 ## Codebase Patterns
@@ -9,106 +9,53 @@ Branch: ralph/self-iteration-20260519-090653
 - US-444 helper and README guidance is now source-contracted too: docs may describe `skipWhenBackendDown` as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
 - Phase 6 upper-layer probes should remain skip-free and should assert concrete OSv2 response shape before using seeded fixtures: `objectTypes`, `actionTypes`, `interfaceTypes`, metadata `linkTypes`, and `loadObjectsOrInterfaces` page payloads should fail loudly on missing arrays or missing `totalCount` instead of falling through shallow route reachability.
 - Phase 7 upper-layer probes should remain skip-free and should assert concrete seeded identity, policy, audit, actionTypes, and realtime subscription behavior; optional empty audit checks or missing `data` array checks let reachable service regressions look like passing probes.
+- ObjectSet composer support for a new backend variant usually needs both `web/src/components/objectsets/ObjectSetBuilder.tsx` controls/defaults and `web/src/lib/objectSetBuilder.ts` node validation/round-trip updates.
+- Run Web TypeScript checks from `web/` with `npx tsc --noEmit` (or `npm --prefix web run build`); `npm --prefix web exec tsc -- --noEmit` does not pass the flag correctly in this environment.
 
 ## Kickoff
-- Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-090653`.
-- Previous active PRD belonged to `ralph/self-iteration-20260519-082247` and all stories had `passes: true`; archived old `scripts/ralph/prd.json` and `scripts/ralph/progress.txt` to `scripts/ralph/archive/self-iteration-20260519-091157/`.
+- Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-122726`.
+- Previous active PRD belonged to `ralph/self-iteration-20260519-090653` and all stories had `passes: true`; archived old `scripts/ralph/prd.json` and `scripts/ralph/progress.txt` to `scripts/ralph/archive/self-iteration-20260519-123148/`.
 - Root symlinks verified before refresh: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
 - No `PR CI auto-fix context` was present in the active progress file.
-- GitHub CI at kickoff: PR CI run 26069425768 completed success; latest completed main CI run 26068337937 completed success; fresh main CI run 26069761127 was in progress with Web job success and Go job in race/coverage.
+- GitHub CI at kickoff: latest main CI runs 26076080948, 26069761127, and 26068337937 completed success.
 - Local health sampled:
-  - `go test ./...` passed.
-  - `npm --prefix web test -- --run` passed: 268 files, 2812 tests.
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts` passed: 16 tests.
+  - `go test ./pkg/oss/objectset ./cmd/server -run 'TestExecuteNearestNeighbors|TestBuildEmbeddingProvider|TestDefinition_ValidateNearestNeighbors'` passed.
 - Known-risk inspection:
-  - Fresh-CI `cmd/server/embed.go` risk is covered by existing `cmd/server/embed_ci_bdd_test.go` and server embed placeholders.
+  - Fresh-CI `cmd/server/embed.go` risk is covered by existing embed tests/placeholders.
   - US-453 streamless binary-response risk is covered by `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
   - Dogfood DOG-001 through DOG-005 have committed-looking implementation and regression coverage in this checkout.
-- New PRD created with three high-value CI/E2E signal stories, prioritizing fresh CI discoverability for upper-layer Playwright probes outside `web/e2e/us444/`.
+- New PRD created with three focused ObjectSet composer stories, prioritizing the stale UI block on backend-supported `nearestNeighbors`.
 
 ## Selected Story
-- Selected SELF-434 because it is the highest-priority incomplete story and the current GitHub CI workflow only lists `us444/`, leaving Phase 6, Phase 7, VTX-099, dogfood, and standalone upper-layer probes outside CI syntax/import discovery.
+- Selected SELF-437 because it is the highest-priority incomplete story and the backend/server already support `nearestNeighbors`, while the Web composer still rejects it as unsupported.
+---
 
-## SELF-434 - Expand CI Playwright discovery beyond US-444
+## Tue May 19 12:37:00 CST 2026 - SELF-437
+- What was implemented:
+  - Enabled `nearestNeighbors` in the ObjectSet composer type selector.
+  - Added composer controls for embedding property, neighbor count, and query text.
+  - Updated ObjectSet builder validation so complete nearestNeighbors definitions are executable and incomplete ones report specific missing fields.
+  - Added BDD coverage for switching to nearestNeighbors and rendering a saved nearestNeighbors definition.
+  - Added ObjectSet builder unit coverage for nearestNeighbors validation and wire-format round-trip.
 - TDD red:
-  - Added a raw `.github/workflows/ci.yml` source import to `web/src/lib/__tests__/playwrightSpecContracts.test.ts`.
-  - Added a contract requiring the Playwright discovery step to list `us444/`, `phase6/`, `phase7/`, VTX-099, dogfood, and standalone upper-layer E2E spec targets.
-  - Ran `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`.
-  - Expected failure observed: the new contract rejected the missing `phase6/` target because CI only ran `npx playwright test --list us444/`.
-- Implementation:
-  - Updated `.github/workflows/ci.yml` Web job step from `Playwright spec discovery (us444)` to `Playwright spec discovery (upper-layer E2E)`.
-  - Expanded the list-only command to include `us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts`.
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx` failed as expected before implementation:
+    - `validateNode` returned `nearestNeighbors is not yet supported by the backend`.
+    - Switching the builder type to `nearestNeighbors` made zero `onChange` calls.
+    - The composer rendered the unsupported validation instead of editable controls.
 - Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 18 tests.
-  - `npm --prefix web exec playwright test -- --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts` passed and listed 71 tests in 37 files.
-  - `rg -n "Playwright spec discovery" .github/workflows/ci.yml` showed the expanded `Playwright spec discovery (upper-layer E2E)` step.
-  - `npm --prefix web run build` passed, including `tsc -b`, Vite build, and bundle budget check.
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` passed: 3 files, 25 tests.
+  - From `web/`: `npx tsc --noEmit` passed.
   - `git diff --check` passed.
-  - Fresh main GitHub CI run 26069761127 completed success while this story was in progress.
 - Files changed:
-  - `.github/workflows/ci.yml`
-  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `web/src/components/objectsets/ObjectSetBuilder.tsx`
+  - `web/src/components/objectsets/__tests__/ObjectSetBuilder.nearestNeighbors.bdd.test.tsx`
+  - `web/src/lib/objectSetBuilder.ts`
+  - `web/src/lib/__tests__/objectSetBuilder.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- Result: SELF-434 marked `passes: true`; SELF-435 and SELF-436 remain open for later Ralph iterations.
-
-## Selected Story - SELF-435
-- Selected SELF-435 because SELF-434 was already committed and passing, and SELF-435 was the highest-priority remaining story with `passes != true`.
-
-## SELF-435 - Source-contract Phase 6 E2E gates against degraded skips
-- TDD red:
-  - Added raw imports for all four Phase 6 Playwright probes to `web/src/lib/__tests__/playwrightSpecContracts.test.ts`.
-  - Added a Phase 6 source contract requiring each probe to stay free of `test.skip`, `test.fixme`, optional 404/503/service-unavailable allowances, and degraded-service wording.
-  - Added a Phase 6 source contract requiring concrete response-shape and rendered-data assertions for withProperties, multi-groupBy aggregation, optimistic concurrency, and interface paging.
-  - Ran `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`.
-  - Expected failure observed: the new contract rejected missing `Array.isArray(otBody.data)` in `web/e2e/phase6/withproperties-derived.spec.ts`.
-- Implementation:
-  - Added explicit objectTypes `data` array assertions to the Phase 6 withProperties and aggregation preflights.
-  - Added explicit actionTypes `data` array assertion to the optimistic-concurrency preflight.
-  - Added explicit interfaceTypes `data` array assertion to the interface-paging preflight.
-  - Added explicit `loadObjectsOrInterfaces` page payload assertions for `data` array and string `totalCount` before cursor validation.
-- Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 20 tests.
-  - `npm --prefix web exec playwright test -- --list phase6/` passed and listed 4 tests in 4 files.
-  - `rg -n "test\\.skip|test\\.fixme|not yet wired|unavailable" web/e2e/phase6` returned no matches (exit 1 from `rg` because the forbidden patterns were absent).
-  - `git diff --check` passed.
-  - `npm --prefix web run build` passed, including `tsc -b`, Vite build, and bundle budget check.
-- Files changed:
-  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
-  - `web/e2e/phase6/withproperties-derived.spec.ts`
-  - `web/e2e/phase6/aggregation-multi-groupby.spec.ts`
-  - `web/e2e/phase6/optimistic-concurrency.spec.ts`
-  - `web/e2e/phase6/interface-multitype-paging.spec.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Result: SELF-435 marked `passes: true`; SELF-436 remains open for a later Ralph iteration.
-
-## Selected Story - SELF-436
-- Selected SELF-436 because SELF-434 and SELF-435 were already committed and passing, and SELF-436 was the only remaining story with `passes != true`.
-
-## SELF-436 - Source-contract Phase 7 security and realtime E2E gates
-- TDD red:
-  - Added raw imports for all five Phase 7 Playwright probes to `web/src/lib/__tests__/playwrightSpecContracts.test.ts`.
-  - Added a Phase 7 source contract requiring security, audit, Browser realtime, and SSE reconnect probes to stay free of `test.skip`, `test.fixme`, degraded-service wording, and optional 404/503 allowances.
-  - Added source contracts requiring seeded identity semantics for manager/peer, ACME/ACME2, admin/peer audit access, and realtime actionTypes/subscription assertions.
-  - Ran `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`.
-  - Expected failures observed: missing `Array.isArray(mgrBody.data)` in `web/e2e/phase7/policy-column-hiding.spec.ts` and missing `Array.isArray(body.data)` in `web/e2e/phase7/browser-realtime-mode.spec.ts`.
-- Implementation:
-  - Added explicit `data` array assertions to Phase 7 policy column-hiding, policy row-filter, Browser realtime, and SSE reconnect preflights before using seeded rows or actionTypes.
-  - Tightened the audit-log admin probe so audit entries with expected fields are required instead of optional when the response data array is empty.
-  - Kept Phase 7 skip/status contracts source-level so future optional-service allowances fail in Vitest before E2E execution.
-- Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 23 tests.
-  - `npm --prefix web exec playwright test -- --list phase7/` passed and listed 14 tests in 5 files.
-  - `rg -n "test\\.skip|test\\.fixme|not yet wired|unavailable|503|404" web/e2e/phase7` returned no matches (exit 1 from `rg` because the forbidden patterns were absent).
-  - `git diff --check` passed.
-  - `npm --prefix web run build` passed, including `tsc -b`, Vite build, and bundle budget check.
-- Files changed:
-  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
-  - `web/e2e/phase7/audit-log-admin.spec.ts`
-  - `web/e2e/phase7/browser-realtime-mode.spec.ts`
-  - `web/e2e/phase7/policy-column-hiding.spec.ts`
-  - `web/e2e/phase7/policy-row-filter.spec.ts`
-  - `web/e2e/phase7/sse-reconnect.spec.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Result: SELF-436 marked `passes: true`; all stories in the active PRD are now passing.
+- **Learnings for future iterations:**
+  - ObjectSet composer support for a new variant has two surfaces: `web/src/components/objectsets/ObjectSetBuilder.tsx` for controls/defaults, and `web/src/lib/objectSetBuilder.ts` for `ObjectSetNode` validation/round-trip.
+  - `npm --prefix web exec tsc -- --noEmit` does not pass arguments as intended in this environment; run TypeScript checks from `web/` with `npx tsc --noEmit` or use the project build script.
+- Result: SELF-437 marked `passes: true`; SELF-438 and SELF-439 remain open for later Ralph iterations.
+---

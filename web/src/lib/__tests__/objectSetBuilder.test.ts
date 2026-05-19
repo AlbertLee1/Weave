@@ -134,6 +134,34 @@ describe('nodeToDefinition / definitionToNode round-trip', () => {
     });
   });
 
+  it('round-trips a nearestNeighbors node', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'nearestNeighbors',
+      objectSet: emptyBase('Incident'),
+      propertyIdentifier: { property: { apiName: 'embedding' } },
+      numNeighbors: 3,
+      query: { text: { value: 'find similar incidents' } },
+    };
+
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({
+      type: 'nearestNeighbors',
+      objectSet: { type: 'base', objectType: 'Incident' },
+      propertyIdentifier: { property: { apiName: 'embedding' } },
+      numNeighbors: 3,
+      query: { text: { value: 'find similar incidents' } },
+    });
+
+    const back = definitionToNode(def);
+    expect(back.type).toBe('nearestNeighbors');
+    if (back.type === 'nearestNeighbors') {
+      expect(back.propertyIdentifier?.property.apiName).toBe('embedding');
+      expect(back.numNeighbors).toBe(3);
+      expect(back.query?.text?.value).toBe('find similar incidents');
+    }
+  });
+
   it('omits ids in the produced definition', () => {
     const node: ObjectSetNode = {
       id: 'root-id',
@@ -196,14 +224,16 @@ describe('validateNode', () => {
     expect(errs.length).toBeGreaterThan(0);
   });
 
-  it('flags nearestNeighbors as not yet supported', () => {
+  it('accepts a complete nearestNeighbors node', () => {
     const errs = validateNode({
       id: '1',
       type: 'nearestNeighbors',
       objectSet: emptyBase('Employee'),
+      propertyIdentifier: { property: { apiName: 'embedding' } },
+      numNeighbors: 5,
+      query: { text: { value: 'find similar employees' } },
     });
-    expect(errs.length).toBeGreaterThan(0);
-    expect(errs.join(' ')).toMatch(/not yet supported|not supported/i);
+    expect(errs).toEqual([]);
   });
 });
 
