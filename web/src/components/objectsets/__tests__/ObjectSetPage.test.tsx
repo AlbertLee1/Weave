@@ -152,6 +152,52 @@ describe('ObjectSetPage', () => {
     });
   });
 
+  it.each([
+    [
+      'asType',
+      {
+        type: 'asType',
+        objectType: 'Employee',
+        objectSet: { type: 'base', objectType: 'Person' },
+      },
+    ],
+    ['interfaceBase', { type: 'interfaceBase', interfaceType: 'PersonInterface' }],
+    [
+      'interfaceLinkSearchAround',
+      {
+        type: 'interfaceLinkSearchAround',
+        objectSet: { type: 'base', objectType: 'Person' },
+        interfaceLink: 'assignedTo',
+      },
+    ],
+    ['methodInput', { type: 'methodInput', input: 'selectedObjects' }],
+  ] satisfies [string, ObjectSetDefinition][])(
+    'renders %s shared definitions as read-only validation instead of crashing',
+    async (variant, seed) => {
+      const param = encodeDefinitionToParam(seed);
+      window.history.replaceState({}, '', `/?${OBJECT_SET_URL_PARAM}=${param}`);
+
+      server.use(
+        http.post('/api/v2/ontologies/test/objectSets/loadObjects', () =>
+          HttpResponse.json({ data: [], totalCount: '0' }),
+        ),
+      );
+
+      renderPage();
+
+      expect(await screen.findByTestId('objectset-readonly-unsupported')).toHaveTextContent(
+        variant,
+      );
+      expect(
+        screen.getByText(
+          `${variant} ObjectSet is supported by the backend but is read-only in the composer`,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /execute/i })).toBeDisabled();
+      expect(screen.getByText(/No results yet/i)).toBeInTheDocument();
+    },
+  );
+
   it('shows error when API fails', async () => {
     server.use(
       http.post('/api/v2/ontologies/test/objectSets/loadObjects', () =>

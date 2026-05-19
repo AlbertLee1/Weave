@@ -5,6 +5,10 @@ import type {
   StaticObjectSet,
   WhereClause,
 } from '../../api/types';
+import {
+  isEditableObjectSetType,
+  unsupportedObjectSetMessage,
+} from '../../lib/objectSetBuilder';
 
 const OBJECT_SET_TYPES = [
   'base',
@@ -250,6 +254,33 @@ function updateStatic(
   return { ...value, ...patch };
 }
 
+function UnsupportedObjectSetView({
+  value,
+  depth,
+}: {
+  value: ObjectSetDefinition;
+  depth: number;
+}) {
+  const indent = depth * 16;
+  return (
+    <div
+      className="border border-accent-error/30 rounded bg-accent-error/5 p-3 flex flex-col gap-2"
+      data-testid="objectset-readonly-unsupported"
+      style={{ marginLeft: indent > 0 ? indent : undefined }}
+    >
+      <div className="text-xs font-sans text-accent-error font-medium">
+        Read-only ObjectSet: {value.type}
+      </div>
+      <div className="text-xs font-mono text-accent-error">
+        {unsupportedObjectSetMessage(value.type)}
+      </div>
+      <pre className="text-xs font-mono text-text-secondary bg-bg-tertiary border border-border rounded p-2 overflow-x-auto">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
 export function ObjectSetBuilder({
   objectTypes,
   value,
@@ -257,6 +288,10 @@ export function ObjectSetBuilder({
   depth = 0,
 }: ObjectSetBuilderProps) {
   const indent = depth * 16;
+
+  if (!isEditableObjectSetType(value.type)) {
+    return <UnsupportedObjectSetView value={value} depth={depth} />;
+  }
 
   function handleTypeChange(newType: string) {
     if (OBJECT_SET_TYPES.includes(newType as SupportedType)) {

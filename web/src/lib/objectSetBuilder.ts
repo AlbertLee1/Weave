@@ -17,7 +17,8 @@ export type ObjectSetNode =
   | SearchAroundNode
   | ReferenceNode
   | WithPropertiesNode
-  | NearestNeighborsNode;
+  | NearestNeighborsNode
+  | UnsupportedObjectSetNode;
 
 interface NodeBase {
   id: string;
@@ -84,6 +85,52 @@ export interface NearestNeighborsNode extends NodeBase {
     vector?: { value: number[] };
     text?: { value: string };
   };
+}
+
+export type ObjectSetComposerVariantSupport =
+  | 'editable'
+  | 'readOnlyUnsupported';
+
+export const OBJECT_SET_COMPOSER_VARIANT_SUPPORT = {
+  base: 'editable',
+  static: 'editable',
+  filter: 'editable',
+  union: 'editable',
+  intersect: 'editable',
+  subtract: 'editable',
+  searchAround: 'editable',
+  reference: 'editable',
+  withProperties: 'editable',
+  nearestNeighbors: 'editable',
+  asType: 'readOnlyUnsupported',
+  asBaseObjectTypes: 'readOnlyUnsupported',
+  interfaceBase: 'readOnlyUnsupported',
+  interfaceLinkSearchAround: 'readOnlyUnsupported',
+  methodInput: 'readOnlyUnsupported',
+} satisfies Record<ObjectSetDefinition['type'], ObjectSetComposerVariantSupport>;
+
+export type EditableObjectSetType = {
+  [Type in ObjectSetDefinition['type']]: (typeof OBJECT_SET_COMPOSER_VARIANT_SUPPORT)[Type] extends 'editable'
+    ? Type
+    : never;
+}[ObjectSetDefinition['type']];
+
+export interface UnsupportedObjectSetNode extends NodeBase {
+  type: 'unsupported';
+  objectSetType: ObjectSetDefinition['type'];
+  def: ObjectSetDefinition;
+}
+
+export function isEditableObjectSetType(
+  type: ObjectSetDefinition['type'],
+): type is EditableObjectSetType {
+  return OBJECT_SET_COMPOSER_VARIANT_SUPPORT[type] === 'editable';
+}
+
+export function unsupportedObjectSetMessage(
+  type: ObjectSetDefinition['type'],
+): string {
+  return `${type} ObjectSet is supported by the backend but is read-only in the composer`;
 }
 
 // US-332: each saved ObjectSet carries a list of named/timestamped versions
@@ -200,6 +247,8 @@ export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
         similarityThreshold: node.similarityThreshold,
         query: node.query,
       };
+    case 'unsupported':
+      return node.def;
   }
 }
 
@@ -273,9 +322,12 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
     case 'interfaceBase':
     case 'interfaceLinkSearchAround':
     case 'methodInput':
-      throw new Error(
-        `objectSet type "${def.type}" is not yet supported in the composer UI`,
-      );
+      return {
+        id: newId(),
+        type: 'unsupported',
+        objectSetType: def.type,
+        def,
+      };
   }
 }
 
@@ -285,6 +337,10 @@ export function validateNode(node: ObjectSetNode): string[] {
   const errors: string[] = [];
   walk(node, errors);
   return errors;
+}
+
+export function validateDefinition(def: ObjectSetDefinition): string[] {
+  return validateNode(definitionToNode(def));
 }
 
 function walk(node: ObjectSetNode, errors: string[]): void {
@@ -333,6 +389,9 @@ function walk(node: ObjectSetNode, errors: string[]): void {
         errors.push('nearestNeighbors node requires query text or vector');
       }
       walk(node.objectSet, errors);
+      break;
+    case 'unsupported':
+      errors.push(unsupportedObjectSetMessage(node.objectSetType));
       break;
   }
 }
