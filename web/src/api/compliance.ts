@@ -102,10 +102,79 @@ async function readAttachmentBlob(
 
 function parseAttachmentFilename(header: string | null): string | null {
   if (!header) return null;
-  const m = header.match(/filename\*?="?([^";]+)"?/i);
-  if (!m) return null;
-  const decoded = m[1].trim();
-  return decoded.length === 0 ? null : decoded;
+  const params = parseContentDispositionParams(header);
+  const encoded = params.get('filename*');
+  if (encoded) {
+    const decoded = decodeRFC5987Value(encoded);
+    if (decoded) return decoded;
+  }
+  const fallback = params.get('filename')?.trim();
+  return fallback && fallback.length > 0 ? fallback : null;
+}
+
+function parseContentDispositionParams(header: string): Map<string, string> {
+  const params = new Map<string, string>();
+  for (const part of splitDispositionHeader(header).slice(1)) {
+    const eq = part.indexOf('=');
+    if (eq < 1) continue;
+    const key = part.slice(0, eq).trim().toLowerCase();
+    const value = unquoteHeaderValue(part.slice(eq + 1).trim());
+    if (key) params.set(key, value);
+  }
+  return params;
+}
+
+function splitDispositionHeader(header: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let escaped = false;
+  for (const ch of header) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (inQuotes && ch === '\\') {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+      continue;
+    }
+    if (ch === ';' && !inQuotes) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current.trim());
+  return parts;
+}
+
+function unquoteHeaderValue(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\(.)/g, '$1');
+  }
+  return value;
+}
+
+function decodeRFC5987Value(value: string): string | null {
+  const firstQuote = value.indexOf("'");
+  const secondQuote = value.indexOf("'", firstQuote + 1);
+  if (firstQuote <= 0 || secondQuote < 0) return null;
+  const charset = value.slice(0, firstQuote).toLowerCase();
+  if (charset !== 'utf-8' && charset !== 'utf8') return null;
+  try {
+    const decoded = decodeURIComponent(value.slice(secondQuote + 1));
+    return decoded.trim().length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
 }
 
 function sanitiseFilenamePart(s: string): string {

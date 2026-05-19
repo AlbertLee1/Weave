@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TimeTravelToolbar } from '../TimeTravelToolbar';
 import * as datasetsApi from '../../../api/datasets';
@@ -23,6 +23,7 @@ describe('TimeTravelToolbar empty transactions (dogfood #7)', () => {
   it('option text and hint guide the user to apply an action', async () => {
     vi.spyOn(datasetsApi, 'listDatasetHistory').mockResolvedValue({
       transactions: [],
+      truncated: false,
     });
 
     renderToolbar();
@@ -32,5 +33,29 @@ describe('TimeTravelToolbar empty transactions (dogfood #7)', () => {
     const picker = await screen.findByTestId('time-travel-picker');
     expect(picker.textContent ?? '').toMatch(/no transactions/i);
     expect(picker.textContent ?? '').toMatch(/apply an action/i);
+  });
+
+  it('warns when the transaction chain is capped to the latest 1000 rows', async () => {
+    vi.spyOn(datasetsApi, 'listDatasetHistory').mockResolvedValue({
+      transactions: [
+        {
+          txId: 'tx-1001',
+          ontologyApiName: 'iotDemo',
+          committedAt: '2026-05-19T08:00:00Z',
+          editsCount: 2,
+        },
+      ],
+      truncated: true,
+    } as Awaited<ReturnType<typeof datasetsApi.listDatasetHistory>>);
+
+    renderToolbar();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('time-travel-picker').textContent ?? '').toMatch(
+        /tx-1001/,
+      );
+    });
+    const hint = screen.getByTestId('time-travel-hint');
+    expect(hint.textContent ?? '').toMatch(/latest 1000 transactions/i);
   });
 });

@@ -79,6 +79,7 @@ func newDatasetHistoryHandler(repo datasetOntologyResolver, store datasetTransac
 // historyResponse is the wire shape for GET /datasets/{rid}/history.
 type historyResponse struct {
 	Transactions []oms.DatasetTransaction `json:"transactions"`
+	Truncated    bool                     `json:"truncated"`
 }
 
 // History serves the GET endpoint. Soft 404 when the rid resolves to no
@@ -117,11 +118,11 @@ func (h *datasetHistoryHandler) History(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Cap the chain at 1000 rows for response-size sanity. Single-machine
-	// deployments rarely accumulate more in practice; if pagination becomes
-	// necessary we'll add a ?pageToken= parameter rather than uncapping.
+	// Cap the chain at 1000 rows for response-size sanity. Fetch one extra row
+	// so clients can tell the response is partial instead of mistaking the
+	// latest window for the complete Time Travel audit chain.
 	const historyCap = 1000
-	rows, err := h.store.ListByOntology(r.Context(), ont.APIName, historyCap)
+	rows, err := h.store.ListByOntology(r.Context(), ont.APIName, historyCap+1)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetHistoryFailed", map[string]string{
 			"rid":   rid,
@@ -129,8 +130,15 @@ func (h *datasetHistoryHandler) History(w http.ResponseWriter, r *http.Request) 
 		}))
 		return
 	}
+	truncated := len(rows) > historyCap
+	if truncated {
+		rows = rows[:historyCap]
+	}
 	if rows == nil {
 		rows = []oms.DatasetTransaction{}
 	}
-	httputil.WriteJSON(w, http.StatusOK, &historyResponse{Transactions: rows})
+	httputil.WriteJSON(w, http.StatusOK, &historyResponse{
+		Transactions: rows,
+		Truncated:    truncated,
+	})
 }

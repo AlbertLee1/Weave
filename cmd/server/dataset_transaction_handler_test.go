@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -190,6 +191,84 @@ func TestDatasetHistory_EmptyChainReturnsEmptyList(t *testing.T) {
 	}
 	if len(resp.Transactions) != 0 {
 		t.Errorf("transactions len = %d, want 0", len(resp.Transactions))
+	}
+}
+
+// TestDatasetHistory_CappedResponseReportsTruncated covers the operator-facing
+// Time Travel contract: a capped chain must say it is partial instead of
+// letting clients mistake the newest 1000 rows for the full audit history.
+func TestDatasetHistory_CappedResponseReportsTruncated(t *testing.T) {
+	store := newFakeDatasetTxStore()
+	base := time.Date(2026, 5, 19, 8, 0, 0, 0, time.UTC)
+	for i := 0; i < 1001; i++ {
+		store.byOnt["test"] = append(store.byOnt["test"], oms.DatasetTransaction{
+			TxID:            fmt.Sprintf("tx-%04d", 1001-i),
+			OntologyAPIName: "test",
+			CommittedAt:     base.Add(-time.Duration(i) * time.Minute),
+			EditsCount:      1,
+		})
+	}
+	repo := &fakeOntologyResolver{byInput: map[string]*oms.Ontology{
+		"test": {RID: "ri.ontology.main.ontology.test", APIName: "test"},
+	}}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v2/datasets/test/history", nil)
+	newDatasetHistoryRouter(repo, store).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Transactions []oms.DatasetTransaction `json:"transactions"`
+		Truncated    bool                     `json:"truncated"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body = %s", err, rr.Body.String())
+	}
+	if !resp.Truncated {
+		t.Fatalf("truncated = false, want true; body = %s", rr.Body.String())
+	}
+	if len(resp.Transactions) != 1000 {
+		t.Fatalf("transactions = %d, want 1000", len(resp.Transactions))
+	}
+	if resp.Transactions[0].TxID != "tx-1001" {
+		t.Errorf("first tx = %q, want newest tx-1001", resp.Transactions[0].TxID)
+	}
+	if resp.Transactions[999].TxID != "tx-0002" {
+		t.Errorf("last tx = %q, want tx-0002 so tx-0001 is hidden by cap", resp.Transactions[999].TxID)
+	}
+}
+
+func TestDatasetHistory_UncappedResponseReportsComplete(t *testing.T) {
+	store := newFakeDatasetTxStore()
+	store.byOnt["test"] = []oms.DatasetTransaction{
+		{TxID: "tx-2", OntologyAPIName: "test", CommittedAt: time.Date(2026, 5, 19, 8, 1, 0, 0, time.UTC), EditsCount: 1},
+		{TxID: "tx-1", OntologyAPIName: "test", CommittedAt: time.Date(2026, 5, 19, 8, 0, 0, 0, time.UTC), EditsCount: 1},
+	}
+	repo := &fakeOntologyResolver{byInput: map[string]*oms.Ontology{
+		"test": {RID: "ri.ontology.main.ontology.test", APIName: "test"},
+	}}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v2/datasets/test/history", nil)
+	newDatasetHistoryRouter(repo, store).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Transactions []oms.DatasetTransaction `json:"transactions"`
+		Truncated    bool                     `json:"truncated"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body = %s", err, rr.Body.String())
+	}
+	if resp.Truncated {
+		t.Fatalf("truncated = true, want false; body = %s", rr.Body.String())
+	}
+	if len(resp.Transactions) != 2 {
+		t.Fatalf("transactions = %d, want 2", len(resp.Transactions))
 	}
 }
 
