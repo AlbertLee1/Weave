@@ -1,0 +1,71 @@
+{
+  "project": "Weave Self-Iteration OSv2 Vertex Graph Contract Refresh",
+  "branchName": "ralph/self-iteration-20260519-215825",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-215825. The previous active PRD belonged to ralph/self-iteration-20260519-201909 and all of its stories already passed, so it was archived under scripts/ralph/archive/self-iteration-20260519-215944/. No PR CI auto-fix context was present in the archived progress file. Fresh GitHub main health: latest CI run 26098563689 completed success on commit b3eec04, latest Codespaces prebuild 26098562686 completed success, and Dependabot update run 26098635511 completed success. Local sampled checks for known fresh-CI risks passed via `go test ./scripts/ci -count=1`, `go test ./cmd/server -run 'TestBDD_CIEmbedPackageSurvivesFreshCheckoutWithoutGeneratedWebDist|TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1`, and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. DOG-001 has live seed cleanup plus an integration regression in `test/fixtures/seed_northwind/seed_test.go`; DOG-002 through DOG-005 remain covered by existing live tests/code. This PRD targets the remaining live Vertex SystemGraph routes that are still explicitly allowed as undocumented in `cmd/server/contract_test.go`, so API Playground and SDK generation can discover the core graph workflow.",
+  "userStories": [
+    {
+      "id": "SELF-462",
+      "name": "Publish Vertex graph CRUD OpenAPI contract",
+      "phase": "OSv2 Vertex Workspace API",
+      "active": true,
+      "priority": 1,
+      "passes": true,
+      "dependencies": [],
+      "description": "Document the live Vertex SystemGraph create/read/update routes and remove their temporary undocumented-route exceptions so workspace clients can discover the primary graph lifecycle contract.",
+      "bdd_acceptance": [
+        "Given `pkg/vertex/graphsvc/handler.go` registers POST `/api/vertex/v1/graphs`, GET `/api/vertex/v1/graphs/{rid}`, and PUT `/api/vertex/v1/graphs/{rid}`, When the server contract test compares chi routes against `api/openapi.yaml`, Then those three operations are present in the spec and are not allow-listed as undocumented.",
+        "Given `createRequest`, `updateRequest`, and `Graph` define the live wire shape, When the OpenAPI contract is parsed, Then `VertexGraphCreateRequest` exposes `ontologyRid`, `name`, optional `versioned`, optional `payload`, and optional `createdBy`, `VertexGraphUpdateRequest` exposes required `payload`, and all three operations use the existing `VertexGraph` response schema.",
+        "Given the running server serves the embedded OpenAPI copy from `cmd/server/openapi_spec.yaml`, When embedded-spec drift is checked, Then it remains byte-identical to `api/openapi.yaml`."
+      ],
+      "quality_gates": [
+        "`go test ./cmd/server -run 'TestBDD_VertexGraphCRUDOpenAPIContract|TestContract_' -count=1`",
+        "`go test ./pkg/vertex/graphsvc -run 'Test.*create|Test.*update|Test.*Graph' -count=1`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-463",
+      "name": "Publish Vertex graph history and template OpenAPI contract",
+      "phase": "OSv2 Vertex Versioning API",
+      "active": true,
+      "priority": 2,
+      "passes": true,
+      "dependencies": [
+        "SELF-462"
+      ],
+      "description": "Document the live Vertex graph duplicate, save-as-template, history, version read, and template instantiate routes so graph reuse and version inspection are visible to operators and SDK consumers.",
+      "bdd_acceptance": [
+        "Given `pkg/vertex/graphsvc/handler.go` registers duplicate, save-as-template, history, version, and instantiate routes, When the contract test walks chi routes, Then those operations are present in OpenAPI and removed from the undocumented allow-list.",
+        "Given graph version rows and template save/instantiate handlers have concrete response/request shapes, When the OpenAPI schema is parsed, Then schemas describe graph history entries, template save responses, and instantiate requests/responses without relying on opaque undocumented behavior.",
+        "Given `cmd/server/openapi_spec.yaml` is the runtime served spec, When embedded-spec drift is checked, Then it matches the canonical spec byte-for-byte."
+      ],
+      "quality_gates": [
+        "`go test ./cmd/server -run 'TestBDD_VertexGraphHistoryTemplateOpenAPIContract|TestContract_' -count=1`",
+        "`go test ./pkg/vertex/graphsvc -run 'Test.*Duplicate|Test.*Template|Test.*History|Test.*Version' -count=1`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-464",
+      "name": "Publish Vertex graph layout and diff OpenAPI contract",
+      "phase": "OSv2 Vertex Collaboration API",
+      "active": true,
+      "priority": 3,
+      "passes": true,
+      "dependencies": [
+        "SELF-462"
+      ],
+      "description": "Document the live Vertex layout patch and RFC 6902 graph diff routes so collaborative layout saves and version comparisons are discoverable from the API contract.",
+      "bdd_acceptance": [
+        "Given `pkg/vertex/graphsvc/handler.go` registers PATCH `/api/vertex/v1/graphs/{rid}/layout` and GET `/api/vertex/v1/graphs/{rid}/diff`, When the contract test compares chi routes with OpenAPI, Then those operations are present and removed from the undocumented allow-list.",
+        "Given layout patches accept `positions` and diff requests require `from`/`to` version query parameters, When the OpenAPI schema is parsed, Then request/query parameters and success response schemas describe the live wire contract.",
+        "Given `cmd/server/openapi_spec.yaml` is the runtime served spec, When embedded-spec drift is checked, Then it matches the canonical spec byte-for-byte."
+      ],
+      "quality_gates": [
+        "`go test ./cmd/server -run 'TestBDD_VertexGraphLayoutDiffOpenAPIContract|TestContract_' -count=1`",
+        "`go test ./pkg/vertex/graphsvc -run 'Test.*Layout|Test.*Diff' -count=1`",
+        "`git diff --check`"
+      ]
+    }
+  ]
+}

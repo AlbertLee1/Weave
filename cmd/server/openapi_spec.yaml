@@ -3534,6 +3534,95 @@ components:
         updatedAt:
           type: string
           format: date-time
+    VertexScenarioRunCheckpoint:
+      type: object
+      description: Restartable checkpoint state for a Vertex scenario run.
+      required: [runRid, scenarioRid, status, attemptsById, updatedAt]
+      properties:
+        runRid:
+          type: string
+          description: Scenario Run RID associated with this checkpoint.
+        scenarioRid:
+          type: string
+          description: Scenario RID being executed.
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, canceled]
+          description: Lifecycle status captured at the checkpoint.
+        completed:
+          type: array
+          description: Activity IDs already completed successfully.
+          items:
+            type: string
+        lastActivity:
+          type: string
+          description: Last activity attempted by the workflow.
+        attemptsById:
+          type: object
+          description: Per-activity attempt counts recorded for retry visibility.
+          additionalProperties:
+            type: integer
+            minimum: 1
+        error:
+          type: string
+          description: Terminal failure or cancellation message, when present.
+        updatedAt:
+          type: string
+          format: date-time
+    VertexScenarioRun:
+      type: object
+      description: Persisted Vertex scenario-run lifecycle record.
+      required: [rid, scenarioRid, status, checkpoint, startedAt, createdAt]
+      properties:
+        rid:
+          type: string
+          description: Scenario Run RID.
+        scenarioRid:
+          type: string
+          description: Scenario RID being executed.
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, canceled]
+          description: Current scenario-run lifecycle status.
+        error:
+          type: string
+          description: Terminal failure or cancellation message, when present.
+        checkpoint:
+          $ref: "#/components/schemas/VertexScenarioRunCheckpoint"
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    VertexScenarioRunStartResponse:
+      type: object
+      description: Response returned after a scenario run is accepted.
+      required: [runRid, status]
+      properties:
+        runRid:
+          type: string
+          description: Scenario Run RID to poll or cancel.
+        status:
+          type: string
+          enum: [pending]
+          description: Newly accepted runs start in pending status.
+    VertexScenarioRunCancelResponse:
+      type: object
+      description: Response returned after a scenario-run cancellation is accepted.
+      required: [runRid, status]
+      properties:
+        runRid:
+          type: string
+          description: Scenario Run RID whose cancellation was accepted.
+        status:
+          type: string
+          enum: [canceling]
+          description: Cancellation was signaled; poll the run for terminal canceled state.
     VertexShareLinkCreateResponse:
       type: object
       description: Opaque token minted for sharing a Vertex graph.
@@ -11744,6 +11833,108 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/scenarios/{scenarioRid}/runs:
+    post:
+      operationId: startVertexScenarioRun
+      summary: Start a Vertex scenario run
+      description: |
+        Accepts a new execution of the requested Vertex scenario and returns
+        the Scenario Run RID immediately. The run progresses asynchronously;
+        callers poll the run resource for checkpoint, retry-attempt, and
+        terminal status details.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: scenarioRid
+          required: true
+          description: Vertex scenario RID to execute.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Scenario run accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexScenarioRunStartResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}:
+    get:
+      operationId: getVertexScenarioRun
+      summary: Get a Vertex scenario run
+      description: |
+        Returns the persisted Scenario Run record, including status,
+        checkpoint, retry attempts by activity, and terminal error or
+        cancellation details when present.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: scenarioRid
+          required: true
+          description: Vertex scenario RID that owns the run.
+          schema:
+            type: string
+        - in: path
+          name: runRid
+          required: true
+          description: Scenario Run RID to fetch.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scenario run record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexScenarioRun"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel:
+    post:
+      operationId: cancelVertexScenarioRun
+      summary: Cancel a Vertex scenario run
+      description: |
+        Signals cancellation for an in-flight Scenario Run. The response
+        acknowledges the signal; callers poll the run resource to observe
+        the terminal canceled checkpoint.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: scenarioRid
+          required: true
+          description: Vertex scenario RID that owns the run.
+          schema:
+            type: string
+        - in: path
+          name: runRid
+          required: true
+          description: Scenario Run RID to cancel.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Scenario-run cancellation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexScenarioRunCancelResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/vertex/v1/admin/control-panel:

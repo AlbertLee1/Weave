@@ -766,6 +766,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
           properties: {},
           ontologyApiName: obj.ontologyApiName,
           objectType: obj.objectType,
+          primaryKey: obj.primaryKey,
         });
       }
       return next;
@@ -792,7 +793,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
               mergeEnabled={mergeEnabled}
               hiddenNodeIds={hiddenNodeIds}
             />
-            <VertexNodeOverlay labelsByRid={labelsByRid} />
+            <VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={objectsByRid} />
             <VertexSelectionLayer
               selection={selection}
               onSelectionChange={setSelection}

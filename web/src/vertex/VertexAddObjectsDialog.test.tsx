@@ -194,7 +194,7 @@ describe('VertexAddObjectsDialog (VTX-027)', () => {
     });
 
     expect(onAdd).toHaveBeenCalledTimes(1);
-    const arg = onAdd.mock.calls[0][0] as Array<{ rid: string; label: string }>;
+    const arg = onAdd.mock.calls[0][0] as Array<{ rid: string; label: string; primaryKey?: string }>;
     expect(arg).toHaveLength(5);
     expect(arg.map((o) => o.rid).sort()).toEqual([
       'ri.airport.A0',
@@ -202,6 +202,13 @@ describe('VertexAddObjectsDialog (VTX-027)', () => {
       'ri.airport.A2',
       'ri.airport.A3',
       'ri.airport.A4',
+    ]);
+    expect(arg.map((o) => o.primaryKey).sort()).toEqual([
+      'A0',
+      'A1',
+      'A2',
+      'A3',
+      'A4',
     ]);
     // Dialog dismisses itself on Add.
     expect(onClose).toHaveBeenCalledTimes(1);
