@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useObjectType } from '../../hooks/useObjectTypes';
+import { useProperties } from '../../hooks/useProperties';
 import { useListObjects, useSearchObjects } from '../../hooks/useObjects';
 import { useCreateTemporaryObjectSet } from '../../hooks/useObjectSets';
 import {
@@ -73,6 +74,10 @@ export function BrowserPage() {
   const { data: objectType, isLoading: isLoadingType } = useObjectType(
     ontology,
     objectTypeParam,
+  );
+  const { data: detailedProperties } = useProperties(
+    ontology,
+    objectType?.rid ?? '',
   );
 
   // Search & filter state
@@ -295,9 +300,23 @@ export function BrowserPage() {
     [selectedFacets],
   );
 
+  const sortablePropertyKeys = useMemo(() => {
+    const out = new Set<string>();
+    for (const prop of detailedProperties ?? []) {
+      if (prop.isSortable) out.add(prop.apiName);
+    }
+    return out;
+  }, [detailedProperties]);
+
   // Determine whether we need to use search or list
   const hasActiveSearch =
     searchText.trim().length > 0 || filters.length > 0 || hasFacetSelection;
+
+  const effectiveSortField = useMemo(() => {
+    if (!sortField) return undefined;
+    if (sortField === objectType?.primaryKey) return sortField;
+    return sortablePropertyKeys.has(sortField) ? sortField : undefined;
+  }, [objectType?.primaryKey, sortField, sortablePropertyKeys]);
 
   // Build where clause for search
   const whereClause = useMemo(() => {
@@ -358,8 +377,8 @@ export function BrowserPage() {
     objectType: objectTypeParam,
     pageSize: PAGE_SIZE,
     pageToken: currentPageToken,
-    orderBy: sortField
-      ? `${sortField}:${sortDirection}`
+    orderBy: effectiveSortField
+      ? `${effectiveSortField}:${sortDirection}`
       : undefined,
   });
 
@@ -376,8 +395,8 @@ export function BrowserPage() {
     where: whereClause,
     pageSize: PAGE_SIZE,
     pageToken: currentPageToken,
-    orderBy: sortField
-      ? { field: sortField, direction: sortDirection }
+    orderBy: effectiveSortField
+      ? { field: effectiveSortField, direction: sortDirection }
       : undefined,
     select: selectFields,
     facets: facetFields,
@@ -671,8 +690,8 @@ export function BrowserPage() {
               ontologyApiName: ontology,
               objectType: objectTypeParam,
               where: whereClause,
-              orderBy: sortField
-                ? { field: sortField, direction: sortDirection }
+              orderBy: effectiveSortField
+                ? { field: effectiveSortField, direction: sortDirection }
                 : undefined,
               select: selectFields,
               hasActiveSearch,
@@ -798,6 +817,7 @@ export function BrowserPage() {
                 data={page.data}
                 onRowClick={handleRowClick}
                 onSort={handleSort}
+                sortablePropertyKeys={sortablePropertyKeys}
                 pageSize={PAGE_SIZE}
                 totalCount={page.totalCount}
                 hasNextPage={!!page.nextPageToken}

@@ -27,6 +27,7 @@ interface ObjectTableProps {
   // DerivedPropertyDef outputs). They render after the schema columns and are
   // tagged `data-derived-column` so Playwright specs can target them.
   derivedColumns?: string[];
+  sortablePropertyKeys?: ReadonlySet<string>;
   selection?: ObjectTableSelection;
 }
 
@@ -43,6 +44,7 @@ export function ObjectTable({
   hasPrevPage,
   currentPage,
   derivedColumns,
+  sortablePropertyKeys,
   selection,
 }: ObjectTableProps) {
   const pageKeys = useMemo(
@@ -102,7 +104,7 @@ export function ObjectTable({
         cols.push({
           key: apiName,
           header: apiName,
-          sortable: true,
+          sortable: sortablePropertyKeys?.has(apiName) ?? false,
           render: (row) => {
             const val = row[apiName];
             if (val === null || val === undefined) return '';
@@ -143,7 +145,7 @@ export function ObjectTable({
     }
 
     return cols;
-  }, [objectType, derivedColumns, selection]);
+  }, [objectType, derivedColumns, sortablePropertyKeys, selection]);
 
   return (
     <div>

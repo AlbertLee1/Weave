@@ -5,10 +5,15 @@ import { FilterChip } from '../common/FilterChip';
 const OPERATORS = [
   { value: 'eq', label: '=' },
   { value: 'gt', label: '>' },
+  { value: 'gte', label: '>=' },
   { value: 'lt', label: '<' },
+  { value: 'lte', label: '<=' },
   { value: 'contains', label: 'contains' },
   { value: 'containsAnyTerm', label: 'contains any term' },
+  { value: 'startsWith', label: 'starts with' },
 ] as const;
+
+const NUMERIC_OPERATORS = new Set(['gt', 'gte', 'lt', 'lte']);
 
 interface FilterBuilderProps {
   properties: Record<string, { dataType: { type: string; itemType?: unknown }; rid: string }>;
@@ -33,8 +38,9 @@ export function FilterBuilder({
     if (selectedOp === 'containsAnyTerm') {
       parsedValue = (parsedValue as string)
         .split(/\s+/)
-        .filter((t: string) => t.length > 0);
-    } else if (selectedOp === 'gt' || selectedOp === 'lt') {
+        .filter((t: string) => t.length > 0)
+        .join(' ');
+    } else if (NUMERIC_OPERATORS.has(selectedOp)) {
       const num = Number(parsedValue);
       if (!isNaN(num)) parsedValue = num;
     }
