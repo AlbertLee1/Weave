@@ -5,6 +5,7 @@ Branch: ralph/self-iteration-20260519-082247
 
 ## Codebase Patterns
 - US-444 full-stack probes should only use `test.skip` for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
+- VTX-099 full-stack probes should only skip when the shared backend health check is down. With a reachable backend, missing System Graph records, empty graph payloads, and failed render surfaces should be assertions guarded by a source-level contract test.
 
 ## Kickoff
 - Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-082247`.
@@ -45,3 +46,28 @@ Branch: ralph/self-iteration-20260519-082247
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Result: SELF-431 marked `passes: true`; SELF-432 and SELF-433 remain open for later Ralph iterations.
+
+## Selected Story (Iteration 2)
+- Selected SELF-432 because it is the highest-priority incomplete story and the VTX-099 probe still skipped reachable-but-unwired System Graph pages via `systemGraphReachable`.
+
+## SELF-432 - Make VTX-099 system graph gate reject unwired graph pages
+- TDD red:
+  - Added `vtx099SystemGraphSpecSource` coverage to `web/src/lib/__tests__/playwrightSpecContracts.test.ts`.
+  - Ran `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`.
+  - Expected failure observed: the new contract rejected `systemGraphReachable` and the `VTX-018 System Graph page not yet wired up` skip in `web/e2e/vtx-099-system-graph-render.spec.ts`.
+- Implementation:
+  - Removed the `systemGraphReachable` helper and reachable-backend skip path from `web/e2e/vtx-099-system-graph-render.spec.ts`.
+  - Added `fetchRequiredGraph` so reachable full-stack runs must load concrete benchmark graph records through `/api/vertex/v1/graphs/${encodeURIComponent(rid)}`.
+  - Added payload assertions for non-empty graph nodes, required 5k/15k graph budgets, and mounted `/vertex/{rid}` canvas/topbar/error-state checks before measuring FCP/FPS.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 16 tests.
+  - `npm --prefix web exec playwright test -- --list vtx-099-system-graph-render.spec.ts` passed: 2 discoverable tests.
+  - `rg -n "systemGraphReachable|test\\.skip" web/e2e/vtx-099-system-graph-render.spec.ts` returned only the two shared backend-down skip guards on lines 143 and 151.
+  - `npm --prefix web run build` passed, including `tsc -b`, Vite build, and bundle budget check.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/e2e/vtx-099-system-graph-render.spec.ts`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Result: SELF-432 marked `passes: true`; SELF-433 remains open for a later Ralph iteration.

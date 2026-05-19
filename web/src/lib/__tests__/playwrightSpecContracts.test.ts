@@ -19,6 +19,7 @@ import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
 import us444FunctionReplaySpecSource from '../../../e2e/us444/19-fn-replay.spec.ts?raw';
 import us444SubscribeSpecSource from '../../../e2e/us444/20-subscribe.spec.ts?raw';
+import vtx099SystemGraphSpecSource from '../../../e2e/vtx-099-system-graph-render.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
@@ -258,5 +259,23 @@ describe('Playwright spec contracts', () => {
     expect(source).toMatch(/objectType:\s*['"]customer['"]/);
     expect(source).toContain("toBe('subscribed')");
     expect(source).toContain('subscriptionId');
+  });
+
+  it('keeps the VTX-099 system graph gate wired and skip-free after backend health', () => {
+    const source = vtx099SystemGraphSpecSource;
+
+    expect(source).not.toContain('systemGraphReachable');
+    expect(source).not.toContain('VTX-018 System Graph page not yet wired up');
+    expect(source).not.toMatch(/test\.skip\s*\(\s*!\s*\(\s*await\s+systemGraphReachable/);
+    expect(source).toContain('/api/vertex/v1/graphs/${encodeURIComponent(rid)}');
+    expect(source).toContain('system graph payload must include nodes');
+    expect(source).toContain('system graph payload must include edges');
+    expect(source).toContain("getByTestId('vertex-canvas-host')");
+
+    const skipLines = source.match(/test\.skip[^\n]+/g) ?? [];
+    expect(skipLines).toEqual([
+      "test.skip(!(await backendReachable(request)), 'weave backend not reachable on :9117');",
+      "test.skip(!(await backendReachable(request)), 'weave backend not reachable on :9117');",
+    ]);
   });
 });
