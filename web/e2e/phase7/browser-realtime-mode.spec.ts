@@ -123,7 +123,12 @@ test.describe('Browser realtime mode (US-079)', () => {
       'northwind ontology must be seeded (run scripts/e2e-setup.sh)',
     ).toBe(true);
     const body = (await res.json()) as { data?: Array<{ apiName: string }> };
-    const hasAction = (body.data ?? []).some((a) => a.apiName === 'createCustomer');
+    expect(
+      Array.isArray(body.data),
+      'actionTypes response must include data array',
+    ).toBe(true);
+    const actionTypes = body.data ?? [];
+    const hasAction = actionTypes.some((a) => a.apiName === 'createCustomer');
     expect(
       hasAction,
       'createCustomer action type missing from northwind seed — rerun e2e_seed.sh',

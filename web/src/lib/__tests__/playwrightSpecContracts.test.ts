@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import ciWorkflowSource from '../../../../.github/workflows/ci.yml?raw';
+import auditLogAdminSpecSource from '../../../e2e/phase7/audit-log-admin.spec.ts?raw';
+import browserRealtimeModeSpecSource from '../../../e2e/phase7/browser-realtime-mode.spec.ts?raw';
+import policyColumnHidingSpecSource from '../../../e2e/phase7/policy-column-hiding.spec.ts?raw';
+import policyRowFilterSpecSource from '../../../e2e/phase7/policy-row-filter.spec.ts?raw';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
 import phase6AggregationSpecSource from '../../../e2e/phase6/aggregation-multi-groupby.spec.ts?raw';
 import phase6InterfacePagingSpecSource from '../../../e2e/phase6/interface-multitype-paging.spec.ts?raw';
@@ -61,6 +65,99 @@ describe('Playwright spec contracts', () => {
     expect(source).toContain(`/api/v2/ontologies/\${ONTOLOGY}/objects/\${OBJECT_TYPE}/search`);
     expect(source).toContain("getByTestId('live-status')");
     expect(source).not.toContain("getByTestId('realtime-indicator')");
+  });
+
+  it('keeps all Phase 7 probes active against reachable service failures', () => {
+    const phase7Sources = [
+      auditLogAdminSpecSource,
+      browserRealtimeModeSpecSource,
+      policyColumnHidingSpecSource,
+      policyRowFilterSpecSource,
+      sseReconnectSpecSource,
+    ];
+
+    for (const source of phase7Sources) {
+      expect(source).not.toMatch(/test\.skip\s*\(/);
+      expect(source).not.toMatch(/test\.fixme\s*\(/);
+      expect(source).not.toMatch(/not yet wired|unavailable/i);
+      expect(source).not.toContain('res.ok() ||');
+      expect(source).not.toMatch(/status\(\)\s*===\s*(404|503)/);
+      expect(source).not.toContain('toContain(res.status())');
+    }
+  });
+
+  it('keeps Phase 7 policy and audit probes asserting seeded identity semantics', () => {
+    expect(policyColumnHidingSpecSource).toContain("email: 'manager@test'");
+    expect(policyColumnHidingSpecSource).toContain("email: 'peer@test'");
+    expect(policyColumnHidingSpecSource).toContain('/objects/${OBJECT_TYPE}');
+    expect(policyColumnHidingSpecSource).toContain('Array.isArray(mgrBody.data)');
+    expect(policyColumnHidingSpecSource).toContain('Array.isArray(peerBody.data)');
+    expect(policyColumnHidingSpecSource).toContain(
+      "expect(obj).toHaveProperty('salary')",
+    );
+    expect(policyColumnHidingSpecSource).toContain(
+      "expect(obj).not.toHaveProperty('salary')",
+    );
+    expect(policyColumnHidingSpecSource).toContain(
+      "getByRole('cell', { name: '120000' })",
+    );
+    expect(policyColumnHidingSpecSource).toContain(
+      "getByRole('cell', { name: 'Alice Chen' })",
+    );
+
+    expect(policyRowFilterSpecSource).toContain("email: 'acme@test'");
+    expect(policyRowFilterSpecSource).toContain("email: 'acme2@test'");
+    expect(policyRowFilterSpecSource).toContain('Array.isArray(acmeBody.data)');
+    expect(policyRowFilterSpecSource).toContain('Array.isArray(acme2Body.data)');
+    expect(policyRowFilterSpecSource).toContain(
+      "expect(acmeIDs.sort()).toEqual(['ALFKI', 'BERGS', 'CHOPS'])",
+    );
+    expect(policyRowFilterSpecSource).toContain(
+      "expect(acme2IDs.sort()).toEqual(['BLONP', 'CACTU'])",
+    );
+    expect(policyRowFilterSpecSource).toContain(
+      "getByRole('cell', { name: 'Alfreds Futterkiste' })",
+    );
+    expect(policyRowFilterSpecSource).toContain(
+      "getByRole('cell', { name: 'Cactus Comidas para llevar' })",
+    );
+
+    expect(auditLogAdminSpecSource).toContain("email: 'admin@test'");
+    expect(auditLogAdminSpecSource).toContain("email: 'peer@test'");
+    expect(auditLogAdminSpecSource).toContain('/api/v2/admin/auditEvents');
+    expect(auditLogAdminSpecSource).toContain('Array.isArray(body.data)');
+    expect(auditLogAdminSpecSource).toContain(
+      'expect(body.data.length).toBeGreaterThan(0)',
+    );
+    expect(auditLogAdminSpecSource).toContain(
+      "expect(entry.action).toBe('login_success')",
+    );
+    expect(auditLogAdminSpecSource).toContain('expect(auditRes.status()).toBe(403)');
+    expect(auditLogAdminSpecSource).not.toContain('if (body.data.length > 0)');
+  });
+
+  it('keeps Phase 7 realtime probes tied to seeded actions and live streams', () => {
+    const realtimeSources = [browserRealtimeModeSpecSource, sseReconnectSpecSource];
+
+    for (const source of realtimeSources) {
+      expect(source).toContain('/actionTypes');
+      expect(source).toContain('Array.isArray(body.data)');
+      expect(source).toContain("a.apiName === 'createCustomer'");
+      expect(source).toContain('/actions/createCustomer/apply');
+      expect(source).toContain("getByTestId('search-input')");
+      expect(source).toContain(
+        `/api/v2/ontologies/\${ONTOLOGY}/objects/\${OBJECT_TYPE}/search`,
+      );
+    }
+
+    expect(browserRealtimeModeSpecSource).toContain('waitForRealtimeSubscribed');
+    expect(browserRealtimeModeSpecSource).toContain('waitForRealtimeObjectChange');
+    expect(browserRealtimeModeSpecSource).toContain('realtimePayloadMatchesPrimaryKey');
+    expect(browserRealtimeModeSpecSource).toContain("getByTestId('realtime-indicator')");
+
+    expect(sseReconnectSpecSource).toContain('page.context().setOffline(true)');
+    expect(sseReconnectSpecSource).toContain('page.context().setOffline(false)');
+    expect(sseReconnectSpecSource).toContain("getByTestId('live-status')");
   });
 
   it('keeps all Phase 6 probes active against reachable service failures', () => {

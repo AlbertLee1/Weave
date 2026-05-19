@@ -65,13 +65,16 @@ test.describe('Audit log admin access (US-083)', () => {
       data: Array<Record<string, unknown>>;
     };
 
-    // If there are audit entries, verify they contain the expected fields.
-    if (body.data.length > 0) {
-      const entry = body.data[0];
-      expect(entry).toHaveProperty('id');
-      expect(entry).toHaveProperty('action');
-      expect(entry).toHaveProperty('timestamp');
-    }
+    expect(
+      Array.isArray(body.data),
+      'audit events response must return data rows',
+    ).toBe(true);
+    expect(body.data.length).toBeGreaterThan(0);
+
+    const entry = body.data[0];
+    expect(entry).toHaveProperty('id');
+    expect(entry).toHaveProperty('action');
+    expect(entry).toHaveProperty('timestamp');
   });
 
   test('peer (viewer) user is denied access to audit events', async ({
@@ -116,6 +119,7 @@ test.describe('Audit log admin access (US-083)', () => {
       data: Array<Record<string, unknown>>;
     };
     expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBeGreaterThan(0);
 
     // Every returned entry must have action == login_success.
     for (const entry of body.data) {

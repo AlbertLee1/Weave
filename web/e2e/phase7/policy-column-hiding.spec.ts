@@ -44,6 +44,10 @@ test.describe('Policy column-hiding (US-081)', () => {
     const mgrBody = (await mgrRes.json()) as {
       data: Record<string, unknown>[];
     };
+    expect(
+      Array.isArray(mgrBody.data),
+      'manager employee list must return data rows',
+    ).toBe(true);
     expect(mgrBody.data.length).toBeGreaterThan(0);
 
     // Manager should see the salary property on every row.
@@ -73,6 +77,10 @@ test.describe('Policy column-hiding (US-081)', () => {
     const peerBody = (await peerRes.json()) as {
       data: Record<string, unknown>[];
     };
+    expect(
+      Array.isArray(peerBody.data),
+      'peer employee list must return data rows',
+    ).toBe(true);
     expect(peerBody.data.length).toBeGreaterThan(0);
 
     // Peer should NOT see the salary property on any row.
