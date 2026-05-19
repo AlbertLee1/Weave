@@ -29,7 +29,7 @@
       "phase": "Upper-Layer ObjectSet Experience",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [
         "SELF-440"
       ],
