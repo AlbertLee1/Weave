@@ -1,67 +1,44 @@
 {
-  "project": "Weave Self-Iteration Time Travel Contract Tightening",
-  "branchName": "ralph/self-iteration-20260519-160430",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-160430. The previous active PRD belonged to ralph/self-iteration-20260519-143531 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-160821/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26084194923 completed green on commit 1db8055 while Codespaces prebuild 26084194762 was still in progress; local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI'` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. The earlier dogfood findings for Northwind seeding and Dashboard object type totals already have current regression coverage, so this PRD focuses on current OSv2 Time Travel and admin download contract gaps found during inspection.",
+  "project": "Weave Self-Iteration Browser Export Contract Tightening",
+  "branchName": "ralph/self-iteration-20260519-170927",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-170927. The previous active PRD belonged to ralph/self-iteration-20260519-160430 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-171304/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26087345493 completed green on commit 4eeb507, while Codespaces prebuild 26087344906 was still in progress. Local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. Current dogfood findings DOG-003, DOG-004, and DOG-005 already have dedicated regression coverage in the tree, so this PRD focuses on current Browser export and Time Travel trust gaps found during inspection.",
   "userStories": [
     {
-      "id": "SELF-446",
-      "name": "Signal truncated Time Travel history",
-      "phase": "Upper-Layer Time Travel Experience",
+      "id": "SELF-449",
+      "name": "Refuse silently capped Browser exports",
+      "phase": "Upper-Layer Browser Export Experience",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Make the dataset history API and Time Travel toolbar explicitly signal when the transaction chain is capped, so operators do not mistake the newest 1000 rows for the complete audit timeline.",
+      "description": "Prevent operators from downloading a Browser export that was silently truncated by the 100000-row client hard cap.",
       "bdd_acceptance": [
-        "Given a dataset has more than 1000 transactions, When the operator or SDK requests `/api/v2/datasets/{rid}/history`, Then the response contains the newest 1000 rows and `truncated: true`.",
-        "Given a dataset has 1000 or fewer transactions, When history is requested, Then the response contains all available rows and `truncated: false`.",
-        "Given the Browser Time Travel toolbar receives a truncated history response, When it renders the picker, Then it shows a concise hint that only the latest 1000 transactions are available."
+        "Given a Browser export response advertises a total row count greater than the 100000-row export cap, When the operator exports CSV, JSON, or XLSX, Then the export fails with a clear limit error before any partial file is downloaded.",
+        "Given a paginated Browser export reaches the 100000-row cap and the server still returns a nextPageToken, When the export loop evaluates the page, Then it fails with the same clear limit error instead of returning partial rows.",
+        "Given an export is within the cap, When the operator exports rows, Then the existing CSV, JSON, and XLSX download behavior remains unchanged."
       ],
       "quality_gates": [
-        "`go test ./cmd/server -run TestDatasetHistory -count=1`",
-        "`npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx src/api/__tests__/datasets.test.ts`",
+        "`npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts src/components/browser/__tests__/ExportButton.test.tsx`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-447",
-      "name": "Show rollback status in Time Travel picker",
+      "id": "SELF-450",
+      "name": "Block Browser export affordance during Time Travel",
       "phase": "Upper-Layer Time Travel Experience",
       "active": true,
       "priority": 2,
       "passes": true,
-      "dependencies": [
-        "SELF-446"
-      ],
-      "description": "Use the existing rollback audit fields on dataset transactions to label rolled-back checkpoints in the Browser Time Travel picker and active historical badge.",
-      "bdd_acceptance": [
-        "Given a history row includes `rolledBackAt`, When the Time Travel picker renders, Then the option is labeled as rolled back without hiding the transaction.",
-        "Given a rolled-back transaction points to `rolledBackToTxId`, When the option renders, Then the label includes the rollback target short id.",
-        "Given a rolled-back transaction is currently active, When the toolbar renders, Then the active badge warns that the selected checkpoint was rolled back."
-      ],
-      "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx`",
-        "From `web/`: `npx tsc --noEmit`",
-        "`git diff --check`"
-      ]
-    },
-    {
-      "id": "SELF-448",
-      "name": "Decode standards-compliant admin download filenames",
-      "phase": "Admin Compliance Experience",
-      "active": true,
-      "priority": 3,
-      "passes": true,
       "dependencies": [],
-      "description": "Parse RFC 5987 `Content-Disposition` filenames for compliance and GDPR downloads so operator-supplied report names survive standards-compliant server headers.",
+      "description": "Align the Browser page with its historical-mode contract by disabling the export menu while a Time Travel checkpoint is active.",
       "bdd_acceptance": [
-        "Given the compliance report response includes `filename*=UTF-8''control%20evidence.pdf`, When the browser downloads the report, Then the saved filename is `control evidence.pdf`.",
-        "Given the GDPR export response includes a quoted fallback filename, When the browser downloads the ZIP, Then the existing quoted filename behavior still works.",
-        "Given the attachment filename header is malformed, When the report downloads, Then the UI falls back to the deterministic default filename."
+        "Given Time Travel has pinned an asOf value for the active ontology, When the Browser header renders, Then the Export button is disabled and explains that exports are unavailable in historical mode.",
+        "Given Time Travel is inactive, When the Browser header renders, Then the Export menu remains available with CSV, JSON, and XLSX options.",
+        "Given Time Travel is turned off after being active, When the Browser header re-renders, Then the export affordance is restored without losing the current Browser query state."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/api/__tests__/compliance.test.ts`",
+        "`npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]

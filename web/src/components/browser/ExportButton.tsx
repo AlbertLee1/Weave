@@ -9,14 +9,23 @@ import type { ObjectType } from '../../api/types';
 interface ExportButtonProps {
   objectType: ObjectType;
   query: ExportQuery;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
-export function ExportButton({ objectType, query }: ExportButtonProps) {
+export function ExportButton({
+  objectType,
+  query,
+  disabled = false,
+  disabledReason,
+}: ExportButtonProps) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const disabledDescriptionId =
+    disabled && disabledReason ? 'export-disabled-reason' : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -29,8 +38,13 @@ export function ExportButton({ objectType, query }: ExportButtonProps) {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   const handleExport = useCallback(
     async (format: ExportFormat) => {
+      if (disabled) return;
       setOpen(false);
       setError(null);
       setBusy(true);
@@ -45,15 +59,20 @@ export function ExportButton({ objectType, query }: ExportButtonProps) {
         setBusy(false);
       }
     },
-    [query, objectType],
+    [disabled, query, objectType],
   );
 
   return (
     <div ref={rootRef} className="relative inline-block">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={busy}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((v) => !v);
+        }}
+        disabled={busy || disabled}
+        title={disabled ? disabledReason : undefined}
+        aria-describedby={disabledDescriptionId}
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid="export-button"
@@ -79,6 +98,16 @@ export function ExportButton({ objectType, query }: ExportButtonProps) {
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
+
+      {disabledDescriptionId && (
+        <span
+          id={disabledDescriptionId}
+          data-testid="export-disabled-reason"
+          className="sr-only"
+        >
+          {disabledReason}
+        </span>
+      )}
 
       {open && !busy && (
         <div

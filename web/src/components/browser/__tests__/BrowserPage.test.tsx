@@ -399,6 +399,45 @@ describe('BrowserPage realtime mode', () => {
     );
   });
 
+  it('blocks export while Time Travel is active and restores it without resetting query state', async () => {
+    useTimeTravelStore.getState().setAsOf('testOntology', 'tx-abc');
+
+    renderBrowserPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Employees')).toBeInTheDocument();
+    });
+
+    const exportButton = screen.getByTestId('export-button');
+    expect(exportButton).toBeDisabled();
+    expect(exportButton).toHaveAttribute(
+      'title',
+      'Exports are unavailable while Time Travel is active.',
+    );
+
+    const searchInput = screen.getByTestId('search-input');
+    fireEvent.change(searchInput, { target: { value: 'Alice' } });
+    fireEvent.keyDown(searchInput, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(searchInput).toHaveValue('Alice');
+    });
+
+    act(() => {
+      useTimeTravelStore.getState().clearAsOf('testOntology');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('export-button')).toBeEnabled();
+    });
+    expect(screen.getByTestId('search-input')).toHaveValue('Alice');
+
+    fireEvent.click(screen.getByTestId('export-button'));
+    expect(screen.getByTestId('export-csv')).toBeInTheDocument();
+    expect(screen.getByTestId('export-json')).toBeInTheDocument();
+    expect(screen.getByTestId('export-xlsx')).toBeInTheDocument();
+  });
+
   it('enables WebSocket subscription when toggled on', async () => {
     renderBrowserPage();
 

@@ -49,6 +49,8 @@ function formatBrowserError(err: unknown): string {
 
 const PAGE_SIZE = 25;
 const MAX_FACET_FIELDS = 5;
+const TIME_TRAVEL_EXPORT_DISABLED_REASON =
+  'Exports are unavailable while Time Travel is active.';
 const FACETABLE_BASE_TYPES = new Set([
   'string',
   'boolean',
@@ -686,6 +688,10 @@ export function BrowserPage() {
           </div>
           <ExportButton
             objectType={objectType}
+            disabled={timeTravelActive}
+            disabledReason={
+              timeTravelActive ? TIME_TRAVEL_EXPORT_DISABLED_REASON : undefined
+            }
             query={{
               ontologyApiName: ontology,
               objectType: objectTypeParam,

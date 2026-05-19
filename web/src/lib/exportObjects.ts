@@ -26,6 +26,27 @@ export interface ExportQuery {
 const EXPORT_PAGE_SIZE = 200;
 const EXPORT_HARD_CAP = 100_000;
 
+class ExportLimitExceededError extends Error {
+  constructor(totalCount?: number) {
+    const countText =
+      typeof totalCount === 'number'
+        ? `would include ${totalCount} rows, which`
+        : 'has more rows remaining and';
+    super(
+      `Export ${countText} exceeds the ${EXPORT_HARD_CAP} row export limit. ` +
+        'Refine the Browser search or filters before exporting.',
+    );
+    this.name = 'ExportLimitExceededError';
+  }
+}
+
+function parseTotalCount(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.floor(n);
+}
+
 export async function fetchAllForExport(
   query: ExportQuery,
   onProgress?: (count: number) => void,
@@ -54,13 +75,26 @@ export async function fetchAllForExport(
             : undefined,
         });
 
+    const totalCount = parseTotalCount(page.totalCount);
+    if (totalCount !== undefined && totalCount > EXPORT_HARD_CAP) {
+      throw new ExportLimitExceededError(totalCount);
+    }
+
     rows.push(...page.data);
-    onProgress?.(rows.length);
+
+    if (
+      rows.length > EXPORT_HARD_CAP ||
+      (rows.length >= EXPORT_HARD_CAP && page.nextPageToken)
+    ) {
+      throw new ExportLimitExceededError(totalCount);
+    }
 
     if (!page.nextPageToken) break;
+    onProgress?.(rows.length);
     pageToken = page.nextPageToken;
   }
 
+  onProgress?.(rows.length);
   return rows;
 }
 

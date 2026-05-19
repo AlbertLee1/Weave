@@ -1,97 +1,83 @@
 # Ralph Progress Log
-Started: Tue May 19 16:04:30 CST 2026
+Started: Tue May 19 17:09:27 CST 2026
+Branch: ralph/self-iteration-20260519-170927
+State reset: Tue May 19 17:13:04 CST 2026
 
-## Codebase Patterns
-- US-444 full-stack probes should only use `test.skip` for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
+Archived previous state:
+- scripts/ralph/archive/self-iteration-20260519-171304/prd.json
+- scripts/ralph/archive/self-iteration-20260519-171304/progress.txt
+
+Kickoff evidence:
+- Branch verified: ralph/self-iteration-20260519-170927.
+- Previous PRD branchName was ralph/self-iteration-20260519-160430 and all stories had passes=true, so a new PRD was required.
+- No PR CI auto-fix context was present in the previous progress file.
+- GitHub CI: main CI run 26087345493 completed success for 4eeb507; Codespaces prebuild 26087344906 was still in progress.
+- Known fresh-CI risk check passed: go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1.
+- Known US-453 streamless response check passed: npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx.
+- Dogfood DOG-003/DOG-004/DOG-005 are already represented by current BDD tests and implementation, so this PRD did not repeat them.
+
+Current stories:
+- SELF-449 Refuse silently capped Browser exports: passes.
+- SELF-450 Block Browser export affordance during Time Travel: passes.
+
+Codebase Patterns:
+- US-444 full-stack probes should only use test.skip for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
 - VTX-099 full-stack probes should only skip when the shared backend health check is down. With a reachable backend, missing System Graph records, empty graph payloads, and failed render surfaces should be assertions guarded by a source-level contract test.
-- US-444 helper and README guidance is now source-contracted too: docs may describe `skipWhenBackendDown` as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
-- Phase 6 upper-layer probes should remain skip-free and should assert concrete OSv2 response shape before using seeded fixtures: `objectTypes`, `actionTypes`, `interfaceTypes`, metadata `linkTypes`, and `loadObjectsOrInterfaces` page payloads should fail loudly on missing arrays or missing `totalCount` instead of falling through shallow route reachability.
-- Phase 7 upper-layer probes should remain skip-free and should assert concrete seeded identity, policy, audit, actionTypes, and realtime subscription behavior; optional empty audit checks or missing `data` array checks let reachable service regressions look like passing probes.
-- ObjectSet composer support for a new backend variant usually needs both `web/src/components/objectsets/ObjectSetBuilder.tsx` controls/defaults and `web/src/lib/objectSetBuilder.ts` node validation/round-trip updates.
-- ObjectSet composer filter operators must align with `pkg/oss/where/converter.go`; UI-only pseudo-operators should either be normalized to backend wire format or rejected before Execute.
-- Run Web TypeScript checks from `web/` with `npx tsc --noEmit` (or `npm --prefix web run build`); `npm --prefix web exec tsc -- --noEmit` does not pass the flag correctly in this environment.
-- Browser structured filters should emit canonical WhereClause wire values directly; do not depend on backend tolerance for old UI-only shapes such as `containsAnyTerm.value` arrays.
+- US-444 helper and README guidance is source-contracted too: docs may describe skipWhenBackendDown as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
+- Phase 6 upper-layer probes should remain skip-free and should assert concrete OSv2 response shape before using seeded fixtures: objectTypes, actionTypes, interfaceTypes, metadata linkTypes, and loadObjectsOrInterfaces page payloads should fail loudly on missing arrays or missing totalCount instead of falling through shallow route reachability.
+- Phase 7 upper-layer probes should remain skip-free and should assert concrete seeded identity, policy, audit, actionTypes, and realtime subscription behavior; optional empty audit checks or missing data array checks let reachable service regressions look like passing probes.
+- ObjectSet composer support for a new backend variant usually needs both web/src/components/objectsets/ObjectSetBuilder.tsx controls/defaults and web/src/lib/objectSetBuilder.ts node validation/round-trip updates.
+- ObjectSet composer filter operators must align with pkg/oss/where/converter.go; UI-only pseudo-operators should either be normalized to backend wire format or rejected before Execute.
+- Run Web TypeScript checks from web/ with npx tsc --noEmit or npm --prefix web run build; npm --prefix web exec tsc -- --noEmit does not pass the flag correctly in this environment.
+- Browser structured filters should emit canonical WhereClause wire values directly; do not depend on backend tolerance for old UI-only shapes such as containsAnyTerm.value arrays.
+- Capped history/list endpoints should fetch limit + 1 and return an explicit partial-response marker; otherwise upper-layer Time Travel and audit UIs silently present a bounded window as complete history.
+- Time Travel history rows already carry rollback audit fields through the web API type; upper-layer controls should surface those fields anywhere a historical checkpoint can be selected or shown as active.
+- Download helpers should parse Content-Disposition as parameters, not with a single filename regex; extended filename* values need decode-and-validate semantics before falling back to regular filenames or deterministic defaults.
+- Browser export uses web/src/lib/exportObjects.ts to page through listObjects/searchObjects at EXPORT_PAGE_SIZE=200 with a client hard cap of 100000 rows.
+- ExportButton catches exportObjects errors and surfaces them through its role=alert banner.
+- Browser API calls use request(), which injects active branch and Time Travel asOf query params for ontology-scoped paths.
 
-## Kickoff - 2026-05-19 16:08 CST
-- Current branch verified: `ralph/self-iteration-20260519-160430`.
-- Archived stale PRD/progress for branch `ralph/self-iteration-20260519-143531` under `scripts/ralph/archive/self-iteration-20260519-160821/`.
-- No `PR CI auto-fix context` was present in the active progress file.
-- GitHub health: latest main CI run `26084194923` completed green on commit `1db8055`; Codespaces prebuild `26084194762` was still in progress at kickoff.
-- Local fresh-CI risk checks passed:
-  - `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI'`
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
-- Dogfood inspection: DOG-001 Northwind seeding and DOG-002 Dashboard object type totals already have current regression coverage in `test/fixtures/seed_northwind/seed_test.go` and `web/src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx`.
-- Selected highest-priority story for this execution: `SELF-446` Signal truncated Time Travel history.
----
-
-## Tue May 19 16:13:24 CST 2026 - SELF-446
+## Tue May 19 17:16:30 CST 2026 - SELF-449
 - What was implemented:
-  - Added backend BDD coverage that `/api/v2/datasets/{rid}/history` fetches one extra row, returns only the newest 1000 transactions, and reports `truncated: true` when older history exists.
-  - Added web API and Time Travel toolbar coverage for the `truncated` response flag.
-  - Updated the dataset history handler to fetch `historyCap + 1`, trim the response window, and include `truncated` on every success response.
-  - Updated the Browser Time Travel toolbar to show `Showing latest 1000 transactions only` when the history response is capped.
+  - Added export BDD coverage for totalCount overflow, pagination overflow at the 100000-row cap, and no partial download when the cap is exceeded.
+  - Updated Browser export pagination to reject exports whose advertised totalCount exceeds the cap.
+  - Updated Browser export pagination to reject when rows reach the cap and nextPageToken proves more rows remain.
+  - Kept existing CSV, JSON, and XLSX behavior unchanged for in-cap exports.
 - TDD red:
-  - `go test ./cmd/server -run TestDatasetHistory_CappedResponseReportsTruncated -count=1` failed as expected before implementation: `truncated = false, want true`.
-  - `npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx src/api/__tests__/datasets.test.ts` failed as expected before implementation: the rendered toolbar had no `time-travel-hint` after the capped transaction loaded.
+  - `npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts` failed as expected before implementation: the new cap tests resolved rows/downloads instead of rejecting.
 - Verification:
-  - `go test ./cmd/server -run TestDatasetHistory -count=1` passed.
-  - `npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx src/api/__tests__/datasets.test.ts` passed: 2 files, 3 tests.
+  - `npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts` passed: 1 file, 22 tests.
+  - `npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts src/components/browser/__tests__/ExportButton.test.tsx` passed: 2 files, 27 tests.
   - From `web/`: `npx tsc --noEmit` passed.
   - `git diff --check` passed.
 - Files changed:
-  - `cmd/server/dataset_transaction_handler.go`
-  - `cmd/server/dataset_transaction_handler_test.go`
-  - `web/src/api/datasets.ts`
-  - `web/src/api/__tests__/datasets.test.ts`
-  - `web/src/components/browser/TimeTravelToolbar.tsx`
-  - `web/src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx`
+  - `web/src/lib/exportObjects.ts`
+  - `web/src/lib/__tests__/exportObjects.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Learnings for future iterations:
-  - Capped history/list endpoints should fetch `limit + 1` and return an explicit partial-response marker; otherwise upper-layer Time Travel and audit UIs silently present a bounded window as complete history.
-- Result: SELF-446 marked `passes: true`; SELF-447 and SELF-448 remain open for later Ralph iterations.
----
+  - Browser export is a trust surface like history and audit timelines: if the client enforces a hard cap, it must fail loudly before download rather than returning a partial artifact.
+- Result: SELF-449 marked `passes: true`; SELF-450 remains open for the next Ralph iteration.
 
-## Tue May 19 16:18:42 CST 2026 - SELF-447
+## Tue May 19 17:21:42 CST 2026 - SELF-450
 - What was implemented:
-  - Added BDD coverage for Browser Time Travel rollback metadata in the picker and active historical badge.
-  - Updated the Browser Time Travel toolbar to label rolled-back checkpoints as `Rolled back` or `Rolled back to <short tx id>` without removing them from the picker.
-  - Updated the active historical badge to warn when the selected checkpoint was rolled back and include the rollback target short id when present.
+  - Added ExportButton BDD coverage for a disabled historical-mode export affordance with an explanatory reason and no menu/download side effects.
+  - Added BrowserPage BDD coverage proving Time Travel disables export, clearing Time Travel restores the export menu, and the current search query text is preserved across that transition.
+  - Updated ExportButton to accept `disabled` and `disabledReason`, close/prevent its dropdown while disabled, and expose the reason via title plus screen-reader text.
+  - Updated BrowserPage to pass the Time Travel disabled state into ExportButton.
 - TDD red:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx` failed as expected before implementation: picker option text was `tx-rolled-b… · 2026-05-19 08:00Z · 3 edits` and the active badge was `Historical · 2026-05-19 08:00Z`, both missing rollback status.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: the new tests found the export button was still enabled while Time Travel was active.
 - Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx` passed: 1 file, 2 tests.
+  - `npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 23 tests.
   - From `web/`: `npx tsc --noEmit` passed.
   - `git diff --check` passed.
 - Files changed:
-  - `web/src/components/browser/TimeTravelToolbar.tsx`
-  - `web/src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx`
+  - `web/src/components/browser/ExportButton.tsx`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/ExportButton.test.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Learnings for future iterations:
-  - Time Travel history rows already carry rollback audit fields through the web API type; upper-layer controls should surface those fields anywhere a historical checkpoint can be selected or shown as active.
-- Result: SELF-447 marked `passes: true`; SELF-448 remains open for a later Ralph iteration.
----
-
-## Tue May 19 16:23:36 CST 2026 - SELF-448
-- What was implemented:
-  - Added component BDD coverage that a standards-compliant `filename*=UTF-8''control%20evidence.pdf` compliance report header saves as `control evidence.pdf`.
-  - Added API coverage for RFC 5987 compliance filenames, existing quoted GDPR filenames, and malformed filename fallback behavior.
-  - Replaced the attachment filename regex with Content-Disposition parameter parsing that prefers valid UTF-8 RFC 5987 `filename*`, preserves quoted `filename`, and falls back to deterministic names when extended values are malformed.
-  - Corrected the SELF-448 API test quality-gate path to run from the `web/` project root.
-- TDD red:
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/api/__tests__/compliance.test.ts` failed as expected before implementation: encoded filenames were returned as `UTF-8''control%20evidence.pdf`, and malformed values were returned as `UTF-8''%E0%A4%A` instead of falling back.
-- Verification:
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/api/__tests__/compliance.test.ts` passed: 2 files, 11 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/src/api/compliance.ts`
-  - `web/src/api/__tests__/compliance.test.ts`
-  - `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Learnings for future iterations:
-  - Download helpers should parse `Content-Disposition` as parameters, not with a single filename regex; extended `filename*` values need decode-and-validate semantics before falling back to regular filenames or deterministic defaults.
-- Result: SELF-448 marked `passes: true`; all stories in the active PRD now pass pending final clean-worktree verification.
----
+  - Browser historical mode should gate every artifact-producing affordance, not only live updates and bulk mutation controls.
+- Result: SELF-450 marked `passes: true`; all current PRD stories are now passing.
