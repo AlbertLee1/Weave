@@ -29,7 +29,7 @@
       "phase": "OSv2 GeoTemporal Operator Experience",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Correct stale GeoTemporal docs and package comments that still claim only in-memory storage exists even though PgStore, server PG default wiring, and spatial-temporal query support are implemented.",
       "bdd_acceptance": [

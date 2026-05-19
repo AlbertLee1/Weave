@@ -18,7 +18,7 @@ Kickoff evidence:
 
 Current stories:
 - SELF-451 Align MCP operator docs with live bridge contract: passes.
-- SELF-452 Correct GeoTemporal PG-store documentation drift: open.
+- SELF-452 Correct GeoTemporal PG-store documentation drift: passes.
 
 Codebase Patterns:
 - OSv2 operator docs with live protocol claims can be guarded from scripts/ci BDD tests that read docs and reject stale stub language while requiring the implemented contract fragments.
@@ -59,3 +59,27 @@ Codebase Patterns:
   - MCP resource kind names are lowercase in URIs; the ObjectType resource is `weave://objecttype/<ontologyApiName>/<objectTypeApiName>`.
   - cmd/weave-mcp does not bootstrap Weave dependencies; the production local-client path is stdio framing bridged to an already running `/mcp` endpoint.
 - Result: SELF-451 marked `passes: true`; SELF-452 remains open for the next Ralph iteration.
+
+## Tue May 19 18:07:30 CST 2026 - SELF-452
+- What was implemented:
+  - Added a scripts/ci BDD docs-contract test that rejects stale GeoTemporal memory-only claims and requires the live PG-backed `PgStore`, server wiring, migrations, and spatial-temporal query capability fragments.
+  - Updated `docs/PRD-Weave-OSv2-深度复刻-V2.md` so the status matrix, gap table, US-072 notes, and component map describe `pkg/geotemporal/pg_store.go`, `geotemporal_values`, `cmd/server/main.go`, and degraded memory fallback accurately.
+  - Updated `pkg/geotemporal` package comments so `MemoryStore` is documented as degraded mode while durable server boots use `PgStore`.
+- TDD red:
+  - `go test ./scripts/ci -run TestBDD_GeoTemporalDocsReflectPGStoreDefault -count=1` failed as expected before doc/comment updates because stale memory-only claims remained and required PG-store contract fragments were missing.
+- Verification:
+  - `go test ./scripts/ci -run TestBDD_GeoTemporalDocsReflectPGStoreDefault -count=1` passed.
+  - `go test ./pkg/geotemporal ./cmd/server -run 'Test.*Geotemporal|TestHealth|TestContract' -count=1` passed.
+  - `go test ./scripts/ci -count=1` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - docs/PRD-Weave-OSv2-深度复刻-V2.md
+  - pkg/geotemporal/memory_store.go
+  - pkg/geotemporal/store.go
+  - scripts/ci/ci_workflow_bdd_test.go
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Learnings for future iterations:
+  - GeoTemporal durable default is selected in `cmd/server/main.go` when `PGPool` exists; memory is a degraded-mode fallback for no-PG boots and tests.
+  - GeoTemporal docs should mention both migrations: `000205_geotemporal_values` for persistence and `000208_geotemporal_spatial_indexes` for bbox/time query support.
+- Result: SELF-452 marked `passes: true`; all current PRD stories now pass.

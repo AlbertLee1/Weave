@@ -185,6 +185,102 @@ func TestBDD_MCPDocsReflectLivePromptsResourcesBridge(t *testing.T) {
 	}
 }
 
+func TestBDD_GeoTemporalDocsReflectPGStoreDefault(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	storeDoc := readFile(t, filepath.Join(root, "pkg", "geotemporal", "store.go"))
+	memoryStoreDoc := readFile(t, filepath.Join(root, "pkg", "geotemporal", "memory_store.go"))
+	serverMain := readFile(t, filepath.Join(root, "cmd", "server", "main.go"))
+	pgStore := readFile(t, filepath.Join(root, "pkg", "geotemporal", "pg_store.go"))
+	migration205 := readFile(t, filepath.Join(root, "migrations", "000205_geotemporal_values.up.sql"))
+	migration208 := readFile(t, filepath.Join(root, "migrations", "000208_geotemporal_spatial_indexes.up.sql"))
+
+	staleClaims := []struct {
+		name string
+		text string
+	}{
+		{"statusDoc", statusDoc},
+		{"storeDoc", storeDoc},
+		{"memoryStoreDoc", memoryStoreDoc},
+	}
+	for _, source := range staleClaims {
+		for _, claim := range []string{
+			"Only an in-memory implementation ships today",
+			"persistent backends (PostGIS,\n// JSONB) are deferred",
+			"**仅内存 store**",
+			"🔴 **内存**",
+			"**GeoTemporal 仅 memory_store.go**",
+			"`pkg/geotemporal` 目录 3 文件，全是内存",
+			"**不持久化**，进程重启丢失",
+			"GeoTemporal PG store + 可选 PostGIS",
+			"| GeoTemporal | `pkg/geotemporal/memory_store.go` |",
+		} {
+			if strings.Contains(source.text, claim) {
+				t.Errorf("%s still contains stale GeoTemporal claim %q", source.name, claim)
+			}
+		}
+	}
+
+	for _, required := range []string{
+		"`pkg/geotemporal/pg_store.go`",
+		"`geotemporal_values`",
+		"`migrations/000205_geotemporal_values.up.sql`",
+		"`migrations/000208_geotemporal_spatial_indexes.up.sql`",
+		"`SpatialTemporalQuerier`",
+		"`QueryBBoxRange`",
+		"`cmd/server/main.go`",
+		"PG-backed `PgStore`",
+		"in-process MemoryStore as degraded mode",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("GeoTemporal status doc must describe live PG contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"PostgreSQL-backed PgStore",
+		"geotemporal_values",
+		"000205_geotemporal_values.up.sql",
+		"000208_geotemporal_spatial_indexes.up.sql",
+		"SpatialTemporalQuerier",
+	} {
+		if !strings.Contains(storeDoc, required) {
+			t.Errorf("pkg/geotemporal package comment must describe %q", required)
+		}
+	}
+	if !strings.Contains(memoryStoreDoc, "degraded-mode") {
+		t.Error("MemoryStore comment must describe memory as degraded-mode fallback, not the durable default")
+	}
+	if !strings.Contains(serverMain, "geotemporal.NewPgStore") {
+		t.Error("cmd/server must wire geotemporal.NewPgStore when PG is available")
+	}
+	for _, required := range []string{
+		"func (s *PgStore) QueryBBoxRange",
+		"var _ SpatialTemporalQuerier = (*PgStore)(nil)",
+	} {
+		if !strings.Contains(pgStore, required) {
+			t.Errorf("PgStore must expose the spatial-temporal query capability fragment %q", required)
+		}
+	}
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS geotemporal_values",
+		"idx_geotemporal_values_series_ts",
+	} {
+		if !strings.Contains(migration205, required) {
+			t.Errorf("migration 000205 must contain %q", required)
+		}
+	}
+	for _, required := range []string{
+		"idx_geotemporal_values_lng",
+		"idx_geotemporal_values_lat",
+		"postgis",
+	} {
+		if !strings.Contains(migration208, required) {
+			t.Errorf("migration 000208 must contain %q", required)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

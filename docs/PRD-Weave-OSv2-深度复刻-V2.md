@@ -34,7 +34,7 @@
 | 安全模型 | RBAC Phase 1 完成 | 仅 Ontology-scoped RBAC，**无行级 / 列级 / Marking 评估链路** | 语义缺 |
 | 实时订阅 | WebSocket 订阅列入路线 | **无客户端订阅端点**（仅 Funnel 内部广播） | 缺失 |
 | TimeSeries | 3 端点 + PG 存储 | PG 存储有，但无时间分桶 / 聚合查询 | 深度缺 |
-| GeoTemporal | 2 端点 + 存储 | **仅内存 store** | 深度缺 |
+| GeoTemporal | 2 端点 + 存储 | PG `geotemporal_values` 持久化，缺聚合/订阅深度 | 深度缺 |
 | Function backed action | Tier 3.2 声称完成 | HTTP dispatcher 存在，**无内嵌运行时**（Goja/Wasm） | 深度缺 |
 | Type classes | 语法支持 | **不驱动 Bleve 索引映射**（analyzer.not_analyzed 等未生效） | 行为缺 |
 | Ontology 分支/版本 | Snapshot 存在 | **无分支 / 无语义版本链路 / RID 不含 version** | 结构缺 |
@@ -118,7 +118,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | Special | Attachment Blob | 🟢 | 🟢 本地 | 🟢 | **85%** | 4 全局端点 + 4 property 端点；无 S3/minio 后端 |
 | Special | MediaReference | 🟢 | 🟢 | 🟢 | **80%** | 3 端点就位 |
 | Special | TimeSeries | 🟢 3 端点 | 🟢 PG `timeseries_points` | 🟡 | **55%** | Append/FirstPoint/LastPoint/StreamPoints；**无时间分桶聚合、无 downsample** |
-| Special | GeoTemporal | 🟢 2 端点 | 🔴 **内存** | 🔴 | **35%** | latestValue / streamHistoricValues；**不持久化**，进程重启丢失 |
+| Special | GeoTemporal | 🟢 2 端点 | 🟢 PG `geotemporal_values` | 🟡 | **60%** | latestValue / streamHistoricValues 由 `cmd/server/main.go` 在 PG 可用时接入 PG-backed `PgStore`；无 PG 时使用 in-process MemoryStore as degraded mode |
 | Special | CipherText (AES-GCM) | 🟢 | 🟢 | 🟢 | **80%** | decrypt 端点 + 信封加密 |
 | Special | Transaction (preview) | 🟢 | 🟡 | 🟡 | **55%** | `/transactions/{id}/edits` 端点就位；**事务边界语义浅**，未与 Action 集成 |
 | Special | SQL Query | 🟢 | 🟢 | 🟡 | **60%** | execute 端点；**无查询沙箱、无资源限制、无 read-only guard** |
@@ -151,7 +151,7 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 | "Phase 4 gate: **100% Foundry 对齐** 68/68" | 路由 68/68 就位；**端点语义与 Foundry 不等价**的至少 10+ 个 | 上表黄红部分 |
 | "Phase 5: RBAC 完成" | Ontology 作用域 + role-permission 矩阵完成；**行/列/Marking 未纳入查询过滤** | `pkg/oss/policy_filter.go` / `marking_filter.go` 存在但未接主链路 |
 | "nearestNeighbors + MCP AI tools 交付" | 单字段 KNN + 4 MCP tool；**无混合检索 / 无 reranking / 无跨 ObjectType** | `pkg/oss/objectset/nn.go` 仅 PropertyIdentifier |
-| "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store；**GeoTemporal 仅 memory_store.go** | `pkg/geotemporal` 目录 3 文件，全是内存 |
+| "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store；GeoTemporal 也有 `pkg/geotemporal/pg_store.go` | GeoTemporal 使用 `migrations/000205_geotemporal_values.up.sql` 持久化，并由 `migrations/000208_geotemporal_spatial_indexes.up.sql` 加强 bbox + 时间过滤索引 |
 | "Function-backed Actions" | HTTP dispatcher 可用；**无内嵌运行时**，依赖外部 function server | `pkg/actions/function_dispatcher.go` + `http_dispatcher.go` |
 | "Edit → NATS → Bleve → Broadcast" | 后端管线通；**广播不暴露给客户端** | 无 SSE/WS 路由 |
 | "Interface 完整" | 元数据 CRUD + 多态查询端点；**跨子类型排序 + 分页稳定性未测试** | 无集成测试覆盖"多 ObjectType 实现同一 interface 的 load + sort"路径 |
@@ -656,13 +656,13 @@ Weave 是一个**单机开源的 Palantir Foundry OSv2 本体层克隆**，目�
 - Metric: avg/min/max/sum/count；
 - 测试：生成 10 万个点 + 按天聚合结果正确。
 
-### US-072 — GeoTemporal PG store + 可选 PostGIS
+### US-072 — GeoTemporal PG store 已落地 + 可选 PostGIS 索引
 
 **Acceptance Criteria**
-- `pkg/geotemporal/pg_store.go` 使用普通 PG 存储；
-- 可选开启 PostGIS extension 使用 `geography(Point, 4326)` 列；
-- `latestValue` 和 `streamHistoricValues` 走 PG 查询；
-- 测试：重启进程数据不丢失。
+- `pkg/geotemporal/pg_store.go` 使用普通 PG 存储，表结构在 `migrations/000205_geotemporal_values.up.sql`；
+- `latestValue` 和 `streamHistoricValues` 走 PG 查询；`cmd/server/main.go` 在 PG pool 可用时默认接入 PG-backed `PgStore`，否则使用 in-process MemoryStore as degraded mode；
+- `SpatialTemporalQuerier` / `QueryBBoxRange` 支持 bbox + time range 查询，`migrations/000208_geotemporal_spatial_indexes.up.sql` 提供经纬度函数索引和可选 PostGIS GIST 索引；
+- 测试：重启进程数据不丢失，bbox/time range 查询结果稳定。
 
 ### US-073 — withProperties 二阶
 
@@ -826,7 +826,7 @@ v2 允许有限的 breaking changes，需在 `CHANGES-v2.md` 显式标注：
 | Auth JWT / API Key | `pkg/auth/jwt_signer.go`, `api_key.go` |
 | Policy filter (未接入主链路) | `pkg/oss/policy_filter.go`, `marking_filter.go` |
 | TimeSeries | `pkg/timeseries/pg_store.go` |
-| GeoTemporal | `pkg/geotemporal/memory_store.go` |
+| GeoTemporal | `pkg/geotemporal/pg_store.go`, `pkg/geotemporal/memory_store.go` |
 | Cipher | `pkg/cipher/` |
 | MCP | `pkg/mcp/`, `cmd/weave-mcp/` |
 | Routes 总表 | `cmd/server/routes.go` |
