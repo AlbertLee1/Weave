@@ -353,6 +353,24 @@ describe('validateNode', () => {
     ).toEqual([]);
   });
 
+  it('accepts backend text-search filter clauses with string values', () => {
+    for (const type of [
+      'contains',
+      'containsAllTerms',
+      'containsAllTermsInOrder',
+      'startsWith',
+    ]) {
+      expect(
+        validateNode({
+          id: '1',
+          type: 'filter',
+          objectSet: emptyBase('Employee'),
+          where: { type, field: 'description', value: 'critical outage' },
+        }),
+      ).toEqual([]);
+    }
+  });
+
   it('flags union with fewer than 2 children', () => {
     const errs = validateNode({
       id: '1',

@@ -199,7 +199,11 @@ const SIMPLE_WHERE_OPERATORS = [
   'lt',
   'lte',
   'isNull',
+  'contains',
+  'containsAllTerms',
   'containsAnyTerm',
+  'containsAllTermsInOrder',
+  'startsWith',
 ] as const;
 
 const LOGICAL_WHERE_OPERATORS = ['and', 'or', 'not'] as const;
