@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import ciWorkflowSource from '../../../../.github/workflows/ci.yml?raw';
 import sseReconnectSpecSource from '../../../e2e/phase7/sse-reconnect.spec.ts?raw';
 import optimisticConcurrencySpecSource from '../../../e2e/phase6/optimistic-concurrency.spec.ts?raw';
 import us444BrowseSpecSource from '../../../e2e/us444/02-browse.spec.ts?raw';
@@ -24,6 +25,31 @@ import us444ReadmeSource from '../../../e2e/us444/README.md?raw';
 import vtx099SystemGraphSpecSource from '../../../e2e/vtx-099-system-graph-render.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
+  it('keeps CI Playwright discovery aligned with every upper-layer E2E probe group', () => {
+    const stepStart = ciWorkflowSource.indexOf('- name: Playwright spec discovery');
+    expect(stepStart).toBeGreaterThanOrEqual(0);
+
+    const discoveryStep = ciWorkflowSource.slice(stepStart);
+    const requiredTargets = [
+      'us444/',
+      'phase6/',
+      'phase7/',
+      'vtx-099-system-graph-render.spec.ts',
+      'dogfood-verify.spec.ts',
+      'dogfood-diagnose.spec.ts',
+      'dogfood-empty-states.spec.ts',
+      'us-456-perf-dashboard.spec.ts',
+      'us-457-timeseries-tab.spec.ts',
+      'us-458-hotkey-help.spec.ts',
+      'zzz-login-rate-limit.spec.ts',
+    ];
+
+    expect(discoveryStep).toContain('npx playwright test --list');
+    for (const target of requiredTargets) {
+      expect(discoveryStep).toContain(target);
+    }
+  });
+
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
     const source = sseReconnectSpecSource;
 
