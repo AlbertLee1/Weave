@@ -19,6 +19,8 @@ import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
 import us444FunctionReplaySpecSource from '../../../e2e/us444/19-fn-replay.spec.ts?raw';
 import us444SubscribeSpecSource from '../../../e2e/us444/20-subscribe.spec.ts?raw';
+import us444HelpersSource from '../../../e2e/us444/helpers.ts?raw';
+import us444ReadmeSource from '../../../e2e/us444/README.md?raw';
 import vtx099SystemGraphSpecSource from '../../../e2e/vtx-099-system-graph-render.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
@@ -259,6 +261,25 @@ describe('Playwright spec contracts', () => {
     expect(source).toMatch(/objectType:\s*['"]customer['"]/);
     expect(source).toContain("toBe('subscribed')");
     expect(source).toContain('subscriptionId');
+  });
+
+  it('keeps US-444 helper guidance aligned with mandatory wired-service gates', () => {
+    const sources = [us444HelpersSource, us444ReadmeSource];
+
+    for (const source of sources) {
+      expect(source).toContain('skipWhenBackendDown');
+      expect(source).not.toMatch(/optional feature/i);
+      expect(source).not.toMatch(/404[\s\S]{0,80}503[\s\S]{0,80}skip/i);
+      expect(source).not.toContain('feature surface returns 503/404');
+      expect(source).not.toContain('endpoint unavailable');
+    }
+
+    expect(us444HelpersSource).toMatch(
+      /Reachable backend service failures should be[\s\S]{0,40}asserted in the spec body\./,
+    );
+    expect(us444ReadmeSource).toMatch(
+      /A reachable[\s\S]{0,40}backend with an unwired service endpoint is a test failure\./,
+    );
   });
 
   it('keeps the VTX-099 system graph gate wired and skip-free after backend health', () => {

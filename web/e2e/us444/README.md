@@ -33,13 +33,14 @@ cd web && npm run test:e2e -- us444/         # this suite only
 make e2e-down                                # tear down
 ```
 
-## Degraded-mode behaviour
+## Portability guard
 
-Every spec opens with `await skipWhenBackendDown(request)` and treats
-`404` / `503` from optional feature endpoints as a `test.skip()` rather
-than a failure. This keeps the suite useful both for full local stacks
-AND for the syntactic CI gate (`npx playwright test --list`) which runs
-without a live backend.
+Every spec opens with `await skipWhenBackendDown(request)`. That is the
+only portability skip: it keeps the suite useful for the syntactic CI gate
+(`npx playwright test --list`) when no live backend is present. A reachable
+backend with an unwired service endpoint is a test failure. Missing routes,
+disabled stores, empty payloads, and quiet services should be asserted by
+the spec that owns the flow.
 
 ## CI
 

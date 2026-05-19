@@ -9,12 +9,11 @@ import { test, type APIRequestContext } from '@playwright/test';
  *   - ontology=northwind with employee/customer/order/product types
  *   - users admin@test (admin) / manager@test (editor) / peer@test (viewer)
  *
- * Every spec is degraded-mode tolerant: if the backend is unreachable or
- * the optional feature surface returns 503/404 because its store is not
- * wired (PG-mode-only features in a partial deployment), the spec calls
- * `test.skip()` rather than failing. This keeps the suite useful both
- * for full local stacks AND for syntactic CI gates that only invoke
- * `playwright test --list`.
+ * Every spec starts with the same portability guard: when the backend is
+ * unreachable, `skipWhenBackendDown` skips the test so syntax-only CI lanes
+ * can still list the suite. Reachable backend service failures should be
+ * asserted in the spec body. Missing routes, disabled stores, empty payloads,
+ * and quiet services are wired-service regressions, not portability skips.
  */
 export const API_BASE = 'http://localhost:9117';
 export const ONTOLOGY = 'northwind';
@@ -70,8 +69,9 @@ export async function loginAdmin(
 
 /**
  * Fetch JSON from a GET endpoint, returning the parsed body on 2xx,
- * `null` on 404 (so specs can choose between "feature unavailable" and
- * "test skip"), and throwing on other error statuses for visibility.
+ * `null` on 404/503 so specs can produce targeted assertions for missing
+ * service routes or disabled stores, and throwing on other error statuses
+ * for visibility.
  */
 export async function fetchJSON<T>(
   request: APIRequestContext,

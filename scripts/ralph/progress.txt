@@ -6,6 +6,7 @@ Branch: ralph/self-iteration-20260519-082247
 ## Codebase Patterns
 - US-444 full-stack probes should only use `test.skip` for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
 - VTX-099 full-stack probes should only skip when the shared backend health check is down. With a reachable backend, missing System Graph records, empty graph payloads, and failed render surfaces should be assertions guarded by a source-level contract test.
+- US-444 helper and README guidance is now source-contracted too: docs may describe `skipWhenBackendDown` as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
 
 ## Kickoff
 - Current branch verified with `git branch --show-current`: `ralph/self-iteration-20260519-082247`.
@@ -71,3 +72,28 @@ Branch: ralph/self-iteration-20260519-082247
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Result: SELF-432 marked `passes: true`; SELF-433 remains open for a later Ralph iteration.
+
+## Selected Story (Iteration 3)
+- Selected SELF-433 because it is the highest-priority incomplete story and stale US-444 helper/README guidance still told future probes to skip reachable-but-unwired service endpoints.
+
+## SELF-433 - Align US-444 helper docs with mandatory wired-service gates
+- TDD red:
+  - Added raw-source imports for `web/e2e/us444/helpers.ts` and `web/e2e/us444/README.md` to `web/src/lib/__tests__/playwrightSpecContracts.test.ts`.
+  - Added a contract that requires `skipWhenBackendDown` guidance, rejects stale optional-feature skip wording, and requires mandatory wired-service failure wording.
+  - Ran `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts`.
+  - Expected failure observed: the new contract rejected `optional feature` in `web/e2e/us444/helpers.ts`.
+- Implementation:
+  - Updated `web/e2e/us444/helpers.ts` comments so backend-down is documented as the only portability skip, while reachable backend service failures are assertions.
+  - Updated the `fetchJSON` comment to explain 404/503 null bodies as targeted assertion inputs, not skip signals.
+  - Updated `web/e2e/us444/README.md` to replace degraded-mode optional-skip guidance with a portability guard section.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 17 tests.
+  - `rg -n "optional feature|404.*503.*skip|feature surface returns 503/404|endpoint unavailable" web/e2e/us444/README.md web/e2e/us444/helpers.ts` returned no matches.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/e2e/us444/helpers.ts`
+  - `web/e2e/us444/README.md`
+  - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Result: SELF-433 marked `passes: true`; all active PRD stories are now passing.
