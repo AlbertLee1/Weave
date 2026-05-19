@@ -62,6 +62,7 @@ import { AutomationRulesPage } from './components/automation/AutomationRulesPage
 import { ProposalsPage } from './components/proposals/ProposalsPage';
 import { SecurityPoliciesPage } from './components/securityPolicies/SecurityPoliciesPage';
 import { NotFoundPage } from './components/common/NotFoundPage';
+import { VertexDiagrammingRedirect } from './vertex/VertexDiagrammingRedirect';
 // Lazy-load the Vertex workspace so the heavy Sigma + Graphology bundle
 // is split off the initial app chunk and only paid for by users who hit
 // /vertex/*. (Also keeps test-only App imports from triggering Sigma's
@@ -424,6 +425,7 @@ export default function App() {
                 }
               />
               <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
+              <Route path="vertex/:rid/diagramming" element={<VertexDiagrammingRedirect />} />
               <Route
                 path="vertex/:rid"
                 element={

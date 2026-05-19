@@ -51,7 +51,7 @@
       "phase": "OSv2 Vertex Workspace Experience",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Ensure `/vertex/{rid}/diagramming` does not dead-end on the SPA wildcard or a stale Coming Soon stub now that Vertex workspace graph rendering, layout, and interactions are live.",
       "bdd_acceptance": [

@@ -184,12 +184,6 @@ const zhCN = {
       saved: '已保存',
       loading: '加载中…',
     },
-    diagramming: {
-      title: '图表绘制 · 即将上线',
-      description:
-        '图表绘制（Diagramming）模式仍在上游 beta 阶段。Vertex v1 仅发布 Graph 模式；该路由已保留，未来从外部系统过来的链接不会 404。详见 PRD VTX-114。',
-      backToGraph: '返回 Graph',
-    },
     layers: {
       title: '图层',
       dropHere: '拖动图层到此',
