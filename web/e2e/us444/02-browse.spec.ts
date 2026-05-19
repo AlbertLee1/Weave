@@ -28,12 +28,15 @@ test.describe('US-444 — browse objects', () => {
     const res = await request.get(
       `${API_BASE}/api/v2/ontologies/${ONTOLOGY}/objects/customer`,
     );
-    test.skip(!res.ok(), `objects endpoint unavailable: ${res.status()}`);
+    const failureBody = res.ok() ? '' : await res.text();
+    expect(
+      res.ok(),
+      `customer objects endpoint must be wired: ${res.status()} ${failureBody}`,
+    ).toBe(true);
+
     const body = (await res.json()) as { data: Record<string, unknown>[] };
     expect(Array.isArray(body.data)).toBe(true);
-    if (body.data.length === 0) {
-      test.skip(true, 'northwind seed produced 0 customer rows — rerun e2e_seed.sh');
-    }
+    expect(body.data.length, 'northwind seed must include customer rows').toBeGreaterThan(0);
     for (const row of body.data) {
       expect(row).toHaveProperty('customerID');
     }
