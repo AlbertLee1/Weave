@@ -33,7 +33,8 @@ export function FilterBuilder({
     if (selectedOp === 'containsAnyTerm') {
       parsedValue = (parsedValue as string)
         .split(/\s+/)
-        .filter((t: string) => t.length > 0);
+        .filter((t: string) => t.length > 0)
+        .join(' ');
     } else if (selectedOp === 'gt' || selectedOp === 'lt') {
       const num = Number(parsedValue);
       if (!isNaN(num)) parsedValue = num;

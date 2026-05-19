@@ -1,0 +1,71 @@
+{
+  "project": "Weave Self-Iteration ObjectSet Filter Contract Hardening",
+  "branchName": "ralph/self-iteration-20260519-132647",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-132647. The previous active PRD belonged to ralph/self-iteration-20260519-122726 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-133057/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26077819348 completed green while Codespaces prebuild 26077819155 was still in progress; local sampled checks for the known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA'` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. DOG-002 through DOG-005 have committed regression coverage in this checkout. This PRD focuses on the next stale ObjectSet composer surface: filters can still be incomplete or use a UI-only operator shape that the backend WhereClause contract rejects.",
+  "userStories": [
+    {
+      "id": "SELF-440",
+      "name": "Fail closed on invalid ObjectSet filter clauses",
+      "phase": "Upper-Layer ObjectSet Experience",
+      "active": true,
+      "priority": 1,
+      "passes": true,
+      "dependencies": [],
+      "description": "Make the ObjectSet composer validate filter where clauses against the backend-supported WhereClause contract before Execute or shared-link execution can send a malformed filter.",
+      "bdd_acceptance": [
+        "Given the ObjectSet composer contains a filter ObjectSet whose `eq` clause has no field or value, When validation runs, Then Execute is disabled and the validation panel names the missing field and value.",
+        "Given a saved or shared filter ObjectSet contains the unsupported `neq` operator, When the composer renders it, Then Execute remains disabled with a specific unsupported-operator message and the builder no longer offers `neq` for new filter clauses.",
+        "Given a filter ObjectSet uses the backend-supported `isNull` operator with a field and no value, When validation runs, Then Execute remains enabled because `isNull` does not require a comparison value."
+      ],
+      "quality_gates": [
+        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetComposer.filterValidation.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx`",
+        "From `web/`: `npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-441",
+      "name": "Expose logical Where groups in ObjectSet composer",
+      "phase": "Upper-Layer ObjectSet Experience",
+      "active": true,
+      "priority": 2,
+      "passes": true,
+      "dependencies": [
+        "SELF-440"
+      ],
+      "description": "Allow users to build backend-supported `and`, `or`, and `not` filter clauses in the composer instead of only accepting them from pasted or shared definitions.",
+      "bdd_acceptance": [
+        "Given the user adds an `and` filter group with two child clauses, When the definition updates, Then the wire WhereClause contains `type: \"and\"` and a two-entry `value` array.",
+        "Given the user adds a `not` filter around an `eq` clause, When the ObjectSet executes, Then the backend receives the supported `not` shape rather than a UI-only pseudo-operator.",
+        "Given a saved definition with nested logical clauses is loaded, When it is rendered and saved again, Then the logical filter round-trips without losing children."
+      ],
+      "quality_gates": [
+        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.logicalFilters.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`",
+        "From `web/`: `npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    },
+    {
+      "id": "SELF-442",
+      "name": "Cover text-search Where operators in ObjectSet composer",
+      "phase": "Upper-Layer ObjectSet Experience",
+      "active": true,
+      "priority": 3,
+      "passes": true,
+      "dependencies": [
+        "SELF-440"
+      ],
+      "description": "Expand the composer filter controls to cover the backend text-search Where operators users need for analyst-style ObjectSet queries.",
+      "bdd_acceptance": [
+        "Given the user selects `contains`, `containsAllTerms`, or `containsAllTermsInOrder`, When they enter a field and text value, Then the wire WhereClause uses the selected backend-supported operator with a string value.",
+        "Given the user selects `startsWith`, When they enter a prefix, Then the definition validates and Execute is enabled.",
+        "Given a shared definition already uses one of the supported text-search operators, When loaded in the composer, Then the operator is shown as editable rather than rejected as unsupported."
+      ],
+      "quality_gates": [
+        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.textFilters.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`",
+        "From `web/`: `npx tsc --noEmit`",
+        "`git diff --check`"
+      ]
+    }
+  ]
+}

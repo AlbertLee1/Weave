@@ -1,68 +1,66 @@
 {
-  "project": "Weave Self-Iteration ObjectSet Filter Contract Hardening",
-  "branchName": "ralph/self-iteration-20260519-132647",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-132647. The previous active PRD belonged to ralph/self-iteration-20260519-122726 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-133057/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26077819348 completed green while Codespaces prebuild 26077819155 was still in progress; local sampled checks for the known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA'` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. DOG-002 through DOG-005 have committed regression coverage in this checkout. This PRD focuses on the next stale ObjectSet composer surface: filters can still be incomplete or use a UI-only operator shape that the backend WhereClause contract rejects.",
+  "project": "Weave Self-Iteration Browser Where Contract Tightening",
+  "branchName": "ralph/self-iteration-20260519-143531",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-143531. The previous active PRD belonged to ralph/self-iteration-20260519-132647 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-143836/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26080216394 completed green on commit 1aa796d while Codespaces prebuild 26080216161 was still in progress; local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI'` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. DOG-003 through DOG-005 have committed regression coverage, but code inspection found the Browser structured filter builder still emitting a UI-only array shape for `containsAnyTerm` even though the canonical WhereClause contract is string-based. This PRD focuses on tightening the Browser object exploration WhereClause surface used by upper-layer ObjectSet experiences.",
   "userStories": [
     {
-      "id": "SELF-440",
-      "name": "Fail closed on invalid ObjectSet filter clauses",
-      "phase": "Upper-Layer ObjectSet Experience",
+      "id": "SELF-443",
+      "name": "Canonicalize Browser containsAnyTerm filters",
+      "phase": "Upper-Layer Browser Experience",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Make the ObjectSet composer validate filter where clauses against the backend-supported WhereClause contract before Execute or shared-link execution can send a malformed filter.",
+      "description": "Make the Browser structured filter builder emit the canonical backend WhereClause shape for `containsAnyTerm` instead of preserving a UI-only array of terms.",
       "bdd_acceptance": [
-        "Given the ObjectSet composer contains a filter ObjectSet whose `eq` clause has no field or value, When validation runs, Then Execute is disabled and the validation panel names the missing field and value.",
-        "Given a saved or shared filter ObjectSet contains the unsupported `neq` operator, When the composer renders it, Then Execute remains disabled with a specific unsupported-operator message and the builder no longer offers `neq` for new filter clauses.",
-        "Given a filter ObjectSet uses the backend-supported `isNull` operator with a field and no value, When validation runs, Then Execute remains enabled because `isNull` does not require a comparison value."
+        "Given the Browser filter builder is set to `contains any term`, When the user enters `OpenAI   Codex` and adds the filter, Then the saved filter value is the string `OpenAI Codex` rather than an array.",
+        "Given multiple Browser filters include a `containsAnyTerm` clause, When `buildWhereClause` serializes the request body, Then the clause keeps `value` as a string inside the `and` group.",
+        "Given the filter chip renders a canonical `containsAnyTerm` string, When the user reviews the active filter, Then the visible chip value remains readable as `OpenAI Codex`."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetComposer.filterValidation.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx`",
+        "`npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx src/lib/__tests__/whereBuilder.test.ts`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-441",
-      "name": "Expose logical Where groups in ObjectSet composer",
-      "phase": "Upper-Layer ObjectSet Experience",
+      "id": "SELF-444",
+      "name": "Expose range and prefix Where operators in Browser filters",
+      "phase": "Upper-Layer Browser Experience",
       "active": true,
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "dependencies": [
-        "SELF-440"
+        "SELF-443"
       ],
-      "description": "Allow users to build backend-supported `and`, `or`, and `not` filter clauses in the composer instead of only accepting them from pasted or shared definitions.",
+      "description": "Expand the Browser structured filter controls beyond `eq`, `gt`, `lt`, and text contains so analysts can build backend-supported range and prefix clauses without leaving the object browser.",
       "bdd_acceptance": [
-        "Given the user adds an `and` filter group with two child clauses, When the definition updates, Then the wire WhereClause contains `type: \"and\"` and a two-entry `value` array.",
-        "Given the user adds a `not` filter around an `eq` clause, When the ObjectSet executes, Then the backend receives the supported `not` shape rather than a UI-only pseudo-operator.",
-        "Given a saved definition with nested logical clauses is loaded, When it is rendered and saved again, Then the logical filter round-trips without losing children."
+        "Given the user selects `gte` or `lte` in the Browser filter builder, When they enter a numeric value, Then the generated WhereClause uses the selected operator with a numeric value.",
+        "Given the user selects `startsWith`, When they enter a prefix, Then the generated WhereClause uses `type: \"startsWith\"` with a string value.",
+        "Given a saved search reloads a Browser filter using one of these supported operators, When the filter chip renders, Then it shows the operator label instead of falling back to an unsupported raw token."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.logicalFilters.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`",
+        "`npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-442",
-      "name": "Cover text-search Where operators in ObjectSet composer",
-      "phase": "Upper-Layer ObjectSet Experience",
+      "id": "SELF-445",
+      "name": "Guard Browser sort requests with property metadata",
+      "phase": "Upper-Layer Browser Experience",
       "active": true,
       "priority": 3,
-      "passes": true,
-      "dependencies": [
-        "SELF-440"
-      ],
-      "description": "Expand the composer filter controls to cover the backend text-search Where operators users need for analyst-style ObjectSet queries.",
+      "passes": false,
+      "dependencies": [],
+      "description": "Prevent the Browser table from sending server-side sort requests for properties that are not declared sortable, avoiding avoidable backend rejections in object exploration flows.",
       "bdd_acceptance": [
-        "Given the user selects `contains`, `containsAllTerms`, or `containsAllTermsInOrder`, When they enter a field and text value, Then the wire WhereClause uses the selected backend-supported operator with a string value.",
-        "Given the user selects `startsWith`, When they enter a prefix, Then the definition validates and Execute is enabled.",
-        "Given a shared definition already uses one of the supported text-search operators, When loaded in the composer, Then the operator is shown as editable rather than rejected as unsupported."
+        "Given detailed property metadata marks `summary` as not sortable, When the Browser table renders, Then the `summary` column is not exposed as a sortable header.",
+        "Given detailed property metadata marks `deliveredDate` as sortable, When the user sorts that column, Then the Browser request includes `orderBy` for `deliveredDate`.",
+        "Given detailed property metadata is still loading or unavailable, When the table renders, Then only the primary key sort affordance remains enabled rather than assuming every property is sortable."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.textFilters.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`",
+        "`npm --prefix web test -- --run src/components/browser/__tests__/ObjectTable.sortability.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx`",
         "From `web/`: `npx tsc --noEmit`",
         "`git diff --check`"
       ]
