@@ -277,6 +277,31 @@ describe('VertexWorkspacePage extended-label overlay (VTX-019)', () => {
     positions: {},
   };
 
+  const payloadWithTimeSeriesMetadata = {
+    layers: [
+      {
+        id: 'layer-airports',
+        ontology: 'main',
+        objectTypeRid: 'ri.ontology.main.object-type.airport',
+        objectType: 'Airport',
+        extendedLabels: [
+          { kind: 'timeSeries', property: 'temperatureSeries', label: 'Temp °C' },
+        ],
+        objects: [
+          {
+            objectRid: 'ri.ontology.main.object.airport.JFK',
+            properties: {
+              name: 'JFK',
+              primaryKey: 'JFK_PK',
+            },
+          },
+        ],
+      },
+    ],
+    edges: [],
+    positions: {},
+  };
+
   it('Given_payloadWith3ExtendedLabels_When_pageRenders_Then_overlayCardShows3LabelRows', async () => {
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
@@ -315,6 +340,69 @@ describe('VertexWorkspacePage extended-label overlay (VTX-019)', () => {
     expect(screen.getByTestId('vertex-extended-label-property').textContent).toContain('92');
     expect(screen.getByTestId('vertex-extended-label-timeSeries').textContent).toContain('Temp °C');
     expect(screen.getByTestId('vertex-extended-label-measure').textContent).toContain('avgDelay');
+  });
+
+  it('Given_overlayNodeHasTimeSeriesLabelAndObjectMetadata_When_pageRenders_Then_overlayRequestsPointsAndDrawsSparkline', async () => {
+    const graphBody = {
+      rid: 'ri.vertex.main.graph.labels',
+      name: 'Labels',
+      version: 1,
+      payload: payloadWithTimeSeriesMetadata,
+    };
+    const pointsBody = [
+      { time: '2026-05-19T00:00:00Z', value: 10 },
+      { time: '2026-05-19T00:01:00Z', value: 15 },
+      { time: '2026-05-19T00:02:00Z', value: 20 },
+    ];
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('/api/vertex/v1/graphs/')) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            text: async () => JSON.stringify(graphBody),
+            json: async () => graphBody,
+          };
+        }
+        if (
+          init?.method === 'POST' &&
+          url ===
+            '/api/v2/ontologies/main/objects/Airport/JFK_PK/timeseries/temperatureSeries/streamPoints'
+        ) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            text: async () => JSON.stringify(pointsBody),
+            json: async () => pointsBody,
+          };
+        }
+        throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${url}`);
+      },
+    );
+
+    renderAt('/vertex/ri.vertex.main.graph.labels');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(1);
+    });
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/v2/ontologies/main/objects/Airport/JFK_PK/timeseries/temperatureSeries/streamPoints',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId('vertex-node-overlay-series-sparkline')
+          .querySelector('path')
+          ?.getAttribute('d'),
+      ).toBe('M 2.00 22.00 L 60.00 12.00 L 118.00 2.00');
+    });
   });
 });
 

@@ -11,6 +11,7 @@ import type { SelectionState } from '../features/vertex/selections/selectionStat
 import type { ExtendedLabel } from '../features/vertex/render/extendedLabels';
 import { useGetObject, useObjectActivity } from '../hooks/useObjects';
 import { useTimeSeriesPoints } from '../hooks/useTimeSeries';
+import { VertexMiniSparkline } from './VertexMiniSparkline';
 
 export interface VertexObjectSummary {
   rid: string;
@@ -266,7 +267,11 @@ function SeriesRow({
     >
       <div className="text-zinc-300">{label.label}</div>
       {values.length >= 2 ? (
-        <MiniSparkline values={values} />
+        <VertexMiniSparkline
+          values={values}
+          testId="vertex-sidebar-series-sparkline"
+          className="mt-1 h-6 w-full"
+        />
       ) : (
         <span
           data-testid="vertex-sidebar-series-sparkline"
@@ -276,36 +281,6 @@ function SeriesRow({
         </span>
       )}
     </div>
-  );
-}
-
-const SPARK_W = 120;
-const SPARK_H = 24;
-const SPARK_PAD = 2;
-
-function MiniSparkline({ values }: { values: number[] }) {
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const span = max - min || 1;
-  const innerW = SPARK_W - SPARK_PAD * 2;
-  const innerH = SPARK_H - SPARK_PAD * 2;
-  const stepX = values.length > 1 ? innerW / (values.length - 1) : 0;
-  const path = values
-    .map((v, i) => {
-      const x = SPARK_PAD + i * stepX;
-      const y = SPARK_PAD + innerH - ((v - min) / span) * innerH;
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(' ');
-  return (
-    <svg
-      data-testid="vertex-sidebar-series-sparkline"
-      viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
-      preserveAspectRatio="none"
-      className="mt-1 h-6 w-full"
-    >
-      <path d={path} stroke="#3B82F6" strokeWidth={1.5} fill="none" />
-    </svg>
   );
 }
 

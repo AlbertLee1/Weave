@@ -2,6 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 
 import type { ExtendedLabel } from '../features/vertex/render/extendedLabels';
+import type { VertexObjectSummary } from './VertexSelectionSidebar';
+
+type MockTimeSeriesPoint = { time: string; value: unknown };
+
+const timeSeriesHook = vi.hoisted(() => ({
+  useTimeSeriesPoints: vi.fn<() => { data: MockTimeSeriesPoint[] }>(() => ({ data: [] })),
+}));
 
 // Module-scoped stubs the test cases mutate per case. The mocked
 // @react-sigma/core exports return references to these stubs so each test
@@ -27,6 +34,10 @@ vi.mock('@react-sigma/core', () => ({
   useRegisterEvents: () => (handlers: Record<string, () => void>) => {
     lastHandlers = handlers;
   },
+}));
+
+vi.mock('../hooks/useTimeSeries', () => ({
+  useTimeSeriesPoints: timeSeriesHook.useTimeSeriesPoints,
 }));
 
 import { VertexNodeOverlay } from './VertexNodeOverlay';
@@ -57,6 +68,8 @@ function buildSigmaStub(opts: {
 
 beforeEach(() => {
   lastHandlers = null;
+  timeSeriesHook.useTimeSeriesPoints.mockReset();
+  timeSeriesHook.useTimeSeriesPoints.mockReturnValue({ data: [] });
 });
 
 const threeLabels: ExtendedLabel[] = [
@@ -64,6 +77,15 @@ const threeLabels: ExtendedLabel[] = [
   { key: 'timeSeries:temp:1', kind: 'timeSeries', label: 'Temp °C' },
   { key: 'measure:ri.fn.avgDelay:2', kind: 'measure', label: 'Avg Delay' },
 ];
+
+const jfkSummary: VertexObjectSummary = {
+  rid: 'ri.airport.JFK',
+  label: 'JFK',
+  properties: {},
+  ontologyApiName: 'main',
+  objectType: 'Airport',
+  primaryKey: 'JFK',
+};
 
 describe('VTX-019 VertexNodeOverlay', () => {
   it('Given_oneNodeWith3Labels_When_overlayRenders_Then_emitsCardWith3LabelRows', () => {
@@ -75,7 +97,7 @@ describe('VTX-019 VertexNodeOverlay', () => {
       ['ri.airport.JFK', threeLabels],
     ]);
 
-    render(<VertexNodeOverlay labelsByRid={labelsByRid} />);
+    render(<VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={new Map()} />);
 
     const card = screen.getByTestId('vertex-node-overlay-card-ri.airport.JFK');
     expect(card).toBeInTheDocument();
@@ -103,7 +125,7 @@ describe('VTX-019 VertexNodeOverlay', () => {
     const labelsByRid = new Map<string, ExtendedLabel[]>([
       ['ri.airport.JFK', threeLabels],
     ]);
-    render(<VertexNodeOverlay labelsByRid={labelsByRid} />);
+    render(<VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={new Map()} />);
 
     // Sanity check: registered afterRender handler is captured.
     expect(lastHandlers).not.toBeNull();
@@ -141,7 +163,7 @@ describe('VTX-019 VertexNodeOverlay', () => {
       ['ri.airport.onscreen', threeLabels],
       ['ri.airport.offscreen', threeLabels],
     ]);
-    render(<VertexNodeOverlay labelsByRid={labelsByRid} />);
+    render(<VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={new Map()} />);
 
     expect(screen.queryByTestId('vertex-node-overlay-card-ri.airport.onscreen')).toBeInTheDocument();
     expect(screen.queryByTestId('vertex-node-overlay-card-ri.airport.offscreen')).not.toBeInTheDocument();
@@ -150,7 +172,7 @@ describe('VTX-019 VertexNodeOverlay', () => {
   it('Given_emptyLabelsMap_When_render_Then_overlayRootRendersWithoutCards', () => {
     const { sigma } = buildSigmaStub({ positions: {} });
     sigmaStub = sigma;
-    render(<VertexNodeOverlay labelsByRid={new Map()} />);
+    render(<VertexNodeOverlay labelsByRid={new Map()} objectsByRid={new Map()} />);
     expect(screen.getByTestId('vertex-node-overlay-root')).toBeInTheDocument();
     expect(
       screen.getByTestId('vertex-node-overlay-root').querySelectorAll(
@@ -169,9 +191,106 @@ describe('VTX-019 VertexNodeOverlay', () => {
       ['ri.known', threeLabels],
       ['ri.missing', threeLabels],
     ]);
-    render(<VertexNodeOverlay labelsByRid={labelsByRid} />);
+    render(<VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={new Map()} />);
 
     expect(screen.getByTestId('vertex-node-overlay-card-ri.known')).toBeInTheDocument();
     expect(screen.queryByTestId('vertex-node-overlay-card-ri.missing')).not.toBeInTheDocument();
+  });
+
+  it('Given_visibleNodeWithTimeSeriesLabelAndMetadata_When_overlayRenders_Then_requestsStreamPointsAndDrawsSparkline', () => {
+    timeSeriesHook.useTimeSeriesPoints.mockReturnValue({
+      data: [
+        { time: '2026-05-19T00:00:00Z', value: 10 },
+        { time: '2026-05-19T00:01:00Z', value: 15 },
+        { time: '2026-05-19T00:02:00Z', value: 20 },
+      ],
+    });
+    const { sigma } = buildSigmaStub({
+      positions: { 'ri.airport.JFK': { x: 100, y: 200 } },
+    });
+    sigmaStub = sigma;
+    const labelsByRid = new Map<string, ExtendedLabel[]>([
+      ['ri.airport.JFK', [{ key: 'timeSeries:temp:0', kind: 'timeSeries', label: 'Temp °C' }]],
+    ]);
+    const objectsByRid = new Map<string, VertexObjectSummary>([
+      ['ri.airport.JFK', jfkSummary],
+    ]);
+
+    render(<VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={objectsByRid} />);
+
+    expect(timeSeriesHook.useTimeSeriesPoints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ontologyApiName: 'main',
+        objectType: 'Airport',
+        primaryKey: 'JFK',
+        property: 'temp',
+      }),
+    );
+    const sparkline = screen.getByTestId('vertex-node-overlay-series-sparkline');
+    expect(sparkline.tagName.toLowerCase()).toBe('svg');
+    expect(sparkline.querySelector('path')?.getAttribute('d')).toBe(
+      'M 2.00 22.00 L 60.00 12.00 L 118.00 2.00',
+    );
+  });
+
+  it('Given_missingOrNonNumericStreamPoints_When_overlayRenders_Then_keepsPendingMarkerWithoutThrowing', () => {
+    timeSeriesHook.useTimeSeriesPoints.mockReturnValue({
+      data: [
+        { time: '2026-05-19T00:00:00Z', value: 'cold' },
+        { time: '2026-05-19T00:01:00Z', value: null },
+      ],
+    });
+    const { sigma } = buildSigmaStub({
+      positions: { 'ri.airport.JFK': { x: 100, y: 200 } },
+    });
+    sigmaStub = sigma;
+    const labelsByRid = new Map<string, ExtendedLabel[]>([
+      ['ri.airport.JFK', [{ key: 'timeSeries:temp:0', kind: 'timeSeries', label: 'Temp °C' }]],
+    ]);
+
+    render(
+      <VertexNodeOverlay
+        labelsByRid={labelsByRid}
+        objectsByRid={new Map([['ri.airport.JFK', jfkSummary]])}
+      />,
+    );
+
+    const marker = screen.getByTestId('vertex-node-overlay-series-sparkline');
+    expect(marker.tagName.toLowerCase()).toBe('span');
+    expect(marker).toHaveAttribute('aria-label', 'sparkline pending');
+    expect(marker.textContent).toBe('▁▂▃▄▅');
+  });
+
+  it('Given_onlyOneOfManyTimeSeriesNodesIsVisible_When_overlayRenders_Then_requestsOnlyRenderedCards', () => {
+    const { sigma } = buildSigmaStub({
+      positions: {
+        'ri.airport.visible': { x: 100, y: 200 },
+        'ri.airport.offscreen': { x: 9999, y: 9999 },
+      },
+      dimensions: { width: 800, height: 600 },
+    });
+    sigmaStub = sigma;
+    const timeSeriesLabel: ExtendedLabel = {
+      key: 'timeSeries:temp:0',
+      kind: 'timeSeries',
+      label: 'Temp °C',
+    };
+    const labelsByRid = new Map<string, ExtendedLabel[]>([
+      ['ri.airport.visible', [timeSeriesLabel]],
+      ['ri.airport.offscreen', [timeSeriesLabel]],
+    ]);
+    const objectsByRid = new Map<string, VertexObjectSummary>([
+      ['ri.airport.visible', { ...jfkSummary, rid: 'ri.airport.visible', primaryKey: 'visible' }],
+      ['ri.airport.offscreen', { ...jfkSummary, rid: 'ri.airport.offscreen', primaryKey: 'offscreen' }],
+    ]);
+
+    render(<VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={objectsByRid} />);
+
+    expect(screen.getByTestId('vertex-node-overlay-card-ri.airport.visible')).toBeInTheDocument();
+    expect(screen.queryByTestId('vertex-node-overlay-card-ri.airport.offscreen')).not.toBeInTheDocument();
+    expect(timeSeriesHook.useTimeSeriesPoints).toHaveBeenCalledTimes(1);
+    expect(timeSeriesHook.useTimeSeriesPoints).toHaveBeenCalledWith(
+      expect.objectContaining({ primaryKey: 'visible' }),
+    );
   });
 });

@@ -793,7 +793,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
               mergeEnabled={mergeEnabled}
               hiddenNodeIds={hiddenNodeIds}
             />
-            <VertexNodeOverlay labelsByRid={labelsByRid} />
+            <VertexNodeOverlay labelsByRid={labelsByRid} objectsByRid={objectsByRid} />
             <VertexSelectionLayer
               selection={selection}
               onSelectionChange={setSelection}

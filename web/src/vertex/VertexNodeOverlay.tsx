@@ -14,28 +14,33 @@
 // off-screen node, keeping the React tree size bounded even on a 5000-
 // node graph where most labels are clipped.
 //
-// VTX-019 is the *infrastructure*. The per-kind renderers (sparkline
-// for timeSeries / value resolution for measure / threshold colouring
-// for property) land in VTX-059+ and replace the placeholder rows here.
+// VTX-019 introduced the infrastructure; SELF-466 wires time-series
+// labels to the same mini-sparkline behavior used by the sidebar.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSigma, useRegisterEvents } from '@react-sigma/core';
 
 import type { ExtendedLabel } from '../features/vertex/render/extendedLabels';
+import { useTimeSeriesPoints } from '../hooks/useTimeSeries';
+import type { VertexObjectSummary } from './VertexSelectionSidebar';
+import { VertexMiniSparkline } from './VertexMiniSparkline';
 
 export interface VertexNodeOverlayProps {
   /** Map keyed by objectRid → labels emitted by extractExtendedLabels. */
   labelsByRid: Map<string, ExtendedLabel[]>;
+  /** Map keyed by objectRid → metadata needed for OSS object-scoped calls. */
+  objectsByRid: ReadonlyMap<string, VertexObjectSummary>;
 }
 
 interface CardPos {
   rid: string;
   labels: ExtendedLabel[];
+  object: VertexObjectSummary | null;
   x: number;
   y: number;
 }
 
-export function VertexNodeOverlay({ labelsByRid }: VertexNodeOverlayProps) {
+export function VertexNodeOverlay({ labelsByRid, objectsByRid }: VertexNodeOverlayProps) {
   const sigma = useSigma();
   const registerEvents = useRegisterEvents();
   // tick is bumped by Sigma's afterRender — the body reads `sigma` /
@@ -66,7 +71,13 @@ export function VertexNodeOverlay({ labelsByRid }: VertexNodeOverlayProps) {
     // -100%), so a 0..height inclusive check matches what's visible.
     if (vp.x < 0 || vp.x > dims.width) continue;
     if (vp.y < 0 || vp.y > dims.height) continue;
-    cards.push({ rid, labels, x: vp.x, y: vp.y });
+    cards.push({
+      rid,
+      labels,
+      object: objectsByRid.get(rid) ?? null,
+      x: vp.x,
+      y: vp.y,
+    });
   }
 
   return (
@@ -96,14 +107,20 @@ function ExtendedLabelCard({ card }: { card: CardPos }) {
     >
       <div className="min-w-[120px] rounded border border-zinc-700 bg-zinc-900/95 px-2 py-1 text-[10px] text-zinc-100 shadow">
         {card.labels.map((l) => (
-          <ExtendedLabelRow key={l.key} label={l} />
+          <ExtendedLabelRow key={l.key} label={l} object={card.object} />
         ))}
       </div>
     </div>
   );
 }
 
-function ExtendedLabelRow({ label }: { label: ExtendedLabel }) {
+function ExtendedLabelRow({
+  label,
+  object,
+}: {
+  label: ExtendedLabel;
+  object: VertexObjectSummary | null;
+}) {
   return (
     <div
       data-testid={`vertex-extended-label-${label.kind}`}
@@ -114,9 +131,7 @@ function ExtendedLabelRow({ label }: { label: ExtendedLabel }) {
         <span className="font-mono text-zinc-100">{label.value ?? '—'}</span>
       )}
       {label.kind === 'timeSeries' && (
-        <span className="font-mono text-zinc-500" aria-label="sparkline placeholder">
-          ▁▂▃▄▅
-        </span>
+        <OverlayTimeSeriesSparkline label={label} object={object} />
       )}
       {label.kind === 'measure' && (
         <span className="font-mono text-zinc-500" aria-label="measure pending">
@@ -124,5 +139,61 @@ function ExtendedLabelRow({ label }: { label: ExtendedLabel }) {
         </span>
       )}
     </div>
+  );
+}
+
+function propertyFromTimeSeriesLabel(label: ExtendedLabel): string {
+  const [, property] = label.key.split(':');
+  return property && property.length > 0 ? property : label.label;
+}
+
+function OverlayTimeSeriesSparkline({
+  label,
+  object,
+}: {
+  label: ExtendedLabel;
+  object: VertexObjectSummary | null;
+}) {
+  const property = propertyFromTimeSeriesLabel(label);
+  const ontologyApiName = object?.ontologyApiName ?? '';
+  const objectType = object?.objectType ?? '';
+  const primaryKey = object?.primaryKey ?? '';
+  const enabled = Boolean(ontologyApiName && objectType && primaryKey && property);
+  const query = useTimeSeriesPoints({
+    ontologyApiName,
+    objectType,
+    primaryKey,
+    property,
+    enabled,
+  });
+  const values = useMemo<number[]>(() => {
+    const data = query.data;
+    if (!Array.isArray(data)) return [];
+    const out: number[] = [];
+    for (const pt of data) {
+      const v = (pt as { value: unknown }).value;
+      if (typeof v === 'number' && Number.isFinite(v)) out.push(v);
+    }
+    return out;
+  }, [query.data]);
+
+  if (values.length >= 2) {
+    return (
+      <VertexMiniSparkline
+        values={values}
+        testId="vertex-node-overlay-series-sparkline"
+        className="h-4 w-16"
+      />
+    );
+  }
+
+  return (
+    <span
+      data-testid="vertex-node-overlay-series-sparkline"
+      className="font-mono text-zinc-500"
+      aria-label="sparkline pending"
+    >
+      ▁▂▃▄▅
+    </span>
   );
 }
