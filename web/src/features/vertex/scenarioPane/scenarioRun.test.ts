@@ -125,7 +125,7 @@ describe('VTX-043 Scenario run request builder', () => {
     const req = buildRunScenarioRequest({ scenarioRid });
     expect(req.method).toBe('POST');
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs`,
     );
     expect(req.body).toEqual({});
   });
@@ -134,7 +134,7 @@ describe('VTX-043 Scenario run request builder', () => {
     const ridWithSpecial = 'ri.vertex.main.scenario.s/with space';
     const req = buildRunScenarioRequest({ scenarioRid: ridWithSpecial });
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(ridWithSpecial)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(ridWithSpecial)}/runs`,
     );
   });
 
@@ -486,7 +486,7 @@ describe('VTX-043 end-to-end sync run flow', () => {
     const req = buildRunScenarioRequest({ scenarioRid: scenario.rid });
     expect(req.method).toBe('POST');
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenario.rid)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenario.rid)}/runs`,
     );
 
     // 3. UI 标记 running

@@ -5,7 +5,7 @@
 //   2. Last-Event-Id header carried across reconnects so the server can
 //      replay from the last delivered event
 //   3. a terminal fallback: if reconnect keeps failing, GET
-//      /api/vertex/v1/scenarios/{rid}/run/{jobId} returns the final
+//      /api/vertex/v1/scenarios/{rid}/runs/{runRid} returns the final
 //      record so the UI is never stuck "in progress" forever
 //
 // The actual SSE endpoint and replay support are owned by VTX-044.
@@ -22,7 +22,7 @@ export type RunEvent =
 
 export interface ScenarioRunStreamOptions {
   scenarioRid: string;
-  jobId?: string;
+  runRid?: string;
   /** Inject for tests. Default: window.EventSource. */
   EventSourceCtor?: typeof EventSource;
   /** Inject for tests. Default: globalThis.fetch. */
@@ -87,7 +87,10 @@ export function openScenarioRunStream(opts: ScenarioRunStreamOptions): Handle {
 
   function connect(attempt: number) {
     if (closed) return;
-    const urlBase = `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}/run`;
+    const scenarioPath = `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}`;
+    const urlBase = opts.runRid
+      ? `${scenarioPath}/runs/${encodeURIComponent(opts.runRid)}/stream`
+      : `${scenarioPath}/runs/stream`;
     const url = lastEventId ? `${urlBase}?lastEventId=${encodeURIComponent(lastEventId)}` : urlBase;
     const next = new EventSourceCtor(url) as unknown as MinimalEventSource;
     es = next;
@@ -153,17 +156,24 @@ export async function pollFinalState(
   opts: ScenarioRunStreamOptions,
   fetchImpl: typeof fetch,
 ): Promise<RunEvent | null> {
-  if (!opts.jobId) return null;
+  if (!opts.runRid) return null;
   try {
     const res = await fetchImpl(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}/run/${encodeURIComponent(opts.jobId)}`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}/runs/${encodeURIComponent(opts.runRid)}`,
     );
     if (!res.ok) return null;
-    const body = (await res.json()) as { status: 'succeeded' | 'failed'; scenarioRunRid: string; error?: string };
+    const body = (await res.json()) as {
+      status: 'succeeded' | 'failed';
+      runRid?: string;
+      scenarioRunRid?: string;
+      error?: string;
+    };
+    const scenarioRunRid = body.runRid ?? body.scenarioRunRid;
+    if (!scenarioRunRid) return null;
     if (body.status === 'succeeded') {
-      return { kind: 'completed', scenarioRunRid: body.scenarioRunRid };
+      return { kind: 'completed', scenarioRunRid };
     }
-    return { kind: 'failed', scenarioRunRid: body.scenarioRunRid, error: body.error ?? 'failed' };
+    return { kind: 'failed', scenarioRunRid, error: body.error ?? 'failed' };
   } catch {
     return null;
   }

@@ -65,7 +65,7 @@ class ScenariosAPI:
         When ``streaming=False``, blocks for the terminal Run record and
         returns it as a dict.
         """
-        path = f"/api/vertex/v1/scenarios/{scenario_rid}/run"
+        path = f"/api/vertex/v1/scenarios/{scenario_rid}/runs"
         if not streaming:
             return self._client._request("POST", path, json_body={}) or {}
         return _sse_generator(self._client.base_url + path, headers=self._client._headers())

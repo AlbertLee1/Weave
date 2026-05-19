@@ -67,7 +67,9 @@ func TestScenariosApplyToMain_Given_StubServer_When_Apply_Then_POSTsToApplyPath(
 }
 
 func TestScenariosRun_Given_SSEStream_When_Run_Then_ChannelEmitsEventsInOrder(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
 		for _, raw := range []string{
@@ -100,6 +102,9 @@ func TestScenariosRun_Given_SSEStream_When_Run_Then_ChannelEmitsEventsInOrder(t 
 		if kinds[i] != want[i] {
 			t.Errorf("kinds[%d] = %s, want %s", i, kinds[i], want[i])
 		}
+	}
+	if gotPath != "/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs" {
+		t.Errorf("path = %s, want /api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs", gotPath)
 	}
 }
 

@@ -105,7 +105,7 @@ func (s *ScenariosService) ApplyToMain(ctx context.Context, scenarioRID string) 
 	return out, nil
 }
 
-// Run opens an SSE stream against /api/vertex/v1/scenarios/{rid}/run and
+// Run opens an SSE stream against /api/vertex/v1/scenarios/{rid}/runs and
 // returns a channel that receives every parsed RunEvent. The channel
 // closes when the stream ends (or ctx is canceled). Callers MUST drain
 // the channel to avoid leaking the underlying goroutine.
@@ -114,7 +114,7 @@ func (s *ScenariosService) Run(ctx context.Context, scenarioRID string, opts *Ru
 	if opts != nil && opts.BufferSize > 0 {
 		bufSize = opts.BufferSize
 	}
-	url := s.client.BaseURL + "/api/vertex/v1/scenarios/" + scenarioRID + "/run"
+	url := s.client.BaseURL + "/api/vertex/v1/scenarios/" + scenarioRID + "/runs"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err

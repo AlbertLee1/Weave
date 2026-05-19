@@ -59,6 +59,9 @@ describe('VertexClient (VTX-108)', () => {
     const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
     const r = await client.scenarios.run('ri.vertex.main.scenario.s1');
     expect((r as { status: string }).status).toBe('succeeded');
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs',
+    );
   });
 
   it('scenarios.run returns an AsyncIterable when streaming is requested', async () => {

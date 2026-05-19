@@ -29,7 +29,7 @@ export interface Scenario {
 
 export interface ScenarioRunOptions {
   /** If true, returns an AsyncIterable of RunEvent. If false / omitted,
-   *  the call resolves with the terminal Run record once /run completes. */
+   *  the call resolves with the terminal Run record once /runs completes. */
   streaming?: boolean;
 }
 
@@ -95,7 +95,7 @@ export class VertexClient {
     rid: string,
     opts?: ScenarioRunOptions,
   ): Promise<ScenarioRun | AsyncIterable<RunEvent>> {
-    const path = '/api/vertex/v1/scenarios/' + encodeURIComponent(rid) + '/run';
+    const path = '/api/vertex/v1/scenarios/' + encodeURIComponent(rid) + '/runs';
     if (!opts?.streaming) {
       return this.postJSON<ScenarioRun>(path, {});
     }

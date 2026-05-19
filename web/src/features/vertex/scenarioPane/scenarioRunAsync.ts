@@ -1,21 +1,21 @@
-// VTX-044 — Scenario Run（异步路径，jobId + SSE）的纯逻辑层。
+// VTX-044 — Scenario Run（异步路径，runRid + SSE）的纯逻辑层。
 //
 // 调研报告 §4.4 / 附录 B：当 Scenario 含 ≥ 2 models 或调用方显式
-// forceAsync=true，后端 POST /scenarios/{rid}/run 立即返回 202
-// {jobId}。前端按 jobId 打开 SSE GET /scenarios/{rid}/run/{jobId}/stream，
+// forceAsync=true，后端 POST /scenarios/{rid}/runs 立即返回 202
+// {runRid}。前端按 runRid 打开 SSE GET /scenarios/{rid}/runs/{runRid}/stream，
 // 后端推送 progress{model,pct} / result{model,output} / done{durationMs}
 // / error{model,message} / cancelled 事件。Pane 行按 progress 显示
 // spinner+百分比，done 翻 ✓ + duration，error 翻 × + tooltip，cancel
-// 通过 POST /run/{jobId}/cancel 触发后端推 cancelled 事件 + cleanup。
+// 通过 POST /runs/{runRid}/cancel 触发后端推 cancelled 事件 + cleanup。
 //
 // 本模块交付：
 //   - 异步触发判定 shouldRunAsync（modelCount >= 2 OR forceAsync）
 //   - 异步 Run 请求构造 buildAsyncRunScenarioRequest（forceAsync 透传）
-//   - SSE URL 构造 buildScenarioRunStreamUrl（jobId 走 encodeURIComponent）
+//   - SSE URL 构造 buildScenarioRunStreamUrl（runRid 走 encodeURIComponent）
 //   - Cancel 请求构造 buildCancelScenarioRunRequest
 //   - 202 响应解析 parseAcceptedScenarioRunResponse
 //   - SSE 事件解析 parseScenarioRunSseEvent（5 类事件 + clamp + fallback）
-//   - 每个 scenario 一份 ScenarioRunJobState（jobId, status, startedAt,
+//   - 每个 scenario 一份 ScenarioRunJobState（runRid, status, startedAt,
 //     durationMs, error, progressByModel, resultsByModel）
 //   - 状态机迁移 applyAcceptedScenarioRunJob / applyScenarioRunSseEvent
 //   - UI 派生 getOverallProgressPct / getModelProgressPct /
@@ -36,7 +36,7 @@ export type ScenarioRunJobStatus =
   | 'cancelled';
 
 export interface ScenarioRunJobState {
-  jobId: string;
+  runRid: string;
   status: ScenarioRunJobStatus;
   startedAt: number | null;
   durationMs: number | null;
@@ -66,21 +66,22 @@ export interface BuildAsyncRunScenarioRequestInput {
 
 export interface BuildScenarioRunStreamUrlInput {
   scenarioRid: string;
-  jobId: string;
+  runRid: string;
 }
 
 export interface BuildCancelScenarioRunRequestInput {
   scenarioRid: string;
-  jobId: string;
+  runRid: string;
 }
 
 export interface AcceptedScenarioRunResponse {
-  status: 'accepted';
-  jobId: string;
+  status: 'pending' | 'running';
+  runRid: string;
 }
 
 export interface ParsedAcceptedScenarioRunResponse {
-  jobId: string;
+  status: AcceptedScenarioRunResponse['status'];
+  runRid: string;
 }
 
 export interface AsyncRunScenarioApiRequest {
@@ -117,7 +118,7 @@ export function buildAsyncRunScenarioRequest(
   input: BuildAsyncRunScenarioRequestInput,
 ): AsyncRunScenarioApiRequest {
   const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
-  const path = `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run`;
+  const path = `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs`;
   if (input.forceAsync === true) {
     return { method: 'POST', path, body: { forceAsync: true } };
   }
@@ -128,18 +129,18 @@ export function buildScenarioRunStreamUrl(
   input: BuildScenarioRunStreamUrlInput,
 ): string {
   const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
-  const jobId = requireNonBlank(input.jobId, 'jobId');
-  return `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run/${encodeURIComponent(jobId)}/stream`;
+  const runRid = requireNonBlank(input.runRid, 'runRid');
+  return `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/stream`;
 }
 
 export function buildCancelScenarioRunRequest(
   input: BuildCancelScenarioRunRequestInput,
 ): CancelScenarioRunApiRequest {
   const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
-  const jobId = requireNonBlank(input.jobId, 'jobId');
+  const runRid = requireNonBlank(input.runRid, 'runRid');
   return {
     method: 'POST',
-    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run/${encodeURIComponent(jobId)}/cancel`,
+    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/cancel`,
     body: {},
   };
 }
@@ -147,14 +148,14 @@ export function buildCancelScenarioRunRequest(
 export function parseAcceptedScenarioRunResponse(
   response: AcceptedScenarioRunResponse,
 ): ParsedAcceptedScenarioRunResponse {
-  if (typeof response.jobId !== 'string') {
-    throw new Error('jobId is required');
+  if (typeof response.runRid !== 'string') {
+    throw new Error('runRid is required');
   }
-  const jobId = response.jobId.trim();
-  if (jobId.length === 0) {
-    throw new Error('jobId is required');
+  const runRid = response.runRid.trim();
+  if (runRid.length === 0) {
+    throw new Error('runRid is required');
   }
-  return { jobId };
+  return { runRid, status: response.status };
 }
 
 function clampPct(value: number): number {
@@ -230,7 +231,7 @@ export function createScenarioRunJobMap(): ScenarioRunJobMap {
 }
 
 export interface CreateScenarioRunJobStateInput {
-  jobId: string;
+  runRid: string;
   startedAt?: number | null;
 }
 
@@ -238,7 +239,7 @@ export function createScenarioRunJobState(
   input: CreateScenarioRunJobStateInput,
 ): ScenarioRunJobState {
   return {
-    jobId: input.jobId,
+    runRid: input.runRid,
     status: 'pending',
     startedAt: input.startedAt ?? null,
     durationMs: null,
@@ -277,11 +278,11 @@ export function isScenarioRunJobActive(
 export function applyAcceptedScenarioRunJob(
   map: ScenarioRunJobMap,
   scenarioRid: string,
-  jobId: string,
+  runRid: string,
   startedAt: number,
 ): ScenarioRunJobMap {
   return setScenarioRunJobState(map, scenarioRid, {
-    jobId,
+    runRid,
     status: 'pending',
     startedAt,
     durationMs: null,

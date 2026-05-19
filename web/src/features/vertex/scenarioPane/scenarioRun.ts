@@ -1,7 +1,7 @@
 // VTX-043 — Scenario Run（同步路径，单 Function）的纯逻辑层。
 //
 // 调研报告 §4.4 / 附录 B：用户在 Scenario Pane 点 Run，前端 POST
-// /api/vertex/v1/scenarios/{rid}/run。后端 fork ontology + 跑 function +
+// /api/vertex/v1/scenarios/{rid}/runs。后端 fork ontology + 跑 function +
 // 把 edits 写入 scenario_edits，200 OK 返回 {durationMs, scenario:
 // {..., immutable:true}}。前端把 scenario 列状态变绿 ✓ + 显示执行耗时
 // + 标记 scenario.immutable=true。function 抛错则返回 error payload，
@@ -12,7 +12,7 @@
 //   - 每个 scenario 一份 ScenarioRunState（status / startedAt /
 //     durationMs / error），map 形 Record<scenarioRid, state>
 //   - 状态机迁移 helper：applyScenarioRunStart / Success / Error
-//   - POST /run 请求构造 buildRunScenarioRequest
+//   - POST /runs 请求构造 buildRunScenarioRequest
 //   - 响应解析 parseScenarioRunSuccessResponse / parseScenarioRunErrorResponse
 //   - preflight 校验 validateScenarioRunRequest +
 //     assertScenarioRunnable（throws ScenarioRunNotEditableError）
@@ -205,7 +205,7 @@ export function buildRunScenarioRequest(
   const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
   return {
     method: 'POST',
-    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run`,
+    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs`,
     body: {},
   };
 }

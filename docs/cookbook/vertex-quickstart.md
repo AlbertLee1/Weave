@@ -108,17 +108,19 @@ curl -X POST "http://localhost:9117/api/v2/ontologies/aviation/objects/Airport/a
   -d '{ "aggregations": [{"type":"sum","field":"capacity","name":"sumCap"}] }'
 ```
 
-## 7. Run the Scenario (SSE)
+## 7. Start the Scenario Run
 
 ```bash
-curl -N -X POST "http://localhost:9117/api/vertex/v1/scenarios/$SCENARIO_RID/run" \
+curl -X POST "http://localhost:9117/api/vertex/v1/scenarios/$SCENARIO_RID/runs" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
-  -H 'Accept: text/event-stream' \
   -d '{}'
-# Streams events like:
-#   data: {"kind":"progress","percent":25}
-#   data: {"kind":"completed","scenarioRunRid":"ri.vertex.main.scenario-run.<uuid>"}
+# Returns:
+#   {"runRid":"ri.vertex.main.scenario-run.<uuid>","status":"pending"}
+
+RUN_RID="ri.vertex.main.scenario-run.<uuid>"
+curl "http://localhost:9117/api/vertex/v1/scenarios/$SCENARIO_RID/runs/$RUN_RID" \
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 ## 8. Apply (or discard)

@@ -27,7 +27,7 @@ import type {
 
 const scenarioRid = 'ri.vertex.main.scenario.s-1';
 const otherRid = 'ri.vertex.main.scenario.s-2';
-const jobId = 'job-abc-123';
+const runRid = 'run-abc-123';
 
 function mutableScenario(rid = scenarioRid): ScenarioRef {
   return { rid, name: 'Scenario A', immutable: false };
@@ -68,7 +68,7 @@ describe('VTX-044 async run request builder', () => {
     const req = buildAsyncRunScenarioRequest({ scenarioRid });
     expect(req.method).toBe('POST');
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs`,
     );
     expect(req.body).toEqual({});
   });
@@ -87,7 +87,7 @@ describe('VTX-044 async run request builder', () => {
     const ridWithSpecial = 'ri.vertex.main.scenario.s/with space';
     const req = buildAsyncRunScenarioRequest({ scenarioRid: ridWithSpecial });
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(ridWithSpecial)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(ridWithSpecial)}/runs`,
     );
   });
 
@@ -99,94 +99,94 @@ describe('VTX-044 async run request builder', () => {
 });
 
 describe('VTX-044 stream URL builder', () => {
-  it('given_scenarioRid_and_jobId_when_buildStreamUrl_then_returns_sse_path', () => {
-    const url = buildScenarioRunStreamUrl({ scenarioRid, jobId });
+  it('given_scenarioRid_and_runRid_when_buildStreamUrl_then_returns_sse_path', () => {
+    const url = buildScenarioRunStreamUrl({ scenarioRid, runRid });
     expect(url).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run/${encodeURIComponent(jobId)}/stream`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/stream`,
     );
   });
 
-  it('given_jobId_with_slash_when_buildStreamUrl_then_path_encodes_jobId', () => {
-    const slashJob = 'job/with/slashes';
-    const url = buildScenarioRunStreamUrl({ scenarioRid, jobId: slashJob });
-    expect(url).toContain(encodeURIComponent(slashJob));
+  it('given_runRid_with_slash_when_buildStreamUrl_then_path_encodes_runRid', () => {
+    const slashRun = 'run/with/slashes';
+    const url = buildScenarioRunStreamUrl({ scenarioRid, runRid: slashRun });
+    expect(url).toContain(encodeURIComponent(slashRun));
   });
 
-  it('given_blank_jobId_when_buildStreamUrl_then_throws', () => {
+  it('given_blank_runRid_when_buildStreamUrl_then_throws', () => {
     expect(() =>
-      buildScenarioRunStreamUrl({ scenarioRid, jobId: '   ' }),
-    ).toThrow(/jobId/);
+      buildScenarioRunStreamUrl({ scenarioRid, runRid: '   ' }),
+    ).toThrow(/runRid/);
   });
 
   it('given_blank_scenarioRid_when_buildStreamUrl_then_throws', () => {
     expect(() =>
-      buildScenarioRunStreamUrl({ scenarioRid: '', jobId }),
+      buildScenarioRunStreamUrl({ scenarioRid: '', runRid }),
     ).toThrow(/scenarioRid/);
   });
 });
 
 describe('VTX-044 cancel request builder', () => {
-  it('given_scenarioRid_and_jobId_when_buildCancel_then_returns_POST_cancel_path', () => {
-    const req = buildCancelScenarioRunRequest({ scenarioRid, jobId });
+  it('given_scenarioRid_and_runRid_when_buildCancel_then_returns_POST_cancel_path', () => {
+    const req = buildCancelScenarioRunRequest({ scenarioRid, runRid });
     expect(req.method).toBe('POST');
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run/${encodeURIComponent(jobId)}/cancel`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/cancel`,
     );
     expect(req.body).toEqual({});
   });
 
-  it('given_blank_jobId_when_buildCancel_then_throws', () => {
+  it('given_blank_runRid_when_buildCancel_then_throws', () => {
     expect(() =>
-      buildCancelScenarioRunRequest({ scenarioRid, jobId: '' }),
-    ).toThrow(/jobId/);
+      buildCancelScenarioRunRequest({ scenarioRid, runRid: '' }),
+    ).toThrow(/runRid/);
   });
 
   it('given_blank_scenarioRid_when_buildCancel_then_throws', () => {
     expect(() =>
-      buildCancelScenarioRunRequest({ scenarioRid: '   ', jobId }),
+      buildCancelScenarioRunRequest({ scenarioRid: '   ', runRid }),
     ).toThrow(/scenarioRid/);
   });
 
-  it('given_jobId_with_special_chars_when_buildCancel_then_path_encoded', () => {
-    const specialJob = 'job with space';
-    const req = buildCancelScenarioRunRequest({ scenarioRid, jobId: specialJob });
-    expect(req.path).toContain(encodeURIComponent(specialJob));
+  it('given_runRid_with_special_chars_when_buildCancel_then_path_encoded', () => {
+    const specialRun = 'run with space';
+    const req = buildCancelScenarioRunRequest({ scenarioRid, runRid: specialRun });
+    expect(req.path).toContain(encodeURIComponent(specialRun));
   });
 });
 
 describe('VTX-044 accepted response parser', () => {
-  it('given_202_response_with_jobId_when_parse_then_returns_jobId', () => {
+  it('given_202_response_with_runRid_when_parse_then_returns_runRid_and_status', () => {
     const parsed = parseAcceptedScenarioRunResponse({
-      status: 'accepted',
-      jobId,
+      status: 'pending',
+      runRid,
     });
-    expect(parsed).toEqual({ jobId });
+    expect(parsed).toEqual({ runRid, status: 'pending' });
   });
 
-  it('given_response_missing_jobId_when_parse_then_throws', () => {
+  it('given_response_missing_runRid_when_parse_then_throws', () => {
     expect(() =>
       parseAcceptedScenarioRunResponse({
-        status: 'accepted',
+        status: 'pending',
       } as unknown as Parameters<typeof parseAcceptedScenarioRunResponse>[0]),
-    ).toThrow(/jobId/);
+    ).toThrow(/runRid/);
   });
 
-  it('given_response_with_blank_jobId_when_parse_then_throws', () => {
+  it('given_response_with_blank_runRid_when_parse_then_throws', () => {
     expect(() =>
       parseAcceptedScenarioRunResponse({
-        status: 'accepted',
-        jobId: '   ',
+        status: 'pending',
+        runRid: '   ',
       }),
-    ).toThrow(/jobId/);
+    ).toThrow(/runRid/);
   });
 
-  it('given_response_with_non_string_jobId_when_parse_then_throws', () => {
+  it('given_response_with_non_string_runRid_when_parse_then_throws', () => {
     expect(() =>
       parseAcceptedScenarioRunResponse({
-        status: 'accepted',
-        jobId: 123 as unknown as string,
+        status: 'pending',
+        runRid: 123 as unknown as string,
       }),
-    ).toThrow(/jobId/);
+    ).toThrow(/runRid/);
   });
 });
 
@@ -328,9 +328,9 @@ describe('VTX-044 Scenario run job state machine', () => {
     );
   });
 
-  it('given_jobId_when_createJobState_then_pending_with_jobId', () => {
-    const s = createScenarioRunJobState({ jobId, startedAt: 1700000000000 });
-    expect(s.jobId).toBe(jobId);
+  it('given_runRid_when_createJobState_then_pending_with_runRid', () => {
+    const s = createScenarioRunJobState({ runRid, startedAt: 1700000000000 });
+    expect(s.runRid).toBe(runRid);
     expect(s.status).toBe('pending');
     expect(s.startedAt).toBe(1700000000000);
     expect(s.durationMs).toBeNull();
@@ -343,11 +343,11 @@ describe('VTX-044 Scenario run job state machine', () => {
     const map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       1700000000000,
     );
     expect(getScenarioRunJobStatus(map, scenarioRid)).toBe('pending');
-    expect(map[scenarioRid].jobId).toBe(jobId);
+    expect(map[scenarioRid].runRid).toBe(runRid);
   });
 
   it('given_prior_error_when_applyAccepted_then_clears_error_and_duration', () => {
@@ -355,7 +355,7 @@ describe('VTX-044 Scenario run job state machine', () => {
       createScenarioRunJobMap(),
       scenarioRid,
       {
-        jobId: 'prev-job',
+        runRid: 'prev-run',
         status: 'error',
         startedAt: 1,
         durationMs: null,
@@ -364,18 +364,18 @@ describe('VTX-044 Scenario run job state machine', () => {
         resultsByModel: {},
       },
     );
-    map = applyAcceptedScenarioRunJob(map, scenarioRid, jobId, 100);
+    map = applyAcceptedScenarioRunJob(map, scenarioRid, runRid, 100);
     expect(map[scenarioRid].error).toBeNull();
     expect(map[scenarioRid].progressByModel).toEqual({});
     expect(map[scenarioRid].resultsByModel).toEqual({});
-    expect(map[scenarioRid].jobId).toBe(jobId);
+    expect(map[scenarioRid].runRid).toBe(runRid);
   });
 
   it('given_pending_when_progress_event_then_running_and_pct_recorded', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -391,7 +391,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -411,7 +411,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -427,7 +427,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -443,7 +443,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -459,7 +459,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -473,7 +473,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -499,10 +499,10 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
-    map = applyAcceptedScenarioRunJob(map, otherRid, 'job-2', 0);
+    map = applyAcceptedScenarioRunJob(map, otherRid, 'run-2', 0);
     const priorOther = map[otherRid];
     map = applyScenarioRunSseEvent(map, scenarioRid, {
       type: 'progress',
@@ -516,7 +516,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     const map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     expect(isScenarioRunJobActive(map, scenarioRid)).toBe(true);
@@ -526,7 +526,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -541,7 +541,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -555,7 +555,7 @@ describe('VTX-044 Scenario run job state machine', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, { type: 'cancelled' });
@@ -575,7 +575,7 @@ describe('VTX-044 Scenario run job state machine', () => {
 describe('VTX-044 progress derived helpers', () => {
   it('given_state_with_two_models_when_getOverall_then_returns_average_pct', () => {
     const state: ScenarioRunJobState = {
-      jobId,
+      runRid,
       status: 'running',
       startedAt: 0,
       durationMs: null,
@@ -587,13 +587,13 @@ describe('VTX-044 progress derived helpers', () => {
   });
 
   it('given_state_with_no_models_yet_when_getOverall_then_returns_zero', () => {
-    const state = createScenarioRunJobState({ jobId, startedAt: 0 });
+    const state = createScenarioRunJobState({ runRid, startedAt: 0 });
     expect(getOverallProgressPct(state)).toBe(0);
   });
 
   it('given_success_state_when_getOverall_then_returns_100', () => {
     const state: ScenarioRunJobState = {
-      jobId,
+      runRid,
       status: 'success',
       startedAt: 0,
       durationMs: 100,
@@ -606,7 +606,7 @@ describe('VTX-044 progress derived helpers', () => {
 
   it('given_known_model_when_getModelProgress_then_returns_pct', () => {
     const state: ScenarioRunJobState = {
-      jobId,
+      runRid,
       status: 'running',
       startedAt: 0,
       durationMs: null,
@@ -618,7 +618,7 @@ describe('VTX-044 progress derived helpers', () => {
   });
 
   it('given_unknown_model_when_getModelProgress_then_returns_null', () => {
-    const state = createScenarioRunJobState({ jobId, startedAt: 0 });
+    const state = createScenarioRunJobState({ runRid, startedAt: 0 });
     expect(getModelProgressPct(state, 'M1')).toBeNull();
   });
 });
@@ -652,7 +652,7 @@ describe('VTX-044 status icon / tooltip', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     expect(getScenarioRunJobStatusTooltip(map, scenarioRid)).toBe('Queued…');
@@ -670,7 +670,7 @@ describe('VTX-044 status icon / tooltip', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -692,7 +692,7 @@ describe('VTX-044 status icon / tooltip', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -708,7 +708,7 @@ describe('VTX-044 status icon / tooltip', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -725,7 +725,7 @@ describe('VTX-044 status icon / tooltip', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, { type: 'cancelled' });
@@ -750,15 +750,16 @@ describe('VTX-044 end-to-end flows', () => {
     expect(req.path).toContain(scenario.rid);
 
     const accepted = parseAcceptedScenarioRunResponse({
-      status: 'accepted',
-      jobId,
+      status: 'pending',
+      runRid,
     });
-    expect(accepted.jobId).toBe(jobId);
+    expect(accepted.runRid).toBe(runRid);
+    expect(accepted.status).toBe('pending');
 
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenario.rid,
-      accepted.jobId,
+      accepted.runRid,
       1700000000000,
     );
     expect(getScenarioRunJobStatus(map, scenario.rid)).toBe('pending');
@@ -786,7 +787,7 @@ describe('VTX-044 end-to-end flows', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {
@@ -795,9 +796,9 @@ describe('VTX-044 end-to-end flows', () => {
       pct: 30,
     });
 
-    const cancel = buildCancelScenarioRunRequest({ scenarioRid, jobId });
+    const cancel = buildCancelScenarioRunRequest({ scenarioRid, runRid });
     expect(cancel.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run/${encodeURIComponent(jobId)}/cancel`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/cancel`,
     );
 
     // SSE 推 cancelled 事件后状态机翻 cancelled
@@ -810,7 +811,7 @@ describe('VTX-044 end-to-end flows', () => {
     let map = applyAcceptedScenarioRunJob(
       createScenarioRunJobMap(),
       scenarioRid,
-      jobId,
+      runRid,
       0,
     );
     map = applyScenarioRunSseEvent(map, scenarioRid, {

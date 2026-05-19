@@ -64,6 +64,7 @@ def test_vertex_scenarios_run_streaming_false_returns_terminal_record():
     res = c.vertex.scenarios.run("ri.vertex.main.scenario.s1", streaming=False)
     assert isinstance(res, dict)
     assert res["status"] == "succeeded"
+    assert t.last_url.endswith("/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs")
 
 
 def test_objects_get_with_scenario_id_sets_x_scenario_id_header():
