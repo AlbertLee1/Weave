@@ -563,6 +563,61 @@ describe('BrowserPage facets', () => {
   });
 });
 
+describe('BrowserPage saved searches', () => {
+  it('loads a startsWith filter with a readable chip label and forwards the saved WhereClause', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('/api/v2/saved-searches', () =>
+        HttpResponse.json({
+          savedSearches: [
+            {
+              id: 'saved-prefix',
+              name: 'A names',
+              ontology: 'testOntology',
+              objectType: 'Employee',
+              createdBy: 'test-user',
+              createdAt: '2026-05-19T00:00:00Z',
+              updatedAt: '2026-05-19T00:00:00Z',
+              definition: {
+                filters: [{ field: 'name', op: 'startsWith', value: 'Al' }],
+              },
+            },
+          ],
+        }),
+      ),
+      http.post(
+        '/api/v2/ontologies/:ontology/objects/:objectType/search',
+        async ({ request }) => {
+          requestBodies.push((await request.json()) as Record<string, unknown>);
+          return HttpResponse.json({
+            data: [
+              { __primaryKey: '1', __apiName: 'Employee', id: '1', name: 'Alice' },
+            ],
+            totalCount: '1',
+          });
+        },
+      ),
+    );
+
+    renderBrowserPage();
+
+    fireEvent.click(await screen.findByTestId('saved-search-load-saved-prefix'));
+
+    await waitFor(() => {
+      expect(screen.getByText('name starts with:')).toBeInTheDocument();
+      expect(screen.getByText('Al')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(requestBodies).toContainEqual(
+        expect.objectContaining({
+          where: { type: 'startsWith', field: 'name', value: 'Al' },
+        }),
+      );
+    });
+  });
+});
+
 describe('BrowserPage view-mode toggle', () => {
   it('defaults to table view and hides the map', async () => {
     renderBrowserPage();

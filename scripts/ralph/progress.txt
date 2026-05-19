@@ -42,3 +42,25 @@ Started: Tue May 19 14:35:31 CST 2026
   - The Browser search bar already normalizes `containsAnyTerm` to a string; structured filters need the same canonical shape so saved searches and ad hoc filters do not diverge.
 - Result: SELF-443 marked `passes: true`; SELF-444 and SELF-445 remain open for later Ralph iterations.
 ---
+
+## Tue May 19 14:46:18 CST 2026 - SELF-444
+- What was implemented:
+  - Added BDD coverage for Browser structured `gte`, `lte`, and `startsWith` filter operators.
+  - Added a BrowserPage saved-search reload regression that verifies a persisted `startsWith` filter renders as a readable chip label and forwards the saved WhereClause.
+  - Updated `FilterBuilder` to expose `>=`, `<=`, and `starts with`, and to parse `gte`/`lte` values as numbers with the existing range operators.
+- TDD red:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: the new FilterBuilder tests could not find `>=`, `<=`, or `starts with` options, and the BrowserPage saved-search test rendered the raw `startsWith` token instead of `starts with`.
+- Verification:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 18 tests.
+  - From `web/`: `npx tsc --noEmit` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/src/components/browser/FilterBuilder.tsx`
+  - `web/src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Browser structured filters can safely expose backend-supported WhereClause operators when the visible operator label, filter state, saved-search round trip, and request body are covered together.
+- Result: SELF-444 marked `passes: true`; SELF-445 remains open for later Ralph iterations.
+---
