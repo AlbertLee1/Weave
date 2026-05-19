@@ -2,11 +2,13 @@ import type {
   DerivedPropertyDef,
   NearestNeighborsObjectSet,
   ObjectSetDefinition,
+  StaticObjectSet,
   WhereClause,
 } from '../../api/types';
 
 const OBJECT_SET_TYPES = [
   'base',
+  'static',
   'filter',
   'union',
   'intersect',
@@ -33,6 +35,8 @@ function defaultForType(
   switch (type) {
     case 'base':
       return { type: 'base', objectType: firstType };
+    case 'static':
+      return { type: 'static', objectType: firstType, primaryKeys: [] };
     case 'filter':
       return {
         type: 'filter',
@@ -232,6 +236,20 @@ function updateNearest(
   return { ...value, ...patch };
 }
 
+function parsePrimaryKeys(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((pk) => pk.trim())
+    .filter((pk) => pk.length > 0);
+}
+
+function updateStatic(
+  value: StaticObjectSet,
+  patch: Partial<StaticObjectSet>,
+): StaticObjectSet {
+  return { ...value, ...patch };
+}
+
 export function ObjectSetBuilder({
   objectTypes,
   value,
@@ -273,6 +291,24 @@ export function ObjectSetBuilder({
             value={value.objectType}
             onChange={(e) =>
               onChange({ type: 'base', objectType: e.target.value })
+            }
+            aria-label="object type"
+          >
+            {objectTypes.map((ot) => (
+              <option key={ot} value={ot}>
+                {ot}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {/* Static: pick object type */}
+        {value.type === 'static' && (
+          <select
+            className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary"
+            value={value.objectType}
+            onChange={(e) =>
+              onChange(updateStatic(value, { objectType: e.target.value }))
             }
             aria-label="object type"
           >
@@ -355,6 +391,21 @@ export function ObjectSetBuilder({
           </>
         )}
       </div>
+
+      {/* Static: explicit primary keys */}
+      {value.type === 'static' && (
+        <textarea
+          className="text-xs font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary min-h-20"
+          placeholder="primary keys, one per line"
+          value={value.primaryKeys.join('\n')}
+          onChange={(e) =>
+            onChange(updateStatic(value, {
+              primaryKeys: parsePrimaryKeys(e.target.value),
+            }))
+          }
+          aria-label="primary keys"
+        />
+      )}
 
       {/* Filter: nested objectSet + where */}
       {value.type === 'filter' && (

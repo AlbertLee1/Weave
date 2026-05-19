@@ -162,6 +162,27 @@ describe('nodeToDefinition / definitionToNode round-trip', () => {
     }
   });
 
+  it('round-trips a static node and removes blank primary keys', () => {
+    const def: ObjectSetDefinition = {
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['e1', '', ' e2 ', '   '],
+    };
+
+    const node = definitionToNode(def);
+    expect(node.type).toBe('static');
+    if (node.type === 'static') {
+      expect(node.objectType).toBe('Employee');
+      expect(node.primaryKeys).toEqual(['e1', '', ' e2 ', '   ']);
+    }
+
+    expect(nodeToDefinition(node)).toEqual({
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['e1', 'e2'],
+    });
+  });
+
   it('omits ids in the produced definition', () => {
     const node: ObjectSetNode = {
       id: 'root-id',
@@ -234,6 +255,26 @@ describe('validateNode', () => {
       query: { text: { value: 'find similar employees' } },
     });
     expect(errs).toEqual([]);
+  });
+
+  it('accepts a static node with object type and primary keys', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'static',
+      objectType: 'Employee',
+      primaryKeys: ['e1'],
+    });
+    expect(errs).toEqual([]);
+  });
+
+  it('flags static node missing objectType', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'static',
+      objectType: '',
+      primaryKeys: ['e1'],
+    });
+    expect(errs).toContain('static node requires an object type');
   });
 });
 

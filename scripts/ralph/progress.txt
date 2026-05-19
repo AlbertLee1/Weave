@@ -59,3 +59,33 @@ Branch: ralph/self-iteration-20260519-122726
   - `npm --prefix web exec tsc -- --noEmit` does not pass arguments as intended in this environment; run TypeScript checks from `web/` with `npx tsc --noEmit` or use the project build script.
 - Result: SELF-437 marked `passes: true`; SELF-438 and SELF-439 remain open for later Ralph iterations.
 ---
+
+## Tue May 19 12:42:36 CST 2026 - SELF-438
+- What was implemented:
+  - Added editable `static` ObjectSet support to the Web ObjectSet builder type selector.
+  - Added static object type and primary-key list controls, normalizing the wire `primaryKeys` array by trimming entries and removing blanks.
+  - Added static ObjectSet node conversion and validation so saved/shared static definitions render instead of throwing as unsupported.
+  - Added regression coverage for static definition round-trip, static validation, builder editing, and composer execute enablement.
+- TDD red:
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` failed as expected before implementation:
+    - `definitionToNode` threw `objectSet type "static" is not yet supported in the composer UI`.
+    - Static validation returned no missing-object-type error.
+    - The builder selector rendered the stale `base` fallback instead of `static`.
+    - The composer crashed while rendering a valid static ObjectSet.
+- Verification:
+  - `npm --prefix web test -- --run src/lib/__tests__/objectSetBuilder.test.ts src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx src/components/objectsets/__tests__/ObjectSetComposer.test.tsx` passed: 3 files, 33 tests.
+  - From `web/`: `npx tsc --noEmit` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/src/components/objectsets/ObjectSetBuilder.tsx`
+  - `web/src/components/objectsets/__tests__/ObjectSetBuilder.test.tsx`
+  - `web/src/components/objectsets/__tests__/ObjectSetComposer.test.tsx`
+  - `web/src/lib/objectSetBuilder.ts`
+  - `web/src/lib/__tests__/objectSetBuilder.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **Learnings for future iterations:**
+  - Static ObjectSets are backend-supported with only `objectType` required; empty `primaryKeys` is valid and returns an empty exact set.
+  - Composer support for a backend-supported root variant must include `OBJECT_SET_TYPES`, default wire shape, source-level `ObjectSetNode` conversion, and composer validation.
+- Result: SELF-438 marked `passes: true`; SELF-439 remains open for a later Ralph iteration.
+---

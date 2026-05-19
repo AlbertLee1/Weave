@@ -133,4 +133,28 @@ describe('ObjectSetComposer', () => {
       screen.getByText(/branch.*differ|different.*types|mixing.*types/i),
     ).toBeInTheDocument();
   });
+
+  it('renders a valid static object set with execute enabled', () => {
+    render(
+      <ObjectSetComposer
+        objectTypes={['Employee', 'Department']}
+        value={{
+          type: 'static',
+          objectType: 'Employee',
+          primaryKeys: ['emp-1', 'emp-2'],
+        }}
+        onChange={() => {}}
+        onExecute={() => {}}
+        onSaveAs={() => {}}
+        savedObjectSets={[]}
+        onLoadSaved={() => {}}
+        onDeleteSaved={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('combobox', { name: /objectset type/i })).toHaveValue('static');
+    expect(screen.getByLabelText(/primary keys/i)).toHaveValue('emp-1\nemp-2');
+    expect(screen.getByRole('button', { name: /execute/i })).toBeEnabled();
+    expect(screen.queryByText(/unsupported|not yet supported/i)).not.toBeInTheDocument();
+  });
 });

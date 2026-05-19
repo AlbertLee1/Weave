@@ -9,6 +9,7 @@ import type {
 // definition.
 export type ObjectSetNode =
   | BaseNode
+  | StaticNode
   | FilterNode
   | UnionNode
   | IntersectNode
@@ -25,6 +26,12 @@ interface NodeBase {
 export interface BaseNode extends NodeBase {
   type: 'base';
   objectType: string;
+}
+
+export interface StaticNode extends NodeBase {
+  type: 'static';
+  objectType: string;
+  primaryKeys: string[];
 }
 
 export interface FilterNode extends NodeBase {
@@ -129,6 +136,14 @@ export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
   switch (node.type) {
     case 'base':
       return { type: 'base', objectType: node.objectType };
+    case 'static':
+      return {
+        type: 'static',
+        objectType: node.objectType,
+        primaryKeys: node.primaryKeys
+          .map((pk) => pk.trim())
+          .filter((pk) => pk.length > 0),
+      };
     case 'filter':
       return {
         type: 'filter',
@@ -193,6 +208,13 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
   switch (def.type) {
     case 'base':
       return { id: newId(), type: 'base', objectType: def.objectType };
+    case 'static':
+      return {
+        id: newId(),
+        type: 'static',
+        objectType: def.objectType,
+        primaryKeys: def.primaryKeys,
+      };
     case 'filter':
       return {
         id: newId(),
@@ -246,7 +268,6 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
         similarityThreshold: def.similarityThreshold,
         query: def.query,
       };
-    case 'static':
     case 'asType':
     case 'asBaseObjectTypes':
     case 'interfaceBase':
@@ -270,6 +291,9 @@ function walk(node: ObjectSetNode, errors: string[]): void {
   switch (node.type) {
     case 'base':
       if (!node.objectType) errors.push('base node requires an object type');
+      break;
+    case 'static':
+      if (!node.objectType) errors.push('static node requires an object type');
       break;
     case 'filter':
       if (!node.where || !(node.where as WhereClause).type) {
