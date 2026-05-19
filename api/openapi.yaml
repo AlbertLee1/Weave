@@ -3318,6 +3318,41 @@ components:
         nextPageToken:
           type: string
           description: Opaque cursor for the next page. Empty when no more pages remain.
+    VertexGraphCreateRequest:
+      type: object
+      description: Request body for creating a Vertex SystemGraph.
+      required: [ontologyRid, name]
+      additionalProperties: false
+      properties:
+        ontologyRid:
+          type: string
+          description: Ontology RID the graph belongs to.
+        name:
+          type: string
+          minLength: 1
+          description: Human-readable graph name.
+        versioned:
+          type: boolean
+          default: true
+          description: Whether full graph saves should create version-history rows.
+        payload:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Optional serialized graph workspace payload.
+        createdBy:
+          type: string
+          description: Optional creator user ID recorded with the graph.
+    VertexGraphUpdateRequest:
+      type: object
+      description: Request body for a full Vertex SystemGraph save.
+      required: [payload]
+      additionalProperties: false
+      properties:
+        payload:
+          type: object
+          additionalProperties: true
+          description: Serialized graph workspace payload to persist.
     VertexGraph:
       type: object
       description: |
@@ -11070,6 +11105,104 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/vertex/v1/graphs:
+    post:
+      operationId: createVertexGraph
+      summary: Create a Vertex graph
+      description: |
+        Creates a Vertex SystemGraph workspace for an ontology. The optional
+        payload carries the initial serialized graph state; when omitted, the
+        server creates an empty graph payload.
+      tags: [Vertex]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphCreateRequest"
+      responses:
+        "201":
+          description: Vertex graph created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}:
+    get:
+      operationId: getVertexGraph
+      summary: Get a Vertex graph
+      description: |
+        Returns the current persisted Vertex SystemGraph payload and metadata
+        for the graph identified by `{rid}`.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current Vertex graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      operationId: updateVertexGraph
+      summary: Update a Vertex graph
+      description: |
+        Performs a full graph save by replacing the serialized payload. For
+        versioned graphs, the save bumps the graph version and records a
+        history row.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexGraphUpdateRequest"
+      responses:
+        "200":
+          description: Updated Vertex graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/vertex/v1/graphs/{rid}/share-links:
     post:
       operationId: createVertexShareLink

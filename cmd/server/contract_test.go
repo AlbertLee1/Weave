@@ -137,9 +137,6 @@ var undocumentedRouteAllowList = map[specOperationKey]bool{
 	// payloads (layers, edges, savedSelections, timeSettings, positions) land
 	// alongside the JSON Schema work in VTX-011; until then the chi routes are
 	// the canonical contract.
-	{Method: "POST", Path: "/api/vertex/v1/graphs"}:                         true,
-	{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}"}:                    true,
-	{Method: "PUT", Path: "/api/vertex/v1/graphs/{rid}"}:                    true,
 	{Method: "PATCH", Path: "/api/vertex/v1/graphs/{rid}/layout"}:           true,
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/duplicate"}:         true,
 	{Method: "POST", Path: "/api/vertex/v1/graphs/{rid}/save-as-template"}:  true,
@@ -291,6 +288,87 @@ func TestBDD_VertexShareLinksAndWidgetOpenAPIContract(t *testing.T) {
 	}
 }
 
+func TestBDD_VertexGraphCRUDOpenAPIContract(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	specOps := extractSpecOperations(t, doc)
+	expectedOps := []struct {
+		op          specOperationKey
+		operationID string
+		status      string
+	}{
+		{
+			op:          specOperationKey{Method: "POST", Path: "/api/vertex/v1/graphs"},
+			operationID: "createVertexGraph",
+			status:      "201",
+		},
+		{
+			op:          specOperationKey{Method: "GET", Path: "/api/vertex/v1/graphs/{rid}"},
+			operationID: "getVertexGraph",
+			status:      "200",
+		},
+		{
+			op:          specOperationKey{Method: "PUT", Path: "/api/vertex/v1/graphs/{rid}"},
+			operationID: "updateVertexGraph",
+			status:      "200",
+		},
+	}
+
+	allPresent := true
+	for _, want := range expectedOps {
+		if undocumentedRouteAllowList[want.op] {
+			t.Errorf("%s %s must be documented in OpenAPI, not allow-listed as undocumented", want.op.Method, want.op.Path)
+		}
+		if !specOps[want.op] {
+			t.Errorf("api/openapi.yaml must document %s %s", want.op.Method, want.op.Path)
+			allPresent = false
+		}
+	}
+	if !allPresent {
+		return
+	}
+
+	for _, want := range expectedOps {
+		operation := openAPIPathOperation(t, doc, want.op.Path, want.op.Method)
+		if got, _ := operation["operationId"].(string); got != want.operationID {
+			t.Errorf("%s %s operationId = %q, want %q", want.op.Method, want.op.Path, got, want.operationID)
+		}
+		if got := openAPIJSONResponseSchemaRef(t, operation, want.status); got != "#/components/schemas/VertexGraph" {
+			t.Errorf("%s %s %s schema = %q, want VertexGraph", want.op.Method, want.op.Path, want.status, got)
+		}
+	}
+
+	create := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs", "POST")
+	if got := openAPIRequestBodySchemaRef(t, create); got != "#/components/schemas/VertexGraphCreateRequest" {
+		t.Errorf("graph create request schema = %q, want VertexGraphCreateRequest", got)
+	}
+	update := openAPIPathOperation(t, doc, "/api/vertex/v1/graphs/{rid}", "PUT")
+	if got := openAPIRequestBodySchemaRef(t, update); got != "#/components/schemas/VertexGraphUpdateRequest" {
+		t.Errorf("graph update request schema = %q, want VertexGraphUpdateRequest", got)
+	}
+
+	schemas := openAPISchemas(t, doc)
+	createProps := openAPIProperties(t, schemas, "VertexGraphCreateRequest")
+	for _, field := range []string{"ontologyRid", "name", "versioned", "payload", "createdBy"} {
+		if _, ok := createProps[field]; !ok {
+			t.Errorf("VertexGraphCreateRequest must expose %s", field)
+		}
+	}
+	createRequired := openAPIRequiredSet(t, schemas, "VertexGraphCreateRequest")
+	for _, field := range []string{"ontologyRid", "name"} {
+		if !createRequired[field] {
+			t.Errorf("VertexGraphCreateRequest must require %s", field)
+		}
+	}
+
+	updateProps := openAPIProperties(t, schemas, "VertexGraphUpdateRequest")
+	if _, ok := updateProps["payload"]; !ok {
+		t.Errorf("VertexGraphUpdateRequest must expose payload")
+	}
+	if !openAPIRequiredSet(t, schemas, "VertexGraphUpdateRequest")["payload"] {
+		t.Errorf("VertexGraphUpdateRequest must require payload")
+	}
+}
+
 func openAPISchemas(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	components, ok := doc["components"].(map[string]any)
@@ -315,6 +393,27 @@ func openAPIProperties(t *testing.T, schemas map[string]any, name string) map[st
 		t.Fatalf("components.schemas.%s.properties: expected map, got %T", name, schema["properties"])
 	}
 	return props
+}
+
+func openAPIRequiredSet(t *testing.T, schemas map[string]any, name string) map[string]bool {
+	t.Helper()
+	schema, ok := schemas[name].(map[string]any)
+	if !ok {
+		t.Fatalf("components.schemas.%s: expected map, got %T", name, schemas[name])
+	}
+	requiredRaw, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("components.schemas.%s.required: expected list, got %T", name, schema["required"])
+	}
+	out := map[string]bool{}
+	for _, item := range requiredRaw {
+		field, ok := item.(string)
+		if !ok {
+			t.Fatalf("components.schemas.%s.required item: expected string, got %T", name, item)
+		}
+		out[field] = true
+	}
+	return out
 }
 
 func openAPIPathOperation(t *testing.T, doc map[string]any, path string, method string) map[string]any {
